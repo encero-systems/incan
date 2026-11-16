@@ -6,6 +6,7 @@ use super::{NodeBindingError, Positions, Span};
 use crate::typechecker::ownership_contracts::flow::{
     Access, ClosureCaptures, Event, Graph, InputEvaluation, Invocation, InvocationArgument, Loan, LoanId, LoanKind,
     MutationBody, Node, OperandDependency, OperationInputs, OwnedInitialization, Permission, Place, Projection, Root,
+    SnapshotInitialization, SnapshotMaterialization,
 };
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess};
 use std::collections::{BTreeMap, BTreeSet};
@@ -203,6 +204,26 @@ pub(super) fn project(positions: &Positions, graph: &Graph, fields: &mut Vec<Str
         owned.push((key, row));
     }
     ordered_fields(owned, fields)?;
+    let mut snapshots = Vec::new();
+    for (destination, snapshot) in &graph.owned_snapshot_locals {
+        let mut row = vec![positions.identity(destination)?];
+        let key = canonical_key(&row);
+        row.push(anchor(positions, snapshot.initializer)?);
+        row.push(anchor(positions, snapshot.base)?);
+        place(positions, &snapshot.source, &mut row)?;
+        row.push(snapshot.access_node.to_string());
+        let mut materializations = Vec::new();
+        for (span, materialization) in &snapshot.materializations {
+            let mut entry = vec![anchor(positions, *span)?];
+            let materialization_key = canonical_key(&entry);
+            super::types::type_fields(&materialization.value_type, &mut entry)?;
+            entry.push(materialization.access_node.to_string());
+            materializations.push((materialization_key, entry));
+        }
+        ordered_fields(materializations, &mut row)?;
+        snapshots.push((key, row));
+    }
+    ordered_fields(snapshots, fields)?;
     let mut operations = Vec::new();
     for (span, operation) in &graph.operations {
         let mut row = vec![anchor(positions, *span)?];
@@ -432,6 +453,11 @@ impl Reader<'_> {
             dependent_locals: self.ordered_map(Self::identity, Self::loan_ids)?,
             dependent_values: self.span_set()?,
             owned_locals: self.ordered_map(Self::identity, Self::owned_initialization)?,
+            owned_snapshot_locals: if schema >= 5 {
+                self.ordered_map(Self::identity, Self::snapshot_initialization)?
+            } else {
+                BTreeMap::new()
+            },
             operations: self.ordered_map(Self::semantic_span, Self::operation)?,
             invocations: self.ordered_map(Self::semantic_span, |reader| reader.invocation(schema))?,
             closures: self.ordered_map(Self::semantic_span, Self::closure)?,
@@ -520,6 +546,23 @@ impl Reader<'_> {
             initializer: self.semantic_span()?,
             source: self.optional(Self::place)?,
             access_node: self.optional(Self::number)?,
+        })
+    }
+    /// An immutable snapshot local retains its exact parameter Read and every exact constructor element Read.
+    fn snapshot_initialization(&mut self) -> Result<SnapshotInitialization, NodeBindingError> {
+        Ok(SnapshotInitialization {
+            initializer: self.semantic_span()?,
+            base: self.semantic_span()?,
+            source: self.place()?,
+            access_node: self.number()?,
+            materializations: self.ordered_map(Self::semantic_span, Self::snapshot_materialization)?,
+        })
+    }
+    /// One constructor materialization retains its checked type and exact final Read node.
+    fn snapshot_materialization(&mut self) -> Result<SnapshotMaterialization, NodeBindingError> {
+        Ok(SnapshotMaterialization {
+            value_type: super::types::read_type(&mut self.values)?,
+            access_node: self.number()?,
         })
     }
     /// An operation's inputs: the node that completes it and each operand's dependency.

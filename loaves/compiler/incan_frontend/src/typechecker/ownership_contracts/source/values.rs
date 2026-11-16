@@ -498,9 +498,49 @@ impl Builder<'_> {
                 .as_ref()
                 .and_then(|types| types.get(index))
                 .is_some_and(|expected| self.fresh_loop_slice_field(value, expected));
+            let snapshot_index = argument_types
+                .as_ref()
+                .and_then(|types| types.get(index))
+                .and_then(|expected| {
+                    self.immutable_snapshot_index_materialization(value, expected)
+                        .map(|identity| (identity, expected))
+                });
+            let closed_try_call = argument_types
+                .as_ref()
+                .and_then(|types| types.get(index))
+                .is_some_and(|expected| self.closed_try_call_field(value, expected));
+            let enum_parameter = argument_types
+                .as_ref()
+                .and_then(|types| types.get(index))
+                .is_some_and(|expected| self.closed_enum_parameter_field(value, expected));
+            if enum_parameter {
+                let path = self.optional_place(value)?.ok_or(Unavailable {
+                    span: value.span,
+                    reason: "Enum Parameter transfer has no checked source place".into(),
+                })?;
+                self.constrained.insert(path.place.root);
+                incoming = self.expression(value, incoming, true)?;
+                continue;
+            }
+            let whole_local_list = argument_types
+                .as_ref()
+                .and_then(|types| types.get(index))
+                .is_some_and(|expected| self.whole_local_list_field(value, expected));
+            if whole_local_list {
+                let path = self.optional_place(value)?.ok_or(Unavailable {
+                    span: value.span,
+                    reason: "whole local list transfer has no checked source place".into(),
+                })?;
+                self.constrained.insert(path.place.root);
+                incoming = self.expression(value, incoming, true)?;
+                continue;
+            }
             if !stores_view && !self.fresh_or_copy_field(value) {
-                if fresh_loop_index || fresh_loop_slice {
+                if fresh_loop_index || fresh_loop_slice || snapshot_index.is_some() || closed_try_call {
                     incoming = self.expression(value, incoming, false)?;
+                    if let Some((identity, expected)) = snapshot_index {
+                        self.retain_snapshot_materialization(&identity, value, expected, &incoming)?;
+                    }
                     continue;
                 }
                 let borrowed = self
@@ -518,6 +558,105 @@ impl Builder<'_> {
             incoming = self.expression(value, incoming, false)?;
         }
         Ok(incoming)
+    }
+
+    /// Transfer one exact whole inferred builtin-list Local into an equal constructor field. Mutable accumulated and
+    /// immutable list locals share this Move route; aliases, dependent/owned storage and projections remain refused.
+    fn whole_local_list_field(&mut self, value: &Spanned<Expr>, expected: &ResolvedType) -> bool {
+        if self.checker.type_info.expr_type(value.span) != Some(expected)
+            || self.checker.type_holds_borrow(expected)
+            || self.checker.type_holds_native_loan(expected)
+            || !matches!(expected,
+                ResolvedType::Generic(name, arguments)
+                    if incan_lang::lang::types::collections::from_str(name)
+                        == Some(incan_lang::lang::types::collections::CollectionTypeId::List)
+                        && arguments.len() == 1)
+        {
+            return false;
+        }
+        self.optional_place(value).ok().flatten().is_some_and(|path| {
+            path.through.is_none()
+                && path.place.projection.is_empty()
+                && matches!(&path.place.root, super::Root::Binding(identity)
+                    if identity.kind == SemanticSourceTargetKind::Local
+                        && !self.graph.local_loans.contains_key(identity)
+                        && !self.graph.dependent_locals.contains_key(identity)
+                        && !self.graph.owned_locals.contains_key(identity)
+                        && !self.graph.owned_snapshot_locals.contains_key(identity))
+                && self
+                    .graph
+                    .permissions
+                    .get(&path.place.root)
+                    .is_some_and(|permission| permission.transferable)
+                && !self.borrowed_inputs.contains(&path.place.root)
+        })
+    }
+
+    /// Transfer one exact whole plain Parameter into an equal closed enum field. This is a real Move: borrowed,
+    /// projected, model and already-constrained parameters remain outside the route and later reuse conflicts.
+    fn closed_enum_parameter_field(&mut self, value: &Spanned<Expr>, expected: &ResolvedType) -> bool {
+        if self.checker.type_info.expr_type(value.span) != Some(expected)
+            || self.checker.type_holds_borrow(expected)
+            || self.checker.type_holds_native_loan(expected)
+            || !matches!(expected,
+                ResolvedType::Named(owner) | ResolvedType::Generic(owner, _)
+                    if matches!(self.checker.lookup_type_info(owner), Some(TypeInfo::Enum(_))))
+        {
+            return false;
+        }
+        self.optional_place(value).ok().flatten().is_some_and(|path| {
+            path.through.is_none()
+                && path.place.projection.is_empty()
+                && matches!(&path.place.root, super::Root::Binding(identity)
+                    if identity.kind == SemanticSourceTargetKind::Parameter)
+                && self.graph.permissions.get(&path.place.root).is_some_and(|permission| {
+                    !permission.exclusive && !permission.writable && permission.transferable
+                })
+                && !self.borrowed_inputs.contains(&path.place.root)
+                && !self.declared_constrained_inputs.contains(&path.place.root)
+        })
+    }
+
+    /// Admit only a direct ordinary free call whose `?` payload exactly fills one closed constructor field. The
+    /// selected call must retain no returned-view, native, owned-result or clone relationship; stored carriers,
+    /// constructors and user-selected methods remain outside this route.
+    fn closed_try_call_field(&self, value: &Spanned<Expr>, expected: &ResolvedType) -> bool {
+        let Expr::Try(inner) = &value.node else {
+            return false;
+        };
+        let Expr::Call(..) = &inner.node else {
+            return false;
+        };
+        if self.checker.type_info.expr_type(value.span) != Some(expected)
+            || self.checker.type_holds_borrow(expected)
+            || self.checker.type_holds_native_loan(expected)
+        {
+            return false;
+        }
+        let Some(call) = self.checker.type_info.protocols.explicit_input_calls.get(&inner.span) else {
+            return false;
+        };
+        if call.kind != super::super::InputCallKind::Ordinary || call.owner.as_ref() != Some(&self.owner) {
+            return false;
+        }
+        let Ok(contract) = self.checker.type_info.selected_input_contract(call) else {
+            return false;
+        };
+        let carrier_matches = matches!(self.checker.type_info.expr_type(inner.span),
+            Some(ResolvedType::Generic(name, arguments))
+                if incan_lang::lang::types::collections::from_str(name)
+                    == Some(incan_lang::lang::types::collections::CollectionTypeId::Result)
+                    && arguments.len() == 2
+                    && arguments.first() == Some(expected));
+        carrier_matches
+            && crate::ownership_metadata::returned_view(contract).is_ok_and(|view| view.is_none())
+            && crate::ownership_metadata::owned_result(contract).is_ok_and(|owned| owned.is_none())
+            && self
+                .checker
+                .native_result_dependencies(inner.span)
+                .is_ok_and(|dependencies| dependencies.is_none())
+            && !self.checker.native_result_is_independent(inner.span)
+            && !self.checked_clone_call(inner.span)
     }
 
     fn fresh_loop_index_field(&mut self, value: &Spanned<Expr>, expected: &ResolvedType) -> bool {
@@ -549,6 +688,123 @@ impl Builder<'_> {
                     && matches!(&path.place.root, super::Root::Binding(identity)
                         if self.fresh_loop_locals.contains(identity))
             })
+    }
+
+    /// Retain one exact constructor-field clone from an authenticated immutable parameter snapshot. The initializer
+    /// fact owns the original Read clone; this materialization only reads one closed scalar element from local storage.
+    pub(super) fn immutable_snapshot_index_materialization(
+        &mut self,
+        value: &Spanned<Expr>,
+        expected: &ResolvedType,
+    ) -> Option<incan_semantics_core::CanonicalSymbolId> {
+        let Expr::Index(base, _) = &value.node else {
+            return None;
+        };
+        let scalar = matches!(expected,
+            ResolvedType::Int
+                | ResolvedType::Float
+                | ResolvedType::Numeric(_)
+                | ResolvedType::Bool
+                | ResolvedType::Str
+                | ResolvedType::Bytes
+                | ResolvedType::FrozenStr
+                | ResolvedType::FrozenBytes
+                | ResolvedType::Unit);
+        if !scalar
+            || self
+                .checker
+                .type_info
+                .calls
+                .resolved_operator_calls
+                .contains_key(&value.span)
+            || self.checker.type_info.expr_type(value.span) != Some(expected)
+            || !self.checker.is_clone_type(expected)
+            || self.checker.type_holds_borrow(expected)
+            || self.checker.type_holds_native_loan(expected)
+            || !matches!(self.checker.type_info.expr_type(base.span),
+                Some(ResolvedType::Generic(name, arguments))
+                    if incan_lang::lang::types::collections::from_str(name)
+                        == Some(incan_lang::lang::types::collections::CollectionTypeId::List)
+                        && arguments.as_slice() == std::slice::from_ref(expected))
+        {
+            return None;
+        }
+        let Some(identity) = self.optional_place(base).ok().flatten().and_then(|path| {
+            (path.through.is_none() && path.place.projection.is_empty())
+                .then_some(path.place.root)
+                .and_then(|root| match root {
+                    super::Root::Binding(identity) => Some(identity),
+                    super::Root::Temporary { .. } => None,
+                })
+        }) else {
+            return None;
+        };
+        self.graph
+            .owned_snapshot_locals
+            .contains_key(&identity)
+            .then_some(identity)
+    }
+
+    /// Retain the exact final Read created by evaluation of one authenticated snapshot index. This fact is recorded
+    /// only after expression evaluation, so a similar span cannot substitute another graph event.
+    pub(super) fn retain_snapshot_materialization(
+        &mut self,
+        identity: &incan_semantics_core::CanonicalSymbolId,
+        value: &Spanned<Expr>,
+        expected: &ResolvedType,
+        outgoing: &[usize],
+    ) -> Result<(), Unavailable> {
+        let Expr::Index(_, index) = &value.node else {
+            return Err(Unavailable {
+                span: value.span,
+                reason: "snapshot materialization is not one checked index".into(),
+            });
+        };
+        let [access_node] = outgoing else {
+            return Err(Unavailable {
+                span: value.span,
+                reason: "snapshot materialization needs one final read access".into(),
+            });
+        };
+        let node = self.graph.nodes.get(*access_node).ok_or(Unavailable {
+            span: value.span,
+            reason: "snapshot materialization read is outside callable".into(),
+        })?;
+        if node.span.expansion != value.span.expansion
+            || node.span.start < value.span.start
+            || node.span.end > value.span.end
+            || !matches!(&node.event,
+                super::Event::Access {
+                    place: super::Place {
+                        root: super::Root::Binding(root),
+                        projection,
+                    },
+                    access: super::Access::Read,
+                    through: None,
+                } if root == identity
+                    && matches!(projection.as_slice(), [super::Projection::Element(span)]
+                        if *span == index.span))
+        {
+            return Err(Unavailable {
+                span: value.span,
+                reason: "snapshot materialization differs from its final checked element read".into(),
+            });
+        }
+        let retained = super::SnapshotMaterialization {
+            value_type: expected.clone(),
+            access_node: *access_node,
+        };
+        let snapshot = self.graph.owned_snapshot_locals.get_mut(identity).ok_or(Unavailable {
+            span: value.span,
+            reason: "snapshot materialization has no authenticated initializer".into(),
+        })?;
+        if snapshot.materializations.insert(value.span, retained).is_some() {
+            return Err(Unavailable {
+                span: value.span,
+                reason: "snapshot materialization span is not unique".into(),
+            });
+        }
+        Ok(())
     }
 
     fn fresh_loop_slice_field(&mut self, value: &Spanned<Expr>, expected: &ResolvedType) -> bool {

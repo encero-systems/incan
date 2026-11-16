@@ -57,6 +57,39 @@ fn graph_body_records_restore_through_checked_body_assembly() -> Result<(), Box<
 }
 
 #[test]
+fn graph_body_record_revalidates_input_value_decisions_before_reuse()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = "def keep(value: Owned[str]) -> str:\n    return value\n";
+    let program = parsed(source)?;
+    let declaration = super::records::fixture_record(source, "keep", true)?;
+    let mut local = super::records::produce_local_record(source, "keep", declaration, Vec::new())?;
+    local.first_mut().ok_or("missing local header")?.insert(3, "local".into());
+    let mut final_value = super::records::fixture_record(source, "keep", false)?;
+    final_value.first_mut().ok_or("missing final header")?.insert(3, "final".into());
+    let decision = final_value.iter_mut()
+        .find(|row| row.first().is_some_and(|family| family == "input-copy"))
+        .ok_or("missing input value decision row")?;
+    assert_eq!(decision.get(3).map(String::as_str), Some("2"));
+    let forged = decision.iter().rposition(|token| token == "false").ok_or("missing negative value decision")?;
+    decision[forged] = "true".into();
+    let identity = local.first().ok_or("missing local header")?[1].clone();
+    let records = crate::checker_records::GraphBodyRecords::new(vec![crate::checker_records::GraphBodyRecord {
+        identity,
+        local,
+        final_value,
+        body_ir: None,
+    }])?;
+    let mut checker = TypeChecker::new();
+    checker.set_graph_body_records(records);
+    checker.check_program(&program).map_err(|errors| format!("{errors:?}"))?;
+    let work = checker.check_work();
+    assert_eq!(work.body_view_reuses, 0);
+    assert_eq!(work.function_bodies, 1);
+    assert_eq!(work.final_record_evaluations, 1);
+    Ok(())
+}
+
+#[test]
 fn selected_declaration_is_republished_with_a_fresh_local_body() -> Result<(), Box<dyn std::error::Error>> {
     let source =
         "def output_index_key(profile: str, output: str) -> str:\n    key = profile + output\n    return key\n";

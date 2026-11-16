@@ -204,6 +204,17 @@ pub struct IsInstanceTargetInfo {
 }
 
 /// Custom protocol decisions that lower into explicit runtime calls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::typechecker) struct CheckedInputValueDecision {
+    /// Whether the source checker's exact Copy relation accepted this type in the owning body's lexical environment.
+    pub copy: bool,
+    /// Whether the source checker's exact Clone relation accepted this type in the owning body's lexical environment.
+    pub clone: bool,
+    /// Whether the checked type can hold neither an Incan borrow nor a native loan at any stored depth.
+    pub closed: bool,
+}
+
+/// Custom protocol decisions that lower into explicit runtime calls.
 #[derive(Debug, Default, Clone)]
 pub struct ProtocolArtifacts {
     /// Exact selected input contracts of successful calls, including calls from otherwise ordinary bodies.
@@ -222,9 +233,11 @@ pub struct ProtocolArtifacts {
     /// graph is already present stores its mutation facts there instead, so there is one graph per callable.
     /// Checker records transport the mutation projection separately and restore this transient map empty.
     pub(in crate::typechecker) mutation_flows: BTreeMap<CanonicalSymbolId, super::ownership_contracts::flow::Graph>,
-    /// Body-owned decisions from the checker's Copy relation, independent of the flow graph. Exact checked types
-    /// select their retained decision; missing evidence never falls back to an ABI or source-name heuristic.
-    pub(in crate::typechecker) explicit_input_copy: BTreeMap<CanonicalSymbolId, HashMap<ResolvedType, bool>>,
+    /// Body-owned value-layout decisions from the source checker's exact Copy, Clone and stored-loan relations,
+    /// independent of the flow graph. Exact checked types select their retained decision; missing evidence never
+    /// falls back to an ABI, declaration-name or partial restored-layout heuristic.
+    pub(in crate::typechecker) explicit_input_copy:
+        BTreeMap<CanonicalSymbolId, HashMap<ResolvedType, CheckedInputValueDecision>>,
     /// Receiver value identities retained only for Body IR before synthetic truthiness dispatch reuses their spans.
     /// The legacy reference at that span still selects `__bool__`; this separate record never changes that table.
     pub(crate) body_ir_truthiness_receivers: HashMap<crate::ast::Span, CanonicalSymbolId>,

@@ -638,7 +638,14 @@ fn source_copy_evidence_is_independent_of_access_events() -> Result<(), Box<dyn 
                     .get_mut(owner)
                     .ok_or("missing decisions")?;
                 decisions.clear();
-                decisions.insert(ResolvedType::Str, true);
+                decisions.insert(
+                    ResolvedType::Str,
+                    crate::typechecker::type_info::CheckedInputValueDecision {
+                        copy: true,
+                        clone: true,
+                        closed: true,
+                    },
+                );
             }
             _ => {
                 let InputFlow::Checked { graph, analysis } = facts

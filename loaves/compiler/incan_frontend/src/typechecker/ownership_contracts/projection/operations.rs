@@ -292,6 +292,25 @@ impl CheckedInputBody<'_> {
                     self.visit_operation_expression(element, parameters, execution, seen)?;
                 }
             }
+            // A match used as an assignment value follows the same scrutinee/guard/body order as a statement
+            // match. Source-access replay separately authenticates the one continuing extraction arm; this traversal
+            // only closes operation and invocation coverage over the already-admitted expression.
+            Expr::Match(scrutinee, arms) => {
+                self.visit_operation_expression(scrutinee, parameters, execution, seen)?;
+                for arm in arms {
+                    if let Some(guard) = &arm.node.guard {
+                        self.visit_operation_expression(guard, parameters, execution, seen)?;
+                    }
+                    match &arm.node.body {
+                        MatchBody::Expr(value) => {
+                            self.visit_operation_expression(value, parameters, execution, seen)?;
+                        }
+                        MatchBody::Block(body) => {
+                            self.visit_operation_statements(body, parameters, execution, seen)?;
+                        }
+                    }
+                }
+            }
             Expr::ListComp(comprehension) => {
                 self.visit_comprehension(
                     &comprehension.clauses,
@@ -402,6 +421,14 @@ impl CheckedInputBody<'_> {
         execution: &[usize],
         seen: &mut SourceCoverage,
     ) -> Result<(), &'static str> {
+        if self.facts.resolved_builtin_method_call(expression.span)
+            == Some(BuiltinMethodId::Result(
+                incan_lang::lang::surface::result_methods::ResultMethodId::MapErr,
+            ))
+            && !self.selected_closed_result_map_err(expression, receiver, arguments)?
+        {
+            return Err("builtin Result.map_err differs from its capture-free closed Package-call surface");
+        }
         self.visit_operation_expression(receiver, parameters, execution, seen)?;
         let retained = super::super::builtins::retained_iterator_method(self.facts, expression.span).is_some();
         let place_method = super::super::builtins::builtin_place_method_writes(self.facts, expression.span).is_some();

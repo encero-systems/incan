@@ -240,6 +240,27 @@ impl SourcePaths<'_> {
                 &[&comprehension.key, &comprehension.value],
                 incoming,
             ),
+            // Assignment-valued matches share the statement-match edge shape but create no synthetic wrapper node:
+            // the assignment binding region follows the one continuing arm exactly as source graph construction did.
+            Expr::Match(scrutinee, arms) => {
+                let evaluated = self.expression(scrutinee, incoming)?;
+                let mut outgoing = Vec::new();
+                let mut remaining = evaluated;
+                for arm in arms {
+                    let arm_input = if let Some(guard) = &arm.node.guard {
+                        let guarded = self.expression(guard, remaining)?;
+                        remaining = guarded.clone();
+                        guarded
+                    } else {
+                        remaining.clone()
+                    };
+                    outgoing.extend(match &arm.node.body {
+                        MatchBody::Expr(value) => self.expression(value, arm_input)?,
+                        MatchBody::Block(body) => self.block(body, arm_input)?,
+                    });
+                }
+                Ok(outgoing)
+            }
             _ => Ok(self.region(expression.span, incoming)),
         }
     }

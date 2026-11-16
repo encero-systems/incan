@@ -117,6 +117,7 @@ impl Builder<'_> {
         &mut self,
         scrutinee: &Spanned<Expr>,
         arms: &[Spanned<MatchArm>],
+        assignment_payload: Option<&CanonicalSymbolId>,
         incoming: Vec<usize>,
     ) -> Result<Vec<usize>, Unavailable> {
         if let Some(outgoing) = self.dictionary_match(scrutinee, arms, incoming.clone())? {
@@ -194,6 +195,9 @@ impl Builder<'_> {
                     }
                 }
             }
+            if let Some(payload) = assignment_payload {
+                self.constrained.insert(Root::Binding(payload.clone()));
+            }
             let arm_input = if let Some(guard) = &arm.node.guard {
                 let guarded = self.expression(guard, remaining, false)?;
                 remaining = guarded.clone();
@@ -202,8 +206,23 @@ impl Builder<'_> {
                 remaining.clone()
             };
             let continuing = match &arm.node.body {
-                MatchBody::Expr(value) => self.expression(value, arm_input, false)?,
-                MatchBody::Block(body) => self.block(body, arm_input)?,
+                MatchBody::Expr(value) => self.expression(
+                    value,
+                    arm_input,
+                    assignment_payload.is_some_and(|payload| {
+                        self.checker.type_info.resolved_identity(value.span) == Some(payload)
+                    }),
+                )?,
+                MatchBody::Block(body) => {
+                    let continuing = self.block(body, arm_input)?;
+                    if assignment_payload.is_some() && !continuing.is_empty() {
+                        return Err(Unavailable {
+                            span: arm.span,
+                            reason: "match assignment fallback arm does not terminate".into(),
+                        });
+                    }
+                    continuing
+                }
             };
             if !continuing.is_empty() {
                 ends.push(self.carrier_state());
@@ -212,6 +231,113 @@ impl Builder<'_> {
         }
         self.join_carrier_states(&entry, &ends);
         Ok(outgoing)
+    }
+
+    /// Move one exact independent source-enum payload through a match expression into an inferred assignment. One
+    /// canonical extraction arm continues with its sole binding; every other arm binds nothing and must terminate.
+    pub(super) fn match_assignment_value(
+        &mut self,
+        scrutinee: &Spanned<Expr>,
+        arms: &[Spanned<MatchArm>],
+        incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        let Some(path) = self.optional_place(scrutinee)? else {
+            return Err(Unavailable {
+                span: scrutinee.span,
+                reason: "match assignment subject needs one independent stored enum place".into(),
+            });
+        };
+        let Root::Binding(subject) = &path.place.root else {
+            return Err(Unavailable {
+                span: scrutinee.span,
+                reason: "match assignment subject needs one independent stored enum place".into(),
+            });
+        };
+        let subject_type = self.checker.type_info.expr_type(scrutinee.span);
+        let enum_subject = matches!(subject_type,
+            Some(ResolvedType::Named(owner) | ResolvedType::Generic(owner, _))
+                if matches!(self.checker.lookup_type_info(owner), Some(crate::symbols::TypeInfo::Enum(_)))
+                    || self.checker.type_info.declarations.enum_derives.contains_key(owner)
+                    || self.checker.type_info.declarations.named_type_identities.get(owner)
+                        .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Enum));
+        if path.through.is_some()
+            || subject.kind != SemanticSourceTargetKind::Local
+            || self.graph.local_loans.contains_key(subject)
+            || self.graph.dependent_locals.contains_key(subject)
+            || !enum_subject
+            || subject_type.is_some_and(|ty| self.checker.type_holds_borrow(ty))
+            || !self.checker.type_info.scrutinee_holds_no_loan(scrutinee.span)
+        {
+            return Err(Unavailable {
+                span: scrutinee.span,
+                reason: "match assignment subject needs one independent stored enum place".into(),
+            });
+        }
+        let mut payload = None;
+        for arm in arms {
+            if arm.node.guard.is_some() {
+                return Err(Unavailable {
+                    span: arm.span,
+                    reason: "match assignment extraction does not admit guards".into(),
+                });
+            }
+            match (&arm.node.pattern.node, &arm.node.body) {
+                (Pattern::Constructor(name, arguments), MatchBody::Expr(value))
+                    if self
+                        .checker
+                        .type_info
+                        .resolved_identity(name.span)
+                        .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant)
+                        && arguments.len() == 1 =>
+                {
+                    let [PatternArg::Positional(binding)] = arguments.as_slice() else {
+                        return Err(Unavailable {
+                            span: arm.span,
+                            reason: "match assignment extraction needs one positional payload".into(),
+                        });
+                    };
+                    let Pattern::Binding(name) = &binding.node else {
+                        return Err(Unavailable {
+                            span: binding.span,
+                            reason: "match assignment extraction needs one immutable payload binding".into(),
+                        });
+                    };
+                    let identity = self
+                        .checker
+                        .type_info
+                        .resolved_write_identity(binding.span, name)
+                        .cloned()
+                        .ok_or(Unavailable {
+                            span: binding.span,
+                            reason: "match assignment extraction has no canonical payload binding".into(),
+                        })?;
+                    if payload.is_some()
+                        || self.checker.type_info.resolved_identity(value.span) != Some(&identity)
+                        || self.checker.type_info.expr_type(value.span)
+                            != self.checker.type_info.resolved_write_type(binding.span, name)
+                    {
+                        return Err(Unavailable {
+                            span: arm.span,
+                            reason: "match assignment extraction body differs from its payload binding".into(),
+                        });
+                    }
+                    payload = Some(identity);
+                }
+                (Pattern::Wildcard | Pattern::Literal(_), MatchBody::Block(_)) => {}
+                _ => {
+                    return Err(Unavailable {
+                        span: arm.span,
+                        reason: "match assignment has another continuing or payload-binding arm".into(),
+                    });
+                }
+            }
+        }
+        let payload = payload.ok_or(Unavailable {
+            span: scrutinee.span,
+            reason: "match assignment has no canonical extraction arm".into(),
+        })?;
+        self.constrained.insert(path.place.root);
+        self.match_statement(scrutinee, arms, Some(&payload), incoming)
     }
 
     /// A carried view's body returns the variant holding the view (`Ok` or `Some`, or `Err` for a view carried in the

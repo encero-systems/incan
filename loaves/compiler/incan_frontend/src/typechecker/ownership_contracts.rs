@@ -86,6 +86,18 @@ pub(super) enum InputCallKind {
 }
 
 impl TypeChecker {
+    /// Test-only same-source graph construction after an adversarial fixture has temporarily changed one checked
+    /// source fact. Production callers always use the ordinary finalization boundary above.
+    #[cfg(test)]
+    pub(in crate::typechecker) fn rebuild_function_input_flow_for_test(
+        &self,
+        function: &crate::ast::FunctionDecl,
+        span: Span,
+        identity: &CanonicalSymbolId,
+    ) -> Result<flow::Graph, Unavailable> {
+        source::build(self, CallableSource::Function(function), span, identity)
+    }
+
     /// Return the runtime value beneath one canonical ownership wrapper in a checked type position.
     pub(in crate::typechecker) fn explicit_ownership_value_type(&self, ty: &ResolvedType) -> Option<ResolvedType> {
         let ResolvedType::Generic(name, arguments) = ty else {

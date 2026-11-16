@@ -318,6 +318,25 @@ impl TypeChecker {
         self.capturing_callables.captures.get(&span).map(Vec::as_slice)
     }
 
+    /// Test-only adversarial boundary: remove and later restore one authentic checked capture set so a same-source
+    /// forged graph can be produced without changing any AST, identity or type fact.
+    #[cfg(test)]
+    pub(in crate::typechecker) fn take_closure_captures_for_test(
+        &mut self,
+        span: crate::ast::Span,
+    ) -> Option<Vec<Capture>> {
+        self.capturing_callables.captures.insert(span, Vec::new())
+    }
+
+    #[cfg(test)]
+    pub(in crate::typechecker) fn restore_closure_captures_for_test(
+        &mut self,
+        span: crate::ast::Span,
+        captures: Vec<Capture>,
+    ) {
+        self.capturing_callables.captures.insert(span, captures);
+    }
+
     /// Return whether the module being checked is a module of the standard library, whose function-typed slots,
     /// closures and trait defaults are spelled by the standard library's own lowering rules and are left as they are.
     /// A module is one when the program is a standard package ([`TypeChecker::set_own_standard_package`]) or when its

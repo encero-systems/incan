@@ -594,6 +594,7 @@ def input_protocol_controls() -> Result[None, str]:
         decoded = decode_record(encoded, CHECKER_PROFILE, record.owner, record.root).map_err((_) => "input decode")?
         assert decoded == record
         owned_initializer_grammar(record)?
+        snapshot_schema_grammar(record)?
         operation_dependency_grammar(record)?
         invocation_evaluation_grammar(record)?
         invocation_receiver_grammar(record)?
@@ -774,6 +775,80 @@ def owned_initializer_grammar(record: CheckedRecord) -> Result[None, str]:
         match encode_record(broken):
             Err(CodecFault.Malformed) => pass
             _ => return Err("malformed checked owned initializer accepted")
+    return Ok(None)
+
+
+def snapshot_schema_grammar(record: CheckedRecord) -> Result[None, str]:
+    """Schema 4 keeps callback/inferred-shared invocation facts; schema 5 adds exact snapshot Read authority."""
+    v4_prefix = ["4", "checked", "owner", "0", "0", "0", "0", "0", "0", "0", "0", "1", "call", "callee", "none", "none", "false", "none", "0", "1"]
+    v4_argument = ["argument", "0", "0", "inferred_shared", "none", "none", "true", "0", "0", "none"]
+    v4_suffix = ["none", "0", "0", "0", "1", "nothing", "0", "node"]
+    v4_values = v4_prefix + v4_argument + v4_suffix
+    v4 = CheckedRecord(
+        profile=record.profile,
+        owner=record.owner,
+        root=record.root,
+        family=record.family,
+        fields=[CanonicalField(family="input-flow", node="owner-node", selector="graph", values=v4_values)],
+    )
+    encoded_v4 = encode_record(v4).map_err((_) => "schema 4 invocation encode")?
+    decoded_v4 = decode_record(encoded_v4, CHECKER_PROFILE, v4.owner, v4.root).map_err(
+        (_) => "schema 4 invocation decode",
+    )?
+    assert decoded_v4 == v4
+    missing_observer = v4_prefix + v4_argument[:6] + v4_argument[7:] + v4_suffix
+    broken_v4 = CheckedRecord(
+        profile=record.profile,
+        owner=record.owner,
+        root=record.root,
+        family=record.family,
+        fields=[CanonicalField(family="input-flow", node="owner-node", selector="graph", values=missing_observer)],
+    )
+    match encode_record(broken_v4):
+        Err(CodecFault.Malformed) => pass
+        _ => return Err("schema 4 callback observer omission accepted")
+
+    source_place = ["binding", "rows", "1", "element", "source-index"]
+    destination_place = ["binding", "header", "1", "element", "materialization-index"]
+    v5_prefix = ["5", "checked", "owner", "0", "2", "binding", "rows", "false", "false", "true", "binding", "header", "false", "false", "true", "0", "0", "0", "0", "0"]
+    snapshot = ["header", "initializer", "source-base"] + source_place + ["1", "1", "materialization", "str", "2"]
+    v5_suffix = ["0", "0", "0", "3", "nothing", "1", "1", "owner", "access"] + source_place
+    v5_suffix += ["read", "none", "1", "2", "initializer", "access"] + destination_place
+    v5_suffix += ["read", "none", "0", "materialization"]
+    valid = v5_prefix + ["1"] + snapshot + v5_suffix
+    v5 = CheckedRecord(
+        profile=record.profile,
+        owner=record.owner,
+        root=record.root,
+        family=record.family,
+        fields=[CanonicalField(family="input-flow", node="owner-node", selector="graph", values=valid)],
+    )
+    encoded_v5 = encode_record(v5).map_err((_) => "schema 5 snapshot encode")?
+    decoded_v5 = decode_record(encoded_v5, CHECKER_PROFILE, v5.owner, v5.root).map_err(
+        (_) => "schema 5 snapshot decode",
+    )?
+    assert decoded_v5 == v5
+
+    duplicate_snapshot = v5_prefix + ["2"] + snapshot + snapshot + v5_suffix
+    snapshot_z = ["z-header", "initializer", "source-base"] + source_place + ["1", "0"]
+    snapshot_a = ["a-header", "initializer", "source-base"] + source_place + ["1", "0"]
+    reordered_snapshot = v5_prefix + ["2"] + snapshot_z + snapshot_a + v5_suffix
+    out_of_range_initializer = v5_prefix + ["1", "header", "initializer", "source-base"] + source_place + ["3", "1", "materialization", "str", "2"] + v5_suffix
+    out_of_range_materialization = v5_prefix + ["1", "header", "initializer", "source-base"] + source_place + ["1", "1", "materialization", "str", "3"] + v5_suffix
+    duplicate_materialization = v5_prefix + ["1", "header", "initializer", "source-base"] + source_place + ["1", "2", "materialization", "str", "2", "materialization", "str", "2"] + v5_suffix
+    reordered_materialization = v5_prefix + ["1", "header", "initializer", "source-base"] + source_place + ["1", "2", "z-materialization", "str", "2", "a-materialization", "str", "2"] + v5_suffix
+    malformed_type = v5_prefix + ["1", "header", "initializer", "source-base"] + source_place + ["1", "1", "materialization", "list", "2"] + v5_suffix
+    for values in [duplicate_snapshot, reordered_snapshot, out_of_range_initializer, out_of_range_materialization, duplicate_materialization, reordered_materialization, malformed_type, valid[:len(valid) - 1], valid + ["trailing"]]:
+        broken = CheckedRecord(
+            profile=record.profile,
+            owner=record.owner,
+            root=record.root,
+            family=record.family,
+            fields=[CanonicalField(family="input-flow", node="owner-node", selector="graph", values=values)],
+        )
+        match encode_record(broken):
+            Err(CodecFault.Malformed) => pass
+            _ => return Err("malformed schema 5 snapshot accepted")
     return Ok(None)
 
 
@@ -1008,8 +1083,8 @@ def closure_capture_grammar(record: CheckedRecord) -> Result[None, str]:
 
 
 def input_copy_grammar(record: CheckedRecord) -> Result[None, str]:
-    """Copy decisions are retained by exact checked type, never inferred from graph event tags."""
-    values = ["1", "owner", "4", "int", "true", "str", "false", "list", "int", "false", "callable", "0", "int", "false"]
+    """Copy, Clone and stored-layout decisions are retained by exact checked type, never inferred from graph tags."""
+    values = ["2", "owner", "4", "int", "true", "true", "true", "str", "false", "true", "true", "list", "int", "false", "true", "true", "callable", "0", "int", "false", "false", "false"]
     retained = CheckedRecord(
         profile=record.profile,
         owner=record.owner,
@@ -1022,7 +1097,7 @@ def input_copy_grammar(record: CheckedRecord) -> Result[None, str]:
         (_) => "checked Copy grammar decode",
     )?
     assert decoded == retained
-    malformed = [["1", "owner", "2", "str", "false", "int", "true"], ["1", "owner", "2", "int", "true", "int", "false"], ["1", "owner", "1", "int", "maybe"], ["1", "owner", "1", "callable", "00", "int", "false"], ["1", "", "1", "int", "true"], ["1", "owner", "2", "int", "true"], ["1", "owner", "1", "list", "int"]]
+    malformed = [["2", "owner", "2", "str", "false", "true", "true", "int", "true", "true", "true"], ["2", "owner", "2", "int", "true", "true", "true", "int", "false", "true", "true"], ["2", "owner", "1", "int", "maybe", "true", "true"], ["2", "owner", "1", "callable", "00", "int", "false", "false", "false"], ["2", "", "1", "int", "true", "true", "true"], ["2", "owner", "1", "int", "true", "true"], ["2", "owner", "1", "list", "int", "true", "true"]]
     for payload in malformed:
         broken = CheckedRecord(
             profile=record.profile,

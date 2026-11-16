@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::TypeChecker;
 use super::flow::{
     Access, Event, Graph, Loan, LoanId, LoanKind, Node, OperandDependency, OperationInputs, OwnedInitialization,
-    Permission, Place, Projection, Root,
+    Permission, Place, Projection, Root, SnapshotInitialization, SnapshotMaterialization,
 };
 use crate::ast::{
     AssignmentStmt, BinaryOp, BindingKind, CompoundAssignmentStmt, Condition, Expr, FieldAssignmentStmt, ForStmt,
@@ -144,9 +144,14 @@ struct Builder<'a> {
     try_calls: BTreeSet<Span>,
     /// Selected closed model calls currently authenticated as one exact fresh list element.
     fresh_list_calls: BTreeSet<Span>,
+    /// Direct dependency-free Package calls currently authenticated as the exact receiver of selected builtin
+    /// `Result.map_err`. The marker is active only while that receiver is evaluated.
+    closed_result_map_err_receivers: BTreeSet<Span>,
     /// Canonical locals introduced by the active loop headers; every poll produces fresh owned storage.
     fresh_loop_locals: BTreeSet<CanonicalSymbolId>,
     constrained: BTreeSet<Root>,
+    /// Parameter roots constrained by their declared input mode, before body moves add transient constraints.
+    declared_constrained_inputs: BTreeSet<Root>,
     borrowed_inputs: BTreeSet<Root>,
     loops: Vec<LoopEdges>,
     /// The declared source dependency of a top-level owned result. The result remains value storage rather than a
@@ -294,6 +299,7 @@ fn build_graph(
             dependent_locals: BTreeMap::new(),
             dependent_values: BTreeSet::new(),
             owned_locals: BTreeMap::new(),
+            owned_snapshot_locals: BTreeMap::new(),
             invocations: BTreeMap::new(),
             operations: BTreeMap::new(),
             closures: BTreeMap::new(),
@@ -306,6 +312,7 @@ fn build_graph(
             entry: 0,
         },
         constrained: BTreeSet::new(),
+        declared_constrained_inputs: BTreeSet::new(),
         borrowed_inputs: BTreeSet::new(),
         aliases: BTreeMap::new(),
         carriers: BTreeMap::new(),
@@ -314,6 +321,7 @@ fn build_graph(
         awaited: BTreeSet::new(),
         try_calls: BTreeSet::new(),
         fresh_list_calls: BTreeSet::new(),
+        closed_result_map_err_receivers: BTreeSet::new(),
         fresh_loop_locals: BTreeSet::new(),
         loops: Vec::new(),
         owned_source: None,

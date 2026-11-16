@@ -8,12 +8,13 @@ use incan_semantics_core::CanonicalSymbolId;
 use crate::ast::Span;
 use crate::symbols::ResolvedType;
 use crate::typechecker::derive_requirements::DeriveSupport;
+use crate::typechecker::type_info::CheckedInputValueDecision;
 use crate::typechecker::{TypeCheckInfo, TypeChecker};
 
 impl TypeChecker {
     /// Shared references copy their address and exclusive references transfer access. Other values use the one
     /// checked derive relation, including nominal, generic and native evidence; an unknown result is not Copy.
-    pub(super) fn input_copy_value(&self, ty: &ResolvedType) -> bool {
+    pub(in crate::typechecker) fn input_copy_value(&self, ty: &ResolvedType) -> bool {
         match ty {
             ResolvedType::Ref(_) => true,
             ResolvedType::RefMut(_) => false,
@@ -22,9 +23,9 @@ impl TypeChecker {
         }
     }
 
-    /// Capture decisions while this exact body's lexical type environment is still active. Expression values,
-    /// instantiated input slots and annotated local payloads are retained, so later validation never rebuilds
-    /// nominal derive resolution from display names or substitutes native carrier copyability.
+    /// Capture value-layout decisions while this exact body's lexical type environment is still active. Expression
+    /// values, instantiated input slots and annotated local payloads are retained, so later validation never
+    /// rebuilds nominal storage or derive resolution from partial declaration maps or display names.
     pub(super) fn retain_input_copy_values(&mut self, owner: &CanonicalSymbolId, span: Span) {
         let expressions = self
             .type_info
@@ -53,12 +54,51 @@ impl TypeChecker {
         let decisions: HashMap<_, _> = expressions
             .chain(parameters)
             .chain(locals)
-            .map(|ty| (ty.clone(), self.input_copy_value(ty)))
+            .map(|ty| {
+                (
+                    ty.clone(),
+                    CheckedInputValueDecision {
+                        copy: self.input_copy_value(ty),
+                        clone: self.is_clone_type(ty),
+                        closed: !self.type_holds_borrow(ty) && !self.type_holds_native_loan(ty),
+                    },
+                )
+            })
             .collect();
         self.type_info
             .protocols
             .explicit_input_copy
             .insert(owner.clone(), decisions);
+    }
+
+    /// Revalidate one restored body's complete value-decision map while the exact prepared callable lexical/import
+    /// environment is live. Serialized booleans are claims: only equality with the current source checker relation
+    /// permits record reuse. Owner-set mismatch likewise refuses before any restored body is published.
+    pub(in crate::typechecker) fn validate_restored_input_value_decisions(
+        &self,
+        protocols: &crate::typechecker::type_info::ProtocolArtifacts,
+    ) -> Result<(), &'static str> {
+        if protocols.explicit_input_copy.len() != protocols.explicit_input_flow.len()
+            || protocols
+                .explicit_input_flow
+                .keys()
+                .any(|owner| !protocols.explicit_input_copy.contains_key(owner))
+        {
+            return Err("restored input value decisions differ from the checked body owners");
+        }
+        for decisions in protocols.explicit_input_copy.values() {
+            for (ty, restored) in decisions {
+                let current = CheckedInputValueDecision {
+                    copy: self.input_copy_value(ty),
+                    clone: self.is_clone_type(ty),
+                    closed: !self.type_holds_borrow(ty) && !self.type_holds_native_loan(ty),
+                };
+                if restored != &current {
+                    return Err("restored input value decision differs from the current source checker");
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -74,7 +114,36 @@ impl TypeCheckInfo {
             .explicit_input_copy
             .get(owner)
             .and_then(|decisions| decisions.get(ty))
-            .copied()
+            .map(|decision| decision.copy)
             .ok_or("input value has no body-owned checked Copy decision")
+    }
+
+    /// Require the exact body's retained Clone decision. Missing or legacy Copy-only rows fail closed.
+    pub(in crate::typechecker) fn checked_input_clone_value(
+        &self,
+        owner: &CanonicalSymbolId,
+        ty: &ResolvedType,
+    ) -> Result<bool, &'static str> {
+        self.protocols
+            .explicit_input_copy
+            .get(owner)
+            .and_then(|decisions| decisions.get(ty))
+            .map(|decision| decision.clone)
+            .ok_or("input value has no body-owned checked Clone decision")
+    }
+
+    /// Require the exact body's checked proof that the complete stored layout holds no Incan borrow or native loan.
+    /// This decision is made while imported and generic nominal declarations are still fully available.
+    pub(in crate::typechecker) fn checked_input_closed_value(
+        &self,
+        owner: &CanonicalSymbolId,
+        ty: &ResolvedType,
+    ) -> Result<bool, &'static str> {
+        self.protocols
+            .explicit_input_copy
+            .get(owner)
+            .and_then(|decisions| decisions.get(ty))
+            .map(|decision| decision.closed)
+            .ok_or("input value has no body-owned checked stored-layout decision")
     }
 }

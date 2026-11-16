@@ -486,6 +486,7 @@ impl Builder<'_> {
             && !closed_try_carrier_result
             && !lends_nothing
             && !self.fresh_list_calls.contains(&span)
+            && !self.closed_result_map_err_receivers.contains(&span)
             && !(call.kind == super::super::InputCallKind::Ordinary && call.parameters.is_empty())
         {
             return Err(Unavailable {
@@ -529,26 +530,31 @@ impl Builder<'_> {
                 == Some(BuiltinMethodId::Result(
                     incan_lang::lang::surface::result_methods::ResultMethodId::MapErr,
                 ));
-        if selected_result_map_err
-            && !receiver.is_some_and(|receiver| {
-                matches!(receiver.node, Expr::Call(..))
-                    && self
-                        .checker
-                        .type_info
-                        .protocols
-                        .explicit_input_calls
-                        .get(&receiver.span)
-                        .is_some_and(|receiver_call| {
-                            receiver_call.kind == super::super::InputCallKind::Ordinary
-                                && matches!(receiver_call.callee.origin, incan_semantics_core::SymbolOrigin::Package { .. })
-                                && self
-                                    .checker
-                                    .type_info
-                                    .selected_input_contract(receiver_call)
-                                    .is_ok_and(|contract| contract.is_none())
-                        })
-            })
-        {
+        let selected_package_result_receiver = receiver.is_some_and(|receiver| {
+            matches!(receiver.node, Expr::Call(..))
+                && self
+                    .checker
+                    .type_info
+                    .protocols
+                    .explicit_input_calls
+                    .get(&receiver.span)
+                    .is_some_and(|receiver_call| {
+                        receiver_call.kind == super::super::InputCallKind::Ordinary
+                            && matches!(
+                                receiver_call.callee.origin,
+                                incan_semantics_core::SymbolOrigin::Package { .. }
+                            )
+                            && self
+                                .checker
+                                .type_info
+                                .selected_input_contract(receiver_call)
+                                .is_ok_and(|contract| contract.is_none())
+                    })
+        });
+        let closed_result_map_err_receiver = (selected_result_map_err && selected_package_result_receiver)
+            .then(|| self.closed_result_map_err_receiver(receiver, arguments, span))
+            .flatten();
+        if selected_result_map_err && !selected_package_result_receiver {
             return Err(Unavailable {
                 span,
                 reason: "call has no selected explicit input access facts".into(),
@@ -622,7 +628,12 @@ impl Builder<'_> {
                         through: None,
                     }
                 } else {
-                    let (source, evaluated) = self.borrowed_input_source(receiver, span, incoming)?;
+                    if closed_result_map_err_receiver == Some(receiver.span) {
+                        self.closed_result_map_err_receivers.insert(receiver.span);
+                    }
+                    let evaluated = self.borrowed_input_source(receiver, span, incoming);
+                    self.closed_result_map_err_receivers.remove(&receiver.span);
+                    let (source, evaluated) = evaluated?;
                     incoming = evaluated;
                     source
                 };
@@ -752,6 +763,82 @@ impl Builder<'_> {
             });
         }
         Ok(incoming)
+    }
+
+    /// Authenticate one direct, dependency-free imported call as the temporary receiver of the exact selected
+    /// capture-free builtin `Result.map_err` surface. This does not classify its aggregate result as generally plain:
+    /// the returned span is active only while this outer invocation evaluates that receiver.
+    fn closed_result_map_err_receiver(
+        &self,
+        receiver: Option<&Spanned<Expr>>,
+        arguments: &[CallArg],
+        span: Span,
+    ) -> Option<Span> {
+        let outer = self.checker.type_info.protocols.explicit_input_calls.get(&span)?;
+        if outer.owner.as_ref() != Some(&self.owner)
+            || outer.callee != crate::symbols::canonical_builtin_member_identity("Result", "map_err")
+            || outer.receiver != Some(Receiver::Immutable)
+            || self.checker.type_info.resolved_builtin_method_call(span)
+                != Some(BuiltinMethodId::Result(
+                    incan_lang::lang::surface::result_methods::ResultMethodId::MapErr,
+                ))
+            || !self
+                .checker
+                .type_info
+                .selected_input_contract(outer)
+                .is_ok_and(|contract| contract.is_none())
+        {
+            return None;
+        }
+        let [CallArg::Positional(callback)] = arguments else {
+            return None;
+        };
+        let [parameter] = outer.parameters.as_slice() else {
+            return None;
+        };
+        if !matches!(&parameter.ty, ResolvedType::Function(parameters, _) if parameters.len() == 1)
+            || !matches!(callback.node, Expr::Closure(..))
+            || self.checker.type_info.expr_type(callback.span) != Some(&parameter.ty)
+            || !self
+                .checker
+                .closure_captures(callback.span)
+                .is_some_and(|captures| captures.is_empty())
+        {
+            return None;
+        }
+        let receiver = receiver?;
+        if !matches!(receiver.node, Expr::Call(..)) {
+            return None;
+        }
+        let inner = self
+            .checker
+            .type_info
+            .protocols
+            .explicit_input_calls
+            .get(&receiver.span)?;
+        let contract = self.checker.type_info.selected_input_contract(inner).ok()?;
+        let result = self.checker.type_info.expr_type(receiver.span)?;
+        if inner.kind != super::super::InputCallKind::Ordinary
+            || inner.owner.as_ref() != Some(&self.owner)
+            || !matches!(inner.callee.origin, incan_semantics_core::SymbolOrigin::Package { .. })
+            || contract.is_some()
+            || !result.is_result()
+            || self.checker.type_holds_borrow(result)
+            || self.checker.type_holds_native_loan(result)
+            || crate::ownership_metadata::returned_view(contract).ok().flatten().is_some()
+            || crate::ownership_metadata::owned_result(contract).ok().flatten().is_some()
+            || self
+                .checker
+                .native_result_dependencies(receiver.span)
+                .ok()
+                .flatten()
+                .is_some()
+            || self.checker.native_result_is_independent(receiver.span)
+            || self.checked_clone_call(receiver.span)
+        {
+            return None;
+        }
+        Some(receiver.span)
     }
 
     /// Return whether semantic method resolution selected the standard `Clone.clone` slot for this call. A source
@@ -884,6 +971,29 @@ impl Builder<'_> {
                 self.expression(expression, incoming, false)
                     .map(|outgoing| (outgoing, None))
             }
+            // One scalar element of an authenticated immutable parameter snapshot may be read into an exact
+            // immutable ordinary slot. The same retained materialization fact used by constructor fields binds the
+            // checked snapshot identity, element type and final Read node; stored, borrowed and overloaded indexes
+            // remain outside this route.
+            None if ordinary_callee
+                && !parameter.is_mut
+                && let Some(identity) =
+                    self.immutable_snapshot_index_materialization(expression, &parameter.ty) =>
+            {
+                let outgoing = self.expression(expression, incoming, false)?;
+                self.retain_snapshot_materialization(&identity, expression, &parameter.ty, &outgoing)?;
+                Ok((outgoing, None))
+            }
+            // One builtin list element's exact Clone field may be read from an immutable unaliased ordinary local.
+            // The index, field, local permission and selected slot type are all checker facts; borrowed, mutable,
+            // dependent, overloaded and non-Clone paths remain outside this argument-only route.
+            None if ordinary_callee
+                && !parameter.is_mut
+                && self.immutable_local_element_field_argument(expression, &parameter.ty)? =>
+            {
+                self.expression(expression, incoming, false)
+                    .map(|outgoing| (outgoing, None))
+            }
             // A checked local or parameter, including a field-only path, may be observed by an immutable ordinary
             // helper while its body retains storage. Indexes and borrowed aliases still need separate access facts.
             None if ordinary_callee
@@ -956,6 +1066,55 @@ impl Builder<'_> {
             && plain_result(&parameter.ty))
     }
 
+    fn immutable_local_element_field_argument(
+        &mut self,
+        expression: &Spanned<Expr>,
+        expected: &ResolvedType,
+    ) -> Result<bool, Unavailable> {
+        let Expr::Field(indexed, _) = &expression.node else {
+            return Ok(false);
+        };
+        let Expr::Index(base, index) = &indexed.node else {
+            return Ok(false);
+        };
+        if self.checker.type_info.resolved_operator_call(indexed.span).is_some()
+            || self.checker.type_info.expr_type(index.span) != Some(&ResolvedType::Int)
+            || self.checker.type_info.expr_type(expression.span) != Some(expected)
+            || !self.checker.is_clone_type(expected)
+            || self.checker.type_holds_borrow(expected)
+            || self.checker.type_holds_native_loan(expected)
+            || !self
+                .checker
+                .type_info
+                .resolved_identity(expression.span)
+                .is_some_and(|identity| identity.kind == incan_semantics_core::SemanticSourceTargetKind::Field)
+            || !matches!(self.checker.type_info.expr_type(base.span),
+                Some(ResolvedType::Generic(name, arguments))
+                    if collections::from_str(name) == Some(CollectionTypeId::List)
+                        && arguments.first() == self.checker.type_info.expr_type(indexed.span)
+                        && arguments.len() == 1)
+        {
+            return Ok(false);
+        }
+        let Some(path) = self.optional_place(expression)? else {
+            return Ok(false);
+        };
+        let Root::Binding(identity) = &path.place.root else {
+            return Ok(false);
+        };
+        Ok(path.through.is_none()
+            && identity.kind == incan_semantics_core::SemanticSourceTargetKind::Local
+            && matches!(path.place.projection.as_slice(),
+                [Projection::Element(element), Projection::Field(_)] if *element == index.span)
+            && self.graph.permissions.get(&path.place.root).is_some_and(|permission| {
+                !permission.exclusive && !permission.writable && permission.transferable
+            })
+            && !self.graph.local_loans.contains_key(identity)
+            && !self.graph.dependent_locals.contains_key(identity)
+            && !self.graph.owned_locals.contains_key(identity)
+            && !self.graph.owned_snapshot_locals.contains_key(identity))
+    }
+
     /// Authenticate the only whole non-Copy Parameter observation currently retained by an ordinary inferred slot.
     fn closed_enum_parameter_argument(
         &mut self,
@@ -973,6 +1132,10 @@ impl Builder<'_> {
             || !path.place.projection.is_empty()
             || !matches!(&path.place.root, Root::Binding(identity)
                 if identity.kind == incan_semantics_core::SemanticSourceTargetKind::Parameter)
+            || self.declared_constrained_inputs.contains(&path.place.root)
+            || !self.graph.permissions.get(&path.place.root).is_some_and(|permission| {
+                !permission.exclusive && !permission.writable && permission.transferable
+            })
         {
             return Ok(false);
         }
@@ -1064,6 +1227,7 @@ impl Builder<'_> {
             && !fresh_constructor
             && !independent_source_result
             && !independent_native_result
+            && !self.closed_result_map_err_receivers.contains(&expression.span)
         {
             return Err(Unavailable {
                 span: expression.span,

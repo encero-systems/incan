@@ -572,6 +572,7 @@ class InputFields:
         loans: int,
         receiver_dependencies: bool,
         result_requirements: bool,
+        callback_observers: bool,
     ) -> Result[list[int], CodecFault]:
         """Retain invocation inputs and collect the graph nodes that their evaluations reference."""
         mut invocation_nodes: list[int] = []
@@ -597,10 +598,12 @@ class InputFields:
                 self.handle()?
                 self.number()?
                 self.number()?
-                self.tag(["inferred", "shared", "exclusive", "owned"])?
+                self.tag(["inferred", "inferred_shared", "shared", "exclusive", "owned"])?
                 self.optional_index(loans)?
                 if self.tag(["none", "some"])? == "some":
                     self.place()?
+                if callback_observers:
+                    self.tag(["true", "false"])?
                 invocation_nodes += self.input_evaluation()?
             if self.tag(["none", "some"])? == "some":
                 invocation_nodes += self.input_evaluation()?
@@ -615,6 +618,8 @@ class InputFields:
         strict_indices: bool,
         receiver_dependencies: bool,
         result_requirements: bool,
+        callback_observers: bool,
+        snapshots: bool,
     ) -> Result[None, CodecFault]:
         """Retain every permission, dependency, invocation and edge under the selected input-flow schema."""
         self.strict_indices = strict_indices
@@ -677,6 +682,26 @@ class InputFields:
                 initializer_nodes.append(self.number()?)
             if has_source != has_access and self.strict_indices:
                 return Err(CodecFault.Malformed)
+        # Schema 5 snapshot locals retain one exact parameter Read and every exact constructor materialization Read.
+        if snapshots:
+            snapshot_count = self.count()?
+            previous = ""
+            for _ in range(snapshot_count):
+                start = self.offset
+                self.handle()?
+                previous = self.ordered(previous, start)?
+                self.handle()?
+                self.handle()?
+                self.place()?
+                initializer_nodes.append(self.number()?)
+                materializations = self.count()?
+                mut previous_materialization = ""
+                for _ in range(materializations):
+                    materialization_start = self.offset
+                    self.handle()?
+                    previous_materialization = self.ordered(previous_materialization, materialization_start)?
+                    self.value_type()?
+                    initializer_nodes.append(self.number()?)
         # Operations: each one's completion node, then each operand's span, source place, loan and final access node.
         operations = self.count()?
         previous = ""
@@ -694,7 +719,7 @@ class InputFields:
                 operation_nodes.append(self.number()?)
         # Invocations: each one's callee, receiver loan and arguments (span, slot, written position, access, loan and
         # source place).
-        invocation_nodes = self.invocations(loans, receiver_dependencies, result_requirements)?
+        invocation_nodes = self.invocations(loans, receiver_dependencies, result_requirements, callback_observers)?
         # Closures bound to locals; the nodes that read their captures are checked with the others below.
         closure_nodes = self.closures(loans)?
         # Nodes: each one's event, successors and span. Every node index recorded above must name one of them.
@@ -734,12 +759,13 @@ def input_field_end(field: CanonicalField) -> Result[int, CodecFault]:
         return Err(CodecFault.Malformed)
     mut reader = InputFields.read(field.values)
     # Every explicit ownership field starts with its grammar version.
-    version = reader.tag(["1", "2", "3"])?
+    version = reader.tag(["1", "2", "3", "4", "5"])?
     input_flow = field.family == "input-flow" and field.selector == "graph"
-    if version != "1" and not input_flow:
+    input_layout = field.family == "input-copy" and field.selector == "types"
+    if version != "1" and not input_flow and not (input_layout and version == "2"):
         return Err(CodecFault.Malformed)
-    # Copy decisions: the owner, then each value type in canonical order with whether it is Copy.
-    if field.family == "input-copy" and field.selector == "types":
+    # Body-owned value decisions: v1 retained Copy only; v2 also retains exact Clone and closed stored-layout facts.
+    if input_layout:
         reader.handle()?
         size = reader.count()?
         mut previous = ""
@@ -748,6 +774,9 @@ def input_field_end(field: CanonicalField) -> Result[int, CodecFault]:
             reader.value_type()?
             previous = reader.ordered(previous, start)?
             reader.tag(["true", "false"])?
+            if version == "2":
+                reader.tag(["true", "false"])?
+                reader.tag(["true", "false"])?
     # A call contract: the callee's optional owner, the callee, its receiver's access and its parameters.
     elif field.family == "input-call" and field.selector == "contract":
         reader.tag(["explicit", "ordinary"])?
@@ -773,7 +802,13 @@ def input_field_end(field: CanonicalField) -> Result[int, CodecFault]:
             reader.handle()?
             reader.handle()?
         else:
-            reader.graph(state == "checked", version != "1", version == "3")?
+            reader.graph(
+                state == "checked",
+                version in ["2", "3", "4", "5"],
+                version in ["3", "4", "5"],
+                version in ["4", "5"],
+                version == "5",
+            )?
             if state == "invalid":
                 reader.handle()?
     else:

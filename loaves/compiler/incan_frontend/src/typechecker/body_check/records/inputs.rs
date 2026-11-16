@@ -5,6 +5,7 @@ use super::input_flow::{self, Reader};
 use super::types::{parameter_fields, read_parameters, read_type, type_fields};
 use super::{BodyLocal, Fields, NodeBindingError, Positions, span_of};
 use crate::ast::Receiver;
+use crate::typechecker::type_info::CheckedInputValueDecision;
 use crate::typechecker::ownership_contracts::{InputCall, InputCallKind, InputFlow, LocalMode, Unavailable, flow};
 use incan_lang::lang::types::ownership;
 use std::collections::HashMap;
@@ -20,15 +21,19 @@ pub(super) fn project(positions: &Positions, local: &BodyLocal, fields: &mut Fie
             "input-copy".into(),
             positions.nodes.anchor(span_of(owner))?.path,
             "types".into(),
-            "1".into(),
+            "2".into(),
             positions.identity(owner)?,
         ];
         let mut entries = Vec::with_capacity(decisions.len());
-        for (ty, supported) in decisions {
+        for (ty, decision) in decisions {
             let mut entry = Vec::new();
             type_fields(ty, &mut entry)?;
             let key = input_flow::canonical_key(&entry);
-            entry.push(supported.to_string());
+            entry.extend([
+                decision.copy.to_string(),
+                decision.clone.to_string(),
+                decision.closed.to_string(),
+            ]);
             entries.push((key, entry));
         }
         input_flow::ordered_fields(entries, &mut row)?;
@@ -87,7 +92,7 @@ pub(super) fn project(positions: &Positions, local: &BodyLocal, fields: &mut Fie
             "input-flow".into(),
             positions.nodes.anchor(span_of(owner))?.path,
             "graph".into(),
-            "4".into(),
+            "5".into(),
         ];
         match flow {
             InputFlow::Checked { graph, analysis } => {
@@ -129,6 +134,7 @@ pub(super) fn restore(positions: &Positions, local: &mut BodyLocal, row: &[Strin
         Some("2") => 2,
         Some("3") => 3,
         Some("4") => 4,
+        Some("5") => 5,
         _ => return Err(NodeBindingError::Unsupported("input record schema")),
     };
     let mut reader = Reader {
@@ -137,6 +143,9 @@ pub(super) fn restore(positions: &Positions, local: &mut BodyLocal, row: &[Strin
     };
     match (row[0].as_str(), row[2].as_str()) {
         ("input-copy", "types") => {
+            if !matches!(schema, 1 | 2) {
+                return Err(NodeBindingError::Unsupported("input Copy/layout schema"));
+            }
             let owner = reader.identity()?;
             if span_of(&owner) != anchor || local.protocols.explicit_input_copy.contains_key(&owner) {
                 return Err(NodeBindingError::WrongOwner);
@@ -153,8 +162,15 @@ pub(super) fn restore(positions: &Positions, local: &mut BodyLocal, row: &[Strin
                     return Err(NodeBindingError::InvalidField("noncanonical checked Copy type".into()));
                 }
                 input_flow::ordered_key(&mut previous, before, reader.values.len())?;
-                let supported = reader.boolean()?;
-                if decisions.insert(ty, supported).is_some() {
+                let copy = reader.boolean()?;
+                let (clone, closed) = if schema == 1 {
+                    // Old records carried Copy only. They remain usable for established Copy routes, while every
+                    // newer Clone or stored-layout route fails closed until a current source check publishes v2.
+                    (false, false)
+                } else {
+                    (reader.boolean()?, reader.boolean()?)
+                };
+                if decisions.insert(ty, CheckedInputValueDecision { copy, clone, closed }).is_some() {
                     return Err(NodeBindingError::InvalidField("duplicate checked Copy type".into()));
                 }
             }

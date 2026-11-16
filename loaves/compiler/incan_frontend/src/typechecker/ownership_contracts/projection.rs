@@ -46,6 +46,102 @@ impl CheckedInputBody<'_> {
             .ok_or("input value has no checked source type")?;
         self.facts.checked_input_copy_value(self.canonical_owner(), ty)
     }
+
+    /// Select the owning body's checked complete-layout decision. The current AST and checked call/field facts select
+    /// `ty` before this method is reached; missing legacy evidence cannot reconstruct nominal storage from partial
+    /// declaration maps or persisted permission bits.
+    pub(super) fn replay_type_holds_no_borrow_or_native(&self, ty: &crate::symbols::ResolvedType) -> bool {
+        self.facts
+            .checked_input_closed_value(self.canonical_owner(), ty)
+            .is_ok_and(|closed| closed)
+    }
+
+    /// Select the owning body's checked Clone decision after the current AST authenticates the exact value type.
+    pub(super) fn replay_type_is_clone(&self, ty: &crate::symbols::ResolvedType) -> bool {
+        self.facts
+            .checked_input_clone_value(self.canonical_owner(), ty)
+            .is_ok_and(|clone| clone)
+    }
+
+    /// Recompute the one selected capture-free builtin Result.map_err surface from current AST and checked call
+    /// facts. Neither a persisted source-free callback argument nor a fabricated receiver invocation is authority.
+    pub(super) fn selected_closed_result_map_err(
+        &self,
+        expression: &crate::ast::Spanned<crate::ast::Expr>,
+        receiver: &crate::ast::Spanned<crate::ast::Expr>,
+        arguments: &[crate::ast::CallArg],
+    ) -> Result<bool, &'static str> {
+        use incan_lang::lang::builtins::BuiltinMethodId;
+        use incan_lang::lang::surface::result_methods::ResultMethodId;
+
+        let Some(outer) = self.facts.protocols.explicit_input_calls.get(&expression.span) else {
+            return Ok(false);
+        };
+        if outer.owner.as_ref() != Some(self.canonical_owner())
+            || outer.callee != crate::symbols::canonical_builtin_member_identity("Result", "map_err")
+            || outer.receiver != Some(crate::ast::Receiver::Immutable)
+            || self.facts.resolved_builtin_method_call(expression.span)
+                != Some(BuiltinMethodId::Result(ResultMethodId::MapErr))
+            || self.facts.selected_input_contract(outer)?.is_some()
+            || self
+                .graph
+                .invocations
+                .get(&expression.span)
+                .is_none_or(|invocation| invocation.callee != outer.callee)
+        {
+            return Ok(false);
+        }
+        let [crate::ast::CallArg::Positional(callback)] = arguments else {
+            return Ok(false);
+        };
+        let [parameter] = outer.parameters.as_slice() else {
+            return Ok(false);
+        };
+        let crate::ast::Expr::Closure(params, body) = &callback.node else {
+            return Ok(false);
+        };
+        let free = crate::body_ir::free_vars::free_vars_in_closure_body(params, body);
+        // Capture identity belongs to the current checked source reference, independently of the mutable ownership
+        // graph. Deleting or substituting a permission row cannot turn a capturing callback into an empty closure.
+        let captures_local = self.facts.references.resolved_identities.iter().any(|(span, identity)| {
+            span.expansion == callback.span.expansion
+                && callback.span.start <= span.start
+                && span.end <= callback.span.end
+                && matches!(identity.kind,
+                    SemanticSourceTargetKind::Local
+                        | SemanticSourceTargetKind::Parameter
+                        | SemanticSourceTargetKind::Receiver)
+                && free.contains(&identity.declaration_name)
+        });
+        if captures_local
+            || self.facts.expr_type(callback.span) != Some(&parameter.ty)
+            || !matches!(&parameter.ty, crate::symbols::ResolvedType::Function(parameters, _) if parameters.len() == 1)
+        {
+            return Ok(false);
+        }
+        let crate::ast::Expr::Call(..) = &receiver.node else {
+            return Ok(false);
+        };
+        let Some(inner) = self.facts.protocols.explicit_input_calls.get(&receiver.span) else {
+            return Ok(false);
+        };
+        let Some(result) = self.facts.expr_type(receiver.span) else {
+            return Ok(false);
+        };
+        Ok(inner.kind == InputCallKind::Ordinary
+            && inner.owner.as_ref() == Some(self.canonical_owner())
+            && matches!(inner.callee.origin, SymbolOrigin::Package { .. })
+            && self.facts.selected_input_contract(inner)?.is_none()
+            && result.is_result()
+            && self.replay_type_holds_no_borrow_or_native(result)
+            && self
+                .graph
+                .invocations
+                .get(&receiver.span)
+                .is_some_and(|invocation| invocation.callee == inner.callee)
+            && !self.facts.rust.checked_calls.contains_key(&receiver.span)
+            && self.facts.resolved_builtin_method_call(receiver.span).is_none())
+    }
     /// Retain each authenticated call's unresolved result obligation for executable-template publication.
     pub(crate) fn result_requirements(
         &self,
@@ -340,6 +436,86 @@ impl TypeCheckInfo {
                 let copy = self.checked_input_copy_value(owner, &mode.value_type)?;
                 if (copy && access != flow::Access::Read) || (!copy && access != flow::Access::Move) {
                     return Err("owned initializer access differs from its checked Copy or transfer contract");
+                }
+            }
+        }
+
+        // ---- Exact immutable parameter-snapshot relationships ----
+        for (local, snapshot) in &graph.owned_snapshot_locals {
+            if self.protocols.explicit_local_modes.contains_key(local)
+                || local.kind != SemanticSourceTargetKind::Local
+                || self.resolved_write_identity(local.declaration_span, &local.declaration_name) != Some(local)
+            {
+                return Err("parameter snapshot is not one inferred local declaration");
+            }
+            let local_type = self
+                .resolved_write_type(local.declaration_span, &local.declaration_name)
+                .ok_or("parameter snapshot local has no checked type")?;
+            let source = match &snapshot.source.root {
+                flow::Root::Binding(source) if source.kind == SemanticSourceTargetKind::Parameter => source,
+                _ => return Err("parameter snapshot has no checked source parameter"),
+            };
+            let source_type = self
+                .resolved_write_type(source.declaration_span, &source.declaration_name)
+                .ok_or("parameter snapshot source has no checked type")?;
+            let [flow::Projection::Element(index)] = snapshot.source.projection.as_slice() else {
+                return Err("parameter snapshot has no checked source index");
+            };
+            if self.resolved_identity(snapshot.base) != Some(source)
+                || self.expr_type(snapshot.base) != Some(source_type)
+                || self.expr_type(*index) != Some(&crate::symbols::ResolvedType::Int)
+                || snapshot.base.expansion != snapshot.initializer.expansion
+                || snapshot.base.start < snapshot.initializer.start
+                || snapshot.base.end > index.start
+                || index.expansion != snapshot.initializer.expansion
+                || index.end > snapshot.initializer.end
+                || self.expr_type(snapshot.initializer) != Some(local_type)
+                || self.calls.resolved_operator_calls.contains_key(&snapshot.initializer)
+                || !matches!(local_type,
+                    crate::symbols::ResolvedType::Generic(name, arguments)
+                        if incan_lang::lang::types::collections::from_str(name)
+                            == Some(incan_lang::lang::types::collections::CollectionTypeId::List)
+                            && matches!(arguments.as_slice(), [
+                                crate::symbols::ResolvedType::Int
+                                    | crate::symbols::ResolvedType::Float
+                                    | crate::symbols::ResolvedType::Numeric(_)
+                                    | crate::symbols::ResolvedType::Bool
+                                    | crate::symbols::ResolvedType::Str
+                                    | crate::symbols::ResolvedType::Bytes
+                                    | crate::symbols::ResolvedType::FrozenStr
+                                    | crate::symbols::ResolvedType::FrozenBytes
+                                    | crate::symbols::ResolvedType::Unit
+                            ]))
+                || !matches!(source_type,
+                    crate::symbols::ResolvedType::Generic(name, arguments)
+                        if incan_lang::lang::types::collections::from_str(name)
+                            == Some(incan_lang::lang::types::collections::CollectionTypeId::List)
+                            && arguments.as_slice() == std::slice::from_ref(local_type))
+            {
+                return Err("parameter snapshot differs from its checked builtin list index");
+            }
+            for (span, materialization) in &snapshot.materializations {
+                let expected = &materialization.value_type;
+                let scalar = matches!(expected,
+                    crate::symbols::ResolvedType::Int
+                        | crate::symbols::ResolvedType::Float
+                        | crate::symbols::ResolvedType::Numeric(_)
+                        | crate::symbols::ResolvedType::Bool
+                        | crate::symbols::ResolvedType::Str
+                        | crate::symbols::ResolvedType::Bytes
+                        | crate::symbols::ResolvedType::FrozenStr
+                        | crate::symbols::ResolvedType::FrozenBytes
+                        | crate::symbols::ResolvedType::Unit);
+                if !scalar
+                    || self.expr_type(*span) != Some(expected)
+                    || self.calls.resolved_operator_calls.contains_key(span)
+                    || !matches!(local_type,
+                        crate::symbols::ResolvedType::Generic(name, arguments)
+                            if incan_lang::lang::types::collections::from_str(name)
+                                == Some(incan_lang::lang::types::collections::CollectionTypeId::List)
+                                && arguments.as_slice() == std::slice::from_ref(expected))
+                {
+                    return Err("snapshot constructor clone differs from its checked scalar element");
                 }
             }
         }

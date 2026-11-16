@@ -217,6 +217,182 @@ fn builtin_result_map_err_requires_fresh_selected_package_result()
     Ok(())
 }
 
+/// A selected imported call may return a closed, borrow-free `Result` whose success payload is a non-scalar model
+/// list and feed it immediately to builtin `Result.map_err` and `?`. The exact inner Package call and outer builtin
+/// callback facts authorize this receiver only; a capture, selected user method, returned view or carrier constructor
+/// remains on its existing refusal route.
+#[test]
+fn builtin_result_map_err_accepts_dependency_free_package_model_list_result()
+-> Result<(), Box<dyn std::error::Error>> {
+    let provider = "pub model Row:\n    pub value: int\n\npub def decode(value: int, descriptions: list[Row], maximum: int) -> Result[list[Row], str]:\n    return Ok(descriptions)\n";
+    let consumer = "from views import Row, decode\n\nenum Fault:\n    Malformed\n\ndef use(value: Borrowed[int]) -> Result[list[Row], Fault]:\n    rows = decode(value, [Row(value=value)], 64).map_err((_) => Fault.Malformed)?\n    return Ok(rows)\n";
+    let accepted = package_consumer_checkers(provider, consumer)?;
+
+    let scalar_provider = "pub def decode(value: int) -> Result[int, str]:\n    return Ok(value)\n";
+    let captureful = "from views import decode\n\nenum Fault:\n    Malformed\n\ndef use(value: Borrowed[int]) -> Result[int, Fault]:\n    fault = Fault.Malformed\n    decoded = decode(value).map_err((_) => fault)?\n    return Ok(decoded)\n";
+    for (route, checker) in package_consumer_checkers(scalar_provider, captureful)? {
+        let state = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == "use")
+            .map(|(_, state)| state)
+            .ok_or_else(|| format!("{route}: missing captureful map_err flow"))?;
+        let InputFlow::Unavailable(unavailable) = state else {
+            return Err(format!("{route}: captureful callback entered dependency-free map_err route: {state:?}").into());
+        };
+        assert_eq!(unavailable.reason, "ordinary argument requires inferred access or mutable binding facts", "{route}");
+        assert_eq!(
+            captureful.get(unavailable.span.start..unavailable.span.end),
+            Some("(_) => fault"),
+            "{route}"
+        );
+        assert!(
+            !checker.errors.is_empty()
+                && checker.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123")),
+            "{route}: captureful callback produced unrelated diagnostics: {:?}",
+            checker.errors
+        );
+    }
+
+    let user_source = "model Mapper:\n    value: int\n    def map_err(self, replacement: str) -> int:\n        return len(replacement)\ndef use(value: Borrowed[str]) -> int:\n    mapper = Mapper(value=1)\n    return mapper.map_err(value)\n";
+    let user = checked(user_source)?;
+    let user_state = user
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find(|(owner, _)| owner.declaration_name == "use")
+        .map(|(_, state)| state)
+        .ok_or("missing selected user map_err flow")?;
+    let InputFlow::Unavailable(user_unavailable) = user_state else {
+        return Err(format!("selected user map_err entered builtin route: {user_state:?}").into());
+    };
+    assert_eq!(
+        user_unavailable.reason,
+        "ordinary argument requires inferred access or mutable binding facts"
+    );
+    assert_eq!(
+        user_source.get(user_unavailable.span.start..user_unavailable.span.end),
+        Some("value")
+    );
+    assert!(
+        !user.errors.is_empty() && user.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123")),
+        "selected user map_err produced unrelated diagnostics: {:?}",
+        user.errors
+    );
+
+    let view_source = "model Row:\n    value: int\ndef result_view(value: Borrowed[Result[list[Row], str]]) -> Borrowed[Result[list[Row], str]] from value:\n    return value\ndef use(value: Borrowed[Result[list[Row], str]]) -> Result[list[Row], int]:\n    rows = result_view(value).map_err((_) => 1)?\n    return Ok(rows)\n";
+    let view = checked(view_source)?;
+    let view_state = view
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find(|(owner, _)| owner.declaration_name == "use")
+        .map(|(_, state)| state)
+        .ok_or("missing returned-view map_err flow")?;
+    let InputFlow::Unavailable(view_unavailable) = view_state else {
+        return Err(format!("returned-view receiver entered dependency-free map_err route: {view_state:?}").into());
+    };
+    assert_eq!(view_unavailable.reason, "call has no selected explicit input access facts");
+    assert_eq!(
+        view_source.get(view_unavailable.span.start..view_unavailable.span.end),
+        Some("result_view(value).map_err((_) => 1)")
+    );
+    assert!(
+        !view.errors.is_empty() && view.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123")),
+        "returned-view map_err produced unrelated diagnostics: {:?}",
+        view.errors
+    );
+
+    let carrier_source = "model Row:\n    value: int\ndef use(value: Borrowed[int]) -> Result[list[Row], int]:\n    rows = Ok([Row(value=value)]).map_err((_) => 1)?\n    return Ok(rows)\n";
+    let carrier = checked(carrier_source)?;
+    let carrier_state = carrier
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find(|(owner, _)| owner.declaration_name == "use")
+        .map(|(_, state)| state)
+        .ok_or("missing carrier-temporary map_err flow")?;
+    let InputFlow::Unavailable(carrier_unavailable) = carrier_state else {
+        return Err(format!("carrier temporary entered dependency-free map_err route: {carrier_state:?}").into());
+    };
+    assert_eq!(carrier_unavailable.reason, "call has no selected explicit input access facts");
+    assert_eq!(
+        carrier_source.get(carrier_unavailable.span.start..carrier_unavailable.span.end),
+        Some("Ok([Row(value=value)]).map_err((_) => 1)")
+    );
+    assert!(
+        !carrier.errors.is_empty()
+            && carrier.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123")),
+        "carrier map_err produced unrelated diagnostics: {:?}",
+        carrier.errors
+    );
+
+    for (route, checker) in accepted {
+        let (owner, flow) = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == "use")
+            .ok_or_else(|| format!("{route}: missing model-list map_err flow"))?;
+        let inner = checker
+            .type_info
+            .protocols
+            .explicit_input_calls
+            .values()
+            .find(|call| call.callee.declaration_name == "decode" && call.owner.as_ref() == Some(owner))
+            .ok_or_else(|| format!("{route}: missing imported decode call"))?;
+        assert!(matches!(
+            &inner.callee.origin,
+            incan_semantics_core::SymbolOrigin::Package { library, module_path }
+                if library == "fixture_records" && module_path.iter().map(String::as_str).eq(["views"])
+        ), "{route}: imported decode call lost Package identity: {:?}", inner.callee);
+        assert_eq!(inner.kind, InputCallKind::Ordinary, "{route}");
+        assert_eq!(inner.parameters.len(), 3, "{route}");
+
+        let (outer_span, outer) = checker
+            .type_info
+            .protocols
+            .explicit_input_calls
+            .iter()
+            .find(|(_, call)| {
+                call.owner.as_ref() == Some(owner)
+                    && call.callee == crate::symbols::canonical_builtin_member_identity("Result", "map_err")
+            })
+            .ok_or_else(|| format!("{route}: missing selected builtin Result.map_err call"))?;
+        assert_eq!(outer.receiver, Some(crate::ast::Receiver::Immutable), "{route}");
+        assert_eq!(outer.parameters.len(), 1, "{route}");
+        let Some(crate::symbols::ResolvedType::Generic(_, result_sides)) = checker.type_info.expr_type(*outer_span)
+        else {
+            return Err(format!("{route}: map_err lost its checked Result type").into());
+        };
+        let [_, error_side] = result_sides.as_slice() else {
+            return Err(format!("{route}: map_err retained the wrong Result arity").into());
+        };
+        let crate::symbols::ResolvedType::Function(parameters, callback_result) = &outer.parameters[0].ty else {
+            return Err(format!("{route}: map_err callback is not a checked function").into());
+        };
+        assert_eq!(parameters.len(), 1, "{route}");
+        assert_eq!(parameters[0].ty, crate::symbols::ResolvedType::Str, "{route}");
+        assert_eq!(callback_result.as_ref(), error_side, "{route}");
+        assert_eq!(
+            checker.type_info.resolved_builtin_method_call(*outer_span),
+            Some(incan_lang::lang::builtins::BuiltinMethodId::Result(
+                incan_lang::lang::surface::result_methods::ResultMethodId::MapErr,
+            )),
+            "{route}"
+        );
+        assert!(matches!(flow, InputFlow::Checked { .. }), "{route}: {flow:?}");
+        assert!(checker.errors.is_empty(), "{route}: {:?}", checker.errors);
+    }
+    Ok(())
+}
+
 /// A function with a `Borrowed[str]` input, called from another module, takes an owned local with no `&`, as a call
 /// in its own module does (shape B1).
 #[test]
@@ -290,6 +466,41 @@ fn explicit_view_parameters_are_native_reference_parameters() -> Result<(), Box<
         "{:?}",
         checker.errors
     );
+    Ok(())
+}
+
+/// The real decoded-record shape combines an imported Package Result/map_err, `row = rows[0]`, a record-payload
+/// match, five immutable Element+Field helper arguments, and direct scalar/enum/list-model Try(Call) fields in one
+/// constructor. Both collected and sealed package routes must retain one Checked owner after every boundary lands.
+#[test]
+fn decoded_record_shape_retains_package_and_constructor_inputs()
+-> Result<(), Box<dyn std::error::Error>> {
+    let provider = "@derive(Clone)\npub model Cell:\n    pub value: str\n@derive(Clone)\npub enum Payload:\n    Record(list[Cell])\n@derive(Clone)\npub model Row:\n    pub value: Payload\npub def decode(value: int) -> Result[list[Row], str]:\n    values = [Cell(value=str(value)), Cell(value=\"binary\"), Cell(value=\"family\"), Cell(value=\"decoded\"), Cell(value=\"native\")]\n    return Ok([Row(value=Payload.Record(values))])\n";
+    let consumer = "from views import Payload, decode\n\nenum Fault:\n    Malformed\nenum Family:\n    Local\n@derive(Clone)\nmodel OutputCell:\n    value: str\nmodel Record:\n    text: str\n    binary: bytes\n    family: Family\n    decoded: list[OutputCell]\n    native: list[OutputCell]\ndef text_value(value: str) -> Result[str, Fault]:\n    return Ok(value)\ndef binary_value(value: str) -> Result[bytes, Fault]:\n    return Ok(b\"value\")\ndef family_value(value: str) -> Result[Family, Fault]:\n    return Ok(Family.Local)\ndef decoded_fields(value: str) -> Result[list[OutputCell], Fault]:\n    return Ok([OutputCell(value=value)])\ndef native_fields(value: str) -> Result[list[OutputCell], Fault]:\n    return Ok([OutputCell(value=value)])\ndef decoded_record(value: Borrowed[int]) -> Result[Record, Fault]:\n    rows = decode(value).map_err((_) => Fault.Malformed)?\n    row = rows[0]\n    values = match row.value:\n        Payload.Record(fields) => fields\n    return Ok(Record(text=text_value(values[0].value)?, binary=binary_value(values[1].value)?, family=family_value(values[2].value)?, decoded=decoded_fields(values[3].value)?, native=native_fields(values[4].value)?))\n";
+    let checked = package_consumer_checkers(provider, consumer)?;
+    for (route, checker) in checked {
+        let (owner, flow) = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == "decoded_record")
+            .ok_or_else(|| format!("{route}: missing decoded_record flow"))?;
+        let imported = checker
+            .type_info
+            .protocols
+            .explicit_input_calls
+            .values()
+            .find(|call| call.callee.declaration_name == "decode" && call.owner.as_ref() == Some(owner))
+            .ok_or_else(|| format!("{route}: missing Package decode call"))?;
+        assert!(matches!(
+            &imported.callee.origin,
+            incan_semantics_core::SymbolOrigin::Package { library, module_path }
+                if library == "fixture_records" && module_path.iter().map(String::as_str).eq(["views"])
+        ), "{route}: imported decode lost Package identity: {:?}", imported.callee);
+        assert!(matches!(flow, InputFlow::Checked { .. }), "{route}: {flow:?}");
+        assert!(checker.errors.is_empty(), "{route}: {:?}", checker.errors);
+    }
     Ok(())
 }
 

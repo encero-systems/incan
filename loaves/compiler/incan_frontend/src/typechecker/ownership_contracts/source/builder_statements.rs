@@ -90,7 +90,11 @@ impl Builder<'_> {
                 self.constrained.insert(source.place.root.clone());
             }
         }
-        let incoming = self.expression(&assignment.value, incoming, true)?;
+        let incoming = if let Expr::Match(scrutinee, arms) = &assignment.value.node {
+            self.match_assignment_value(scrutinee, arms, incoming)?
+        } else {
+            self.expression(&assignment.value, incoming, true)?
+        };
         if mode.is_some_and(|mode| mode.mode == OwnershipMode::Owned) {
             self.retain_owned_initializer(assignment, &root, source.as_ref(), &incoming)?;
         }
@@ -107,6 +111,12 @@ impl Builder<'_> {
         }
         let previously_known = self.graph.permissions.contains_key(&Root::Binding(root.clone()));
         let place = self.root(&root, assignment.name_span)?;
+        if mode.is_none()
+            && let Some(source) = &source
+            && self.immutable_parameter_snapshot(assignment, &root, source)
+        {
+            self.retain_parameter_snapshot(assignment, &root, source, &incoming)?;
+        }
         if mode.is_some()
             || source.is_some_and(|source| source.through.is_some() || self.constrained.contains(&source.place.root))
         {
@@ -124,6 +134,108 @@ impl Builder<'_> {
             },
             assignment.name_span,
         ))
+    }
+
+    /// Select only an immutable first declaration initialized by one no-hook builtin index Read from an unborrowed,
+    /// transferable plain parameter. The local owns the cloned snapshot; this fact grants no general use permission.
+    fn immutable_parameter_snapshot(
+        &self,
+        assignment: &AssignmentStmt,
+        destination: &CanonicalSymbolId,
+        source: &Path,
+    ) -> bool {
+        let Expr::Index(base, index) = &assignment.value.node else {
+            return false;
+        };
+        let Some(result) = self.checker.type_info.expr_type(assignment.value.span) else {
+            return false;
+        };
+        let closed_scalar_list = matches!(result,
+            ResolvedType::Generic(name, arguments)
+                if collections::from_str(name) == Some(CollectionTypeId::List)
+                    && matches!(arguments.as_slice(), [
+                        ResolvedType::Int
+                            | ResolvedType::Float
+                            | ResolvedType::Numeric(_)
+                            | ResolvedType::Bool
+                            | ResolvedType::Str
+                            | ResolvedType::Bytes
+                            | ResolvedType::FrozenStr
+                            | ResolvedType::FrozenBytes
+                            | ResolvedType::Unit
+                    ]));
+        destination.kind == SemanticSourceTargetKind::Local
+            && destination.declaration_span == assignment.name_span
+            && !matches!(assignment.binding, BindingKind::Reassign)
+            && self
+                .locals
+                .get(destination)
+                .is_some_and(|permission| !permission.exclusive && !permission.writable && permission.transferable)
+            && self.checker.type_info.resolved_operator_call(assignment.value.span).is_none()
+            && self.checker.type_info.resolved_write_type(assignment.name_span, &assignment.name) == Some(result)
+            && closed_scalar_list
+            && self.checker.is_clone_type(result)
+            && !self.checker.type_holds_borrow(result)
+            && !self.checker.type_holds_native_loan(result)
+            && matches!(self.checker.type_info.expr_type(base.span),
+                Some(ResolvedType::Generic(name, arguments))
+                    if collections::from_str(name) == Some(CollectionTypeId::List)
+                        && arguments.as_slice() == std::slice::from_ref(result))
+            && source.through.is_none()
+            && matches!(&source.place.root,
+                Root::Binding(identity) if identity.kind == SemanticSourceTargetKind::Parameter)
+            && matches!(source.place.projection.as_slice(), [Projection::Element(span)] if *span == index.span)
+            && self
+                .graph
+                .permissions
+                .get(&source.place.root)
+                .is_some_and(|permission| {
+                    !permission.exclusive && !permission.writable && permission.transferable
+                })
+            && !self.borrowed_inputs.contains(&source.place.root)
+            && !self.constrained.contains(&source.place.root)
+    }
+
+    /// Retain the exact initializer Read after evaluation; a similar span or another access cannot authenticate the
+    /// snapshot. Graph validation independently checks the immutable destination and plain parameter source.
+    fn retain_parameter_snapshot(
+        &mut self,
+        assignment: &AssignmentStmt,
+        destination: &CanonicalSymbolId,
+        source: &Path,
+        incoming: &[usize],
+    ) -> Result<(), Unavailable> {
+        let [access_node] = incoming else {
+            return Err(Unavailable {
+                span: assignment.value.span,
+                reason: "parameter snapshot needs one final read access".into(),
+            });
+        };
+        let Expr::Index(base, _) = &assignment.value.node else {
+            return Err(Unavailable {
+                span: assignment.value.span,
+                reason: "parameter snapshot initializer is not one builtin index".into(),
+            });
+        };
+        let retained = SnapshotInitialization {
+            initializer: assignment.value.span,
+            base: base.span,
+            source: source.place.clone(),
+            access_node: *access_node,
+            materializations: BTreeMap::new(),
+        };
+        if self
+            .graph
+            .owned_snapshot_locals
+            .insert(destination.clone(), retained)
+            .is_some()
+        {
+            return Err(Unavailable {
+                span: assignment.name_span,
+                reason: "immutable snapshot local has more than one initializer".into(),
+            });
+        }
+        Ok(())
     }
 
     /// Bind a closure capture, direct returned view or carried view to a fresh unannotated local. The boolean
@@ -657,7 +769,7 @@ impl Builder<'_> {
             Statement::Expr(Spanned {
                 node: Expr::Match(scrutinee, arms),
                 ..
-            }) => self.match_statement(scrutinee, arms, incoming),
+            }) => self.match_statement(scrutinee, arms, None, incoming),
             // A discarded returned view still borrows its source for the call; its result loan is never used. A
             // discarded call that carries a view drops its carrier the same way, with its view and its error.
             Statement::Expr(value) => match self.view_source(value)? {

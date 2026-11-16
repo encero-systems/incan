@@ -224,6 +224,8 @@ impl TypeChecker {
                 "body record carried declaration output".into(),
             ));
         }
+        self.validate_restored_input_value_decisions(&restored.view.local.protocols)
+            .map_err(|reason| NodeBindingError::InvalidField(reason.into()))?;
         let canonical = self
             .declaration_view()
             .function(owner)
@@ -356,6 +358,21 @@ impl Positions {
                 identities.insert(stable.render_compact(), canonical.clone());
             }
         }
+        // Selected builtin members such as `Result.map_err` are canonical compiler identities, not lexical symbols.
+        // Projection can therefore encode them through `identity()` even though the symbol-table pass above has no
+        // matching entry. Admit the exact checked callees as reverse bindings so the same schema row can restore.
+        for canonical in checker
+            .type_info
+            .protocols
+            .explicit_input_calls
+            .values()
+            .map(|call| &call.callee)
+            .filter(|callee| callee.origin == incan_semantics_core::SymbolOrigin::Builtin)
+        {
+            if let Some(stable) = StableDeclarationId::from_canonical(canonical, None, None) {
+                identities.insert(stable.render_compact(), canonical.clone());
+            }
+        }
         // A constructor of an imported model or class names the checked field each of its arguments initializes.
         identities.extend(imported_members::field_identities(checker));
         let type_identities = admitted_type_identities(checker);
@@ -465,18 +482,58 @@ impl Positions {
         fields: &Fields,
     ) -> Result<Self, NodeBindingError> {
         let mut positions = Self::new(checker, program, owner, false)?;
+        let mut closure_parameters = Vec::new();
+        let function = program
+            .declarations
+            .iter()
+            .find(|declaration| declaration.span == owner)
+            .and_then(|declaration| match &declaration.node {
+                crate::ast::Declaration::Function(function) => Some(function),
+                _ => None,
+            })
+            .ok_or(NodeBindingError::MissingOwner)?;
+        crate::ast_walk::any_expr_in_body(&function.body, |expression| {
+            let crate::ast::Expr::Closure(parameters, _) = expression else {
+                return false;
+            };
+            closure_parameters.extend(parameters.iter().map(|parameter| CanonicalSymbolId {
+                namespace: SymbolNamespace::OrdinaryLexical,
+                origin: checker.symbols.declaration_origin(),
+                declaration_name: parameter.node.name.clone(),
+                kind: SemanticSourceTargetKind::Parameter,
+                scope_discriminant: Some(ScopeDiscriminant(checker.symbols.next_scope_index())),
+                declaration_span: parameter.span,
+            }));
+            false
+        });
+        let closure_parameters = positions
+            .nodes
+            .binding_identities(&closure_parameters)?
+            .into_iter()
+            .map(|(canonical, stable)| (canonical.declaration_span, (canonical, stable.render_compact())))
+            .collect::<BTreeMap<_, _>>();
         for row in fields {
             if row.len() != 4 || row[0] != "binding" || row[2] != "declaration" {
                 continue;
             }
             let span = positions.span(&row[1])?;
-            let canonical = CanonicalSymbolId {
-                namespace: SymbolNamespace::OrdinaryLexical,
-                origin: checker.symbols.declaration_origin(),
-                declaration_name: persisted_local_name(positions.nodes.owner(), &row[3])?,
-                kind: SemanticSourceTargetKind::Local,
-                scope_discriminant: Some(ScopeDiscriminant(checker.symbols.next_scope_index())),
-                declaration_span: span,
+            let canonical = match closure_parameters.get(&span) {
+                Some((canonical, stable)) => {
+                    if stable != &row[3] {
+                        return Err(NodeBindingError::InvalidField(
+                            "nested declaration identity".into(),
+                        ));
+                    }
+                    canonical.clone()
+                }
+                None => CanonicalSymbolId {
+                    namespace: SymbolNamespace::OrdinaryLexical,
+                    origin: checker.symbols.declaration_origin(),
+                    declaration_name: persisted_local_name(positions.nodes.owner(), &row[3])?,
+                    kind: SemanticSourceTargetKind::Local,
+                    scope_discriminant: Some(ScopeDiscriminant(checker.symbols.next_scope_index())),
+                    declaration_span: span,
+                },
             };
             if positions.identities.insert(row[3].clone(), canonical).is_some() {
                 return Err(NodeBindingError::InvalidField(

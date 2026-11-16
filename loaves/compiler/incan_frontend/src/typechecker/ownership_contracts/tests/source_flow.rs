@@ -1299,3 +1299,752 @@ fn constructor_field_slice_requires_fresh_transferable_loop_row()
     }
     Ok(())
 }
+
+/// An immutable pre-loop local may retain the exact owned snapshot moved from one builtin parameter index. A later
+/// constructor may clone a scalar element from that authenticated snapshot, without granting arbitrary stored,
+/// mutable, borrowed, overloaded, non-cloneable or returned-view locals the same authority.
+#[test]
+fn constructor_field_index_requires_immutable_parameter_snapshot()
+-> Result<(), Box<dyn std::error::Error>> {
+    let accepted_source = "model Field:\n    owner: str\n    root: str\n    values: list[str]\ndef from_native(seed: Borrowed[int], rows: list[list[str]]) -> list[Field]:\n    header = rows[0]\n    mut fields: list[Field] = []\n    for row in rows[1:]:\n        fields.append(Field(owner=header[1], root=header[2], values=row[3:]))\n    return fields\ndef from_family(seed: Borrowed[int], rows: list[list[str]]) -> list[Field]:\n    header = rows[0]\n    mut fields: list[Field] = []\n    for row in rows[1:]:\n        fields.append(Field(owner=header[1], root=header[2], values=row[3:]))\n    return fields\n";
+    let accepted = checked(accepted_source)?;
+
+    for (label, source, expected, stop) in [
+        (
+            "literal stored local",
+            "model Field:\n    owner: str\ndef collect(seed: Borrowed[int]) -> Field:\n    header = [\"header\", \"owner\"]\n    return Field(owner=header[1])\n",
+            "non-Copy constructor field needs checked ownership transfer materialization",
+            "header[1]",
+        ),
+        (
+            "mutable reassigned snapshot",
+            "model Field:\n    owner: str\ndef collect(seed: Borrowed[int], rows: list[list[str]]) -> list[Field]:\n    mut header = rows[0]\n    header = rows[1]\n    mut fields: list[Field] = []\n    for row in rows[2:]:\n        fields.append(Field(owner=header[1]))\n    return fields\n",
+            "non-Copy constructor field needs checked ownership transfer materialization",
+            "header[1]",
+        ),
+        (
+            "borrowed header",
+            "model Field:\n    owner: str\ndef collect(header: Borrowed[list[str]], rows: list[list[str]]) -> list[Field]:\n    mut fields: list[Field] = []\n    for row in rows:\n        fields.append(Field(owner=header[1]))\n    return fields\n",
+            source::BORROWED_VALUE_IN_OWNED_FIELD,
+            "header[1]",
+        ),
+        (
+            "selected user index",
+            "class Header:\n    pub owner: str\n    def __getitem__(self, index: int) -> str:\n        return self.owner\nmodel Field:\n    owner: str\ndef collect(seed: Borrowed[int], rows: list[Header]) -> list[Field]:\n    header = rows[0]\n    mut fields: list[Field] = []\n    for row in rows[1:]:\n        fields.append(Field(owner=header[1]))\n    return fields\n",
+            "non-Copy constructor field needs checked ownership transfer materialization",
+            "header[1]",
+        ),
+        (
+            "non-cloneable element",
+            "model Token:\n    value: str\nmodel Field:\n    token: Token\ndef collect(seed: Borrowed[int], rows: list[list[Token]]) -> list[Field]:\n    header = rows[0]\n    mut fields: list[Field] = []\n    for row in rows[1:]:\n        fields.append(Field(token=header[1]))\n    return fields\n",
+            "non-Copy constructor field needs checked ownership transfer materialization",
+            "header[1]",
+        ),
+        (
+            "returned-view initializer",
+            "model Field:\n    owner: str\ndef view(value: Borrowed[list[str]]) -> Borrowed[list[str]] from value:\n    return value\ndef collect(source: Borrowed[list[str]], rows: list[list[str]]) -> list[Field]:\n    header = view(source)\n    mut fields: list[Field] = []\n    for row in rows:\n        fields.append(Field(owner=header[1]))\n    return fields\n",
+            source::BORROWED_VALUE_IN_OWNED_FIELD,
+            "header[1]",
+        ),
+    ] {
+        let refused = checked(source)?;
+        let state = refused
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == "collect")
+            .map(|(_, state)| state)
+            .ok_or_else(|| format!("missing {label} snapshot flow"))?;
+        let InputFlow::Unavailable(unavailable) = state else {
+            return Err(format!("{label} entered immutable snapshot route: {state:?}").into());
+        };
+        assert_eq!(unavailable.reason, expected, "{label}: {:?}", refused.errors);
+        assert_eq!(source.get(unavailable.span.start..unavailable.span.end), Some(stop), "{label}");
+        if label == "selected user index" {
+            assert!(
+                refused.type_info.calls.resolved_operator_calls.contains_key(&unavailable.span),
+                "user index fixture did not retain its selected operator"
+            );
+        }
+        assert!(
+            !refused.errors.is_empty()
+                && refused.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123")),
+            "{label} produced unrelated diagnostics: {:?}",
+            refused.errors
+        );
+    }
+
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+    for name in ["from_native", "from_family"] {
+        assert!(accepted.type_info.protocols.explicit_input_flow.iter().any(|(owner, flow)| {
+            owner.declaration_name == name && matches!(flow, InputFlow::Checked { .. })
+        }));
+    }
+    Ok(())
+}
+
+/// A scalar index of one authenticated immutable parameter snapshot may feed only an immutable ordinary helper slot.
+/// An explicit Owned source parameter and a mutable ordinary slot retain the existing argument refusal.
+#[test]
+fn snapshot_index_argument_requires_immutable_ordinary_read()
+-> Result<(), Box<dyn std::error::Error>> {
+    let accepted_source = "enum Family:\n    Local\ndef read_family(value: str) -> Result[Family, str]:\n    return Ok(Family.Local)\ndef collect(seed: Borrowed[int], rows: list[list[str]]) -> Result[Family, str]:\n    header = rows[0]\n    family = read_family(header[3])?\n    return Ok(family)\n";
+    let accepted = checked(accepted_source)?;
+
+    for (label, source) in [
+        (
+            "explicit Owned source",
+            "enum Family:\n    Local\ndef read_family(value: str) -> Result[Family, str]:\n    return Ok(Family.Local)\ndef collect(seed: Borrowed[int], rows: Owned[list[list[str]]]) -> Result[Family, str]:\n    header = rows[0]\n    family = read_family(header[3])?\n    return Ok(family)\n",
+        ),
+        (
+            "mutable ordinary slot",
+            "enum Family:\n    Local\ndef read_family(mut value: str) -> Result[Family, str]:\n    return Ok(Family.Local)\ndef collect(seed: Borrowed[int], rows: list[list[str]]) -> Result[Family, str]:\n    header = rows[0]\n    family = read_family(header[3])?\n    return Ok(family)\n",
+        ),
+    ] {
+        let refused = checked(source)?;
+        let state = refused
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == "collect")
+            .map(|(_, state)| state)
+            .ok_or_else(|| format!("missing {label} snapshot-argument flow"))?;
+        let InputFlow::Unavailable(unavailable) = state else {
+            return Err(format!("{label} entered snapshot ordinary-argument route: {state:?}").into());
+        };
+        assert_eq!(unavailable.reason, "ordinary argument requires inferred access or mutable binding facts");
+        assert_eq!(source.get(unavailable.span.start..unavailable.span.end), Some("header[3]"));
+        assert!(
+            !refused.errors.is_empty()
+                && refused.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123")),
+            "{label} produced unrelated diagnostics: {:?}",
+            refused.errors
+        );
+    }
+
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+    assert!(accepted.type_info.protocols.explicit_input_flow.iter().any(|(owner, flow)| {
+        owner.declaration_name == "collect" && matches!(flow, InputFlow::Checked { .. })
+    }), "{}", format!("{:?}", flow_summary(&accepted)));
+    Ok(())
+}
+
+/// Full header construction keeps the direct Try(Call) and closed Enum Parameter constructor routes visible to their
+/// own focused contracts instead of letting either hide the snapshot-argument boundary above.
+#[test]
+fn full_header_constructor_shape_retains_snapshot_and_family_inputs()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = "enum Family:\n    Local\nmodel CanonicalField:\n    value: str\nmodel Record:\n    profile: str\n    owner: str\n    root: str\n    family: Family\n    fields: list[CanonicalField]\ndef read_family(value: str) -> Result[Family, str]:\n    return Ok(Family.Local)\ndef from_native(seed: Borrowed[int], rows: list[list[str]]) -> Result[Record, str]:\n    header = rows[0]\n    mut fields: list[CanonicalField] = []\n    for row in rows[1:]:\n        fields.append(CanonicalField(value=row[0]))\n    record = Record(profile=header[4], owner=header[1], root=header[2], family=read_family(header[3])?, fields=fields)\n    return Ok(record)\ndef from_family(seed: Borrowed[int], rows: list[list[str]], family: Family) -> Record:\n    header = rows[0]\n    mut fields: list[CanonicalField] = []\n    for row in rows[1:]:\n        fields.append(CanonicalField(value=row[0]))\n    return Record(profile=header[4], owner=header[1], root=header[2], family=family, fields=fields)\n";
+    let checker = checked(source)?;
+    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+    for name in ["from_native", "from_family"] {
+        assert!(checker.type_info.protocols.explicit_input_flow.iter().any(|(owner, flow)| {
+            owner.declaration_name == name && matches!(flow, InputFlow::Checked { .. })
+        }), "{name}: {}", format!("{:?}", flow_summary(&checker)));
+    }
+    Ok(())
+}
+
+/// One exact immutable whole Enum Parameter may transfer into an equal constructor field. Borrowed values, stored
+/// locals and model parameters remain refused, while a second use after the admitted transfer remains a real T0126.
+#[test]
+fn constructor_field_enum_parameter_requires_exact_transfer()
+-> Result<(), Box<dyn std::error::Error>> {
+    let accepted_source = "enum Family:\n    Local\nmodel Field:\n    family: Family\ndef collect(seed: Borrowed[int], family: Family) -> Field:\n    return Field(family=family)\n";
+    let accepted = checked(accepted_source)?;
+
+    for (label, source, expected) in [
+        (
+            "Borrowed enum",
+            "enum Family:\n    Local\nmodel Field:\n    family: Family\ndef collect(family: Borrowed[Family]) -> Field:\n    return Field(family=family)\n",
+            source::BORROWED_VALUE_IN_OWNED_FIELD,
+        ),
+        (
+            "stored enum local",
+            "enum Family:\n    Local\nmodel Field:\n    family: Family\ndef collect(seed: Borrowed[int]) -> Field:\n    family = Family.Local\n    return Field(family=family)\n",
+            "non-Copy constructor field needs checked ownership transfer materialization",
+        ),
+        (
+            "model parameter",
+            "model Family:\n    value: str\nmodel Field:\n    family: Family\ndef collect(seed: Borrowed[int], family: Family) -> Field:\n    return Field(family=family)\n",
+            "non-Copy constructor field needs checked ownership transfer materialization",
+        ),
+        (
+            "explicit Owned enum parameter",
+            "enum Family:\n    Local\nmodel Field:\n    family: Family\ndef collect(seed: Borrowed[int], family: Owned[Family]) -> Field:\n    return Field(family=family)\n",
+            "non-Copy constructor field needs checked ownership transfer materialization",
+        ),
+    ] {
+        let refused = checked(source)?;
+        let state = refused
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == "collect")
+            .map(|(_, state)| state)
+            .ok_or_else(|| format!("missing {label} constructor flow"))?;
+        let InputFlow::Unavailable(unavailable) = state else {
+            return Err(format!("{label} entered Enum Parameter transfer route: {state:?}").into());
+        };
+        assert_eq!(unavailable.reason, expected, "{label}: {:?}", refused.errors);
+        assert_eq!(source.get(unavailable.span.start..unavailable.span.end), Some("family"), "{label}");
+        assert!(
+            !refused.errors.is_empty()
+                && refused.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123")),
+            "{label} produced unrelated diagnostics: {:?}",
+            refused.errors
+        );
+    }
+
+    let reused = checked(
+        "enum Family:\n    Local\nmodel Field:\n    family: Family\ndef collect(seed: Borrowed[int], family: Family) -> Field:\n    first = Field(family=family)\n    second = Field(family=family)\n    return second\n",
+    )?;
+    assert!(
+        !reused.errors.is_empty()
+            && reused.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0126")),
+        "reused Enum Parameter produced unrelated diagnostics: {:?}",
+        reused.errors
+    );
+    let state = reused
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find(|(owner, _)| owner.declaration_name == "collect")
+        .map(|(_, state)| state)
+        .ok_or("missing reused Enum Parameter flow")?;
+    let InputFlow::Checked { analysis, .. } = state else {
+        return Err(format!("reused Enum Parameter lost its checked conflict graph: {state:?}").into());
+    };
+    assert!(!analysis.conflicts.is_empty(), "reused Enum Parameter lost its exact T0126 conflict");
+
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+    assert!(accepted.type_info.protocols.explicit_input_flow.iter().any(|(owner, flow)| {
+        owner.declaration_name == "collect" && matches!(flow, InputFlow::Checked { .. })
+    }));
+    Ok(())
+}
+
+/// An exact whole builtin-list Local may transfer once into an equal constructor field. Borrowed, dependent,
+/// non-list and projected storage remain refused; a read or second move after transfer remains a checked T0126.
+#[test]
+fn constructor_field_whole_local_list_requires_exact_transfer()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mutable_positive = checked(
+        "@derive(Clone)\nmodel Field:\n    value: str\nmodel Record:\n    fields: list[Field]\ndef collect(seed: Borrowed[int]) -> Record:\n    mut fields: list[Field] = []\n    for value in [\"a\", \"b\"]:\n        fields.append(Field(value=\"field\"))\n    return Record(fields=fields)\n",
+    )?;
+    let immutable_positive = checked(
+        "@derive(Clone)\nmodel Field:\n    value: str\nmodel Record:\n    fields: list[Field]\ndef collect(seed: Borrowed[int]) -> Record:\n    fields = [Field(value=\"a\")]\n    return Record(fields=fields)\n",
+    )?;
+
+    for (label, source, expected) in [
+        (
+            "returned-view list",
+            "@derive(Clone)\nmodel Field:\n    value: str\nmodel Record:\n    fields: list[Field]\ndef view(values: Borrowed[list[Field]]) -> Borrowed[list[Field]] from values:\n    return values\ndef collect(source: Borrowed[list[Field]]) -> Record:\n    fields = view(source)\n    return Record(fields=fields)\n",
+            source::BORROWED_VALUE_IN_OWNED_FIELD,
+        ),
+        (
+            "dependent owned list",
+            "@derive(Clone)\nmodel Field:\n    value: str\nmodel Record:\n    fields: list[Field]\ndef copy_fields(values: Borrowed[list[Field]]) -> Owned[list[Field]] from values:\n    return values.clone()\ndef collect(source: Borrowed[list[Field]]) -> Record:\n    fields = copy_fields(source)\n    return Record(fields=fields)\n",
+            "non-Copy constructor field needs checked ownership transfer materialization",
+        ),
+        (
+            "stored model local",
+            "model Family:\n    value: str\nmodel Record:\n    family: Family\ndef collect(seed: Borrowed[int]) -> Record:\n    family = Family(value=\"local\")\n    return Record(family=family)\n",
+            "non-Copy constructor field needs checked ownership transfer materialization",
+        ),
+        (
+            "stored enum local",
+            "enum Family:\n    Local\nmodel Record:\n    family: Family\ndef collect(seed: Borrowed[int]) -> Record:\n    family = Family.Local\n    return Record(family=family)\n",
+            "non-Copy constructor field needs checked ownership transfer materialization",
+        ),
+        (
+            "explicit Owned list local",
+            "@derive(Clone)\nmodel Field:\n    value: str\nmodel Record:\n    fields: list[Field]\ndef collect(seed: Borrowed[int]) -> Record:\n    fields: Owned[list[Field]] = [Field(value=\"a\")]\n    return Record(fields=fields)\n",
+            "non-Copy constructor field needs checked ownership transfer materialization",
+        ),
+        (
+            "snapshot list local",
+            "model Record:\n    fields: list[str]\ndef collect(seed: Borrowed[int], rows: list[list[str]]) -> Record:\n    fields = rows[0]\n    return Record(fields=fields)\n",
+            "non-Copy constructor field needs checked ownership transfer materialization",
+        ),
+        (
+            "projected list",
+            "@derive(Clone)\nmodel Field:\n    value: str\nmodel Store:\n    fields: list[Field]\nmodel Record:\n    fields: list[Field]\ndef collect(seed: Borrowed[int]) -> Record:\n    store = Store(fields=[Field(value=\"a\")])\n    return Record(fields=store.fields)\n",
+            "non-Copy constructor field needs checked ownership transfer materialization",
+        ),
+    ] {
+        let refused = checked(source)?;
+        let state = refused
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == "collect")
+            .map(|(_, state)| state)
+            .ok_or_else(|| format!("missing {label} constructor flow"))?;
+        let InputFlow::Unavailable(unavailable) = state else {
+            return Err(format!("{label} entered whole-local list transfer route: {state:?}").into());
+        };
+        assert_eq!(unavailable.reason, expected, "{label}: {:?}", refused.errors);
+        assert!(
+            !refused.errors.is_empty()
+                && refused.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123")),
+            "{label} produced unrelated diagnostics: {:?}",
+            refused.errors
+        );
+        if label == "dependent owned list" {
+            let call = refused
+                .type_info
+                .protocols
+                .explicit_input_calls
+                .values()
+                .find(|call| call.callee.declaration_name == "copy_fields")
+                .ok_or("dependent list control lost its selected call")?;
+            let contract = refused
+                .type_info
+                .selected_input_contract(call)?
+                .ok_or("dependent list control lost its selected contract")?;
+            assert!(crate::ownership_metadata::owned_result_source(Some(contract))?.is_some());
+        }
+    }
+
+    for (label, source) in [
+        (
+            "move then read",
+            "@derive(Clone)\nmodel Field:\n    value: str\nmodel Record:\n    fields: list[Field]\ndef collect(seed: Borrowed[int]) -> int:\n    fields = [Field(value=\"a\")]\n    record = Record(fields=fields)\n    return len(fields)\n",
+        ),
+        (
+            "double move",
+            "@derive(Clone)\nmodel Field:\n    value: str\nmodel Record:\n    fields: list[Field]\ndef collect(seed: Borrowed[int]) -> Record:\n    fields = [Field(value=\"a\")]\n    first = Record(fields=fields)\n    second = Record(fields=fields)\n    return second\n",
+        ),
+    ] {
+        let refused = checked(source)?;
+        assert!(
+            !refused.errors.is_empty()
+                && refused.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0126")),
+            "{label} produced unrelated diagnostics: {:?}",
+            refused.errors
+        );
+        let state = refused
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == "collect")
+            .map(|(_, state)| state)
+            .ok_or_else(|| format!("missing {label} flow"))?;
+        let InputFlow::Checked { analysis, .. } = state else {
+            return Err(format!("{label} lost its checked conflict graph: {state:?}").into());
+        };
+        assert!(!analysis.conflicts.is_empty(), "{label} lost its exact T0126 conflict");
+    }
+
+    for (label, accepted) in [("mutable", mutable_positive), ("immutable", immutable_positive)] {
+        assert!(
+            accepted.errors.is_empty(),
+            "{label}: {:?}; {}",
+            accepted.errors,
+            format!("{:?}", flow_summary(&accepted))
+        );
+        assert!(accepted.type_info.protocols.explicit_input_flow.iter().any(|(owner, flow)| {
+            owner.declaration_name == "collect" && matches!(flow, InputFlow::Checked { .. })
+        }), "{label}: {}", format!("{:?}", flow_summary(&accepted)));
+    }
+    Ok(())
+}
+
+/// One exact source-enum payload arm may continue while a payload-free wildcard terminates. The subject field and
+/// payload binding each move once; guards, nested/named/multiple payloads, a second continuation, transformed bodies
+/// and borrowed/dependent subjects remain refused before the deferred positive assertion.
+#[test]
+fn match_expression_assignment_requires_exact_independent_enum_payload()
+-> Result<(), Box<dyn std::error::Error>> {
+    let accepted_source = "enum Fault:\n    Bad\n@derive(Clone)\nmodel Cell:\n    value: str\n@derive(Clone)\nenum Payload:\n    Record(list[Cell])\n@derive(Clone)\nmodel Row:\n    value: Payload\ndef decode(seed: Borrowed[int]) -> Result[list[Cell], Fault]:\n    row = Row(value=Payload.Record([Cell(value=\"a\")]))\n    values = match row.value:\n        Payload.Record(fields) => fields\n        _ => return Err(Fault.Bad)\n    return Ok(values)\n";
+    let accepted = checked(accepted_source)?;
+
+    for (label, source, expected) in [
+        (
+            "borrowed subject",
+            "enum Fault:\n    Bad\n@derive(Clone)\nmodel Cell:\n    value: str\n@derive(Clone)\nenum Payload:\n    Record(list[Cell])\ndef select(value: Borrowed[Payload]) -> Result[list[Cell], Fault]:\n    values = match value:\n        Payload.Record(fields) => fields\n        _ => return Err(Fault.Bad)\n    return Ok(values)\n",
+            "match assignment subject needs one independent stored enum place",
+        ),
+        (
+            "dependent returned-view subject",
+            "enum Fault:\n    Bad\n@derive(Clone)\nmodel Cell:\n    value: str\n@derive(Clone)\nenum Payload:\n    Record(list[Cell])\ndef view(value: Borrowed[Payload]) -> Borrowed[Payload] from value:\n    return value\ndef select(value: Borrowed[Payload]) -> Result[list[Cell], Fault]:\n    held = view(value)\n    values = match held:\n        Payload.Record(fields) => fields\n        _ => return Err(Fault.Bad)\n    return Ok(values)\n",
+            "match assignment subject needs one independent stored enum place",
+        ),
+        (
+            "guarded extraction",
+            "enum Fault:\n    Bad\n@derive(Clone)\nmodel Cell:\n    value: str\n@derive(Clone)\nenum Payload:\n    Record(list[Cell])\n@derive(Clone)\nmodel Row:\n    value: Payload\ndef select(seed: Borrowed[int]) -> Result[list[Cell], Fault]:\n    row = Row(value=Payload.Record([]))\n    values = match row.value:\n        Payload.Record(fields) if true => fields\n        _ => return Err(Fault.Bad)\n    return Ok(values)\n",
+            "match assignment extraction does not admit guards",
+        ),
+        (
+            "nested payload pattern",
+            "enum Fault:\n    Bad\n@derive(Clone)\nmodel Cell:\n    value: str\n@derive(Clone)\nenum Inner:\n    Record(list[Cell])\n@derive(Clone)\nenum Payload:\n    Nested(Inner)\n@derive(Clone)\nmodel Row:\n    value: Payload\ndef select(seed: Borrowed[int]) -> Result[list[Cell], Fault]:\n    row = Row(value=Payload.Nested(Inner.Record([])))\n    values = match row.value:\n        Payload.Nested(Inner.Record(fields)) => fields\n        _ => return Err(Fault.Bad)\n    return Ok(values)\n",
+            "match assignment extraction needs one immutable payload binding",
+        ),
+        (
+            "named model payload pattern",
+            "enum Fault:\n    Bad\n@derive(Clone)\nmodel Cell:\n    value: str\n@derive(Clone)\nmodel Payload:\n    fields: list[Cell]\ndef select(seed: Borrowed[int]) -> Result[list[Cell], Fault]:\n    payload = Payload(fields=[])\n    values = match payload:\n        Payload(fields=fields) => fields\n        _ => return Err(Fault.Bad)\n    return Ok(values)\n",
+            "match assignment subject needs one independent stored enum place",
+        ),
+        (
+            "multiple payload bindings",
+            "enum Fault:\n    Bad\n@derive(Clone)\nmodel Cell:\n    value: str\n@derive(Clone)\nenum Payload:\n    Pair(list[Cell], list[Cell])\n@derive(Clone)\nmodel Row:\n    value: Payload\ndef select(seed: Borrowed[int]) -> Result[list[Cell], Fault]:\n    row = Row(value=Payload.Pair([], []))\n    values = match row.value:\n        Payload.Pair(left, right) => left\n        _ => return Err(Fault.Bad)\n    return Ok(values)\n",
+            "match assignment has another continuing or payload-binding arm",
+        ),
+        (
+            "second continuing arm",
+            "enum Fault:\n    Bad\n@derive(Clone)\nmodel Cell:\n    value: str\n@derive(Clone)\nenum Payload:\n    Record(list[Cell])\n    Empty\n@derive(Clone)\nmodel Row:\n    value: Payload\ndef select(seed: Borrowed[int]) -> Result[list[Cell], Fault]:\n    row = Row(value=Payload.Record([]))\n    values = match row.value:\n        Payload.Record(fields) => fields\n        Payload.Empty => []\n    return Ok(values)\n",
+            "match assignment has another continuing or payload-binding arm",
+        ),
+        (
+            "mismatched body",
+            "enum Fault:\n    Bad\n@derive(Clone)\nmodel Cell:\n    value: str\n@derive(Clone)\nenum Payload:\n    Record(list[Cell])\n@derive(Clone)\nmodel Row:\n    value: Payload\ndef select(seed: Borrowed[int]) -> Result[list[Cell], Fault]:\n    row = Row(value=Payload.Record([]))\n    other: list[Cell] = []\n    values = match row.value:\n        Payload.Record(fields) => other\n        _ => return Err(Fault.Bad)\n    return Ok(values)\n",
+            "match assignment extraction body differs from its payload binding",
+        ),
+        (
+            "transformed payload body",
+            "enum Fault:\n    Bad\n@derive(Clone)\nmodel Cell:\n    value: str\n@derive(Clone)\nenum Payload:\n    Record(list[Cell])\n@derive(Clone)\nmodel Row:\n    value: Payload\ndef select(seed: Borrowed[int]) -> Result[list[Cell], Fault]:\n    row = Row(value=Payload.Record([]))\n    values = match row.value:\n        Payload.Record(fields) => fields + []\n        _ => return Err(Fault.Bad)\n    return Ok(values)\n",
+            "match assignment extraction body differs from its payload binding",
+        ),
+    ] {
+        let refused = checked(source)?;
+        let state = refused
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == "select")
+            .map(|(_, state)| state)
+            .ok_or_else(|| format!("missing {label} match-expression flow"))?;
+        let InputFlow::Unavailable(unavailable) = state else {
+            return Err(format!("{label} entered match-expression assignment route: {state:?}").into());
+        };
+        assert_eq!(unavailable.reason, expected, "{label}");
+        assert!(
+            !refused.errors.is_empty()
+                && refused.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123")),
+            "{label}: {:?}",
+            refused.errors
+        );
+    }
+
+    let (owner, state) = accepted
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find(|(owner, _)| owner.declaration_name == "decode")
+        .ok_or("missing accepted match-expression flow")?;
+    let InputFlow::Checked { graph, .. } = state else {
+        return Err(format!("match-expression assignment was not checked: {state:?}").into());
+    };
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+    for spelling in ["row.value", "fields"] {
+        assert_eq!(
+            graph.nodes.iter().filter(|node| {
+                matches!(node.event, flow::Event::Access { access: flow::Access::Move, .. })
+                    && accepted_source.get(node.span.start..node.span.end) == Some(spelling)
+            }).count(),
+            1,
+            "match extraction lost its exact {spelling} Move: {:?}",
+            graph.nodes
+        );
+    }
+    let subject_span = graph.nodes.iter().find_map(|node| {
+        (matches!(node.event, flow::Event::Access { access: flow::Access::Move, .. })
+            && accepted_source.get(node.span.start..node.span.end) == Some("row.value")).then_some(node.span)
+    }).ok_or("match extraction lost its subject Move")?;
+    let mut missing_loan_free = checked(accepted_source)?;
+    missing_loan_free.type_info.protocols.loan_free_scrutinees.remove(&subject_span);
+    let tokens = crate::lexer::lex(accepted_source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let (declaration_span, function) = program.declarations.iter().find_map(|declaration| match &declaration.node {
+        crate::ast::Declaration::Function(function) if function.name == "decode" => Some((declaration.span, function)),
+        _ => None,
+    }).ok_or("missing accepted match-expression declaration")?;
+    let Err(missing_fact) = source::build(
+        &missing_loan_free,
+        CallableSource::Function(function),
+        declaration_span,
+        owner,
+    ) else {
+        return Err("source selection ignored a missing no-loan scrutinee fact".into());
+    };
+    assert_eq!(
+        missing_fact.reason,
+        "match assignment subject needs one independent stored enum place"
+    );
+    assert!(
+        missing_loan_free.type_info.checked_input_body(owner)?
+            .ok_or("missing match-expression proof after fact removal")?
+            .validate_operation_coverage(CallableSource::Function(function))
+            .is_ok(),
+        "current match replay still trusts the retained no-loan scrutinee marker"
+    );
+
+    let reused = checked("enum Fault:\n    Bad\n@derive(Clone)\nmodel Cell:\n    value: str\n@derive(Clone)\nenum Payload:\n    Record(list[Cell])\n@derive(Clone)\nmodel Row:\n    value: Payload\ndef decode(seed: Borrowed[int]) -> Result[list[Cell], Fault]:\n    row = Row(value=Payload.Record([Cell(value=\"a\")]))\n    values = match row.value:\n        Payload.Record(fields) => fields\n        _ => return Err(Fault.Bad)\n    again = row.value\n    return Ok(values)\n")?;
+    assert!(
+        !reused.errors.is_empty()
+            && reused.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0126")),
+        "post-extraction reuse produced unrelated diagnostics: {:?}",
+        reused.errors
+    );
+    let state = reused.type_info.protocols.explicit_input_flow.iter()
+        .find(|(owner, _)| owner.declaration_name == "decode")
+        .map(|(_, state)| state)
+        .ok_or("missing post-extraction reuse flow")?;
+    let InputFlow::Checked { analysis, .. } = state else {
+        return Err(format!("post-extraction reuse lost its checked conflict graph: {state:?}").into());
+    };
+    assert!(!analysis.conflicts.is_empty(), "post-extraction reuse lost its exact T0126 conflict");
+    Ok(())
+}
+
+/// A direct selected Try(Call) may fill an exact closed constructor field only when its result carries no view,
+/// stored carrier, user-selected method or Native call selection. Scalar, enum and list[Model] fields share the
+/// same selected-call boundary; every negative executes before the deferred positive assertion.
+#[test]
+fn constructor_field_try_call_requires_closed_selected_result()
+-> Result<(), Box<dyn std::error::Error>> {
+    let accepted_source = "enum Fault:\n    Bad\nenum Family:\n    Local\n@derive(Clone)\nmodel Row:\n    value: str\nmodel Record:\n    text: str\n    family: Family\n    rows: list[Row]\ndef text_value() -> Result[str, Fault]:\n    return Ok(\"value\")\ndef family_value() -> Result[Family, Fault]:\n    return Ok(Family.Local)\ndef row_values() -> Result[list[Row], Fault]:\n    return Ok([Row(value=\"value\")])\ndef decode(seed: Borrowed[int]) -> Result[Record, Fault]:\n    return Ok(Record(text=text_value()?, family=family_value()?, rows=row_values()?))\n";
+    let accepted = checked(accepted_source)?;
+
+    for (label, source, expected, stop) in [
+        (
+            "returned view",
+            "enum Fault:\n    Bad\nmodel Record:\n    text: str\ndef view(value: Borrowed[str]) -> Result[Borrowed[str], Fault] from value:\n    return Ok(value)\ndef decode(value: Borrowed[str]) -> Result[Record, Fault]:\n    return Ok(Record(text=view(value)?))\n",
+            "non-Copy constructor field needs checked ownership transfer materialization",
+            "view(value)?",
+        ),
+        (
+            "stored Result",
+            "enum Fault:\n    Bad\nmodel Record:\n    text: str\ndef decode(seed: Borrowed[int], value: str) -> Result[Record, Fault]:\n    result: Result[str, Fault] = Ok(value)\n    return Ok(Record(text=result?))\n",
+            "non-Copy constructor field needs checked ownership transfer materialization",
+            "result?",
+        ),
+        (
+            "non-call carrier",
+            "enum Fault:\n    Bad\nmodel Record:\n    text: str\ndef decode(seed: Borrowed[int], value: str) -> Result[Record, Fault]:\n    return Ok(Record(text=Ok(value)?))\n",
+            "non-Copy constructor field needs checked ownership transfer materialization",
+            "Ok(value)?",
+        ),
+        (
+            "user-selected method",
+            "enum Fault:\n    Bad\nclass Decoder:\n    pub def text(self, value: str) -> Result[str, Fault]:\n        return Ok(value)\nmodel Record:\n    text: str\ndef decode(seed: Borrowed[int], value: str) -> Result[Record, Fault]:\n    decoder = Decoder()\n    return Ok(Record(text=decoder.text(value)?))\n",
+            "non-Copy constructor field needs checked ownership transfer materialization",
+            "decoder.text(value)?",
+        ),
+    ] {
+        let refused = checked(source)?;
+        let state = refused
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == "decode")
+            .map(|(_, state)| state)
+            .ok_or_else(|| format!("missing {label} constructor Try(Call) flow"))?;
+        let InputFlow::Unavailable(unavailable) = state else {
+            return Err(format!("{label} entered closed constructor Try(Call) route: {state:?}").into());
+        };
+        assert_eq!(unavailable.reason, expected, "{label}: {:?}", refused.errors);
+        assert_eq!(source.get(unavailable.span.start..unavailable.span.end), Some(stop), "{label}");
+        if label == "returned view" {
+            let call = refused
+                .type_info
+                .protocols
+                .explicit_input_calls
+                .values()
+                .find(|call| call.callee.declaration_name == "view")
+                .ok_or("returned-view control lost its selected call")?;
+            let contract = refused
+                .type_info
+                .selected_input_contract(call)?
+                .ok_or("returned-view control lost its selected contract")?;
+            assert!(crate::ownership_metadata::returned_view(Some(contract))?.is_some());
+        }
+        assert!(
+            !refused.errors.is_empty()
+                && refused.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123")),
+            "{label} produced unrelated diagnostics: {:?}",
+            refused.errors
+        );
+    }
+
+    let mut native = checked(accepted_source)?;
+    let native_call = native
+        .type_info
+        .protocols
+        .explicit_input_calls
+        .values_mut()
+        .find(|call| call.callee.declaration_name == "text_value")
+        .ok_or("missing selected text_value call for Native call-kind control")?;
+    native_call.kind = InputCallKind::Native;
+    let tokens = crate::lexer::lex(accepted_source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let declaration = program
+        .declarations
+        .iter()
+        .find(|declaration| matches!(&declaration.node,
+            crate::ast::Declaration::Function(function) if function.name == "decode"))
+        .ok_or("missing Native call-kind control declaration")?;
+    let crate::ast::Declaration::Function(function) = &declaration.node else {
+        return Err("Native call-kind control is not a function".into());
+    };
+    let owner = native
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .keys()
+        .find(|owner| owner.declaration_name == "decode")
+        .ok_or("missing Native call-kind control owner")?;
+    let Err(native_unavailable) = source::build(&native, CallableSource::Function(function), declaration.span, owner)
+    else {
+        return Err("native Result call entered closed constructor Try(Call) route".into());
+    };
+    assert_eq!(
+        native_unavailable.reason,
+        "non-Copy constructor field needs checked ownership transfer materialization"
+    );
+    assert_eq!(
+        accepted_source.get(native_unavailable.span.start..native_unavailable.span.end),
+        Some("text_value()?")
+    );
+    assert!(
+        native.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123")),
+        "Native call-kind control produced unrelated diagnostics: {:?}",
+        native.errors
+    );
+
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+    assert!(accepted.type_info.protocols.explicit_input_flow.iter().any(|(owner, flow)| {
+        owner.declaration_name == "decode" && matches!(flow, InputFlow::Checked { .. })
+    }));
+    Ok(())
+}
+
+/// An immutable unaliased local may expose one exact builtin Element+Field path to an immutable ordinary helper only
+/// when the selected field is Clone, borrow-free and exactly matches its slot. Borrowed, mutable, overloaded,
+/// non-Clone and returned-view storage remains refused before the deferred positive assertion. Native-bearing values
+/// remain outside this route-specific matrix; production admission must retain its fail-closed native-loan guard.
+#[test]
+fn ordinary_argument_element_field_requires_immutable_clone_read()
+-> Result<(), Box<dyn std::error::Error>> {
+    let accepted_source = "@derive(Clone)\nmodel Cell:\n    value: str\ndef keep(value: str) -> str:\n    return value\ndef decode(seed: Borrowed[int]) -> str:\n    values = [Cell(value=\"a\")]\n    return keep(values[0].value)\n";
+    let accepted = checked(accepted_source)?;
+
+    for (label, source, stop) in [
+        (
+            "borrowed values",
+            "@derive(Clone)\nmodel Cell:\n    value: str\ndef keep(value: str) -> str:\n    return value\ndef decode(values: Borrowed[list[Cell]]) -> str:\n    return keep(values[0].value)\n",
+            "values[0].value",
+        ),
+        (
+            "mutable values",
+            "@derive(Clone)\nmodel Cell:\n    value: str\ndef keep(value: str) -> str:\n    return value\ndef decode(seed: Borrowed[int]) -> str:\n    mut values = [Cell(value=\"a\")]\n    return keep(values[0].value)\n",
+            "values[0].value",
+        ),
+        (
+            "selected user index",
+            "@derive(Clone)\nmodel Cell:\n    value: str\nclass Shelf:\n    pub item: Cell\n    def __getitem__(self, index: int) -> Cell:\n        return self.item\ndef keep(value: str) -> str:\n    return value\ndef decode(seed: Borrowed[int]) -> str:\n    shelf = Shelf(item=Cell(value=\"a\"))\n    return keep(shelf[0].value)\n",
+            "shelf[0].value",
+        ),
+        (
+            "non-Clone field",
+            "from rust::std::thread import JoinHandle\nmodel Cell:\n    token: JoinHandle[int]\ndef keep(value: JoinHandle[int]) -> None:\n    pass\ndef decode(seed: Borrowed[int]) -> None:\n    values: list[Cell] = []\n    keep(values[0].token)\n",
+            "values[0].token",
+        ),
+        (
+            "returned-view initializer",
+            "@derive(Clone)\nmodel Cell:\n    value: str\ndef view(values: Borrowed[list[Cell]]) -> Borrowed[list[Cell]] from values:\n    return values\ndef keep(value: str) -> str:\n    return value\ndef decode(source: Borrowed[list[Cell]]) -> str:\n    values = view(source)\n    return keep(values[0].value)\n",
+            "values[0].value",
+        ),
+    ] {
+        let refused = checked(source)?;
+        let state = refused
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == "decode")
+            .map(|(_, state)| state)
+            .ok_or_else(|| format!("missing {label} Element+Field argument flow"))?;
+        let InputFlow::Unavailable(unavailable) = state else {
+            return Err(format!("{label} entered immutable Element+Field argument route: {state:?}").into());
+        };
+        assert_eq!(unavailable.reason, "ordinary argument requires inferred access or mutable binding facts", "{label}");
+        assert_eq!(source.get(unavailable.span.start..unavailable.span.end), Some(stop), "{label}");
+        if label == "selected user index" {
+            assert!(refused.type_info.calls.resolved_operator_calls.keys().any(|span| {
+                unavailable.span.start <= span.start && span.end <= unavailable.span.end
+            }));
+        }
+        assert!(
+            !refused.errors.is_empty()
+                && refused.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123")),
+            "{label} produced unrelated diagnostics: {:?}",
+            refused.errors
+        );
+    }
+
+    let mut mismatch = checked(accepted_source)?;
+    let mismatch_call = mismatch
+        .type_info
+        .protocols
+        .explicit_input_calls
+        .values_mut()
+        .find(|call| call.callee.declaration_name == "keep")
+        .ok_or("missing keep call for exact slot mismatch control")?;
+    let [parameter] = mismatch_call.parameters.as_mut_slice() else {
+        return Err("keep mismatch control has the wrong arity".into());
+    };
+    parameter.ty = crate::symbols::ResolvedType::Bytes;
+    let tokens = crate::lexer::lex(accepted_source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let declaration = program
+        .declarations
+        .iter()
+        .find(|declaration| matches!(&declaration.node,
+            crate::ast::Declaration::Function(function) if function.name == "decode"))
+        .ok_or("missing exact slot mismatch declaration")?;
+    let crate::ast::Declaration::Function(function) = &declaration.node else {
+        return Err("exact slot mismatch control is not a function".into());
+    };
+    let owner = mismatch
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .keys()
+        .find(|owner| owner.declaration_name == "decode")
+        .ok_or("missing exact slot mismatch owner")?;
+    let Err(mismatch_unavailable) = source::build(
+        &mismatch,
+        CallableSource::Function(function),
+        declaration.span,
+        owner,
+    ) else {
+        return Err("mismatched Element+Field argument entered immutable read route".into());
+    };
+    assert_eq!(mismatch_unavailable.reason, "ordinary invocation differs from its selected call-site header");
+    assert_eq!(
+        accepted_source.get(mismatch_unavailable.span.start..mismatch_unavailable.span.end),
+        Some("keep(values[0].value)")
+    );
+    assert!(
+        mismatch.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123")),
+        "exact slot mismatch produced unrelated diagnostics: {:?}",
+        mismatch.errors
+    );
+
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+    assert!(accepted.type_info.protocols.explicit_input_flow.iter().any(|(owner, flow)| {
+        owner.declaration_name == "decode" && matches!(flow, InputFlow::Checked { .. })
+    }));
+    Ok(())
+}

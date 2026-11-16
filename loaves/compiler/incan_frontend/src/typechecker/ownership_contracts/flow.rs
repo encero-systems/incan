@@ -170,6 +170,26 @@ pub(in crate::typechecker) struct OwnedInitialization {
     pub access_node: Option<usize>,
 }
 
+/// An immutable inferred local owns the exact element cloned from one plain parameter index. Unlike an explicit
+/// owned local, this fact grants no general transfer authority; constructor replay may only clone a checked scalar
+/// element from the destination's independent snapshot storage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::typechecker) struct SnapshotMaterialization {
+    pub value_type: crate::symbols::ResolvedType,
+    pub access_node: usize,
+}
+
+#[derive(Debug, Clone)]
+pub(in crate::typechecker) struct SnapshotInitialization {
+    pub initializer: HirSourceSpan,
+    /// Exact direct parameter expression selected as the builtin index base.
+    pub base: HirSourceSpan,
+    pub source: Place,
+    pub access_node: usize,
+    /// Exact constructor argument spans, checked field types and final snapshot-element Read nodes.
+    pub materializations: BTreeMap<HirSourceSpan, SnapshotMaterialization>,
+}
+
 /// One in-place dictionary lookup and the shared entry loans carried by its pattern bindings.
 ///
 /// An empty loan set represents a wildcard-only match. The lookup is read-only when every retained loan remains an
@@ -227,6 +247,103 @@ fn validate_owned_initializations(graph: &Graph) -> Result<(), InvalidGraph> {
     Ok(())
 }
 
+/// Snapshot links are distinct from explicit owned locals. They retain one immutable local destination and one exact
+/// parameter-projection Read, and cannot reuse an initializer event already claimed by another destination fact.
+fn validate_snapshot_initializations(graph: &Graph) -> Result<(), InvalidGraph> {
+    let mut sources = graph
+        .owned_locals
+        .values()
+        .filter_map(|initializer| initializer.access_node)
+        .collect::<BTreeSet<_>>();
+    for (destination, initializer) in &graph.owned_snapshot_locals {
+        let destination_root = Root::Binding(destination.clone());
+        let source_root = match &initializer.source.root {
+            Root::Binding(source) if source.kind == incan_semantics_core::SemanticSourceTargetKind::Parameter => {
+                source
+            }
+            _ => return Err(InvalidGraph("snapshot initializer source is not a plain parameter")),
+        };
+        if destination.kind != incan_semantics_core::SemanticSourceTargetKind::Local
+            || source_root == destination
+            || graph.local_loans.contains_key(destination)
+            || graph.owned_locals.contains_key(destination)
+            || graph
+                .permissions
+                .get(&destination_root)
+                .is_none_or(|permission| permission.exclusive || permission.writable || !permission.transferable)
+            || graph.permissions.get(&initializer.source.root).is_none_or(|permission| {
+                permission.exclusive || permission.writable || !permission.transferable
+            })
+            || !matches!(initializer.source.projection.as_slice(), [Projection::Element(_)])
+            || !sources.insert(initializer.access_node)
+        {
+            return Err(InvalidGraph("snapshot initializer has invalid destination or source storage"));
+        }
+        let node = graph
+            .nodes
+            .get(initializer.access_node)
+            .ok_or(InvalidGraph("snapshot initializer access is outside callable"))?;
+        if node.span.expansion != initializer.initializer.expansion
+            || initializer.base.expansion != initializer.initializer.expansion
+            || initializer.base.start < initializer.initializer.start
+            || initializer.base.end > initializer.initializer.end
+            || node.span.start < initializer.initializer.start
+            || node.span.end > initializer.initializer.end
+            || !matches!(&node.event,
+                Event::Access { place, access: Access::Read, through: None }
+                    if place == &initializer.source)
+        {
+            return Err(InvalidGraph(
+                "snapshot initializer access differs from its retained parameter read",
+            ));
+        }
+        let [Projection::Element(index)] = initializer.source.projection.as_slice() else {
+            return Err(InvalidGraph("snapshot initializer source is not one parameter index"));
+        };
+        if index.expansion != initializer.initializer.expansion
+            || index.start < initializer.base.end
+            || index.end > initializer.initializer.end
+        {
+            return Err(InvalidGraph(
+                "snapshot initializer operands differ from its retained builtin index",
+            ));
+        }
+        for (span, materialization) in &initializer.materializations {
+            if !sources.insert(materialization.access_node) {
+                return Err(InvalidGraph(
+                    "snapshot materialization has an invalid or reused read access",
+                ));
+            }
+            let node = graph
+                .nodes
+                .get(materialization.access_node)
+                .ok_or(InvalidGraph("snapshot materialization access is outside callable"))?;
+            if node.span.expansion != span.expansion
+                || node.span.start < span.start
+                || node.span.end > span.end
+                || !matches!(&node.event,
+                    Event::Access {
+                        place: Place {
+                            root: Root::Binding(root),
+                            projection,
+                        },
+                        access: Access::Read,
+                        through: None,
+                    } if root == destination
+                        && matches!(projection.as_slice(), [Projection::Element(index)]
+                            if index.expansion == span.expansion
+                                && index.start >= span.start
+                                && index.end <= span.end))
+            {
+                return Err(InvalidGraph(
+                    "snapshot materialization access differs from its retained element read",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The resolved input of one callable analysis. Unknown identities or malformed edges must refuse validation.
 #[derive(Debug, Clone)]
 pub(in crate::typechecker) struct Graph {
@@ -251,6 +368,8 @@ pub(in crate::typechecker) struct Graph {
     pub dependent_values: BTreeSet<HirSourceSpan>,
     /// Canonical owned destinations are distinct from local aliases and invocation-bounded argument owners.
     pub owned_locals: BTreeMap<CanonicalSymbolId, OwnedInitialization>,
+    /// Immutable inferred locals initialized by one exact builtin index read from a plain parameter.
+    pub owned_snapshot_locals: BTreeMap<CanonicalSymbolId, SnapshotInitialization>,
     /// Argument-to-loan bindings are retained at construction; lowering must not recover them from similar spans.
     pub invocations: BTreeMap<HirSourceSpan, Invocation>,
     /// Observer and operator dependencies retain their evaluated operand and exact consumption event.
@@ -284,6 +403,7 @@ impl Graph {
             dependent_locals: BTreeMap::new(),
             dependent_values: BTreeSet::new(),
             owned_locals: BTreeMap::new(),
+            owned_snapshot_locals: BTreeMap::new(),
             invocations: BTreeMap::new(),
             operations: BTreeMap::new(),
             closures: BTreeMap::new(),
@@ -449,6 +569,7 @@ fn validate(graph: &Graph) -> Result<Validated, InvalidGraph> {
     }
     validate_invocations(graph)?;
     validate_owned_initializations(graph)?;
+    validate_snapshot_initializations(graph)?;
     operations::validate_operations(graph)?;
     validate_closures(graph)?;
     let mut origins = vec![None; graph.loans.len()];

@@ -9,7 +9,7 @@ use incan_semantics_core::{HirSourceSpan, IncanInputAccess, SemanticSourceTarget
 use super::{CheckedInputBody, flow};
 use crate::ast::{
     AssertKind, AssignmentStmt, BindingKind, CallArg, Condition, Expr, FStringPart, ForStmt, ListEntry, Literal,
-    MatchBody, Spanned, Statement, TupleUnpackStmt,
+    MatchBody, Pattern, PatternArg, Spanned, Statement, TupleUnpackStmt,
 };
 use crate::typechecker::ownership_contracts::CallableSource;
 
@@ -24,6 +24,7 @@ impl CheckedInputBody<'_> {
             last: None,
             known: BTreeSet::new(),
             constrained: BTreeSet::new(),
+            declared_constrained_inputs: BTreeSet::new(),
             fresh_loop_locals: BTreeSet::new(),
         };
         for (index, node) in self.graph.nodes.iter().enumerate() {
@@ -62,6 +63,7 @@ impl CheckedInputBody<'_> {
             let root = flow::Root::Binding(identity.clone());
             coverage.known.insert(root.clone());
             if crate::ownership_metadata::direct_input_access(contract, slot)? != IncanInputAccess::Inferred {
+                coverage.declared_constrained_inputs.insert(root.clone());
                 coverage.constrained.insert(root);
             }
         }
@@ -102,6 +104,7 @@ struct SourceAccesses<'a, 'facts> {
     last: Option<usize>,
     known: BTreeSet<flow::Root>,
     constrained: BTreeSet<flow::Root>,
+    declared_constrained_inputs: BTreeSet<flow::Root>,
     fresh_loop_locals: BTreeSet<incan_semantics_core::CanonicalSymbolId>,
 }
 
@@ -316,14 +319,34 @@ impl SourceAccesses<'_, '_> {
     /// an owned argument constrains its root and is consumed.
     fn invocation_arguments(
         &mut self,
+        span: HirSourceSpan,
         invocation: &flow::Invocation,
         arguments: &[CallArg],
     ) -> Result<(), &'static str> {
+        let selected = self
+            .proof
+            .facts
+            .protocols
+            .explicit_input_calls
+            .get(&span)
+            .ok_or("source access invocation has no selected call")?;
         for argument in &invocation.arguments {
             let value = match arguments.get(argument.written_position) {
                 Some(CallArg::Positional(value) | CallArg::Named(_, value)) => value,
                 _ => return Err("source access call has no fixed written argument"),
             };
+            let parameter = selected
+                .parameters
+                .get(argument.slot)
+                .ok_or("source access invocation argument has no selected slot")?;
+            let closed_enum_parameter_observer = self.closed_enum_parameter_observer(
+                value,
+                parameter,
+                selected.kind == super::super::InputCallKind::Ordinary,
+            )?;
+            if argument.closed_enum_parameter_observer != closed_enum_parameter_observer {
+                return Err("closed Enum Parameter observer differs from its current source argument");
+            }
             // A closure local passed on first uses the borrow it holds, then is read itself.
             if argument.access == IncanInputAccess::Inferred
                 && let Some(closure) = self.closure_callee(value)
@@ -338,6 +361,14 @@ impl SourceAccesses<'_, '_> {
                 continue;
             }
             let source = self.place(value)?;
+            if matches!(&value.node, Expr::Field(indexed, _) if matches!(indexed.node, Expr::Index(..)))
+                && argument.access == IncanInputAccess::Inferred
+                && selected.kind == super::super::InputCallKind::Ordinary
+                && !self.immutable_local_element_field_argument(value, &parameter.ty)?
+            {
+                return Err("Element+Field helper argument differs from its immutable clone-read boundary");
+            }
+            let snapshot_materialization = self.snapshot_argument_materialization(value, &parameter.ty)?;
             match argument.access {
                 IncanInputAccess::Owned => {
                     if let Some((place, _)) = source {
@@ -352,8 +383,142 @@ impl SourceAccesses<'_, '_> {
                 }
                 IncanInputAccess::Inferred => self.expression(value, false)?,
             }
+            if snapshot_materialization.is_some_and(|node| !self.claimed.contains(&node)) {
+                return Err("snapshot helper argument did not claim its exact retained materialization");
+            }
         }
         Ok(())
+    }
+
+    /// Recompute the exact plain whole-Parameter observer from current argument and selected-slot facts. A persisted
+    /// marker or transferable permission cannot turn an explicit Owned parameter into this immutable read route.
+    fn closed_enum_parameter_observer(
+        &mut self,
+        value: &Spanned<Expr>,
+        parameter: &crate::typechecker::CallableParam,
+        ordinary_callee: bool,
+    ) -> Result<bool, &'static str> {
+        if !ordinary_callee || parameter.is_mut || self.proof.facts.expr_type(value.span) != Some(&parameter.ty) {
+            return Ok(false);
+        }
+        let Some((place, through)) = self.place(value)? else {
+            return Ok(false);
+        };
+        let flow::Root::Binding(identity) = &place.root else {
+            return Ok(false);
+        };
+        let enum_type = match &parameter.ty {
+            crate::symbols::ResolvedType::Named(owner) | crate::symbols::ResolvedType::Generic(owner, _) => self
+                .proof
+                .facts
+                .declarations
+                .named_type_identities
+                .get(owner)
+                .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Enum)
+                || self.proof.facts.declarations.enum_derives.contains_key(owner),
+            _ => false,
+        };
+        Ok(through.is_none()
+            && place.projection.is_empty()
+            && identity.kind == SemanticSourceTargetKind::Parameter
+            && enum_type
+            && self.proof.replay_type_holds_no_borrow_or_native(&parameter.ty)
+            && !self.declared_constrained_inputs.contains(&place.root))
+    }
+
+    /// Reconstruct the exact immutable local Element+Field helper route from current call/type/place facts. The
+    /// replay grants only the Read already present in the graph; it creates no transfer or stored-field authority.
+    fn immutable_local_element_field_argument(
+        &mut self,
+        value: &Spanned<Expr>,
+        expected: &crate::symbols::ResolvedType,
+    ) -> Result<bool, &'static str> {
+        let Expr::Field(indexed, _) = &value.node else {
+            return Ok(false);
+        };
+        let Expr::Index(base, index) = &indexed.node else {
+            return Ok(false);
+        };
+        if self.proof.facts.calls.resolved_operator_calls.contains_key(&indexed.span)
+            || self.proof.facts.expr_type(index.span) != Some(&crate::symbols::ResolvedType::Int)
+            || self.proof.facts.expr_type(value.span) != Some(expected)
+            || !self.proof.replay_type_is_clone(expected)
+            || !self.proof.replay_type_holds_no_borrow_or_native(expected)
+            || !self
+                .proof
+                .facts
+                .resolved_identity(value.span)
+                .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Field)
+            || !matches!(self.proof.facts.expr_type(base.span),
+                Some(crate::symbols::ResolvedType::Generic(name, arguments))
+                    if incan_lang::lang::types::collections::from_str(name)
+                        == Some(incan_lang::lang::types::collections::CollectionTypeId::List)
+                        && arguments.len() == 1
+                        && arguments.first() == self.proof.facts.expr_type(indexed.span))
+        {
+            return Ok(false);
+        }
+        let Some((place, through)) = self.place(value)? else {
+            return Ok(false);
+        };
+        let flow::Root::Binding(identity) = &place.root else {
+            return Ok(false);
+        };
+        Ok(through.is_none()
+            && identity.kind == SemanticSourceTargetKind::Local
+            && matches!(place.projection.as_slice(),
+                [flow::Projection::Element(element), flow::Projection::Field(_)] if *element == index.span)
+            && self.proof.graph.permissions.get(&place.root).is_some_and(|permission| {
+                !permission.exclusive && !permission.writable && permission.transferable
+            })
+            && !self.proof.graph.local_loans.contains_key(identity)
+            && !self.proof.graph.dependent_locals.contains_key(identity)
+            && !self.proof.graph.owned_locals.contains_key(identity)
+            && !self.proof.graph.owned_snapshot_locals.contains_key(identity))
+    }
+
+    /// An ordinary helper may read one snapshot element only through the exact schema-5 materialization retained
+    /// for that argument span, selected slot type and final Read node.
+    fn snapshot_argument_materialization(
+        &mut self,
+        value: &Spanned<Expr>,
+        expected: &crate::symbols::ResolvedType,
+    ) -> Result<Option<usize>, &'static str> {
+        let Expr::Index(base, index) = &value.node else {
+            return Ok(None);
+        };
+        let Some((place, through)) = self.place(base)? else {
+            return Ok(None);
+        };
+        let flow::Root::Binding(identity) = &place.root else {
+            return Ok(None);
+        };
+        let Some(snapshot) = self.proof.graph.owned_snapshot_locals.get(identity) else {
+            return Ok(None);
+        };
+        if through.is_some() || !place.projection.is_empty() {
+            return Err("snapshot helper argument has a projected or borrowed base");
+        }
+        let materialization = snapshot
+            .materializations
+            .get(&value.span)
+            .ok_or("snapshot helper argument has no retained materialization")?;
+        if &materialization.value_type != expected
+            || self.proof.facts.expr_type(value.span) != Some(expected)
+            || !matches!(self.proof.graph.nodes.get(materialization.access_node).map(|node| &node.event),
+                Some(flow::Event::Access {
+                    place: flow::Place {
+                        root: flow::Root::Binding(root),
+                        projection,
+                    },
+                    access: flow::Access::Read,
+                    through: None,
+                }) if root == identity
+                    && matches!(projection.as_slice(), [flow::Projection::Element(span)] if *span == index.span))
+        {
+            return Err("snapshot helper argument differs from its retained materialization");
+        }
+        Ok(Some(materialization.access_node))
     }
 
     /// Source admission already proved this exact inline callback has no captures; replay claims no storage access.
@@ -485,6 +650,16 @@ impl SourceAccesses<'_, '_> {
         arguments: &[CallArg],
         consume: bool,
     ) -> Result<(), &'static str> {
+        if self.proof.facts.resolved_builtin_method_call(expression.span)
+            == Some(incan_lang::lang::builtins::BuiltinMethodId::Result(
+                incan_lang::lang::surface::result_methods::ResultMethodId::MapErr,
+            ))
+            && !self
+                .proof
+                .selected_closed_result_map_err(expression, receiver, arguments)?
+        {
+            return Err("builtin Result.map_err differs from its capture-free closed Package-call surface");
+        }
         if self
             .proof
             .facts
@@ -559,13 +734,13 @@ impl SourceAccesses<'_, '_> {
             .ok_or("source access method call has no checked invocation")?;
         if invocation.receiver_owned {
             self.expression(receiver, true)?;
-            return self.invocation_arguments(invocation, arguments);
+            return self.invocation_arguments(expression.span, invocation, arguments);
         }
         if invocation.receiver.is_none() {
-            return self.invocation_arguments(invocation, arguments);
+            return self.invocation_arguments(expression.span, invocation, arguments);
         }
         self.fresh_method_receiver(receiver, invocation)?;
-        self.invocation_arguments(invocation, arguments)
+        self.invocation_arguments(expression.span, invocation, arguments)
     }
 
     /// Claim a builtin access over a computed receiver only when the graph ties it to that exact temporary or to a
@@ -668,7 +843,7 @@ impl SourceAccesses<'_, '_> {
             return self.closure_capture_accesses(expression.span, &loans);
         }
         if let Some(invocation) = self.proof.graph.invocations.get(&expression.span) {
-            return self.invocation_arguments(invocation, arguments);
+            return self.invocation_arguments(expression.span, invocation, arguments);
         }
         let carrier = super::super::builtins::carrier_constructor(self.proof.facts, callee).is_some();
         let construction = self.proof.facts.constructor_field_binding(expression.span).is_some();
@@ -676,9 +851,57 @@ impl SourceAccesses<'_, '_> {
             let (CallArg::Positional(value) | CallArg::Named(_, value)) = argument else {
                 return Err("source access needs fixed call arguments");
             };
+            if construction
+                && matches!(value.node, Expr::Try(_))
+                && !self.closed_result_try_call_constructor_materialization(value)?
+            {
+                return Err("constructor Try(Call) differs from its exact selected closed Result call");
+            }
             if carrier {
                 self.retained_source(value, false)?;
                 continue;
+            }
+            let snapshot_materialization = if construction {
+                None
+            } else {
+                let expected = self
+                    .proof
+                    .facts
+                    .expr_type(value.span)
+                    .ok_or("ordinary call argument has no checked type")?
+                    .clone();
+                self.snapshot_argument_materialization(value, &expected)?
+            };
+            let plain_parameter_transfer = construction
+                && self.place(value)?.is_some_and(|(place, through)| {
+                    through.is_none()
+                        && place.projection.is_empty()
+                        && matches!(&place.root, flow::Root::Binding(identity)
+                            if identity.kind == SemanticSourceTargetKind::Parameter)
+                        && self.proof.graph.permissions.get(&place.root).is_some_and(|permission| {
+                            !permission.exclusive && !permission.writable && permission.transferable
+                        })
+                })
+                && !self.copy_value(value)?;
+            if plain_parameter_transfer && !self.closed_enum_parameter_constructor_transfer(value)? {
+                return Err("plain Parameter constructor transfer is not one exact closed enum value");
+            }
+            let whole_local_transfer = construction
+                && self.place(value)?.is_some_and(|(place, through)| {
+                    through.is_none()
+                        && place.projection.is_empty()
+                        && matches!(&place.root, flow::Root::Binding(identity)
+                            if identity.kind == SemanticSourceTargetKind::Local)
+                        && self
+                            .proof
+                            .graph
+                            .permissions
+                            .get(&place.root)
+                            .is_some_and(|permission| permission.transferable)
+                })
+                && !self.copy_value(value)?;
+            if whole_local_transfer && !self.whole_local_list_constructor_transfer(value)? {
+                return Err("whole Local constructor transfer is not one exact independent builtin list");
             }
             let consume = construction
                 && self.place(value)?.is_some_and(|(place, through)| {
@@ -691,13 +914,142 @@ impl SourceAccesses<'_, '_> {
                             .is_some_and(|permission| permission.transferable)
                 })
                 && !self.copy_value(value)?
-                && !self.fresh_loop_constructor_materialization(value)?;
+                && !self.fresh_loop_constructor_materialization(value)?
+                && !self.immutable_snapshot_constructor_materialization(value)?;
             if consume && let Some((place, _)) = self.place(value)? {
                 self.constrained.insert(place.root);
             }
             self.expression(value, consume)?;
+            if snapshot_materialization.is_some_and(|node| !self.claimed.contains(&node)) {
+                return Err("snapshot helper argument did not claim its exact retained materialization");
+            }
         }
         Ok(())
+    }
+
+    /// Replay only the exact whole independent builtin-list Local transfer selected by source flow. The retained
+    /// Move remains the authority; this predicate merely refuses aliases, dependent/owned storage and other types.
+    fn whole_local_list_constructor_transfer(
+        &mut self,
+        value: &Spanned<Expr>,
+    ) -> Result<bool, &'static str> {
+        let Some((place, through)) = self.place(value)? else {
+            return Ok(false);
+        };
+        let flow::Root::Binding(identity) = &place.root else {
+            return Ok(false);
+        };
+        Ok(through.is_none()
+            && place.projection.is_empty()
+            && identity.kind == SemanticSourceTargetKind::Local
+            && matches!(self.proof.facts.expr_type(value.span),
+                Some(crate::symbols::ResolvedType::Generic(name, arguments))
+                    if incan_lang::lang::types::collections::from_str(name)
+                        == Some(incan_lang::lang::types::collections::CollectionTypeId::List)
+                        && arguments.len() == 1)
+            && self
+                .proof
+                .graph
+                .permissions
+                .get(&place.root)
+                .is_some_and(|permission| permission.transferable)
+            && !self.proof.graph.local_loans.contains_key(identity)
+            && !self.proof.graph.dependent_locals.contains_key(identity)
+            && !self.proof.graph.owned_locals.contains_key(identity)
+            && !self.proof.graph.owned_snapshot_locals.contains_key(identity)
+            && self.proof.replay_type_holds_no_borrow_or_native(
+                self.proof
+                    .facts
+                    .expr_type(value.span)
+                    .ok_or("whole local constructor transfer has no checked source type")?,
+            ))
+    }
+
+    /// Recompute the only plain whole-Parameter constructor transfer admitted by source flow. The current nominal
+    /// identity must still be a source enum, and the graph must retain ordinary transferable parameter storage.
+    fn closed_enum_parameter_constructor_transfer(
+        &mut self,
+        value: &Spanned<Expr>,
+    ) -> Result<bool, &'static str> {
+        let Some((place, through)) = self.place(value)? else {
+            return Ok(false);
+        };
+        let flow::Root::Binding(identity) = &place.root else {
+            return Ok(false);
+        };
+        let owner = match self.proof.facts.expr_type(value.span) {
+            Some(crate::symbols::ResolvedType::Named(owner)
+            | crate::symbols::ResolvedType::Generic(owner, _)) => owner,
+            _ => return Ok(false),
+        };
+        Ok(through.is_none()
+            && place.projection.is_empty()
+            && identity.kind == SemanticSourceTargetKind::Parameter
+            && (self
+                .proof
+                .facts
+                .declarations
+                .named_type_identities
+                .get(owner)
+                .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Enum)
+                || self.proof.facts.declarations.enum_derives.contains_key(owner))
+            && self.proof.graph.permissions.get(&place.root).is_some_and(|permission| {
+                !permission.exclusive && !permission.writable && permission.transferable
+            })
+            && self.proof.replay_type_holds_no_borrow_or_native(
+                self.proof
+                    .facts
+                    .expr_type(value.span)
+                    .ok_or("Enum Parameter transfer has no checked type")?,
+            )
+            && !self.declared_constrained_inputs.contains(&place.root))
+    }
+
+    /// Recompute the exact current-fact boundary for a direct Result `Try(Call)` constructor field. The retained
+    /// invocation proves evaluation order, but cannot by itself turn Option, a method, a returned view, a native
+    /// selection or another owner's call into closed constructor storage.
+    fn closed_result_try_call_constructor_materialization(
+        &self,
+        value: &Spanned<Expr>,
+    ) -> Result<bool, &'static str> {
+        let Expr::Try(inner) = &value.node else {
+            return Ok(false);
+        };
+        let Expr::Call(..) = &inner.node else {
+            return Ok(false);
+        };
+        let Some(result) = self.proof.facts.expr_type(value.span) else {
+            return Ok(false);
+        };
+        if !self.proof.replay_type_holds_no_borrow_or_native(result) {
+            return Ok(false);
+        }
+        if !matches!(self.proof.facts.expr_type(inner.span),
+            Some(crate::symbols::ResolvedType::Generic(name, arguments))
+                if incan_lang::lang::types::collections::from_str(name)
+                    == Some(incan_lang::lang::types::collections::CollectionTypeId::Result)
+                    && arguments.len() == 2
+                    && arguments.first() == Some(result))
+        {
+            return Ok(false);
+        }
+        let Some(call) = self.proof.facts.protocols.explicit_input_calls.get(&inner.span) else {
+            return Ok(false);
+        };
+        let Some(invocation) = self.proof.graph.invocations.get(&inner.span) else {
+            return Ok(false);
+        };
+        if call.kind != super::super::InputCallKind::Ordinary
+            || call.owner.as_ref() != Some(self.proof.canonical_owner())
+            || invocation.callee != call.callee
+        {
+            return Ok(false);
+        }
+        let contract = self.proof.facts.selected_input_contract(call)?;
+        Ok(crate::ownership_metadata::returned_view(contract)?.is_none()
+            && crate::ownership_metadata::owned_result(contract)?.is_none()
+            && !self.proof.facts.rust.checked_calls.contains_key(&inner.span)
+            && self.proof.facts.resolved_builtin_method_call(inner.span).is_none())
     }
 
     fn fresh_loop_constructor_materialization(&mut self, value: &Spanned<Expr>) -> Result<bool, &'static str> {
@@ -764,6 +1116,60 @@ impl SourceAccesses<'_, '_> {
             }))
     }
 
+    /// Replay only the exact constructor-field read recorded against one authenticated immutable parameter snapshot.
+    /// The initializer owns its parameter Read clone; this access clones a scalar element without constraining the local.
+    fn immutable_snapshot_constructor_materialization(
+        &mut self,
+        value: &Spanned<Expr>,
+    ) -> Result<bool, &'static str> {
+        let Expr::Index(base, _) = &value.node else {
+            return Ok(false);
+        };
+        if self
+            .proof
+            .facts
+            .calls
+            .resolved_operator_calls
+            .contains_key(&value.span)
+        {
+            return Ok(false);
+        }
+        let Some((place, through)) = self.place(base)? else {
+            return Ok(false);
+        };
+        let flow::Root::Binding(identity) = &place.root else {
+            return Ok(false);
+        };
+        let Some(result) = self.proof.facts.expr_type(value.span) else {
+            return Ok(false);
+        };
+        let scalar = matches!(result,
+            crate::symbols::ResolvedType::Int
+                | crate::symbols::ResolvedType::Float
+                | crate::symbols::ResolvedType::Numeric(_)
+                | crate::symbols::ResolvedType::Bool
+                | crate::symbols::ResolvedType::Str
+                | crate::symbols::ResolvedType::Bytes
+                | crate::symbols::ResolvedType::FrozenStr
+                | crate::symbols::ResolvedType::FrozenBytes
+                | crate::symbols::ResolvedType::Unit);
+        Ok(through.is_none()
+            && place.projection.is_empty()
+            && scalar
+            && matches!(self.proof.facts.expr_type(base.span),
+                Some(crate::symbols::ResolvedType::Generic(name, arguments))
+                    if incan_lang::lang::types::collections::from_str(name)
+                        == Some(incan_lang::lang::types::collections::CollectionTypeId::List)
+                        && arguments.as_slice() == std::slice::from_ref(result))
+            && self
+                .proof
+                .graph
+                .owned_snapshot_locals
+                .get(identity)
+                .and_then(|snapshot| snapshot.materializations.get(&value.span))
+                .is_some_and(|materialization| materialization.value_type == *result))
+    }
+
     /// Unpacking a call that carries a view in one tuple element evaluates the call; the view's name takes a borrow
     /// keyed to it, as a view local does, and the other names are new owners of their elements.
     fn tuple_unpack(&mut self, unpack: &TupleUnpackStmt) -> Result<(), &'static str> {
@@ -807,6 +1213,24 @@ impl SourceAccesses<'_, '_> {
         let mode = (root.declaration_span == assignment.name_span)
             .then(|| self.proof.facts.protocols.explicit_local_modes.get(&root))
             .flatten();
+        if self.proof.graph.owned_snapshot_locals.contains_key(&root)
+            && (mode.is_some()
+                || root.declaration_span != assignment.name_span
+                || !matches!(assignment.binding, BindingKind::Inferred | BindingKind::Let))
+        {
+            return Err("parameter snapshot destination is not one immutable inferred declaration");
+        }
+        if let Expr::Match(scrutinee, arms) = &assignment.value.node {
+            if mode.is_some()
+                || root.declaration_span != assignment.name_span
+                || !matches!(assignment.binding, BindingKind::Inferred | BindingKind::Let)
+            {
+                return Err("match expression assignment destination is not one fresh inferred local");
+            }
+            self.match_assignment_value(scrutinee, arms)?;
+            self.known.insert(flow::Root::Binding(root));
+            return Ok(());
+        }
         // A closure binding reads or borrows its captures where it is built; those events are its retained record's.
         if let Expr::Closure(params, body) = &assignment.value.node {
             let closure = self
@@ -920,6 +1344,100 @@ impl SourceAccesses<'_, '_> {
                 None,
                 flow::Access::Replace,
             )?;
+        }
+        Ok(())
+    }
+
+    /// Replay the exact single continuing enum-payload extraction retained by source flow. Other arms may only bind
+    /// nothing and terminate; both the subject field and extracted payload must claim their retained Move events.
+    fn match_assignment_value(
+        &mut self,
+        scrutinee: &Spanned<Expr>,
+        arms: &[Spanned<crate::ast::MatchArm>],
+    ) -> Result<(), &'static str> {
+        let Some((place, through)) = self.place(scrutinee)? else {
+            return Err("match assignment subject has no stored enum place");
+        };
+        let flow::Root::Binding(subject) = &place.root else {
+            return Err("match assignment subject has no stored enum place");
+        };
+        let owner = match self.proof.facts.expr_type(scrutinee.span) {
+            Some(crate::symbols::ResolvedType::Named(owner)
+            | crate::symbols::ResolvedType::Generic(owner, _)) => owner,
+            _ => return Err("match assignment subject is not one source enum"),
+        };
+        if through.is_some()
+            || subject.kind != SemanticSourceTargetKind::Local
+            || self.proof.graph.local_loans.contains_key(subject)
+            || self.proof.graph.dependent_locals.contains_key(subject)
+            || !self.proof.replay_type_holds_no_borrow_or_native(
+                self.proof
+                    .facts
+                    .expr_type(scrutinee.span)
+                    .ok_or("match assignment subject has no checked type")?,
+            )
+            || !(self.proof.facts.declarations.enum_derives.contains_key(owner)
+                || self
+                    .proof
+                    .facts
+                    .declarations
+                    .named_type_identities
+                    .get(owner)
+                    .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Enum))
+        {
+            return Err("match assignment subject is not one independent source enum");
+        }
+        self.constrained.insert(place.root);
+        self.expression(scrutinee, true)?;
+        let mut continuing = 0;
+        for arm in arms {
+            if arm.node.guard.is_some() {
+                return Err("match assignment extraction does not admit guards");
+            }
+            match (&arm.node.pattern.node, &arm.node.body) {
+                (Pattern::Constructor(name, arguments), MatchBody::Expr(value))
+                    if self
+                        .proof
+                        .facts
+                        .resolved_identity(name.span)
+                        .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant)
+                        && arguments.len() == 1 =>
+                {
+                    let [PatternArg::Positional(binding)] = arguments.as_slice() else {
+                        return Err("match assignment extraction needs one positional payload");
+                    };
+                    let Pattern::Binding(name) = &binding.node else {
+                        return Err("match assignment extraction needs one immutable payload binding");
+                    };
+                    let identity = self
+                        .proof
+                        .facts
+                        .resolved_write_identity(binding.span, name)
+                        .ok_or("match assignment extraction has no canonical payload binding")?
+                        .clone();
+                    if continuing != 0
+                        || self.proof.facts.resolved_identity(value.span) != Some(&identity)
+                        || self.proof.facts.expr_type(value.span)
+                            != self.proof.facts.resolved_write_type(binding.span, name)
+                    {
+                        return Err("match assignment extraction body differs from its payload binding");
+                    }
+                    continuing += 1;
+                    let root = flow::Root::Binding(identity);
+                    self.known.insert(root.clone());
+                    self.constrained.insert(root);
+                    self.expression(value, true)?;
+                }
+                (Pattern::Wildcard | Pattern::Literal(_), MatchBody::Block(body)) => {
+                    if self.block(body)? {
+                        return Err("match assignment fallback arm does not terminate");
+                    }
+                }
+                _ => return Err("match assignment has another continuing or payload-binding arm"),
+            }
+        }
+        if continuing != 1 {
+            return Err("match assignment has no unique continuing extraction arm");
         }
         Ok(())
     }
