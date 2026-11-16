@@ -1,0 +1,96 @@
+# behavior: loops that read a string by scalar index or slice, ascending, descending, from the end, skipping, breaking, nested, past the end and over a string the loop changes, give each read the result a single read gives, for ASCII and non-ASCII text (#3070)
+# expect-stdout:
+#   ppl|lla|aai|iin|nn|
+#   nialp
+#   plainz!,lainz!,ainz!,inz!,nz!,
+#   20
+#   plain/lain/ain/in/n///
+#   hhé|éél|lll|llo|oo |  w|wwö|öör|rrl|lld|dd|
+#   dlröw olléh
+#   héllo wörldz!,lo wörldz!,o wörldz!, wörldz!,wörldz!,örldz!,rldz!,ldz!,dz!,
+#   220
+#   héllo/éllo /llo w/lo wö/o wör/ wörl/wörld/örld/rld/ld/d///
+#   aa€|€€b|bb😀|😀😀c|cc|
+#   c😀b€a
+#   a€b😀cz!,€b😀cz!,b😀cz!,😀cz!,cz!,
+#   20
+#   a€b😀c/€b😀c/b😀c/😀c/c///
+#
+#
+#
+#   0
+#   //
+#   dlröw olléhrlél öl
+#   aaaa
+
+def ascending(value: str) -> str:
+    mut out = ""
+    for index in range(len(value)):
+        out += value[index] + value[index:index + 2] + "|"
+    return out
+
+
+def descending(value: str) -> str:
+    mut out = ""
+    mut index = len(value) - 1
+    while index >= 0:
+        out += value[index]
+        index -= 1
+    return out
+
+
+def from_the_end(value: str) -> str:
+    mut out = ""
+    for index in range(1, len(value) + 1):
+        out += value[-index]
+    return out + value[-3:-1] + value[1::2]
+
+
+def skipping(value: str) -> str:
+    mut out = ""
+    mut index = 0
+    while index < len(value):
+        if value[index] == "é":
+            index += 2
+            continue
+        if value[index] == "z":
+            break
+        out += value[index:]
+        out += ","
+        index += 1
+    return out
+
+
+def nested(value: str) -> int:
+    mut total = 0
+    for outer in range(len(value)):
+        for inner in range(outer, len(value)):
+            total += len(value[outer:inner])
+    return total
+
+
+def past_the_end(value: str) -> str:
+    mut out = ""
+    for index in range(len(value) + 2):
+        out += value[index:index + 5] + "/"
+    return out
+
+
+def changing(value: str) -> str:
+    mut current = value + ""
+    mut out = ""
+    for index in range(4):
+        out += current[index]
+        current = "x" + current
+    return out
+
+
+def main() -> None:
+    for text in ["plain", "héllo wörld", "a€b😀c", ""]:
+        println(ascending(text))
+        println(descending(text))
+        println(skipping(text + "z!"))
+        println(nested(text))
+        println(past_the_end(text))
+    println(from_the_end("héllo wörld"))
+    println(changing("abé😀"))
