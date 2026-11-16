@@ -1,0 +1,52 @@
+# behavior: every builtin function 0.5.1 lists is reachable as std.builtins.<name> and runs as its plain spelling does, range, enumerate and zip loop headers included (T10.8, #3144)
+# expect-stdout:
+#   print
+#   println
+#   3 6 1 3
+#   4! 6 6.0 false
+#   7 [1, 2, 3] [3, 1, 2] true
+#   range 0
+#   range 1
+#   stepped 1
+#   stepped 4
+#   [0, 2, 4]
+#   enumerate 0 a
+#   enumerate 1 b
+#   enumerated 0 e
+#   enumerated 1 f
+#   zip 1 c
+#   zip 2 d
+#   zip range 0 e
+#   zip range 1 f
+#   [3,1,2]
+#   wrote
+#   written
+
+def main() -> None:
+    values = [3, 1, 2]
+    names = ["e", "f"]
+    std.builtins.print("print")
+    std.builtins.println("println")
+    std.builtins.println(std.builtins.len(values), std.builtins.sum(values), std.builtins.min(values), std.builtins.max(values))
+    std.builtins.println(std.builtins.str(4) + "!", std.builtins.int("5") + 1, std.builtins.float(6), std.builtins.bool(0))
+    std.builtins.println(std.builtins.abs(-7), std.builtins.sorted(values), values, std.builtins.isinstance(1, int))
+    for index in std.builtins.range(2):
+        std.builtins.println("range", index)
+    for index in std.builtins.range(1, 7, 3):
+        std.builtins.println("stepped", index)
+    std.builtins.println([index * 2 for index in std.builtins.range(3)])
+    for pair in std.builtins.enumerate(["a", "b"]):
+        std.builtins.println("enumerate", pair[0], pair[1])
+    for position, name in std.builtins.enumerate(names):
+        std.builtins.println("enumerated", position, name)
+    for pair in std.builtins.zip([1, 2], ["c", "d"]):
+        std.builtins.println("zip", pair[0], pair[1])
+    for index, name in std.builtins.zip(std.builtins.range(2), names):
+        std.builtins.println("zip range", index, name)
+    std.builtins.println(std.builtins.json_stringify(values))
+    match std.builtins.write_file("builtins.txt", "written"):
+        Ok(_) => std.builtins.println("wrote")
+        Err(error) => std.builtins.println("write failed", error)
+    match std.builtins.read_file("builtins.txt"):
+        Ok(text) => std.builtins.println(text)
+        Err(error) => std.builtins.println("read failed", error)
