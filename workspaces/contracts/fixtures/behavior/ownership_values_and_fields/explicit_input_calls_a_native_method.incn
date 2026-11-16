@@ -1,5 +1,4 @@
 # behavior: A native method reads through a shared text input (RFC 164).
-# pending: INCAN-T0123 refuses the body: "call has no selected explicit input access facts" at the native method call.
 # expect-stdout:
 #   3
 

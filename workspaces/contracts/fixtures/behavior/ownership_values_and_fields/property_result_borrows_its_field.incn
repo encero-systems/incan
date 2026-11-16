@@ -1,5 +1,4 @@
 # behavior: A property's borrowed result names the field it views with `from self.<field>`, so a disjoint sibling field stays usable while the view is held (RFC 164, umbrella #3004).
-# pending: the parser refuses `from` after a property's return type ("Expected ':' after property return type"), and properties carry no ownership contract for their result.
 # expect-stdout:
 #   3
 #   1
