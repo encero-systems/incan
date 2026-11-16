@@ -140,6 +140,8 @@ struct Builder<'a> {
     /// Calls an `await` suspends on directly. A call to an async callable anywhere else would leave a future holding
     /// its loans, which is not modeled.
     awaited: BTreeSet<Span>,
+    /// Direct calls currently evaluated as the carrier of `?`; only their exact closed carrier may use that route.
+    try_calls: BTreeSet<Span>,
     constrained: BTreeSet<Root>,
     borrowed_inputs: BTreeSet<Root>,
     loops: Vec<LoopEdges>,
@@ -306,6 +308,7 @@ fn build_graph(
         taken_carriers: BTreeSet::new(),
         closures: BTreeMap::new(),
         awaited: BTreeSet::new(),
+        try_calls: BTreeSet::new(),
         loops: Vec::new(),
         owned_source: None,
         view: None,
@@ -565,13 +568,30 @@ impl Builder<'_> {
             // whose view is carried in the success payload, has that exit; an error that carries the view must be the
             // declared source's.
             Expr::Try(inner) if self.view.is_none() || self.view_carried == Some(0) => {
-                self.expression(inner, incoming, true)
+                let direct_call = matches!(inner.node, Expr::Call(..) | Expr::MethodCall(..));
+                if direct_call {
+                    self.try_calls.insert(inner.span);
+                }
+                let result = self.expression(inner, incoming, true);
+                if direct_call {
+                    self.try_calls.remove(&inner.span);
+                }
+                result
             }
             Expr::Try(_) if self.view_carried == Some(1) => Err(error_view_try(expression.span)),
             Expr::Binary(left, operation, right) => {
-                let incoming = self.expression(left, incoming, false)?;
+                let builtin_list_concat = self.builtin_list_concat_argument(expression);
+                let incoming = if builtin_list_concat {
+                    self.builtin_list_concat_operand(left, incoming)?
+                } else {
+                    self.expression(left, incoming, false)?
+                };
                 let (incoming, left_dependency) = self.retain_operation_operand(left, incoming)?;
-                let mut outgoing = self.expression(right, incoming.clone(), false)?;
+                let mut outgoing = if builtin_list_concat {
+                    self.builtin_list_concat_operand(right, incoming.clone())?
+                } else {
+                    self.expression(right, incoming.clone(), false)?
+                };
                 let (evaluated, right_dependency) = self.retain_operation_operand(right, outgoing)?;
                 outgoing = evaluated;
                 if matches!(operation, BinaryOp::And | BinaryOp::Or) {

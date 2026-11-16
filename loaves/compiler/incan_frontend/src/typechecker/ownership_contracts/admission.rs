@@ -304,6 +304,7 @@ impl CheckedInputBody<'_> {
                                 .iter()
                                 .any(|projection| !matches!(projection, super::flow::Projection::Field(_))))
                     })
+                    && !argument.closed_enum_parameter_observer
                     && !super::projection::closure_argument(self.graph, argument)
                 {
                     return Err("ordinary non-Copy input requires its inferred access proof");

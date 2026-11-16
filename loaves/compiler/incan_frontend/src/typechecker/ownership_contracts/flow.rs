@@ -137,6 +137,8 @@ pub(in crate::typechecker) struct InvocationArgument {
     pub access: IncanInputAccess,
     pub loan: Option<LoanId>,
     pub source: Option<Place>,
+    /// The checker proved this immutable whole Parameter is a closed source enum matching its ordinary slot.
+    pub closed_enum_parameter_observer: bool,
     pub evaluation: InputEvaluation,
 }
 

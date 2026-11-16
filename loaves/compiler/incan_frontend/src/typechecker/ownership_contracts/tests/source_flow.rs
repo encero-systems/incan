@@ -266,6 +266,131 @@ fn explicit_input_builtin_method_accepts_only_fresh_try_call_arguments() -> Resu
     Ok(())
 }
 
+/// A closed source enum parameter may be observed by an immutable ordinary helper without widening the whole-value
+/// route for borrowed strings or other stored parameters.
+#[test]
+fn explicit_input_whole_parameter_requires_closed_enum_facts() -> Result<(), Box<dyn std::error::Error>> {
+    let positive = checked(
+        "enum Family:\n    Local\n    Final\ndef family_name(family: Family) -> str:\n    match family:\n        Family.Local => return \"local\"\n        Family.Final => return \"final\"\ndef inspect(rows: Borrowed[list[list[str]]], family: Family) -> str:\n    if len(rows) == 0:\n        return \"empty\"\n    return family_name(family)\n",
+    )?;
+    let refused = checked(
+        "def inspect(value: Borrowed[str]) -> None:\n    user_print(value)\ndef user_print(value: str) -> None:\n    pass\n",
+    )?;
+    let state = refused
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find(|(owner, _)| owner.declaration_name == "inspect")
+        .map(|(_, state)| state)
+        .ok_or("missing whole borrowed observer flow")?;
+    let InputFlow::Unavailable(unavailable) = state else {
+        return Err(format!("whole borrowed observer admitted: {state:?}").into());
+    };
+    assert_eq!(unavailable.reason, "ordinary argument requires inferred access or mutable binding facts");
+    assert!(!refused.errors.is_empty());
+    assert!(refused.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123")));
+    assert!(positive.errors.is_empty(), "{:?}", positive.errors);
+    assert!(
+        positive
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .any(|(owner, flow)| owner.declaration_name == "inspect" && matches!(flow, InputFlow::Checked { .. }))
+    );
+    Ok(())
+}
+
+/// A builtin list concatenation creates fresh list storage after reading both exact list operands. A stored list or
+/// checker-selected user `__add__` result must not acquire transfer authority from the append boundary.
+#[test]
+fn explicit_input_builtin_list_concat_is_fresh_without_transfer_authority() -> Result<(), Box<dyn std::error::Error>> {
+    let positive = checked(
+        "model Field:\n    family: str\n    node: str\n    values: list[str]\ndef collect(field: Borrowed[Field]) -> list[list[str]]:\n    mut rows: list[list[str]] = []\n    rows.append([field.family, field.node] + field.values)\n    return rows\n",
+    )?;
+    for (label, source) in [
+        (
+            "stored list field",
+            "model Field:\n    values: list[str]\ndef collect(field: Borrowed[Field]) -> list[list[str]]:\n    mut rows: list[list[str]] = []\n    rows.append(field.values)\n    return rows\n",
+        ),
+        (
+            "selected user addition",
+            "model Words:\n    values: list[str]\n    def __add__(self, other: Words) -> list[str]:\n        return []\ndef collect(left: Borrowed[Words], right: Borrowed[Words]) -> list[list[str]]:\n    mut rows: list[list[str]] = []\n    rows.append(left + right)\n    return rows\n",
+        ),
+    ] {
+        let checker = checked(source)?;
+        let state = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == "collect")
+            .map(|(_, state)| state)
+            .ok_or_else(|| format!("missing {label} flow"))?;
+        let InputFlow::Unavailable(unavailable) = state else {
+            return Err(format!("{label} acquired append transfer authority: {state:?}").into());
+        };
+        assert_eq!(
+            unavailable.reason,
+            "a non-Copy builtin method argument needs checked ownership transfer materialization",
+            "{label}: {:?}",
+            checker.errors
+        );
+        assert!(!checker.errors.is_empty(), "{label} produced no refusal");
+        assert!(checker.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123")));
+    }
+    assert!(positive.errors.is_empty(), "{:?}", positive.errors);
+    assert!(
+        positive
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .any(|(owner, flow)| owner.declaration_name == "collect" && matches!(flow, InputFlow::Checked { .. }))
+    );
+    Ok(())
+}
+
+/// `?` may unwrap a selected call only after the call result itself is proven to carry no retained dependency. A
+/// returned view in the success payload remains refused at the builtin append boundary.
+#[test]
+fn explicit_input_try_call_requires_closed_carrier_dependency_facts() -> Result<(), Box<dyn std::error::Error>> {
+    let positive = checked(
+        "enum Fault:\n    Bad(str)\ndef encode(value: int) -> Result[bytes, Fault]:\n    if value < 0:\n        return Err(Fault.Bad(\"negative\"))\n    return Ok(b\"row\")\ndef collect(seed: Borrowed[int]) -> Result[list[bytes], Fault]:\n    value = 1\n    mut rows: list[bytes] = []\n    rows.append(encode(value)?)\n    return Ok(rows)\n",
+    )?;
+    let refused = checked(
+        "enum Fault:\n    Bad\ndef view(value: Borrowed[bytes]) -> Result[Borrowed[bytes], Fault] from value:\n    return Ok(value)\ndef collect(value: Borrowed[bytes]) -> Result[list[bytes], Fault]:\n    mut rows: list[bytes] = []\n    rows.append(view(value)?)\n    return Ok(rows)\n",
+    )?;
+    let state = refused
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find(|(owner, _)| owner.declaration_name == "collect")
+        .map(|(_, state)| state)
+        .ok_or("missing returned-view carrier flow")?;
+    let InputFlow::Unavailable(unavailable) = state else {
+        return Err(format!("returned view bypassed dependency facts: {state:?}").into());
+    };
+    assert_eq!(
+        unavailable.reason,
+        "a non-Copy builtin method argument needs checked ownership transfer materialization"
+    );
+    assert!(!refused.errors.is_empty());
+    assert!(refused.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123")));
+    assert!(positive.errors.is_empty(), "{:?}", positive.errors);
+    assert!(
+        positive
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .any(|(owner, flow)| owner.declaration_name == "collect" && matches!(flow, InputFlow::Checked { .. }))
+    );
+    Ok(())
+}
+
 /// Resource-observer fixtures must reach cleanup through represented call boundaries. An ordinary helper
 /// retains its selected header but still needs non-Copy argument or nominal returned-dependency facts.
 #[test]

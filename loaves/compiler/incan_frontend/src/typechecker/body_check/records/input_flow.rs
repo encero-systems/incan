@@ -264,6 +264,7 @@ pub(super) fn project(positions: &Positions, graph: &Graph, fields: &mut Vec<Str
                 }
                 None => row.push("none".into()),
             }
+            row.push(argument.closed_enum_parameter_observer.to_string());
             input_evaluation(&argument.evaluation, &mut row);
         }
         match &invocation.receiver_evaluation {
@@ -555,14 +556,14 @@ impl Reader<'_> {
             receiver_owned: self.boolean()?,
             receiver_source: self.optional(Self::place)?,
             receiver_dependencies: if schema >= 2 { self.loan_ids()? } else { Vec::new() },
-            arguments: self.list(Self::invocation_argument)?,
+            arguments: self.list(|reader| reader.invocation_argument(schema))?,
             receiver_evaluation: self.optional(Self::input_evaluation)?,
             completion_node: self.number()?,
             final_accesses: self.list(Self::number)?,
         })
     }
     /// An invocation argument: its span, slot, written position, access, loan, source place and evaluation.
-    fn invocation_argument(&mut self) -> Result<InvocationArgument, NodeBindingError> {
+    fn invocation_argument(&mut self, schema: usize) -> Result<InvocationArgument, NodeBindingError> {
         Ok(InvocationArgument {
             span: self.semantic_span()?,
             slot: self.number()?,
@@ -570,6 +571,7 @@ impl Reader<'_> {
             access: self.input_access()?,
             loan: self.loan_option()?,
             source: self.optional(Self::place)?,
+            closed_enum_parameter_observer: if schema >= 4 { self.boolean()? } else { false },
             evaluation: self.input_evaluation()?,
         })
     }

@@ -311,6 +311,28 @@ impl Builder<'_> {
         Ok(incoming)
     }
 
+    /// Evaluate a checked builtin-list concat operand without transferring any element root. A literal contributes
+    /// its elements as reads; a stored list operand follows ordinary expression evaluation as a read.
+    pub(super) fn builtin_list_concat_operand(
+        &mut self,
+        operand: &Spanned<Expr>,
+        mut incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        let Expr::List(entries) = &operand.node else {
+            return self.expression(operand, incoming, false);
+        };
+        for entry in entries {
+            let ListEntry::Element(value) = entry else {
+                return Err(Unavailable {
+                    span: operand.span,
+                    reason: "builtin list concat literal needs fixed elements".into(),
+                });
+            };
+            incoming = self.expression(value, incoming, false)?;
+        }
+        Ok(incoming)
+    }
+
     /// A complete model or class field binding, declared in this project or by a provider, constructs fresh storage
     /// after evaluating supplied values in written order. Deferred defaults, native constructors and non-Copy place
     /// transfer require separate proofs.

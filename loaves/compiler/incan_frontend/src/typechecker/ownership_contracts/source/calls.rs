@@ -8,8 +8,8 @@ use super::{
     Access, Builder, Event, Loan, LoanId, LoanKind, OwnershipMode, Path, Permission, Place, Projection, ResolvedType,
     Root, SourceSlot, Unavailable, ViewRelation, ViewSource,
 };
-use crate::ast::{CallArg, Expr, ParamKind, Receiver, Span, Spanned};
-use crate::symbols::CallableParam;
+use crate::ast::{BinaryOp, CallArg, Expr, ParamKind, Receiver, Span, Spanned};
+use crate::symbols::{CallableParam, TypeInfo};
 use crate::typechecker::TypeChecker;
 use incan_lang::lang::builtins::{BuiltinFnId, BuiltinMethodId};
 use incan_lang::lang::surface::{
@@ -184,6 +184,7 @@ impl Builder<'_> {
             if !self.fresh_or_copy_field(value)
                 && !matches!(value.node, Expr::Call(..) | Expr::MethodCall(..))
                 && !self.transparent_selected_call_argument(value)
+                && !self.builtin_list_concat_argument(value)
             {
                 return Err(Unavailable {
                     span: value.span,
@@ -203,6 +204,25 @@ impl Builder<'_> {
             },
             span,
         ))
+    }
+
+    /// A checker-unhooked `list[T] + list[T]` evaluates both operands as reads and creates fresh list storage. This
+    /// authorizes only the result at the builtin argument boundary; neither operand receives transfer authority.
+    pub(super) fn builtin_list_concat_argument(&self, value: &Spanned<Expr>) -> bool {
+        let Expr::Binary(left, BinaryOp::Add, right) = &value.node else {
+            return false;
+        };
+        if self.checker.type_info.resolved_operator_call(value.span).is_some() {
+            return false;
+        }
+        self.checker.type_info.expr_type(value.span).is_some_and(|result| {
+            matches!(result, ResolvedType::Generic(name, arguments)
+                if collections::from_str(name) == Some(CollectionTypeId::List) && arguments.len() == 1)
+                && self.checker.type_info.expr_type(left.span) == Some(result)
+                && self.checker.type_info.expr_type(right.span) == Some(result)
+                && !self.checker.type_holds_borrow(result)
+                && !self.checker.type_holds_native_loan(result)
+        })
     }
 
     /// A transparent `?` or grouping wrapper preserves one checker-selected call's fresh, closed result. Stored
@@ -443,6 +463,18 @@ impl Builder<'_> {
             })
             && conditional_result(result))
         .then(|| result.clone());
+        let closed_try_carrier_result = self.try_calls.contains(&span)
+            && call.kind == super::super::InputCallKind::Ordinary
+            && view.is_none()
+            && native_dependencies.is_none()
+            && !native_independent_result
+            && !owned_independent_result
+            && !owned_dependent_result
+            && !clone_result
+            && result_requirement.is_none()
+            && (result.is_result() || result.is_option())
+            && !self.checker.type_holds_borrow(result)
+            && !self.checker.type_holds_native_loan(result);
         if view.is_none()
             && native_dependencies.is_none()
             && !native_independent_result
@@ -451,6 +483,7 @@ impl Builder<'_> {
             && !clone_result
             && !plain_result(result)
             && result_requirement.is_none()
+            && !closed_try_carrier_result
             && !lends_nothing
             && !(call.kind == super::super::InputCallKind::Ordinary && call.parameters.is_empty())
         {
@@ -597,6 +630,11 @@ impl Builder<'_> {
                 continue;
             }
             let source = self.optional_place(expression)?.map(|path| path.place);
+            let closed_enum_parameter_observer = self.closed_enum_parameter_argument(
+                expression,
+                &call.parameters[slot],
+                call.kind == super::super::InputCallKind::Ordinary,
+            )?;
             let start_node = self.graph.nodes.len();
             incoming = self.event(incoming, Event::Nothing, expression.span);
             let (outgoing, loan) = self.call_argument(
@@ -604,6 +642,7 @@ impl Builder<'_> {
                 &call.parameters[slot],
                 mode,
                 call.kind == super::super::InputCallKind::Ordinary,
+                closed_enum_parameter_observer,
                 matches!(
                     call.kind,
                     super::super::InputCallKind::Explicit | super::super::InputCallKind::Native
@@ -648,6 +687,7 @@ impl Builder<'_> {
                 },
                 loan,
                 source: loan.map(|loan| self.graph.loans[loan.0].source.clone()).or(source),
+                closed_enum_parameter_observer,
                 evaluation: InputEvaluation {
                     start_node,
                     end_node,
@@ -717,6 +757,7 @@ impl Builder<'_> {
         parameter: &CallableParam,
         mode: Option<OwnershipMode>,
         ordinary_callee: bool,
+        closed_enum_parameter_observer: bool,
         accepts_fresh_inferred: bool,
         invocation: Span,
         incoming: Vec<usize>,
@@ -778,6 +819,13 @@ impl Builder<'_> {
                 self.expression(expression, incoming, true)
                     .map(|outgoing| (outgoing, None))
             }
+            // An immutable whole parameter may cross an ordinary slot only when the selected slot has the exact
+            // same closed source-enum type. This does not admit borrowed primitives or other stored nominal values.
+            None if closed_enum_parameter_observer =>
+            {
+                self.expression(expression, incoming, false)
+                    .map(|outgoing| (outgoing, None))
+            }
             // A checked local or parameter, including a field-only path, may be observed by an immutable ordinary
             // helper while its body retains storage. Indexes and borrowed aliases still need separate access facts.
             None if ordinary_callee
@@ -803,6 +851,39 @@ impl Builder<'_> {
                 reason: "ordinary argument requires inferred access or mutable binding facts".into(),
             }),
         }
+    }
+
+    /// Authenticate the only whole non-Copy Parameter observation currently retained by an ordinary inferred slot.
+    fn closed_enum_parameter_argument(
+        &mut self,
+        expression: &Spanned<Expr>,
+        parameter: &CallableParam,
+        ordinary_callee: bool,
+    ) -> Result<bool, Unavailable> {
+        if !ordinary_callee || parameter.is_mut {
+            return Ok(false);
+        }
+        let Some(path) = self.optional_place(expression)? else {
+            return Ok(false);
+        };
+        if path.through.is_some()
+            || !path.place.projection.is_empty()
+            || !matches!(&path.place.root, Root::Binding(identity)
+                if identity.kind == incan_semantics_core::SemanticSourceTargetKind::Parameter)
+        {
+            return Ok(false);
+        }
+        Ok(self.checker.type_info.expr_type(expression.span).is_some_and(|ty| {
+            ty == &parameter.ty
+                && match ty {
+                    ResolvedType::Named(owner) | ResolvedType::Generic(owner, _) => {
+                        matches!(self.checker.lookup_type_info(owner), Some(TypeInfo::Enum(_)))
+                    }
+                    _ => false,
+                }
+                && !self.checker.type_holds_borrow(ty)
+                && !self.checker.type_holds_native_loan(ty)
+        }))
     }
 
     /// A fresh scalar or owned byte-string expression, or a list literal of Copy scalars, may be borrowed for this
