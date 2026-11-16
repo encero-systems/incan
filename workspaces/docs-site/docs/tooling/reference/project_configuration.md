@@ -71,7 +71,7 @@ regex = { loaf = "crates-io/regex", version = "1" }
 json = { loaf = "crates-io/serde_json", version = "1", features = ["preserve_order"] }
 ```
 
-The dependency key is the code-facing alias. `package`, `crate`, bare string values and the `[rust-dependencies]` table are refused with the corresponding `loaf` form. A requirement must match an available toolchain registry unit. Declaration does not download a Loaf. `target` accepts an exact target triple or a supported `cfg(...)` predicate. Git selectors and Cargo manifests are not dependency sources for this CLI.
+The dependency key is the code-facing alias. `package`, `crate`, bare string values and the `[rust-dependencies]` table are refused with the corresponding `loaf` form. A requirement must match an available toolchain registry unit. Declaration does not download a Loaf. `target` accepts an exact target triple or a supported `cfg(...)` predicate. A key may instead hold an array of registry declarations, each of which applies where its `target` holds; at most one of them omits `target`, and it applies on every target (RFC 119 rule 3). Git selectors and Cargo manifests are not dependency sources for this CLI.
 
 `loaf` accepts an unscoped identity or one scope and name separated by `/`. Components contain 1 through 64 lowercase ASCII letters, digits or hyphens and begin with a letter or digit. Unscoped local identities and exact upstream names under `crates-io/` may also contain underscores. Capitals are refused and are never folded. The default Rust crate name is the identity's final component with hyphens replaced by underscores.
 

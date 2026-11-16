@@ -85,30 +85,7 @@ pub def parse_dependencies(
         for alias in sorted([key for key in values.keys()]):
             value = values[alias].clone()
             if value.kind() == TomlKind.Array:
-                entries = value
-                    .as_array()
-                    .map_err((error) => refusal(manifest, [group, alias], IntakeErrorKind.Invalid, error.message()))?
-                if len(entries) == 0:
-                    return Err(
-                        refusal(
-                            manifest,
-                            [group, alias],
-                            IntakeErrorKind.Invalid,
-                            "target entry array must not be empty",
-                        ),
-                    )
-                for entry in entries:
-                    request = rust_request(alias, entry, manifest, group)?
-                    if request.target is None:
-                        return Err(
-                            refusal(
-                                manifest,
-                                [group, alias, "target"],
-                                IntakeErrorKind.Missing,
-                                "array entries require target",
-                            ),
-                        )
-                    rust_inputs.append(request)
+                rust_inputs.extend(target_entries(alias, value, manifest, group)?)
             else:
                 if value.kind() == TomlKind.String:
                     replacement = dependency_replacement(alias, value, manifest, [group, alias])?
@@ -302,6 +279,35 @@ def cfg_predicate(value: str, depth: int) -> Result[str, str]:
             offset += 1
         return Err("cfg value requires a closing quote")
     return Ok(rest)
+
+
+def target_entries(
+    alias: str,
+    value: TomlValue,
+    manifest: str,
+    group: str,
+) -> Result[list[RustInputRequest], IntakeError]:
+    """
+    One key's target entry array: declarations that each apply where their `target` holds, and at most one without
+    `target`, which applies on every target, as an adopted crate declares a dependency in `[dependencies]` and again
+    in a `[target.*.dependencies]` table.
+    """
+    entries = value
+        .as_array()
+        .map_err((error) => refusal(manifest, [group, alias], IntakeErrorKind.Invalid, error.message()))?
+    if len(entries) == 0:
+        return Err(refusal(manifest, [group, alias], IntakeErrorKind.Invalid, "target entry array must not be empty"))
+    mut requests: list[RustInputRequest] = []
+    mut everywhere = false
+    for entry in entries:
+        request = rust_request(alias, entry, manifest, group)?
+        if request.target is None:
+            if everywhere:
+                detail = "only one entry may omit target, and it applies on every target (RFC 119 rule 3)"
+                return Err(refusal(manifest, [group, alias, "target"], IntakeErrorKind.Invalid, detail))
+            everywhere = true
+        requests.append(request)
+    return Ok(requests)
 
 
 pub def rust_request(alias: str, value: TomlValue, manifest: str, group: str) -> Result[RustInputRequest, IntakeError]:
