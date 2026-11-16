@@ -20,6 +20,7 @@ from overlay_hover import overlay_hover
 from overlay_definition import overlay_definition
 from overlay_references import overlay_references
 from overlay_call_hierarchy import overlay_call_hierarchy
+from overlay_document_symbols import overlay_document_symbols
 from engine_state import Identity
 from engine_wire import Refusal
 from files import json_text
@@ -56,6 +57,7 @@ const OVERLAY_HOVER_SCHEMA: str = "incan.overlay-hover/1"
 const OVERLAY_DEFINITION_SCHEMA: str = "incan.overlay-definition/1"
 const OVERLAY_REFERENCES_SCHEMA: str = "incan.overlay-references/1"
 const OVERLAY_CALL_HIERARCHY_SCHEMA: str = "incan.overlay-call-hierarchy/1"
+const OVERLAY_DOCUMENT_SYMBOLS_SCHEMA: str = "incan.overlay-document-symbols/1"
 # While an overlay request runs, its console is collected here instead of being relayed to the terminal.
 static console_capture: dict[str, str] = {}
 
@@ -160,6 +162,18 @@ def answer_overlay(mut channel: Channel, store: Path, request: OverlayRequest) -
         return references_answer(store, editor, program, absolute, checked.editor_facts, request)
     if request.call_hierarchy_line > 0:
         return call_hierarchy_answer(store, editor, program, absolute, checked.editor_facts, request)
+    if request.document_symbols:
+        return document_symbols_answer(
+            store,
+            editor,
+            program,
+            entry,
+            absolute,
+            document,
+            text,
+            checked.editor_facts,
+            request,
+        )
     # 4. Diagnostics name the editor's documents, never the overlay root.
     mut entries: list[JsonValue] = []
     for found in report_diagnostics(checked.report, overlay.0, program.0).map_err(
@@ -281,6 +295,29 @@ def call_hierarchy_answer(
         "version": JsonValue.int(request.version),
         "editor_view": JsonValue.string(editor),
         "hierarchy": hierarchy,
+    }
+    return JsonValue.object(answer).to_json().map_err((error) => error.message())
+
+
+def document_symbols_answer(
+    store: Path,
+    editor: str,
+    program: Path,
+    entry: Path,
+    document: Path,
+    logical: str,
+    source: str,
+    facts_key: str,
+    request: OverlayRequest,
+) -> Result[str, str]:
+    """Answer the complete current-document outline from its witnessed projection and checked editor facts."""
+    selected = snapshot(store, editor).map_err((error) => error.message())?
+    symbols = overlay_document_symbols(selected, facts_key, program, entry, document, logical, source)?
+    answer = {
+        "schema": JsonValue.string(OVERLAY_DOCUMENT_SYMBOLS_SCHEMA),
+        "version": JsonValue.int(request.version),
+        "editor_view": JsonValue.string(editor),
+        "symbols": JsonValue.array(symbols),
     }
     return JsonValue.object(answer).to_json().map_err((error) => error.message())
 

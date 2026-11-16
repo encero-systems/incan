@@ -1,0 +1,149 @@
+"""Document-outline answers from the witnessed buffer projection and its checked editor facts."""
+
+from std.fs import Path
+from std.json import JsonValue
+from pub::incan_platform.store import Snapshot
+from compiler_source_projection import SourceProjectionRecord, project_source, signature_record
+from graph_queries import nested, text
+from overlay_hover import program_origin
+from overlay_references import editor_graph_records, graph_location
+
+
+pub def overlay_document_symbols(
+    selected: Snapshot,
+    facts_key: str,
+    program: Path,
+    entry: Path,
+    document: Path,
+    logical: str,
+    source: str,
+) -> Result[list[JsonValue], str]:
+    """Return every outline declaration in this exact buffer, marking feature-gated declarations absent from the check."""
+    records = editor_graph_records(selected, facts_key, program)?
+    projection = project_source(program_origin(program, entry)?, logical, source)?
+    mut symbols: list[JsonValue] = []
+    for owner in projection.owners:
+        kind = symbol_kind(owner.key.facet)
+        if kind == "":
+            continue
+        name = symbol_name(owner.key.facet)
+        checked_detail = active_detail(records, document, logical, name, kind)
+        mut detail = declaration_detail(owner)
+        mut inactive = false
+        match checked_detail:
+            Some(found) => detail = found
+            None =>
+                if len(owner.required_features) > 0:
+                    inactive = true
+                    detail += " — inactive; requires " + " and ".join(
+                        [f"`{feature}`" for feature in owner.required_features],
+                    )
+        symbols.append(
+            JsonValue.object(
+                {
+                    "name": JsonValue.string(name),
+                    "kind": JsonValue.string(kind),
+                    "detail": JsonValue.string(detail),
+                    "location": source_location(document, source, owner),
+                    "inactive": JsonValue.bool(inactive),
+                    "required_features": JsonValue.array(
+                        [JsonValue.string(feature) for feature in owner.required_features],
+                    ),
+                },
+            ),
+        )
+    return Ok(symbols)
+
+
+def active_detail(records: list[JsonValue], document: Path, logical: str, name: str, kind: str) -> Option[str]:
+    """Return the checked declaration signature only when the graph proves this projected owner is active."""
+    for record in records:
+        if text(record, "record") != "declaration" or degraded(record):
+            continue
+        if text(record, "name") != name or not matching_kind(kind, text(record, "kind")):
+            continue
+        if let Some(location) = graph_location(record):
+            path = text(location, "path")
+            if path == document.0 or path.ends_with("/" + logical):
+                signature = text(record, "signature")
+                if signature != "":
+                    return Some(signature)
+                return Some(name)
+    return None
+
+
+def symbol_kind(facet: str) -> str:
+    """Map one source-projection owner to the protocol-neutral symbol kind used by the LSP adapter."""
+    if ":" not in facet:
+        return "function"
+    kind = facet.split(":")[0]
+    if kind in ["const", "static"]:
+        return "constant"
+    if kind == "partial":
+        return "function"
+    if kind in ["model", "newtype", "rusttype"]:
+        return "struct"
+    if kind in ["class", "enum"]:
+        return kind
+    if kind == "trait":
+        return "interface"
+    if kind == "type_alias":
+        return "type_parameter"
+    return ""
+
+
+def matching_kind(kind: str, graph: str) -> bool:
+    """Match one protocol-neutral symbol kind to the source declaration spellings that produce it."""
+    if kind == "function":
+        return graph in ["function", "partial"]
+    if kind == "constant":
+        return graph in ["const", "static"]
+    if kind == "struct":
+        return graph in ["model", "newtype", "rusttype"]
+    if kind == "interface":
+        return graph == "trait"
+    if kind == "type_parameter":
+        return graph == "type_alias"
+    return kind == graph
+
+
+def symbol_name(facet: str) -> str:
+    """Return the declared name from a kind-qualified or callable source facet."""
+    if ":" not in facet:
+        return facet
+    parts = facet.split(":")
+    return parts[len(parts) - 1]
+
+
+def declaration_detail(owner: SourceProjectionRecord) -> str:
+    """Use the build's declaration-signature projection when no active checked signature exists."""
+    surface = signature_record(owner).text.strip()
+    if "\n" in surface:
+        return surface.split("\n")[0].strip()
+    return surface
+
+
+def source_location(path: Path, source: str, owner: SourceProjectionRecord) -> JsonValue:
+    """Project the exact source-owner byte interval into one-based editor coordinates."""
+    start = position(source, owner.start)
+    end = position(source, owner.end)
+    return JsonValue.object(
+        {
+            "path": JsonValue.string(path.0),
+            "line": JsonValue.int(start[0]),
+            "column": JsonValue.int(start[1]),
+            "end_line": JsonValue.int(end[0]),
+            "end_column": JsonValue.int(end[1]),
+        },
+    )
+
+
+def position(source: str, offset: int) -> list[int]:
+    """Return the one-based line and column at one source offset."""
+    rows = source[:offset].split("\n")
+    return [len(rows), len(rows[len(rows) - 1]) + 1]
+
+
+def degraded(record: JsonValue) -> bool:
+    """Exclude partial graph declarations from active-feature evidence."""
+    return nested(record, "degraded").as_bool().unwrap_or(false)

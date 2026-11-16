@@ -32,7 +32,13 @@ pub def editor_source_witness(record: SourceProjectionRecord) -> SourceProjectio
         facet=record.key.family + ":" + record.key.facet,
         context=record.digest(),
     )
-    return SourceProjectionRecord(key=key, text=record.text, start=record.start, end=record.end)
+    return SourceProjectionRecord(
+        key=key,
+        text=record.text,
+        start=record.start,
+        end=record.end,
+        required_features=record.required_features,
+    )
 
 
 pub model PreparedEditorFacts:

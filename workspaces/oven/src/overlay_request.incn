@@ -1,6 +1,6 @@
 """
 `incan check SOURCE --overlay BUFFER [--document-version N] [--profile debug|release] [--format json]
-[--engine-report] [--build] [--hover LINE:COLUMN] [--definition LINE:COLUMN]`, and `incan check --overlay-serve [--profile debug|release]`, which
+[--engine-report] [--build] [--hover LINE:COLUMN] [--definition LINE:COLUMN] [--document-symbols]`, and `incan check --overlay-serve [--profile debug|release]`, which
 answers one such request per JSON line on standard input.
 """
 
@@ -30,6 +30,8 @@ pub model OverlayRequest:
     # A call hierarchy request's one-based line and column in the buffer.
     pub call_hierarchy_line: int = 0
     pub call_hierarchy_column: int = 0
+    # Whether the answer is the current document's complete outline.
+    pub document_symbols: bool = false
 
 
 pub def parse_served(line: str, profile: str) -> Result[OverlayRequest, str]:
@@ -73,6 +75,8 @@ pub def parse_served(line: str, profile: str) -> Result[OverlayRequest, str]:
             return Err("call hierarchy names a line and a column")
         answered.call_hierarchy_line = place[0].expect_int().map_err((error) => error.message())?
         answered.call_hierarchy_column = place[1].expect_int().map_err((error) => error.message())?
+    if let Some(selected) = request.get("document_symbols"):
+        answered.document_symbols = selected.expect_bool().map_err((error) => error.message())?
     return Ok(answered)
 
 
@@ -82,9 +86,11 @@ pub def parse_overlay(arguments: list[str]) -> Result[OverlayRequest, str]:
     mut index = 0
     while index < len(arguments):
         argument = arguments[index]
-        if argument in ["--engine-report", "--build"]:
+        if argument in ["--engine-report", "--build", "--document-symbols"]:
             if argument == "--build":
                 request.build = true
+            elif argument == "--document-symbols":
+                request.document_symbols = true
             else:
                 request.report = true
             index += 1

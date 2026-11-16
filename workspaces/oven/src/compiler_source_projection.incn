@@ -23,6 +23,7 @@ pub model SourceProjectionRecord:
     pub text: str
     pub start: int
     pub end: int
+    pub required_features: list[str] = []
 
     pub def digest(self) -> str:
         """Return the semantic identity of this slice without folding file-wide coordinates into it."""
@@ -49,6 +50,15 @@ model Boundary:
 
     start: int
     owner: str
+    required_features: list[str]
+
+
+model FeatureBlock:
+    """One nested compile-time feature block and the indentation of its direct declarations."""
+
+    indent: int
+    member_indent: int
+    required_features: list[str]
 
 
 class SourceProjector:
@@ -82,21 +92,23 @@ class SourceProjector:
         """
         mut offset = 0
         mut decorated_start = -1
-        mut conditional = false
-        mut member_indent = -1
+        mut feature_blocks: list[FeatureBlock] = []
         for line in self.lines:
             content = line.strip()
             indent = leading_whitespace(line)
-            mut chunk = false
-            if content != "" and indent == 0:
-                chunk = true
-                if not content.startswith("#"):
-                    conditional = conditional_block(content)
-                    member_indent = -1
-            elif conditional and content != "" and not content.startswith("#"):
-                if member_indent < 0:
-                    member_indent = indent
-                chunk = indent == member_indent
+            while len(feature_blocks) > 0 and content != "" and indent <= feature_blocks[len(feature_blocks) - 1].indent:
+                feature_blocks = feature_blocks[:len(feature_blocks) - 1]
+            mut chunk = content != "" and indent == 0
+            if len(feature_blocks) > 0 and content != "" and not content.startswith("#"):
+                at = len(feature_blocks) - 1
+                mut block = feature_blocks[at]
+                if block.member_indent < 0 and indent > block.indent:
+                    block.member_indent = indent
+                    feature_blocks[at] = block
+                chunk = indent == block.member_indent
+            mut required_features: list[str] = []
+            if len(feature_blocks) > 0:
+                required_features = feature_blocks[len(feature_blocks) - 1].required_features
             if chunk and content.startswith("@"):
                 if decorated_start < 0:
                     decorated_start = offset
@@ -106,11 +118,21 @@ class SourceProjector:
                     start = decorated_start
                 else:
                     start = offset
-                self.boundaries.append(Boundary(start=start, owner=declaration_owner(content)))
+                self.boundaries.append(
+                    Boundary(start=start, owner=declaration_owner(content), required_features=required_features),
+                )
+                if conditional_block(content):
+                    feature_blocks.append(
+                        FeatureBlock(
+                            indent=indent,
+                            member_indent=-1,
+                            required_features=sorted(required_features + condition_features(content)),
+                        ),
+                    )
                 decorated_start = -1
             offset += len(line)
         if decorated_start >= 0:
-            self.boundaries.append(Boundary(start=decorated_start, owner=""))
+            self.boundaries.append(Boundary(start=decorated_start, owner="", required_features=[]))
 
     pub def projection(mut self) -> Result[SourceProjection, str]:
         """Partition source owners and nested defaults while retaining a declaration surface for selector invalidation."""
@@ -140,11 +162,26 @@ class SourceProjector:
                             text=semantic,
                             start=boundary.start,
                             end=end,
+                            required_features=boundary.required_features,
                         ),
                     )
-                    for field in field_records(boundary.owner, text, boundary.start, self.origin, self.path):
+                    for field in field_records(
+                        boundary.owner,
+                        text,
+                        boundary.start,
+                        self.origin,
+                        self.path,
+                        boundary.required_features,
+                    ):
                         owners.append(semantic_record(field, documentation_free(field.text)))
-                    for default in field_default_records(boundary.owner, text, boundary.start, self.origin, self.path):
+                    for default in field_default_records(
+                        boundary.owner,
+                        text,
+                        boundary.start,
+                        self.origin,
+                        self.path,
+                        boundary.required_features,
+                    ):
                         owners.append(semantic_record(default, comment_free(default.text)))
         return Ok(
             SourceProjection(
@@ -270,12 +307,24 @@ pub def signature_record(owner: &SourceProjectionRecord) -> SourceProjectionReco
     """Project one declaration's header without its implementation, preserving its kind-qualified source owner."""
     mut key = owner.key
     key.family = "declaration-signature"
-    return SourceProjectionRecord(key=key, text=declaration_surface(owner.text), start=owner.start, end=owner.end)
+    return SourceProjectionRecord(
+        key=key,
+        text=declaration_surface(owner.text),
+        start=owner.start,
+        end=owner.end,
+        required_features=owner.required_features,
+    )
 
 
 def semantic_record(record: SourceProjectionRecord, text: str) -> SourceProjectionRecord:
     """Keep one nested record's key and source coordinates with its semantic text."""
-    return SourceProjectionRecord(key=record.key, text=text, start=record.start, end=record.end)
+    return SourceProjectionRecord(
+        key=record.key,
+        text=text,
+        start=record.start,
+        end=record.end,
+        required_features=record.required_features,
+    )
 
 
 pub def publish_source_projection(
@@ -337,6 +386,18 @@ def conditional_block(line: str) -> bool:
     return line.startswith("when ") and line.endswith(":")
 
 
+def condition_features(line: str) -> list[str]:
+    """Return the positive feature conjunction accepted by the language's compile-time `when` grammar."""
+    mut features: list[str] = []
+    for predicate in line[5:len(line) - 1].split(" and "):
+        mut parts = predicate.split("\"")
+        if len(parts) != 3:
+            parts = predicate.split("'")
+        if len(parts) == 3 and parts[0].strip() == "feature(" and parts[2].strip() == ")" and parts[1] not in features:
+            features.append(parts[1])
+    return sorted(features)
+
+
 def declaration_owner(line: str) -> str:
     """Name an independently owned declaration while imports and other module forms stay in the header."""
     mut header = f"{line}"
@@ -349,6 +410,14 @@ def declaration_owner(line: str) -> str:
             name = identifier_prefix(header)
             if name != "":
                 return kind + ":" + name
+    if header.startswith("type "):
+        name = identifier_prefix(header[5:])
+        if name != "":
+            if " = newtype " in header or " = newtype[" in header:
+                return "newtype:" + name
+            if " = rusttype " in header or " = rusttype[" in header:
+                return "rusttype:" + name
+            return "type_alias:" + name
     for kind in ["def", "const", "static", "model", "capability", "class", "trait", "partial", "newtype", "enum"]:
         prefix = kind + " "
         if header.startswith(prefix):
@@ -376,6 +445,7 @@ def field_default_records(
     source_start: int,
     origin: str,
     path: str,
+    required_features: list[str],
 ) -> list[SourceProjectionRecord]:
     """Project each direct model or class field default as its own expression-only source facet."""
     if not declaration.startswith("model:") and not declaration.startswith("class:"):
@@ -396,6 +466,7 @@ def field_default_records(
                         text=source[start + relative_start:start + relative_end],
                         start=source_start + start + relative_start,
                         end=source_start + start + relative_end,
+                        required_features=required_features,
                     ),
                 )
     return records
@@ -407,6 +478,7 @@ def field_records(
     source_start: int,
     origin: str,
     path: str,
+    required_features: list[str],
 ) -> list[SourceProjectionRecord]:
     """Project each direct nominal field independently, including fields without a default expression."""
     starts = direct_member_starts(source)
@@ -426,6 +498,7 @@ def field_records(
                         text=member,
                         start=source_start + start,
                         end=source_start + end,
+                        required_features=required_features,
                     ),
                 )
     return records
