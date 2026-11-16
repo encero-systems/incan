@@ -330,10 +330,9 @@ pub def test_toolchain_plan_failure_is_retried() -> Result[None, str]:
 
 
 def build_project(binary: str, project: Path, bakery: Path, failure: Path) -> Result[Output, str]:
-    """Build `project` without an owner, retaining one bakery while the one-shot native-plan failure is consumed."""
+    """Build `project`, retaining one bakery while the one-shot native-plan failure is consumed."""
     mut command = Command.new(binary)
     command.arg("build").arg(project.0).current_dir(project.0)
-    command.env("OVEN_OWNER", "off")
     command.env("INCAN_BAKERY", bakery.0).env("INCAN_TEST_PLAN_FAILURE_ONCE", failure.0)
     return command.output().map_err((error) => f"cannot run {binary}: {error}")
 
@@ -833,7 +832,7 @@ def started_test(binary: str, project: Path, name: str) -> Result[Child, str]:
     """Start `binary test` on one test source of `project`, collecting what it prints."""
     mut command = Command.new(binary)
     command.arg("test").arg(project.joinpath(f"tests/test_{name}.incn").0).current_dir(project.0)
-    command.env("OVEN_OWNER", "off").stdin(Stdio.null()).stdout(Stdio.piped()).stderr(Stdio.piped())
+    command.stdin(Stdio.null()).stdout(Stdio.piped()).stderr(Stdio.piped())
     return command.spawn().map_err((error) => f"cannot start {binary}: {error}")
 
 

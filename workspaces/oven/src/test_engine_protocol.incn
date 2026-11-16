@@ -112,7 +112,6 @@ def exercise_records_check(binary: str, source: Path, store: Path, project: Path
         .arg(source.0)
         .arg("--format")
         .arg("json")
-        .env("INCAN_ENGINE", "legacy")
         .env("INCAN_BAKERY", store.0)
         .output()
         .map_err((error) => str(error))?
@@ -130,7 +129,6 @@ def exercise_records_check(binary: str, source: Path, store: Path, project: Path
         .arg(source.0)
         .arg("--format")
         .arg("json")
-        .env("INCAN_ENGINE", "legacy")
         .env("INCAN_BAKERY", store.0)
         .output()
         .map_err((error) => str(error))?

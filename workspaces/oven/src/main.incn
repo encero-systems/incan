@@ -46,7 +46,7 @@ from runner_options import RUNNER_VALUE_OPTIONS, RunnerOptions, split_runner_opt
 from test_batches import batch_groups, batch_of, module_of
 from project_library import with_testing_features
 from inline_source import inline, inline_arguments
-from owner_endpoint import stop_owners
+from resident_ipc import retire_residents
 from observation import trace_boundary
 from installation_page import begin_command as begin_installation_command
 from home_views import selected_home_view
@@ -206,12 +206,12 @@ def dispatch(command: str, rest: list[str]) -> None:
                         return
         return
     if command == "--internal-readmit":
-        # A relink rewrote the installation it owns; this is its explicit re-admission, never a user command. Owners and
-        # compiler workers still hold the earlier installation, so they stop first. The arguments are the compiler files
+        # A relink rewrote the installation it owns; this is its explicit re-admission, never a user command. Resident
+        # compiler workers still hold the earlier installation, so they retire first. The arguments are the compiler files
         # the relink removed, whose admission records retire.
         begin_installation_command()
-        match stop_owners():
-            Err(reason) => fail(f"{invoked()}: cannot stop the home's owners before re-admission: {reason}", 1)
+        match retire_residents():
+            Err(reason) => fail(f"{invoked()}: cannot retire the home's compiler workers before re-admission: {reason}", 1)
             Ok(_) => pass
         match readmit_relinked_installation(rest):
             Err(reason) => fail(f"{invoked()}: cannot re-admit the relinked installation: {reason}", 1)

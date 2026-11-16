@@ -1,0 +1,231 @@
+"""
+Where a home's resident compiler workers listen, and the JSON documents they exchange with a command.
+
+A resident's lock lives in a private directory of the home; its socket and readiness socket live in the user's private
+endpoint directory, named after a digest of that directory, so a deep home still has a short socket path.
+
+A stale socket (nothing listens) is removed; a socket that something refuses, or an ordinary file in its place, is left
+alone and reported.
+"""
+
+from rust::std::fs import Permissions, metadata, set_permissions, symlink_metadata
+from rust::std::os::unix::fs import FileTypeExt, MetadataExt, PermissionsExt
+from rust::std::string import String as RustString
+from std.environ import get_or
+from std.fs import Path
+from std.json import JsonValue, parse
+from pub::incan_platform.ipc import Connection, dial_live
+from files import discard_file
+from home import owners_dir
+from unit_freshness import fingerprint
+
+# The longest socket path the system accepts, with room to spare.
+const MAX_SOCKET_PATH: int = 100
+# Read, write and search permission for the user alone (octal 700).
+const PRIVATE_DIRECTORY: u32 = 448
+# The seconds a command waits for a resident to answer that it retires.
+const RETIREMENT_SECONDS: u64 = 5
+# The suffix of a resident's socket file name.
+const SOCKET_SUFFIX: str = ".sock"
+# Where the user's endpoint directory is made when no environment root can keep every endpoint bounded.
+const ENDPOINT_ROOT: str = "/tmp"
+# The digits of a directory's digest that name its sockets in the endpoint directory.
+const DIRECTORY_DIGITS: int = 12
+# The longest fixed endpoint name after the directory prefix (`e-` plus 20 digest digits and `.sock`).
+const MAX_ENDPOINT_NAME: int = 27
+# The schema of the document that retires a resident. No resident serves it: one that reads it withdraws its socket.
+const RETIRE_SCHEMA: str = "incan.resident-retire/1"
+
+
+pub model Endpoint:
+    """Where one resident lives."""
+
+    pub generation: str
+    pub directory: str
+    pub socket: str
+    pub lock: str
+    pub ready: str
+
+
+pub def bindable(socket: str) -> Result[None, str]:
+    """Refuse a socket path longer than the system can bind, naming it."""
+    if len(socket) > MAX_SOCKET_PATH:
+        return Err(f"the socket path {socket} is longer than the system allows")
+    return Ok(None)
+
+
+pub def socket_prefix(directory: str) -> Result[str, str]:
+    """
+    The short, depth-independent path prefix of the sockets that belong to the private `directory`.
+
+    1. Make `directory` private; the user who owns it owns its sockets.
+    2. Select an absolute environment root only when the longest endpoint still fits, otherwise use `/tmp`.
+    3. Make that user's private endpoint directory: `i-<uid>` under the selected root.
+    4. Name the sockets by the physical identity of `directory`, so aliases share one and different homes never do.
+    """
+    # 1. The directory the sockets belong to is private to its user before anything is named after it.
+    prepare_directory(directory)?
+    uid = owner_of(directory)?
+    # 2. and 3. The endpoint directory belongs to the same user and nobody else can enter it.
+    endpoints = f"{endpoint_root(uid)}/i-{uid}"
+    prepare_endpoints(endpoints, uid)?
+    # 4. Device and inode identify the locked directory even when `/var` and `/private/var` spell it differently.
+    physical = metadata(f"{directory}").map_err((error) => f"{directory}: {error}")?
+    identity = fingerprint([str(physical.dev()), str(physical.ino())])?
+    return Ok(f"{endpoints}/{identity[0:DIRECTORY_DIGITS]}-")
+
+
+def endpoint_root(uid: u32) -> str:
+    """The first absolute environment root whose longest fixed endpoint fits, else the fixed short root."""
+    for configured in [get_or("XDG_RUNTIME_DIR", ""), get_or("TMPDIR", "")]:
+        root = without_trailing_slashes(configured)
+        prefix_length = len(root) + len(f"/i-{uid}/") + DIRECTORY_DIGITS + 1
+        if root.startswith("/") and prefix_length + MAX_ENDPOINT_NAME <= MAX_SOCKET_PATH:
+            return root
+    return ENDPOINT_ROOT
+
+
+def without_trailing_slashes(path: str) -> str:
+    """Remove incidental trailing separators without changing the filesystem location."""
+    mut normalized = path
+    while len(normalized) > 1 and normalized.endswith("/"):
+        normalized = normalized[:-1]
+    return normalized
+
+
+def owner_of(directory: str) -> Result[u32, str]:
+    """The user who owns `directory`."""
+    match metadata(f"{directory}"):
+        Ok(found) => return Ok(found.uid())
+        Err(error) => return Err(f"{directory}: {error}")
+
+
+def prepare_endpoints(directory: str, uid: u32) -> Result[None, str]:
+    """
+    Make the user's endpoint directory and refuse one that is a link, belongs to another user, or is open to others.
+
+    1. A link in its place is never followed.
+    2. Make it private, as any directory that holds endpoints.
+    3. It must belong to the user who owns the home.
+    """
+    # 1. A link could be swapped for another user's directory after the checks, so none is accepted.
+    match symlink_metadata(f"{directory}"):
+        Ok(found) =>
+            if found.file_type().is_symlink():
+                return Err(f"{directory} is a link")
+        Err(_) => pass
+    # 2. Creation, the mode and the refusal of a directory others can enter are those of every such directory.
+    prepare_directory(directory)?
+    # 3. A directory made by another user is refused even when its mode is private.
+    if owner_of(directory)? != uid:
+        return Err(f"{directory} belongs to another user")
+    return Ok(None)
+
+
+pub def attach(endpoint: Endpoint) -> Result[Option[Connection], str]:
+    """
+    Connect to a live resident. Nothing there is `None`; a socket nothing listens at is removed first; a live one that
+    refuses us, or an ordinary file in the socket's place, is an error and is left as it is.
+
+    1. No socket file means no resident.
+    2. Anything but a socket at that path is an error.
+    3. Connect; a socket nothing listens at is removed.
+    """
+    # 1. A path with nothing at it has no resident.
+    if not Path(endpoint.socket).exists():
+        return Ok(None)
+    # 2. Something that is not a socket is never removed or connected to.
+    require_socket(endpoint.socket)?
+    # 3. A socket nothing listens at is stale and goes; one that refuses us belongs to another command and stays.
+    return connect_or_clear(endpoint.socket)
+
+
+def require_socket(path: str) -> Result[None, str]:
+    """Refuse a path that holds anything but a socket."""
+    match metadata(f"{path}"):
+        Err(error) => return Err(f"{path}: {error}")
+        Ok(found) =>
+            if not found.file_type().is_socket():
+                return Err(f"{path} is not a socket")
+    return Ok(None)
+
+
+def connect_or_clear(path: str) -> Result[Option[Connection], str]:
+    """A connection to the resident at the socket `path`; a socket nothing listens at is removed and gives `None`."""
+    match dial_live(path)?:
+        Some(found) => return Ok(Some(found))
+        None =>
+            discard_file(Path(path))
+            return Ok(None)
+
+
+pub def prepare_directory(directory: str) -> Result[None, str]:
+    """
+    Make `directory`, private to the user, and refuse one that anyone else can enter.
+
+    1. Create it, with its parents.
+    2. Restrict it to the user.
+    3. Refuse it when group or others can still enter it.
+    """
+    # 1. The directory exists, with the parents it needs.
+    Path(directory).mkdir(true, true).map_err((error) => f"{directory}: {error.message()}")?
+    # 2. Only the user can enter it, whatever mode it was created with.
+    match set_permissions(f"{directory}", Permissions.from_mode(PRIVATE_DIRECTORY)):
+        Ok(_) => pass
+        Err(error) => return Err(f"cannot restrict {directory}: {error}")
+    # 3. A directory that group or others can still enter is never trusted with a socket.
+    match metadata(f"{directory}"):
+        Err(error) => return Err(f"{directory}: {error}")
+        Ok(found) =>
+            if int(found.permissions().mode()) % 64 != 0:
+                return Err(f"{directory} is accessible to others")
+    return Ok(None)
+
+
+pub def send_document(mut connected: Connection, document: JsonValue) -> Result[None, str]:
+    """Send one document as one frame, its payload the document's JSON text in UTF-8."""
+    payload = document.to_json().map_err((error) => error.message())?.encode("utf-8")
+    return connected.send(payload)
+
+
+pub def receive_document(mut connected: Connection) -> Result[JsonValue, str]:
+    """Read one frame and its document; a payload that is not UTF-8 JSON refuses it."""
+    payload = connected.receive()?
+    match RustString.from_utf8(payload):
+        Ok(text) => return parse(str(text)).map_err((error) => error.message())
+        Err(_) => return Err("the frame is not UTF-8")
+
+
+pub def retire_residents() -> Result[int, str]:
+    """Retire every resident compiler worker of this home. Returns how many answered."""
+    directory = owners_dir()?
+    if not directory.is_dir():
+        return Ok(0)
+    prefix = socket_prefix(directory.0)?
+    endpoints = Path(prefix).parent()
+    named = Path(prefix).name()
+    mut retired = 0
+    for entry in endpoints.iterdir().map_err((error) => f"cannot {error.message()}")?:
+        name = entry.name()
+        if name.startswith(named) and name.endswith(SOCKET_SUFFIX):
+            if retire_resident(entry):
+                retired += 1
+    return Ok(retired)
+
+
+def retire_resident(socket: Path) -> bool:
+    """Tell the resident listening at `socket` to retire. Whether one answered; a socket nobody listens at is removed."""
+    match dial_live(socket.0):
+        Err(_) => return false
+        Ok(found) =>
+            match found:
+                None =>
+                    discard_file(socket)
+                    return false
+                Some(live) =>
+                    mut resident = live
+                    resident.wait_at_most(RETIREMENT_SECONDS)
+                    # A resident that answered counts as retired, whether or not its reply arrives.
+                    _ = send_document(resident, JsonValue.object({"schema": JsonValue.string(RETIRE_SCHEMA)}))
+                    _ = resident.receive()
+                    return true

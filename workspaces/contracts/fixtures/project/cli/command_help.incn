@@ -10,7 +10,6 @@
 #   oven trust --help
 #   build --help
 #   fmt --help
-#   oven owner stop --help
 #   inspect codegraph --help
 #   mcp --help
 #   toolchain pack --help
@@ -25,7 +24,6 @@
 #   oven trust -h
 #   build -h
 #   fmt -h
-#   oven owner stop -h
 #   inspect codegraph -h
 #   mcp -h
 #   toolchain pack -h

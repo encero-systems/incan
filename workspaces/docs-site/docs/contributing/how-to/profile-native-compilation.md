@@ -13,14 +13,14 @@ incan run src/main.incn
 Edit its source, then capture the changed invocation in a fresh directory:
 
 ```sh
-mkdir -p /tmp/incan-native-trace && OVEN_OWNER=off INCAN_ENGINE_TRACE=/tmp/incan-native-trace INCAN_NATIVE_TIMING=1 incan run src/main.incn
+mkdir -p /tmp/incan-native-trace && INCAN_ENGINE_TRACE=/tmp/incan-native-trace INCAN_NATIVE_TIMING=1 incan run src/main.incn
 ```
 
-For a test unit, replace `run src/main.incn` with `test tests/test_value.incn`. `OVEN_OWNER=off` keeps the capture in this invocation's environment; a project owner can retain the tracing settings it inherited at startup. Change the source before capturing: an unchanged executable can be reused and has no new compiler phases to report. Keep successful test payloads distinct between measurement batches too; an operating system may recognize a binary it has already validated even when it was just rebuilt.
+For a test unit, replace `run src/main.incn` with `test tests/test_value.incn`. Change the source before capturing: an unchanged executable can be reused and has no new compiler phases to report. Keep successful test payloads distinct between measurement batches too; an operating system may recognize a binary it has already validated even when it was just rebuilt.
 
 The channel holds the native driver's `invocation` records in `engine-compiler-<pid>.jsonl`. `INCAN_NATIVE_TIMING`, when set, additionally writes rustc phase timings as `native_timing` records; `time` is seconds. It enables timing diagnostics within the pinned driver without granting unstable command-line options. Oven relays a resident compiler's diagnostics through the ordinary request console.
 
-The requested diagnostic settings select the resident project owner as well as the compiler worker. Enabling or disabling them takes effect on the next command, including when this project already has a running owner. The compiler phase timings also apply to hand-written Rust units compiled through the driver.
+The requested diagnostic settings select the compiler worker. Enabling or disabling them takes effect on the next command. The compiler phase timings also apply to hand-written Rust units compiled through the driver.
 
 ## Attribute the intervals
 
@@ -30,7 +30,7 @@ Within native compilation, inspect `macro_expand_crate`, `type_check_crate`, `MI
 
 The driver also emits `native-time: {"boundary":...,"elapsed":...,"interval":...}`. Seconds are measured from entry to that invocation and from its previous boundary. These records separate plan validation, shared-library preparation, argument/search preparation, rustc options, session setup, Incan declaration injection, expansion, native signature verification, analysis, dynamic-input observation and the combined codegen/link/teardown interval. Compare that last interval with rustc's nested codegen and link phases to locate teardown. `unit_descriptor` uses a separate origin immediately before reading the unit JSON. These opt-in measurements include diagnostic writes; they are not acceptance timings.
 
-Oven's `oven: prepare epoch=SECONDS boundary=NAME` records locate command entry, project and owner selection, owner receipt, current toolchain, prepared unit, source key, descriptor writing and worker selection/connection on the same Unix clock. Compare successive boundaries and the driver's first span to attribute work before compilation, including transport or scheduling gaps. Owner records are relayed with the reply, so use their timestamps rather than their display order.
+Oven's `oven: prepare epoch=SECONDS boundary=NAME` records locate command entry, descriptor writing, the compiler request and worker selection/connection on the same Unix clock. Compare successive boundaries and the driver's first span to attribute work before compilation, including transport or scheduling gaps.
 
 Oven writes `oven: launch epoch=SECONDS program=PATH` immediately before a program's `exec` or a collected test's spawn. Compare that timestamp with the observed first output, or test completion, to separate preparation from execution. That interval includes operating-system launch checks, dynamic loading and program work before the observation; the timestamp alone cannot distinguish those causes. It also includes writing the trace line. Program output and test outcome rules are unchanged.
 

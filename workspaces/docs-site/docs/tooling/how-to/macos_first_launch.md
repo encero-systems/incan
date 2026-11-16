@@ -27,4 +27,4 @@ Developer Tools permits the selected application to run local development softwa
 
 Change the source and repeat the build and two traced runs. Confirm that the commands come from the enabled application. Compare first execution with the unchanged second run and keep both traces. A `compiled (...)` line still indicates compiler work; Developer Tools does not make a stale executable reusable.
 
-For other rebuild causes, see [Troubleshooting](troubleshooting.md). [CLI reference](../reference/cli_reference.md#tracing) specifies `INCAN_ENGINE_TRACE`, and its environment variables `OVEN_OWNER`.
+For other rebuild causes, see [Troubleshooting](troubleshooting.md). [CLI reference](../reference/cli_reference.md#tracing) specifies `INCAN_ENGINE_TRACE`.

@@ -75,7 +75,6 @@ pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> Result[
             ("test", "oven test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]"),
             ("describe-unit", "oven describe-unit PATH [--unattended] [UNIT OPTIONS]"),
             ("build", "oven build [PATH [OUTPUT_DIR]] [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"),
-            ("owner stop", "oven owner stop"),
             ("bakery status", "oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE"),
             ("inspect dependencies", "oven inspect dependencies PATH [UNIT OPTIONS]"),
             ("inspect features", "oven inspect features [PATH] [--format text|json] [--features A,B] [--no-default-features] [--all-features]"),
@@ -96,7 +95,6 @@ pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> Result[
     assert command_help("incan", "fmt", ["--", "--help"]) == None
     assert command_help("incan", "inspect", ["codegraph", ".", "--query", "defs", "--help"]) == None
     assert command_help("incan", "nonexistent", ["--help"]) == None
-    assert command_help("oven", "owner", ["nonexistent", "--help"]) == None
     assert command_help("oven", "bakery", ["status", "--format", "--help"]) == None
     incan_run = command_help("incan", "run", ["--help"])
     oven_run = command_help("oven", "run", ["--help"])
@@ -120,7 +118,7 @@ pub def test_each_surface_runs_only_its_own_commands() -> None:
     `oven` names the `incan` command that runs a language command. The project commands run on both, and `--version`
     names the invoked surface.
     """
-    for command in [["describe-unit"], ["owner", "stop"], ["bakery", "status"], ["trust", "list"]]:
+    for command in [["describe-unit"], ["bakery", "status"], ["trust", "list"]]:
         assert command_help("incan", command[0], command[1:] + ["--help"]) == None
         assert misplaced("incan", command[0], command[1:]) == Some(f"incan: unknown command `{command[0]}`")
         assert misplaced("oven", command[0], command[1:]) == None

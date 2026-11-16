@@ -12,7 +12,7 @@ from engine_channel import Channel, SendOutcome
 from engine_messages import Message
 from engine_state import Identity
 from engine_wire import Refusal, RefusalKind, zero_id
-from owner_endpoint import bindable, prepare_directory, socket_prefix
+from resident_ipc import bindable, prepare_directory, socket_prefix
 from unit_freshness import fingerprint
 from files import discard_file
 from publication import publish

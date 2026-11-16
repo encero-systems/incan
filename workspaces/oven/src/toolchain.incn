@@ -378,7 +378,6 @@ def toolchain_of(document: JsonValue, directory: Path) -> Result[Toolchain, list
             codegraph_on_request=optional_flag(document, "codegraph_on_request")?,
             closure_anchors=optional_flag(document, "closure_anchors")?,
             console="",
-            worker_generation="",
             native_closures=NativeClosureInput(),
             registry_lock=optional_path(document, "registry_lock", directory)?,
             c_compiler=optional_path(document, "c_compiler", directory)?,

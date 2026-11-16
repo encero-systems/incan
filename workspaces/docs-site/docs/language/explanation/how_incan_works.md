@@ -12,6 +12,6 @@ Incan source compiles to native machine code through the pinned Rust compiler. D
 
 The project manifest supplies package identity, dependencies and features. Checked Body IR records language facts once. Lowering consumes those facts, and the native plan reaches rustc through its Rust adapter.
 
-Libraries publish checked contracts and native artifacts together. Standard packages use the same Loaf boundary. Oven can reuse unchanged executables and retain project preparation in a resident owner, while each program or test execution remains fresh.
+Libraries publish checked contracts and native artifacts together. Standard packages use the same Loaf boundary. Oven can reuse unchanged executables, while each program or test execution remains fresh.
 
 Source diagnostics and codegraph records expose compiler facts to tools. See [CLI reference](../../tooling/reference/cli_reference.md) for commands and [Architecture](../../contributing/explanation/architecture.md) for contributor boundaries.

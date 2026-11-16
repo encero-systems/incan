@@ -6,7 +6,6 @@
 #   oven test --nonexistent
 #   oven describe-unit --nonexistent
 #   oven build --nonexistent
-#   oven owner stop --nonexistent
 #   oven bakery status --nonexistent
 #   oven inspect dependencies --nonexistent
 #   oven --version --nonexistent

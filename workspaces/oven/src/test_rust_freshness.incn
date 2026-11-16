@@ -671,7 +671,7 @@ def probe_build(probe: Path) -> Result[Output, str]:
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     mut command = Command.new(binary)
     command.arg("build").arg(probe.joinpath("src/main.incn").0).arg("--profile").arg("release").current_dir(probe.0)
-    command.env("OVEN_OWNER", "off").env("OVEN_TRACE", "-").stdin(Stdio.null())
+    command.env("OVEN_TRACE", "-").stdin(Stdio.null())
     return command.output().map_err((error) => f"cannot run {binary}: {error}")
 
 
@@ -680,5 +680,5 @@ def standard_build(project: Path, stdlib: Path) -> Result[Output, str]:
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     mut command = Command.new(binary)
     command.arg("build").arg(project.0).arg("--profile").arg("release").current_dir(project.0)
-    command.env("INCAN_STDLIB", stdlib.0).env("OVEN_OWNER", "off").env("OVEN_TRACE", "-").stdin(Stdio.null())
+    command.env("INCAN_STDLIB", stdlib.0).env("OVEN_TRACE", "-").stdin(Stdio.null())
     return command.output().map_err((error) => f"cannot run {binary}: {error}")

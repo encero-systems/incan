@@ -88,7 +88,7 @@ pub def standard_packages(reader: ManifestReader = ManifestReader()) -> Result[l
 
 
 pub def owners_dir() -> Result[Path, str]:
-    """Where the resident owners of this home keep their sockets, locks and mailboxes: private to the user."""
+    """Where the resident compiler workers of this home keep their locks and console sinks: private to the user."""
     return Ok(home()?.joinpath("owners"))
 
 

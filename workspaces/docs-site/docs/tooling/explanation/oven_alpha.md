@@ -27,7 +27,7 @@ An authored project has Incan source and a `loaf.toml`. Oven resolves active dep
 
 Run, check, test and build take explicit paths. Format takes files or trees. Standard packages are ordinary Loaves supplied by the installed toolchain. Path dependencies are prepared before their consumers.
 
-Oven reuses unchanged executables and retains project preparation in resident owners. Test execution remains fresh. Its `reason` records in the [tracing](../reference/cli_reference.md#tracing) channel explain reuse and rebuild decisions.
+Oven reuses unchanged executables. Test execution remains fresh. Its `reason` records in the [tracing](../reference/cli_reference.md#tracing) channel explain reuse and rebuild decisions.
 
 For Rust procedural-macro tests, the macro library retains its host-domain identity. Test runtime dependencies retain their target-domain identity, allowing the test consumer to use the installed runtime without replacing its support generation.
 

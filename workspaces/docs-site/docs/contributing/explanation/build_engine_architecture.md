@@ -908,7 +908,7 @@ The platform is one Loaf, `incan_platform` in `loaves/platform`, between foundat
 
 | Component | One home | State | API contract | Two-home flags |
 | --- | --- | --- | --- | --- |
-| Service and lifecycle | Oven engine service | To be built | Store lock, handshake, drain and stop | Per-project owners (`owner_client`, `owner_service`, `owner_state`) retire at E7 |
+| Service and lifecycle | Oven engine service | To be built | Store lock, handshake, drain and stop | — |
 | Request capture and freshness | Engine capture | Reused in part: the first engine's retained-owner source reconciliation (#2192, #2194–#2196, #2202, #2203) | `Submit → Accepted → Captured`; reach, metadata-first checks, observer | `unit_freshness.incn` per-call freshness reads and stamps (see Unit identity) retire at E2 |
 | Ranked work graph | Engine graph | To be built | Frontier, dirty set, witness validation | — |
 | Scheduler | Engine scheduler | To be built | Tokens, fairness, batches | Runner-side group deadlines in `workspaces/contracts/src/batch.incn` retire in E5 |

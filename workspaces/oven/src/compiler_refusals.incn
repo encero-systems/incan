@@ -25,7 +25,7 @@ from driver_command import driver_command
 from compiler_worker import Completion, captured_resident
 from files import json_text, open_stream
 from observation import trace
-from owner_client import status_code
+from core_process import status_code
 from publication import publish_binary
 from toolchain import Toolchain
 from unit import UnitDescription
@@ -224,7 +224,7 @@ def withdraw(certificate: Path) -> None:
 
 
 def show(outcome: Completion, console: str) -> Result[i32, str]:
-    """Forward exact bytes to the foreground streams or the project owner's request-local console sinks."""
+    """Forward exact bytes to the foreground streams or the request's own console sinks."""
     if console != "":
         mut out = open_stream(f"{console}.out")?
         match out.write_all(outcome.output):

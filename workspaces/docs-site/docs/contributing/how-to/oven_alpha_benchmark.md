@@ -12,7 +12,7 @@ time incan build examples/simple/hello.incn
 mkdir -p trace && INCAN_ENGINE_TRACE=trace incan build examples/simple/hello.incn
 ```
 
-Measure with tracing disabled; use the separate traced invocation to explain the decision. `reused` means the executable was retained. `compiled (...)` explains an invalidation. Record the compiler version and whether the project owner was already running.
+Measure with tracing disabled; use the separate traced invocation to explain the decision. `reused` means the executable was retained. `compiled (...)` explains an invalidation. Record the compiler version.
 
 ## Separate execution from compilation
 

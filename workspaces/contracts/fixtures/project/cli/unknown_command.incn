@@ -5,7 +5,6 @@
 #   toolchain nonexistent
 #   _run-built target/incan/debug/bin/unknown_command
 #   describe-unit src/main.incn
-#   owner stop
 #   bakery status
 #   bakery gc --help
 #   inspect dependencies src/main.incn

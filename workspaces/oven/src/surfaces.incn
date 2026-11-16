@@ -1,6 +1,6 @@
 """
 The two command surfaces of one Oven program (RFC 118). `oven` is the project command: running, checking, testing,
-building and describing units, inspecting their operational facts, the bakery and resident owners. `incan` is the
+building and describing units, inspecting their operational facts and the bakery. `incan` is the
 language command: diagnostics, formatting, semantic inspection, the context server and the toolchain. Both run the
 project commands `run`, `check`, `test` and `build`, which on `incan` are shallow aliases of the same Oven operation.
 
@@ -19,7 +19,6 @@ pub const INCAN: str = "incan"
 # Commands only `oven` runs; `inspect` is split by its subcommand below.
 const OVEN_COMMANDS: FrozenList[str] = [
     "describe-unit",
-    "owner",
     "bakery",
     "lock",
     "add",

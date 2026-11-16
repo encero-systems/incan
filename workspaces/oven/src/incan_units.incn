@@ -215,7 +215,7 @@ pub def obtain_executable(
     """
     Obtain the executable of `key` from the home bakery and make `output` a view of it.
 
-    The caller reconciled the unit's inputs into `key`, so a resident owner can answer from what it retains.
+    The caller reconciled the unit's inputs into `key`.
     Development linkage has its own identity, and every shared library is validated before its fact is used.
     Execution starts the requested view, so the host's executable-path lookup and the program name agree.
 

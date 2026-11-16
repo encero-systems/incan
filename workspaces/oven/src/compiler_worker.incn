@@ -26,10 +26,9 @@ from pub::incan_worker_host.record_protocol import (
     encode_record_message,
 )
 from observation import trace, trace_boundary
-from owner_client import status_code
-from owner_endpoint import Endpoint, attach, bindable, prepare_directory, socket_prefix
+from core_process import status_code
+from resident_ipc import Endpoint, attach, bindable, prepare_directory, receive_document, send_document, socket_prefix
 from decimal_text import digits_only
-from owner_protocol import receive_document, send_document
 from toolchain import Toolchain
 from request_directory import working_directory
 from unit_freshness import compiler_fingerprint, fingerprint
@@ -66,11 +65,11 @@ pub def compile_resident(toolchain: Toolchain, arguments: list[str]) -> Result[O
     """
     Run a served invocation through the shared worker, or keep the cold path when startup is unavailable.
 
-    1. Select private request console sinks, retaining a project owner's existing sinks.
+    1. Select private request console sinks, retaining the sinks an engine request already names.
     2. Submit the ordinary compiler invocation without replaying a submitted request.
     3. A foreground command relays its original console bytes and removes its temporary sinks.
     """
-    # 1. A foreground command owns private sinks; a project owner already supplied its request's sinks.
+    # 1. A foreground command owns private sinks; an engine request already names its own.
     match capture_for(toolchain):
         Err(reason) =>
             trace(f"compiler worker: cold path ({reason})")
@@ -79,7 +78,7 @@ pub def compile_resident(toolchain: Toolchain, arguments: list[str]) -> Result[O
         Ok(capturing) =>
             # 2. Only a failure before submission permits the original single-process path.
             compiled = compile_at(capturing, arguments)
-            # 3. Foreground console bytes stay outside the protocol, exactly as for a project owner.
+            # 3. Foreground console bytes stay outside the protocol, exactly as an engine request's do.
             if toolchain.console == "":
                 relay_console(capturing.console)?
             return compiled
@@ -90,7 +89,7 @@ pub def captured_resident(toolchain: Toolchain, arguments: list[str]) -> Result[
     Run a served invocation through the shared worker and return its completion with the exact bytes it wrote,
     relaying nothing; `None` keeps the cold path when startup is unavailable.
 
-    1. Select private request console sinks, even for a project owner, so the caller decides where the bytes go.
+    1. Select private request console sinks, even for an engine request, so the caller decides where the bytes go.
     2. Submit the ordinary compiler invocation without replaying a submitted request.
     3. Collect and withdraw both sinks; a failed submission relays what it wrote to this command's streams.
     """
@@ -141,7 +140,7 @@ pub def activate_record(toolchain: Toolchain, request: RecordMessage) -> Result[
 
 
 def capture_for(toolchain: Toolchain) -> Result[Toolchain, str]:
-    """The original owner sinks, or private request-local sinks for a foreground native compilation."""
+    """The sinks the request already names, or private request-local sinks for a foreground native compilation."""
     if toolchain.console != "":
         return Ok(toolchain)
     directory = owners_dir()?
@@ -337,9 +336,7 @@ def slot_connection(toolchain: Toolchain, endpoint: Endpoint) -> Result[Connecti
 
 
 def generation_of(toolchain: Toolchain) -> Result[str, str]:
-    """The generation a resident owner retained, or the one this invocation's compiler and environment select."""
-    if toolchain.worker_generation != "":
-        return Ok(toolchain.worker_generation)
+    """The worker generation this invocation's compiler and environment select."""
     return generation_for(toolchain, compiler_fingerprint(toolchain)?)
 
 
@@ -363,7 +360,6 @@ pub def slot_endpoint(directory: Path, generation: str, slot: int) -> Result[End
             socket=socket,
             lock=directory.joinpath(f"c-{generation}-{slot}.lock").0,
             ready=ready,
-            mailbox="",
         ),
     )
 
@@ -410,9 +406,8 @@ pub def generation_for(toolchain: Toolchain, compiler: str) -> Result[str, str]:
     process's inherited configuration.
 
     The record set is no unit input, but a worker keeps reading the set it was launched with, so another set needs
-    another worker. A resident owner may retain this digest only while it watches all compiler inputs and its
-    environment remains unchanged. Every other caller derives it for the request; source, checking and compilation are
-    never retained.
+    another worker. Every caller derives this digest for its request; source, checking and compilation are never
+    retained.
     """
     mut selected = [SCHEMA, RECORD_SCHEMA, compiler]
     if let Some(pin) = toolchain.compiler_records:
@@ -450,7 +445,7 @@ def unicode_environment(value: OsString) -> Result[str, str]:
 
 def launch(toolchain: Toolchain, endpoint: Endpoint) -> Result[None, str]:
     """
-    Start the exact driver detached from the owner, with protocol and console on separate streams. The worker decides
+    Start the exact driver detached from its caller, with protocol and console on separate streams. The worker decides
     its own retirement, after its idle period among others.
     """
     mut listener = listen(f"{endpoint.ready}", false)?

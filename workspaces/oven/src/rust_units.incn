@@ -290,7 +290,7 @@ def start_scheduled_unit(
         command.arg("--features").arg(",".join(request.features))
     for name in sorted([name for name in request.substitutes.keys()]):
         command.arg("--substitute").arg(f"{name}={request.substitutes[name]}")
-    command.env("OVEN_OWNER", "off").env("INCAN_NO_BANNER", "1")
+    command.env("INCAN_NO_BANNER", "1")
     command.stdin(Stdio.null()).stdout(output).stderr(errors)
     child = command.spawn().map_err((error) => f"cannot start scheduled build for {facet.project}: {error}")?
     return Ok(RunningUnit(position=position, child=Rc.new(RefCell.new(child)), result=result, log=log))

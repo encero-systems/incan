@@ -118,7 +118,7 @@ pub def deployment_configuration(entries: list[tuple[str, str]]) -> list[str]:
     Normalize deployment-selection inputs without duplicating rustc's platform/default policy.
 
     Names and exact values distinguish absent, empty and explicit settings, so another selection is another question
-    to rustc and another resident owner.
+    to rustc and to a resident compiler worker.
     """
     return sorted([f"{name}={value}" for name, value in entries if name.endswith("_DEPLOYMENT_TARGET")])
 
