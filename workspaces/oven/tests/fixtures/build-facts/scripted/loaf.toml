@@ -17,7 +17,7 @@ profile = "release"
 features = ["default", "std"]
 cfg = ["fast_arithmetic=\"64\"", "has_neon"]
 out = [{ name = "table.rs", path = "out/table.rs", digest = "sha256:ff0adc19232b0da24c8f6497962f28339804fc38c1080c513a69f9829fbae74c" }]
-environment = { SCRIPTED_TABLE = "crc32" }
+environment = [{ name = "SCRIPTED_TABLE", literal = "crc32" }, { name = "SCRIPTED_TABLES", out = "." }]
 harvested-from = "evidence only"
 
 [[rust.facts]]
