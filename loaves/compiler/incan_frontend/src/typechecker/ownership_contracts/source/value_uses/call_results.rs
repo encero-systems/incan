@@ -8,10 +8,10 @@ use crate::ast::{CallArg, Expr, Span, Spanned};
 use crate::symbols::ResolvedType;
 
 impl Builder<'_> {
-    /// Authenticate one direct dependency-free Package `Result` call as the temporary receiver of the exact
+    /// Authenticate one direct dependency-free source `Result` call as the temporary receiver of the exact
     /// selected capture-free builtin `Result.map_err` call. This remains a scoped call-result observation: carrier
     /// constructors, returned views, stored Results and captureful callbacks do not become generally independent.
-    pub(super) fn closed_package_result_receiver(
+    pub(super) fn closed_source_result_receiver(
         &self,
         value: &Spanned<Expr>,
         invocation: Span,
@@ -52,7 +52,10 @@ impl Builder<'_> {
         };
         (inner.kind == InputCallKind::Ordinary
             && inner.owner.as_ref() == Some(&self.owner)
-            && matches!(inner.callee.origin, incan_semantics_core::SymbolOrigin::Package { .. })
+            && matches!(
+                inner.callee.origin,
+                incan_semantics_core::SymbolOrigin::Module(_) | incan_semantics_core::SymbolOrigin::Package { .. }
+            )
             && self
                 .checker
                 .type_info
@@ -70,6 +73,6 @@ impl Builder<'_> {
                 .is_ok_and(|dependencies| dependencies.is_none())
             && !self.checker.native_result_is_independent(value.span)
             && !self.checked_clone_call(value.span))
-            .then_some(callback.span)
+        .then_some(callback.span)
     }
 }

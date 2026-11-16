@@ -107,6 +107,55 @@ impl CheckedInputBody<'_> {
 }
 
 impl TypeCheckInfo {
+    /// Resolve one checked nominal spelling to its retained declaration identity. An exact key is authoritative;
+    /// a leaf-name fallback exists only when every retained match is the same canonical declaration. Distinct
+    /// same-leaf declarations therefore refuse instead of depending on map iteration order.
+    pub(in crate::typechecker) fn checked_nominal_identity(&self, name: &str) -> Option<&CanonicalSymbolId> {
+        if let Some(exact) = self.declarations.named_type_identities.get(name) {
+            return Some(exact);
+        }
+        let mut matches = self
+            .declarations
+            .named_type_identities
+            .values()
+            .filter(|identity| identity.declaration_name == name);
+        let first = matches.next()?;
+        matches.all(|identity| identity == first).then_some(first)
+    }
+
+    /// Compare checked value types through exact structure and the fail-closed retained nominal resolver. Generic
+    /// arguments recurse so a transparent `Result` success type and a direct nominal result use one policy.
+    pub(in crate::typechecker) fn same_checked_value_type(
+        &self,
+        actual: &crate::symbols::ResolvedType,
+        expected: &crate::symbols::ResolvedType,
+    ) -> bool {
+        use crate::symbols::ResolvedType;
+
+        if actual == expected {
+            return true;
+        }
+        let same_nominal = |actual: &str, expected: &str| {
+            actual == expected
+                || matches!(
+                    (self.checked_nominal_identity(actual), self.checked_nominal_identity(expected)),
+                    (Some(actual), Some(expected)) if actual == expected
+                )
+        };
+        match (actual, expected) {
+            (ResolvedType::Named(actual), ResolvedType::Named(expected)) => same_nominal(actual, expected),
+            (ResolvedType::Generic(actual, actual_args), ResolvedType::Generic(expected, expected_args)) => {
+                same_nominal(actual, expected)
+                    && actual_args.len() == expected_args.len()
+                    && actual_args
+                        .iter()
+                        .zip(expected_args)
+                        .all(|(actual, expected)| self.same_checked_value_type(actual, expected))
+            }
+            _ => false,
+        }
+    }
+
     /// Authenticate an ordinary header affirmatively, not by absence of explicit metadata. Exact canonical
     /// identity and unchanged parameters preserve declaration ABI. A generic binder that does not change these
     /// parameters is not itself an access change; parameter substitution requires separate retained evidence.
@@ -507,7 +556,15 @@ impl TypeCheckInfo {
             )?;
             for argument in &invocation.arguments {
                 let access = crate::ownership_metadata::direct_input_access(contract, argument.slot)?;
-                if argument.access != access {
+                let classified_move = graph
+                    .value_uses
+                    .get(&argument.span)
+                    .is_some_and(|value_use| value_use.kind == flow::ValueUseKind::Move);
+                if argument.access != access
+                    && !(access == incan_semantics_core::IncanInputAccess::Inferred
+                        && argument.access == incan_semantics_core::IncanInputAccess::Owned
+                        && classified_move)
+                {
                     return Err("invocation argument access differs from the selected parameter");
                 }
                 if let Some(id) = argument.loan {

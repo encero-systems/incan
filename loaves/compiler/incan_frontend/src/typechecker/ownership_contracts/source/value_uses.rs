@@ -22,11 +22,8 @@ pub(super) enum ValueUseContext<'a> {
     OrdinaryArgument(&'a CallableParam),
     /// One exact constructor field stores the classified value.
     ConstructorField(&'a ResolvedType),
-    /// One selected builtin call borrows a direct independent Package call result as its receiver.
-    CallReceiver {
-        invocation: Span,
-        arguments: &'a [CallArg],
-    },
+    /// One selected builtin call observes a direct independent source-call result as its receiver.
+    CallReceiver { invocation: Span, arguments: &'a [CallArg] },
     /// One inferred assignment extracts a single independent enum payload.
     MatchAssignment(&'a [Spanned<MatchArm>]),
 }
@@ -60,20 +57,29 @@ impl Builder<'_> {
                     match_payload: None,
                     result_map_err: None,
                 })),
-            ValueUseContext::OrdinaryArgument(parameter) => Ok(self
-                .ordinary_read(value, &parameter.ty)
-                .then_some(ValueUsePlan {
-                    kind: ValueUseKind::Read,
+            ValueUseContext::OrdinaryArgument(parameter) => {
+                let kind = if self.ordinary_read(value, &parameter.ty) {
+                    Some(ValueUseKind::Read)
+                } else if self.closed_call_result(value, &parameter.ty) {
+                    Some(ValueUseKind::CallResult)
+                } else if self.ordinary_move(value, parameter)? {
+                    Some(ValueUseKind::Move)
+                } else {
+                    None
+                };
+                Ok(kind.map(|kind| ValueUsePlan {
+                    kind,
                     independent_local: None,
                     match_payload: None,
                     result_map_err: None,
-                })),
+                }))
+            }
             ValueUseContext::ConstructorField(expected) => {
                 let kind = if self.constructor_move(value, expected)? {
                     Some(ValueUseKind::Move)
                 } else if self.constructor_read(value, expected)? {
                     Some(ValueUseKind::Read)
-                } else if self.closed_try_call(value, expected) {
+                } else if self.closed_call_result(value, expected) {
                     Some(ValueUseKind::CallResult)
                 } else {
                     None
@@ -85,11 +91,8 @@ impl Builder<'_> {
                     result_map_err: None,
                 }))
             }
-            ValueUseContext::CallReceiver {
-                invocation,
-                arguments,
-            } => Ok(self
-                .closed_package_result_receiver(value, invocation, arguments)
+            ValueUseContext::CallReceiver { invocation, arguments } => Ok(self
+                .closed_source_result_receiver(value, invocation, arguments)
                 .map(|callback| ValueUsePlan {
                     kind: ValueUseKind::CallResult,
                     independent_local: None,
@@ -100,14 +103,14 @@ impl Builder<'_> {
                         callback,
                     }),
                 })),
-            ValueUseContext::MatchAssignment(arms) => Ok(self
-                .match_payload(value, arms)?
-                .map(|payload| ValueUsePlan {
+            ValueUseContext::MatchAssignment(arms) => {
+                Ok(self.match_payload(value, arms)?.map(|payload| ValueUsePlan {
                     kind: ValueUseKind::Move,
                     independent_local: None,
                     match_payload: Some(payload),
                     result_map_err: None,
-                })),
+                }))
+            }
         }
     }
 
@@ -270,12 +273,7 @@ impl Builder<'_> {
             span: self.owner.declaration_span,
             reason: "classified access is outside callable".into(),
         })?;
-        let super::Event::Access {
-            place,
-            access,
-            through,
-        } = &retained.event
-        else {
+        let super::Event::Access { place, access, through } = &retained.event else {
             return Err(Unavailable {
                 span: retained.span,
                 reason: "classified value has no retained access".into(),
@@ -310,8 +308,16 @@ impl Builder<'_> {
                 .locals
                 .get(destination)
                 .is_some_and(|permission| !permission.exclusive && !permission.writable && permission.transferable)
-            && self.checker.type_info.resolved_operator_call(assignment.value.span).is_none()
-            && self.checker.type_info.resolved_write_type(assignment.name_span, &assignment.name) == Some(result)
+            && self
+                .checker
+                .type_info
+                .resolved_operator_call(assignment.value.span)
+                .is_none()
+            && self
+                .checker
+                .type_info
+                .resolved_write_type(assignment.name_span, &assignment.name)
+                == Some(result)
             && self.checker.is_clone_type(result)
             && !self.checker.type_holds_borrow(result)
             && !self.checker.type_holds_native_loan(result)
@@ -334,7 +340,11 @@ impl Builder<'_> {
 
     /// Whether one immutable ordinary slot may read the exact checked stored projection.
     fn ordinary_read(&mut self, value: &Spanned<Expr>, expected: &ResolvedType) -> bool {
-        if self.checker.type_info.expr_type(value.span) != Some(expected)
+        if !self
+            .checker
+            .type_info
+            .expr_type(value.span)
+            .is_some_and(|actual| self.checker.type_info.same_checked_value_type(actual, expected))
             || !self.checker.is_clone_type(expected)
             || self.checker.type_holds_borrow(expected)
             || self.checker.type_holds_native_loan(expected)
@@ -352,9 +362,11 @@ impl Builder<'_> {
             || self.graph.local_loans.contains_key(identity)
             || self.graph.dependent_locals.contains_key(identity)
             || self.graph.owned_locals.contains_key(identity)
-            || !self.graph.permissions.get(&path.place.root).is_some_and(|permission| {
-                !permission.exclusive && !permission.writable && permission.transferable
-            })
+            || !self
+                .graph
+                .permissions
+                .get(&path.place.root)
+                .is_some_and(|permission| !permission.exclusive && !permission.writable && permission.transferable)
         {
             return false;
         }
@@ -363,15 +375,56 @@ impl Builder<'_> {
             [super::Projection::Element(_), super::Projection::Field(field)] => {
                 identity.kind == SemanticSourceTargetKind::Local
                     && field.kind == SemanticSourceTargetKind::Field
-                    && matches!(self.checker.type_info.expr_type(value.span), Some(actual) if actual == expected)
+                    && self
+                        .checker
+                        .type_info
+                        .expr_type(value.span)
+                        .is_some_and(|actual| self.checker.type_info.same_checked_value_type(actual, expected))
             }
             _ => false,
         }
     }
 
-    /// Whether one constructor field consumes a whole plain enum Parameter or whole independent builtin-list Local.
+    /// Whether one immutable ordinary slot consumes an exact whole owned Parameter once. Borrowed roots, Copy
+    /// values, projections, aliases and previously constrained parameters retain their existing routes.
+    fn ordinary_move(&mut self, value: &Spanned<Expr>, parameter: &CallableParam) -> Result<bool, Unavailable> {
+        if parameter.is_mut
+            || !self
+                .checker
+                .type_info
+                .expr_type(value.span)
+                .is_some_and(|actual| self.checker.type_info.same_checked_value_type(actual, &parameter.ty))
+            || self.copy_value(&parameter.ty)
+            || self.checker.type_holds_borrow(&parameter.ty)
+            || self.checker.type_holds_native_loan(&parameter.ty)
+        {
+            return Ok(false);
+        }
+        let Some(path) = self.optional_place(value)? else {
+            return Ok(false);
+        };
+        if path.through.is_some()
+            || !path.place.projection.is_empty()
+            || self.borrowed_inputs.contains(&path.place.root)
+            || self.constrained.contains(&path.place.root)
+        {
+            return Ok(false);
+        }
+        Ok(matches!(&path.place.root, Root::Binding(identity)
+        if identity.kind == SemanticSourceTargetKind::Parameter
+            && self.graph.permissions.get(&path.place.root).is_some_and(|permission| {
+                !permission.exclusive && !permission.writable && permission.transferable
+            })))
+    }
+
+    /// Whether one constructor field consumes a whole plain enum Parameter, one exact immutable Local, or one
+    /// independent builtin-list Local.
     fn constructor_move(&mut self, value: &Spanned<Expr>, expected: &ResolvedType) -> Result<bool, Unavailable> {
-        if self.checker.type_info.expr_type(value.span) != Some(expected)
+        if !self
+            .checker
+            .type_info
+            .expr_type(value.span)
+            .is_some_and(|actual| self.checker.type_info.same_checked_value_type(actual, expected))
             || self.checker.type_holds_borrow(expected)
             || self.checker.type_holds_native_loan(expected)
         {
@@ -380,7 +433,9 @@ impl Builder<'_> {
         let Some(path) = self.optional_place(value)? else {
             return Ok(false);
         };
-        if path.through.is_some() || !path.place.projection.is_empty() || self.borrowed_inputs.contains(&path.place.root)
+        if path.through.is_some()
+            || !path.place.projection.is_empty()
+            || self.borrowed_inputs.contains(&path.place.root)
         {
             return Ok(false);
         }
@@ -397,6 +452,17 @@ impl Builder<'_> {
             && matches!(expected,
                 ResolvedType::Named(owner) | ResolvedType::Generic(owner, _)
                     if matches!(self.checker.lookup_type_info(owner), Some(TypeInfo::Enum(_))));
+        let whole_immutable_local = identity.kind == SemanticSourceTargetKind::Local
+            && !self.aliases.contains_key(identity)
+            && !self.graph.local_loans.contains_key(identity)
+            && !self.graph.dependent_locals.contains_key(identity)
+            && !self.graph.owned_locals.contains_key(identity)
+            && !self.constrained.contains(&path.place.root)
+            && self
+                .graph
+                .permissions
+                .get(&path.place.root)
+                .is_some_and(|permission| !permission.exclusive && !permission.writable && permission.transferable);
         let whole_local_list = identity.kind == SemanticSourceTargetKind::Local
             && !self.independent_locals.contains(identity)
             && !self.graph.local_loans.contains_key(identity)
@@ -405,7 +471,7 @@ impl Builder<'_> {
             && matches!(expected,
                 ResolvedType::Generic(name, arguments)
                     if collections::from_str(name) == Some(CollectionTypeId::List) && arguments.len() == 1);
-        Ok(transferable && (plain_enum_parameter || whole_local_list))
+        Ok(transferable && (plain_enum_parameter || whole_immutable_local || whole_local_list))
     }
 
     /// Whether one constructor field reads a scalar element from an authenticated independent local snapshot.
@@ -416,40 +482,62 @@ impl Builder<'_> {
         Ok(matches!(value.node, Expr::Index(..)))
     }
 
-    /// Whether one direct ordinary `Result` call has a dependency-free success payload equal to the field type.
-    fn closed_try_call(&self, value: &Spanned<Expr>, expected: &ResolvedType) -> bool {
-        let Expr::Try(inner) = &value.node else {
-            return false;
+    /// Whether one exact selected call, optionally unwrapped by `?`, has a dependency-free result equal to the
+    /// ordinary slot. This classifies the fresh result itself; stored results retain the ordinary-place refusal.
+    fn closed_call_result(&self, value: &Spanned<Expr>, expected: &ResolvedType) -> bool {
+        let (call_expression, tried) = match &value.node {
+            Expr::Call(..) | Expr::MethodCall(..) => (value, false),
+            Expr::Try(inner) if matches!(inner.node, Expr::Call(..) | Expr::MethodCall(..)) => (inner.as_ref(), true),
+            _ => return false,
         };
-        let Expr::Call(..) = &inner.node else {
-            return false;
-        };
-        if self.checker.type_info.expr_type(value.span) != Some(expected)
+        if !self
+            .checker
+            .type_info
+            .expr_type(value.span)
+            .is_some_and(|actual| self.checker.type_info.same_checked_value_type(actual, expected))
             || self.checker.type_holds_borrow(expected)
             || self.checker.type_holds_native_loan(expected)
         {
             return false;
         }
-        let Some(call) = self.checker.type_info.protocols.explicit_input_calls.get(&inner.span) else {
+        let Some(call) = self
+            .checker
+            .type_info
+            .protocols
+            .explicit_input_calls
+            .get(&call_expression.span)
+        else {
             return false;
         };
         let Ok(contract) = self.checker.type_info.selected_input_contract(call) else {
             return false;
         };
-        call.kind == super::super::InputCallKind::Ordinary
-            && call.owner.as_ref() == Some(&self.owner)
-            && contract.is_none()
-            && matches!(self.checker.type_info.expr_type(inner.span),
-                Some(ResolvedType::Generic(name, arguments))
-                    if collections::from_str(name) == Some(CollectionTypeId::Result)
-                        && arguments.first() == Some(expected)
-                        && arguments.len() == 2)
+        matches!(
+            call.kind,
+            super::super::InputCallKind::Ordinary | super::super::InputCallKind::Explicit
+        ) && call.owner.as_ref() == Some(&self.owner)
+            && crate::ownership_metadata::returned_view(contract).is_ok_and(|view| view.is_none())
+            && crate::ownership_metadata::owned_result(contract).is_ok_and(|owned| owned.is_none())
+            && if tried {
+                matches!(self.checker.type_info.expr_type(call_expression.span),
+                    Some(ResolvedType::Generic(name, arguments))
+                        if collections::from_str(name) == Some(CollectionTypeId::Result)
+                            && arguments
+                                .first()
+                                .is_some_and(|actual| self.checker.type_info.same_checked_value_type(actual, expected))
+                            && arguments.len() == 2)
+            } else {
+                self.checker
+                    .type_info
+                    .expr_type(call_expression.span)
+                    .is_some_and(|actual| self.checker.type_info.same_checked_value_type(actual, expected))
+            }
             && self
                 .checker
-                .native_result_dependencies(inner.span)
+                .native_result_dependencies(call_expression.span)
                 .is_ok_and(|dependencies| dependencies.is_none())
-            && !self.checker.native_result_is_independent(inner.span)
-            && !self.checked_clone_call(inner.span)
+            && !self.checker.native_result_is_independent(call_expression.span)
+            && !self.checked_clone_call(call_expression.span)
     }
 
     /// Select one continuing canonical enum-payload arm; every other arm binds no payload and terminates.

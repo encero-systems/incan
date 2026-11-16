@@ -3,11 +3,7 @@
 use super::*;
 
 /// Require one named imported body to retain a conflict-free checked graph on both dependency routes.
-fn require_package_checked(
-    provider: &str,
-    consumer: &str,
-    owner_name: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn require_package_checked(provider: &str, consumer: &str, owner_name: &str) -> Result<(), Box<dyn std::error::Error>> {
     for (route, checker) in super::one_type::package_consumer_checkers(provider, consumer)? {
         if !checker.errors.is_empty() {
             return Err(format!("{route}: {owner_name} produced diagnostics: {:?}", checker.errors).into());
@@ -41,8 +37,8 @@ fn require_package_checked(
 /// The exact outer invocation, receiver and capture-free callback are one current-source call-result classification;
 /// deleting, substituting or transplanting any part makes full replay refuse instead of skipping closure storage.
 #[test]
-fn signature_block_value_use_mutations_reject_map_err_callback_substitution()
--> Result<(), Box<dyn std::error::Error>> {
+fn signature_block_value_use_mutations_reject_map_err_callback_substitution() -> Result<(), Box<dyn std::error::Error>>
+{
     let provider = "pub def decode(value: int) -> Result[int, str]:\n    return Ok(value)\n";
     let consumer = "from views import decode\n\nenum Fault:\n    Malformed\ndef use(value: Borrowed[int]) -> Result[int, Fault]:\n    decoded = decode(value).map_err((_) => Fault.Malformed)?\n    return Ok(decoded)\n";
     let tokens = crate::lexer::lex(consumer).map_err(|errors| format!("{errors:?}"))?;
@@ -192,8 +188,7 @@ fn signature_block_value_use_mutations_reject_map_err_callback_substitution()
 /// classification feeds builtin `map_err` and the later constructor routes without turning stored or captureful
 /// Result values into generally independent temporaries.
 #[test]
-fn signature_block_classifies_package_map_err_and_decoded_record()
--> Result<(), Box<dyn std::error::Error>> {
+fn signature_block_classifies_package_map_err_and_decoded_record() -> Result<(), Box<dyn std::error::Error>> {
     let scalar_provider = "pub def decode(value: int) -> Result[int, str]:\n    return Ok(value)\n";
     let captureful = "from views import decode\n\nenum Fault:\n    Malformed\n\ndef use(value: Borrowed[int]) -> Result[int, Fault]:\n    fault = Fault.Malformed\n    decoded = decode(value).map_err((_) => fault)?\n    return Ok(decoded)\n";
     for (route, checker) in super::one_type::package_consumer_checkers(scalar_provider, captureful)? {
@@ -215,7 +210,10 @@ fn signature_block_classifies_package_map_err_and_decoded_record()
         );
         assert!(
             !checker.errors.is_empty()
-                && checker.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123"))
+                && checker
+                    .errors
+                    .iter()
+                    .all(|error| error.stable_code() == Some("INCAN-T0123"))
         );
     }
 

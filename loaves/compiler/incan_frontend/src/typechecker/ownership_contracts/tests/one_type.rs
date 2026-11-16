@@ -23,7 +23,7 @@ fn consumer_errors(
 }
 
 /// Check both authentic dependency routes while retaining their complete source-flow facts for ownership tests.
-fn consumer_checkers(
+pub(super) fn consumer_checkers(
     provider: &str,
     consumer: &str,
 ) -> Result<Vec<(&'static str, TypeChecker)>, Box<dyn std::error::Error>> {

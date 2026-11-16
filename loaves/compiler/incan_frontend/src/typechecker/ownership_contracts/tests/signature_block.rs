@@ -22,12 +22,7 @@ fn require_checked(checker: &TypeChecker, owner: &str) -> Result<(), Box<dyn std
 }
 
 /// Require one body to refuse at the current T0123 boundary before a positive route is admitted.
-fn require_unavailable(
-    source: &str,
-    owner: &str,
-    reason: &str,
-    stop: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn require_unavailable(source: &str, owner: &str, reason: &str, stop: &str) -> Result<(), Box<dyn std::error::Error>> {
     let checker = checked(source)?;
     let flow = checker
         .type_info
@@ -136,7 +131,12 @@ fn signature_block_value_use_mutations_reject_access_substitution() -> Result<()
     let first_span = *repointed
         .value_uses
         .iter()
-        .find(|(_, value_use)| value_use.accesses.first().is_some_and(|access| access.node == first.node))
+        .find(|(_, value_use)| {
+            value_use
+                .accesses
+                .first()
+                .is_some_and(|access| access.node == first.node)
+        })
         .map(|(span, _)| span)
         .ok_or("missing first classification")?;
     repointed
@@ -155,7 +155,10 @@ fn signature_block_value_use_mutations_reject_access_substitution() -> Result<()
         .value_uses
         .values_mut()
         .find(|value_use| {
-            value_use.accesses.iter().any(|access| access.role == flow::ValueUseRole::MatchSubject)
+            value_use
+                .accesses
+                .iter()
+                .any(|access| access.role == flow::ValueUseRole::MatchSubject)
         })
         .ok_or("missing match classification")?;
     let [subject, payload] = match_use.accesses.as_mut_slice() else {
@@ -169,8 +172,7 @@ fn signature_block_value_use_mutations_reject_access_substitution() -> Result<()
 /// Immutable ordinary arguments may read only authenticated independent storage projections. Explicit ownership,
 /// mutable slots and borrowed storage remain outside the read classification.
 #[test]
-fn signature_block_classifies_snapshot_and_element_field_reads()
--> Result<(), Box<dyn std::error::Error>> {
+fn signature_block_classifies_snapshot_and_element_field_reads() -> Result<(), Box<dyn std::error::Error>> {
     let snapshot = checked(
         "enum Family:\n    Local\ndef read_family(value: str) -> Result[Family, str]:\n    return Ok(Family.Local)\ndef collect(seed: Borrowed[int], rows: list[list[str]]) -> Result[Family, str]:\n    header = rows[0]\n    family = read_family(header[3])?\n    return Ok(family)\n",
     )?;
@@ -198,8 +200,7 @@ fn signature_block_classifies_snapshot_and_element_field_reads()
 /// Constructor fields consume exact whole transferable values once. Borrowed and explicitly owned parameters do not
 /// borrow this route, and a second use after the admitted move remains a checked T0126 conflict.
 #[test]
-fn signature_block_classifies_enum_parameter_and_local_list_moves()
--> Result<(), Box<dyn std::error::Error>> {
+fn signature_block_classifies_enum_parameter_and_local_list_moves() -> Result<(), Box<dyn std::error::Error>> {
     let enum_value = checked(
         "enum Family:\n    Local\nmodel Field:\n    family: Family\ndef collect(seed: Borrowed[int], family: Family) -> Field:\n    return Field(family=family)\n",
     )?;
@@ -243,8 +244,7 @@ fn signature_block_classifies_enum_parameter_and_local_list_moves()
 /// A selected dependency-free `Result` call may provide an exact constructor field through `?`. Stored carriers,
 /// carrier constructors and returned views remain materialization refusals.
 #[test]
-fn signature_block_classifies_closed_try_call_results()
--> Result<(), Box<dyn std::error::Error>> {
+fn signature_block_classifies_closed_try_call_results() -> Result<(), Box<dyn std::error::Error>> {
     let accepted = checked(
         "enum Fault:\n    Bad\nenum Family:\n    Local\n@derive(Clone)\nmodel Row:\n    value: str\nmodel Record:\n    text: str\n    family: Family\n    rows: list[Row]\ndef text_value() -> Result[str, Fault]:\n    return Ok(\"value\")\ndef family_value() -> Result[Family, Fault]:\n    return Ok(Family.Local)\ndef row_values() -> Result[list[Row], Fault]:\n    return Ok([Row(value=\"value\")])\ndef decode(seed: Borrowed[int]) -> Result[Record, Fault]:\n    return Ok(Record(text=text_value()?, family=family_value()?, rows=row_values()?))\n",
     )?;
@@ -274,8 +274,7 @@ fn signature_block_classifies_closed_try_call_results()
 /// One continuing enum-payload arm may move its payload into a local while a payload-free fallback terminates. A
 /// borrowed subject and a second continuing arm remain refused, and post-extraction reuse remains a T0126 conflict.
 #[test]
-fn signature_block_classifies_match_payload_extraction()
--> Result<(), Box<dyn std::error::Error>> {
+fn signature_block_classifies_match_payload_extraction() -> Result<(), Box<dyn std::error::Error>> {
     let accepted_source = "enum Fault:\n    Bad\n@derive(Clone)\nmodel Cell:\n    value: str\n@derive(Clone)\nenum Payload:\n    Record(list[Cell])\n@derive(Clone)\nmodel Row:\n    value: Payload\ndef decode(seed: Borrowed[int]) -> Result[list[Cell], Fault]:\n    row = Row(value=Payload.Record([Cell(value=\"a\")]))\n    values = match row.value:\n        Payload.Record(fields) => fields\n        _ => return Err(Fault.Bad)\n    return Ok(values)\n";
     let accepted = checked(accepted_source)?;
 
@@ -323,8 +322,13 @@ fn signature_block_classifies_match_payload_extraction()
                 .nodes
                 .iter()
                 .filter(|node| {
-                    matches!(node.event, flow::Event::Access { access: flow::Access::Move, .. })
-                        && accepted_source.get(node.span.start..node.span.end) == Some(spelling)
+                    matches!(
+                        node.event,
+                        flow::Event::Access {
+                            access: flow::Access::Move,
+                            ..
+                        }
+                    ) && accepted_source.get(node.span.start..node.span.end) == Some(spelling)
                 })
                 .count(),
             1,
@@ -337,8 +341,7 @@ fn signature_block_classifies_match_payload_extraction()
 /// The full record header shape combines snapshot reads, one closed `Try(Call)` field, one plain Enum Parameter move
 /// and the final whole-list move. The grouped controls above remain the refusal matrix for each individual route.
 #[test]
-fn signature_block_classifies_full_header_record()
--> Result<(), Box<dyn std::error::Error>> {
+fn signature_block_classifies_full_header_record() -> Result<(), Box<dyn std::error::Error>> {
     let source = "enum Family:\n    Local\nmodel CanonicalField:\n    value: str\nmodel Record:\n    profile: str\n    owner: str\n    root: str\n    family: Family\n    fields: list[CanonicalField]\ndef read_family(value: str) -> Result[Family, str]:\n    return Ok(Family.Local)\ndef from_native(seed: Borrowed[int], rows: list[list[str]]) -> Result[Record, str]:\n    header = rows[0]\n    mut fields: list[CanonicalField] = []\n    for row in rows[1:]:\n        fields.append(CanonicalField(value=row[0]))\n    record = Record(profile=header[4], owner=header[1], root=header[2], family=read_family(header[3])?, fields=fields)\n    return Ok(record)\ndef from_family(seed: Borrowed[int], rows: list[list[str]], family: Family) -> Record:\n    header = rows[0]\n    mut fields: list[CanonicalField] = []\n    for row in rows[1:]:\n        fields.append(CanonicalField(value=row[0]))\n    return Record(profile=header[4], owner=header[1], root=header[2], family=family, fields=fields)\n";
     let checker = checked(source)?;
     require_checked(&checker, "from_native")?;

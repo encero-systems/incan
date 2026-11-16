@@ -367,22 +367,32 @@ impl Builder<'_> {
     /// Whether one selected call returns an exact dependency-free model value for a builtin list element.
     fn fresh_closed_selected_model_result(&self, value: &Spanned<Expr>, element: &ResolvedType) -> bool {
         if !matches!(value.node, Expr::Call(..) | Expr::MethodCall(..))
-            || self.checker.type_info.expr_type(value.span) != Some(element)
             || self.checker.type_holds_borrow(element)
             || self.checker.type_holds_native_loan(element)
         {
             return false;
         }
+        let Some(actual) = self.checker.type_info.expr_type(value.span) else {
+            return false;
+        };
+        let same_type = self.checker.type_info.same_checked_value_type(actual, element);
         let model = match element {
             ResolvedType::Named(owner) | ResolvedType::Generic(owner, _) => {
                 matches!(self.checker.lookup_type_info(owner), Some(TypeInfo::Model(_)))
+                    || self.checker.type_info.declarations.model_derives.contains_key(owner)
+                    || self
+                        .checker
+                        .type_info
+                        .checked_nominal_identity(owner)
+                        .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Model)
             }
             _ => false,
         };
         let Some(call) = self.checker.type_info.protocols.explicit_input_calls.get(&value.span) else {
             return false;
         };
-        if !model
+        if !same_type
+            || !model
             || !matches!(
                 call.kind,
                 super::super::InputCallKind::Ordinary | super::super::InputCallKind::Explicit

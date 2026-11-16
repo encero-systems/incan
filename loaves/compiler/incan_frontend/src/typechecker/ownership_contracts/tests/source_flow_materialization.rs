@@ -427,4 +427,3 @@ fn constructor_field_slice_requires_fresh_transferable_loop_row() -> Result<(), 
     }
     Ok(())
 }
-

@@ -452,6 +452,13 @@ impl Builder<'_> {
             })?
             .is_some();
         let clone_result = self.checked_clone_call(span);
+        let selected_result_map_err = call.callee
+            == crate::symbols::canonical_builtin_member_identity("Result", "map_err")
+            && call.receiver == Some(Receiver::Immutable)
+            && self.checker.type_info.resolved_builtin_method_call(span)
+                == Some(BuiltinMethodId::Result(
+                    incan_lang::lang::surface::result_methods::ResultMethodId::MapErr,
+                ));
         // A native call that lends nothing returns a value that cannot keep a borrow of the caller's storage.
         let lends_nothing = call.kind == super::super::InputCallKind::Native
             && (call.receiver.is_none() || self.checker.type_info.native_value_receiver(span))
@@ -491,6 +498,7 @@ impl Builder<'_> {
             && !lends_nothing
             && !self.fresh_list_calls.contains(&span)
             && !self.independent_call_results.contains(&span)
+            && !selected_result_map_err
             && !(call.kind == super::super::InputCallKind::Ordinary && call.parameters.is_empty())
         {
             return Err(Unavailable {
@@ -527,13 +535,6 @@ impl Builder<'_> {
             completion_node: 0,
             final_accesses: Vec::new(),
         };
-        let selected_result_map_err = call.callee
-            == crate::symbols::canonical_builtin_member_identity("Result", "map_err")
-            && call.receiver == Some(Receiver::Immutable)
-            && self.checker.type_info.resolved_builtin_method_call(span)
-                == Some(BuiltinMethodId::Result(
-                    incan_lang::lang::surface::result_methods::ResultMethodId::MapErr,
-                ));
         let receiver_value_use = if selected_result_map_err {
             let receiver = receiver.ok_or(Unavailable {
                 span,
@@ -728,6 +729,11 @@ impl Builder<'_> {
             if let Some(loan) = loan {
                 loans.push(loan);
             }
+            let classified_move = self
+                .graph
+                .value_uses
+                .get(&expression.span)
+                .is_some_and(|value_use| value_use.kind == super::super::flow::ValueUseKind::Move);
             invocation.arguments.push(InvocationArgument {
                 span: expression.span,
                 slot,
@@ -736,6 +742,7 @@ impl Builder<'_> {
                     Some(OwnershipMode::Borrowed) => IncanInputAccess::Shared,
                     Some(OwnershipMode::BorrowedMut) => IncanInputAccess::Exclusive,
                     Some(OwnershipMode::Owned) => IncanInputAccess::Owned,
+                    None if classified_move => IncanInputAccess::Owned,
                     None => IncanInputAccess::Inferred,
                     Some(OwnershipMode::Reference) => {
                         return Err(Unavailable {
@@ -843,15 +850,6 @@ impl Builder<'_> {
             None if self.copy_value(&parameter.ty) && !parameter.is_mut => self
                 .expression(expression, incoming, false)
                 .map(|outgoing| (outgoing, None)),
-            // An immutable ordinary slot may receive one exact selected call's fresh closed result. The selected
-            // inner call must carry no view, native, owned-result or clone obligation; dependent calls stay stored.
-            None if ordinary_callee
-                && !parameter.is_mut
-                && self.fresh_closed_selected_call_argument(expression, parameter)? =>
-            {
-                self.expression(expression, incoming, true)
-                    .map(|outgoing| (outgoing, None))
-            }
             // `Result.map_err` invokes its one checked callback without retaining it. A capture-free closure literal
             // therefore evaluates no caller-owned storage; capturing callbacks still need the ordinary local-closure
             // route so their loans remain live through invocation.
@@ -944,56 +942,6 @@ impl Builder<'_> {
                 reason: "ordinary argument requires inferred access or mutable binding facts".into(),
             }),
         }
-    }
-
-    /// Whether one selected call returns an exact dependency-free value for an immutable ordinary argument slot.
-    fn fresh_closed_selected_call_argument(
-        &self,
-        expression: &Spanned<Expr>,
-        parameter: &CallableParam,
-    ) -> Result<bool, Unavailable> {
-        if !matches!(expression.node, Expr::Call(..) | Expr::MethodCall(..))
-            || self.checker.type_info.expr_type(expression.span) != Some(&parameter.ty)
-            || self.checker.type_holds_borrow(&parameter.ty)
-            || self.checker.type_holds_native_loan(&parameter.ty)
-        {
-            return Ok(false);
-        }
-        let Some(call) = self
-            .checker
-            .type_info
-            .protocols
-            .explicit_input_calls
-            .get(&expression.span)
-        else {
-            return Ok(false);
-        };
-        if !matches!(
-            call.kind,
-            super::super::InputCallKind::Ordinary | super::super::InputCallKind::Explicit
-        ) || call.owner.as_ref() != Some(&self.owner)
-        {
-            return Ok(false);
-        }
-        let contract = self
-            .checker
-            .type_info
-            .selected_input_contract(call)
-            .map_err(|reason| Unavailable {
-                span: expression.span,
-                reason: reason.into(),
-            })?;
-        Ok(
-            crate::ownership_metadata::returned_view(contract).is_ok_and(|view| view.is_none())
-                && crate::ownership_metadata::owned_result(contract).is_ok_and(|owned| owned.is_none())
-                && self
-                    .checker
-                    .native_result_dependencies(expression.span)
-                    .is_ok_and(|value| value.is_none())
-                && !self.checker.native_result_is_independent(expression.span)
-                && !self.checked_clone_call(expression.span)
-                && plain_result(&parameter.ty),
-        )
     }
 
     /// Authenticate the only whole non-Copy Parameter observation currently retained by an ordinary inferred slot.
