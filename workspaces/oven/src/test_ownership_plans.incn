@@ -579,14 +579,14 @@ def main() -> None:
 pub def test_text_membership_in_a_frozen_set_or_list_copies_no_element() -> Result[None, str]:
     """
     `x in` a frozen set or list of text compares each static element in place: the plan formats no element into an
-    owned list, and the runtime's in-place comparison is what it calls (#2944).
+    owned list, and the frozen carriers' own in-place comparisons are what the program instantiates (#2944).
     """
     report = plan_report("frozen_membership", FROZEN_MEMBERSHIP, "32")?
     names = plan_function_names(report)
     snapshots = [name for name in names if encoded_name("frozen_text_item") in name]
     assert len(snapshots) == 0, f"membership formats frozen elements through {snapshots}"
-    compared = [name for name in names if encoded_name("frozen_list_contains_text") in name]
-    assert len(compared) > 0, f"membership compares through none of {names}"
+    for helper in ["frozen_set_contains_text", "frozen_list_contains_text"]:
+        assert f"incan_std_primitives::frozen::{helper}" in report, f"the program instantiates no {helper}"
     return Ok(None)
 
 
