@@ -436,6 +436,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             ast::Expr::Paren(inner) => self.lower_expr_to_operand(inner, scope, out),
             ast::Expr::Field(base, name) => self.lower_field_value(expr, base, name, scope, span, out),
             ast::Expr::Index(base, index) => {
+                if let Some(call) = self.type_info.rust.checked_calls.get(&expr.span).cloned() {
+                    return self.lower_checked_native_index(base, index, &call, expr.span, scope, out);
+                }
                 let index_operand = self.lower_checked_index_operand(base, index, scope, out);
                 let mut place = self.lower_expr_to_place(base, scope, out);
                 place.projection.push(bir::PlaceElem::Index(Box::new(index_operand)));
