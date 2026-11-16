@@ -67,9 +67,11 @@ pub(super) fn validate_operations(graph: &Graph) -> Result<(), InvalidGraph> {
             }
             previous = dependency.final_access;
         }
-        // Operand evaluation may contain nested operations, but none may occur after this operation completes.
+        // Operand evaluation may contain nested operations, but none may occur after this operation completes. A
+        // structural marker evaluates nothing: an enclosing call ends its argument at the operation's own span.
         for (index, node) in graph.nodes.iter().enumerate().skip(inputs.completion_node + 1) {
             if contains(operation, &node.span)
+                && !matches!(node.event, Event::Nothing)
                 && !inputs
                     .operands
                     .iter()
