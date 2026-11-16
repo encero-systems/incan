@@ -635,6 +635,49 @@ pub def test_a_read_only_text_parameter_is_lent_and_never_copied() -> Result[Non
     return Ok(None)
 
 
+const INDEXED_TEXT_LOOPS: str = """def by_index(value: str) -> int:
+    mut count = 0
+    for index in range(len(value)):
+        count += len(value[index:index + 1])
+        if value[index] == "a":
+            count += 1
+    return count
+
+
+def growing(value: str) -> str:
+    mut current = value
+    mut out = ""
+    for index in range(3):
+        out += current[index]
+        current = current + "x"
+    return out
+
+
+def main() -> None:
+    mut text = ""
+    for _ in range(5):
+        text += "aé"
+    local = text + "z"
+    mut total = 0
+    for index in range(len(local)):
+        total += len(local[index:])
+    println(by_index(text), total, growing(text))
+"""
+
+
+pub def test_a_loop_reading_unchanged_text_by_index_seeks_from_a_cursor() -> Result[None, str]:
+    """
+    A loop that reads a string it never changes by scalar index or slice seeks each read from a cursor the loop keeps,
+    for a parameter and for a local, ASCII or not, so reading every scalar once walks the string once; a loop that
+    changes the string it indexes keeps the walk from the start (#3070).
+    """
+    report = plan_report("indexed_text_loops", INDEXED_TEXT_LOOPS, "15 66 aéa")?
+    for helper in ["str_index_from", "str_slice_from"]:
+        assert f"incan_std_primitives::text_cursor::{helper}" in report, f"the program instantiates no {helper}"
+    assert "incan_std_primitives::strings::str_index" in report, "a loop that changes its string reads it by cursor"
+    return Ok(None)
+
+
 def initializers(report: str) -> list[str]:
     """The module and static initializer functions the plan report names."""
     mut found: list[str] = []
