@@ -6,10 +6,11 @@ from rust::std::thread import sleep
 from rust::std::time import Duration, Instant
 from std.encoding.hex import hexlify
 from std.fs import Path
-from pub::incan_platform.ipc import Listener, listen, session_id, stale
+from pub::incan_platform.ipc import Listener, listen, stale
 from decimal_text import digits_only
-from engine_channel import Channel, Envelope, SendOutcome
-from engine_endpoint import HANDSHAKE_SECONDS, endpoint, owner_uid, record_endpoint, transport, withdraw_endpoint
+from engine_admission import Arrival, Notice, arrivals, notices, start_admission
+from engine_channel import Channel, Envelope, deliver as send, refuse as send_refusal
+from engine_endpoint import endpoint, owner_uid, record_endpoint, transport, withdraw_endpoint
 from engine_messages import (
     Accepted,
     Cancelled,
@@ -17,7 +18,6 @@ from engine_messages import (
     Complete,
     Event,
     Message,
-    Refused,
     BindingOutcome,
     CompletionStatus,
     EffectDisposition,
@@ -28,14 +28,12 @@ from engine_actions import Pending, Ready, ExecutionLease, finish_request
 from engine_programs import read_program, program_handle
 from engine_messages import Resolve, Resolution
 from engine_messages import Submit
-from engine_wire import MAX_PAYLOAD, Refusal, RefusalKind, zero_id
+from engine_wire import MAX_PAYLOAD, Refusal, RefusalKind
 from bakery import forget_verified, verification_entries
 from observation import trace
 from files import discard_file
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation, flush as flush_trace
-
-const MAX_CLIENTS: int = 16
 
 
 pub class Client:
@@ -45,13 +43,6 @@ pub class Client:
     pub pending: list[Pending] = []
     pub pins: list[ExecutionLease] = []
     pub closed: bool = false
-
-
-class Greeting:
-    """An accepted connection waiting to present its complete initial Hello without blocking other clients."""
-
-    pub channel: Channel
-    pub accepted: int
 
 
 pub def serve(arguments: list[str]) -> Result[None, Refusal]:
@@ -93,7 +84,7 @@ pub def serve_at_with(
     if held is None:
         return Err(transport("another engine owns this store"))
     withdraw_stale(selected.socket)?
-    mut listener = listen(selected.socket, false).map_err(transport)?
+    listener = listen(selected.socket, false).map_err(transport)?
     # A caller whose runtime directory names another socket path finds this one through the store; without the
     # record only callers sharing this environment can.
     _ = record_endpoint(root, selected.socket)
@@ -116,74 +107,54 @@ def withdraw_stale(path: str) -> Result[None, Refusal]:
 
 
 def event_loop(
-    mut listener: Listener,
+    listener: Listener,
     mut state: ServiceState,
     settle_request: (Path, Pending) -> Result[Ready, str],
     idle: int,
 ) -> Result[None, Refusal]:
-    """Poll bounded client state and release it after use; no decoded compilation closure enters this process."""
+    """
+    Poll bounded client state and release it after use; no decoded compilation closure enters this process.
+
+    Connections are accepted and welcomed on the admission thread, so a request this loop settles holds no other
+    client's handshake. This loop services welcomed clients only.
+    """
     mut clients: list[Client] = []
-    mut greetings: list[Greeting] = []
+    announce, arriving = arrivals()
+    telling, told = notices()
+    admission = start_admission(listener, state.identity, announce, told)
+    # Connections the admission thread holds: greeting, or welcomed and not taken here yet.
+    mut waiting = 0
     clock = Instant.now()
-    while true:
+    # A finished admission thread lost its listener; the service then leaves with that failure.
+    while not admission.is_finished():
         now = int(clock.elapsed().as_millis())
-        match listener.poll().map_err(transport)?:
-            Some(connected) =>
-                if len(clients) + len(greetings) < MAX_CLIENTS and not state.stopping:
-                    greetings.append(Greeting(channel=Channel(transport=connected), accepted=now))
-            None => pass
-        greetings = greet_ready(greetings, clients, state, now)
+        while true:
+            match arriving.try_recv():
+                Ok(arrival) =>
+                    match arrival:
+                        Arrival.Entered => waiting += 1
+                        Arrival.Left => waiting -= 1
+                        Arrival.Welcomed(channel) =>
+                            waiting -= 1
+                            clients.append(Client(channel=channel))
+                Err(_) => break
         if len(clients) > 0:
+            serviced = len(clients)
             for index in range(len(clients)):
                 mut client = clients[index]
                 service_client(client, state, settle_request)
                 clients[index] = client
             clients = [client for client in clients if not client.closed]
-        state.clients = len(clients) + len(greetings)
+            if len(clients) < serviced:
+                _ = telling.send(Notice.Released(serviced - len(clients)))
+        state.clients = len(clients) + waiting
         if state.stopping or state.exits(now, idle * 1000):
-            return Ok(None)
+            break
         sleep(Duration.from_millis(2))
-
-
-def greet_ready(greetings: list[Greeting], mut clients: list[Client], state: ServiceState, now: int) -> list[Greeting]:
-    """Admit every ready Hello while silent peers wait independently until their bounded handshake expires."""
-    mut waiting: list[Greeting] = []
-    for index in range(len(greetings)):
-        mut greeting = greetings[index]
-        if now - greeting.accepted >= int(HANDSHAKE_SECONDS) * 1000:
-            _ = greeting.channel.transport.close()
-            continue
-        match greeting.channel.transport.readable():
-            Ok(true) =>
-                match greet(greeting.channel, state):
-                    Ok(client) => clients.append(client)
-                    Err(_) => pass
-            Ok(false) => waiting.append(greeting)
-            Err(_) => _ = greeting.channel.transport.close()
-    return waiting
-
-
-def greet(initial: Channel, state: ServiceState) -> Result[Client, Refusal]:
-    """Authenticate OS credentials and Hello before assigning a fresh nonzero session id."""
-    mut channel = initial
-    channel.transport.wait_at_most(HANDSHAKE_SECONDS)
-    channel.transport.write_at_most(HANDSHAKE_SECONDS)
-    first = channel.receive()?
-    if first.header.session != zero_id() or first.header.request != zero_id():
-        return Err(Refusal(kind=RefusalKind.Identity, detail="initial Hello must have zero identities"))
-    match first.message:
-        Message.Hello(hello) =>
-            peer = channel.transport.peer().map_err(transport)?
-            match state.negotiate(hello, peer.uid):
-                Err(reason) =>
-                    send_refusal(channel, zero_id(), reason, "Hello")?
-                    return Err(reason)
-                Ok(welcome) =>
-                    channel.session = session_id().map_err(transport)?
-                    send(channel, zero_id(), Message.Welcome(welcome))?
-                    channel.acknowledge(first)?
-                    return Ok(Client(channel=channel))
-        _ => return Err(Refusal(kind=RefusalKind.Schema, detail="Hello must be the first engine message"))
+    _ = telling.send(Notice.Closing)
+    match admission.join():
+        Ok(outcome) => return outcome.map_err(transport)
+        Err(_) => return Err(transport("engine admission thread panicked"))
 
 
 def service_client(
@@ -356,23 +327,6 @@ def close_client(mut client: Client, mut state: ServiceState) -> None:
     client.closed = true
 
 
-def send(mut channel: Channel, request: bytes, message: Message) -> Result[None, Refusal]:
-    """Require an available credit at a handler boundary; admission gates leave room for all replies."""
-    match channel.send(request, message)?:
-        SendOutcome.Sent(_) => return Ok(None)
-        SendOutcome.Blocked =>
-            return Err(Refusal(kind=RefusalKind.Credit, detail="engine sender is blocked awaiting credit"))
-
-
-def send_refusal(mut channel: Channel, request: bytes, reason: Refusal, command: str) -> Result[None, Refusal]:
-    """Send a stable refusal code with context; receivers never parse prose to choose their next action."""
-    return send(
-        channel,
-        request,
-        Message.Refused(Refused(code=refusal_code(reason.kind), command=command, detail=reason.detail)),
-    )
-
-
 def send_request_refusal(
     mut channel: Channel,
     store: Path,
@@ -399,22 +353,3 @@ def send_request_refusal(
         ),
         command,
     )
-
-
-pub def refusal_code(kind: RefusalKind) -> int:
-    """The stable v1 refusal discriminants carried by Refused bodies."""
-    match kind:
-        RefusalKind.BadMagic => return 1
-        RefusalKind.Version => return 2
-        RefusalKind.Oversized => return 3
-        RefusalKind.ShortRead => return 4
-        RefusalKind.Reserved => return 5
-        RefusalKind.Flags => return 6
-        RefusalKind.Schema => return 7
-        RefusalKind.Identity => return 8
-        RefusalKind.Sequence => return 9
-        RefusalKind.Credit => return 10
-        RefusalKind.UnsupportedCommand => return 11
-        RefusalKind.Busy => return 12
-        RefusalKind.Draining => return 13
-        RefusalKind.Transport => return 14

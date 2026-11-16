@@ -30,6 +30,32 @@ pub model Identity:
             payload_limit=MAX_PAYLOAD,
         )
 
+    pub def negotiate(self, hello: Hello, peer_uid: u32) -> Result[Welcome, Refusal]:
+        """Check OS identity and all full protocol/profile/generation/store identities before work."""
+        if peer_uid != self.uid or hello.peer_uid != peer_uid:
+            return Err(Refusal(kind=RefusalKind.Identity, detail="engine peer user mismatch"))
+        if hello.store_id != self.store_id:
+            return Err(Refusal(kind=RefusalKind.Identity, detail="engine store mismatch"))
+        if hello.profile != self.profile:
+            return Err(Refusal(kind=RefusalKind.Identity, detail="engine profile mismatch"))
+        if hello.service_generation != self.service_generation:
+            return Err(Refusal(kind=RefusalKind.Identity, detail="engine service generation mismatch"))
+        if hello.compiler_generation != self.compiler_generation:
+            return Err(Refusal(kind=RefusalKind.Identity, detail="engine compiler generation mismatch"))
+        if hello.credits != DATA_CREDITS or hello.payload_limit != MAX_PAYLOAD:
+            return Err(Refusal(kind=RefusalKind.Version, detail="engine transport limits mismatch"))
+        return Ok(
+            Welcome(
+                store_id=self.store_id,
+                profile=self.profile,
+                service_generation=self.service_generation,
+                compiler_generation=self.compiler_generation,
+                peer_uid=self.uid,
+                credits=DATA_CREDITS,
+                payload_limit=MAX_PAYLOAD,
+            ),
+        )
+
 
 pub model Interest:
     """One request interest; cancellation never detaches another request's interest."""
@@ -52,33 +78,6 @@ pub class ServiceState:
     pub draining: bool = false
     pub stopping: bool = false
     pub last_active: int = 0
-
-    pub def negotiate(self, hello: Hello, peer_uid: u32) -> Result[Welcome, Refusal]:
-        """Check OS identity and all full protocol/profile/generation/store identities before work."""
-        expected = self.identity
-        if peer_uid != expected.uid or hello.peer_uid != peer_uid:
-            return Err(Refusal(kind=RefusalKind.Identity, detail="engine peer user mismatch"))
-        if hello.store_id != expected.store_id:
-            return Err(Refusal(kind=RefusalKind.Identity, detail="engine store mismatch"))
-        if hello.profile != expected.profile:
-            return Err(Refusal(kind=RefusalKind.Identity, detail="engine profile mismatch"))
-        if hello.service_generation != expected.service_generation:
-            return Err(Refusal(kind=RefusalKind.Identity, detail="engine service generation mismatch"))
-        if hello.compiler_generation != expected.compiler_generation:
-            return Err(Refusal(kind=RefusalKind.Identity, detail="engine compiler generation mismatch"))
-        if hello.credits != DATA_CREDITS or hello.payload_limit != MAX_PAYLOAD:
-            return Err(Refusal(kind=RefusalKind.Version, detail="engine transport limits mismatch"))
-        return Ok(
-            Welcome(
-                store_id=expected.store_id,
-                profile=expected.profile,
-                service_generation=expected.service_generation,
-                compiler_generation=expected.compiler_generation,
-                peer_uid=expected.uid,
-                credits=DATA_CREDITS,
-                payload_limit=MAX_PAYLOAD,
-            ),
-        )
 
     pub def accept(mut self, request: bytes, work: str, token: str) -> Result[None, Refusal]:
         """Accept at most sixteen control interests; drained services never accept another submit."""

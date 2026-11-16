@@ -1,0 +1,197 @@
+"""
+Admit engine connections on a thread of their own, so a settling request never holds another client's handshake.
+
+The event loop settles one request at a time and reads no socket while it does. A client's Hello, Welcome and Ack
+are bounded by `HANDSHAKE_SECONDS`, so they are answered here, apart from that loop: this thread owns the listener
+and every connection that has not been welcomed yet, and hands each welcomed channel to the event loop.
+
+The two threads share no state. This thread announces each `Arrival` to the event loop, and the event loop sends
+each `Notice` back.
+"""
+
+from rust::std::sync import Arc, Mutex
+from rust::std::sync::mpsc import Receiver, Sender, channel
+from rust::std::thread import JoinHandle, sleep, spawn
+from rust::std::time import Duration, Instant
+from pub::incan_platform.ipc import Listener, session_id
+from engine_channel import Channel, deliver, refuse
+from engine_endpoint import HANDSHAKE_SECONDS, transport
+from engine_messages import Message
+from engine_state import Identity
+from engine_wire import Refusal, RefusalKind, zero_id
+
+pub const MAX_CLIENTS: int = 16
+
+
+pub enum Arrival:
+    """What the admission thread announces: every `Entered` is followed by one `Left` or one `Welcomed`."""
+
+    # A connection was accepted and now greets.
+    Entered
+    # A greeting connection was closed before its Welcome.
+    Left
+    # A connection completed Hello and Welcome; the event loop services its channel from here on.
+    Welcomed(Channel)
+
+
+pub enum Notice:
+    """What the event loop tells the admission thread."""
+
+    # The event loop closed this many welcomed clients, which makes room for as many connections.
+    Released(int)
+    # The service is leaving: close every greeting connection and return.
+    Closing
+
+
+class Greeting:
+    """An accepted connection waiting to present its complete initial Hello without blocking other clients."""
+
+    pub channel: Channel
+    pub accepted: int
+
+
+pub def arrivals() -> tuple[Sender[Arrival], Receiver[Arrival]]:
+    """The queue that carries each arrival from the admission thread to the event loop."""
+    pair: tuple[Sender[Arrival], Receiver[Arrival]] = channel()
+    return pair
+
+
+pub def notices() -> tuple[Sender[Notice], Arc[Mutex[Receiver[Notice]]]]:
+    """The queue that carries each notice from the event loop to the admission thread, which shares its end."""
+    pair: tuple[Sender[Notice], Receiver[Notice]] = channel()
+    telling, told = pair
+    return (telling, Arc.new(Mutex.new(told)))
+
+
+pub def start_admission(
+    listener: Listener,
+    identity: Identity,
+    announce: Sender[Arrival],
+    told: Arc[Mutex[Receiver[Notice]]],
+) -> JoinHandle[Result[None, str]]:
+    """Start the thread that accepts and greets connections until the event loop tells it to close."""
+    return spawn(() => admit(listener, identity, announce, told))
+
+
+def admit(
+    accepting: Listener,
+    identity: Identity,
+    announce: Sender[Arrival],
+    told: Arc[Mutex[Receiver[Notice]]],
+) -> Result[None, str]:
+    """
+    Accept and greet connections until the event loop closes admission.
+
+    1. Hear what the event loop released, and whether the service is leaving.
+    2. Take the next waiting connection, when the client bound has room for it.
+    3. Welcome every connection whose Hello has arrived, and close the ones whose handshake expired.
+    4. On the way out, close every connection that was not welcomed.
+    """
+    mut listener = accepting
+    mut greetings: list[Greeting] = []
+    # Connections accepted here that are still open: greeting, or welcomed and not released yet.
+    mut occupied = 0
+    mut closing = false
+    clock = Instant.now()
+    while not closing:
+        now = int(clock.elapsed().as_millis())
+        # 1. A released client makes room; a lost event loop closes admission as its notice does.
+        while true:
+            match next_notice(told):
+                Some(notice) =>
+                    match notice:
+                        Notice.Released(count) => occupied -= count
+                        Notice.Closing => closing = true
+                None => break
+        # 2. A connection over the bound is dropped, which closes it.
+        match listener.poll():
+            Err(reason) =>
+                dismiss(greetings, announce)
+                return Err(reason)
+            Ok(polled) =>
+                if let Some(connected) = polled:
+                    if occupied < MAX_CLIENTS and not closing:
+                        occupied += 1
+                        _ = announce.send(Arrival.Entered)
+                        greetings.append(Greeting(channel=Channel(transport=connected), accepted=now))
+        # 3. Silent peers wait independently until their bounded handshake expires.
+        still, welcomed = greet_ready(greetings, identity, announce, now)
+        occupied -= len(greetings) - len(still) - welcomed
+        greetings = still
+        sleep(Duration.from_millis(2))
+    # 4. The service is leaving; a peer still greeting reads the end of its stream.
+    dismiss(greetings, announce)
+    return Ok(None)
+
+
+def next_notice(told: Arc[Mutex[Receiver[Notice]]]) -> Option[Notice]:
+    """The next notice the event loop sent, if one waits; a poisoned queue closes admission."""
+    match told.lock():
+        Ok(queue) =>
+            match queue.try_recv():
+                Ok(notice) => return Some(notice)
+                Err(_) => return None
+        Err(_) => return Some(Notice.Closing)
+
+
+def greet_ready(
+    greetings: list[Greeting],
+    identity: Identity,
+    announce: Sender[Arrival],
+    now: int,
+) -> tuple[list[Greeting], int]:
+    """
+    Welcome every ready Hello while silent peers wait independently until their bounded handshake expires. Returns
+    the connections that still greet, and how many were welcomed.
+    """
+    mut waiting: list[Greeting] = []
+    mut welcomed = 0
+    for index in range(len(greetings)):
+        mut greeting = greetings[index]
+        if now - greeting.accepted >= int(HANDSHAKE_SECONDS) * 1000:
+            _ = greeting.channel.transport.close()
+            _ = announce.send(Arrival.Left)
+            continue
+        match greeting.channel.transport.readable():
+            Ok(true) =>
+                match greet(greeting.channel, identity):
+                    Ok(channel) =>
+                        # With the event loop gone nothing services this channel, so it leaves as a refused one does.
+                        if announce.send(Arrival.Welcomed(channel)).is_ok():
+                            welcomed += 1
+                    Err(_) => _ = announce.send(Arrival.Left)
+            Ok(false) => waiting.append(greeting)
+            Err(_) =>
+                _ = greeting.channel.transport.close()
+                _ = announce.send(Arrival.Left)
+    return (waiting, welcomed)
+
+
+def greet(initial: Channel, identity: Identity) -> Result[Channel, Refusal]:
+    """Authenticate OS credentials and Hello before assigning a fresh nonzero session id."""
+    mut channel = initial
+    channel.transport.wait_at_most(HANDSHAKE_SECONDS)
+    channel.transport.write_at_most(HANDSHAKE_SECONDS)
+    first = channel.receive()?
+    if first.header.session != zero_id() or first.header.request != zero_id():
+        return Err(Refusal(kind=RefusalKind.Identity, detail="initial Hello must have zero identities"))
+    match first.message:
+        Message.Hello(hello) =>
+            peer = channel.transport.peer().map_err(transport)?
+            match identity.negotiate(hello, peer.uid):
+                Err(reason) =>
+                    refuse(channel, zero_id(), reason, "Hello")?
+                    return Err(reason)
+                Ok(welcome) =>
+                    channel.session = session_id().map_err(transport)?
+                    deliver(channel, zero_id(), Message.Welcome(welcome))?
+                    channel.acknowledge(first)?
+                    return Ok(channel)
+        _ => return Err(Refusal(kind=RefusalKind.Schema, detail="Hello must be the first engine message"))
+
+
+def dismiss(greetings: list[Greeting], announce: Sender[Arrival]) -> None:
+    """Close every connection that was not welcomed."""
+    for greeting in greetings:
+        _ = greeting.channel.transport.close()
+        _ = announce.send(Arrival.Left)

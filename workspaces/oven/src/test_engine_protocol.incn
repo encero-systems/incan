@@ -254,7 +254,7 @@ pub def test_service_handshake_drain_and_idle() -> Result[None, str]:
         uid=7u32,
     )
     mut state = ServiceState(identity=identity, last_active=100)
-    state.negotiate(identity.hello(), 7u32).map_err(detail)?
+    state.identity.negotiate(identity.hello(), 7u32).map_err(detail)?
     mut wrong = identity.hello()
     wrong.profile = "other"
     assert handshake_refused(state, wrong, 7u32)
@@ -306,7 +306,7 @@ pub def test_service_handshake_drain_and_idle() -> Result[None, str]:
 
 def handshake_refused(state: ServiceState, hello: Hello, uid: u32) -> bool:
     """Whether negotiation refused before accepting any work."""
-    match state.negotiate(hello, uid):
+    match state.identity.negotiate(hello, uid):
         Ok(_) => return false
         Err(_) => return true
 

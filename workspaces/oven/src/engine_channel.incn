@@ -2,9 +2,9 @@
 
 from pub::incan_platform.ipc import Connection, Credits
 from engine_codec import decode, encode
-from engine_messages import Ack, Message
+from engine_messages import Ack, Message, Refused
 from engine_wire import CONTROL, DATA_CREDITS, HEADER_SIZE, MAX_PAYLOAD, Header, Refusal, RefusalKind
-from engine_wire import decode_header, encode_header, zero_id
+from engine_wire import decode_header, encode_header, refusal_code, zero_id
 
 
 pub enum SendOutcome:
@@ -134,3 +134,20 @@ pub def short_read(detail: str) -> Refusal:
 pub def credit_refusal(detail: str) -> Refusal:
     """A data frame the credit window refuses."""
     return Refusal(kind=RefusalKind.Credit, detail=detail)
+
+
+pub def deliver(mut channel: Channel, request: bytes, message: Message) -> Result[None, Refusal]:
+    """Require an available credit at a handler boundary; admission gates leave room for all replies."""
+    match channel.send(request, message)?:
+        SendOutcome.Sent(_) => return Ok(None)
+        SendOutcome.Blocked =>
+            return Err(Refusal(kind=RefusalKind.Credit, detail="engine sender is blocked awaiting credit"))
+
+
+pub def refuse(mut channel: Channel, request: bytes, reason: Refusal, command: str) -> Result[None, Refusal]:
+    """Send a stable refusal code with context; receivers never parse prose to choose their next action."""
+    return deliver(
+        channel,
+        request,
+        Message.Refused(Refused(code=refusal_code(reason.kind), command=command, detail=reason.detail)),
+    )

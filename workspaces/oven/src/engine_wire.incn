@@ -35,6 +35,25 @@ pub model Refusal:
     pub detail: str
 
 
+pub def refusal_code(kind: RefusalKind) -> int:
+    """The stable v1 refusal discriminants carried by Refused bodies."""
+    match kind:
+        RefusalKind.BadMagic => return 1
+        RefusalKind.Version => return 2
+        RefusalKind.Oversized => return 3
+        RefusalKind.ShortRead => return 4
+        RefusalKind.Reserved => return 5
+        RefusalKind.Flags => return 6
+        RefusalKind.Schema => return 7
+        RefusalKind.Identity => return 8
+        RefusalKind.Sequence => return 9
+        RefusalKind.Credit => return 10
+        RefusalKind.UnsupportedCommand => return 11
+        RefusalKind.Busy => return 12
+        RefusalKind.Draining => return 13
+        RefusalKind.Transport => return 14
+
+
 pub model Header:
     """Wire fields only: ids are exactly sixteen bytes, with no pointers or native layouts."""
 
