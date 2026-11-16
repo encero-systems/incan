@@ -118,6 +118,25 @@ pub fn writable_binding_of_read_only_place(binding: &str, place: ReadOnlyScrutin
     )
 }
 
+/// Refuse a pattern binding written `mut name` whose subject is read out as a copy before it is matched: an element
+/// reached through an index that is not a list's, such as a tuple element spelled `pair[0]` (RFC 129).
+///
+/// A `mut` binding owns the payload of an owned subject or borrows the payload of a place; it never binds a copy of a
+/// stored value, where a change through it would silently miss the place.
+pub fn writable_binding_of_copied_element(binding: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Cannot bind '{binding}' as `mut` - its subject is an element reached through an index that is not a list's, which a pattern reads as a copy"
+        ),
+        span,
+    )
+    .with_stable_code("INCAN-T0126")
+    .with_hint(
+        "Match a field such as `pair.0`, a list element or a `mut` local instead, or take a copy on purpose: match on `<subject>.clone()`",
+    )
+    .with_note("A `mut` binding never copies the value it names to become writable (RFC 129 writable alias rule 8)")
+}
+
 /// Describe a place that does not permit a change through `binding`, and say what would permit it.
 fn read_only_scrutinee_parts(binding: &str, place: ReadOnlyScrutinee<'_>) -> (String, String) {
     match place {

@@ -588,6 +588,7 @@ impl TypeChecker {
             self.view_root_source(&node.node)
                 .unwrap_or_else(|| ViewSource::with_access(ViewAccess::Owned))
         };
+        source.copied_element = through_other_index && matches!(node.node, Expr::Ident(_) | Expr::SelfExpr);
         if through_dict_value && matches!(source.access, ViewAccess::Writable) {
             source.access = ViewAccess::ReadOnly(ReadOnlyPlace::DictValue);
         }
@@ -640,6 +641,16 @@ impl TypeChecker {
         let mut names = Vec::new();
         collect_mut_pattern_bindings(pattern, &mut names);
         if names.is_empty() {
+            return;
+        }
+        if source.copied_element {
+            for name in names {
+                let Some(span) = self.lookup_symbol(&name).map(|symbol| symbol.span) else {
+                    continue;
+                };
+                self.errors
+                    .push(errors::writable_binding_of_copied_element(&name, span));
+            }
             return;
         }
         match &source.access {
