@@ -323,6 +323,33 @@ pub def test_amended_loaf_dependency_entries() -> Result[None, IntakeError]:
     return Ok(None)
 
 
+pub def test_a_target_entry_array_holds_one_declaration_for_every_target() -> Result[None, IntakeError]:
+    """
+    A key may be declared for every target and again for some targets, as an adopted crate's `[dependencies]` entry
+    beside its `[target.*.dependencies]` one; two declarations for every target under one key are refused.
+    """
+    source = (
+        "[project]\nname='app'\nversion='0.1.0'\n[dependencies]\nserde = [\n"
+        + "  { loaf = 'crates-io/serde', version = '1', target = 'cfg(any())' },\n"
+        + "  { loaf = 'crates-io/serde_core', version = '1', optional = true },\n]\n"
+    )
+    project = parse_intent(source, "loaf.toml")?
+    assert len(project.rust_inputs) == 2
+    assert project.rust_inputs[0].target == Some("cfg(any())")
+    assert project.rust_inputs[1].target == None
+    assert project.rust_inputs[1].loaf == Some("crates-io/serde_core")
+    twice = (
+        "[project]\nname='app'\nversion='0.1.0'\n[dependencies]\n"
+        + "libc = [{ loaf = 'crates-io/libc', version = '0.2' }, { loaf = 'crates-io/libc', version = '0.2' }]\n"
+    )
+    match parse_intent(twice, "loaf.toml"):
+        Ok(_) => fail("a key declared twice for every target was admitted")
+        Err(error) =>
+            assert error.field == ["dependencies", "libc", "target"], error.message()
+            assert error.kind == IntakeErrorKind.Invalid, error.message()
+    return Ok(None)
+
+
 pub def test_amended_loaf_refuses_retired_grammar() -> None:
     """Reject removed Rust keys, dependency kinds, invalid identities, extra roles and noncanonical predicates."""
     for extra in [
