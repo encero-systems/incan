@@ -7,6 +7,7 @@ from loaf_local_graph import LocalDemand, LocalFacet, catalog, local_facets, loc
 from rust_activation import ActivationPurpose, CfgSnapshot, DependencyDomain, TargetConfiguration
 from registry_units import RegistryDemand, RegistrySelection, RegistryUnit, RegistryUnits
 from toolchain_native import retain_support_facet
+from json_fields import required_items, required_text, string_value
 
 
 def root(defaults: bool) -> Result[LocalDemand, str]:
@@ -311,4 +312,36 @@ pub def test_a_versioned_substitute_serves_the_registry_edge_its_requirement_adm
             assert len(facet.registry) == 0
     only_old = local_facets(demand, configuration(), {"crates-io/sub-leaf@1.0.0": old.0})?
     assert len(only_old) == 1 and len(only_old[0].registry) == 1, "a version the requirement refuses served the edge"
+    return Ok(None)
+
+
+def target_entries(name: str, features: list[str]) -> Result[LocalDemand, str]:
+    """A demand for one target-entry fixture, built for the Linux target `configuration` names."""
+    path = Path(f"tests/fixtures/target-entries/{name}").resolve().map_err((error) => error.message())?
+    return Ok(LocalDemand(project=path.0, domain=DependencyDomain.Target, features=features, defaults=true))
+
+
+pub def test_the_entries_of_one_key_that_apply_on_a_target_name_one_loaf_and_combine() -> Result[None, str]:
+    """
+    RFC 119 rule 3: the entries of one key that apply on the target being resolved make one request of their Loaf,
+    with their features combined and every version requirement they state; entries naming different Loaves there are
+    refused by name; an entry whose target does not hold contributes nothing, its Loaf and requirement included.
+    """
+    combined = local_facets(target_entries("combined", [])?, configuration())?
+    assert len(combined) == 1 and combined[0].registry_aliases == ["mio"], f"{combined[0].registry_aliases}"
+    mio = combined[0].registry[0]
+    assert required_text(mio, "loaf")? == "crates-io/mio"
+    assert required_text(mio, "req")? == "^1.2.0, ^1.0", required_text(mio, "req")?
+    features = sorted([string_value(item)? for item in required_items(mio, "features")?])
+    assert features == ["os-ext", "os-poll"], f"{features}"
+    match local_facets(target_entries("divergent", [])?, configuration()):
+        Ok(_) => fail("the entries of one key named two Loaves on one target and were accepted")
+        Err(reason) =>
+            assert "`serde`" in reason and "crates-io/serde_core" in reason, reason
+            assert "x86_64-unknown-linux-gnu" in reason, reason
+            assert "RFC 119 rule 3" in reason, reason
+    dormant = local_facets(target_entries("dormant", ["serde"])?, configuration())?
+    assert len(dormant) == 1 and len(dormant[0].registry) == 1, f"{dormant[0].registry_aliases}"
+    assert required_text(dormant[0].registry[0], "loaf")? == "crates-io/serde_core"
+    assert required_text(dormant[0].registry[0], "req")? == "^1.0.220"
     return Ok(None)

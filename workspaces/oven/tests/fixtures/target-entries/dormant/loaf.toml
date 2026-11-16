@@ -1,0 +1,15 @@
+[project]
+name = "crates-io/entries-dormant"
+version = "1.0.0"
+
+[project.features]
+serde = ["dep:serde"]
+
+[dependencies]
+serde = [
+  { loaf = "crates-io/serde", version = "^1.0.300", default-features = false, optional = true, target = "cfg(any())" },
+  { loaf = "crates-io/serde_core", version = "^1.0.220", default-features = false, optional = true },
+]
+
+[rust]
+type = "lib"
