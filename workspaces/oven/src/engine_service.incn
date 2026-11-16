@@ -24,7 +24,7 @@ from engine_messages import (
 )
 from engine_state import Identity, ServiceState
 from engine_epochs import prepare_submit
-from engine_actions import Pending, ExecutionLease, finish_request
+from engine_actions import Pending, Ready, ExecutionLease, finish_request
 from engine_programs import read_program, program_handle
 from engine_messages import Resolve, Resolution
 from engine_messages import Submit
@@ -78,6 +78,16 @@ pub def serve(arguments: list[str]) -> Result[None, Refusal]:
 
 pub def serve_at(root: Path, identity: Identity, idle: int = 600) -> Result[None, Refusal]:
     """Hold the store scheduling lock through startup, all client work and final socket withdrawal."""
+    return serve_at_with(root, identity, finish_request, idle)
+
+
+pub def serve_at_with(
+    root: Path,
+    identity: Identity,
+    settle_request: (Path, Pending) -> Result[Ready, str],
+    idle: int = 600,
+) -> Result[None, Refusal]:
+    """Serve with the supplied request settler, so admission can be tested against deterministically held work."""
     selected = endpoint(root, identity)?
     held = Path(selected.lock).try_lock_exclusive().map_err((error) => transport(error.message()))?
     if held is None:
@@ -88,7 +98,7 @@ pub def serve_at(root: Path, identity: Identity, idle: int = 600) -> Result[None
     # record only callers sharing this environment can.
     _ = record_endpoint(root, selected.socket)
     mut state = ServiceState(identity=identity, store=root, last_active=0)
-    outcome = event_loop(listener, state, idle)
+    outcome = event_loop(listener, state, settle_request, idle)
     withdraw_endpoint(root, selected.socket)
     discard_file(Path(selected.socket))
     return outcome
@@ -105,7 +115,12 @@ def withdraw_stale(path: str) -> Result[None, Refusal]:
     return Ok(None)
 
 
-def event_loop(mut listener: Listener, mut state: ServiceState, idle: int) -> Result[None, Refusal]:
+def event_loop(
+    mut listener: Listener,
+    mut state: ServiceState,
+    settle_request: (Path, Pending) -> Result[Ready, str],
+    idle: int,
+) -> Result[None, Refusal]:
     """Poll bounded client state and release it after use; no decoded compilation closure enters this process."""
     mut clients: list[Client] = []
     mut greetings: list[Greeting] = []
@@ -121,7 +136,7 @@ def event_loop(mut listener: Listener, mut state: ServiceState, idle: int) -> Re
         if len(clients) > 0:
             for index in range(len(clients)):
                 mut client = clients[index]
-                service_client(client, state)
+                service_client(client, state, settle_request)
                 clients[index] = client
             clients = [client for client in clients if not client.closed]
         state.clients = len(clients) + len(greetings)
@@ -171,9 +186,13 @@ def greet(initial: Channel, state: ServiceState) -> Result[Client, Refusal]:
         _ => return Err(Refusal(kind=RefusalKind.Schema, detail="Hello must be the first engine message"))
 
 
-def service_client(mut client: Client, mut state: ServiceState) -> None:
+def service_client(
+    mut client: Client,
+    mut state: ServiceState,
+    settle_request: (Path, Pending) -> Result[Ready, str],
+) -> None:
     """One invalid connection retires only its own interests; other clients retain their requests."""
-    match poll_client(client, state):
+    match poll_client(client, state, settle_request):
         Ok(_) => pass
         Err(_) => close_client(client, state)
     if len(client.pending) == 0 and verification_entries() > 0:
@@ -182,7 +201,11 @@ def service_client(mut client: Client, mut state: ServiceState) -> None:
         trace(f"engine request released: captures=0 verification={verification_entries()} released={released}")
 
 
-def poll_client(mut client: Client, mut state: ServiceState) -> Result[None, Refusal]:
+def poll_client(
+    mut client: Client,
+    mut state: ServiceState,
+    settle_request: (Path, Pending) -> Result[Ready, str],
+) -> Result[None, Refusal]:
     """Consume at most eight ready frames, then settle accepted requests within available credits."""
     for _turn in range(8):
         if not client.channel.transport.readable().map_err(transport)?:
@@ -194,7 +217,7 @@ def poll_client(mut client: Client, mut state: ServiceState) -> Result[None, Ref
         client.channel.acknowledge(frame)?
         if state.stopping:
             return Ok(None)
-    return settle(client, state)
+    return settle(client, state, settle_request)
 
 
 def handle(mut client: Client, mut state: ServiceState, frame: Envelope) -> Result[None, Refusal]:
@@ -290,14 +313,18 @@ def accept(mut client: Client, mut state: ServiceState, request: bytes, submit: 
             return send(client.channel, request, Message.Captured(Captured(epoch=captured.identity, snapshot=selected)))
 
 
-def settle(mut client: Client, mut state: ServiceState) -> Result[None, Refusal]:
+def settle(
+    mut client: Client,
+    mut state: ServiceState,
+    settle_request: (Path, Pending) -> Result[Ready, str],
+) -> Result[None, Refusal]:
     """Settle available requests, then replace the interest list after its iteration has ended."""
     mut waiting: list[Pending] = []
     for pending in client.pending:
         if client.channel.pending.exhausted():
             waiting.append(pending)
             continue
-        match finish_request(state.store, pending):
+        match settle_request(state.store, pending):
             Err(reason) =>
                 send_request_refusal(client.channel, state.store, pending.request, transport(reason), "unit-record")?
             Ok(ready) =>

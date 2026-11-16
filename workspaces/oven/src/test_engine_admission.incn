@@ -1,0 +1,197 @@
+"""A settling records request cannot hold later clients outside the engine handshake."""
+
+from rust::std::thread import JoinHandle, sleep, spawn
+from rust::std::time import Duration, Instant
+from std.fs import Path
+from pub::incan_platform.ipc import dial
+from engine_actions import Pending, Ready
+from engine_channel import Channel
+from engine_endpoint import endpoint, handshake, owner_uid
+from engine_messages import BindingOutcome, Complete, CompletionStatus, Message, Stop, Submit
+from engine_service import serve_at_with
+from engine_state import Identity
+from engine_wire import Refusal, joined, scalar, zero_id
+from files import write
+from scratch import scratch_directory
+
+# The file the held settler writes into the request's directory once it holds the first request.
+const SETTLING: str = "settling"
+
+
+pub def test_handshakes_progress_while_an_earlier_request_settles() -> Result[None, str]:
+    """Three later clients complete Hello, Welcome and Ack while the first request is held unsettled for six seconds."""
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("store")
+    store.mkdir(true, true).map_err((error) => error.message())?
+    source = scratch.path().joinpath("main.incn")
+    write(source, "def main() -> None:\n    println(\"hello\")\n")?
+    started = scratch.path().joinpath(SETTLING)
+    identity = admission_identity(store)?
+    server_identity = admission_identity(store)?
+    server = spawn(() => delayed_service(store, server_identity))
+    mut first = await_channel(store, identity)?
+    # As the client does: only the handshake is bounded, and the held settlement outlives that bound.
+    first.transport.wait_at_most(0)
+    request = request_id(1)
+    _ = first
+        .send(
+            request,
+            Message.Submit(
+                Submit(
+                    command="build",
+                    view="first",
+                    input_selection="debug",
+                    requested_roots=source.0,
+                    options="",
+                    observation_policy="",
+                    directory=scratch.path().0,
+                ),
+            ),
+        )
+        .map_err(refusal_detail)?
+    await_capture(first)?
+    await_settlement(started)?
+    clock = Instant.now()
+    second_identity = admission_identity(store)?
+    third_identity = admission_identity(store)?
+    fourth_identity = admission_identity(store)?
+    second = spawn(() => await_channel(store, second_identity))
+    third = spawn(() => await_channel(store, third_identity))
+    fourth = spawn(() => await_channel(store, fourth_identity))
+    admitted = [joined_handshake(second), joined_handshake(third), joined_handshake(fourth)]
+    greeted = int(clock.elapsed().as_millis())
+    await_completion(first)?
+    settled = int(clock.elapsed().as_millis())
+    _ = first.send(zero_id(), Message.Stop(Stop(reason="admission proof complete"))).map_err(refusal_detail)?
+    await_stopping(first)?
+    _ = first.transport.close()
+    joined_server(server)?
+    assert admitted == [true, true, true], f"later handshake outcomes: {admitted}"
+    assert greeted < 5000, f"the later handshakes took {greeted} ms"
+    assert settled > 5000, f"the first request settled after {settled} ms"
+    return Ok(None)
+
+
+def delayed_service(store: Path, identity: Identity) -> Result[None, str]:
+    """Run one real service whose request settler is held beyond the handshake deadline."""
+    return serve_at_with(store, identity, delayed_finish, 30).map_err(refusal_detail)
+
+
+def delayed_finish(_store: Path, pending: Pending) -> Result[Ready, str]:
+    """Announce settlement, hold it for six seconds, then return one ordinary successful completion."""
+    write(Path(pending.directory).joinpath(SETTLING), "settling")?
+    sleep(Duration.from_secs(6))
+    return Ok(
+        Ready(
+            message=Complete(
+                snapshot="settled",
+                admission_proof="test",
+                result_handles="",
+                binding_outcome=BindingOutcome.NotSelected,
+                status=CompletionStatus.Success,
+                observation_handle="",
+            ),
+            console="",
+        ),
+    )
+
+
+def admission_identity(store: Path) -> Result[Identity, str]:
+    """Name the complete identity shared by this test's clients and service."""
+    return Ok(
+        Identity(
+            store_id="concurrent-admission",
+            profile="test",
+            service_generation="service",
+            compiler_generation="compiler",
+            uid=owner_uid(store).map_err(refusal_detail)?,
+        ),
+    )
+
+
+def await_channel(store: Path, identity: Identity) -> Result[Channel, str]:
+    """Connect and complete Hello, Welcome and Ack within the protocol's own bound."""
+    selected = endpoint(store, identity).map_err(refusal_detail)?
+    for _poll in range(2500):
+        match dial(selected.socket):
+            Ok(connected) => return handshake(Channel(transport=connected), identity).map_err(refusal_detail)
+            Err(_) => sleep(Duration.from_millis(2))
+    return Err("test engine did not start")
+
+
+def await_capture(mut channel: Channel) -> Result[None, str]:
+    """Require acceptance and capture before the test starts its later clients."""
+    mut accepted = false
+    for _turn in range(8):
+        frame = channel.receive().map_err(refusal_detail)?
+        match frame.message:
+            Message.Accepted(_) => accepted = true
+            Message.Captured(_) =>
+                assert accepted
+                channel.acknowledge(frame).map_err(refusal_detail)?
+                return Ok(None)
+            Message.Refused(value) => return Err(value.detail)
+            _ => pass
+        channel.acknowledge(frame).map_err(refusal_detail)?
+    return Err("the first request was not captured")
+
+
+def await_settlement(started: Path) -> Result[None, str]:
+    """Wait until the first request is inside the deliberately held synchronous settler."""
+    for _poll in range(2500):
+        if started.is_file():
+            return Ok(None)
+        sleep(Duration.from_millis(2))
+    return Err("the first request did not begin settlement")
+
+
+def await_completion(mut channel: Channel) -> Result[None, str]:
+    """Read the first request through to its completion."""
+    for _turn in range(12):
+        frame = channel.receive().map_err(refusal_detail)?
+        channel.acknowledge(frame).map_err(refusal_detail)?
+        match frame.message:
+            Message.Complete(_) => return Ok(None)
+            Message.Refused(value) => return Err(value.detail)
+            _ => pass
+    return Err("the first request did not complete")
+
+
+def await_stopping(mut channel: Channel) -> Result[None, str]:
+    """Read until the service says it stops; it leaves at once, so nothing is acknowledged from here on."""
+    for _turn in range(12):
+        frame = channel.receive().map_err(refusal_detail)?
+        match frame.message:
+            Message.Event(value) =>
+                if value.status == "Stopping":
+                    return Ok(None)
+            Message.Refused(value) => return Err(value.detail)
+            _ => pass
+    return Err("the service did not stop")
+
+
+def joined_handshake(worker: JoinHandle[Result[Channel, str]]) -> bool:
+    """Close a successfully admitted later client and report any handshake or thread failure."""
+    match worker.join():
+        Ok(Ok(channel)) =>
+            _ = channel.transport.close()
+            return true
+        Ok(Err(_)) => return false
+        Err(_) => return false
+
+
+def joined_server(worker: JoinHandle[Result[None, str]]) -> Result[None, str]:
+    """Require the test-owned service thread to withdraw its endpoint normally."""
+    match worker.join():
+        Ok(outcome) => return outcome
+        Err(_) => return Err("test engine thread panicked")
+
+
+def request_id(value: int) -> bytes:
+    """Make one nonzero 16-byte request identity."""
+    return joined([scalar(value, 8), scalar(0, 8)])
+
+
+def refusal_detail(refusal: Refusal) -> str:
+    """Expose a typed engine refusal through the test boundary."""
+    return refusal.detail
