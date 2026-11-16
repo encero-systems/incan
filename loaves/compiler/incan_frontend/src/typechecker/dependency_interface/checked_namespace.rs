@@ -152,7 +152,7 @@ impl CheckedNamespaceInterface {
         let remapping = checked_namespace_foreign_nominal_remapping(&self.api);
         let mut symbols = HashMap::new();
         let mut reexports = HashMap::new();
-        let mut symbol_rows = Vec::new();
+        let mut declared = Vec::new();
         for declaration in &self.api.declarations {
             let name = namespace_declaration_name(declaration)
                 .ok_or("checked namespace interface contains an unsupported declaration")?;
@@ -183,16 +183,8 @@ impl CheckedNamespaceInterface {
             if let Some(members) = self.members.get(name) {
                 members.restore(&mut kind);
             }
-            symbols.insert(name.to_owned(), kind.clone());
-            symbol_rows.push((
-                Symbol {
-                    name: name.to_owned(),
-                    kind,
-                    span: namespace_declaration_span(declaration),
-                    scope: 0,
-                },
-                Some(identity),
-            ));
+            symbols.insert(name.to_owned(), kind);
+            declared.push((name.to_owned(), namespace_declaration_span(declaration), identity));
         }
         let exports = self
             .api
@@ -206,11 +198,36 @@ impl CheckedNamespaceInterface {
             .map(|(name, identity)| (name.clone(), identity.clone()))
             .collect::<HashMap<_, _>>();
         let nominal_scope = Arc::new(self.nominal_scope.clone());
-        for (name, kind) in &symbols {
+        // As when the declaring module is sealed: each declaration keeps its scope under its own spellings, and its
+        // member types then name every nominal of that scope by carrier key, so a consumer that reaches a model only
+        // through a field or a result still names the declaration and not a spelling it never imported.
+        let carriers = nominal_scope
+            .iter()
+            .filter_map(|(name, identity)| {
+                incan_semantics_core::body_ir::nominal_carrier_key(identity).map(|key| (name.clone(), key))
+            })
+            .collect::<HashMap<_, _>>();
+        for (name, kind) in &mut symbols {
             if let Some(identity) = identities.get(name) {
                 converter.retain_declaration_nominal_scope(identity, kind, &nominal_scope);
+                converter.remap_symbol_kind_with_import_aliases(kind, &carriers);
             }
         }
+        let symbol_rows = declared
+            .into_iter()
+            .filter_map(|(name, span, identity)| {
+                let kind = symbols.get(&name)?.clone();
+                Some((
+                    Symbol {
+                        name,
+                        kind,
+                        span,
+                        scope: 0,
+                    },
+                    Some(identity),
+                ))
+            })
+            .collect::<Vec<_>>();
         converter.retain_nominal_scope_carriers(&nominal_scope);
         let (transitive_public_types, transitive_public_traits) = provider_transitive_semantics(&symbols, &identities);
         let symbols = Arc::new(symbols);
