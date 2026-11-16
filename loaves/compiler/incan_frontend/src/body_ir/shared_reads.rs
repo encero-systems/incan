@@ -18,6 +18,7 @@ mod loop_reads;
 mod match_reads;
 mod published_reads;
 mod string_parameter_reads;
+mod view_clones;
 
 use derived_reads::{derived_temporaries_are_read_only, retain_shared_temporaries, temporary_is_read_only};
 use match_reads::{match_bindings_are_read_only, pattern_is_read_only, pattern_selects_shared_carrier};
@@ -201,6 +202,7 @@ pub(super) fn retain_modules_with_selected(
             match_reads::retain_borrowed_payload_bindings(body, &final_signatures, &field_types, &no_candidates);
             loop_reads::retain_borrowed_loop_items(body, &final_signatures, &field_types, &no_candidates);
             retain_body_calls(body, &final_signatures, &field_types, &no_candidates);
+            view_clones::refuse_cloned_views(body);
         }
     }
 }
