@@ -149,9 +149,9 @@ def items(value: JsonValue, key: str) -> Result[list[JsonValue], str]:
 
 pub def test_a_loaf_whose_source_holds_a_bidirectional_control_is_refused_with_what_links_it() -> Result[None, str]:
     """
-    RFC 175: Oven refuses source that holds a raw bidirectional control, in every file of a Loaf. A registry Loaf whose
-    archive holds one is refused by name, with the file named by its place in the Loaf, and so is every Loaf that links
-    it; the run still writes its closure document.
+    RFC 175: Oven refuses Rust source that holds a raw embedding, override or isolate control, in every file of a Loaf.
+    A registry Loaf whose archive holds one is refused by name, with the file named by its place in the Loaf, and so
+    is every Loaf that links it; the run still writes its closure document.
     """
     scratch = scratch_directory()?
     root = scratch.path()
@@ -160,7 +160,8 @@ pub def test_a_loaf_whose_source_holds_a_bidirectional_control_is_refused_with_w
     fixture = Path("tests/fixtures/compile-closure/tiny-a").resolve().map_err((error) => error.message())?
     copied = Command.new("cp").arg("-R").arg(fixture.0).arg(marked.0).output().map_err((error) => error.to_string())?
     assert copied.status.success(), "cannot copy tiny-a"
-    marked.joinpath("src/example.rs").write_bytes(b"// a mark \xe2\x80\x8e here\n").map_err((error) => error.message())?
+    overriding = b"// an override \xe2\x80\xae here\n"
+    marked.joinpath("src/example.rs").write_bytes(overriding).map_err((error) => error.message())?
     sources = root.joinpath("sources")
     index = root.joinpath("index")
     first = archived_tree(marked, "tiny-a", sources)?
@@ -179,7 +180,7 @@ pub def test_a_loaf_whose_source_holds_a_bidirectional_control_is_refused_with_w
         reasons[text(refusal, "loaf")?] = text(refusal, "reason")?
     assert len(reasons) == 2, f"{reasons}"
     marked_reason = reasons["crates-io/tiny-a"]
-    assert "INCAN-P0101" in marked_reason and "LEFT-TO-RIGHT MARK" in marked_reason, marked_reason
+    assert "INCAN-P0101" in marked_reason and "RIGHT-TO-LEFT OVERRIDE" in marked_reason, marked_reason
     assert "src/example.rs:1:" in marked_reason and root.0 not in marked_reason, marked_reason
     assert "links crates-io/tiny-a 1.0.0" in reasons["crates-io/tiny-b"], reasons["crates-io/tiny-b"]
     return Ok(None)

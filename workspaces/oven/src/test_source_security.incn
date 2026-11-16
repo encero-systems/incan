@@ -5,7 +5,10 @@ from source_security import validate_native_project
 
 
 pub def test_native_source_security_refuses_controls_before_rust_or_c_compilation() -> Result[None, str]:
-    """Rust and C-family inputs report stable code, position, name and visible replacement without compiling."""
+    """
+    Rust and C-family inputs holding an embedding, override or isolate control report stable code, position, name and
+    visible replacement without compiling (RFC 175).
+    """
     scratch = scratch_directory()?
     root = scratch.path()
     root.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
@@ -18,16 +21,33 @@ pub def test_native_source_security_refuses_controls_before_rust_or_c_compilatio
         Err(error) =>
             assert "INCAN-P0101" in error, error
             assert "RIGHT-TO-LEFT OVERRIDE" in error, error
-            assert "lib.rs:1:5" in error, error
+            assert "src/lib.rs:1:5" in error, error
             assert "\\u{202e}" in error, error
     rust_source.unlink().map_err((error) => error.message())?
     c = root.joinpath("src").joinpath("bridge.c")
-    c.write_bytes(b"//\xc3\xa9\xd8\x9c").map_err((error) => error.message())?
+    c.write_bytes(b"//\xc3\xa9\xe2\x81\xa7").map_err((error) => error.message())?
     match validate_native_project(root.0):
         Ok(_) => return Err("raw C control was admitted")
         Err(error) =>
-            assert "ARABIC LETTER MARK" in error, error
-            assert "bridge.c:1:4" in error, error
+            assert "RIGHT-TO-LEFT ISOLATE" in error, error
+            assert "src/bridge.c:1:4" in error, error
+            assert "\\u{2067}" in error, error
+    return Ok(None)
+
+
+pub def test_native_source_security_admits_the_marks_rust_admits() -> Result[None, str]:
+    """
+    Rust and C-family sources may hold the implicit marks U+061C, U+200E and U+200F, which rustc's text-direction lints
+    admit; only the embedding, override and isolate controls are refused there (RFC 175). Incan source still refuses
+    every bidirectional control.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    root.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    marked = b"//! `\xd9\x84\xd8\xa7`\xe2\x80\x8e and \xe2\x80\x8f\npub fn f() {}\n"
+    root.joinpath("src").joinpath("lib.rs").write_bytes(marked).map_err((error) => error.message())?
+    root.joinpath("src").joinpath("bridge.c").write_bytes(b"// \xd8\x9c\n").map_err((error) => error.message())?
+    validate_native_project(root.0)?
     return Ok(None)
 
 
