@@ -16,7 +16,7 @@ from pub::incan_mir_plan import (
 )
 from explicit_arguments import direct_view_access
 from layout_types import native_source_type
-from signature_lifetimes import signature_lifetimes
+from signature_lifetimes import owner_signature_lifetimes, signature_lifetimes
 from rust::incan_semantics_core import (
     IncanInputAccess,
     IncanType as RustType,
@@ -179,6 +179,13 @@ pub def lower_function(
             if view.access != IncanInputAccess.Owned:
                 function.signature_lifetimes = signature_lifetimes(body, type_arguments)?
         None => pass
+    # A closed nominal method keeps the loans its owner's type arguments supply (#2972).
+    if len(function.signature_lifetimes) == 0 and len(body.nominal_instantiation) != 0:
+        function.signature_lifetimes = owner_signature_lifetimes(
+            body.params,
+            body.return_type,
+            body.nominal_instantiation,
+        )
     if body.is_generator():
         match generator_shape(declared_type):
             Some((leaf, depth)) =>
