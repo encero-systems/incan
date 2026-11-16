@@ -1,4 +1,4 @@
-"""Publish both host bundles with oras and replace the checked-in immutable build-toolchain pins."""
+"""Publish both host bundles, each asset with its release signature, with oras and replace the checked-in immutable build-toolchain pins."""
 
 from rust::std::env import args
 from rust::std::process import Command, exit
@@ -7,16 +7,28 @@ from std.fs import Path
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
 from check_support import repository_root, write_stderr
+from release_signer import BUNDLE_SUFFIX, SIGNED_ASSETS
 from release_support import TOOLCHAIN_VERSION, full_sha
+
+# The media type of the Sigstore bundle the release workflow's `cosign sign-blob --new-bundle-format` writes.
+const SIGNATURE_TYPE: str = "application/vnd.dev.sigstore.bundle.v0.3+json"
 
 
 pub model HostBundle:
-    """One native host target and its compiler archive, Oven, and language server."""
+    """
+    One native host target and its compiler archive, Oven, and language server, each signed by the release workflow.
+
+    Each input's signature, `INPUT.sigstore.json`, lies beside it, as the workflow's signed bundle holds them.
+    """
 
     pub target: str
     pub archive: Path
     pub oven: Path
     pub lsp: Path
+
+    pub def assets(self) -> list[tuple[str, Path]]:
+        """Each input under the name the published bundle gives it, in `SIGNED_ASSETS` order."""
+        return [(SIGNED_ASSETS[0], self.archive), (SIGNED_ASSETS[1], self.oven), (SIGNED_ASSETS[2], self.lsp)]
 
 
 def main() -> None:
@@ -78,22 +90,37 @@ pub def publish(arguments: list[str]) -> Result[Path, str]:
 
 
 pub def validate(bundle: HostBundle) -> Result[None, str]:
-    """Refuse an incomplete host bundle before any registry mutation occurs."""
-    for input in [bundle.archive, bundle.oven, bundle.lsp]:
+    """
+    Refuse an incomplete host bundle before any registry mutation occurs.
+
+    A stamped `incan` installs an archive only with its signature beside it, so an input without `INPUT.sigstore.json`
+    is refused by that file's name.
+    """
+    for _name, input in bundle.assets():
         if not input.is_file():
             return Err(f"missing release input: {input.0}")
+        signature = Path(input.0 + BUNDLE_SUFFIX)
+        if not signature.is_file():
+            return Err(f"missing release signature: {signature.0}")
     if not bundle.archive.0.endswith(".tar.zst"):
         return Err(f"compiler archives must be .tar.zst: {bundle.archive.0}")
     return Ok(None)
 
 
-def publish_host(commit: str, bundle: HostBundle, stage: Path) -> Result[str, str]:
-    """Push one annotated OCI bundle and derive its immutable pin from that push's descriptor."""
+pub def stage_host(bundle: HostBundle, stage: Path) -> Result[Path, str]:
+    """Lay out one host's published bundle: each asset under its published name, its signature beside it."""
     directory = stage.joinpath(bundle.target)
     directory.mkdir(true, false).map_err((error) => error.message())?
-    _ = bundle.archive.copy(directory.joinpath("toolchain.tar.zst"), true, true).map_err((error) => error.message())?
-    _ = bundle.oven.copy(directory.joinpath("incan"), true, true).map_err((error) => error.message())?
-    _ = bundle.lsp.copy(directory.joinpath("incan-lsp"), true, true).map_err((error) => error.message())?
+    for name, input in bundle.assets():
+        _ = input.copy(directory.joinpath(name), true, true).map_err((error) => error.message())?
+        signature = Path(input.0 + BUNDLE_SUFFIX)
+        _ = signature.copy(directory.joinpath(name + BUNDLE_SUFFIX), true, true).map_err((error) => error.message())?
+    return Ok(directory)
+
+
+def publish_host(commit: str, bundle: HostBundle, stage: Path) -> Result[str, str]:
+    """Push one annotated OCI bundle and derive its immutable pin from that push's descriptor."""
+    directory = stage_host(bundle, stage)?
     reference = f"ghcr.io/encero-systems/loaves.pub/toolchain/incan:{commit}-{bundle.target}"
     mut command = Command.new("oras")
     command.current_dir(directory.0)
@@ -117,8 +144,8 @@ def publish_host(commit: str, bundle: HostBundle, stage: Path) -> Result[str, st
 
 
 pub def push_arguments(reference: str, commit: str, target: str) -> list[str]:
-    """Return the stable oras push arguments and release annotations for one host."""
-    return [
+    """Return the stable oras push arguments and release annotations for one host, each asset with its signature."""
+    mut arguments = [
         "push",
         reference,
         "--artifact-type",
@@ -139,6 +166,9 @@ pub def push_arguments(reference: str, commit: str, target: str) -> list[str]:
         "incan:application/octet-stream",
         "incan-lsp:application/octet-stream",
     ]
+    for asset in SIGNED_ASSETS:
+        arguments.append(f"{asset}{BUNDLE_SUFFIX}:{SIGNATURE_TYPE}")
+    return arguments
 
 
 def valid_digest(value: str) -> bool:
