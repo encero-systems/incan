@@ -1,0 +1,58 @@
+# behavior: a walker built from a selected view of the envelope's plan holds that view through its type argument, so it reads the plan until it is consumed, after which the envelope changes (#2972)
+# expect-stdout:
+#   7
+#   12
+
+
+trait Plan:
+    def width(self) -> int:
+        pass
+
+
+class StoredPlan with Plan:
+    pub value: int
+
+    def width(self) -> int:
+        return self.value
+
+
+class Walker[P with Plan]:
+    pub plan: P
+    total: int = 0
+
+    pub def write(mut self, value: int) -> None:
+        self.total += value + self.plan.width()
+
+    pub def finish(self) -> int:
+        return self.total
+
+
+model Selected[P with Plan]:
+    plan: P
+
+    pub def walker(self) -> Walker[P]:
+        return Walker(plan=self.plan)
+
+
+class Envelope:
+    pub plan: StoredPlan
+    pub total: int = 0
+
+    pub def select(self) -> Selected[Borrowed[StoredPlan]] from self.plan:
+        return Selected[Borrowed[StoredPlan]](plan=self.plan)
+
+    pub def append(mut self, value: int) -> None:
+        self.total += value
+
+
+def main() -> None:
+    mut envelope = Envelope(plan=StoredPlan(value=2), total=0)
+    selected = envelope.select()
+    mut walker = selected.walker()
+    walker.write(3)
+    walker.write(0)
+    completed = walker.finish()
+    println(completed)
+    envelope.append(completed)
+    envelope.append(5)
+    println(envelope.total)
