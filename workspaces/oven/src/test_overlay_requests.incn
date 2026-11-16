@@ -74,7 +74,7 @@ pub def test_a_hover_answers_an_imported_signature_from_the_editor_views_records
     program.mkdir(true, true).map_err((error) => error.message())?
     write(
         program.joinpath("loaf.toml"),
-        "[project]\nname = \"overlay-definition\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"main.incn\"\n\n[dependencies]\nchecked = { path = \"deps/checked\" }\n",
+        "[project]\nname = \"overlay-definition\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"main.incn\"\n\n[project.features]\ndefault = []\nextra = []\n\n[dependencies]\nchecked = { path = \"deps/checked\" }\n",
     )?
     checked = program.joinpath("deps").joinpath("checked")
     checked.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
@@ -84,7 +84,7 @@ pub def test_a_hover_answers_an_imported_signature_from_the_editor_views_records
     source = program.joinpath("main.incn")
     write(
         source,
-        "from helper import value\nfrom pub::checked import checked_value\n\n\ndef main() -> None:\n    println(f\"{value(2)}\")\n    println(f\"{checked_value()}\")\n",
+        "from helper import value\nfrom pub::checked import checked_value\n\n\ndef main() -> None:\n    println(f\"{value(2)}\")\n    println(f\"{checked_value()}\")\n\n\nwhen feature(\"extra\"):\n    def inactive_value() -> int:\n        return 1\n",
     )?
     store = scratch.path().joinpath("store")
     ran = records_run(binary, source, store)
@@ -95,6 +95,7 @@ pub def test_a_hover_answers_an_imported_signature_from_the_editor_views_records
     references = overlay_with(binary, source, source, store, ["--references", "6:17"])
     incoming_hierarchy = overlay_with(binary, source, source, store, ["--call-hierarchy", "6:17"])
     outgoing_hierarchy = overlay_with(binary, source, source, store, ["--call-hierarchy", "5:5"])
+    document_symbols = overlay_with(binary, source, source, store, ["--document-symbols"])
     if store.exists():
         stop_engine(binary, store)?
     _ = ran?
@@ -105,6 +106,7 @@ pub def test_a_hover_answers_an_imported_signature_from_the_editor_views_records
     references_answer = references?
     incoming_hierarchy_answer = incoming_hierarchy?
     outgoing_hierarchy_answer = outgoing_hierarchy?
+    document_symbols_answer = document_symbols?
     imported_text = imported_answer.to_json().map_err((error) => error.message())?
     own_text = own_answer.to_json().map_err((error) => error.message())?
     definition_text = definition_answer.to_json().map_err((error) => error.message())?
@@ -112,6 +114,7 @@ pub def test_a_hover_answers_an_imported_signature_from_the_editor_views_records
     references_text = references_answer.to_json().map_err((error) => error.message())?
     incoming_hierarchy_text = incoming_hierarchy_answer.to_json().map_err((error) => error.message())?
     outgoing_hierarchy_text = outgoing_hierarchy_answer.to_json().map_err((error) => error.message())?
+    document_symbols_text = document_symbols_answer.to_json().map_err((error) => error.message())?
     assert imported_text.contains("def value(scale: int) -> int"), imported_text
     assert own_text.contains("def main() -> None"), own_text
     assert definition_text.contains("helper.incn") and definition_text.contains("\"line\":1"), definition_text
@@ -119,6 +122,7 @@ pub def test_a_hover_answers_an_imported_signature_from_the_editor_views_records
     assert references_text.contains("helper.incn") and references_text.contains("main.incn"), references_text
     assert incoming_hierarchy_text.contains("\"incoming\"") and incoming_hierarchy_text.contains("helper.incn") and incoming_hierarchy_text.contains("main.incn"), incoming_hierarchy_text
     assert outgoing_hierarchy_text.contains("\"outgoing\"") and outgoing_hierarchy_text.contains("main.incn") and outgoing_hierarchy_text.contains("helper.incn"), outgoing_hierarchy_text
+    assert document_symbols_text.contains("\"name\":\"main\"") and document_symbols_text.contains("\"name\":\"inactive_value\"") and document_symbols_text.contains("inactive; requires `extra`") and not document_symbols_text.contains("helper.incn"), document_symbols_text
     return Ok(None)
 
 
