@@ -561,4 +561,70 @@ mod tests {
         assert!(model.fields.contains_key("unit_price"));
         Ok(())
     }
+
+    /// The nominal facts one consumer publishes when it is checked against `interface` for the `domain` module.
+    fn consumer_nominal_facts(
+        provider: &Program,
+        consumer: &Program,
+        interface: Arc<ModuleDependencyInterface>,
+    ) -> Result<Vec<String>, String> {
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["transform".to_string()]));
+        checker.register_dependency_module_path_segments("domain", vec!["domain".to_string()]);
+        checker.select_dependency_interfaces(vec![interface]);
+        checker
+            .check_with_imports(consumer, &[("domain", provider)])
+            .map_err(|errors| format!("{errors:?}"))?;
+        let facts = checker.type_info();
+        let mut rows = facts
+            .declarations
+            .named_type_identities
+            .iter()
+            .map(|(name, identity)| format!("named {name} -> {identity:?}"))
+            .collect::<Vec<_>>();
+        let mut expressions = facts
+            .expressions
+            .body_ir_expr_types
+            .iter()
+            .map(|(span, ty)| format!("expression {}..{} : {ty:?}", span.start, span.end))
+            .collect::<Vec<_>>();
+        expressions.sort();
+        rows.extend(expressions);
+        Ok(rows)
+    }
+
+    /// A consumer checked against a restored namespace publishes the nominal facts it publishes against the sealed
+    /// one, including a model it reaches only through an imported model's field and never imports.
+    #[test]
+    fn restored_namespace_gives_a_consumer_the_sealed_nominal_facts() -> Result<(), String> {
+        let parse = |source: &str| -> Result<Program, String> {
+            let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+            crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))
+        };
+        let provider =
+            parse("pub model Order:\n    pub quantity: int\n\npub model OrderBatch:\n    pub orders: list[Order]\n")?;
+        let consumer = parse(
+            "from domain import OrderBatch\n\npub def total(batch: OrderBatch) -> int:\n    mut sum = 0\n    for order in batch.orders:\n        sum += order.quantity\n    return sum\n",
+        )?;
+        let module_path = vec!["domain".to_string()];
+        let mut builder = TypeChecker::new();
+        builder.set_current_module_path(Some(module_path.clone()));
+        builder
+            .check_program(&provider)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let restored = CheckedNamespaceInterface::from_checked("domain", &module_path, &provider, &builder)?
+            .ok_or("model namespace was not retained")?
+            .installable()?;
+        let exports = Arc::from(crate::module::exported_symbols(&provider));
+        let sealed = builder.seal_current_module_dependency_interface("domain", &provider, exports, true);
+        let sealed_facts =
+            consumer_nominal_facts(&provider, &consumer, sealed).map_err(|error| format!("sealed: {error}"))?;
+        let restored_facts =
+            consumer_nominal_facts(&provider, &consumer, restored).map_err(|error| format!("restored: {error}"))?;
+        assert_eq!(
+            sealed_facts, restored_facts,
+            "sealed:\n{sealed_facts:#?}\nrestored:\n{restored_facts:#?}"
+        );
+        Ok(())
+    }
 }
