@@ -175,6 +175,11 @@ impl Builder<'_> {
             self.graph.dependent_values.insert(assignment.value.span);
             return Ok((result.incoming, true));
         }
+        // A call result holding a borrow only through a type argument keeps its carrying input's dependencies.
+        if self.carried_call(&assignment.value) {
+            let incoming = self.bind_carried_result(&assignment.value, root, assignment.name_span, incoming)?;
+            return Ok((incoming, true));
+        }
         // A user-defined or nested aggregate stores its physical reference while retaining the substituted source
         // loan on the aggregate local. Unlike a builtin carried view, ordinary field access reads that stored value.
         if let Some(relation) = self

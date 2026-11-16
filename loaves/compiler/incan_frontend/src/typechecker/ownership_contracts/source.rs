@@ -174,6 +174,9 @@ struct Builder<'a> {
     view_in_tuple: bool,
     /// Returns that do not borrow the declared view source. These are program errors, reported by the caller.
     view_errors: Vec<crate::diagnostics::CompileError>,
+    /// Calls whose result carries its carrying input's dependencies through a type argument, by call span, until a
+    /// new local binding takes them. One left when the body completes was used where nothing retains them.
+    carried_results: BTreeMap<Span, Vec<LoanId>>,
 }
 
 /// Project a checked callable body against its declaration and local contracts. Calls without selected access
@@ -329,6 +332,7 @@ fn build_graph(
         view_component: Vec::new(),
         view_in_tuple: false,
         view_errors: Vec::new(),
+        carried_results: BTreeMap::new(),
     };
     builder.inputs(parameters, identity)?;
     let mut receiver_root = None;
@@ -398,6 +402,12 @@ fn build_graph(
     let result = builder.block(body, vec![0]);
     view_errors.append(&mut builder.view_errors);
     result?;
+    if let Some(span) = builder.carried_results.keys().next().copied() {
+        return Err(Unavailable {
+            span,
+            reason: "a carried result needs a local binding".into(),
+        });
+    }
     Ok(builder.graph)
 }
 

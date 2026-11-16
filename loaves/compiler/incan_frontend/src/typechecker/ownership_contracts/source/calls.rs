@@ -421,7 +421,9 @@ impl Builder<'_> {
             super::super::InputCallKind::Explicit | super::super::InputCallKind::Ordinary
         ) && contract.is_none_or(|contract| contract.result_source.is_none())
             && self.checker.type_holds_no_borrow(result);
+        let carried = result_requirement.is_none() && self.carried_result(call, contract, result);
         if view.is_none()
+            && !carried
             && native_dependencies.is_none()
             && !native_independent_result
             && !owned_independent_result
@@ -431,7 +433,7 @@ impl Builder<'_> {
             && !fresh_result
             && result_requirement.is_none()
             && !lends_nothing
-            && !(call.kind == super::super::InputCallKind::Ordinary && call.parameters.is_empty())
+            && !(call.kind == super::super::InputCallKind::Ordinary && call.parameters.is_empty() && receiver.is_none())
         {
             return Err(Unavailable {
                 span,
@@ -655,6 +657,9 @@ impl Builder<'_> {
                 reason: "invocation has more than one checked argument binding".into(),
             });
         }
+        if carried {
+            self.retain_carried_result(span)?;
+        }
         Ok(incoming)
     }
 
@@ -722,23 +727,6 @@ impl Builder<'_> {
                 reason: "ordinary argument requires inferred access or mutable binding facts".into(),
             }),
         }
-    }
-
-    /// Whether a temporary argument is a fresh value: no returned or native view, and a type that can hold no borrow.
-    fn fresh_argument(&mut self, expression: &Spanned<Expr>) -> Result<bool, Unavailable> {
-        if self.view_source(expression)?.is_some()
-            || self.view_rooted(expression)
-            || self
-                .native_result_relation(expression)?
-                .is_some_and(|relation| !relation.sources.is_empty())
-        {
-            return Ok(false);
-        }
-        Ok(self
-            .checker
-            .type_info
-            .expr_type(expression.span)
-            .is_some_and(|ty| plain_result(ty) || self.checker.type_holds_no_borrow(ty)))
     }
 
     /// A fresh scalar or owned byte-string expression, or a list literal of Copy scalars, may be borrowed for this
