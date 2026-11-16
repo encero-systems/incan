@@ -644,6 +644,15 @@ const INDEXED_TEXT_LOOPS: str = """def by_index(value: str) -> int:
     return count
 
 
+def measured(value: str) -> int:
+    mut index = 0
+    mut seen = 0
+    while index < len(value):
+        seen += len(value[index])
+        index += 1
+    return seen
+
+
 def growing(value: str) -> str:
     mut current = value
     mut out = ""
@@ -661,18 +670,18 @@ def main() -> None:
     mut total = 0
     for index in range(len(local)):
         total += len(local[index:])
-    println(by_index(text), total, growing(text))
+    println(by_index(text), total, measured(text), growing(text))
 """
 
 
 pub def test_a_loop_reading_unchanged_text_by_index_seeks_from_a_cursor() -> Result[None, str]:
     """
     A loop that reads a string it never changes by scalar index or slice seeks each read from a cursor the loop keeps,
-    for a parameter and for a local, ASCII or not, so reading every scalar once walks the string once; a loop that
-    changes the string it indexes keeps the walk from the start (#3070).
+    and its `len` reads the count the cursor keeps, for a parameter and for a local, ASCII or not, so reading every
+    scalar once walks the string once; a loop that changes the string it indexes keeps the walk from the start (#3070).
     """
-    report = plan_report("indexed_text_loops", INDEXED_TEXT_LOOPS, "15 66 aéa")?
-    for helper in ["str_index_from", "str_slice_from"]:
+    report = plan_report("indexed_text_loops", INDEXED_TEXT_LOOPS, "15 66 10 aéa")?
+    for helper in ["str_index_from", "str_slice_from", "str_len_from"]:
         assert f"incan_std_primitives::text_cursor::{helper}" in report, f"the program instantiates no {helper}"
     assert "incan_std_primitives::strings::str_index" in report, "a loop that changes its string reads it by cursor"
     return Ok(None)
