@@ -135,6 +135,10 @@ pub(in crate::typechecker) struct ViewSource {
     ///
     /// [`TypeCheckInfo::match_scrutinee_is_changed_in_place`]: super::TypeCheckInfo::match_scrutinee_is_changed_in_place
     scrutinees: Vec<Span>,
+    /// Whether the subject is read out as a copy before it is matched: it is reached through an index that is not a
+    /// list's, such as a tuple element spelled `pair[0]`. A change through a plain binding then changes that copy; a
+    /// `mut` binding, which never binds a copy, is refused.
+    copied_element: bool,
 }
 
 /// Whether the place a view reaches permits a change through the view.
@@ -194,6 +198,7 @@ impl ViewSource {
             param,
             access: ViewAccess::Writable,
             scrutinees: Vec::new(),
+            copied_element: false,
         }
     }
 
@@ -203,6 +208,7 @@ impl ViewSource {
             param: None,
             access,
             scrutinees: Vec::new(),
+            copied_element: false,
         }
     }
 }

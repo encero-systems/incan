@@ -1,5 +1,4 @@
 # behavior: a `mut` pattern binding never binds a copy: a subject reached through an index that is not a list's, such as a tuple element spelled `pair[0]`, is read out as a copy, so `Some(mut items)` on it is refused at the binding and names the shape (RFC 129 writable alias rule 8, #1846).
-# pending: the subject is matched as a value of its own, so the check accepts the program and the change lands in a copy: it prints `(Some([1]), Some([2]))`.
 # expect-diagnostic: INCAN-T0126
 
 def main() -> None:

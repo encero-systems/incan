@@ -31,6 +31,7 @@ impl TypeChecker {
             param,
             access,
             scrutinees,
+            copied_element: _,
         } = source;
         match access {
             ViewAccess::Writable => {

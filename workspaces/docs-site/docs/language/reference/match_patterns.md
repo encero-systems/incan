@@ -41,7 +41,7 @@ This page specifies the patterns of `match`, `if let`, and `while let`: each pat
 
 Refused (`INCAN-T0001`): a binding pattern named `print` or `println`, a tuple pattern with more or fewer sub-patterns than the subject's tuple type has elements, an assignment to a name bound without `mut`, and an alternation whose alternatives write a shared name `mut` in one and plain in another.
 
-Refused (`INCAN-T0126`): a writable binding whose subject is a place that does not permit mutation.
+Refused (`INCAN-T0126`): a writable binding whose subject is a place that does not permit mutation, and a writable binding whose subject is an element of a binding reached through an index that is not a list's, such as a tuple element spelled `pair[0]` or a dict value, which a pattern reads as a copy.
 
 Refused (`INCAN-P0001`): `mut` followed by anything other than a plain name, such as `mut _` or `mut Some(value)`.
 
