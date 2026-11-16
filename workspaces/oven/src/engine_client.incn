@@ -19,6 +19,7 @@ from overlay_request import OverlayRequest, parse_served
 from overlay_hover import overlay_hover
 from overlay_definition import overlay_definition
 from overlay_references import overlay_references
+from overlay_call_hierarchy import overlay_call_hierarchy
 from engine_state import Identity
 from engine_wire import Refusal
 from files import json_text
@@ -54,6 +55,7 @@ const OVERLAY_HOVER_SCHEMA: str = "incan.overlay-hover/1"
 # The schema of the document an overlay definition answers with.
 const OVERLAY_DEFINITION_SCHEMA: str = "incan.overlay-definition/1"
 const OVERLAY_REFERENCES_SCHEMA: str = "incan.overlay-references/1"
+const OVERLAY_CALL_HIERARCHY_SCHEMA: str = "incan.overlay-call-hierarchy/1"
 # While an overlay request runs, its console is collected here instead of being relayed to the terminal.
 static console_capture: dict[str, str] = {}
 
@@ -156,6 +158,8 @@ def answer_overlay(mut channel: Channel, store: Path, request: OverlayRequest) -
     checked = submit_check(channel, store, editor, target, request.profile, request.report)?
     if request.references_line > 0:
         return references_answer(store, editor, program, absolute, checked.editor_facts, request)
+    if request.call_hierarchy_line > 0:
+        return call_hierarchy_answer(store, editor, program, absolute, checked.editor_facts, request)
     # 4. Diagnostics name the editor's documents, never the overlay root.
     mut entries: list[JsonValue] = []
     for found in report_diagnostics(checked.report, overlay.0, program.0).map_err(
@@ -250,6 +254,33 @@ def references_answer(
         "version": JsonValue.int(request.version),
         "editor_view": JsonValue.string(editor),
         "references": JsonValue.array(locations),
+    }
+    return JsonValue.object(answer).to_json().map_err((error) => error.message())
+
+
+def call_hierarchy_answer(
+    store: Path,
+    editor: str,
+    program: Path,
+    document: Path,
+    facts_key: str,
+    request: OverlayRequest,
+) -> Result[str, str]:
+    """Answer incoming and outgoing calls only from this request's witnessed checked editor facts."""
+    selected = snapshot(store, editor).map_err((error) => error.message())?
+    hierarchy = overlay_call_hierarchy(
+        selected,
+        facts_key,
+        program,
+        document,
+        request.call_hierarchy_line,
+        request.call_hierarchy_column,
+    )?
+    answer = {
+        "schema": JsonValue.string(OVERLAY_CALL_HIERARCHY_SCHEMA),
+        "version": JsonValue.int(request.version),
+        "editor_view": JsonValue.string(editor),
+        "hierarchy": hierarchy,
     }
     return JsonValue.object(answer).to_json().map_err((error) => error.message())
 

@@ -1,0 +1,115 @@
+"""Incoming and outgoing call answers projected from the compiler-owned editor-facts Crumb."""
+
+from std.fs import Path
+from std.json import JsonValue
+from pub::incan_platform.store import Snapshot
+from graph_queries import canonical, nested, text
+from overlay_references import editor_graph_records, graph_location, selected_identity
+
+
+pub def overlay_call_hierarchy(
+    selected: Snapshot,
+    facts_key: str,
+    program: Path,
+    document: Path,
+    line: int,
+    column: int,
+) -> Result[JsonValue, str]:
+    """Return the checked declaration at the cursor with its recorded incoming and outgoing call edges."""
+    records = editor_graph_records(selected, facts_key, program)?
+    target = selected_identity(records, document, line, column)?
+    mut declarations: Dict[str, JsonValue] = {}
+    mut selected_declaration = JsonValue.null()
+    for record in records:
+        if text(record, "record") != "declaration" or degraded(record):
+            continue
+        declarations[text(record, "id")] = record
+        if target != "" and canonical(record) == target:
+            selected_declaration = record
+    if selected_declaration.is_null():
+        return Ok(empty_hierarchy())
+    identifier = text(selected_declaration, "id")
+    mut incoming_items: Dict[str, JsonValue] = {}
+    mut incoming_ranges: Dict[str, list[JsonValue]] = {}
+    mut outgoing_items: Dict[str, JsonValue] = {}
+    mut outgoing_ranges: Dict[str, list[JsonValue]] = {}
+    for record in records:
+        if text(record, "record") != "call" or degraded(record):
+            continue
+        if let Some(call) = graph_location(record):
+            owner = text(record, "owner_id")
+            target_id = text(record, "target_id")
+            if target_id == identifier and owner in declarations:
+                if let Some(item) = hierarchy_item(declarations[owner]):
+                    incoming_items[owner] = item
+                    if owner not in incoming_ranges:
+                        incoming_ranges[owner] = []
+                    incoming_ranges[owner].append(call)
+            if owner == identifier and target_id in declarations:
+                if let Some(item) = hierarchy_item(declarations[target_id]):
+                    outgoing_items[target_id] = item
+                    if target_id not in outgoing_ranges:
+                        outgoing_ranges[target_id] = []
+                    outgoing_ranges[target_id].append(call)
+    item = hierarchy_item(selected_declaration)
+    if item is None:
+        return Ok(empty_hierarchy())
+    return Ok(
+        JsonValue.object(
+            {
+                "item": item.unwrap_or(JsonValue.null()),
+                "incoming": JsonValue.array(grouped_edges("from", incoming_items, incoming_ranges)),
+                "outgoing": JsonValue.array(grouped_edges("to", outgoing_items, outgoing_ranges)),
+            },
+        ),
+    )
+
+
+def hierarchy_item(declaration: JsonValue) -> Option[JsonValue]:
+    """Project one checked declaration into the engine's protocol-neutral hierarchy vocabulary."""
+    location = graph_location(declaration)
+    if location is None:
+        return None
+    mut detail = JsonValue.null()
+    if text(declaration, "signature") != "":
+        detail = JsonValue.string(text(declaration, "signature"))
+    return Some(
+        JsonValue.object(
+            {
+                "id": JsonValue.string(text(declaration, "id")),
+                "name": JsonValue.string(text(declaration, "name")),
+                "kind": JsonValue.string(text(declaration, "kind")),
+                "detail": detail,
+                "location": location.unwrap_or(JsonValue.null()),
+            },
+        ),
+    )
+
+
+def grouped_edges(
+    field: str,
+    items: Dict[str, JsonValue],
+    ranges: Dict[str, list[JsonValue]],
+) -> list[JsonValue]:
+    """Group repeated calls by their proved endpoint while retaining every exact call-site range."""
+    mut edges: list[JsonValue] = []
+    for identifier in sorted([identifier for identifier in items.keys()]):
+        edges.append(JsonValue.object({field: items[identifier], "ranges": JsonValue.array(ranges[identifier])}))
+    return edges
+
+
+def empty_hierarchy() -> JsonValue:
+    """Answer an unproved cursor without guessing a declaration or relationship."""
+    none: list[JsonValue] = []
+    return JsonValue.object(
+        {
+            "item": JsonValue.null(),
+            "incoming": JsonValue.array(none),
+            "outgoing": JsonValue.array([]),
+        },
+    )
+
+
+def degraded(record: JsonValue) -> bool:
+    """Exclude partial graph facts from checked navigation answers."""
+    return nested(record, "degraded").as_bool().unwrap_or(false)

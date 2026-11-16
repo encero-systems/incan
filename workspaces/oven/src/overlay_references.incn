@@ -20,12 +20,7 @@ pub def overlay_references(
     column: int,
 ) -> Result[list[JsonValue], str]:
     """Return the declaration and checked reference spans sharing the identity under the requested position."""
-    facts = read_named_editor_facts(selected, facts_key)?
-    graph = cache_file(fingerprint(["incan.editor-facts-cache/1", facts_key])?)?
-    if not graph.is_file():
-        publish_binary(graph, facts)?
-    unit = GraphUnit(path=graph, root=program)
-    records = graph_records(read_graph(unit, load_toolchain()?, "nodes,reference,call,import")?)?
+    records = editor_graph_records(selected, facts_key, program)?
     target = selected_identity(records, document, line, column)?
     if target == "":
         return Ok([])
@@ -33,14 +28,24 @@ pub def overlay_references(
     for record in records:
         if canonical(record) != target or text(record, "record") not in ["declaration", "reference", "call"]:
             continue
-        if let Some(location) = location(record):
-            encoded = location.to_json().map_err((error) => error.message())?
+        if let Some(found) = graph_location(record):
+            encoded = found.to_json().map_err((error) => error.message())?
             if encoded not in [item.to_json().unwrap_or("") for item in locations]:
-                locations.append(location)
+                locations.append(found)
     return Ok(locations)
 
 
-def selected_identity(records: list[JsonValue], document: Path, line: int, column: int) -> Result[str, str]:
+pub def editor_graph_records(selected: Snapshot, facts_key: str, program: Path) -> Result[list[JsonValue], str]:
+    """Read the exact compiler graph value named by a completed editor check through the ordinary graph reader."""
+    facts = read_named_editor_facts(selected, facts_key)?
+    graph = cache_file(fingerprint(["incan.editor-facts-cache/1", facts_key])?)?
+    if not graph.is_file():
+        publish_binary(graph, facts)?
+    unit = GraphUnit(path=graph, root=program)
+    return graph_records(read_graph(unit, load_toolchain()?, "nodes,reference,call,import")?)
+
+
+pub def selected_identity(records: list[JsonValue], document: Path, line: int, column: int) -> Result[str, str]:
     """Select the checked identity of the narrowest graph span covering the cursor in this document."""
     mut target = ""
     mut width = 2147483647
@@ -78,7 +83,7 @@ def span_width(span: JsonValue) -> Result[int, str]:
     return Ok(lines * 1000000 + columns)
 
 
-def location(record: JsonValue) -> Option[JsonValue]:
+pub def graph_location(record: JsonValue) -> Option[JsonValue]:
     """Project one present graph span to the engine's location vocabulary."""
     span = nested(record, "span")
     if text(span, "file") == "":
