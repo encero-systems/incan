@@ -14,6 +14,7 @@ pub enum ProducerStage:
     Layout
     Default
     CheckBody
+    EditorFacts
     BodyIr
     Instance
     LoweringDemand

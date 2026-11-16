@@ -18,6 +18,7 @@ from engine_proofs import report
 from overlay_request import OverlayRequest, parse_served
 from overlay_hover import overlay_hover
 from overlay_definition import overlay_definition
+from overlay_references import overlay_references
 from engine_state import Identity
 from engine_wire import Refusal
 from files import json_text
@@ -52,6 +53,7 @@ const OVERLAY_DIAGNOSTICS_SCHEMA: str = "incan.overlay-diagnostics/1"
 const OVERLAY_HOVER_SCHEMA: str = "incan.overlay-hover/1"
 # The schema of the document an overlay definition answers with.
 const OVERLAY_DEFINITION_SCHEMA: str = "incan.overlay-definition/1"
+const OVERLAY_REFERENCES_SCHEMA: str = "incan.overlay-references/1"
 # While an overlay request runs, its console is collected here instead of being relayed to the terminal.
 static console_capture: dict[str, str] = {}
 
@@ -63,6 +65,7 @@ model CheckAnswer:
     report: str
     errors: str
     work: JsonValue
+    editor_facts: str
 
 
 pub def execute_overlay(request: OverlayRequest) -> Result[str, str]:
@@ -151,6 +154,8 @@ def answer_overlay(mut channel: Channel, store: Path, request: OverlayRequest) -
     if request.build:
         return built_overlay(editor, target, request)
     checked = submit_check(channel, store, editor, target, request.profile, request.report)?
+    if request.references_line > 0:
+        return references_answer(store, editor, program, absolute, checked.editor_facts, request)
     # 4. Diagnostics name the editor's documents, never the overlay root.
     mut entries: list[JsonValue] = []
     for found in report_diagnostics(checked.report, overlay.0, program.0).map_err(
@@ -222,6 +227,33 @@ def definition_answer(
     return JsonValue.object(answer).to_json().map_err((error) => error.message())
 
 
+def references_answer(
+    store: Path,
+    editor: str,
+    program: Path,
+    document: Path,
+    facts_key: str,
+    request: OverlayRequest,
+) -> Result[str, str]:
+    """Answer references only from the witnessed editor-facts value produced by this request's completed check."""
+    selected = snapshot(store, editor).map_err((error) => error.message())?
+    locations = overlay_references(
+        selected,
+        facts_key,
+        program,
+        document,
+        request.references_line,
+        request.references_column,
+    )?
+    answer = {
+        "schema": JsonValue.string(OVERLAY_REFERENCES_SCHEMA),
+        "version": JsonValue.int(request.version),
+        "editor_view": JsonValue.string(editor),
+        "references": JsonValue.array(locations),
+    }
+    return JsonValue.object(answer).to_json().map_err((error) => error.message())
+
+
 def built_overlay(editor: str, target: Path, request: OverlayRequest) -> Result[str, str]:
     """Build a saved overlay in its editor view, collecting the compiler's console instead of relaying it."""
     console_capture["capturing"] = "yes"
@@ -272,7 +304,13 @@ def submit_check(
     if complete.observation_handle != "":
         work = parse(report(store, complete.observation_handle)?).map_err((error) => error.message())?
     return Ok(
-        CheckAnswer(passed=complete.status == CompletionStatus.Success, report=report_text, errors=errors, work=work),
+        CheckAnswer(
+            passed=complete.status == CompletionStatus.Success,
+            report=report_text,
+            errors=errors,
+            work=work,
+            editor_facts=complete.result_handles,
+        ),
     )
 
 

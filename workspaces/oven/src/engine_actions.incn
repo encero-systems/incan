@@ -17,6 +17,8 @@ from installation_page import begin_command, end_command
 from trace_adapter import count_frozen_work, finish_frozen_counting
 from toolchain import toolchain_directory
 from home import standard_library_dir
+from editor_facts import prepare_editor_facts
+from pub::internal_models.records import encode_record_key
 
 
 pub model Pending:
@@ -183,9 +185,14 @@ def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, 
     )?
     record(Operation.EngineUnit, pending.capture.revision, checking)
     captured = after_projection(pending.capture)?
-    mut snapshot = captured.snapshot.digest
-    if let Some(transaction) = captured.transaction:
-        snapshot = commit(transaction).map_err((error) => error.message())?.digest
+    mut transaction = begin_selection(captured.snapshot)
+    if let Some(captured_transaction) = captured.transaction:
+        transaction = captured_transaction
+    unit = match outcome.unit:
+        Some(value) => value
+        None => return Err("editor check completed without its prepared unit")
+    editor = prepare_editor_facts(transaction, unit, outcome.inputs, outcome.editor_facts)?
+    snapshot = commit(editor.transaction).map_err((error) => error.message())?.digest
     mut status = CompletionStatus.Success
     if outcome.code != 0:
         status = CompletionStatus.Failed
@@ -205,7 +212,7 @@ def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, 
             message=Complete(
                 snapshot=snapshot,
                 admission_proof="",
-                result_handles="",
+                result_handles=encode_record_key(editor.key)?,
                 binding_outcome=BindingOutcome.NotSelected,
                 status=status,
                 observation_handle=observation,

@@ -100,7 +100,7 @@ const CHECK_CERTIFICATE: &str = "incan.compiler-check/1\n";
 const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [OPTIONS] | --rustc-handoff PATH | \
                      --source-interface UNIT SYSROOT DIRECTORY [OPTIONS] | --dependencies UNIT SYSROOT [OPTIONS] | --compiler-records INSTALLED OUTPUT | \
                      --check UNIT SYSROOT [--format text|json] [--certify PATH] [--checked-bodies PATH] [OPTIONS] | --explain CODE | --fmt UNIT PATH [--check] | --source-files PATH | --rust-imports UNIT [--source-graph] | --emit-model PATH MODEL incan|json [LABEL] | --codegraph UNIT SYSROOT OUTPUT [INTERFACE] | --read-codegraph GRAPH ROOT GROUP [FIELDS_JSON] | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-compile-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --resident SOCKET GENERATION READY HOME | --identity SYSROOT\n\
-                     OPTIONS: --rustc-arg ARG, --library, --no-codegraph, --inspection, --shared-native DIR, --toolchain-root DIR, --bakery-root DIR, --graph-body-records PATH, --graph-body-output PATH (native artifacts and ABI caches come from UNIT)";
+                     OPTIONS: --rustc-arg ARG, --library, --no-codegraph, --inspection, --shared-native DIR, --toolchain-root DIR, --bakery-root DIR, --graph-body-records PATH, --graph-body-output PATH, --editor-facts-output PATH (native artifacts and ABI caches come from UNIT)";
 
 /// Compile an Incan unit (`--unit`, or serially from a `--resident` worker, with rustc in a fresh driver process that
 /// reads the unit's handoff, `--rustc-handoff`) or check one (`--check`), each from the
@@ -300,9 +300,23 @@ pub(crate) fn check(arguments: &[String]) -> Result<i32, Box<dyn std::error::Err
     let dependencies = frontend::dependencies(&unit, options)?;
     let rust = dependencies.rust_facts(&unit, Path::new(sysroot));
     let decoded_before = frontend::decoded_pages::decodes();
-    let checked = incan_driver::check::check_unit(&unit, &rust, dependencies.graph_body_records());
+    let checked = incan_driver::check::check_unit(
+        &unit,
+        &rust,
+        dependencies.graph_body_records(),
+        dependencies.editor_facts_output.is_some(),
+    );
     let decoded = frontend::decoded_pages::decodes() - decoded_before;
-    let checked = checked.and_then(|(output, bodies)| {
+    let checked = checked.and_then(|(mut output, bodies)| {
+        if let Some(path) = &dependencies.editor_facts_output {
+            let facts = output
+                .editor_facts
+                .take()
+                .ok_or_else(|| incan_driver::error::CliError::failure("check produced no requested editor facts"))?;
+            std::fs::write(path, facts).map_err(|error| {
+                incan_driver::error::CliError::failure(format!("cannot write editor facts {}: {error}", path.display()))
+            })?;
+        }
         if let Some(report) = bodies_report {
             std::fs::write(report, checked_bodies_report(&bodies, decoded)?).map_err(|error| {
                 incan_driver::error::CliError::failure(format!("cannot write {}: {error}", report.display()))

@@ -14,8 +14,8 @@ from compiler_body_publication import (
     PreparedSourceInputs,
     prepare_captured_source_inputs,
     prepare_compiled_bodies,
-    source_origin,
 )
+from compiler_source_identity import source_origin
 from compiler_body_values import (
     SelectedBodyRecord,
     body_owners_reading,
@@ -130,6 +130,9 @@ pub model CheckOutcome:
     # Pages the check wrote for its view, and restored pages the compiler decoded itself.
     pub body_page_writes: int = 0
     pub body_page_decodes: int = 0
+    pub unit: Option[UnitDescription] = None
+    pub inputs: list[CapturedInput] = []
+    pub editor_facts: bytes = b""
 
 
 pub model BodyReading:
@@ -204,7 +207,7 @@ pub def check_program(
     reading = body_reading(store, view, ready, epoch.inputs)?
     directory = check_page_directory(store, view, ready)
     pages = keep_check_pages(reading.graph, source_origin(ready), reading.invalid, ready, directory)?
-    checked = check_prepared(ready, toolchain, format, Some(pages.directory))?
+    checked = check_prepared(ready, toolchain, format, Some(pages.directory), true)?
     return Ok(
         CheckOutcome(
             code=checked.code,
@@ -213,6 +216,9 @@ pub def check_program(
             body_reuses=checked.bodies.reused,
             body_page_writes=pages.written,
             body_page_decodes=checked.bodies.decoded,
+            unit=Some(ready),
+            inputs=epoch.inputs,
+            editor_facts=checked.editor_facts,
         ),
     )
 

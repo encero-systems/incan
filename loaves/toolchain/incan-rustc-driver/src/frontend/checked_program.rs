@@ -359,6 +359,14 @@ pub(super) fn checked_modules(
             })
             .map_err(|failure| receipt.diagnostic(failure))?
     };
+    if graph_body_output.requested() {
+        let editor_records =
+            incan_driver::inspect::codegraph::collect_live_unit_codegraph(&session, &modules, Ok(&analysis));
+        graph_body_output.attach_editor_facts(
+            incan_codegraph::artifact::encode_graph(&editor_records, &unit.project_root)
+                .map_err(|error| error.to_string())?,
+        );
+    }
     let entry = modules
         .iter()
         .position(|module| module.file_path == path)

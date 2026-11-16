@@ -25,20 +25,14 @@ from pub::internal_models import (
 from pub::internal_models.checker_records import CHECKER_PROFILE
 from pub::internal_models.compiler_records import RUNTIME_INSTANCE_IDENTITY
 from pub::internal_models.records import (
-    PreparationEvidence,
-    ReadReceipt,
     ReadScope,
-    RecordRead,
     RecordKey,
-    RecordReads,
     RecordRequest,
-    RecordSelection,
-    PayloadSelection,
     ReadWitness,
     encode_record_key,
 )
 from compiler_graph_records import prepare_evaluation, reusable_evaluation
-from compiler_prepared_records import PreparedBodyRecordSource
+from compiler_prepared_records import PreparedBodyRecordSource, prepared_product_request, prepared_receipt
 from compiler_body_fallbacks import fallback_lowering_event, fallback_reasons, retained_namespace_event
 from compiler_plan_values import LOWERING_PROFILE
 from compiler_body_values import SelectedBodyRecord
@@ -58,7 +52,9 @@ from compiler_projection_cache import (
     project_dependency_module,
     projection_cache,
 )
+from compiler_source_identity import captured_source_identity, source_origin
 from engine_capture import CapturedInput, InputRole
+from editor_facts import editor_facts_profile, editor_source_witness, stage_editor_facts
 from files import discard_file
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
@@ -276,42 +272,6 @@ pub def prepare_captured_source_inputs(
     return Ok(PreparedSourceInputs(transaction=prepared, keys=changed))
 
 
-def captured_source_identity(unit: UnitDescription, path: str) -> Result[Option[Tuple[str, str]], str]:
-    """Compare physical input and root paths so symlinked checkouts cannot omit changed source witnesses."""
-    mut normalized = ""
-    match Path(path).resolve():
-        Err(_) => return Ok(None)
-        Ok(resolved) => normalized = resolved.0
-    for dependency in dependency_source_roots(unit):
-        if let Some(relative) = captured_relative_path(normalized, dependency[1])?:
-            return Ok(Some((dependency[0], logical_module(relative))))
-    if let Some(relative) = captured_relative_path(normalized, unit.project_root)?:
-        return Ok(Some((source_origin(unit), relative)))
-    return Ok(None)
-
-
-def captured_relative_path(path: str, root: str) -> Result[Option[str], str]:
-    """Resolve the described root with the input's path policy; an unreadable root must refuse reuse."""
-    physical = Path(root).resolve().map_err((error) => f"captured source root: cannot {error.message()}")?
-    prefix = physical.0 + "/"
-    if path.startswith(prefix):
-        return Ok(Some(path[len(prefix):]))
-    return Ok(None)
-
-
-def logical_module(relative: str) -> str:
-    """Canonicalize an editable dependency source path the same way source-module resolution names its module."""
-    mut without_extension = relative
-    if without_extension.endswith(".incn"):
-        without_extension = without_extension[:len(without_extension) - len(".incn")]
-    mut parts = without_extension.split("/")
-    if len(parts) > 0 and parts[len(parts) - 1] in ["mod", "__init__"]:
-        parts = parts[:len(parts) - 1]
-    elif len(parts) > 1 and parts[len(parts) - 1] == "prelude":
-        parts = parts[:len(parts) - 1]
-    return "/".join(parts)
-
-
 pub def publish_compiled_bodies(
     selected: Snapshot,
     unit: UnitDescription,
@@ -356,7 +316,12 @@ pub def prepare_compiled_bodies(
     if not output.is_file():
         return Err("successful graph-enabled compile did not publish body outputs")
     outputs = read_compiled_body_outputs(output)?
+    facts_output = Path(output.0 + ".editor-facts")
+    if not facts_output.is_file():
+        return Err("successful graph-enabled compile did not publish editor facts")
+    editor_facts = facts_output.read_bytes().map_err((error) => f"cannot read editor facts: {error.message()}")?
     discard_file(output)
+    discard_file(facts_output)
     # After a successful build the compiler also names an edited owner whose body it checked again, as its reported
     # type errors show; a body is restored only from a record the engine selected.
     chosen = set([record.identity for record in retained])
@@ -505,6 +470,27 @@ pub def prepare_compiled_bodies(
                     signature_value = signature.text.encode("utf-8")
                     stage_put(prepared, signature_key, signature_value)
                     source.add(signature_key, signature_value)
+    editor_profile = editor_facts_profile()
+    editor_scope = ReadScope(snapshot=transaction.id, profile=editor_profile)
+    mut editor_source = source.for_profile(editor_profile)
+    mut editor_reads: list[RecordRequest] = []
+    for module in staged:
+        projection = projections[module]
+        for record in [projection.header, projection.declarations] + projection.owners:
+            witness = editor_source_witness(record)
+            encoded = encode_record_key(witness.key)?
+            value = witness.text.encode("utf-8")
+            stage_put(prepared, encoded, value)
+            editor_source.add(encoded, value)
+            editor_reads.append(prepared_product_request(witness.key))
+    _ = stage_editor_facts(
+        prepared,
+        editor_source,
+        editor_scope,
+        origin,
+        editor_facts,
+        editor_reads,
+    )?
     for value in outputs.values:
         declaration_key = encode_record_key(
             body_key("declaration", origin, value.identity, value.name, root(value.declaration)?),
@@ -1302,46 +1288,6 @@ def eligibility_key(origin: str, identity: str, name: str) -> RecordKey:
     )
 
 
-pub def source_origin(unit: UnitDescription) -> str:
-    """Use the package authority, or isolate one manifest-free entry by its exact source path."""
-    if unit.package != "":
-        return unit.package
-    return "standalone:" + unit.source
-
-
 def root(encoded: bytes) -> Result[str, str]:
     """Map codec faults at the engine boundary without weakening checker-record validation."""
     return record_root(encoded).map_err((error) => f"compiled checker root refused: {error:?}")
-
-
-pub def prepared_product_request(key: RecordKey) -> RecordRequest:
-    """Read scalar facts while binding opaque Body IR and plans through a bounded semantic witness."""
-    if key.family in ["body-ir", "plan-function"]:
-        selected = PayloadSelection(reference=key.context, offset=0, length=0)
-        return RecordRequest(key=key, selection=RecordSelection.Payload(selected))
-    return RecordRequest(key=key, selection=RecordSelection.Field("value"))
-
-
-def prepared_receipt(
-    source: &PreparedBodyRecordSource,
-    scope: ReadScope,
-    output: RecordKey,
-    requests: list[RecordRequest],
-) -> Result[ReadReceipt, str]:
-    """Authenticate one producer's exact inputs from the caller-owned publication transaction."""
-    preparation = PreparationEvidence(
-        output=output,
-        rank_certificate="compiled-check",
-        selector_witnesses="compiled-check",
-    )
-    mut reads = RecordReads.start(scope, preparation, requests)
-    for item in requests:
-        match reads.read(source, item):
-            RecordRead.Failed(fault) =>
-                return Err(
-                    f"compiled body publication for {encode_record_key(output)?} could not read " + f"{encode_record_key(
-                        item.key,
-                    )?}: {fault:?}",
-                )
-            _ => pass
-    return reads.finish().map_err((_) => "compiled body publication produced an incomplete receipt")

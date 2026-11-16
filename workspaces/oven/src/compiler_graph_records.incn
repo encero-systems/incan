@@ -445,7 +445,7 @@ def output_index_key(profile: str, output: str) -> Result[str, str]:
     return Ok("incan.engine.output\t" + profile + "\t" + record_slot(output)?)
 
 
-def decode_record_key(encoded: str) -> Result[RecordKey, str]:
+pub def decode_record_key(encoded: str) -> Result[RecordKey, str]:
     """Decode the canonical six-field record key retained verbatim as the output index's value."""
     fields = encoded.split("\t")
     if len(fields) != 6:

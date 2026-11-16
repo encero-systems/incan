@@ -37,6 +37,7 @@ pub struct CompilationAnalysis {
     semantic_snapshots_by_path: BTreeMap<PathBuf, incan_semantics_core::SemanticModuleSnapshot>,
     namespace_body_by_path: BTreeMap<PathBuf, Arc<incan_semantics_core::body_ir::BodyIrModule>>,
     namespace_lowering_inputs: Vec<(incan_semantics_core::CompilerNodeId, String)>,
+    warnings: Vec<crate::diagnostics::CliDiagnostic>,
 }
 
 impl CompilationAnalysis {
@@ -66,6 +67,11 @@ impl CompilationAnalysis {
     /// Return lowering witnesses carried by complete namespaces admitted in this analysis pass.
     pub fn namespace_lowering_inputs(&self) -> &[(incan_semantics_core::CompilerNodeId, String)] {
         &self.namespace_lowering_inputs
+    }
+
+    /// Return the warnings produced by the same check as every retained semantic fact.
+    pub fn warnings(&self) -> &[crate::diagnostics::CliDiagnostic] {
+        &self.warnings
     }
 }
 
@@ -295,6 +301,7 @@ impl CompilationSession {
         visit: &mut dyn FnMut(&ParsedModule, &TypeChecker),
     ) -> Result<CompilationAnalysis, CliDiagnosticFailure> {
         let checked = self.typecheck_unit(modules, package, visit)?;
+        let warnings = checked.warnings.clone();
         let namespace_lowering_inputs = checked.namespace_lowering_inputs.clone();
         let mut type_info_by_path = BTreeMap::new();
         let mut type_info_by_module_path = BTreeMap::new();
@@ -318,6 +325,7 @@ impl CompilationSession {
             semantic_snapshots_by_path,
             namespace_body_by_path,
             namespace_lowering_inputs,
+            warnings,
         })
     }
 

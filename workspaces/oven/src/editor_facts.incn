@@ -1,0 +1,127 @@
+"""Admit the compiler's editor projection as one witnessed value shared by builds and overlay checks."""
+
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.primitives.hash import sha256
+from pub::incan_platform.store import Snapshot, Transaction, stage_put
+from pub::internal_models import ProducerRank, ProducerStage
+from pub::internal_models.records import ReadScope, RecordKey, RecordRequest, encode_record_key
+from compiler_graph_records import decode_record_key, prepare_evaluation, reusable_evaluation, reusable_family_records
+from compiler_prepared_records import PreparedBodyRecordSource, prepared_product_request, prepared_receipt
+from compiler_source_identity import captured_source_identity, source_origin
+from compiler_source_projection import SourceProjectionRecord, project_source
+from engine_capture import CapturedInput, InputRole
+from unit import UnitDescription
+
+const IDENTITY_PROFILE: str = "incan.editor-unit/1"
+const SOURCE_PROFILE: str = "incan.editor-source/1"
+
+
+pub def editor_facts_profile() -> str:
+    """Return the editor-facts evaluation profile without exposing mutable global storage."""
+    return "incan.editor-facts/1"
+
+
+pub def editor_source_witness(record: SourceProjectionRecord) -> SourceProjectionRecord:
+    """Name one exact source projection by content so editor checks never replace a build's canonical source slot."""
+    key = RecordKey(
+        family="editor-source",
+        identity_profile=SOURCE_PROFILE,
+        origin=record.key.origin,
+        identity=record.key.identity,
+        facet=record.key.family + ":" + record.key.facet,
+        context=record.digest(),
+    )
+    return SourceProjectionRecord(key=key, text=record.text, start=record.start, end=record.end)
+
+
+pub model PreparedEditorFacts:
+    """The request transaction with its editor-facts evaluation and the key that selects it."""
+
+    pub transaction: Transaction
+    pub key: RecordKey
+
+
+pub def prepare_editor_facts(
+    transaction: Transaction,
+    unit: UnitDescription,
+    inputs: list[CapturedInput],
+    facts: bytes,
+) -> Result[PreparedEditorFacts, str]:
+    """Stage source projections and one editor-facts value from the exact captured inputs the check consumed."""
+    mut prepared = transaction
+    scope = ReadScope(snapshot=prepared.id, profile=editor_facts_profile())
+    mut source = PreparedBodyRecordSource.open(scope)
+    mut reads: list[RecordRequest] = []
+    for input in inputs:
+        if not input.path.endswith(".incn") or input.role not in [InputRole.Root, InputRole.Member, InputRole.Resolved]:
+            continue
+        if let Some(identity) = captured_source_identity(unit, input.path)?:
+            text = Path(input.path).read_text("utf-8", "strict").map_err((error) => error.message())?
+            if hexlify(sha256.digest(text.encode("utf-8"))) != input.digest:
+                return Err("captured source changed before editor facts were admitted")
+            projection = project_source(identity[0], identity[1], text)?
+            for record in [projection.header, projection.declarations] + projection.owners:
+                witness = editor_source_witness(record)
+                encoded = encode_record_key(witness.key)?
+                value = witness.text.encode("utf-8")
+                stage_put(prepared, encoded, value)
+                source.add(encoded, value)
+                reads.append(prepared_product_request(witness.key))
+    key = stage_editor_facts(prepared, source, scope, source_origin(unit), facts, reads)?
+    return Ok(PreparedEditorFacts(transaction=prepared, key=key))
+
+
+pub def stage_editor_facts(
+    mut transaction: Transaction,
+    source: PreparedBodyRecordSource,
+    scope: ReadScope,
+    origin: str,
+    facts: bytes,
+    reads: list[RecordRequest],
+) -> Result[RecordKey, str]:
+    """Stage one checked editor projection through its complete source-projection receipt."""
+    if len(facts) == 0 or len(reads) == 0:
+        return Err("editor facts require a value and at least one captured source witness")
+    digest = hexlify(sha256.digest(facts))
+    key = RecordKey(
+        family="editor-facts",
+        identity_profile=IDENTITY_PROFILE,
+        origin=origin,
+        identity=origin,
+        facet="checked",
+        context=digest,
+    )
+    receipt = prepared_receipt(source, scope, key, reads)?
+    _ = prepare_evaluation(
+        transaction,
+        "editor-facts-" + origin,
+        ProducerRank(namespace=0, stage=ProducerStage.EditorFacts, dependency=0),
+        facts,
+        receipt,
+    )?
+    return Ok(key)
+
+
+pub def read_editor_facts(selected: Snapshot, origin: str) -> Result[bytes, str]:
+    """Read the one current witnessed editor projection for this unit origin."""
+    mut found: Option[bytes] = None
+    for record in reusable_family_records(selected, "editor-facts", editor_facts_profile())?:
+        if record.key.origin != origin:
+            continue
+        if found is not None:
+            return Err("selected view contains more than one current editor-facts value for the unit")
+        found = Some(record.value)
+    match found:
+        Some(value) => return Ok(value)
+        None => return Err("selected view contains no current editor-facts value for the unit")
+
+
+pub def read_named_editor_facts(selected: Snapshot, encoded: str) -> Result[bytes, str]:
+    """Read and validate the exact editor-facts output named by a completed engine check."""
+    key = decode_record_key(encoded)?
+    if key.family != "editor-facts":
+        return Err("engine check named a result that is not editor facts")
+    match reusable_evaluation(selected, key, editor_facts_profile())?:
+        Some(value) => return Ok(value.value)
+        None => return Err("engine check's editor facts are not reusable in its completed snapshot")

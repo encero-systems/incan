@@ -95,6 +95,9 @@ pub struct CheckOutput {
     /// Whether unchanged inputs reproduce exactly this outcome: a passing check or one refused by source
     /// diagnostics, never an import, resource or tooling failure.
     pub reproducible: bool,
+    /// Compiler-owned editor facts from this exact check, when the caller requested their record value.
+    #[serde(skip)]
+    pub editor_facts: Option<Vec<u8>>,
 }
 
 /// Check one unit with the engine's selected body records, capturing the warnings it prints alongside its report.
@@ -103,8 +106,10 @@ pub fn check_unit(
     unit: &UnitDescription,
     rust: &RustFactsSetup,
     records: GraphBodyRecords,
+    collect_editor_facts: bool,
 ) -> CliResult<(CheckOutput, CheckedBodies)> {
-    let (result, warnings) = crate::diagnostics::capture_warning_output(|| check_report(unit, rust, records));
+    let (result, warnings) =
+        crate::diagnostics::capture_warning_output(|| check_report(unit, rust, records, collect_editor_facts));
     match result {
         Ok(mut report) => {
             let bodies = std::mem::take(&mut report.bodies);
@@ -116,6 +121,7 @@ pub fn check_unit(
                 exit_code: if report.ok { 0 } else { 1 },
                 warnings,
                 reproducible: report.reproducible,
+                editor_facts: report.editor_facts,
             };
             Ok((output, bodies))
         }
@@ -126,6 +132,7 @@ pub fn check_unit(
                 exit_code: error.exit_code.0,
                 warnings,
                 reproducible: false,
+                editor_facts: None,
             },
             CheckedBodies::default(),
         )),
@@ -159,6 +166,8 @@ pub struct DiagnosticReport {
     /// The project's top-level function bodies this check restored or checked; never part of the public JSON report.
     #[serde(skip_serializing)]
     bodies: CheckedBodies,
+    #[serde(skip)]
+    editor_facts: Option<Vec<u8>>,
 }
 
 /// Check one unit without rendering the result: its stable diagnostics, warnings included, and whether it passed.
@@ -167,6 +176,7 @@ pub fn check_report(
     unit: &UnitDescription,
     rust: &RustFactsSetup,
     records: GraphBodyRecords,
+    collect_editor_facts: bool,
 ) -> CliResult<DiagnosticReport> {
     let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::check_pipeline").entered();
     // Opening the session and extracting Rust facts read artifacts and run rustc, so their failures stay retryable.
@@ -196,19 +206,44 @@ pub fn check_report(
     let mut roots = vec![unit.project_root.as_path()];
     roots.extend(resolved_root.as_deref());
     let mut bodies = CheckedBodies::default();
-    let typecheck = session.typecheck_unit(&modules, None, &mut |module, checker| {
+    let analysis = session.analyze_unit(&modules, None, &mut |module, checker| {
         bodies.observe(&roots, module, checker)
     });
-    let mut report = match typecheck {
-        Ok(checked) => DiagnosticReport {
-            schema_version: CHECK_REPORT_SCHEMA_VERSION,
-            ok: true,
-            diagnostics: stable_diagnostics_from(&checked.warnings),
-            human_message: None,
-            reproducible: true,
-            bodies: CheckedBodies::default(),
-        },
-        Err(failure) => diagnostic_report_from_failure(failure),
+    let mut report = match analysis {
+        Ok(analysis) => {
+            let editor_facts = if collect_editor_facts {
+                let records = crate::inspect::codegraph::collect_live_unit_codegraph(&session, &modules, Ok(&analysis));
+                Some(
+                    incan_codegraph::artifact::encode_graph(&records, &unit.project_root)
+                        .map_err(|error| CliError::failure(error.to_string()))?,
+                )
+            } else {
+                None
+            };
+            DiagnosticReport {
+                schema_version: CHECK_REPORT_SCHEMA_VERSION,
+                ok: true,
+                diagnostics: stable_diagnostics_from(analysis.warnings()),
+                human_message: None,
+                reproducible: true,
+                bodies: CheckedBodies::default(),
+                editor_facts,
+            }
+        }
+        Err(failure) => {
+            let editor_facts = if collect_editor_facts {
+                let records = crate::inspect::codegraph::collect_live_unit_codegraph(&session, &modules, Err(&failure));
+                Some(
+                    incan_codegraph::artifact::encode_graph(&records, &unit.project_root)
+                        .map_err(|error| CliError::failure(error.to_string()))?,
+                )
+            } else {
+                None
+            };
+            let mut report = diagnostic_report_from_failure(failure);
+            report.editor_facts = editor_facts;
+            report
+        }
     };
     report.bodies = bodies;
     Ok(report)
@@ -249,5 +284,6 @@ fn diagnostic_report_from_failure(failure: CliDiagnosticFailure) -> DiagnosticRe
         human_message: Some(human_message),
         reproducible: failure.reproducible(),
         bodies: CheckedBodies::default(),
+        editor_facts: None,
     }
 }

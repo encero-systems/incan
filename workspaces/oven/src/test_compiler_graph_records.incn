@@ -48,7 +48,7 @@ from pub::internal_models import (
 )
 from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily, CheckedRecord, encode_record
 from compiler_graph_records import PublishedEvaluation, publish_evaluation, reusable_evaluation
-from compiler_prepared_records import PreparedBodyRecordSource
+from compiler_prepared_records import PreparedBodyRecordSource, prepared_product_request
 from compiler_record_envelopes import RankedActivation, RankedCheckingSweep, persist_activation
 from compiler_body_values import (
     encode_body_inventory,
@@ -61,7 +61,6 @@ from compiler_body_publication import (
     dependency_owner,
     prepare_captured_source_inputs,
     prepare_compiled_bodies,
-    prepared_product_request,
     projection_refusals,
     publish_compiled_bodies,
     retained_owner_record,

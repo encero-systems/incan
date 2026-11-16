@@ -1,0 +1,112 @@
+"""Reference answers projected from the compiler-owned editor-facts Crumb."""
+
+from std.fs import Path
+from std.json import JsonValue, parse
+from pub::incan_platform.store import Snapshot
+from editor_facts import read_named_editor_facts
+from graph_cache import GraphUnit, cache_file, read_graph
+from graph_queries import canonical, nested, text
+from publication import publish_binary
+from toolchain import load_toolchain
+from unit_freshness import fingerprint
+
+
+pub def overlay_references(
+    selected: Snapshot,
+    facts_key: str,
+    program: Path,
+    document: Path,
+    line: int,
+    column: int,
+) -> Result[list[JsonValue], str]:
+    """Return the declaration and checked reference spans sharing the identity under the requested position."""
+    facts = read_named_editor_facts(selected, facts_key)?
+    graph = cache_file(fingerprint(["incan.editor-facts-cache/1", facts_key])?)?
+    if not graph.is_file():
+        publish_binary(graph, facts)?
+    unit = GraphUnit(path=graph, root=program)
+    records = graph_records(read_graph(unit, load_toolchain()?, "nodes,reference,call,import")?)?
+    target = selected_identity(records, document, line, column)?
+    if target == "":
+        return Ok([])
+    mut locations: list[JsonValue] = []
+    for record in records:
+        if canonical(record) != target or text(record, "record") not in ["declaration", "reference", "call"]:
+            continue
+        if let Some(location) = location(record):
+            encoded = location.to_json().map_err((error) => error.message())?
+            if encoded not in [item.to_json().unwrap_or("") for item in locations]:
+                locations.append(location)
+    return Ok(locations)
+
+
+def selected_identity(records: list[JsonValue], document: Path, line: int, column: int) -> Result[str, str]:
+    """Select the checked identity of the narrowest graph span covering the cursor in this document."""
+    mut target = ""
+    mut width = 2147483647
+    for record in records:
+        span = nested(record, "span")
+        if text(span, "file") != document.0 or not contains(span, line, column):
+            continue
+        identity = canonical(record)
+        current = span_width(span)?
+        if identity != "" and current < width:
+            target = identity
+            width = current
+    return Ok(target)
+
+
+def contains(span: JsonValue, line: int, column: int) -> bool:
+    """Whether a one-based graph span covers this one-based source position."""
+    start_line = number(span, "start_line")
+    start_column = number(span, "start_column")
+    end_line = number(span, "end_line")
+    end_column = number(span, "end_column")
+    if line < start_line or line > end_line:
+        return false
+    if line == start_line and column < start_column:
+        return false
+    return line != end_line or column <= end_column
+
+
+def span_width(span: JsonValue) -> Result[int, str]:
+    """A stable ordering that prefers a single token over its containing declaration or call."""
+    lines = number(span, "end_line") - number(span, "start_line")
+    columns = number(span, "end_column") - number(span, "start_column")
+    if lines < 0:
+        return Err("editor facts contain an inverted source span")
+    return Ok(lines * 1000000 + columns)
+
+
+def location(record: JsonValue) -> Option[JsonValue]:
+    """Project one present graph span to the engine's location vocabulary."""
+    span = nested(record, "span")
+    if text(span, "file") == "":
+        return None
+    return Some(
+        JsonValue.object(
+            {
+                "path": JsonValue.string(text(span, "file")),
+                "line": JsonValue.int(number(span, "start_line")),
+                "column": JsonValue.int(number(span, "start_column")),
+                "end_line": JsonValue.int(number(span, "end_line")),
+                "end_column": JsonValue.int(number(span, "end_column")),
+            },
+        ),
+    )
+
+
+def number(value: JsonValue, key: str) -> int:
+    """Read an optional graph coordinate, using zero only for an absent malformed span."""
+    match value.get(key):
+        Some(item) => return item.as_int().unwrap_or(0)
+        None => return 0
+
+
+def graph_records(document: str) -> Result[list[JsonValue], str]:
+    """Decode the graph reader's newline-delimited records."""
+    mut records: list[JsonValue] = []
+    for line in document.split("\n"):
+        if line != "":
+            records.append(parse(line).map_err((error) => f"editor facts: {error.message()}")?)
+    return Ok(records)

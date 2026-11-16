@@ -1,0 +1,47 @@
+"""Map captured compiler inputs to their stable source authorities and module names."""
+
+from std.fs import Path
+from unit import UnitDescription, dependency_source_roots
+
+
+pub def captured_source_identity(unit: UnitDescription, path: str) -> Result[Option[Tuple[str, str]], str]:
+    """Compare physical input and root paths so symlinked checkouts cannot omit changed source witnesses."""
+    mut normalized = ""
+    match Path(path).resolve():
+        Err(_) => return Ok(None)
+        Ok(resolved) => normalized = resolved.0
+    for dependency in dependency_source_roots(unit):
+        if let Some(relative) = captured_relative_path(normalized, dependency[1])?:
+            return Ok(Some((dependency[0], logical_module(relative))))
+    if let Some(relative) = captured_relative_path(normalized, unit.project_root)?:
+        return Ok(Some((source_origin(unit), relative)))
+    return Ok(None)
+
+
+def captured_relative_path(path: str, root: str) -> Result[Option[str], str]:
+    """Resolve the described root with the input's path policy; an unreadable root must refuse reuse."""
+    physical = Path(root).resolve().map_err((error) => f"captured source root: cannot {error.message()}")?
+    prefix = physical.0 + "/"
+    if path.startswith(prefix):
+        return Ok(Some(path[len(prefix):]))
+    return Ok(None)
+
+
+def logical_module(relative: str) -> str:
+    """Canonicalize an editable dependency source path the same way source-module resolution names its module."""
+    mut without_extension = relative
+    if without_extension.endswith(".incn"):
+        without_extension = without_extension[:len(without_extension) - len(".incn")]
+    mut parts = without_extension.split("/")
+    if len(parts) > 0 and parts[len(parts) - 1] in ["mod", "__init__"]:
+        parts = parts[:len(parts) - 1]
+    elif len(parts) > 1 and parts[len(parts) - 1] == "prelude":
+        parts = parts[:len(parts) - 1]
+    return "/".join(parts)
+
+
+pub def source_origin(unit: UnitDescription) -> str:
+    """Use the package authority, or isolate one manifest-free entry by its exact source path."""
+    if unit.package != "":
+        return unit.package
+    return "standalone:" + unit.source

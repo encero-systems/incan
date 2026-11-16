@@ -90,6 +90,7 @@ pub def check_or_replay(
     store: Path,
     key: Key,
     options: list[str] = [],
+    side_effects: bool = false,
 ) -> Result[i32, str]:
     """
     Replay the report of an unchanged check, or check and retain a certified report under the same identity rules.
@@ -107,7 +108,7 @@ pub def check_or_replay(
     identity = fingerprint([CHECK_DOMAIN, key.replayed(), format])?
     arguments = ["--check", description.0, toolchain.sysroot, "--format", format]
     # 1. A stored report of this identity is shown as the compiler printed it, in this project's paths.
-    cacheable = key.refusal == "" and ordinary_compilation() and complete_artifacts(unit)?
+    cacheable = not side_effects and key.refusal == "" and ordinary_compilation() and complete_artifacts(unit)?
     if cacheable:
         if let Some(report) = load_outcome(store, identity, unit.project_root)?:
             trace(f"{label}: replayed")

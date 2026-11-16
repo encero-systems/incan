@@ -67,6 +67,7 @@ pub model CheckedUnit:
 
     pub code: i32
     pub bodies: CheckedBodyCounts = CheckedBodyCounts()
+    pub editor_facts: bytes = b""
 
 
 pub def check_unit(unit: UnitDescription, toolchain: Toolchain, format: str) -> Result[i32, str]:
@@ -84,6 +85,7 @@ pub def check_prepared(
     toolchain: Toolchain,
     format: str,
     pages: Option[Path] = None,
+    editor_facts: bool = false,
 ) -> Result[CheckedUnit, str]:
     """
     Check a prepared unit. With a directory of the engine's selected checked-body pages, the compiler restores each
@@ -104,12 +106,22 @@ pub def check_prepared(
         discard_file(report)
         options = ["--checked-bodies", report.0, "--graph-body-records", directory.0]
         sidecar = Some(report)
+    mut facts: Option[Path] = None
+    if editor_facts:
+        facts_output = Path(f"{path.0}.editor-facts")
+        discard_file(facts_output)
+        options += ["--editor-facts-output", facts_output.0]
+        facts = Some(facts_output)
     # 3. The record's identity covers the key and the report format, so text and JSON reports are kept apart.
-    code = check_or_replay(ready, toolchain, path, format, bakery()?, key, options)?
+    code = check_or_replay(ready, toolchain, path, format, bakery()?, key, options, editor_facts)?
     mut bodies = CheckedBodyCounts()
     if let Some(report) = sidecar:
         bodies = checked_body_counts(report)?
-    return Ok(CheckedUnit(code=code, bodies=bodies))
+    mut answered_facts = b""
+    if let Some(output) = facts:
+        answered_facts = output.read_bytes().map_err((error) => f"cannot read editor facts: {error.message()}")?
+        discard_file(output)
+    return Ok(CheckedUnit(code=code, bodies=bodies, editor_facts=answered_facts))
 
 
 pub def report_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[i32, str]:

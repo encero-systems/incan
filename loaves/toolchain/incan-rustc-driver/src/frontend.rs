@@ -182,6 +182,8 @@ pub(crate) struct Dependencies {
     graph_body_records: incan_frontend::checker_records::GraphBodyRecords,
     /// Optional invocation output for freshly produced checker values; it is not a compilation input.
     graph_body_output: Option<PathBuf>,
+    /// Optional compiler-owned editor-facts value from this exact check.
+    pub(crate) editor_facts_output: Option<PathBuf>,
     /// Request-local directory for actual plan-function producer evaluations and reuses.
     plan_record_report: Option<PathBuf>,
     /// Bakery-selected plan-function products; private target caches are never record authority.
@@ -236,6 +238,7 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
     let mut shared_native = None;
     let mut graph_body_records = incan_frontend::checker_records::GraphBodyRecords::default();
     let mut graph_body_output = None;
+    let mut editor_facts_output = None;
     let mut plan_record_report = None;
     let mut plan_record_products = None;
     let mut anchors = NativeAnchors::default();
@@ -259,6 +262,7 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
             "--shared-native" => shared_native = Some(PathBuf::from(value)),
             "--graph-body-records" => graph_body_records = read_graph_body_records(Path::new(value))?,
             "--graph-body-output" => graph_body_output = Some(PathBuf::from(value)),
+            "--editor-facts-output" => editor_facts_output = Some(PathBuf::from(value)),
             "--plan-record-report" => plan_record_report = Some(PathBuf::from(value)),
             "--plan-record-products" => plan_record_products = Some(PathBuf::from(value)),
             "--toolchain-root" => anchors.toolchain = Some(PathBuf::from(value)),
@@ -284,6 +288,7 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
         shared_native,
         graph_body_records,
         graph_body_output,
+        editor_facts_output,
         plan_record_report,
         plan_record_products,
         anchors,
@@ -619,7 +624,7 @@ fn compile_unit(
 ) -> Result<UnitCompiled, Box<dyn std::error::Error>> {
     if arguments.len() < 4 {
         return Err(
-            "usage: --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [--rustc-arg ARG] [--library] [--shared-native DIR] [--toolchain-root DIR] [--bakery-root DIR] [--graph-body-records PATH] [--graph-body-output PATH]"
+            "usage: --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [--rustc-arg ARG] [--library] [--shared-native DIR] [--toolchain-root DIR] [--bakery-root DIR] [--graph-body-records PATH] [--graph-body-output PATH] [--editor-facts-output PATH]"
                 .into(),
         );
     }

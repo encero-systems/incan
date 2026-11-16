@@ -118,6 +118,7 @@ pub def stage_name(stage: ProducerStage) -> str:
         ProducerStage.Layout => return "layout"
         ProducerStage.Default => return "default"
         ProducerStage.CheckBody => return "check-body"
+        ProducerStage.EditorFacts => return "editor-facts"
         ProducerStage.BodyIr => return "body-ir"
         ProducerStage.Instance => return "instance"
         ProducerStage.LoweringDemand => return "lowering-demand"
@@ -133,6 +134,7 @@ def read_stage(value: str) -> Result[ProducerStage, str]:
         "layout" => return Ok(ProducerStage.Layout)
         "default" => return Ok(ProducerStage.Default)
         "check-body" => return Ok(ProducerStage.CheckBody)
+        "editor-facts" => return Ok(ProducerStage.EditorFacts)
         "body-ir" => return Ok(ProducerStage.BodyIr)
         "instance" => return Ok(ProducerStage.Instance)
         "lowering-demand" => return Ok(ProducerStage.LoweringDemand)

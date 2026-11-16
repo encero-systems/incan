@@ -89,6 +89,7 @@ pub(super) struct GraphBodyOutput {
     values: Vec<PendingBodyValue>,
     namespaces: Vec<PendingNamespaceValue>,
     fallbacks: Vec<PendingBodyFallback>,
+    editor_facts: Option<Vec<u8>>,
     error: Option<String>,
 }
 
@@ -111,8 +112,21 @@ impl GraphBodyOutput {
             values: Vec::new(),
             namespaces: Vec::new(),
             fallbacks: Vec::new(),
+            editor_facts: None,
             error: None,
         })
+    }
+
+    /// Whether Oven requested compiler-record outputs for this invocation.
+    pub(super) fn requested(&self) -> bool {
+        self.path.is_some()
+    }
+
+    /// Retain the compiler's live graph from the same analysis pass as the checker values in this sidecar.
+    pub(super) fn attach_editor_facts(&mut self, facts: Vec<u8>) {
+        if self.path.is_some() {
+            self.editor_facts = Some(facts);
+        }
     }
 
     /// Capture only values already emitted by all three producer boundaries for this checked module.
@@ -347,6 +361,10 @@ impl GraphBodyOutput {
                 )
             })?;
         publish(&path, frames)?;
+        let editor_facts = self
+            .editor_facts
+            .ok_or("compiled graph output omitted its editor facts")?;
+        publish(&editor_facts_path(&path), vec![editor_facts])?;
         publish(&checker_report_path(&path), vec![report])
     }
 }
@@ -446,6 +464,13 @@ fn checker_report_path(path: &Path) -> PathBuf {
     let mut report = OsString::from(path.as_os_str());
     report.push(".checker-report.json");
     PathBuf::from(report)
+}
+
+/// Name the compiler-owned editor-facts value beside the body output that Oven admits atomically with it.
+fn editor_facts_path(path: &Path) -> PathBuf {
+    let mut facts = OsString::from(path.as_os_str());
+    facts.push(".editor-facts");
+    PathBuf::from(facts)
 }
 
 /// Replace one compiler sidecar atomically so a failed invocation cannot leave a partially encoded output.
