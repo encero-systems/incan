@@ -27,8 +27,9 @@ fn assert_proved(source: &str, name: &str) -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
-/// A field of an owned input, an ordinary input, a literal and a fresh result all pass to ordinary value slots. A
-/// place reached through a shared input stays refused: whether the callee shares it or would clone it is not known.
+/// A field of an owned input, an ordinary input, a literal and a fresh result all pass to ordinary value slots, and a
+/// place reached through a shared input is shared for the call: Body IR refuses the call later only if the callee's
+/// realization would consume it.
 #[test]
 fn ordinary_value_slots_take_places_and_fresh_values() -> Result<(), Box<dyn std::error::Error>> {
     let declarations = "model Row:\n    name: str\n    tags: list[str]\n\ndef encode(row: Borrowed[Row]) -> bytes:\n    return b\"row\"\n\ndef size(data: bytes) -> int:\n    return len(data)\n\ndef count(tags: list[str], label: str) -> int:\n    return len(tags) + len(label)\n\n";
@@ -38,20 +39,10 @@ fn ordinary_value_slots_take_places_and_fresh_values() -> Result<(), Box<dyn std
         ),
         "digest",
     )?;
-    let shared = format!("{declarations}def shared(row: Borrowed[Row]) -> int:\n    return count(row.tags, \"x\")\n");
-    let checker = checked(&shared)?;
-    let Some(InputFlow::Unavailable(unavailable)) = flow(&checker, "shared") else {
-        return Err(format!(
-            "a shared input's place passed to an ordinary slot was admitted: {:?}",
-            flow(&checker, "shared")
-        )
-        .into());
-    };
-    assert_eq!(
-        unavailable.reason,
-        "ordinary argument requires inferred access or mutable binding facts"
-    );
-    Ok(())
+    assert_proved(
+        &format!("{declarations}def shared(row: Borrowed[Row]) -> int:\n    return count(row.tags, row.name)\n"),
+        "shared",
+    )
 }
 
 /// An owned input's field forwarded through an ordinary helper into an owned result is a value the helper owns: the
