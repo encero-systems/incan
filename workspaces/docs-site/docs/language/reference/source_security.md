@@ -17,7 +17,7 @@ The diagnostic selects the exact control, names it and shows its visible lowerca
 
 Diagnostics, formatter output, hover and signature text, checked API documentation and inspection output render a control held by a decoded value as its visible scalar escape. They do not reproduce the raw control.
 
-Oven applies the same refusal before compiling authored Rust and C-family source files in every selected local facet and dependency. Generated output directories and precompiled registry units are not authored native inputs.
+Before compiling Rust and C-family source files in every selected local facet and dependency, a registry Loaf compiled from its source included, Oven refuses the embedding, override and isolate controls, U+202A–U+202E and U+2066–U+2069, which rustc's text-direction lints refuse, with the same diagnostic. The marks U+061C, U+200E and U+200F are admitted in those files. Generated output directories and precompiled registry units are not authored native inputs.
 
 ## Confusable identifiers
 
