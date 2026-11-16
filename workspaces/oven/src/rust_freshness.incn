@@ -414,16 +414,20 @@ def environment_inputs(names: list[str], environment: Dict[str, str], project: P
     Observe tracked variables with package overrides, distinguishing unset from empty Unicode values. A watching request
     also records each variable it read from the process environment, by `environment_observation`.
 
-    The `OUT_DIR` a build fact gives the compile is spelled by its place in the Loaf, so the unit keeps one identity
-    wherever the Loaf lies; the generated files it holds enter the identity as sources. Any other location stays refused.
+    The `OUT_DIR` a build fact gives the compile, and a variable the fact places under it, are spelled by their place in
+    the Loaf, so the unit keeps one identity wherever the Loaf lies; the generated files there enter the identity as
+    sources. Any other location stays refused.
     """
     prefix = project.0 + "/"
+    mut out = ""
+    if "OUT_DIR" in environment and environment["OUT_DIR"].startswith(prefix):
+        out = environment["OUT_DIR"]
     mut inputs: list[str] = []
     for name in sorted(names):
         inputs.append(name)
         if name in environment:
             value = environment[name]
-            if name == "OUT_DIR" and value.startswith(prefix):
+            if out != "" and (value == out or value.startswith(out + "/")):
                 inputs.extend(["loaf-relative", value[len(prefix):]])
                 continue
             inputs.extend(observed_environment_value(name, value)?)

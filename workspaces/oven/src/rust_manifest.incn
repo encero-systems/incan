@@ -33,7 +33,9 @@ pub model RustBuildFact:
     pub cfg: list[str]
     # The committed generated files the crate reads from `OUT_DIR`.
     pub out: list[RustFactOut] = []
+    # The variables the compile sees: `literal` values, and `out` places under `OUT_DIR` (`.` is `OUT_DIR` itself).
     pub environment: Dict[str, str] = {}
+    pub placed: Dict[str, str] = {}
     # The C libraries the build script compiled, which the compile builds again from their records.
     pub links: list[LinkFact] = []
     # Declared publisher-side work this Oven does not run (`tool`).
@@ -164,12 +166,23 @@ pub def fact_arguments(fact: RustBuildFact) -> list[str]:
 
 
 pub def fact_environment(project: str, fact: RustBuildFact) -> Result[Dict[str, str], str]:
-    """The environment a build fact gives the crate's compile: its recorded variables, and `OUT_DIR` for its files."""
+    """
+    The environment a build fact gives the crate's compile: its literal variables, `OUT_DIR` for its files, and each
+    placed variable at its place under `OUT_DIR`.
+    """
     mut environment: Dict[str, str] = {}
     for name in sorted([name for name in fact.environment.keys()]):
         environment[name] = fact.environment[name]
     if len(fact.out) > 0:
         environment["OUT_DIR"] = out_directory(project, fact.out)?
+    for name in sorted([name for name in fact.placed.keys()]):
+        if "OUT_DIR" not in environment:
+            return Err(f"rust.facts.environment: {name} names a place under OUT_DIR, and the fact lists no out files")
+        place = fact.placed[name]
+        mut value = environment["OUT_DIR"]
+        if place != ".":
+            value = Path(value).joinpath(place).0
+        environment[name] = value
     return Ok(environment)
 
 
@@ -259,11 +272,7 @@ def read_facts(document: TomlValue) -> Result[list[RustBuildFact], str]:
 def read_fact(record: TomlValue) -> Result[RustBuildFact, str]:
     """One build fact record: its binding, its answers and the kinds of publisher-side work it declares."""
     table = record.as_table().map_err((error) => f"rust.facts: {error.message()}")?
-    mut environment: Dict[str, str] = {}
-    if "environment" in table:
-        values = table["environment"].as_table().map_err((error) => f"rust.facts.environment: {error.message()}")?
-        for name in sorted([name for name in values.keys()]):
-            environment[name] = required_string(record, f"environment.{name}")?
+    environment, placed = fact_variables(table)?
     mut work: list[str] = []
     for kind in ["tool"]:
         if kind in table:
@@ -277,10 +286,36 @@ def read_fact(record: TomlValue) -> Result[RustBuildFact, str]:
             cfg=optional_strings(record, "cfg")?.unwrap_or([]),
             out=fact_outputs(table)?,
             environment=environment,
+            placed=placed,
             links=read_links(table)?,
             work=work,
         ),
     )
+
+
+def fact_variables(table: Dict[str, TomlValue]) -> Result[Tuple[Dict[str, str], Dict[str, str]], str]:
+    """
+    A fact's `environment`, as the registry records it: `{ name, literal }` for a value and `{ name, out }` for a place
+    under `OUT_DIR`. A variable is named once, by exactly one of the two, and a place stays inside `OUT_DIR`.
+    """
+    mut literals: Dict[str, str] = {}
+    mut placed: Dict[str, str] = {}
+    if "environment" not in table:
+        return Ok((literals, placed))
+    for entry in table["environment"].as_array().map_err((error) => f"rust.facts.environment: {error.message()}")?:
+        name = required_string(entry, "name")?
+        literal = optional_string(entry, "literal")?
+        place = optional_string(entry, "out")?
+        if name in literals or name in placed:
+            return Err(f"rust.facts.environment: {name} is named twice")
+        match (literal, place):
+            (Some(value), None) => literals[name] = value
+            (None, Some(path)) =>
+                if path.startswith("/") or ".." in path.split("/"):
+                    return Err(f"rust.facts.environment: {name} names {path}, which is not a place under OUT_DIR")
+                placed[name] = path
+            _ => return Err(f"rust.facts.environment: {name} needs exactly one of `literal` and `out`")
+    return Ok((literals, placed))
 
 
 def crate_name_of(document: TomlValue, package: str) -> Result[str, str]:
