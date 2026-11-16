@@ -63,7 +63,7 @@ fn evaluate_local(
     let record = internal_models::from_native_local_fields(&rows)
         .map_err(|error| format!("local record codec refused: {error:?}"))?;
     let encoded =
-        internal_models::encode_record(record).map_err(|error| format!("local record encoding refused: {error:?}"))?;
+        internal_models::encode_record(&record).map_err(|error| format!("local record encoding refused: {error:?}"))?;
     let semantic = format!("sha256:{}", digest(&encoded));
     let produced =
         incan_worker_host::stage_local_result(home.to_owned(), snapshot, &encoded, &inputs.receipt, &semantic)
@@ -89,7 +89,7 @@ fn evaluate_final(
     let record = internal_models::from_native_final_fields(&rows)
         .map_err(|error| format!("final record codec refused: {error:?}"))?;
     let encoded =
-        internal_models::encode_record(record).map_err(|error| format!("final record encoding refused: {error:?}"))?;
+        internal_models::encode_record(&record).map_err(|error| format!("final record encoding refused: {error:?}"))?;
     let semantic = format!("sha256:{}", digest(&encoded));
     let produced =
         incan_worker_host::stage_checking_result(home.to_owned(), snapshot, &encoded, &inputs.receipt, &semantic)
