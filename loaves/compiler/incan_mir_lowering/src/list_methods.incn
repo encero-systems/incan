@@ -58,7 +58,7 @@ from list_values import (
     value_operand,
 )
 from builtin_methods import lower_generator_member
-from list_iteration import list_root_place, shared_sequence_receiver
+from list_iteration import frozen_text_membership, list_root_place, shared_sequence_receiver
 from hashed_collections import collection_length
 from carrier_operands import boundary_operand, element_plan_operand
 from sequence_builtins import argument_type
@@ -591,6 +591,8 @@ pub def lower_list_helper(
     """
     if len(arguments) != 2:
         return Err("unsupported Body IR list membership arity")
+    if frozen_text_membership(builder, negated, arguments, destination, span)?:
+        return Ok(None)
     receiver = shared_sequence_receiver(builder, arguments, span, true)?
     leaf, depth = require_list_shape(place_type(builder.locals, receiver), "unsupported Body IR membership on non-list")?
     admit_membership_equality(builder, leaf)?
