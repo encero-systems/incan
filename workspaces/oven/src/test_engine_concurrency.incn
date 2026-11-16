@@ -1,0 +1,147 @@
+"""Independent requests of one records engine progress together: neither waits for the other to settle."""
+
+from std.environ import get_or
+from std.fs import Path
+from engine_channel import Channel
+from engine_client import service_generation, service_identity
+from engine_endpoint import connect_with
+from engine_messages import CompletionStatus, Message, Stop, Submit
+from engine_state import Identity
+from engine_wire import Refusal, joined, scalar, zero_id
+from files import write
+from scratch import scratch_directory
+
+# The longest a request may take to be captured, which is no part of its build.
+const CAPTURE_SECONDS: u64 = 60
+
+
+pub def test_independent_requests_are_both_captured_before_either_settles() -> Result[None, str]:
+    """
+    Two clients ask one engine for two programs while this test holds the store's publication lock. No request can
+    settle without publishing, so neither settles; the engine must still accept and capture both.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    store = root.joinpath("store")
+    store.joinpath("locks").mkdir(true, true).map_err((error) => error.message())?
+    one = program(root, "one")?
+    two = program(root, "two")?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    mut identity = service_identity(store)?
+    identity.service_generation = service_generation(binary)?
+    mut first = connect_with(store, identity, binary).map_err(detail)?
+    mut second = connect_with(store, identity, binary).map_err(detail)?
+    first.transport.wait_at_most(CAPTURE_SECONDS)
+    second.transport.wait_at_most(CAPTURE_SECONDS)
+    captured = captured_while_unpublished(store, first, second, one, two)
+    # The lock is free again: both requests settle, whatever the engine captured while it was held.
+    first.transport.wait_at_most(0)
+    second.transport.wait_at_most(0)
+    mut settled: Result[None, str] = Ok(None)
+    if captured.is_ok():
+        settled = await_success(first, request_id(1))
+        if settled.is_ok():
+            settled = await_success(second, request_id(2))
+    stopped = stop(first)
+    _ = first.transport.close()
+    _ = second.transport.close()
+    captured?
+    settled?
+    return stopped
+
+
+def captured_while_unpublished(
+    store: Path,
+    mut first: Channel,
+    mut second: Channel,
+    one: Path,
+    two: Path,
+) -> Result[None, str]:
+    """Submit both requests and read both captures while this function holds the store's publication lock."""
+    held = store.joinpath("locks/publication").lock_exclusive().map_err((error) => error.message())?
+    submit(first, request_id(1), "one", one)?
+    await_capture(first, "the first request")?
+    submit(second, request_id(2), "two", two)?
+    return await_capture(second, "the second request, while the first cannot settle")
+
+
+def program(root: Path, name: str) -> Result[Path, str]:
+    """Write one program of its own project, so the two requests share no source."""
+    project = root.joinpath(name)
+    project.mkdir(true, true).map_err((error) => error.message())?
+    source = project.joinpath("main.incn")
+    write(source, f"def main() -> None:\n    println(\"{name}\")\n")?
+    return Ok(source)
+
+
+def submit(mut channel: Channel, request: bytes, view: str, source: Path) -> Result[None, str]:
+    """Ask for a debug build of `source` in its own view."""
+    _ = channel
+        .send(
+            request,
+            Message.Submit(
+                Submit(
+                    command="build",
+                    view=view,
+                    input_selection="debug",
+                    requested_roots=source.0,
+                    options="",
+                    observation_policy="",
+                ),
+            ),
+        )
+        .map_err(detail)?
+    return Ok(None)
+
+
+def await_capture(mut channel: Channel, what: str) -> Result[None, str]:
+    """Read one request through its acceptance to its capture; a completion first means it settled."""
+    for _turn in range(8):
+        frame = channel.receive().map_err((refusal) => f"{what} was not captured: {refusal.detail}")?
+        channel.acknowledge(frame).map_err(detail)?
+        match frame.message:
+            Message.Captured(_) => return Ok(None)
+            Message.Complete(_) => return Err(f"{what} settled while the publication lock was held")
+            Message.Refused(value) => return Err(f"{what} was refused: {value.detail}")
+            _ => pass
+    return Err(f"{what} was not captured")
+
+
+def await_success(mut channel: Channel, request: bytes) -> Result[None, str]:
+    """Read `request` through to a successful completion."""
+    for _turn in range(16):
+        frame = channel.receive().map_err(detail)?
+        channel.acknowledge(frame).map_err(detail)?
+        if frame.header.request != request:
+            continue
+        match frame.message:
+            Message.Complete(value) =>
+                if value.status != CompletionStatus.Success:
+                    return Err("a request completed without success")
+                return Ok(None)
+            Message.Refused(value) => return Err(value.detail)
+            _ => pass
+    return Err("a request did not complete")
+
+
+def stop(mut channel: Channel) -> Result[None, str]:
+    """Stop the engine and read its acknowledgment; it leaves at once, so nothing is acknowledged from here on."""
+    _ = channel.send(zero_id(), Message.Stop(Stop(reason="concurrency proof complete"))).map_err(detail)?
+    for _turn in range(16):
+        frame = channel.receive().map_err(detail)?
+        match frame.message:
+            Message.Event(value) =>
+                if value.status == "Stopping":
+                    return Ok(None)
+            _ => pass
+    return Err("the engine did not stop")
+
+
+def request_id(value: int) -> bytes:
+    """Make one nonzero 16-byte request identity."""
+    return joined([scalar(value, 8), scalar(0, 8)])
+
+
+def detail(refusal: Refusal) -> str:
+    """Expose a typed engine refusal through the test boundary."""
+    return refusal.detail
