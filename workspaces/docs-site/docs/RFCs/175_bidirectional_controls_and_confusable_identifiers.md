@@ -98,7 +98,7 @@ Every tool that shows source or a string value shows a bidirectional control as 
 
 - **Formatter:** refuses a file that holds a bidirectional control, with the compiler's diagnostic, and never rewrites or removes the character itself.
 - **LSP:** reports the same diagnostics as the compiler. The fix in each hint is offered as a code action.
-- **Oven:** applies the refusal to every source file it compiles, in every facet of a Loaf and in its dependencies, including Rust and C sources. A Rust or C literal that needs a control uses that language's own escape. The diagnostic has the same code and names the file and the facet.
+- **Oven:** applies the refusal to every source file it compiles, in every facet of a Loaf and in its dependencies. In Incan source it covers every bidirectional control. In Rust and C sources it covers the embedding, override and isolate controls, U+202A to U+202E and U+2066 to U+2069, the set rustc's own text-direction lints refuse, and admits the three marks, U+061C, U+200E and U+200F. A Rust or C literal that needs a refused control uses that language's own escape. The diagnostic has the same code and names the file and the facet.
 
 ### Rust interop names
 
@@ -122,6 +122,9 @@ An Incan identifier is ASCII, so Incan source can name only a Rust item whose na
 - **Allowing them in strings when they are balanced.** Balance doesn't decide what a reader sees, and tools disagree on how to render it. An escape shows exactly what the value holds.
 - **Python's `\uXXXX` and `\UXXXXXXXX` escapes.** Two spellings with fixed lengths for one idea, and a backslash followed by `u` would stop being plain text in paths such as `"C:\users"`. Braces mark where the escape ends.
 - **Refusing every invisible character.** Zero-width joiners and similar characters appear in legitimate emoji and in some scripts, and they don't reorder display. Only the reordering controls are refused.
+- **Refusing the marks in Rust and C dependencies too.** Widely used Rust packages hold marks as real right-to-left text, in documentation and test data, so the full set would refuse them with no release to move to.
+- **Trusting a registry's scan of adopted sources.** Oven would compile a file it had not checked itself.
+- **Escaping the controls in adopted sources.** The adopted archive would no longer match the published package byte for byte, and a Rust raw string has no escape to write.
 - **Making confusable pairs an error.** Some ASCII pairs, such as `I` and `l` in mathematical code, are deliberate. A warning flags them without refusing working code.
 - **Unicode identifiers.** They would bring UTS #39's mixed-script rules and restriction levels with them. Identifiers stay ASCII, so mixed scripts cannot occur.
 
@@ -153,4 +156,5 @@ An Incan identifier is ASCII, so Incan source can name only a Rust item whose na
 - **Refuse everywhere.** One rule for code, comments and strings leaves no place where the attack works.
 - **Escapes show what the value holds.** A control that a string needs is visible in the source and in every tool that displays it.
 - **One rule in every tool.** A check that the formatter, the editor or the build skipped would be a place to hide the character.
+- **Foreign sources are checked for the reordering set.** The attacks need a control that opens an embedded, overridden or isolated run. A mark only sets the direction of the neutral characters beside it, as a right-to-left letter already does, so Rust and C sources may hold one. Incan source refuses the marks too, because its author can always write the escape.
 - **Confusables warn.** Look-alike names are a hazard, not a mistake in every case, so they are flagged without refusing the build.
