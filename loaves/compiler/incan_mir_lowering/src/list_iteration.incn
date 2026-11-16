@@ -680,3 +680,51 @@ pub def list_root_place(mut builder: Builder, value: &RustPlace, span: SourceSpa
 def list_projection_refusal(name: str, ty: PlanType, projection: PlaceElem) -> str:
     """Name the retained carrier and projection that cannot provide structural collection storage."""
     return f"unsupported Body IR list root projection in {name}: {ty:?}; {projection:?}"
+
+
+pub def frozen_text_membership(
+    mut builder: Builder,
+    negated: bool,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """
+    Test text membership in a frozen list or set in place: the frozen carrier compares each static element's text
+    with the borrowed needle, and no element is copied or formatted (#2944). Any other membership keeps the
+    ordinary route.
+    """
+    ty = argument_type(builder, arguments, 0, span)?
+    mut path = ""
+    mut elements: list[PlanType] = []
+    match ty:
+        PlanType.FrozenCollection(name, retained) =>
+            if len(retained) != 1 or retained[0] not in [PlanType.StaticText, PlanType.FrozenStr]:
+                return Ok(false)
+            if name == "FrozenList":
+                path = "incan_std_primitives::frozen::frozen_list_contains_text"
+            elif name == "FrozenSet":
+                path = "incan_std_primitives::frozen::frozen_set_contains_text"
+            else:
+                return Ok(false)
+            elements = retained
+        _ => return Ok(false)
+    match arguments[1].as_one():
+        Some(value) =>
+            needle = borrow_text_operand(builder, value, span)?
+            receiver = argument_value(builder, arguments, 0, span)?
+            output = call_destination(builder, destination, PlanType.Bool, span)?
+            instantiated_external_call(
+                builder,
+                path,
+                elements,
+                [ty, PlanType.StringRef],
+                PlanType.Bool,
+                [receiver, needle],
+                output,
+                span,
+            )?
+            if negated:
+                builder.emit(plan_assign(output, RvalueKind.Unary(UnaryOp.Not, read_place(output, false, span)), span))
+            return Ok(true)
+        None => return Err("unsupported Body IR frozen membership needle spread")
