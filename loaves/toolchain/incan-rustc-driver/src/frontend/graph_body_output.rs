@@ -340,7 +340,7 @@ impl GraphBodyOutput {
             values,
             fallbacks,
         };
-        let rows = internal_models::encode_compiled_body_rows(outputs).map_err(|error| {
+        let rows = internal_models::encode_compiled_body_rows(&outputs).map_err(|error| {
             format!(
                 "compiled graph output refused: {error:?} ({body_count} owner rows, {body_ir_bytes} raw Body IR bytes)"
             )
@@ -356,13 +356,13 @@ fn encoded_body_value(
     fields: &incan_frontend::checker_records::CheckedOwnerRecordFields,
 ) -> Result<PendingBodyValue, BodyValueRefusal> {
     let declaration = internal_models::from_native_fields(&fields.declaration)
-        .and_then(|record| internal_models::encode_record(record))
+        .and_then(|record| internal_models::encode_record(&record))
         .map_err(|error| record_refusal("declaration", &fields.declaration, error))?;
     let local = internal_models::from_native_local_fields(&fields.local)
-        .and_then(|record| internal_models::encode_record(record))
+        .and_then(|record| internal_models::encode_record(&record))
         .map_err(|error| record_refusal("local", &fields.local, error))?;
     let final_value = internal_models::from_native_final_fields(&fields.final_value)
-        .and_then(|record| internal_models::encode_record(record))
+        .and_then(|record| internal_models::encode_record(&record))
         .map_err(|error| record_refusal("final", &fields.final_value, error))?;
     let mut dependency_reads = fields
         .dependency_reads
