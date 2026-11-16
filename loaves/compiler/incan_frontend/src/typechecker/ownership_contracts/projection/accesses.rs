@@ -352,6 +352,12 @@ impl SourceAccesses<'_, '_> {
     /// evaluates its address, not its value; fresh borrowed arguments still evaluate their nested value normally.
     fn expression(&mut self, expression: &Spanned<Expr>, consume: bool) -> Result<(), &'static str> {
         match &expression.node {
+            Expr::Ident(_) | Expr::Field(_, _)
+                if self
+                    .proof
+                    .facts
+                    .resolved_identity(expression.span)
+                    .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Const) => {}
             Expr::Field(_, _)
                 if self
                     .proof

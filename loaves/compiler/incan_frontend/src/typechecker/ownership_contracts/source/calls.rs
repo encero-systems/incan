@@ -736,6 +736,22 @@ impl Builder<'_> {
                 self.expression(expression, incoming, true)
                     .map(|outgoing| (outgoing, None))
             }
+            // A private helper's ordinary slot may receive a fresh value whose checked type cannot hold a borrow.
+            // Its expression still proves every nested element; stored and reference-carrying values stay refused.
+            None if ordinary_callee
+                && !parameter.is_mut
+                && self.optional_place(expression)?.is_none()
+                && matches!(
+                    expression.node,
+                    Expr::List(_) | Expr::Tuple(_) | Expr::Set(_) | Expr::Dict(_)
+                )
+                && self.checker.type_info.expr_type(expression.span).is_some_and(|ty| {
+                    !self.checker.type_holds_borrow(ty) && !self.checker.type_holds_native_loan(ty)
+                }) =>
+            {
+                self.expression(expression, incoming, true)
+                    .map(|outgoing| (outgoing, None))
+            }
             // A whole local may be observed by an ordinary helper while its body retains later storage. Parameters,
             // projections and borrowed aliases still need an explicit access fact rather than inferred widening.
             None if ordinary_callee

@@ -396,6 +396,16 @@ impl Builder<'_> {
         if let Some(result) = self.retained_result(expression, incoming.clone(), false)? {
             return Ok(result.incoming);
         }
+        // A checker-resolved module constant is an immutable value, not a storage place in this body's access graph.
+        if matches!(expression.node, Expr::Ident(_) | Expr::Field(_, _))
+            && self
+                .checker
+                .type_info
+                .resolved_identity(expression.span)
+                .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Const)
+        {
+            return Ok(incoming);
+        }
         if matches!(expression.node, Expr::Field(_, _))
             && self
                 .checker

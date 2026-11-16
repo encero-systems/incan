@@ -407,17 +407,6 @@ impl Builder<'_> {
         incoming: Vec<usize>,
     ) -> Result<Vec<usize>, Unavailable> {
         let info = &self.checker.type_info;
-        if info.resolved_operator_call(span).is_some()
-            || !matches!(
-                info.resolved_write_type(assignment.name_span, &assignment.name),
-                Some(ResolvedType::Int | ResolvedType::Float | ResolvedType::Numeric(_) | ResolvedType::Bool)
-            )
-        {
-            return Err(Unavailable {
-                span,
-                reason: "compound operator needs selected callable access facts".into(),
-            });
-        }
         let identity = info
             .resolved_write_identity(assignment.name_span, &assignment.name)
             .ok_or(Unavailable {
@@ -425,6 +414,22 @@ impl Builder<'_> {
                 reason: "compound target lacks a checked identity".into(),
             })?
             .clone();
+        let target = info.resolved_write_type(assignment.name_span, &assignment.name);
+        let scalar = matches!(
+            target,
+            Some(ResolvedType::Int | ResolvedType::Float | ResolvedType::Numeric(_) | ResolvedType::Bool)
+        );
+        let checked_local_list = identity.kind == SemanticSourceTargetKind::Local
+            && !self.aliases.contains_key(&identity)
+            && assignment.op == crate::ast::CompoundOp::Add
+            && matches!(target, Some(ResolvedType::Generic(name, _)) if name == "List")
+            && info.expr_type(assignment.value.span) == target;
+        if info.resolved_operator_call(span).is_some() || (!scalar && !checked_local_list) {
+            return Err(Unavailable {
+                span,
+                reason: "compound operator needs selected callable access facts".into(),
+            });
+        }
         let path = match self.aliases.get(&identity) {
             Some(path) => path.clone(),
             None => Path {

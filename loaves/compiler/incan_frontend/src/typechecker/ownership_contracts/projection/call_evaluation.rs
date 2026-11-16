@@ -285,6 +285,14 @@ impl CheckedInputBody<'_> {
         expression: &Spanned<Expr>,
     ) -> Result<Option<(flow::Place, Option<flow::LoanId>)>, &'static str> {
         match &expression.node {
+            Expr::Ident(_) | Expr::Field(_, _)
+                if self
+                    .facts
+                    .resolved_identity(expression.span)
+                    .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Const) =>
+            {
+                Ok(None)
+            }
             Expr::Ident(_) | Expr::SelfExpr => {
                 let identity = self
                     .facts

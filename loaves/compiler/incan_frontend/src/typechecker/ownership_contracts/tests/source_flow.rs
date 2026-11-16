@@ -2,6 +2,68 @@
 
 use super::*;
 
+/// Immutable module constants are values outside a callable's storage graph. Mutable module static storage and
+/// every other unsupported root keep the existing exact refusal instead of acquiring synthetic local permissions.
+#[test]
+fn module_constants_are_values_but_static_storage_remains_refused() -> Result<(), Box<dyn std::error::Error>> {
+    let accepted = checked(
+        "const LIMIT: int = 1\ndef cap(limit: int) -> int:\n    return limit\ndef inspect(value: Borrowed[int]) -> int:\n    return value + cap(LIMIT)\n",
+    )?;
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+    assert!(
+        accepted
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .any(|(owner, flow)| { owner.declaration_name == "inspect" && matches!(flow, InputFlow::Checked { .. }) })
+    );
+
+    let refused = checked(
+        "static LIMIT: int = 1\ndef cap(limit: int) -> int:\n    return limit\ndef inspect(value: Borrowed[int]) -> int:\n    return value + cap(LIMIT)\n",
+    )?;
+    let flow = refused
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find(|(owner, _)| owner.declaration_name == "inspect")
+        .map(|(_, flow)| flow)
+        .ok_or("missing static source flow")?;
+    let InputFlow::Unavailable(unavailable) = flow else {
+        return Err(format!("unsupported static storage admitted: {flow:?}").into());
+    };
+    assert_eq!(unavailable.reason, "place is not a prepared parameter or checked local");
+    assert!(
+        refused
+            .errors
+            .iter()
+            .any(|error| error.stable_code() == Some("INCAN-T0123"))
+    );
+    Ok(())
+}
+
+/// One explicit-input route may call a checked private helper, read supported fields and extend a checked local list.
+/// The compound update must not grant static storage, an alias or an unproved element transfer local permissions.
+#[test]
+fn explicit_input_uses_private_helper_fields_and_checked_local_compound_assignment()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = "const LIMIT: int = 1\nmodel Record:\n    value: int\ndef record_value(record: Borrowed[Record]) -> int:\n    return record.value\ndef above(value: int, limit: int) -> bool:\n    return value > limit\ndef summarize(values: list[int], limit: int) -> int:\n    return values[0] + limit\ndef encode_record(record: Borrowed[Record]) -> int:\n    mut values: list[int] = []\n    values += [record.value]\n    value = record_value(record)\n    if above(record.value, LIMIT):\n        return 0\n    return summarize([value], LIMIT)\n";
+    let checker = checked(source)?;
+    assert!(checker.errors.is_empty(), "{source}\n{:?}", checker.errors);
+    assert!(
+        checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .any(|(owner, flow)| {
+                owner.declaration_name == "encode_record" && matches!(flow, InputFlow::Checked { .. })
+            })
+    );
+    Ok(())
+}
+
 /// Resource-observer fixtures must reach cleanup through represented call boundaries. An ordinary helper
 /// retains its selected header but still needs non-Copy argument or nominal returned-dependency facts.
 #[test]
