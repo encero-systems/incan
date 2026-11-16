@@ -54,7 +54,10 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     assert proof_count(commented, "body_evaluations")? == 0, comment_diagnostic
     assert proof_count(commented, "body_ir_evaluations")? == 0, comment_diagnostic
     assert proof_count(commented, "plan_function_evaluations")? == 0, comment_diagnostic
-    assert proof_count(commented, "plan_function_reuses")? == 3, comment_diagnostic
+    # The comment leaves both bodies as they were: they are restored from the module's plan record, and the entry
+    # binding is the one plan function reused by its key.
+    assert proof_count(commented, "plan_function_reuses")? == 1, comment_diagnostic
+    assert proof_count(commented, "plan_module_reuses")? == 1, comment_diagnostic
     assert proof_count(commented, "lowering_demand_evaluations")? == 0, comment_diagnostic
     assert proof_count(commented, "native_interface_evaluations")? == 1, comment_diagnostic
     # The comment line moves `main`, so its line tables change and the unit is baked again (BE-34).
@@ -167,6 +170,12 @@ pub def test_one_module_edit_lowers_only_that_module() -> Result[None, str]:
     assert lowered == ["lone_beta"], f"an edit to lone_beta lowered bodies of {len(lowered)} modules: {", ".join(lowered)}"
     # The three unchanged modules, `main` among them, are restored from their module plan records.
     assert proof_count(edited, "plan_module_reuses")? == 3, diagnostic
+    # A later edit of a module that was restored lowers that module again, and its edit reaches the program.
+    write(root.joinpath("lone_alpha.incn"), lone_module("lone_alpha", "7"))?
+    again = traced_example_run(binary, source, store, observations, "22")?
+    again_diagnostic = again.to_json().map_err((error) => error.message())?
+    assert proof_count(again, "plan_function_evaluations")? == 1, again_diagnostic
+    assert proof_count(again, "plan_module_reuses")? == 3, again_diagnostic
     return stop_example_engine(binary, store)
 
 

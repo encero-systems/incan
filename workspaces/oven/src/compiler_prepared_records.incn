@@ -3,13 +3,19 @@
 from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
 from pub::internal_models.records import (
+    PayloadSelection,
+    PreparationEvidence,
     ReadFault,
+    ReadReceipt,
     ReadScope,
     RevisionEvidence,
     SelectedFact,
+    RecordKey,
     RecordRead,
+    RecordReads,
     RecordSource,
     RecordRequest,
+    RecordSelection,
     encode_record_key,
     selected_record_bytes,
 )
@@ -30,10 +36,36 @@ pub class PreparedBodyRecordSource with RecordSource:
         """Make one exact pending value available to later producers in the same transaction."""
         self.values[key] = value
 
+    pub def holds(self, key: str) -> bool:
+        """Whether a value is already available under one encoded record key."""
+        return key in self.values
+
     pub def for_profile(self, profile: str) -> PreparedBodyRecordSource:
         """Bind the same staged values to the next producer profile without weakening its read-scope check."""
         scope = ReadScope(snapshot=self.scope.snapshot, profile=profile)
         return PreparedBodyRecordSource(scope=scope, values=self.values)
+
+    pub def receipt(
+        self,
+        scope: ReadScope,
+        output: RecordKey,
+        requests: list[RecordRequest],
+    ) -> Result[ReadReceipt, str]:
+        """Authenticate one producer's exact inputs from the caller-owned publication transaction."""
+        preparation = PreparationEvidence(
+            output=output,
+            rank_certificate="compiled-check",
+            selector_witnesses="compiled-check",
+        )
+        mut reads = RecordReads.start(scope, preparation, requests)
+        for item in requests:
+            match reads.read(self, item):
+                RecordRead.Failed(fault) =>
+                    written = encode_record_key(output)?
+                    wanted = encode_record_key(item.key)?
+                    return Err(f"compiled body publication for {written} could not read {wanted}: {fault:?}")
+                _ => pass
+        return reads.finish().map_err((_) => "compiled body publication produced an incomplete receipt")
 
     def read(self, scope: ReadScope, request: RecordRequest) -> RecordRead:
         """Return one staged selection with full-value evidence, or fail when publication left it unavailable."""
@@ -53,3 +85,11 @@ pub class PreparedBodyRecordSource with RecordSource:
         semantic = hexlify(sha256.digest(value))
         evidence = RevisionEvidence(scope=scope, request=request, revision=semantic, semantic_digest=semantic)
         return RecordRead.Found(SelectedFact(evidence=evidence, value=selected, selection_digest=semantic))
+
+
+pub def prepared_product_request(key: RecordKey) -> RecordRequest:
+    """Read scalar facts while binding opaque Body IR and plans through a bounded semantic witness."""
+    if key.family in ["body-ir", "plan-function", "namespace", "plan-module"]:
+        selected = PayloadSelection(reference=key.context, offset=0, length=0)
+        return RecordRequest(key=key, selection=RecordSelection.Payload(selected))
+    return RecordRequest(key=key, selection=RecordSelection.Field("value"))

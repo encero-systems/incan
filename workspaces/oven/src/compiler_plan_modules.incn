@@ -1,0 +1,202 @@
+"""Fold a module's plan functions into one module-level plan record, and read which modules a compile restored."""
+
+from std.fs import Path
+from std.primitives.hash import sha256
+from std.encoding.hex import hexlify, unhexlify
+from std.json import JsonValue
+from pub::incan_platform.store import Snapshot, Transaction, get
+from pub::internal_models import ProducerRank, ProducerStage
+from pub::internal_models.plan_module_records import (
+    PLAN_MODULE_FAMILY,
+    PlanModuleFunction,
+    PlanModuleValue,
+    encode_plan_module,
+)
+from pub::internal_models.records import ReadScope, RecordKey, encode_record_key
+from compiler_body_keys import body_key
+from compiler_graph_records import family_outputs, prepare_evaluation, retire_output
+from compiler_plan_values import AdmittedPlanModule, LOWERING_PROFILE
+from compiler_prepared_records import PreparedBodyRecordSource, prepared_product_request
+
+# The note a compiler worker leaves in the plan report for each module it restored functions of.
+const ADMITTED_NOTE: str = ".admitted"
+
+
+pub model StagedPlan:
+    """One plan function a request staged: where its module's record is kept, and what the record says of it."""
+
+    # The project-relative module file, which names the module's record, and the module as lowering names it.
+    pub file: str
+    pub module: str
+    pub function: PlanModuleFunction
+    pub plan: RecordKey
+
+
+pub def plan_module_key(origin: str, file: str, value: bytes) -> RecordKey:
+    """Name one module's plan record under its module file; its context is the content it holds."""
+    return body_key(PLAN_MODULE_FAMILY, origin, file, "checked", hexlify(sha256.digest(value)))
+
+
+pub def folded_modules(staged: list[StagedPlan], restored: list[str]) -> Dict[str, list[StagedPlan]]:
+    """
+    Group a request's staged plan functions by module file. A module the compiler restored from its record keeps that
+    record: a body of it that took the keyed route reported the product the record already holds.
+    """
+    mut modules: Dict[str, list[StagedPlan]] = {}
+    for plan in staged:
+        if plan.file == "" or plan.module == "" or plan.module in restored:
+            continue
+        if plan.file not in modules:
+            modules[plan.file] = []
+        modules[plan.file].append(plan)
+    return modules
+
+
+pub def module_value(plans: list[StagedPlan]) -> Result[bytes, str]:
+    """Encode one module's plan functions in ascending order of owner and function."""
+    mut ordered: Dict[str, PlanModuleFunction] = {}
+    for plan in plans:
+        if plan.module != plans[0].module:
+            return Err("one module file holds plan functions of two lowering modules")
+        ordered[plan.function.identity + "\n" + plan.function.function] = plan.function
+    functions = [ordered[name] for name in sorted([name for name in ordered.keys()])]
+    return encode_plan_module(PlanModuleValue(module=plans[0].module, functions=functions)).map_err(
+        (error) => f"plan-module record refused: {error:?}",
+    )
+
+
+pub def retire_unfolded(
+    mut prepared: Transaction,
+    selected: Option[Snapshot],
+    origin: str,
+    rechecked: list[str],
+    folded: list[str],
+) -> Result[None, str]:
+    """
+    Retire the earlier plan record of every module this request checked again and folded no new record for, such as
+    one whose bodies all lost their products. Its witnesses still validate in the graph, so only this keeps a later
+    request from restoring functions of the module as it was.
+    """
+    prior = match selected:
+        Some(value) => value
+        None => return Ok(None)
+
+    for output in family_outputs(prior, PLAN_MODULE_FAMILY, LOWERING_PROFILE)?:
+        fields = output.split("\t")
+        if len(fields) != 6 or fields[2] != origin:
+            continue
+        if fields[3] in rechecked and fields[3] not in folded:
+            key = RecordKey(
+                family=fields[0],
+                identity_profile=fields[1],
+                origin=fields[2],
+                identity=fields[3],
+                facet=fields[4],
+                context=fields[5],
+            )
+            retire_output(prepared, LOWERING_PROFILE, key)?
+    return Ok(None)
+
+
+pub def restored_modules(report: Path) -> Result[list[str], str]:
+    """The modules, as lowering names them, that the compiler restored functions of from their plan records."""
+    mut modules: list[str] = []
+    if not report.is_dir():
+        return Ok(modules)
+    for entry in report.iterdir().map_err((error) => f"plan record report: cannot {error.message()}")?:
+        name = entry.name()
+        if entry.is_file() and name.endswith(ADMITTED_NOTE):
+            encoded = name[:len(name) - len(ADMITTED_NOTE)]
+            octets = unhexlify(encoded).map_err((error) => error.message())?
+            modules.append(octets.decode().map_err((_) => "plan module note has a malformed name")?)
+    return Ok(sorted(modules))
+
+
+pub def staged_plan(
+    file: str,
+    event: JsonValue,
+    function: PlanModuleFunction,
+    plan: RecordKey,
+) -> Result[StagedPlan, str]:
+    """
+    Describe one staged plan function for its module's record. The event names its module as lowering does; a closed
+    generic instance names none and joins no module. The recorded event always says `reused`, so a module's record is
+    the same bytes whether its functions were evaluated or reused by the request that folds it.
+    """
+    mut module = ""
+    if let Some(named) = event.get("module"):
+        module = named.expect_str().map_err((error) => error.message())?
+    recorded = PlanModuleFunction(
+        identity=function.identity,
+        symbol=function.symbol,
+        function=function.function,
+        key=function.key,
+        event=function.event.replace("\"reused\":false", "\"reused\":true"),
+    )
+    return Ok(StagedPlan(file=file, module=module, function=recorded, plan=plan))
+
+
+pub def carry_selected(
+    mut source: PreparedBodyRecordSource,
+    selected: Option[Snapshot],
+    key: RecordKey,
+) -> Result[None, str]:
+    """Make a record this request did not stage readable from the selected graph, where an earlier request left it."""
+    encoded = encode_record_key(key)?
+    if source.holds(encoded):
+        return Ok(None)
+    prior = match selected:
+        Some(value) => value
+        None => return Err("a carried lowering record has no selected graph snapshot")
+
+    match get(prior, encoded).map_err((error) => error.message())?:
+        Some(value) => source.add(encoded, value)
+        None => return Err("a carried lowering record is absent from its selected graph")
+    return Ok(None)
+
+
+pub def stage_plan_modules(
+    mut prepared: Transaction,
+    mut source: PreparedBodyRecordSource,
+    scope: ReadScope,
+    selected: Option[Snapshot],
+    origin: str,
+    rechecked: list[str],
+    staged: list[StagedPlan],
+    report: Path,
+    admitted: list[AdmittedPlanModule],
+) -> Result[list[RecordKey], str]:
+    """
+    Keep one plan record per module current, and return the records of the modules the compiler restored.
+
+    1. Fold each module's staged plan functions into its record, witnessed by those plan functions.
+    2. Retire the earlier record of a module this request checked again without folding a new one.
+    3. Make each restored module's record readable, so the native interface witnesses the functions it carries.
+    """
+    restored = restored_modules(report)?
+    # 1. A restored module is not folded again: its record is the one the compiler read.
+    modules = folded_modules(staged, restored)
+    mut folded: list[str] = []
+    for file in sorted([name for name in modules.keys()]):
+        plans = modules[file]
+        value = module_value(plans)?
+        key = plan_module_key(origin, file, value)
+        receipt = source.receipt(scope, key, [prepared_product_request(plan.plan) for plan in plans])?
+        _ = prepare_evaluation(
+            prepared,
+            "plan-module-" + file,
+            ProducerRank(namespace=0, stage=ProducerStage.PlanFunction, dependency=1),
+            value,
+            receipt,
+        )?
+        folded.append(file)
+    # 3. Only a record the compiler actually restored from is carried; the others were not read.
+    mut carried: list[RecordKey] = []
+    for module in admitted:
+        if module.module in restored:
+            source.add(encode_record_key(module.key)?, module.value)
+            carried.append(module.key)
+            folded.append(module.key.identity)
+    # 2. Every other rechecked module's earlier record describes bodies that no longer have those products.
+    retire_unfolded(prepared, selected, origin, rechecked, folded)?
+    return Ok(carried)
