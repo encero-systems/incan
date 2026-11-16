@@ -652,6 +652,11 @@ impl Builder<'_> {
                 }
                 Ok(outgoing)
             }
+            Expr::Tuple(items) | Expr::Set(items) => self.fresh_literal(items, incoming),
+            Expr::Dict(entries) => {
+                let elements = Self::dict_literal_elements(entries)?;
+                self.fresh_literal(elements, incoming)
+            }
             Expr::Closure(..) => Err(Unavailable {
                 span: expression.span,
                 reason: "a closure needs a local binding before it is called".into(),

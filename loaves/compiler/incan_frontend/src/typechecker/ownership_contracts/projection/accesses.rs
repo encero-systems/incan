@@ -8,8 +8,8 @@ use incan_semantics_core::{HirSourceSpan, IncanInputAccess, SemanticSourceTarget
 
 use super::{CheckedInputBody, flow};
 use crate::ast::{
-    AssertKind, AssignmentStmt, BindingKind, CallArg, Condition, Expr, FStringPart, ForStmt, ListEntry, Literal,
-    MatchBody, Spanned, Statement, TupleUnpackStmt,
+    AssertKind, AssignmentStmt, BindingKind, CallArg, Condition, DictEntry, Expr, FStringPart, ForStmt, ListEntry,
+    Literal, MatchBody, Spanned, Statement, TupleUnpackStmt,
 };
 use crate::typechecker::ownership_contracts::CallableSource;
 
@@ -440,8 +440,17 @@ impl SourceAccesses<'_, '_> {
                     self.expression(value, false)?;
                 }
             }
-            Expr::Tuple(elements) => {
+            Expr::Tuple(elements) | Expr::Set(elements) => {
                 for value in elements {
+                    self.expression(value, false)?;
+                }
+            }
+            Expr::Dict(entries) => {
+                for entry in entries {
+                    let DictEntry::Pair(key, value) = entry else {
+                        return Err("source access cannot infer dict expansion");
+                    };
+                    self.expression(key, false)?;
                     self.expression(value, false)?;
                 }
             }
