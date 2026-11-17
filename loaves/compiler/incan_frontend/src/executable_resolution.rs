@@ -291,6 +291,9 @@ fn resolve_from_catalog(
         }));
         let (offset, length) = (*offset, *length);
         let declaration = surface.read(package, &identity, offset, length)?;
+        if package.range_head.is_some() {
+            resolved.content_bytes_verified += length;
+        }
         if let ExecutableDeclaration::NominalWithTraits(_, implementations)
         | ExecutableDeclaration::NominalWithCallables { implementations, .. } = &declaration
         {
@@ -495,7 +498,7 @@ impl OpenSurface {
             tracing::trace!(
                 target: "incan::invocation", phase = "body_surface_open", path = %path.display(),
                 loaf = %package.surface.name, digest = %head.descriptor.content_digest,
-                proof = "sealed-range", header_bytes = 0u64, verified_bytes = 0u64, payload_offset = head.payload_offset,
+                proof = "sealed-range", header_digest = %head.header_digest, header_bytes = 0u64, verified_bytes = 0u64, payload_offset = head.payload_offset,
             );
             return Ok(Self {
                 file,
@@ -704,6 +707,7 @@ impl OpenSurface {
             target: "incan::invocation", phase = "body_fragment_read", path = %self.path.display(),
             loaf = %package.surface.name, identity = %incan_semantics_core::encode_incan_symbol_identity(identity),
             offset, absolute_offset = absolute, bytes = length, range_authenticated = package.range_head.is_some(),
+            fragment_digest = self.fragment_digests.get(identity).map(String::as_str).unwrap_or(""),
         );
         self.index
             .decode_declaration(identity, &bytes)
