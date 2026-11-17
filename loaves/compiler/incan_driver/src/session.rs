@@ -35,7 +35,7 @@ pub struct CompilationAnalysis {
     type_info_by_path: BTreeMap<PathBuf, Arc<TypeCheckInfo>>,
     type_info_by_module_path: BTreeMap<Vec<String>, Arc<TypeCheckInfo>>,
     semantic_snapshots_by_path: BTreeMap<PathBuf, incan_semantics_core::SemanticModuleSnapshot>,
-    namespace_body_by_path: BTreeMap<PathBuf, Arc<incan_semantics_core::body_ir::BodyIrModule>>,
+    pub(crate) namespace_body_by_path: BTreeMap<PathBuf, Arc<incan_semantics_core::body_ir::BodyIrModule>>,
     namespace_lowering_inputs: Vec<(incan_semantics_core::CompilerNodeId, String)>,
 }
 
