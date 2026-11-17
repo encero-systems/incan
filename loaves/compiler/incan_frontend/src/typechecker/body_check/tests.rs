@@ -64,6 +64,28 @@ fn selected_declaration_is_republished_with_a_fresh_local_body() -> Result<(), B
     Ok(())
 }
 
+/// A private settlement writer receives the same migration warning as the original full check.
+#[test]
+fn scoped_settlement_keeps_local_diagnostic_values() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def first(rows: list[str]) -> str:\n    value = rows[0]\n    return value\n";
+    let declaration = super::records::fixture_record(source, "first", true)?;
+    let mut local = super::records::produce_local_record(source, "first", declaration, Vec::new())?;
+    local
+        .first_mut()
+        .ok_or("missing local header")?
+        .insert(3, "local".into());
+    let scoped = super::records::produce_final_record(source, "first", local, Vec::new())?;
+    let cold = super::records::fixture_record(source, "first", false)?;
+    let warnings: Vec<_> = cold
+        .iter()
+        .filter(|row| row.first().is_some_and(|tag| tag == "diagnostic"))
+        .collect();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].iter().any(|value| value == "INCAN-T0125"));
+    assert_eq!(scoped, cold);
+    Ok(())
+}
+
 /// Parse one record-boundary fixture without introducing an alternate checker setup.
 fn parsed(source: &str) -> Result<crate::ast::Program, Box<dyn std::error::Error>> {
     let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
