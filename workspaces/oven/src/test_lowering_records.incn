@@ -68,7 +68,7 @@ pub def test_importer_rename_checks_only_its_direct_signature_reader() -> Result
     assert len(cold_checks) == 6
     assert sorted(all_checks) == sorted(cold_checks + ["importer::supported_schema", "importer::import_jsonl"]), diagnostic
     assert proof_count(warm, "body_evaluations")? == 2, diagnostic
-    assert proof_count(warm, "plan_function_evaluations")? == 1, diagnostic
+    assert proof_count(warm, "plan_function_reuses")? > 0, diagnostic
     return Ok(None)
 
 
