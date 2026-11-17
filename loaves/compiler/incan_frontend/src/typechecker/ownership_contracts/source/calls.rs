@@ -1051,9 +1051,10 @@ impl Builder<'_> {
             None if self.mutable_ordinary_local_argument(expression, parameter, ordinary_callee)? => self
                 .expression(expression, incoming, false)
                 .map(|outgoing| (outgoing, None)),
-            // A bytes literal or checked fieldless enum variant creates exact fresh storage for an immutable ordinary
-            // slot. An authenticated payload-variant call is equally fresh, while its normal construction evaluates
-            // every payload. None has a caller-owned source place, so no stored ValueUse authority is invented.
+            // A checked string, bytes, empty option or fieldless enum literal creates fresh storage for an immutable
+            // ordinary slot. An authenticated payload-variant call is equally fresh, while its normal
+            // construction evaluates every payload. None has a caller-owned source place, so no stored
+            // ValueUse authority is invented.
             None if self.fresh_ordinary_argument(expression, parameter, ordinary_callee)? => self
                 .expression(expression, incoming, false)
                 .map(|outgoing| (outgoing, None)),
@@ -1150,7 +1151,11 @@ impl Builder<'_> {
         parameter: &CallableParam,
         ordinary_callee: bool,
     ) -> Result<bool, Unavailable> {
-        let bytes_literal = matches!(expression.node, Expr::Literal(Literal::Bytes(_)));
+        let literal = matches!(
+            expression.node,
+            Expr::Literal(Literal::Bytes(_) | Literal::String(_) | Literal::None)
+        );
+        let empty_option = matches!(expression.node, Expr::Literal(Literal::None)) && parameter.ty.is_option();
         let checked_variant = matches!(expression.node, Expr::Field(..) | Expr::MethodCall(..))
             && self
                 .checker
@@ -1164,13 +1169,14 @@ impl Builder<'_> {
                         .is_some_and(|identity| {
                             identity.kind == incan_semantics_core::SemanticSourceTargetKind::Enum
                         }));
-        if !bytes_literal && !checked_variant {
+        if !literal && !checked_variant {
             return Ok(false);
         }
         if !ordinary_callee
             || parameter.is_mut
             || !self.checker.type_info.expr_type(expression.span).is_some_and(|actual| {
                 super::super::projection::same_checked_value_type_in(&self.nominal_scope, actual, &parameter.ty)
+                    || (empty_option && actual.is_option())
             })
             || self.checker.type_holds_borrow(&parameter.ty)
             || self.checker.type_holds_native_loan(&parameter.ty)

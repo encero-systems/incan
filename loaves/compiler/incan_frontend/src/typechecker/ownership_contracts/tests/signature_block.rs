@@ -240,6 +240,31 @@ fn signature_block_admits_exact_fresh_ordinary_scalars_without_authority() -> Re
     Ok(())
 }
 
+/// Source-free ordinary literals and builtin indexing of immutable bytes remain usable in a body with explicit
+/// input access. Repeated observation of the same element must retain an actual indexed read each time (#1605).
+#[test]
+fn ordinary_scalar_inputs_preserve_fresh_literals_and_indexed_reads() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"def labels(text: str, empty: Option[str]) -> int:
+    return len(text)
+def count(value: bytes) -> int:
+    return len(value)
+def inspect(seed: Borrowed[int], at: int) -> int:
+    rows = [b"one", b"two"]
+    first = count(rows[at])
+    return first + count(rows[at]) + labels("utf-8", None)
+"#;
+    let graph = checked_graph(source, "inspect")?;
+    let reads = graph
+        .value_uses
+        .iter()
+        .filter(|(span, record)| {
+            source.get(span.start..span.end) == Some("rows[at]") && record.kind == flow::ValueUseKind::Read
+        })
+        .count();
+    assert_eq!(reads, 2, "each indexed observation must preserve its own read");
+    Ok(())
+}
+
 /// An ordinary function returning the same enum stays on its authenticated CallResult route; it does not acquire the
 /// source-less payload-Variant authority.
 #[test]

@@ -457,7 +457,23 @@ impl Builder<'_> {
             return false;
         }
         match path.place.projection.as_slice() {
-            [super::Projection::Element(_)] => self.independent_locals.contains(identity),
+            [super::Projection::Element(_)] => {
+                if self.independent_locals.contains(identity) {
+                    return true;
+                }
+                // Indexing an immutable local list of byte or text values yields a clone of the scalar. Retain
+                // the indexed read and its index evaluation so a conflicting live loan still rejects the call.
+                let Expr::Index(base, _) = &value.node else {
+                    return false;
+                };
+                identity.kind == SemanticSourceTargetKind::Local
+                    && !self.constrained.contains(&path.place.root)
+                    && matches!(expected, ResolvedType::Bytes | ResolvedType::Str)
+                    && self.checker.type_info.resolved_operator_call(value.span).is_none()
+                    && matches!(self.checker.type_info.expr_type(base.span), Some(ResolvedType::Generic(name, args))
+                        if collections::from_str(name) == Some(CollectionTypeId::List)
+                            && args.as_slice() == std::slice::from_ref(expected))
+            }
             [super::Projection::Element(_), super::Projection::Field(field)] => {
                 identity.kind == SemanticSourceTargetKind::Local
                     && field.kind == SemanticSourceTargetKind::Field
@@ -632,9 +648,8 @@ impl Builder<'_> {
             super::super::InputCallKind::Ordinary | super::super::InputCallKind::Explicit
         ) && call.owner.as_ref() == Some(&self.owner)
             && crate::ownership_metadata::returned_view(contract).is_ok_and(|view| view.is_none())
-            && crate::ownership_metadata::owned_result(contract).is_ok_and(|owned| {
-                owned.is_none() || contract.is_some_and(|contract| contract.result_source.is_none())
-            })
+            && crate::ownership_metadata::owned_result(contract)
+                .is_ok_and(|owned| owned.is_none() || contract.is_some_and(|contract| contract.result_source.is_none()))
             && if tried {
                 matches!(self.checker.type_info.expr_type(call_expression.span),
                     Some(ResolvedType::Generic(name, arguments))
