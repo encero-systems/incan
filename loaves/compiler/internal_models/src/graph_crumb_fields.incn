@@ -3,7 +3,6 @@
 from std.primitives.crumb.descriptions import Description
 from std.primitives.crumb.records import RowRecord
 from std.primitives.crumb.values import IntegerValue, Value, ValueField
-from std.primitives.text import copy_frozen_bytes
 from crumb_rows import decode_rows, encode_rows
 from record_scope import MemberSelection, PayloadSelection, RecordKey, RecordRequest, RecordSelection, valid_key
 
@@ -20,7 +19,7 @@ pub def encode_graph_row(key: bytes, description: Description, fields: list[Valu
 pub def decode_graph_row(encoded: bytes, key: bytes, description: Description, count: int) -> Result[list[ValueField], str]:
     """Require exactly the expected row, selector and field count before any domain projection."""
     rows = decode_rows(encoded, [description], MAX_GRAPH_RECORD_BYTES)?
-    if len(rows) != 1 or rows[0].key != copy_frozen_bytes(key):
+    if len(rows) != 1 or rows[0].key != key:
         return Err("unexpected compiler graph Crumb row")
     match rows[0].value:
         Value.Record(fields) =>
