@@ -25,6 +25,7 @@ use crate::library_manifest::{
 use super::LoafIndexError;
 use super::lazy_entry::Summary;
 use crate::api_metadata::ApiDocumentation;
+use crate::library_manifest::executable_ranges::{HEAD, RANGE, record_key};
 use crate::library_manifest::executable_surface::ExecutableSurface;
 use incan_semantics_core::body_ir::RuntimeCallableBinding;
 
@@ -75,6 +76,8 @@ struct RecordEntry {
 struct RecordSet {
     root: PathBuf,
     entries: Vec<RecordEntry>,
+    /// Authenticated values for demanded executable range heads and memberships.
+    range_values: Mutex<BTreeMap<String, Vec<u8>>>,
     /// Records this process has read from the payload directory.
     records_read: AtomicUsize,
     /// Payload bytes this process has read from the payload directory.
@@ -117,8 +120,10 @@ enum Projection {
 impl Projection {
     /// Whether records of `family` belong to this projection.
     fn admits(self, family: &str) -> bool {
-        let surface = matches!(family, EXECUTABLE_DESCRIPTOR | PUBLIC_IDENTITIES | RUNTIME_BINDINGS)
-            || NAMED_FAMILIES.contains(&family);
+        let surface = matches!(
+            family,
+            EXECUTABLE_DESCRIPTOR | PUBLIC_IDENTITIES | RUNTIME_BINDINGS | HEAD | RANGE
+        ) || NAMED_FAMILIES.contains(&family);
         match self {
             Self::Complete => family != DOCUMENTATION && !surface,
             Self::Execution => matches!(
@@ -142,8 +147,10 @@ impl Projection {
 
 impl RecordSet {
     /// An installed set whose receipt the caller authenticated, before any payload is read.
-    fn new(root: PathBuf, entries: Vec<RecordEntry>) -> Self {
+    fn new(root: PathBuf, mut entries: Vec<RecordEntry>) -> Self {
+        entries.sort_unstable_by(|a, b| a.key.cmp(&b.key));
         Self {
+            range_values: Mutex::default(),
             root,
             entries,
             records_read: AtomicUsize::new(0),
@@ -195,6 +202,44 @@ impl RecordSet {
             bytes
         );
     }
+}
+
+/// Select an exact range fact by binary search over the authenticated directory. Old pins have no range head.
+pub(super) fn range_value<T: DeserializeOwned>(
+    dir: &Path,
+    name: &str,
+    family: &str,
+    member: &str,
+) -> Result<Option<T>, LoafIndexError> {
+    let Some(set) = installed().map_err(|reason| unreadable(dir, name, reason))? else {
+        return Ok(None);
+    };
+    let profile = dir
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| unreadable(dir, name, "Loaf profile is not UTF-8".into()))?;
+    let key = format!("loaf/{profile}/{name}/{}", record_key(family, member));
+    let Ok(i) = set.entries.binary_search_by(|entry| entry.key.cmp(&key)) else {
+        return Ok(None);
+    };
+    let entry = &set.entries[i];
+    let fail = |reason| unreadable(dir, name, record_failure(&key, reason));
+    if entry.revision != entry.value {
+        return Err(fail("distinct revision and content identities".into()));
+    }
+    let mut cached = set.range_values.lock().unwrap_or_else(PoisonError::into_inner);
+    let bytes = match cached.entry(key.clone()) {
+        std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+        std::collections::btree_map::Entry::Vacant(slot) => {
+            validate_payload_directory(&set.root).map_err(fail)?;
+            let bytes = open_value(&set.root, &entry.value).map_err(fail)?;
+            set.count_read(&key, bytes.len());
+            slot.insert(bytes)
+        }
+    };
+    Ok(Some(
+        LibraryManifest::decode_compiler_record_value(bytes).map_err(|error| fail(error.to_string()))?,
+    ))
 }
 
 /// Read one installed standard/runtime Loaf through its independently addressed records.

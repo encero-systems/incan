@@ -8,6 +8,7 @@
 mod checked_replay;
 pub mod compiler_records;
 pub mod declaration_records;
+pub mod executable_ranges;
 pub mod executable_surface;
 mod model;
 pub(crate) mod ownership;

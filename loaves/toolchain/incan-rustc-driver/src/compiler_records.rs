@@ -47,6 +47,23 @@ pub(crate) fn export(arguments: &[String]) -> Result<(), Box<dyn std::error::Err
             .and_then(|name| name.to_str())
             .ok_or_else(|| format!("manifest has no UTF-8 profile directory: {}", path.display()))?;
         export_manifest(output, profile, &manifest_digest, &manifest, &mut records)?;
+        if manifest.contract_metadata.executable_representation.is_some() {
+            let sidecar = path.with_extension("incnbody");
+            match fs::read(&sidecar) {
+                Ok(bytes) => {
+                    let prefix = format!("loaf/{profile}/{}", manifest.name);
+                    for (key, value) in incan_frontend::library_manifest::executable_ranges::export_ranges(
+                        &manifest,
+                        &manifest_digest,
+                        &bytes,
+                    )? {
+                        write_object(output, format!("{prefix}/{key}"), value, &mut records)?;
+                    }
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
     }
     records.sort_by(|left, right| left.key.cmp(&right.key));
     let index = json!({"schema": EXPORT_SCHEMA, "records": records});
