@@ -1,9 +1,9 @@
 //! One compilation's record-backed native definitions and stable rustc definition index.
 
 use super::*;
+use serde::Deserialize;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
-use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
@@ -37,39 +37,11 @@ impl DefinitionInput {
 }
 
 #[derive(Deserialize)]
-struct FunctionEvent {
-    schema: u64,
-    identity: String,
-    key: String,
-    function: String,
-    product: String,
-    role: Option<String>,
-}
-
-/// One function restored from its module's admitted plan record. Lowering reports no event for it: the engine
-/// authenticated the record before selecting it, so only the key and digest that fingerprint the definition arrive.
-#[derive(Deserialize)]
 struct AdmittedDefinition {
     function: String,
     identity: String,
     key: String,
     digest: String,
-}
-
-#[derive(Deserialize)]
-struct FunctionProduct {
-    schema: u64,
-    inputs: Vec<String>,
-    function: String,
-    /// The generic instance requests the function's lowering made; the digest authenticates them with the function.
-    requests: Vec<String>,
-    digest: String,
-}
-
-#[derive(Deserialize)]
-struct NativeInterface {
-    schema: String,
-    plan: String,
 }
 
 /// A record-backed plan reader. Missing record input keeps ordinary compilation available but makes the unit
@@ -89,17 +61,14 @@ impl PlanReader {
         let Some(report) = report else {
             return Ok(reader);
         };
-        let bytes = match std::fs::read(report.join("native-interface.json")) {
+        let bytes = match std::fs::read(report.join(internal_models::INTERFACE_REPORT)) {
             Ok(bytes) => bytes,
             // A build without record input stays an ordinary compilation, ineligible for native incremental reuse.
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(reader),
             Err(error) => return Err(format!("cannot read native-interface record: {error}")),
         };
-        let interface: NativeInterface = serde_json::from_slice(&bytes)
+        let interface = internal_models::decode_native_interface(&bytes)
             .map_err(|error| format!("cannot decode native-interface record: {error}"))?;
-        if interface.schema != "incan.native-interface/1" {
-            return Err("native-interface record has an unsupported schema".into());
-        }
         if interface.plan.is_empty() {
             return Err("native-interface record has no encoded plan".into());
         }
@@ -147,27 +116,15 @@ impl PlanReader {
             if path.extension().and_then(|value| value.to_str()) != Some("event") {
                 continue;
             }
-            let event: FunctionEvent = serde_json::from_slice(
+            let event = internal_models::decode_lowering_event(
                 &std::fs::read(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))?,
             )
             .map_err(|error| format!("cannot decode {}: {error}", path.display()))?;
-            if event.role.is_some() {
+            if event.role == "entry" {
                 continue;
             }
-            if event.schema != 2 {
-                return Err(format!(
-                    "native function event for {} has an unsupported schema",
-                    event.function
-                ));
-            }
-            let product: FunctionProduct = serde_json::from_str(&event.product)
+            let product = internal_models::decode_plan_function_record(&event.product)
                 .map_err(|error| format!("cannot decode native function product for {}: {error}", event.function))?;
-            if product.schema != 4 {
-                return Err(format!(
-                    "native function product for {} has an unsupported schema",
-                    event.function
-                ));
-            }
             let key = incan_semantics_core::semantic_digest::semantic_digest(&product.inputs)
                 .map_err(|error| format!("cannot fingerprint native function inputs: {error}"))?;
             if key.strip_prefix("sha256:") != Some(event.key.as_str()) {
