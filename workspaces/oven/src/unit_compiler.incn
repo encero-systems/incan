@@ -3,6 +3,7 @@
 from rust::incan_loaf_names import native_crate_name
 from rust::std::process import Command, Stdio
 from rust::std::fs import remove_dir_all
+from pub::internal_models.lowering_events import INTERFACE_REPORT, decode_lowering_event, decode_native_interface
 from std.fs import Path
 from std.json import parse
 from driver_command import driver_command
@@ -237,15 +238,9 @@ pub def plan_record_counts(unit: UnitDescription, key: Key) -> Result[PlanRecord
     for entry in report.iterdir().map_err((error) => f"plan record report: cannot {error.message()}")?:
         if not entry.is_file() or not entry.name().endswith(".event"):
             continue
-        text = entry.read_text("utf-8", "strict").map_err((error) => f"plan record event: cannot {error.message()}")?
-        event = parse(text).map_err((error) => f"cannot decode plan record event {entry.0}: {error.message()}")?
-        reused = event.require("reused").map_err((error) => error.message())?.expect_bool().map_err(
-            (error) => error.message(),
-        )?
-        function = event.require("function").map_err((error) => error.message())?.expect_str().map_err(
-            (error) => error.message(),
-        )?
-        entry_role = event.get("role") is not None
+        event = decode_lowering_event(entry.read_bytes().map_err((error) => error.message())?)?
+        reused = event.reused
+        entry_role = event.role == "entry"
         if reused:
             counts.plan_reuses += 1
             if not entry_role:
@@ -254,14 +249,9 @@ pub def plan_record_counts(unit: UnitDescription, key: Key) -> Result[PlanRecord
             counts.plan_evaluations += 1
             if not entry_role:
                 counts.lowering_demand_evaluations += 1
-    interface = report.joinpath("native-interface.json")
+    interface = report.joinpath(INTERFACE_REPORT)
     if interface.is_file():
-        value = parse(interface.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err(
-            (error) => error.message(),
-        )?
-        schema = value.require("schema").and_then((field) => field.expect_str()).map_err((error) => error.message())?
-        if schema != "incan.native-interface/1":
-            return Err("unsupported native-interface producer report")
+        _ = decode_native_interface(interface.read_bytes().map_err((error) => error.message())?)?
         counts.native_interface_evaluations = 1
     return Ok(counts)
 

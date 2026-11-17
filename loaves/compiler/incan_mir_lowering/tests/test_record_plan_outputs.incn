@@ -1,7 +1,9 @@
 """Keyed plan functions are byte-identical to the functions the whole-program plan compiles."""
 
 from std.fs import Path
-from std.json import JsonValue, parse
+from pub::internal_models.lowering_events import (
+    INTERFACE_REPORT, LoweringRefusal, decode_lowering_event, decode_lowering_refusal, decode_native_interface, encode_lowering_refusal,
+)
 from std.tempfile import TemporaryDirectory
 from pub::internal_models.plan_function_records import decode_plan_function_record
 from pub::incan_mir_plan import (
@@ -36,29 +38,10 @@ pub def test_fresh_keyed_plan_retains_the_whole_program_function() -> Result[Non
     key = retain_product(products, report, unit_function("main", span, 2), false)?
     publish_plan_records(plan, products.0, report.0)?
     assert decode_record_plan(interface_plan(report)?)? == plan
-    event = parse(read(report.joinpath(f"{key}.event"))?).map_err((error) => error.message())?
-    product = event.require("product").and_then((field) => field.expect_str()).map_err((error) => error.message())?
-    retained = decode_plan_function_record(
-        products.joinpath(f"{key}.incnfunction").read_bytes().map_err((error) => error.message())?,
-    )?
-    published = parse(product).map_err((error) => error.message())?
-    assert published.require("schema").and_then((field) => field.expect_int()).map_err((error) => error.message())? == 4
-    assert published.require("function").and_then((field) => field.expect_str()).map_err(
-        (error) => error.message(),
-    )? == retained.function
-    assert published.require("digest").and_then((field) => field.expect_str()).map_err(
-        (error) => error.message(),
-    )? == retained.digest
-    assert published.require("inputs").and_then((field) => field.to_json()).map_err(
-        (error) => error.message(),
-    )? == JsonValue.array([JsonValue.string(value) for value in retained.inputs]).to_json().map_err(
-        (error) => error.message(),
-    )?
-    assert published.require("requests").and_then((field) => field.to_json()).map_err(
-        (error) => error.message(),
-    )? == JsonValue.array([JsonValue.string(value) for value in retained.requests]).to_json().map_err(
-        (error) => error.message(),
-    )?
+    event = decode_lowering_event(read(report.joinpath(f"{key}.event"))?)?
+    retained = read(products.joinpath(f"{key}.incnfunction"))?
+    assert event.product == retained
+    assert decode_plan_function_record(event.product)?.inputs == record_scalar_inputs("checked-meaning", whole.name, span, false, "reads", 0)
     return Ok(None)
 
 
@@ -75,13 +58,8 @@ pub def test_reused_keyed_plan_must_equal_whole_program_plan() -> Result[None, s
         programs=[],
         span=span,
     )
-    mut refusal: Dict[str, JsonValue] = {}
-    refusal["schema"] = JsonValue.int(2)
-    refusal["identity"] = JsonValue.string("helper")
-    refusal["function"] = JsonValue.string("helper")
-    refusal["refusal"] = JsonValue.string("checker supplied no complete scalar body witness")
-    text = JsonValue.object(refusal).to_json().map_err((error) => error.message())?
-    report.joinpath("helper.refusal").write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
+    refusal = LoweringRefusal(identity="helper", function="helper", refusal="checker supplied no complete scalar body witness")
+    report.joinpath("helper.refusal").write_bytes(encode_lowering_refusal(refusal)?).map_err((error) => error.message())?
     _key = retain_product(products, report, unit_function("main", span, 2), true)?
     match publish_plan_records(plan, products.0, report.0):
         Ok(_) =>
@@ -133,10 +111,10 @@ pub def test_keyed_plan_carrying_a_frame_refuses_the_interface() -> Result[None,
     retain_scalar(products.0, inputs, caller, empty_runtime, no_nominals, no_positions, [frame])?
     report_scalar(Some(report.0), products.0, inputs, caller.name, caller.name, false, 0)?
     publish_plan_records(plan, products.0, report.0)?
-    assert not report.joinpath("native-interface.json").is_file(), "a unit with a carried frame published an interface"
+    assert not report.joinpath(INTERFACE_REPORT).is_file(), "a unit with a carried frame published an interface"
     mut refused = false
     for path in report.iterdir().map_err((error) => error.message())?:
-        if path.name().endswith(".refusal") and "helper frame carried" in read(path)?:
+        if path.name().endswith(".refusal") and "helper frame carried" in decode_lowering_refusal(read(path)?)?.refusal:
             refused = true
     assert refused, "an omitted interface carried no lowering refusal"
     return Ok(None)
@@ -152,12 +130,12 @@ pub def test_keyed_plan_with_a_generated_runtime_frame_refuses_the_interface() -
     plan = Plan(enums=[], models=[], functions=[caller, adapter], externals=[], programs=[], span=span)
     _ = retain_product(products, report, caller, false)?
     publish_plan_records(plan, products.0, report.0)?
-    assert not report.joinpath("native-interface.json").is_file(), "an unwitnessed runtime frame published an interface"
+    assert not report.joinpath(INTERFACE_REPORT).is_file(), "an unwitnessed runtime frame published an interface"
     mut refused = false
     for path in report.iterdir().map_err((error) => error.message())?:
         if path.name().endswith(".refusal"):
-            text = read(path)?
-            refused = adapter.name in text and "generated function" in text
+            reason = decode_lowering_refusal(read(path)?)?
+            refused = adapter.name == reason.function and "generated function" in reason.refusal
     assert refused, "an omitted interface did not name its unwitnessed generated function"
     return Ok(None)
 
@@ -208,10 +186,9 @@ def unit_function(name: str, span: SourceSpan, locals: int) -> Function:
 
 def interface_plan(report: Path) -> Result[str, str]:
     """Read the encoded plan from the published native-interface record."""
-    interface = parse(read(report.joinpath("native-interface.json"))?).map_err((error) => error.message())?
-    return interface.require("plan").and_then((field) => field.expect_str()).map_err((error) => error.message())
+    return Ok(decode_native_interface(read(report.joinpath(INTERFACE_REPORT))?)?.plan)
 
 
-def read(path: Path) -> Result[str, str]:
-    """Read one complete JSON report file."""
-    return path.read_text("utf-8", "strict").map_err((error) => error.message())
+def read(path: Path) -> Result[bytes, str]:
+    """Read one complete producer record."""
+    return path.read_bytes().map_err((error) => error.message())

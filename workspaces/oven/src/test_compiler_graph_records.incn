@@ -71,6 +71,7 @@ from compiler_body_publication import (
 )
 from engine_capture import CapturedInput, InputRole
 from observation import file_metadata
+from pub::internal_models.lowering_events import LoweringEvent, LoweringRefusal, encode_lowering_event, encode_lowering_refusal
 from std.fs import Path
 from compiler_body_fallbacks import fallback_reasons
 from compiler_plan_values import LOWERING_PROFILE
@@ -863,12 +864,7 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     report.mkdir(true, true).map_err((error) => error.message())?
     report
         .joinpath("other.event")
-        .write_text(
-            f"{{\"schema\":2,\"reused\":false,\"identity\":\"{fallback_identity}\",\"key\":\"plan\",\"function\":\"other\",\"product\":\"native\",\"runtime_requirements\":0}}",
-            "utf-8",
-            "strict",
-            None,
-        )
+        .write_bytes(encode_lowering_event(LoweringEvent(identity=fallback_identity, key="plan", function="other", product=b"native", reused=false))?)
         .map_err((error) => error.message())?
     match prepare_compiled_bodies(begin(published.snapshot), unit, fallback_output, Some(report)):
         Ok(_) =>
@@ -902,21 +898,11 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     )
     canonical_report
         .joinpath("other.event")
-        .write_text(
-            f"{{\"schema\":2,\"reused\":false,\"identity\":\"{fallback_symbol}\",\"key\":\"plan\",\"function\":\"other\",\"product\":\"native\",\"runtime_requirements\":0}}",
-            "utf-8",
-            "strict",
-            None,
-        )
+        .write_bytes(encode_lowering_event(LoweringEvent(identity=fallback_symbol, key="plan", function="other", product=b"native", reused=false))?)
         .map_err((error) => error.message())?
     canonical_report
         .joinpath("other.refusal")
-        .write_text(
-            "{\"schema\":2,\"function\":\"other\",\"refusal\":\"full-source fallback\"}",
-            "utf-8",
-            "strict",
-            None,
-        )
+        .write_bytes(encode_lowering_refusal(LoweringRefusal(identity=fallback_symbol, function="other", refusal="full-source fallback"))?)
         .map_err((error) => error.message())?
     skipped = prepare_compiled_bodies(begin(published.snapshot), unit, canonical_fallback_output, Some(canonical_report))?
     assert skipped.bodies == 0 and skipped.fallbacks == 1

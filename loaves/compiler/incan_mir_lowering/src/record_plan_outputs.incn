@@ -1,7 +1,10 @@
 """Retain the existing scalar plan's entry selection and complete native interface as record producer outputs."""
 
 from std.fs import Path
-from std.json import JsonValue, parse
+from pub::internal_models.lowering_events import (
+    INTERFACE_REPORT, LoweringEvent, NativeInterface, decode_lowering_event, decode_lowering_refusal, encode_lowering_event, encode_native_interface,
+)
+from pub::internal_models.plan_function_records import decode_plan_function_record, encode_entry_record
 from pub::incan_mir_plan import (
     Function,
     NominalKind,
@@ -13,8 +16,7 @@ from pub::incan_mir_plan import (
     product_frame_names,
 )
 from rust::incan_semantics_core::semantic_digest import semantic_digest
-from rust::serde_json import to_string
-from record_plan_codec import encode_record_plan_products, encode_entry_binding
+from record_plan_codec import encode_record_plan_products
 from record_positions import place_positions, relocate_product
 from scalar_store import event_positions, event_references, finalize_scalar, report_scalar_refusal
 from plan_modules import module_page, read_admitted
@@ -57,41 +59,32 @@ pub def publish_plan_records(plan: &Plan, products: str, report: str) -> Result[
         return Err("native-interface has an unwitnessed plan-function member")
     encoded = encode_record_plan_products(plan, keyed, references)?
     main = ordinary_entry(plan)?
-    mut selected = JsonValue.null()
-    for event in events:
-        if text(event, "function")? == main:
-            selected = event
-    if selected.is_null():
-        return Err("plan-function(entry) has no witnessed main function")
+    matches = [event for event in events if event.function == main]
+    if len(matches) != 1:
+        return Err("plan-function(entry) has no unique witnessed main function")
+    selected = matches[0]
     generation = Path(products).joinpath("producer-profile").read_text("utf-8", "strict").map_err(
         (error) => error.message(),
     )?
     mut selection = "implicit-main"
     if len(plan.programs) != 0:
         selection = "selected-main"
-    inputs = ["incan.plan-entry/1", generation, main, selection, text(selected, "key")?]
+    inputs = ["incan.plan-entry/2", generation, main, selection, selected.key]
     key = semantic_digest(inputs).map_err((error) => str(error))?.replace("sha256:", "")
     path = Path(products).joinpath(key + ".incnentry")
-    value = encode_entry_binding(main, inputs)?
+    value = encode_entry_record(main, inputs)?
     mut reused = false
     if path.is_file():
-        prior = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+        prior = path.read_bytes().map_err((error) => error.message())?
         if prior != value:
             return Err("selected plan-function(entry) disagrees with its complete inputs")
         reused = true
     else:
-        path.write_text(value, "utf-8", "strict", None).map_err((error) => error.message())?
-    entry = JsonValue.object({
-        "schema": JsonValue.int(2), "identity": JsonValue.string(text(selected, "identity")?),
-        "key": JsonValue.string(key), "function": JsonValue.string("entry"), "role": JsonValue.string("entry"),
-        "demand": JsonValue.string(text(selected, "key")?), "product": JsonValue.string(value),
-        "runtime_requirements": JsonValue.int(0), "reused": JsonValue.bool(reused),
-    })
-    write(Path(report).joinpath(key + ".event"), entry)?
-    write(Path(report).joinpath("native-interface.json"), JsonValue.object({
-        "schema": JsonValue.string("incan.native-interface/1"), "plan": JsonValue.string(encoded),
-        "entry": JsonValue.string(key),
-    }))?
+        path.write_bytes(value).map_err((error) => error.message())?
+    entry = LoweringEvent(identity=selected.identity, key=key, function="entry", role="entry",
+        module=selected.module, demand=selected.key, product=value, reused=reused)
+    write(Path(report).joinpath(key + ".event"), encode_lowering_event(entry)?)?
+    write(Path(report).joinpath(INTERFACE_REPORT), encode_native_interface(NativeInterface(entry=key, plan=encoded))?)?
     return Ok(None)
 
 
@@ -99,7 +92,7 @@ def keyed_plan_products(
     plan: &Plan,
     products: str,
     report: Path,
-    events: &list[JsonValue],
+    events: &list[LoweringEvent],
     mut references: list[list[NominalReference]],
     mut carried: list[str],
 ) -> Result[list[str], str]:
@@ -114,39 +107,34 @@ def keyed_plan_products(
     """
     mut keyed: list[str] = []
     for function in plan.functions:
-        matches = [event for event in events if text(event, "function").unwrap_or("") == function.name]
+        matches = [event for event in events if event.function == function.name]
         if len(matches) == 0:
             continue
         if len(matches) != 1:
             return Err(f"native-interface has an ambiguous plan-function member {function.name}")
-        event = matches[0]
-        key = text(event, "key")?
-        reused = event.require("reused").and_then((field) => field.expect_bool()).map_err((error) => error.message())?
-        reported = event.to_json().map_err((error) => error.message())?
-        resolved = plan_positions(plan, event_references(reported)?)?
-        nodes = event_positions(reported)?
-        frames = carried_frames(plan, text(event, "product")?, carried)?
-        # An admitted function's product is already final: it was finalized by the request that reported it.
-        mut record = text(event, "product")?
+        mut event = matches[0]
+        resolved = plan_positions(plan, event_references(event)?)?
+        nodes = event_positions(event)
+        frames = carried_frames(plan, event.product, carried)?
+        mut record = event.product
         mut positions = resolved
-        if event.get("admitted") is None:
-            final_record, final_positions = finalize_scalar(products, key, function, reused, resolved, nodes, frames)?
+        if not event.admitted:
+            final_record, final_positions = finalize_scalar(products, event.key, function, event.reused, resolved, nodes, frames)?
             if final_record != record:
-                mut fields = event.expect_object().map_err((error) => error.message())?
-                fields["product"] = JsonValue.string(final_record)
-                write(report.joinpath(key + ".event"), JsonValue.object(fields))?
+                event.product = final_record
+                write(report.joinpath(event.key + ".event"), encode_lowering_event(event)?)?
             record = final_record
             positions = final_positions
-        product = text(parse(record).map_err((error) => error.message())?, "function")?
+        product = decode_plan_function_record(record)?.function
         keyed.append(relocate_product(place_positions(product, nodes)?, str(function.span.file), function.span.line)?)
         references.append(positions)
     return Ok(keyed)
 
 
-def witnessed(events: &list[JsonValue], function: str) -> bool:
+def witnessed(events: &list[LoweringEvent], function: str) -> bool:
     """Whether a producer event names this plan function."""
     for event in events:
-        if text(event, "function").unwrap_or("") == function:
+        if event.function == function:
             return true
     return false
 
@@ -155,15 +143,7 @@ def has_scalar_refusal(report: Path) -> Result[bool, str]:
     """Require incomplete native-interface publication to carry an explicit scalar-record refusal."""
     for path in report.iterdir().map_err((error) => error.message())?:
         if path.is_file() and path.name().endswith(".refusal"):
-            refusal = parse(path.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err(
-                (error) => error.message(),
-            )?
-            if refusal.require("schema").and_then((field) => field.expect_int()).map_err(
-                (error) => error.message(),
-            )? != 2:
-                return Err("scalar record refusal has an unsupported schema")
-            _ = text(refusal, "function")?
-            _ = text(refusal, "refusal")?
+            _ = decode_lowering_refusal(path.read_bytes().map_err((error) => error.message())?)?
             return Ok(true)
     return Ok(false)
 
@@ -180,32 +160,24 @@ def ordinary_entry(plan: &Plan) -> Result[str, str]:
     return Err("plan-function(entry) has no standalone main")
 
 
-def scalar_events(report: Path) -> Result[list[JsonValue], str]:
+def scalar_events(report: Path) -> Result[list[LoweringEvent], str]:
     """Read each actual scalar producer output in deterministic key order."""
-    mut events: list[JsonValue] = []
+    mut events: list[LoweringEvent] = []
     for path in sorted([str(path.0) for path in report.iterdir().map_err((error) => error.message())?]):
         if path.endswith(".event"):
-            event = parse(Path(path).read_text("utf-8", "strict").map_err((error) => error.message())?).map_err(
-                (error) => error.message(),
-            )?
+            event = decode_lowering_event(Path(path).read_bytes().map_err((error) => error.message())?)?
             events.append(event)
     return Ok(events)
 
 
-def text(value: JsonValue, key: str) -> Result[str, str]:
-    """Require one typed compiler-event field."""
-    return value.require(key).and_then((field) => field.expect_str()).map_err((error) => error.message())
+def write(path: Path, value: bytes) -> Result[None, str]:
+    """Persist the producer's complete typed record without a character encoding step."""
+    return path.write_bytes(value).map_err((error) => error.message())
 
 
-def write(path: Path, value: JsonValue) -> Result[None, str]:
-    """Retain one complete invocation-local output; failure refuses publication."""
-    encoded = value.to_json().map_err((error) => error.message())?
-    return path.write_text(encoded, "utf-8", "strict", None).map_err((error) => error.message())
-
-
-def carried_frames(plan: &Plan, record: str, mut carried: list[str]) -> Result[list[Function], str]:
+def carried_frames(plan: &Plan, record: bytes, mut carried: list[str]) -> Result[list[Function], str]:
     """Select, in a product's order, the whole-plan helper frames it carries, and record their names."""
-    payload = text(parse(record).map_err((error) => error.message())?, "function")?
+    payload = decode_plan_function_record(record)?.function
     mut frames: list[Function] = []
     for name in product_frame_names(payload)?:
         mut found = false

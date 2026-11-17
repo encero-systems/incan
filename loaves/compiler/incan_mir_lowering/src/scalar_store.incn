@@ -1,7 +1,8 @@
 """Read and atomically retain native plan products under their producer's complete input witnesses."""
 
-from rust::serde import Serialize, Deserialize
-from rust::serde_json import to_string, from_str, Error as JsonError
+from pub::internal_models.lowering_events import (
+    EventPosition, EventReference, LoweringEvent, LoweringRefusal, encode_lowering_event, encode_lowering_refusal,
+)
 from rust::incan_semantics_core::semantic_digest import semantic_digest
 from rust::std::process import id as process_id
 from std.fs import Path
@@ -28,69 +29,13 @@ from record_positions import index_positions, place_positions, relocate_product
 
 
 # A record whose key is its checked meaning; its spans name Body IR nodes by ordinal through a request-local position map.
-const RECORD_FUNCTION: str = "incan.record-function/2"
-
-
-@derive(Serialize, Deserialize)
-model EventPosition:
-    """One Body IR node's owner-relative line and column in this request; request-local, never part of the product."""
-
-    line: int
-    column: int
-
-
-@derive(Serialize, Deserialize)
-model EventProductRecord:
-    """Project a private product into the existing request-local JSON event contract."""
-
-    schema: int
-    inputs: list[str]
-    function: str
-    # The generic instance requests the function's lowering made, each a position-free request identity.
-    requests: list[str]
-    digest: str
-
-
-@derive(Serialize, Deserialize)
-model EventReference:
-    """The current unit position and native name one product ordinal resolved to; request-local, never retained."""
-
-    kind: NominalKind
-    index: int
-    name: str
-
-
-@derive(Serialize, Deserialize)
-model ScalarRecordEvent:
-    """One request-local observation of an evaluated or reused plan-function product."""
-
-    schema: int
-    identity: str
-    key: str
-    function: str
-    product: str
-    reused: bool
-    runtime_requirements: int
-    references: list[EventReference]
-    positions: list[EventPosition]
-    # The declaring module of an ordinary frame, as lowering names it; empty for a closed generic instance.
-    module: str
-
-
-@derive(Serialize, Deserialize)
-model ScalarRecordRefusal:
-    """One request-local refusal to represent an ordinarily lowered function as a scalar record."""
-
-    schema: int
-    identity: str
-    function: str
-    refusal: str
+const RECORD_FUNCTION: str = "incan.record-function/3"
 
 
 pub def scalar_inputs(body: str, name: str, span: SourceSpan, overflow_checks: bool, reads: str) -> list[str]:
     """Bind a native product to its checked body, consumed signatures, physical frame and diagnostic provenance."""
     return [
-        "incan.scalar-function/4",
+        "incan.scalar-function/5",
         body,
         name,
         str(span.file),
@@ -188,7 +133,7 @@ pub def finalize_scalar(
     references: list[NominalReference],
     positions: list[tuple[int, int]],
     frames: list[Function] = [],
-) -> Result[tuple[str, list[NominalReference]], str]:
+) -> Result[tuple[bytes, list[NominalReference]], str]:
     """
     Retain the whole-program plan's final function under a keyed product's unchanged inputs and lowering demand.
 
@@ -220,12 +165,12 @@ pub def finalize_scalar(
             None => return Err(f"plan-function {function.name} names a declaration its keyed product does not")
     final = encoded_record(record.inputs, function, demand, nominals, positions, frames, record.requests)?
     if final == encoded:
-        return Ok((event_product(record)?, whole))
+        return Ok((encoded, whole))
     # 3. A reused product was already final when retained, so any difference is a lowering defect, never a refresh.
     if reused:
         return Err(f"plan-function {function.name} differs from the whole-program plan")
     publish_record(directory, record.inputs, final)?
-    return Ok((event_product(decode_record(final)?)?, whole))
+    return Ok((final, whole))
 
 
 pub def report_scalar(
@@ -249,41 +194,45 @@ pub def report_scalar(
         # Revalidate the exact bytes before they cross from private lowering transport into Bakery publication.
         if not valid_record(encoded, inputs):
             return Err("plan-function product failed its lowering codec round trip")
-        product = event_product(decode_record(encoded)?)?
         mut stored: list[EventReference] = []
         for reference in references:
-            stored.append(EventReference(kind=reference.kind, index=reference.index, name=reference.name))
-        event = ScalarRecordEvent(
-            schema=2,
+            kind = match reference.kind:
+                NominalKind.Model => "model"
+                NominalKind.Enum => "enum"
+            stored.append(EventReference(kind=kind, index=reference.index, name=reference.name))
+        event = LoweringEvent(
+            module=module,
             identity=identity,
             key=digest.replace("sha256:", ""),
             function=function,
-            product=product,
+            product=encoded,
             reused=reused,
             runtime_requirements=runtime,
             references=stored,
             positions=event_nodes(positions),
             module=module,
         )
-        text = to_string(event).map_err((error) => str(error))?
+        report = encode_lowering_event(event)?
         path = Path(root).joinpath(digest.replace("sha256:", "") + ".event")
         path.parent().mkdir(true, true).map_err((error) => error.message())?
-        path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
+        path.write_bytes(report).map_err((error) => error.message())?
     return Ok(None)
 
 
-pub def event_references(event: str) -> Result[list[NominalReference], str]:
+pub def event_references(event: LoweringEvent) -> Result[list[NominalReference], str]:
     """Read the positions a reported product's ordinals resolved to in this request."""
-    decoded = decode_event(event).map_err((error) => str(error))?
     mut references: list[NominalReference] = []
-    for reference in decoded.references:
-        references.append(NominalReference(kind=reference.kind, index=reference.index, name=reference.name))
+    for reference in event.references:
+        kind = match reference.kind:
+            "enum" => NominalKind.Enum
+            "model" => NominalKind.Model
+            _ => return Err("invalid lowering event nominal kind")
+        references.append(NominalReference(kind=kind, index=reference.index, name=reference.name))
     return Ok(references)
 
-pub def event_positions(event: str) -> Result[list[tuple[int, int]], str]:
+pub def event_positions(event: LoweringEvent) -> list[tuple[int, int]]:
     """Read the Body IR node positions a reported product's spans were placed at in this request."""
-    decoded = decode_event(event).map_err((error) => str(error))?
-    return Ok([(position.line, position.column) for position in decoded.positions])
+    return [(position.line, position.column) for position in event.positions]
 
 
 
@@ -295,17 +244,16 @@ pub def report_scalar_refusal(
 ) -> Result[None, str]:
     """Retain an explicit record refusal without changing the ordinary lowering verdict."""
     if let Some(root) = directory:
-        report = ScalarRecordRefusal(
-            schema=2,
+        report = LoweringRefusal(
             identity=identity,
             function=function,
             refusal=refusal,
         )
-        text = to_string(report).map_err((error) => str(error))?
+        encoded = encode_lowering_refusal(report)?
         digest = fingerprint([identity, function, refusal])?.replace("sha256:", "")
         path = Path(root).joinpath(digest + ".refusal")
         path.parent().mkdir(true, true).map_err((error) => error.message())?
-        path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
+        path.write_bytes(encoded).map_err((error) => error.message())?
     return Ok(None)
 
 
@@ -392,11 +340,6 @@ def decode_record(encoded: bytes) -> Result[PlanFunctionRecord, str]:
     return decode_plan_function_record(encoded)
 
 
-def decode_event(text: str) -> Result[ScalarRecordEvent, JsonError]:
-    """Pass the expected request-local event type to the native generic decoder."""
-    return from_str(text)
-
-
 def scalar_path(directory: str, inputs: list[str]) -> Result[Path, str]:
     """Name a native product by the existing semantic digest owner's unambiguous framed serialization."""
     digest = fingerprint(inputs)?
@@ -418,23 +361,6 @@ def publish_record(directory: str, inputs: list[str], encoded: bytes) -> Result[
         .map_err((error) => f"cannot write scalar cache {error.message()}")?
     _ = temporary.replace(path).map_err((error) => f"cannot replace scalar cache {error.message()}")?
     return Ok(None)
-
-
-def decode_event_product(text: str) -> Result[EventProductRecord, JsonError]:
-    """Read the request-local representation used by the current event producer."""
-    return from_str(text)
-
-
-def event_product(record: PlanFunctionRecord) -> Result[str, str]:
-    """Keep the request-local event schema stable while its private retained product becomes Crumb."""
-    product = EventProductRecord(
-        schema=4,
-        inputs=record.inputs,
-        function=record.function,
-        requests=record.requests,
-        digest=record.digest,
-    )
-    return to_string(product).map_err((error) => str(error))
 
 
 def event_nodes(positions: list[tuple[int, int]]) -> list[EventPosition]:
