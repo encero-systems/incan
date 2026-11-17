@@ -9,9 +9,9 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::PathBuf;
 
-use incan_driver::session::CompilationSession;
+use incan_driver::session::{CallableBodySource, CompilationSession};
 use incan_driver::unit::UnitDescription;
-use incan_frontend::declaration_interface::{CallableBodyInputs, CallableBodyProducts};
+use incan_frontend::declaration_interface::{CallableBodyInputs, CallableBodyProducts, ValidatedCallableBodies};
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::typechecker::TypeChecker;
 use incan_semantics_core::body_ir::BodyIrModule;
@@ -24,34 +24,42 @@ pub(super) struct CallableProducts {
     inputs: BTreeMap<PathBuf, CallableBodyInputs>,
 }
 
-impl CallableProducts {
-    /// Read complete immutable records before checking and install only producer-validated current selections.
-    /// Oven owns the complete compiler/dependency/feature context; raw invocations without it never reuse items.
-    pub(super) fn prepare(unit: &UnitDescription, modules: &[ParsedModule], session: &mut CompilationSession) -> Self {
-        // ---- Store: read only the private context explicitly selected by Oven ----
-        let directory = product_directory(unit);
-        let mut reuse = BTreeMap::new();
-        if let Some(directory) = &directory {
-            for module in modules {
-                let path = directory.join(module_key(module));
-                let selection = std::fs::read(path)
-                    .ok()
-                    .and_then(|bytes| CallableBodyProducts::from_bytes(&bytes).ok())
-                    .and_then(|products| {
-                        products
-                            .select(&module.ast, &module.source, &unit.package, &module.path_segments)
-                            .ok()
-                    });
-                if let Some(selection) = selection.filter(|selection| !selection.is_empty()) {
-                    tracing::debug!(target: "incan::invocation", file = %module.file_path.display(),
-                        retained_bodies = selection.len(), "selected callable body products");
-                    reuse.insert(module.file_path.clone(), selection);
-                }
-            }
-        }
+#[derive(Debug)]
+struct StoredCallableBodies {
+    directory: PathBuf,
+    package: String,
+}
 
-        // ---- Checking: install sealed selections without changing declaration collection ----
-        session.set_callable_body_reuse(reuse);
+impl CallableBodySource for StoredCallableBodies {
+    fn select(&self, module: &ParsedModule) -> Option<ValidatedCallableBodies> {
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::select_callable_products",
+            file = %module.file_path.display())
+        .entered();
+        let path = self.directory.join(module_key(module));
+        let bytes = std::fs::read(path).ok()?;
+        let products = CallableBodyProducts::from_bytes(&bytes).ok()?;
+        let selection = products
+            .select(&module.ast, &module.source, &self.package, &module.path_segments)
+            .ok()?;
+        if selection.is_empty() {
+            return None;
+        }
+        tracing::debug!(target: "incan::invocation", file = %module.file_path.display(),
+            retained_bodies = selection.len(), "selected callable body products");
+        Some(selection)
+    }
+}
+
+impl CallableProducts {
+    /// Install the private scalar source when Oven supplied its authenticated compilation context.
+    pub(super) fn prepare(unit: &UnitDescription, session: &mut CompilationSession) -> Self {
+        let directory = product_directory(unit);
+        if let Some(directory) = &directory {
+            session.set_callable_body_source(std::sync::Arc::new(StoredCallableBodies {
+                directory: directory.clone(),
+                package: unit.package.clone(),
+            }));
+        }
         Self {
             directory,
             package: unit.package.clone(),
