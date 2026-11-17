@@ -552,6 +552,11 @@ impl OpenSurface {
         }
         let content_bytes_verified =
             Self::verify_content_digest(&mut file, &path, package, &descriptor.content_digest)?;
+        tracing::trace!(
+            target: "incan::invocation", phase = "body_surface_open", path = %path.display(),
+            loaf = %package.surface.name, digest = %descriptor.content_digest,
+            header_bytes = payload_offset, verified_bytes = content_bytes_verified,
+        );
         Ok(Self {
             file,
             path,
@@ -618,6 +623,11 @@ impl OpenSurface {
         self.file
             .read_exact(&mut bytes)
             .map_err(|error| package.unreadable(self.path.clone(), error))?;
+        tracing::trace!(
+            target: "incan::invocation", phase = "body_fragment_read", path = %self.path.display(),
+            loaf = %package.surface.name, identity = %incan_semantics_core::encode_incan_symbol_identity(identity),
+            offset, absolute_offset = absolute, bytes = length,
+        );
         self.index
             .decode_declaration(identity, &bytes)
             .map_err(|error| package.unusable(error))
