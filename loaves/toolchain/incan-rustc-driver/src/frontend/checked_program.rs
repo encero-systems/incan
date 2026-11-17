@@ -444,18 +444,20 @@ pub(super) fn checked_modules(
     .ok_or("unsupported Body IR string conversion contract identity")?;
     let mut cacheable_bodies = callable_products.publish(&modules, &bodies[loaf_modules..]);
     cacheable_bodies.extend(analysis.namespace_lowering_inputs().iter().cloned());
+    let mut witnessed = cacheable_bodies
+        .iter()
+        .map(|(identity, _)| identity)
+        .collect::<std::collections::HashSet<_>>();
+    let mut additional = Vec::new();
     for body in bodies[loaf_modules..].iter().flat_map(|module| &module.bodies) {
-        if cacheable_bodies
-            .iter()
-            .any(|(identity, _)| identity == &body.direct_call_id)
-        {
-            continue;
+        if witnessed.insert(&body.direct_call_id) {
+            let mut unwitnessed = body.clone();
+            let witness = incan_semantics_core::semantic_digest::body_semantic_digest(&mut unwitnessed)
+                .map_err(|error| format!("cannot witness namespace Body IR for lowering: {error}"))?;
+            additional.push((body.direct_call_id.clone(), format!("namespace-body:{witness}")));
         }
-        let mut witnessed = body.clone();
-        let witness = incan_semantics_core::semantic_digest::body_semantic_digest(&mut witnessed)
-            .map_err(|error| format!("cannot witness namespace Body IR for lowering: {error}"))?;
-        cacheable_bodies.push((body.direct_call_id.clone(), format!("namespace-body:{witness}")));
     }
+    cacheable_bodies.extend(additional);
     let cacheable_bodies = canonical_lowering_inputs(cacheable_bodies)?;
     graph_body_output.attach_body_ir(&modules, &bodies[loaf_modules..], &cacheable_bodies)?;
     graph_body_output.publish()?;
@@ -492,7 +494,6 @@ pub(super) fn checked_modules(
                 package_versions,
                 package: package_identity.to_owned(),
                 layout_modules: Vec::new(),
-                layout_modules_installed: false,
                 sources: sources[loaf_modules..].to_vec(),
                 files: files[loaf_modules..].to_vec(),
                 entry: entry - loaf_modules,
@@ -799,26 +800,28 @@ pub(super) fn prepare_runtime_layouts(
     program: &mut CheckedProgram,
     requirements: Vec<RuntimeRequirement>,
 ) -> Result<(), String> {
+    // checked_modules already completed the reached dependency context. With no extra layout roots the same
+    // authenticated fragments and prepared layout owners are still resident in this program.
+    if requirements.is_empty() {
+        return Ok(());
+    }
     let mut requested = BTreeSet::new();
     for requirement in &requirements {
         requested.insert(bind_runtime_requirement(program, requirement)?);
     }
-    // A program without layout requirements reads no layout module, but still installs the dependencies it reached.
     let mut layouts = Vec::new();
-    if !requested.is_empty() {
-        let resolved = load_loaf_modules(
-            &program.dependencies.loaves,
-            &requested,
-            &program.dependencies.checked_local,
-        )?;
-        program.dependencies.package_versions.extend(resolved.package_versions);
-        for mut module in resolved.modules {
-            let mut layout = BodyIrModule::declarations_only(module.module_id.path().to_owned());
-            layout.nominal_declarations = std::mem::take(&mut module.nominal_declarations);
-            layout.enum_declarations = std::mem::take(&mut module.enum_declarations);
-            if !layout.nominal_declarations.is_empty() || !layout.enum_declarations.is_empty() {
-                layouts.push(layout);
-            }
+    let resolved = load_loaf_modules(
+        &program.dependencies.loaves,
+        &requested,
+        &program.dependencies.checked_local,
+    )?;
+    program.dependencies.package_versions.extend(resolved.package_versions);
+    for mut module in resolved.modules {
+        let mut layout = BodyIrModule::declarations_only(module.module_id.path().to_owned());
+        layout.nominal_declarations = std::mem::take(&mut module.nominal_declarations);
+        layout.enum_declarations = std::mem::take(&mut module.enum_declarations);
+        if !layout.nominal_declarations.is_empty() || !layout.enum_declarations.is_empty() {
+            layouts.push(layout);
         }
     }
     program.dependencies.layout_modules = layouts;
@@ -843,10 +846,9 @@ fn install_dependency_modules(
     let mut previous = std::mem::take(&mut program.modules);
     let mut authored = previous.split_off(program.own);
     let mut prepared = previous.split_off(program.dependency_modules);
-    if !program.dependencies.layout_modules_installed {
-        prepared.extend(program.dependencies.layout_modules.iter().cloned());
-        program.dependencies.layout_modules_installed = true;
-    }
+    // A comparison default can extend the reached set before layout preparation supplies its modules.
+    // Consume only the layouts this pass actually received; earlier empty passes cannot suppress them.
+    prepared.append(&mut program.dependencies.layout_modules);
     program.files.clear();
     program.sources.clear();
     let mut modules = resolved.modules;
