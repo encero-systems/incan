@@ -1,5 +1,6 @@
 """Atomic ranked-graph publication for compiler values, completed receipts and their forward and reverse edges."""
 
+from graph_read_demands import note_graph_demand
 from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
 from pub::incan_platform.store import (
@@ -170,6 +171,7 @@ pub def reusable_evaluation(
         return Err("a reusable compiler evaluation requires a producer profile")
     value_key = encode_record_key(output)?
     evaluation_key = evaluation_record_key(profile, value_key)
+    note_graph_demand("evaluation", selected, evaluation_key)
     encoded = match get(selected, evaluation_key).map_err((error) => error.message())?:
         Some(value) => value
         None => return Ok(None)
@@ -258,6 +260,7 @@ pub def owner_evaluations(
         for value_key in family_outputs(selected, family, profile, Some(slots))?:
             key = decode_record_key(value_key)?
             mut evaluation = ""
+            note_graph_demand("evaluation-digest", selected, evaluation_record_key(profile, value_key))
             if let Some(document) = get(selected, evaluation_record_key(profile, value_key)).map_err(
                 (error) => error.message(),
             )?:
@@ -310,6 +313,7 @@ pub def family_outputs(
                 if let Some(names) = included:
                     if fields[5] not in names:
                         continue
+            note_graph_demand("output-slot", selected, indexed)
             output = read_pointer(required_value(selected, indexed)?)?
             if output_index_key(profile, output)? != indexed:
                 return Err("compiler output index entry names a record of another slot")
@@ -346,6 +350,7 @@ pub def readers_of(selected: Snapshot, changed: list[RecordKey], profile: str) -
         exact = encode_record_key(target)?
         prefix = "incan.engine.edge-in/3\t" + record_slot(exact)? + "\t"
         for indexed in keys_with_prefix(selected, prefix).map_err((error) => error.message())?:
+            note_graph_demand("reverse-edge", selected, indexed)
             edge = read_incoming(required_value(selected, indexed)?)?
             if edge.profile != profile or edge.target != exact:
                 continue
@@ -516,6 +521,7 @@ def current_reader(selected: Snapshot, profile: str, reader: str) -> Result[Opti
     if len(reader.split("\t")) == 6:
         return Ok(Some(reader))
     indexed = "incan.engine.output/2\t" + profile + "\t" + reader
+    note_graph_demand("output-slot", selected, indexed)
     match get(selected, indexed).map_err((error) => error.message())?:
         Some(output) =>
             return Ok(Some(read_pointer(output)?))

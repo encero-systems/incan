@@ -8,6 +8,7 @@ from std.fs import Path
 from std.hash import sha256
 from std.json import JsonValue
 from benchmark_body_ranges import BodyDemand, Surface, indexed_surface, needed_ranges, range_key
+from benchmark_graph_frames import required_graph_frames
 from compiler_record_admission import compiler_record_profile
 from files import parse_json, read, read_json, write
 from json_fields import array_value, required_items, required_text, string_value
@@ -166,7 +167,7 @@ def compare(hello: Path, output: Path) -> Result[None, str]:
         expected["body/" + key] = ranges[key]
     observed(hello.joinpath("cold-trace"), selected, surfaces, census)?
     reconcile(expected, census)
-    frames(hello.joinpath("cold.stdout"), census)?
+    frames(hello.joinpath("cold.stdout"), hello.joinpath("cold-store"), census)?
     match read(hello.joinpath("cold.native-plan.tsv")):
         Err(reason) => census.problems.append("missing emitted function report: " + reason)
         Ok(plan) =>
@@ -274,7 +275,7 @@ def reconcile(expected: Dict[str, int], mut census: Census) -> None:
         census.problems.append("empty required record inventory")
 
 
-def frames(path: Path, mut census: Census) -> Result[None, str]:
+def frames(path: Path, store: Path, mut census: Census) -> Result[None, str]:
     """Cross-check graph read totals, preserve framing overhead and refuse frames without a selected-value witness."""
     mut reports = 0
     for line in read(path)?.split("\n"):
@@ -282,6 +283,11 @@ def frames(path: Path, mut census: Census) -> Result[None, str]:
             continue
         report = parse_json(line)?
         reports += 1
+        selection = required_graph_frames(report, store)?
+        for root in selection.roots:
+            census.rows.append("semantic-graph-selection\t1\tunknown\t" + root)
+        census.problems += selection.unknown
+        mut covered: set[str] = set()
         mut count = 0
         mut physical = 0
         mut logical = 0
@@ -291,6 +297,12 @@ def frames(path: Path, mut census: Census) -> Result[None, str]:
             reads = number(item, "reads")?
             size = number(item, "value_bytes")?
             frame = number(item, "frame_bytes")?
+            identity = revision + "\t" + key
+            covered.add(identity)
+            if identity not in selection.lengths:
+                census.problems.append(f"graph frame outside the independently selected roots: {key} {revision}")
+            elif reads != 1 or selection.lengths[identity] != frame:
+                census.problems.append(f"required graph frame {key} {revision}: 1/{selection.lengths[identity]}, measured {reads}/{reads * frame}")
             count += reads
             physical += reads * frame
             logical += reads * size
@@ -303,8 +315,10 @@ def frames(path: Path, mut census: Census) -> Result[None, str]:
             census.problems.append("graph frame totals do not reconcile")
         copied = number(report, "store_decoded_bytes")?
         census.rows.append(f"graph-owned-copies\tunknown\t{copied}\tall-owned-values")
-        if count > 0:
-            census.problems.append(f"{count} graph reads/{logical} value bytes need an independent selected key/revision witness")
+        for identity in sorted([item for item in selection.lengths.keys()]):
+            census.rows.append(f"required-graph-frame\t1\t{selection.lengths[identity]}\t{identity}")
+            if identity not in covered:
+                census.problems.append("required graph frame was not read: " + identity)
     if reports != 1:
         census.problems.append(f"expected one engine proof, received {reports}")
     return Ok(None)

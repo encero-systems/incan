@@ -28,6 +28,7 @@ from compiler_body_values import (
 from compiler_plan_values import select_plan_inventory_except, plan_owners_reading, select_plan_modules
 from compiler_plan_modules import restored_modules
 from compiler_graph_records import supersede_outputs
+from graph_read_demands import GraphDemand, note_graph_demand
 from engine_epochs import record_text, load_epoch
 from features import FeatureRequest
 from files import json_text
@@ -119,6 +120,7 @@ pub model ProgramOutcome:
     pub store_frame_bytes: int = 0
     pub store_decoded_bytes: int = 0
     pub frame_reads: list[FrameRead] = []
+    pub graph_demands: list[GraphDemand] = []
     pub transaction: Option[Transaction] = None
     # An editor overlay's source and checked-body records, published in the editor view only.
     pub view_transaction: Option[Transaction] = None
@@ -565,6 +567,7 @@ pub def selected_program(selected: Snapshot, handle: str) -> Result[Option[Nativ
     """Read a descriptor from the exact immutable view whose generation the execution pin protects."""
     if selected.view != program_view(handle)?:
         return Err("native program handle belongs to another virtual view")
+    note_graph_demand("program-handle", selected, program_key(handle))
     match record_text(selected, program_key(handle))?:
         None => return Ok(None)
         Some(text) => return Ok(Some(decoded_program(text)?))
@@ -711,7 +714,9 @@ def indexed_program(store: Path, epoch: BuildEpoch, selector: Option[str]) -> Re
     match selector:
         None => return Ok(None)
         Some(key) =>
-            match record_text(snapshot(store).map_err((error) => error.message())?, key)?:
+            selected = snapshot(store).map_err((error) => error.message())?
+            note_graph_demand("standalone-selector", selected, key)
+            match record_text(selected, key)?:
                 None => return Ok(None)
                 Some(encoded) =>
                     unit = decoded_program(encoded)?

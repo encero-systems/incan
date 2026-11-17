@@ -64,7 +64,8 @@ pub def prepare_report(
             produced.keys_listed,
         ), "plan_module_reuses": JsonValue.int(produced.plan_module_reuses),
         "store_frames_read": JsonValue.int(produced.store_frames_read), "store_frame_bytes": JsonValue.int(produced.store_frame_bytes),
-        "store_decoded_bytes": JsonValue.int(produced.store_decoded_bytes), "store_reads": JsonValue.array(frames)},
+        "store_decoded_bytes": JsonValue.int(produced.store_decoded_bytes), "store_reads": JsonValue.array(frames),
+        "graph_demands": JsonValue.array([demand.to_json() for demand in produced.graph_demands])},
     )
     selected = snapshot(store).map_err((error) => error.message())?
     return Ok(put(begin(selected), report_key(run), json_text(document)?.encode("utf-8")))
