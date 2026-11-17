@@ -199,6 +199,41 @@ pub def test_one_module_edit_lowers_only_that_module() -> Result[None, str]:
     return stop_example_engine(binary, store)
 
 
+pub def test_unchanged_import_cycle_is_admitted_as_one_component() -> Result[None, str]:
+    """An unrelated edit restores both peers. An exposed change makes both peers run through the checker again."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    source = root.joinpath("main.incn")
+    store = root.joinpath("store")
+    trace = root.joinpath("trace")
+    trace.mkdir(true, true).map_err((error) => error.message())?
+    left = "from right import twice\n\npub def base() -> int:\n    return 2\n\n\npub def left() -> int:\n    return twice(base())\n"
+    right = "from left import base\n\npub def twice(value: int) -> int:\n    return value + base()\n"
+    write(root.joinpath("left.incn"), left)?
+    write(root.joinpath("right.incn"), right)?
+    leaf = root.joinpath("leaf.incn")
+    write(leaf, "pub def leaf() -> int:\n    return 1\n")?
+    write(source, "from leaf import leaf\nfrom left import left\n\ndef main() -> None:\n    println(left() + leaf())\n")?
+    _ = traced_example_run(binary, source, store, trace, "5")?
+    cold = observed_module_work(trace)?
+    write(leaf, "pub def leaf() -> int:\n    return 2\n")?
+    _ = traced_example_run(binary, source, store, trace, "6")?
+    warm = observed_module_work(trace)?
+    for peer in ["check:left.incn", "check:right.incn"]:
+        assert cold.get(peer, 0) > 0
+        assert warm.get(peer, 0) == cold[peer], peer
+    assert warm.get("body-ir", 0) == cold.get("body-ir", 0) + 1
+    # Adding an exported declaration changes the component's surface without changing either import.
+    changed = left.replace("return 2", "return 3") + "\n\npub def exported() -> int:\n    return 9\n"
+    write(root.joinpath("left.incn"), changed)?
+    _ = traced_example_run(binary, source, store, trace, "8")?
+    changed_work = observed_module_work(trace)?
+    for peer in ["check:left.incn", "check:right.incn"]:
+        assert changed_work.get(peer, 0) > warm.get(peer, 0), peer
+    return stop_example_engine(binary, store)
+
+
 def lone_module(name: str, addend: str) -> str:
     """One module of two functions; `addend` is the text a body edit changes."""
     one = f"pub def {name}_one(value: int) -> int:\n    return value + {addend}\n\n\n"

@@ -143,6 +143,11 @@ pub fn typecheck_modules(
             match source {
                 Some(source) => graph_body_records
                     .namespace(&source)
+                    .map(|record| {
+                        record.filter(|record| {
+                            record.interface.module_name == module.name && record.interface.module_path == module.path_segments
+                        })
+                    })
                     .map_err(|error| format!("graph namespace `{source}` refused: {error:?}")),
                 None => Ok(None),
             }
@@ -158,6 +163,19 @@ pub fn typecheck_modules(
         })?;
 
     for (idx, module) in modules.iter().enumerate() {
+        // A cycle shares its declaration environment. Restore it only if every member has an authenticated
+        // interface and Body IR for the current logical module. Any missing member takes the entire component
+        // through the ordinary component interface builder below.
+        if let Some(record) = &namespace_records[idx]
+            && cycle_peers[idx].iter().all(|&peer| namespace_records[peer].is_some())
+        {
+            warnings_out.extend(parser_warning_diagnostics(module));
+            dependency_interfaces[idx] = Some(Arc::clone(&record.interface));
+            type_infos.push(TypeCheckInfo::default());
+            namespace_bodies.push(Some(record.body_ir.clone()));
+            namespace_lowering_inputs.extend(record.lowering_inputs.iter().cloned());
+            continue;
+        }
         let dep_indexes = imported_module_dep_indexes_for(modules, idx, &module_idx_by_key, own_standard_package);
         let deps_for_module = dep_indexes
             .iter()
@@ -177,21 +195,6 @@ pub fn typecheck_modules(
             .map(|dep_idx| dependency_interfaces[*dep_idx].as_ref().map(Arc::clone))
             .collect::<Option<Vec<_>>>()
             .unwrap_or_default();
-        // The graph authenticated every imported declaration-index witness before selecting this namespace. The
-        // module therefore does not need its providers to have appeared earlier in the source-order module list:
-        // its complete checked interface and Body IR are already sufficient for this module and its consumers.
-        if cycle_peers[idx].is_empty()
-            && let Some(record) = &namespace_records[idx]
-            && record.interface.module_name == module.name
-            && record.interface.module_path == module.path_segments
-        {
-            warnings_out.extend(parser_warning_diagnostics(module));
-            dependency_interfaces[idx] = Some(Arc::clone(&record.interface));
-            type_infos.push(TypeCheckInfo::default());
-            namespace_bodies.push(Some(record.body_ir.clone()));
-            namespace_lowering_inputs.extend(record.lowering_inputs.iter().cloned());
-            continue;
-        }
         let _module_trace = tracing::trace_span!(
             target: "incan::invocation",
             "incan_driver::typecheck_module",
