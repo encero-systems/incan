@@ -186,7 +186,7 @@ pub def test_snapshot_record_authenticates_current_and_predecessor_bytes() -> Re
     for data in [current, previous]:
         identity = hexlify(sha256.digest(data))
         assert read_snapshot_record(data, identity)? == handle
-        assert read_snapshot_record(data + b"!", identity).is_err()
-    padded = previous + b" "
+        assert read_snapshot_record(data[:-1], identity).is_err()
+    padded = (encode_snapshot_handle(handle)? + " ").encode("utf-8")
     assert read_snapshot_record(padded, hexlify(sha256.digest(padded))).is_err()
     return Ok(None)
