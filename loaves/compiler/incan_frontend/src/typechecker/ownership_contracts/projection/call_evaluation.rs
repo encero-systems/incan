@@ -322,6 +322,15 @@ impl CheckedInputBody<'_> {
             {
                 Ok(None)
             }
+            Expr::Field(_, _)
+                if self.graph.value_uses.get(&expression.span).is_some_and(|value_use| {
+                    value_use.kind == flow::ValueUseKind::CallResult
+                        && super::super::source::call_results::direct_call_field_projection(self.facts, expression)
+                            .is_some()
+                }) =>
+            {
+                Ok(None)
+            }
             Expr::Field(base, _) => {
                 let (mut place, through) = self.call_place(base)?.ok_or("input field has no stored owner")?;
                 let field = self

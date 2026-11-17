@@ -500,7 +500,12 @@ impl SourceAccesses<'_, '_> {
                 }
                 Ok(())
             }
-            flow::ValueUseKind::CallResult => self.expression(expression, false),
+            flow::ValueUseKind::CallResult => {
+                let evaluated =
+                    super::super::source::call_results::direct_call_field_projection(self.proof.facts, expression)
+                        .unwrap_or(expression);
+                self.expression(evaluated, false)
+            }
         };
         self.active_value_uses.remove(&expression.span);
         result
@@ -546,6 +551,10 @@ impl SourceAccesses<'_, '_> {
                 }
                 self.expression(value, transfer)?;
             }
+            return Ok(());
+        }
+        if let Some(receiver) = super::super::builtins::builtin_str_encode_receiver(self.proof.facts, expression) {
+            self.expression(receiver, false)?;
             return Ok(());
         }
         if let Some(iterator) = super::super::builtins::retained_iterator_method(self.proof.facts, expression.span) {

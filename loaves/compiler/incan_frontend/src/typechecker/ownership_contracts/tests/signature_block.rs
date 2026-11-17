@@ -197,6 +197,585 @@ fn signature_block_classifies_snapshot_and_element_field_reads() -> Result<(), B
     require_checked(&element_field, "decode")
 }
 
+/// Fresh bytes literals and checked fieldless enum variants cross immutable ordinary slots without acquiring a
+/// source place, loan, source node or stored-value classification.
+#[test]
+fn signature_block_admits_exact_fresh_ordinary_scalars_without_authority() -> Result<(), Box<dyn std::error::Error>> {
+    let accepted_source = "enum Projection:\n    Canonical\n    Named(str)\ndef observe_bytes(value: bytes) -> int:\n    return len(value)\ndef observe_projection(value: Projection) -> int:\n    match value:\n        Projection.Canonical => return 1\n        Projection.Named(name) => return len(name)\ndef inspect(seed: Borrowed[int]) -> int:\n    return observe_bytes(b\"family\") + observe_projection(Projection.Canonical) + observe_projection(Projection.Named(\"value\"))\n";
+    let graph = checked_graph(accepted_source, "inspect")?;
+    for (callee, source) in [
+        ("observe_bytes", "b\"family\""),
+        ("observe_projection", "Projection.Canonical"),
+        ("observe_projection", "Projection.Named(\"value\")"),
+    ] {
+        let argument = graph
+            .invocations
+            .values()
+            .find(|invocation| {
+                invocation.callee.declaration_name == callee
+                    && invocation.arguments.first().is_some_and(|argument| {
+                        accepted_source.get(argument.span.start..argument.span.end) == Some(source)
+                    })
+            })
+            .and_then(|invocation| invocation.arguments.first())
+            .ok_or_else(|| format!("fresh ordinary argument lost {callee} invocation"))?;
+        assert_eq!(argument.access, incan_semantics_core::IncanInputAccess::Inferred);
+        assert!(
+            argument.source.is_none(),
+            "fresh ordinary argument acquired a source place"
+        );
+        assert!(argument.loan.is_none(), "fresh ordinary argument acquired a loan");
+        assert!(
+            argument.evaluation.source_node.is_none(),
+            "fresh ordinary argument acquired a source node"
+        );
+        assert!(
+            !graph
+                .value_uses
+                .keys()
+                .any(|span| { accepted_source.get(span.start..span.end) == Some(source) }),
+            "fresh ordinary value acquired stored ValueUse authority: {source}"
+        );
+    }
+    Ok(())
+}
+
+/// An ordinary function returning the same enum stays on its authenticated CallResult route; it does not acquire the
+/// source-less payload-Variant authority.
+#[test]
+fn signature_block_keeps_ordinary_enum_functions_on_call_result_route() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "enum Projection:\n    Named(str)\ndef make() -> Projection:\n    return Projection.Named(\"value\")\ndef observe(value: Projection) -> int:\n    return 1\ndef inspect(seed: Borrowed[int]) -> int:\n    return observe(make())\n";
+    let graph = checked_graph(source, "inspect")?;
+    let value_use = graph
+        .value_uses
+        .iter()
+        .find(|(span, _)| source.get(span.start..span.end) == Some("make()"))
+        .map(|(_, value_use)| value_use)
+        .ok_or("ordinary enum function lost its CallResult authority")?;
+    assert_eq!(value_use.kind, flow::ValueUseKind::CallResult);
+    Ok(())
+}
+
+/// One canonical field may be taken from a fresh dependency-free direct call for an ordinary immutable argument.
+/// The outer value retains source-less CallResult authority while source and replay execute the inner call once.
+#[test]
+fn signature_block_admits_exact_direct_call_field_result_and_replays_it() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Description:\n    metadata: Metadata\ndef make() -> Description:\n    return Description(metadata=Metadata(value=\"value\"))\ndef observe(value: Metadata) -> int:\n    return len(value.value)\ndef inspect(seed: Borrowed[int]) -> int:\n    return observe(make().metadata)\n";
+    let checker = checked(source)?;
+    let (make_span, make_call) = checker
+        .type_info
+        .protocols
+        .explicit_input_calls
+        .iter()
+        .find(|(span, call)| {
+            source.get(span.start..span.end) == Some("make()")
+                && call
+                    .owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.declaration_name == "inspect")
+        })
+        .ok_or("projected base lost its selected call facts")?;
+    assert!(matches!(
+        make_call.kind,
+        InputCallKind::Ordinary | InputCallKind::Explicit
+    ));
+    let make_contract = checker.type_info.selected_input_contract(make_call)?;
+    assert!(crate::ownership_metadata::returned_view(make_contract)?.is_none());
+    assert!(crate::ownership_metadata::owned_result(make_contract)?.is_none());
+    assert!(make_contract.is_none_or(|contract| contract.result_source.is_none()));
+    assert!(checker.native_result_dependencies(*make_span)?.is_none());
+    assert!(!checker.native_result_is_independent(*make_span));
+    require_checked(&checker, "inspect")?;
+    let (owner, graph) = checker
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find(|(owner, _)| owner.declaration_name == "inspect")
+        .and_then(|(owner, flow)| match flow {
+            InputFlow::Checked { graph, .. } => Some((owner, graph)),
+            _ => None,
+        })
+        .ok_or("missing inspect graph")?;
+    let (span, value_use) = graph
+        .value_uses
+        .iter()
+        .find(|(span, _)| source.get(span.start..span.end) == Some("make().metadata"))
+        .ok_or("fresh field projection lost its outer classification")?;
+    assert_eq!(value_use.kind, flow::ValueUseKind::CallResult);
+    assert!(value_use.accesses.is_empty());
+    assert_eq!(source.get(span.start..span.end), Some("make().metadata"));
+    let invocation = graph
+        .invocations
+        .values()
+        .find(|invocation| invocation.callee.declaration_name == "observe")
+        .ok_or("missing observe invocation")?;
+    let argument = invocation.arguments.first().ok_or("missing observe argument")?;
+    assert_eq!(argument.span, *span);
+    assert_eq!(argument.access, incan_semantics_core::IncanInputAccess::Inferred);
+    assert!(argument.source.is_none());
+    assert!(argument.loan.is_none());
+    assert!(argument.evaluation.source_node.is_none());
+    assert_eq!(
+        graph
+            .invocations
+            .values()
+            .filter(|invocation| invocation.callee.declaration_name == "make")
+            .count(),
+        1
+    );
+    assert!(checker.type_info.checked_input_body(owner)?.is_some());
+    Ok(())
+}
+
+/// A field on an existing local remains a stored Read and never borrows fresh call-result authority.
+#[test]
+fn signature_block_keeps_stored_field_on_ordinary_read_route() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Description:\n    metadata: Metadata\ndef make() -> Description:\n    return Description(metadata=Metadata(value=\"value\"))\ndef observe(value: Metadata) -> int:\n    return len(value.value)\ndef inspect(seed: Borrowed[int]) -> int:\n    stored = make()\n    return observe(stored.metadata)\n";
+    let graph = checked_graph(source, "inspect")?;
+    let argument = graph
+        .invocations
+        .values()
+        .find(|invocation| invocation.callee.declaration_name == "observe")
+        .and_then(|invocation| invocation.arguments.first())
+        .ok_or("stored field lost its ordinary invocation")?;
+    let place = argument.source.as_ref().ok_or("stored field lost its source place")?;
+    assert!(matches!(&place.root, flow::Root::Binding(identity)
+        if identity.kind == incan_semantics_core::SemanticSourceTargetKind::Local
+            && identity.declaration_name == "stored"));
+    assert_eq!(place.projection.len(), 1);
+    assert!(argument.evaluation.source_node.is_some_and(|node| {
+        matches!(graph.nodes.get(node).map(|node| &node.event),
+            Some(flow::Event::Access { place: read, access: flow::Access::Read, through: None })
+                if read == place)
+    }));
+    assert!(!graph.value_uses.contains_key(&argument.span));
+    Ok(())
+}
+
+/// Nested, indexed, `?`-wrapped and method-call results cannot impersonate the one direct-call field shape.
+#[test]
+fn signature_block_refuses_other_call_result_projection_shapes() -> Result<(), Box<dyn std::error::Error>> {
+    require_unavailable(
+        "@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Inner:\n    metadata: Metadata\n@derive(Clone)\nmodel Description:\n    inner: Inner\ndef make() -> Description:\n    return Description(inner=Inner(metadata=Metadata(value=\"value\")))\ndef observe(value: Metadata) -> int:\n    return 1\ndef inspect(seed: Borrowed[int]) -> int:\n    return observe(make().inner.metadata)\n",
+        "inspect",
+        "expression is not a stored place",
+        "make()",
+    )?;
+    require_unavailable(
+        "@derive(Clone)\nmodel Description:\n    values: list[str]\ndef make() -> Description:\n    return Description(values=[\"value\"])\ndef observe(value: str) -> int:\n    return 1\ndef inspect(seed: Borrowed[int]) -> int:\n    return observe(make().values[0])\n",
+        "inspect",
+        "expression is not a stored place",
+        "make()",
+    )?;
+    require_unavailable(
+        "enum Fault:\n    Bad\n@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Description:\n    metadata: Metadata\ndef make() -> Result[Description, Fault]:\n    return Ok(Description(metadata=Metadata(value=\"value\")))\ndef observe(value: Metadata) -> int:\n    return 1\ndef inspect(seed: Borrowed[int]) -> Result[int, Fault]:\n    return Ok(observe(make()?.metadata))\n",
+        "inspect",
+        "expression is not a stored place",
+        "make()?",
+    )?;
+    require_unavailable(
+        "@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Description:\n    metadata: Metadata\nclass Factory:\n    pub marker: int\n    pub def make(self) -> Description:\n        return Description(metadata=Metadata(value=\"value\"))\ndef observe(value: Metadata) -> int:\n    return 1\ndef inspect(seed: Borrowed[int]) -> int:\n    factory = Factory(marker=1)\n    return observe(factory.make().metadata)\n",
+        "inspect",
+        "expression is not a stored place",
+        "factory.make()",
+    )
+}
+
+/// Computed properties and returned-view bases do not acquire fresh field-projection authority.
+#[test]
+fn signature_block_refuses_open_or_dependent_call_result_fields() -> Result<(), Box<dyn std::error::Error>> {
+    require_unavailable(
+        "@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Description:\n    raw: Metadata\n    property metadata -> Metadata:\n        return Metadata(value=self.raw.value)\ndef make() -> Description:\n    return Description(raw=Metadata(value=\"value\"))\ndef observe(value: Metadata) -> int:\n    return 1\ndef inspect(seed: Borrowed[int]) -> int:\n    return observe(make().metadata)\n",
+        "inspect",
+        "computed property access",
+        "make().metadata",
+    )?;
+    require_unavailable(
+        "@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Description:\n    metadata: Metadata\ndef view(value: Borrowed[Description]) -> Borrowed[Description] from value:\n    return value\ndef observe(value: Metadata) -> int:\n    return 1\ndef inspect(seed: Borrowed[int], value: Borrowed[Description]) -> int:\n    return observe(view(value).metadata)\n",
+        "inspect",
+        "expression is not a stored place",
+        "view(value)",
+    )?;
+    require_unavailable(
+        "@derive(Clone)\nmodel Metadata:\n    value: str\nmodel Envelope:\n    metadata: Borrowed[Metadata]\ndef make(value: Borrowed[Metadata]) -> Envelope from value:\n    return Envelope(metadata=value)\ndef observe(value: Metadata) -> int:\n    return 1\ndef inspect(seed: Borrowed[int], value: Borrowed[Metadata]) -> int:\n    return observe(make(value).metadata)\n",
+        "inspect",
+        "expression is not a stored place",
+        "make(value)",
+    )?;
+    require_unavailable(
+        "@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Description:\n    metadata: Metadata\ndef make(value: Borrowed[Description]) -> Owned[Description] from value:\n    return Description(metadata=value.metadata)\ndef observe(value: Metadata) -> int:\n    return 1\ndef inspect(seed: Borrowed[int], value: Borrowed[Description]) -> int:\n    return observe(make(value).metadata)\n",
+        "inspect",
+        "expression is not a stored place",
+        "make(value)",
+    )
+}
+
+/// The outer canonical Field identity is part of classification authority; changing it after checking must close the
+/// route before any source-less CallResult is retained.
+#[test]
+fn signature_block_direct_call_field_identity_tamper_refuses() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Description:\n    metadata: Metadata\ndef make() -> Description:\n    return Description(metadata=Metadata(value=\"value\"))\ndef observe(value: Metadata) -> int:\n    return 1\ndef inspect(seed: Borrowed[int]) -> int:\n    return observe(make().metadata)\n";
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let declaration = program
+        .declarations
+        .iter()
+        .find(|declaration| {
+            matches!(&declaration.node, crate::ast::Declaration::Function(function) if function.name == "inspect")
+        })
+        .ok_or("missing inspect declaration")?;
+    let crate::ast::Declaration::Function(function) = &declaration.node else {
+        return Err("inspect is not a function".into());
+    };
+    let mut checker = checked(source)?;
+    let (owner, field_span) = {
+        let (owner, flow) = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == "inspect")
+            .ok_or("missing inspect flow")?;
+        let InputFlow::Checked { graph, .. } = flow else {
+            return Err(format!("field projection baseline did not check: {flow:?}").into());
+        };
+        let field_span = *graph
+            .value_uses
+            .keys()
+            .find(|span| source.get(span.start..span.end) == Some("make().metadata"))
+            .ok_or("missing projected CallResult")?;
+        (owner.clone(), field_span)
+    };
+    let mut tampered = checker
+        .type_info
+        .resolved_identity(field_span)
+        .cloned()
+        .ok_or("projected value has no canonical Field identity")?;
+    assert_eq!(tampered.kind, incan_semantics_core::SemanticSourceTargetKind::Field);
+    tampered.kind = incan_semantics_core::SemanticSourceTargetKind::Function;
+    checker.type_info.record_resolved_identity(field_span, tampered);
+    let unavailable = source::build(&checker, CallableSource::Function(function), declaration.span, &owner)
+        .expect_err("tampered field identity retained projected CallResult authority");
+    assert_eq!(unavailable.reason, "field lacks a checked stored identity");
+    assert_eq!(
+        source.get(unavailable.span.start..unavailable.span.end),
+        Some("make().metadata")
+    );
+    Ok(())
+}
+
+/// Fresh payload-Variant admission depends on the exact full-expression Variant identity, not merely method-call
+/// syntax or an equal result spelling.
+#[test]
+fn signature_block_payload_variant_identity_tamper_refuses_fresh_route() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "enum Projection:\n    Named(str)\ndef observe(value: Projection) -> int:\n    return 1\ndef inspect(seed: Borrowed[int]) -> int:\n    return observe(Projection.Named(\"value\"))\n";
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let declaration = program
+        .declarations
+        .iter()
+        .find(|declaration| {
+            matches!(&declaration.node, crate::ast::Declaration::Function(function) if function.name == "inspect")
+        })
+        .ok_or("missing inspect declaration")?;
+    let crate::ast::Declaration::Function(function) = &declaration.node else {
+        return Err("inspect is not a function".into());
+    };
+    let mut checker = checked(source)?;
+    let (owner, payload_span) = {
+        let (owner, flow) = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == "inspect")
+            .ok_or("missing inspect flow")?;
+        let InputFlow::Checked { graph, .. } = flow else {
+            return Err(format!("fresh payload baseline did not check: {flow:?}").into());
+        };
+        let payload_span = graph
+            .invocations
+            .values()
+            .find(|invocation| invocation.callee.declaration_name == "observe")
+            .and_then(|invocation| invocation.arguments.first())
+            .map(|argument| argument.span)
+            .ok_or("missing payload argument")?;
+        (owner.clone(), payload_span)
+    };
+    let [statement] = function.body.as_slice() else {
+        return Err("inspect body does not contain one return".into());
+    };
+    let crate::ast::Statement::Return(Some(returned)) = &statement.node else {
+        return Err("inspect body is not one returned call".into());
+    };
+    let Expr::Call(_, _, arguments) = &returned.node else {
+        return Err("inspect did not return observe(...)".into());
+    };
+    let [crate::ast::CallArg::Positional(payload)] = arguments.as_slice() else {
+        return Err("observe did not retain one positional payload".into());
+    };
+    let Expr::MethodCall(_, _, _, _) = &payload.node else {
+        return Err("observe payload is not a Variant method-call expression".into());
+    };
+    assert_eq!(payload.span, payload_span);
+    let whole_identity = checker
+        .type_info
+        .resolved_identity(payload.span)
+        .ok_or("payload call has no full-expression Variant identity")?;
+    assert_eq!(
+        whole_identity.kind,
+        incan_semantics_core::SemanticSourceTargetKind::Variant
+    );
+    let mut tampered = checker
+        .type_info
+        .resolved_identity(payload_span)
+        .cloned()
+        .ok_or("payload call has no resolved Variant identity")?;
+    tampered.kind = incan_semantics_core::SemanticSourceTargetKind::Function;
+    checker.type_info.record_resolved_identity(payload_span, tampered);
+    let unavailable = source::build(&checker, CallableSource::Function(function), declaration.span, &owner)
+        .expect_err("tampered payload identity retained fresh ordinary admission");
+    assert_eq!(
+        unavailable.reason,
+        "ordinary argument requires inferred access or mutable binding facts"
+    );
+    assert_eq!(
+        source.get(unavailable.span.start..unavailable.span.end),
+        Some("Projection.Named(\"value\")")
+    );
+    Ok(())
+}
+
+/// Stored locals and explicitly borrowed temporaries retain their established Read and Shared-loan routes rather
+/// than acquiring source-less fresh ordinary authority.
+#[test]
+fn signature_block_preserves_stored_and_borrowed_ordinary_routes() -> Result<(), Box<dyn std::error::Error>> {
+    let stored_source = "def observe(value: bytes) -> int:\n    return len(value)\ndef inspect(seed: Borrowed[int]) -> int:\n    stored = b\"family\"\n    return observe(stored)\n";
+    let stored = checked_graph(stored_source, "inspect")?;
+    let argument = stored
+        .invocations
+        .values()
+        .find(|invocation| invocation.callee.declaration_name == "observe")
+        .and_then(|invocation| invocation.arguments.first())
+        .ok_or("stored ordinary argument lost its invocation")?;
+    let place = argument
+        .source
+        .as_ref()
+        .ok_or("stored ordinary argument lost its source place")?;
+    assert!(
+        matches!(&place.root, flow::Root::Binding(identity)
+            if identity.kind == incan_semantics_core::SemanticSourceTargetKind::Local
+                && identity.declaration_name == "stored")
+            && place.projection.is_empty(),
+        "stored ordinary argument did not retain its exact Local source: {place:?}"
+    );
+    assert!(
+        argument.evaluation.source_node.is_some_and(|source_node| {
+            matches!(stored.nodes.get(source_node).map(|node| &node.event),
+                Some(flow::Event::Access { place: read, access: flow::Access::Read, through: None })
+                    if read == place)
+        }),
+        "stored ordinary argument did not retain its independent Read"
+    );
+    assert!(
+        !stored
+            .value_uses
+            .keys()
+            .any(|span| { stored_source.get(span.start..span.end) == Some("stored") }),
+        "stored ordinary argument acquired fresh ValueUse authority"
+    );
+
+    let borrowed_source = "def observe(value: Borrowed[bytes]) -> int:\n    return len(value)\ndef inspect(seed: Borrowed[int]) -> int:\n    return observe(b\"family\")\n";
+    let borrowed = checked_graph(borrowed_source, "inspect")?;
+    let invocation = borrowed
+        .invocations
+        .values()
+        .find(|invocation| invocation.callee.declaration_name == "observe")
+        .ok_or("borrowed bytes argument lost its invocation")?;
+    let argument = invocation
+        .arguments
+        .first()
+        .ok_or("borrowed bytes invocation lost its argument")?;
+    assert_eq!(argument.access, incan_semantics_core::IncanInputAccess::Shared);
+    let loan = argument.loan.ok_or("borrowed bytes argument lost its Shared loan")?;
+    let place = argument
+        .source
+        .as_ref()
+        .ok_or("borrowed bytes argument lost its Temporary source")?;
+    assert!(
+        matches!(&place.root, flow::Root::Temporary { expression, invocation, .. }
+            if borrowed_source.get(expression.start..expression.end) == Some("b\"family\"")
+                && borrowed_source.get(invocation.start..invocation.end) == Some("observe(b\"family\")"))
+            && place.projection.is_empty(),
+        "borrowed bytes argument did not retain its exact Temporary source: {place:?}"
+    );
+    assert!(
+        argument.evaluation.source_node.is_some_and(|source_node| {
+            matches!(borrowed.nodes.get(source_node).map(|node| &node.event),
+                Some(flow::Event::Borrow(id)) if *id == loan)
+        }),
+        "borrowed bytes argument did not retain its Borrow event"
+    );
+    assert!(
+        invocation.final_accesses.iter().any(|final_access| {
+            matches!(borrowed.nodes.get(*final_access).map(|node| &node.event),
+                Some(flow::Event::Access {
+                    place: read,
+                    access: flow::Access::Read,
+                    through: Some(id),
+                }) if read == place && *id == loan)
+        }),
+        "borrowed bytes argument did not retain its final Read through the Shared loan"
+    );
+    assert!(
+        !borrowed
+            .value_uses
+            .keys()
+            .any(|span| { borrowed_source.get(span.start..span.end) == Some("b\"family\"") }),
+        "borrowed bytes argument acquired fresh ValueUse authority"
+    );
+    Ok(())
+}
+
+/// An ordinary mutable slot may read and reuse only one exact whole cloneable mutable Local. The route preserves its
+/// Local source and ordinary Read events without creating a loan, Move or stored ValueUse authority.
+#[test]
+fn signature_block_admits_only_exact_mutable_cloneable_local_reads() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "@derive(Clone)\nmodel Budget:\n    value: int\ndef charge(mut budget: Budget) -> int:\n    return budget.value\ndef inspect(seed: Borrowed[int]) -> int:\n    mut budget = Budget(value=1)\n    first = charge(budget)\n    return first + charge(budget)\n";
+    let graph = checked_graph(source, "inspect")?;
+    let arguments = graph
+        .invocations
+        .values()
+        .filter(|invocation| invocation.callee.declaration_name == "charge")
+        .filter_map(|invocation| invocation.arguments.first())
+        .collect::<Vec<_>>();
+    assert_eq!(arguments.len(), 2);
+    for argument in arguments {
+        assert_eq!(argument.access, incan_semantics_core::IncanInputAccess::Inferred);
+        assert!(argument.loan.is_none());
+        let place = argument
+            .source
+            .as_ref()
+            .ok_or("mutable ordinary argument lost its Local source")?;
+        assert!(
+            matches!(&place.root, flow::Root::Binding(identity)
+                if identity.kind == incan_semantics_core::SemanticSourceTargetKind::Local
+                    && identity.declaration_name == "budget")
+                && place.projection.is_empty(),
+            "mutable ordinary argument retained the wrong source: {place:?}"
+        );
+        assert!(
+            argument.evaluation.source_node.is_some_and(|source_node| {
+                matches!(graph.nodes.get(source_node).map(|node| &node.event),
+                    Some(flow::Event::Access { place: read, access: flow::Access::Read, through: None })
+                        if read == place)
+            }),
+            "mutable ordinary argument lost its exact Read"
+        );
+        assert!(!graph.value_uses.contains_key(&argument.span));
+    }
+
+    require_unavailable(
+        "@derive(Clone)\nmodel Budget:\n    value: int\ndef charge(mut budget: Budget) -> int:\n    return budget.value\ndef inspect(seed: Borrowed[int]) -> int:\n    budget = Budget(value=1)\n    return charge(budget)\n",
+        "inspect",
+        "ordinary argument requires inferred access or mutable binding facts",
+        "budget",
+    )?;
+    require_unavailable(
+        "@derive(Clone)\nmodel Budget:\n    value: int\n@derive(Clone)\nmodel Holder:\n    budget: Budget\ndef charge(mut budget: Budget) -> int:\n    return budget.value\ndef inspect(seed: Borrowed[int]) -> int:\n    mut holder = Holder(budget=Budget(value=1))\n    return charge(holder.budget)\n",
+        "inspect",
+        "ordinary argument requires inferred access or mutable binding facts",
+        "holder.budget",
+    )?;
+    require_unavailable(
+        "def numbers() -> Generator[int]:\n    yield 1\ndef charge(mut values: Generator[int]) -> int:\n    return 1\ndef inspect(seed: Borrowed[int]) -> int:\n    mut values = numbers()\n    return charge(values)\n",
+        "inspect",
+        "ordinary argument requires inferred access or mutable binding facts",
+        "values",
+    )?;
+
+    require_unavailable(
+        "@derive(Clone)\nmodel Budget:\n    value: int\ndef charge(mut budget: Budget) -> int:\n    return budget.value\ndef inspect(seed: Borrowed[int]) -> int:\n    mut budget = Budget(value=1)\n    held: Borrowed[Budget] = budget\n    result = charge(budget)\n    return result + held.value\n",
+        "inspect",
+        "ordinary argument requires inferred access or mutable binding facts",
+        "budget",
+    )?;
+    require_unavailable(
+        "@derive(Clone)\nmodel Budget:\n    value: int\ndef take(value: Owned[Budget]) -> None:\n    pass\ndef charge(mut budget: Budget) -> int:\n    return budget.value\ndef inspect(seed: Borrowed[int]) -> int:\n    mut budget = Budget(value=1)\n    take(budget)\n    return charge(budget)\n",
+        "inspect",
+        "ordinary argument requires inferred access or mutable binding facts",
+        "budget",
+    )?;
+    Ok(())
+}
+
+/// A mutable ordinary slot cannot borrow the source-less fresh scalar route.
+#[test]
+fn signature_block_refuses_mutable_fresh_ordinary_route() -> Result<(), Box<dyn std::error::Error>> {
+    require_unavailable(
+        "def observe(mut value: bytes) -> int:\n    return len(value)\ndef inspect(seed: Borrowed[int]) -> int:\n    return observe(b\"family\")\n",
+        "inspect",
+        "ordinary argument requires inferred access or mutable binding facts",
+        "b\"family\"",
+    )?;
+    require_unavailable(
+        "enum Projection:\n    Named(str)\ndef observe(mut value: Projection) -> int:\n    return 1\ndef inspect(seed: Borrowed[int]) -> int:\n    return observe(Projection.Named(\"value\"))\n",
+        "inspect",
+        "ordinary argument requires inferred access or mutable binding facts",
+        "Projection.Named(\"value\")",
+    )
+}
+
+/// A reference-carrying payload Variant cannot use the fresh ordinary route even when its constructor identity and
+/// outer enum type are exact.
+#[test]
+fn signature_block_refuses_open_payload_variant_fresh_ordinary_route() -> Result<(), Box<dyn std::error::Error>> {
+    require_unavailable(
+        "enum Envelope:\n    Held(Borrowed[str])\ndef observe(value: Envelope) -> int:\n    return 1\ndef inspect(value: Borrowed[str]) -> int:\n    return observe(Envelope.Held(value))\n",
+        "inspect",
+        "ordinary argument requires inferred access or mutable binding facts",
+        "Envelope.Held(value)",
+    )
+}
+
+/// A payload-variant constructor used as a function value cannot impersonate a checked fieldless enum value.
+#[test]
+fn signature_block_refuses_payload_variant_callback_fresh_ordinary_route() -> Result<(), Box<dyn std::error::Error>> {
+    require_unavailable(
+        "enum Projection:\n    Named(str)\ndef invoke(factory: (str) -> Projection) -> Projection:\n    return factory(\"value\")\ndef inspect(seed: Borrowed[int]) -> Projection:\n    return invoke(Projection.Named)\n",
+        "inspect",
+        "call result needs retained dependency facts",
+        "invoke(Projection.Named)",
+    )
+}
+
+/// Nominal fallback never chooses between equal leaves from different canonical origins. Constructor and variant
+/// classifiers share this resolver, so map iteration order cannot grant either route authority.
+#[test]
+fn signature_block_nominal_fallback_refuses_same_leaf_different_origins() -> Result<(), Box<dyn std::error::Error>> {
+    let checker = checked("enum Family:\n    Local\n")?;
+    let identity = checker
+        .checked_nominal_type_identities()
+        .values()
+        .find(|identity| identity.declaration_name == "Family")
+        .cloned()
+        .ok_or("missing Family identity")?;
+    let mut other = identity.clone();
+    other.origin = incan_semantics_core::SymbolOrigin::Module(vec!["other".into()]);
+    let scope = std::collections::BTreeMap::from([
+        ("__first_family".to_string(), identity),
+        ("__second_family".to_string(), other),
+    ]);
+    assert!(super::super::projection::checked_nominal_identity_in(&scope, "Family").is_none());
+    assert!(!super::super::projection::same_checked_value_type_in(
+        &scope,
+        &crate::symbols::ResolvedType::Named("Family".into()),
+        &crate::symbols::ResolvedType::Named("pub::other::Family".into()),
+    ));
+    Ok(())
+}
+
 /// Constructor fields consume exact whole transferable values once. Borrowed and explicitly owned parameters do not
 /// borrow this route, and a second use after the admitted move remains a checked T0126 conflict.
 #[test]
@@ -206,6 +785,9 @@ fn signature_block_classifies_enum_parameter_and_local_list_moves() -> Result<()
     )?;
     let list_value = checked(
         "@derive(Clone)\nmodel Field:\n    value: str\nmodel Record:\n    fields: list[Field]\ndef collect(seed: Borrowed[int]) -> Record:\n    mut fields: list[Field] = []\n    fields.append(Field(value=\"a\"))\n    return Record(fields=fields)\n",
+    )?;
+    let mutable_final_value = checked(
+        "model Record:\n    profile: str\ndef collect(seed: Borrowed[int]) -> Record:\n    mut profile = \"\"\n    if seed > 0:\n        profile = \"positive\"\n    else:\n        profile = \"other\"\n    return Record(profile=profile)\n",
     )?;
 
     require_unavailable(
@@ -223,7 +805,6 @@ fn signature_block_classifies_enum_parameter_and_local_list_moves() -> Result<()
 
     for source in [
         "enum Family:\n    Local\nmodel Field:\n    family: Family\ndef collect(seed: Borrowed[int], family: Family) -> Field:\n    first = Field(family=family)\n    second = Field(family=family)\n    return second\n",
-        "@derive(Clone)\nmodel Field:\n    value: str\nmodel Record:\n    fields: list[Field]\ndef collect(seed: Borrowed[int]) -> Record:\n    fields = [Field(value=\"a\")]\n    first = Record(fields=fields)\n    second = Record(fields=fields)\n    return second\n",
     ] {
         let checker = checked(source)?;
         assert!(
@@ -238,7 +819,8 @@ fn signature_block_classifies_enum_parameter_and_local_list_moves() -> Result<()
     }
 
     require_checked(&enum_value, "collect")?;
-    require_checked(&list_value, "collect")
+    require_checked(&list_value, "collect")?;
+    require_checked(&mutable_final_value, "collect")
 }
 
 /// A selected dependency-free `Result` call may provide an exact constructor field through `?`. Stored carriers,
@@ -346,4 +928,299 @@ fn signature_block_classifies_full_header_record() -> Result<(), Box<dyn std::er
     let checker = checked(source)?;
     require_checked(&checker, "from_native")?;
     require_checked(&checker, "from_family")
+}
+
+/// The exact zero-argument runtime `str.encode()` builtin evaluates its receiver as one operation and never invents
+/// an explicit invocation. Fresh concatenation stays source-less; an existing string local is replayed as one Read.
+#[test]
+fn signature_block_admits_exact_str_encode_builtin_and_replays_receiver() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def fresh(seed: Borrowed[int], left: str, right: str) -> bytes:\n    return (left + \"\\n\" + right).encode()\ndef stored(seed: Borrowed[int], value: str) -> bytes:\n    saved = value\n    return saved.encode()\n";
+    let checker = checked(source)?;
+    require_checked(&checker, "fresh")?;
+    require_checked(&checker, "stored")?;
+    let operation = incan_lang::lang::builtins::BuiltinMethodId::Str(
+        incan_lang::lang::surface::string_methods::StringMethodId::Encode,
+    );
+    let identity = crate::symbols::canonical_builtin_member_identity(operation.owner(), operation.member());
+
+    for (owner_name, written, receiver) in [
+        ("fresh", "(left + \"\\n\" + right).encode()", "(left + \"\\n\" + right)"),
+        ("stored", "saved.encode()", "saved"),
+    ] {
+        let (call_span, _) = checker
+            .type_info
+            .calls
+            .resolved_builtin_method_calls
+            .iter()
+            .find(|(span, selected)| **selected == operation && source.get(span.start..span.end) == Some(written))
+            .ok_or_else(|| format!("missing checked {written} builtin"))?;
+        assert_eq!(checker.type_info.resolved_identity(*call_span), Some(&identity));
+        assert_eq!(checker.type_info.expr_type(*call_span), Some(&ResolvedType::Bytes));
+        let (owner, graph) = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == owner_name)
+            .and_then(|(owner, flow)| match flow {
+                InputFlow::Checked { graph, .. } => Some((owner, graph)),
+                _ => None,
+            })
+            .ok_or_else(|| format!("missing {owner_name} checked graph"))?;
+        assert!(
+            !graph.invocations.contains_key(call_span),
+            "builtin encode acquired a synthetic invocation"
+        );
+        assert!(
+            !checker.type_info.protocols.explicit_input_calls.contains_key(call_span),
+            "builtin encode acquired a synthetic input contract"
+        );
+        assert!(checker.type_info.checked_input_body(owner)?.is_some());
+        if owner_name == "fresh" {
+            assert!(
+                !graph.operations.contains_key(call_span),
+                "fresh concatenation acquired a stored dependency"
+            );
+            assert!(
+                checker.type_info.expressions.expr_types.iter().any(|(span, ty)| {
+                    source.get(span.start..span.end) == Some(receiver) && ty == &ResolvedType::Str
+                })
+            );
+        } else {
+            assert_eq!(
+                graph
+                    .nodes
+                    .iter()
+                    .filter(|node| {
+                        call_span.start <= node.span.start
+                            && node.span.end <= call_span.end
+                            && source.get(node.span.start..node.span.end) == Some(receiver)
+                            && matches!(
+                                node.event,
+                                flow::Event::Access {
+                                    access: flow::Access::Read,
+                                    ..
+                                }
+                            )
+                    })
+                    .count(),
+                1,
+                "stored encode receiver was not evaluated exactly once"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Supplied codec labels remain outside the zero-argument route, while a source-owned method with the same spelling
+/// continues through its selected ordinary invocation instead of borrowing builtin authority.
+#[test]
+fn signature_block_keeps_encode_arguments_and_source_methods_off_builtin_route()
+-> Result<(), Box<dyn std::error::Error>> {
+    require_unavailable(
+        "def encode(seed: Borrowed[int], value: str) -> bytes:\n    return value.encode(\"utf-8\")\n",
+        "encode",
+        "call has no selected explicit input access facts",
+        "value.encode(\"utf-8\")",
+    )?;
+
+    let source = "class Encoder:\n    pub marker: int\n    pub def encode(self) -> int:\n        return self.marker\ndef inspect(seed: Borrowed[int], encoder: Encoder) -> int:\n    return encoder.encode()\n";
+    let checker = checked(source)?;
+    require_checked(&checker, "inspect")?;
+    let (span, call) = checker
+        .type_info
+        .protocols
+        .explicit_input_calls
+        .iter()
+        .find(|(span, call)| {
+            source.get(span.start..span.end) == Some("encoder.encode()")
+                && call
+                    .owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.declaration_name == "inspect")
+        })
+        .ok_or("source encode call lost its selected input facts")?;
+    assert_ne!(
+        checker.type_info.resolved_builtin_method_call(*span),
+        Some(incan_lang::lang::builtins::BuiltinMethodId::Str(
+            incan_lang::lang::surface::string_methods::StringMethodId::Encode,
+        ))
+    );
+    let graph = checked_graph(source, "inspect")?;
+    assert!(graph.invocations.contains_key(span));
+    assert_eq!(call.callee.declaration_name, "encode");
+    Ok(())
+}
+
+/// Operation, canonical identity and endpoint types are independent authority. Changing any one after checking,
+/// including converting the receiver to `FrozenStr`, closes the builtin route before source construction.
+#[test]
+fn signature_block_str_encode_fact_tampering_refuses_builtin_route() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def encode(seed: Borrowed[int], value: str) -> bytes:\n    return value.encode()\n";
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let declaration = program
+        .declarations
+        .iter()
+        .find(|declaration| {
+            matches!(&declaration.node, crate::ast::Declaration::Function(function) if function.name == "encode")
+        })
+        .ok_or("missing encode declaration")?;
+    let crate::ast::Declaration::Function(function) = &declaration.node else {
+        return Err("encode is not a function".into());
+    };
+    let [statement] = function.body.as_slice() else {
+        return Err("encode body does not contain one return".into());
+    };
+    let crate::ast::Statement::Return(Some(returned)) = &statement.node else {
+        return Err("encode body is not one returned value".into());
+    };
+    let Expr::MethodCall(receiver, _, _, _) = &returned.node else {
+        return Err("encode return is not a method call".into());
+    };
+
+    for corruption in 0..4 {
+        let mut checker = checked(source)?;
+        let owner = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .keys()
+            .find(|owner| owner.declaration_name == "encode")
+            .cloned()
+            .ok_or("missing encode owner")?;
+        match corruption {
+            0 => checker.type_info.record_resolved_builtin_method_call(
+                returned.span,
+                incan_lang::lang::builtins::BuiltinMethodId::FrozenStr(
+                    incan_lang::lang::surface::string_methods::StringMethodId::Encode,
+                ),
+            ),
+            1 => {
+                let mut identity = checker
+                    .type_info
+                    .resolved_identity(returned.span)
+                    .cloned()
+                    .ok_or("encode has no canonical identity")?;
+                identity.declaration_name = "str.decode".into();
+                checker.type_info.record_resolved_identity(returned.span, identity);
+            }
+            2 => {
+                let operation = incan_lang::lang::builtins::BuiltinMethodId::FrozenStr(
+                    incan_lang::lang::surface::string_methods::StringMethodId::Encode,
+                );
+                checker.record_expr_type(receiver.span, ResolvedType::FrozenStr);
+                checker
+                    .type_info
+                    .record_resolved_builtin_method_call(returned.span, operation);
+                checker.type_info.record_resolved_identity(
+                    returned.span,
+                    crate::symbols::canonical_builtin_member_identity(operation.owner(), operation.member()),
+                );
+            }
+            _ => checker.record_expr_type(returned.span, ResolvedType::Str),
+        }
+        let unavailable = source::build(&checker, CallableSource::Function(function), declaration.span, &owner)
+            .expect_err("tampered encode facts retained builtin admission");
+        assert_eq!(unavailable.reason, "call has no selected explicit input access facts");
+        assert_eq!(
+            source.get(unavailable.span.start..unavailable.span.end),
+            Some("value.encode()")
+        );
+    }
+    Ok(())
+}
+
+/// A borrowed string field creates one exact operation-duration dependency for `str.encode()`. Removing that
+/// dependency or changing its completion, operand or loan cannot survive graph analysis and current-source replay.
+#[test]
+fn signature_block_str_encode_operation_tampering_refuses_replay() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Holder:\n    value: str\ndef encode(holder: Borrowed[Holder]) -> bytes:\n    return holder.value.encode()\n";
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let declaration = program
+        .declarations
+        .iter()
+        .find(|declaration| {
+            matches!(&declaration.node, crate::ast::Declaration::Function(function) if function.name == "encode")
+        })
+        .ok_or("missing encode declaration")?;
+    let crate::ast::Declaration::Function(function) = &declaration.node else {
+        return Err("encode is not a function".into());
+    };
+    let checker = checked(source)?;
+    require_checked(&checker, "encode")?;
+    let (owner, flow) = checker
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find(|(owner, _)| owner.declaration_name == "encode")
+        .ok_or("missing encode flow")?;
+    let InputFlow::Checked { graph, .. } = flow else {
+        return Err(format!("encode did not retain a checked graph: {flow:?}").into());
+    };
+    let (span, operation) = graph
+        .operations
+        .iter()
+        .find(|(span, _)| source.get(span.start..span.end) == Some("holder.value.encode()"))
+        .ok_or("encode lost its operation dependency")?;
+    let [dependency] = operation.operands.as_slice() else {
+        return Err("encode operation did not retain one receiver dependency".into());
+    };
+    assert_eq!(
+        source.get(dependency.operand.start..dependency.operand.end),
+        Some("holder.value")
+    );
+    assert!(!graph.invocations.contains_key(span));
+    assert!(checker.type_info.checked_input_body(owner)?.is_some());
+
+    for corruption in 0..4 {
+        let mut facts = checker.type_info.clone();
+        let InputFlow::Checked { graph, analysis } = facts
+            .protocols
+            .explicit_input_flow
+            .get_mut(owner)
+            .ok_or("missing copied encode flow")?
+        else {
+            return Err("copied encode flow is unavailable".into());
+        };
+        match corruption {
+            0 => {
+                graph.operations.remove(span);
+            }
+            1 => {
+                let operation = graph.operations.get_mut(span).ok_or("missing copied operation")?;
+                operation.completion_node = operation.operands[0].final_access;
+            }
+            2 => {
+                graph
+                    .operations
+                    .get_mut(span)
+                    .ok_or("missing copied operation")?
+                    .operands[0]
+                    .operand = *span;
+            }
+            _ => {
+                let loan = graph
+                    .operations
+                    .get(span)
+                    .and_then(|operation| operation.operands.first())
+                    .map(|operand| operand.loan)
+                    .ok_or("missing copied dependency loan")?;
+                graph.loans.get_mut(loan.0).ok_or("missing copied loan")?.kind = flow::LoanKind::Exclusive;
+            }
+        }
+        match flow::analyze(graph) {
+            Ok(recomputed) => {
+                *analysis = recomputed;
+                assert!(
+                    facts.direct_input_admission(owner, function).is_err(),
+                    "accepted source-inconsistent encode operation corruption {corruption}"
+                );
+            }
+            Err(_) => {}
+        }
+    }
+    Ok(())
 }

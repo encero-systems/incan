@@ -88,7 +88,12 @@ fn require_replayed_body(
                 return Err(format!("{route}: {name} did not retain the expected classified value use").into());
             }
         }
-        if map_err && !graph.value_uses.values().any(|value_use| value_use.result_map_err.is_some()) {
+        if map_err
+            && !graph
+                .value_uses
+                .values()
+                .any(|value_use| value_use.result_map_err.is_some())
+        {
             return Err(format!("{route}: {name} did not retain its exact map_err classification").into());
         }
         if !matches!(
@@ -168,11 +173,7 @@ fn require_package_refusal(consumer: &str, name: &str, stop: &str) -> Result<(),
     Ok(())
 }
 
-fn require_module_diagnostic_at(
-    consumer: &str,
-    code: &str,
-    stop: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn require_module_diagnostic_at(consumer: &str, code: &str, stop: &str) -> Result<(), Box<dyn std::error::Error>> {
     for (route, checker) in super::one_type::consumer_checkers(PROVIDER, consumer)? {
         if checker.errors.is_empty() || checker.errors.iter().any(|error| error.stable_code() != Some(code)) {
             return Err(format!("{route}: expected only {code} diagnostics, got {:?}", checker.errors).into());
@@ -259,21 +260,43 @@ fn real_source_try_call_is_an_ordinary_argument_call_result() -> Result<(), Box<
 #[test]
 fn direct_selected_call_uses_one_persisted_call_result_authority() -> Result<(), Box<dyn std::error::Error>> {
     let consumer = "def produce() -> str:\n    return \"value\"\ndef observe(value: str) -> int:\n    return len(value)\ndef use(seed: Borrowed[int]) -> int:\n    return observe(produce())\n";
-    require_replayed_body(
-        consumer,
-        "use",
-        &[PersistedUse::CallResult("produce()")],
-        false,
-    )
+    require_replayed_body(consumer, "use", &[PersistedUse::CallResult("produce()")], false)
+}
+
+/// A constructor may move an exact imported enum Parameter once. Other imported nominals, borrowed values and field
+/// projections cannot borrow that authority, and reusing the enum remains a graph conflict.
+#[test]
+fn imported_enum_parameter_constructor_move_is_exact_and_single_use() -> Result<(), Box<dyn std::error::Error>> {
+    let accepted = "from views import Family\n\nmodel Field:\n    family: Family\ndef collect(seed: Borrowed[int], family: Family) -> Field:\n    return Field(family=family)\n";
+    require_module_bodies(accepted, &["collect"])?;
+
+    let non_enum = "from views import Record\n\nmodel Envelope:\n    record: Record\ndef collect(seed: Borrowed[int], record: Record) -> Envelope:\n    return Envelope(record=record)\n";
+    require_module_diagnostic_at(non_enum, "INCAN-T0123", "record")?;
+    let borrowed = "from views import Family\n\nmodel Field:\n    family: Family\ndef collect(seed: Borrowed[int], family: Borrowed[Family]) -> Field:\n    return Field(family=family)\n";
+    require_module_diagnostic_at(borrowed, "INCAN-T0123", "family")?;
+    let projected = "from views import Family\n\nmodel Holder:\n    family: Family\nmodel Field:\n    family: Family\ndef collect(seed: Borrowed[int], holder: Owned[Holder]) -> Field:\n    return Field(family=holder.family)\n";
+    require_module_diagnostic_at(projected, "INCAN-T0123", "holder.family")?;
+
+    let reused = "from views import Family\n\nmodel Field:\n    family: Family\ndef collect(seed: Borrowed[int], family: Family) -> Field:\n    first = Field(family=family)\n    second = Field(family=family)\n    return second\n";
+    for (route, checker) in super::one_type::consumer_checkers(PROVIDER, reused)? {
+        assert!(
+            !checker.errors.is_empty()
+                && checker
+                    .errors
+                    .iter()
+                    .all(|error| error.stable_code() == Some("INCAN-T0126")),
+            "{route}: imported enum reuse was not a move conflict: {:?}",
+            checker.errors
+        );
+    }
+    Ok(())
 }
 
 #[test]
-fn same_leaf_different_origins_refuse_call_result_and_fresh_model_admission()
--> Result<(), Box<dyn std::error::Error>> {
+fn same_leaf_different_origins_refuse_call_result_and_fresh_model_admission() -> Result<(), Box<dyn std::error::Error>>
+{
     let provider = "@derive(Eq)\npub model Description:\n    pub profile: str\npub def observe(value: Description) -> int:\n    return len(value.profile)\npub def observe_many(values: list[Description]) -> int:\n    return len(values)\n";
     let consumer = "from views import Description, observe, observe_many\n\ndef fresh() -> Description:\n    return Description(profile=\"profile\")\ndef direct(seed: Borrowed[int]) -> int:\n    return observe(fresh())\ndef listed(seed: Borrowed[int]) -> int:\n    return observe_many([fresh()])\n";
-    let tokens = crate::lexer::lex(consumer).map_err(|errors| format!("{errors:?}"))?;
-    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
     let mut checkers = super::one_type::consumer_checkers(provider, consumer)?;
     checkers.extend(super::one_type::package_consumer_checkers(provider, consumer)?);
     for (route, mut checker) in checkers {
@@ -297,48 +320,72 @@ fn same_leaf_different_origins_refuse_call_result_and_fresh_model_admission()
             .declarations
             .named_type_identities
             .insert("__ambiguous_description_control".into(), conflicting);
-
-        for name in ["direct", "listed"] {
-            let declaration = program
-                .declarations
-                .iter()
-                .find(|declaration| {
-                    matches!(&declaration.node,
-                        crate::ast::Declaration::Function(function) if function.name == name)
-                })
-                .ok_or_else(|| format!("missing {name} declaration"))?;
-            let crate::ast::Declaration::Function(function) = &declaration.node else {
-                unreachable!();
-            };
-            let owner = checker
-                .type_info
-                .protocols
-                .explicit_input_flow
-                .keys()
-                .find(|owner| owner.declaration_name == name)
-                .cloned()
-                .ok_or_else(|| format!("{route}: missing {name} owner"))?;
-            let unavailable = super::super::source::build(
-                &checker,
-                CallableSource::Function(function),
-                declaration.span,
-                &owner,
-            )
-            .expect_err("ambiguous same-leaf identities admitted a fresh call result");
-            assert_eq!(
-                consumer.get(unavailable.span.start..unavailable.span.end),
-                Some("fresh()"),
-                "{route}: {name} stopped at the wrong boundary: {unavailable:?}"
-            );
-        }
+        assert!(
+            checker.type_info.checked_nominal_identity("Description").is_none(),
+            "{route}: ambiguous same-leaf identities acquired published nominal authority"
+        );
     }
     Ok(())
 }
 
 #[test]
 fn real_source_imported_plain_enum_is_an_ordinary_observation() -> Result<(), Box<dyn std::error::Error>> {
-    let consumer = "from views import Family, Record\n\ndef family_name(family: Family) -> str:\n    match family:\n        Family.Declaration => return \"declaration\"\n        Family.Local => return \"local\"\n        Family.Final => return \"final\"\ndef from_family(record: Borrowed[Record], family: Family) -> str:\n    return family_name(family)\n";
-    require_module_bodies(consumer, &["from_family"])
+    let consumer = "from views import Family\n\nmodel ObservedFamily:\n    name: str\n    family: Family\ndef family_name(family: Family) -> str:\n    match family:\n        Family.Declaration => return \"declaration\"\n        Family.Local => return \"local\"\n        Family.Final => return \"final\"\ndef from_family(seed: Borrowed[int], family: Family) -> ObservedFamily:\n    name = family_name(family)\n    return ObservedFamily(name=name, family=family)\n";
+    let mut checkers = super::one_type::consumer_checkers(PROVIDER, consumer)?;
+    checkers.extend(super::one_type::package_consumer_checkers(PROVIDER, consumer)?);
+    for (route, checker) in checkers {
+        let flow = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == "from_family")
+            .map(|(_, flow)| flow)
+            .ok_or_else(|| format!("{route}: missing from_family flow"))?;
+        let InputFlow::Checked { graph, analysis } = flow else {
+            return Err(format!("{route}: imported enum observation did not check: {flow:?}").into());
+        };
+        assert!(analysis.conflicts.is_empty(), "{route}: {:?}", analysis.conflicts);
+        let observed = graph
+            .invocations
+            .values()
+            .find(|invocation| invocation.callee.declaration_name == "family_name")
+            .and_then(|invocation| invocation.arguments.first())
+            .ok_or_else(|| format!("{route}: missing family_name argument"))?;
+        assert!(observed.closed_enum_parameter_observer, "{route}");
+        assert_eq!(
+            observed.access,
+            incan_semantics_core::IncanInputAccess::Inferred,
+            "{route}"
+        );
+        assert!(
+            !graph.value_uses.contains_key(&observed.span),
+            "{route}: enum observation acquired Move authority"
+        );
+        let moves = graph
+            .value_uses
+            .iter()
+            .filter(|(span, value_use)| {
+                value_use.kind == flow::ValueUseKind::Move
+                    && span.start > observed.span.start
+                    && consumer.get(span.start..span.end) == Some("family")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(moves.len(), 1, "{route}: final enum constructor Move is not unique");
+        assert!(
+            moves[0].1.accesses.iter().any(|access| {
+                matches!(&access.place.root,
+                    flow::Root::Binding(identity)
+                        if identity.kind == incan_semantics_core::SemanticSourceTargetKind::Parameter
+                            && identity.declaration_name == "family")
+            }),
+            "{route}: final enum Move retained the wrong root"
+        );
+        assert!(checker.errors.is_empty(), "{route}: {:?}", checker.errors);
+    }
+
+    let mutable = "from views import Family\n\ndef family_name(mut family: Family) -> str:\n    return \"family\"\ndef from_family(seed: Borrowed[int], family: Family) -> str:\n    return family_name(family)\n";
+    require_module_refusal(mutable, "from_family", "family")
 }
 
 #[test]
@@ -371,9 +418,11 @@ fn real_source_retained_owner_fields_materialize_full_header() -> Result<(), Box
 fn real_source_routes_keep_capability_boundaries_closed() -> Result<(), Box<dyn std::error::Error>> {
     let captureful = "from views import Description, Record, RowRecord, encode_rows\n\nconst MAX_BYTES: int = 4096\nenum Fault:\n    Bad(str)\ndef checker_description() -> Description:\n    return Description(profile=\"profile\")\ndef encode_record(record: Borrowed[Record]) -> Result[bytes, Fault]:\n    owner = record.owner\n    return encode_rows(checker_description(), [RowRecord(value=record.owner)], MAX_BYTES).map_err((_) => Fault.Bad(owner))\n";
     require_module_refusal(captureful, "encode_record", "encode_rows")?;
-    let mutable_static = "static LIMIT: int = 4096\ndef validate(value: Borrowed[int]) -> bool:\n    return value > LIMIT\n";
+    let mutable_static =
+        "static LIMIT: int = 4096\ndef validate(value: Borrowed[int]) -> bool:\n    return value > LIMIT\n";
     require_module_refusal(mutable_static, "validate", "LIMIT")?;
-    let whole_model = "from views import Record\n\ndef collect(record: Borrowed[Record]) -> list[Record]:\n    return [record]\n";
+    let whole_model =
+        "from views import Record\n\ndef collect(record: Borrowed[Record]) -> list[Record]:\n    return [record]\n";
     require_module_refusal(whole_model, "collect", "record")?;
     let stored_result = "from views import Record, sha256\n\nenum Fault:\n    Bad\ndef encode_record(record: Borrowed[Record]) -> Result[bytes, Fault]:\n    return Ok(b\"encoded\")\ndef content_digest(record: Borrowed[Record]) -> Result[bytes, Fault]:\n    encoded = encode_record(record)\n    return Ok(sha256.digest(encoded?))\n";
     require_package_refusal(stored_result, "content_digest", "encoded?")?;
@@ -382,4 +431,3 @@ fn real_source_routes_keep_capability_boundaries_closed() -> Result<(), Box<dyn 
     let user_slice = "class Shelf:\n    pub rows: list[list[str]]\n    def __getslice__(self, start: Option[int], end: Option[int], step: Option[int]) -> list[list[str]]:\n        return self.rows\ndef collect(shelf: Borrowed[Shelf]) -> int:\n    mut count = 0\n    for row in shelf[1:]:\n        count += len(row)\n    return count\n";
     require_module_refusal(user_slice, "collect", "shelf[1:]")
 }
-

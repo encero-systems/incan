@@ -22,6 +22,8 @@ pub(super) enum ValueUseContext<'a> {
     OrdinaryArgument(&'a CallableParam),
     /// One exact constructor field stores the classified value.
     ConstructorField(&'a ResolvedType),
+    /// One builtin aggregate element owns an exact fresh call result or field-only stored projection.
+    AggregateElement(&'a ResolvedType),
     /// One selected builtin call observes a direct independent source-call result as its receiver.
     CallReceiver { invocation: Span, arguments: &'a [CallArg] },
     /// One inferred assignment extracts a single independent enum payload.
@@ -31,12 +33,23 @@ pub(super) enum ValueUseContext<'a> {
 /// A classification plan whose graph event is retained only after source evaluation succeeds.
 pub(super) struct ValueUsePlan {
     kind: ValueUseKind,
+    /// Exact invocation evaluated for a source-less result. It equals the classified span for whole calls and names
+    /// the inner direct call for the one authenticated field projection.
+    call_result: Option<Span>,
     independent_local: Option<CanonicalSymbolId>,
     match_payload: Option<CanonicalSymbolId>,
     result_map_err: Option<ResultMapErrUse>,
 }
 
 impl Builder<'_> {
+    fn same_source_value_type(&self, actual: &ResolvedType, expected: &ResolvedType) -> bool {
+        super::super::projection::same_checked_value_type_in(&self.nominal_scope, actual, expected)
+    }
+
+    fn source_nominal_identity(&self, name: &str) -> Option<&CanonicalSymbolId> {
+        super::super::projection::checked_nominal_identity_in(&self.nominal_scope, name)
+    }
+
     /// Classify one value from current checked source facts. The result is not persisted and grants no authority to a
     /// restored body; every supported context consumes this same read/move/call-result vocabulary.
     pub(super) fn classify_value_use(
@@ -53,6 +66,7 @@ impl Builder<'_> {
                 .independent_parameter_index(assignment, destination, source)
                 .then(|| ValueUsePlan {
                     kind: ValueUseKind::Read,
+                    call_result: None,
                     independent_local: Some(destination.clone()),
                     match_payload: None,
                     result_map_err: None,
@@ -69,6 +83,7 @@ impl Builder<'_> {
                 };
                 Ok(kind.map(|kind| ValueUsePlan {
                     kind,
+                    call_result: (kind == ValueUseKind::CallResult).then_some(value.span),
                     independent_local: None,
                     match_payload: None,
                     result_map_err: None,
@@ -86,6 +101,23 @@ impl Builder<'_> {
                 };
                 Ok(kind.map(|kind| ValueUsePlan {
                     kind,
+                    call_result: (kind == ValueUseKind::CallResult).then_some(value.span),
+                    independent_local: None,
+                    match_payload: None,
+                    result_map_err: None,
+                }))
+            }
+            ValueUseContext::AggregateElement(expected) => {
+                let kind = if self.closed_call_result(value, expected) {
+                    Some(ValueUseKind::CallResult)
+                } else if self.aggregate_move(value, expected)? {
+                    Some(ValueUseKind::Move)
+                } else {
+                    None
+                };
+                Ok(kind.map(|kind| ValueUsePlan {
+                    kind,
+                    call_result: (kind == ValueUseKind::CallResult).then_some(value.span),
                     independent_local: None,
                     match_payload: None,
                     result_map_err: None,
@@ -95,6 +127,7 @@ impl Builder<'_> {
                 .closed_source_result_receiver(value, invocation, arguments)
                 .map(|callback| ValueUsePlan {
                     kind: ValueUseKind::CallResult,
+                    call_result: Some(value.span),
                     independent_local: None,
                     match_payload: None,
                     result_map_err: Some(ResultMapErrUse {
@@ -106,12 +139,41 @@ impl Builder<'_> {
             ValueUseContext::MatchAssignment(arms) => {
                 Ok(self.match_payload(value, arms)?.map(|payload| ValueUsePlan {
                     kind: ValueUseKind::Move,
+                    call_result: None,
                     independent_local: None,
                     match_payload: Some(payload),
                     result_map_err: None,
                 }))
             }
         }
+    }
+
+    /// Classify one ordinary immutable argument that takes a canonical field from a fresh, dependency-free direct
+    /// call result. The persisted authority belongs to the outer value while evaluation executes the inner call once.
+    pub(super) fn classify_call_result_field_projection(
+        &self,
+        value: &Spanned<Expr>,
+        expected: &ResolvedType,
+    ) -> Option<ValueUsePlan> {
+        let base = super::call_results::direct_call_field_projection(&self.checker.type_info, value)?;
+        let outer = self.checker.type_info.expr_type(value.span)?;
+        let base_type = self.checker.type_info.expr_type(base.span)?;
+        if !self.same_source_value_type(outer, expected)
+            || self.checker.type_holds_borrow(outer)
+            || self.checker.type_holds_native_loan(outer)
+            || self.checker.type_holds_borrow(base_type)
+            || self.checker.type_holds_native_loan(base_type)
+            || !self.closed_call_result(base, base_type)
+        {
+            return None;
+        }
+        Some(ValueUsePlan {
+            kind: ValueUseKind::CallResult,
+            call_result: Some(base.span),
+            independent_local: None,
+            match_payload: None,
+            result_map_err: None,
+        })
     }
 
     /// Evaluate and retain one classification. Stored routes require one exact final event; a selected call result
@@ -133,9 +195,23 @@ impl Builder<'_> {
                 self.expression(value, incoming, true)?
             }
             ValueUseKind::CallResult => {
-                self.independent_call_results.insert(value.span);
-                let result = self.expression(value, incoming, false);
-                self.independent_call_results.remove(&value.span);
+                let call_span = plan.call_result.ok_or(Unavailable {
+                    span: value.span,
+                    reason: "call-result classification has no exact invocation".into(),
+                })?;
+                let evaluated = if call_span == value.span {
+                    value
+                } else {
+                    super::call_results::direct_call_field_projection(&self.checker.type_info, value)
+                        .filter(|base| base.span == call_span)
+                        .ok_or(Unavailable {
+                            span: value.span,
+                            reason: "call-result field projection changed after classification".into(),
+                        })?
+                };
+                self.independent_call_results.insert(call_span);
+                let result = self.expression(evaluated, incoming, false);
+                self.independent_call_results.remove(&call_span);
                 result?
             }
         };
@@ -344,7 +420,7 @@ impl Builder<'_> {
             .checker
             .type_info
             .expr_type(value.span)
-            .is_some_and(|actual| self.checker.type_info.same_checked_value_type(actual, expected))
+            .is_some_and(|actual| self.same_source_value_type(actual, expected))
             || !self.checker.is_clone_type(expected)
             || self.checker.type_holds_borrow(expected)
             || self.checker.type_holds_native_loan(expected)
@@ -379,7 +455,7 @@ impl Builder<'_> {
                         .checker
                         .type_info
                         .expr_type(value.span)
-                        .is_some_and(|actual| self.checker.type_info.same_checked_value_type(actual, expected))
+                        .is_some_and(|actual| self.same_source_value_type(actual, expected))
             }
             _ => false,
         }
@@ -393,7 +469,7 @@ impl Builder<'_> {
                 .checker
                 .type_info
                 .expr_type(value.span)
-                .is_some_and(|actual| self.checker.type_info.same_checked_value_type(actual, &parameter.ty))
+                .is_some_and(|actual| self.same_source_value_type(actual, &parameter.ty))
             || self.copy_value(&parameter.ty)
             || self.checker.type_holds_borrow(&parameter.ty)
             || self.checker.type_holds_native_loan(&parameter.ty)
@@ -417,14 +493,14 @@ impl Builder<'_> {
             })))
     }
 
-    /// Whether one constructor field consumes a whole plain enum Parameter, one exact immutable Local, or one
-    /// independent builtin-list Local.
+    /// Whether one constructor field consumes a whole plain enum Parameter or one exact unaliased Local. Local
+    /// mutability does not prevent final transfer; the persisted Move constrains the root against later reuse.
     fn constructor_move(&mut self, value: &Spanned<Expr>, expected: &ResolvedType) -> Result<bool, Unavailable> {
         if !self
             .checker
             .type_info
             .expr_type(value.span)
-            .is_some_and(|actual| self.checker.type_info.same_checked_value_type(actual, expected))
+            .is_some_and(|actual| self.same_source_value_type(actual, expected))
             || self.checker.type_holds_borrow(expected)
             || self.checker.type_holds_native_loan(expected)
         {
@@ -451,8 +527,10 @@ impl Builder<'_> {
             && !self.declared_constrained_inputs.contains(&path.place.root)
             && matches!(expected,
                 ResolvedType::Named(owner) | ResolvedType::Generic(owner, _)
-                    if matches!(self.checker.lookup_type_info(owner), Some(TypeInfo::Enum(_))));
-        let whole_immutable_local = identity.kind == SemanticSourceTargetKind::Local
+                    if matches!(self.checker.lookup_type_info(owner), Some(TypeInfo::Enum(_)))
+                        || self.source_nominal_identity(owner)
+                            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Enum));
+        let whole_local = identity.kind == SemanticSourceTargetKind::Local
             && !self.aliases.contains_key(identity)
             && !self.graph.local_loans.contains_key(identity)
             && !self.graph.dependent_locals.contains_key(identity)
@@ -462,16 +540,8 @@ impl Builder<'_> {
                 .graph
                 .permissions
                 .get(&path.place.root)
-                .is_some_and(|permission| !permission.exclusive && !permission.writable && permission.transferable);
-        let whole_local_list = identity.kind == SemanticSourceTargetKind::Local
-            && !self.independent_locals.contains(identity)
-            && !self.graph.local_loans.contains_key(identity)
-            && !self.graph.dependent_locals.contains_key(identity)
-            && !self.graph.owned_locals.contains_key(identity)
-            && matches!(expected,
-                ResolvedType::Generic(name, arguments)
-                    if collections::from_str(name) == Some(CollectionTypeId::List) && arguments.len() == 1);
-        Ok(transferable && (plain_enum_parameter || whole_immutable_local || whole_local_list))
+                .is_some_and(|permission| permission.transferable);
+        Ok(transferable && (plain_enum_parameter || whole_local))
     }
 
     /// Whether one constructor field reads a scalar element from an authenticated independent local snapshot.
@@ -480,6 +550,41 @@ impl Builder<'_> {
             return Ok(false);
         }
         Ok(matches!(value.node, Expr::Index(..)))
+    }
+
+    /// Whether one aggregate element consumes an exact field-only stored projection. This preserves the existing
+    /// list-element transfer semantics: it is a Move, not an inferred Clone-like read.
+    fn aggregate_move(&mut self, value: &Spanned<Expr>, expected: &ResolvedType) -> Result<bool, Unavailable> {
+        if !self
+            .checker
+            .type_info
+            .expr_type(value.span)
+            .is_some_and(|actual| self.same_source_value_type(actual, expected))
+            || self.checker.type_holds_borrow(expected)
+            || self.checker.type_holds_native_loan(expected)
+        {
+            return Ok(false);
+        }
+        let Some(path) = self.optional_place(value)? else {
+            return Ok(false);
+        };
+        Ok(path.through.is_none()
+            && !self.borrowed_inputs.contains(&path.place.root)
+            && matches!(&path.place.root,
+                Root::Binding(identity)
+                    if matches!(identity.kind,
+                        SemanticSourceTargetKind::Local | SemanticSourceTargetKind::Parameter))
+            && !path.place.projection.is_empty()
+            && path
+                .place
+                .projection
+                .iter()
+                .all(|projection| matches!(projection, super::Projection::Field(_)))
+            && self
+                .graph
+                .permissions
+                .get(&path.place.root)
+                .is_some_and(|permission| permission.transferable))
     }
 
     /// Whether one exact selected call, optionally unwrapped by `?`, has a dependency-free result equal to the
@@ -494,7 +599,7 @@ impl Builder<'_> {
             .checker
             .type_info
             .expr_type(value.span)
-            .is_some_and(|actual| self.checker.type_info.same_checked_value_type(actual, expected))
+            .is_some_and(|actual| self.same_source_value_type(actual, expected))
             || self.checker.type_holds_borrow(expected)
             || self.checker.type_holds_native_loan(expected)
         {
@@ -524,13 +629,13 @@ impl Builder<'_> {
                         if collections::from_str(name) == Some(CollectionTypeId::Result)
                             && arguments
                                 .first()
-                                .is_some_and(|actual| self.checker.type_info.same_checked_value_type(actual, expected))
+                                .is_some_and(|actual| self.same_source_value_type(actual, expected))
                             && arguments.len() == 2)
             } else {
                 self.checker
                     .type_info
                     .expr_type(call_expression.span)
-                    .is_some_and(|actual| self.checker.type_info.same_checked_value_type(actual, expected))
+                    .is_some_and(|actual| self.same_source_value_type(actual, expected))
             }
             && self
                 .checker
@@ -559,7 +664,7 @@ impl Builder<'_> {
             Some(ResolvedType::Named(owner) | ResolvedType::Generic(owner, _))
                 if matches!(self.checker.lookup_type_info(owner), Some(TypeInfo::Enum(_)))
                     || self.checker.type_info.declarations.enum_derives.contains_key(owner)
-                    || self.checker.type_info.declarations.named_type_identities.get(owner)
+                    || self.source_nominal_identity(owner)
                         .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Enum));
         if path.through.is_some()
             || subject.kind != SemanticSourceTargetKind::Local

@@ -1,5 +1,7 @@
 //! Authenticate the source body's ownership proof before any native projection consumes it.
 
+use std::collections::BTreeMap;
+
 use incan_lang::lang::types::ownership::OwnershipMode;
 use incan_semantics_core::{CanonicalSymbolId, IncanInputAccess, SemanticSourceTargetKind, SymbolOrigin};
 
@@ -106,21 +108,60 @@ impl CheckedInputBody<'_> {
     }
 }
 
+/// Resolve one spelling against the exact nominal scope selected by the caller's checking phase.
+pub(in crate::typechecker) fn checked_nominal_identity_in<'a>(
+    identities: &'a BTreeMap<String, CanonicalSymbolId>,
+    name: &str,
+) -> Option<&'a CanonicalSymbolId> {
+    if let Some(exact) = identities.get(name) {
+        return Some(exact);
+    }
+    let mut matches = identities.values().filter(|identity| identity.declaration_name == name);
+    let first = matches.next()?;
+    matches.all(|identity| identity == first).then_some(first)
+}
+
+/// Compare two checked value types through one explicit retained nominal scope.
+pub(in crate::typechecker) fn same_checked_value_type_in(
+    identities: &BTreeMap<String, CanonicalSymbolId>,
+    actual: &crate::symbols::ResolvedType,
+    expected: &crate::symbols::ResolvedType,
+) -> bool {
+    use crate::symbols::ResolvedType;
+
+    if actual == expected {
+        return true;
+    }
+    let same_nominal = |actual: &str, expected: &str| {
+        actual == expected
+            || matches!(
+                (
+                    checked_nominal_identity_in(identities, actual),
+                    checked_nominal_identity_in(identities, expected),
+                ),
+                (Some(actual), Some(expected)) if actual == expected
+            )
+    };
+    match (actual, expected) {
+        (ResolvedType::Named(actual), ResolvedType::Named(expected)) => same_nominal(actual, expected),
+        (ResolvedType::Generic(actual, actual_args), ResolvedType::Generic(expected, expected_args)) => {
+            same_nominal(actual, expected)
+                && actual_args.len() == expected_args.len()
+                && actual_args
+                    .iter()
+                    .zip(expected_args)
+                    .all(|(actual, expected)| same_checked_value_type_in(identities, actual, expected))
+        }
+        _ => false,
+    }
+}
+
 impl TypeCheckInfo {
     /// Resolve one checked nominal spelling to its retained declaration identity. An exact key is authoritative;
     /// a leaf-name fallback exists only when every retained match is the same canonical declaration. Distinct
     /// same-leaf declarations therefore refuse instead of depending on map iteration order.
     pub(in crate::typechecker) fn checked_nominal_identity(&self, name: &str) -> Option<&CanonicalSymbolId> {
-        if let Some(exact) = self.declarations.named_type_identities.get(name) {
-            return Some(exact);
-        }
-        let mut matches = self
-            .declarations
-            .named_type_identities
-            .values()
-            .filter(|identity| identity.declaration_name == name);
-        let first = matches.next()?;
-        matches.all(|identity| identity == first).then_some(first)
+        checked_nominal_identity_in(&self.declarations.named_type_identities, name)
     }
 
     /// Compare checked value types through exact structure and the fail-closed retained nominal resolver. Generic
@@ -130,30 +171,7 @@ impl TypeCheckInfo {
         actual: &crate::symbols::ResolvedType,
         expected: &crate::symbols::ResolvedType,
     ) -> bool {
-        use crate::symbols::ResolvedType;
-
-        if actual == expected {
-            return true;
-        }
-        let same_nominal = |actual: &str, expected: &str| {
-            actual == expected
-                || matches!(
-                    (self.checked_nominal_identity(actual), self.checked_nominal_identity(expected)),
-                    (Some(actual), Some(expected)) if actual == expected
-                )
-        };
-        match (actual, expected) {
-            (ResolvedType::Named(actual), ResolvedType::Named(expected)) => same_nominal(actual, expected),
-            (ResolvedType::Generic(actual, actual_args), ResolvedType::Generic(expected, expected_args)) => {
-                same_nominal(actual, expected)
-                    && actual_args.len() == expected_args.len()
-                    && actual_args
-                        .iter()
-                        .zip(expected_args)
-                        .all(|(actual, expected)| self.same_checked_value_type(actual, expected))
-            }
-            _ => false,
-        }
+        same_checked_value_type_in(&self.declarations.named_type_identities, actual, expected)
     }
 
     /// Authenticate an ordinary header affirmatively, not by absence of explicit metadata. Exact canonical

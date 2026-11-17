@@ -190,9 +190,9 @@ fn explicit_input_list_slice_requires_builtin_borrow_free_facts() -> Result<(), 
 /// parameter must remain refused; the list literal cannot hide a clone or partial ownership change.
 #[test]
 fn explicit_input_list_elements_require_transferable_field_roots() -> Result<(), Box<dyn std::error::Error>> {
-    let accepted = checked(
-        "model Record:\n    value: str\ndef collect(record: Owned[Record]) -> list[str]:\n    return [record.value]\n",
-    )?;
+    let accepted_source =
+        "model Record:\n    value: str\ndef collect(record: Owned[Record]) -> list[str]:\n    return [record.value]\n";
+    let accepted = checked(accepted_source)?;
     assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
     assert!(
         accepted
@@ -202,6 +202,20 @@ fn explicit_input_list_elements_require_transferable_field_roots() -> Result<(),
             .iter()
             .any(|(owner, flow)| { owner.declaration_name == "collect" && matches!(flow, InputFlow::Checked { .. }) })
     );
+    let accepted_graph = accepted
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find(|(owner, _)| owner.declaration_name == "collect")
+        .and_then(|(_, flow)| match flow {
+            InputFlow::Checked { graph, .. } => Some(graph),
+            _ => None,
+        })
+        .ok_or("missing checked collect graph")?;
+    assert!(accepted_graph.value_uses.iter().any(|(span, value_use)| {
+        value_use.kind == flow::ValueUseKind::Move && accepted_source.get(span.start..span.end) == Some("record.value")
+    }));
 
     let refused = [
         (

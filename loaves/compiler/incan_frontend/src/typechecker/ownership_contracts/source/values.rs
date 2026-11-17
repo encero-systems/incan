@@ -313,105 +313,30 @@ impl Builder<'_> {
                         | ResolvedType::Unit
                 )
             );
-            let fresh_selected_model =
-                element_type.is_some_and(|element| self.fresh_closed_selected_model_result(value, element));
-            if !copy_scalar
-                && !self.fresh_or_copy_field(value)
-                && !fresh_selected_model
-                && !self.allow_fresh_aggregate_elements
-            {
-                let path = self.optional_place(value)?.filter(|path| {
-                    path.through.is_none()
-                        && !self.borrowed_inputs.contains(&path.place.root)
-                        && matches!(&path.place.root,
-                            super::Root::Binding(identity)
-                                if matches!(identity.kind,
-                                    SemanticSourceTargetKind::Local | SemanticSourceTargetKind::Parameter))
-                        && !path.place.projection.is_empty()
-                        && path
-                            .place
-                            .projection
-                            .iter()
-                            .all(|projection| matches!(projection, super::Projection::Field(_)))
-                        && self
-                            .graph
-                            .permissions
-                            .get(&path.place.root)
-                            .is_some_and(|permission| permission.transferable)
-                        && self.checker.type_info.expr_type(value.span).is_some_and(|ty| {
-                            !self.checker.type_holds_borrow(ty) && !self.checker.type_holds_native_loan(ty)
-                        })
-                });
-                let Some(path) = path else {
-                    return Err(Unavailable {
-                        span: value.span,
-                        reason: "list element needs checked retained-owner projection".into(),
-                    });
-                };
-                self.constrained.insert(path.place.root);
-                incoming = self.expression(value, incoming, true)?;
+            let fresh_or_copy_field = self.fresh_or_copy_field(value);
+            let classified = if !copy_scalar && !fresh_or_copy_field && !self.allow_fresh_aggregate_elements {
+                element_type
+                    .map(|element| {
+                        self.classify_value_use(value, super::value_uses::ValueUseContext::AggregateElement(element))
+                    })
+                    .transpose()?
+                    .flatten()
+            } else {
+                None
+            };
+            if let Some(plan) = classified {
+                incoming = self.apply_value_use(value, plan, incoming)?;
                 continue;
             }
-            if fresh_selected_model {
-                self.fresh_list_calls.insert(value.span);
+            if !copy_scalar && !fresh_or_copy_field && !self.allow_fresh_aggregate_elements {
+                return Err(Unavailable {
+                    span: value.span,
+                    reason: "list element needs checked retained-owner projection".into(),
+                });
             }
-            let evaluated = self.expression(value, incoming, false);
-            if fresh_selected_model {
-                self.fresh_list_calls.remove(&value.span);
-            }
-            incoming = evaluated?;
+            incoming = self.expression(value, incoming, false)?;
         }
         Ok(incoming)
-    }
-
-    /// Whether one selected call returns an exact dependency-free model value for a builtin list element.
-    fn fresh_closed_selected_model_result(&self, value: &Spanned<Expr>, element: &ResolvedType) -> bool {
-        if !matches!(value.node, Expr::Call(..) | Expr::MethodCall(..))
-            || self.checker.type_holds_borrow(element)
-            || self.checker.type_holds_native_loan(element)
-        {
-            return false;
-        }
-        let Some(actual) = self.checker.type_info.expr_type(value.span) else {
-            return false;
-        };
-        let same_type = self.checker.type_info.same_checked_value_type(actual, element);
-        let model = match element {
-            ResolvedType::Named(owner) | ResolvedType::Generic(owner, _) => {
-                matches!(self.checker.lookup_type_info(owner), Some(TypeInfo::Model(_)))
-                    || self.checker.type_info.declarations.model_derives.contains_key(owner)
-                    || self
-                        .checker
-                        .type_info
-                        .checked_nominal_identity(owner)
-                        .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Model)
-            }
-            _ => false,
-        };
-        let Some(call) = self.checker.type_info.protocols.explicit_input_calls.get(&value.span) else {
-            return false;
-        };
-        if !same_type
-            || !model
-            || !matches!(
-                call.kind,
-                super::super::InputCallKind::Ordinary | super::super::InputCallKind::Explicit
-            )
-            || call.owner.as_ref() != Some(&self.owner)
-        {
-            return false;
-        }
-        let Ok(contract) = self.checker.type_info.selected_input_contract(call) else {
-            return false;
-        };
-        crate::ownership_metadata::returned_view(contract).is_ok_and(|view| view.is_none())
-            && crate::ownership_metadata::owned_result(contract).is_ok_and(|owned| owned.is_none())
-            && self
-                .checker
-                .native_result_dependencies(value.span)
-                .is_ok_and(|value| value.is_none())
-            && !self.checker.native_result_is_independent(value.span)
-            && !self.checked_clone_call(value.span)
     }
 
     /// Evaluate a checked builtin-list concat operand without transferring any element root. A literal contributes

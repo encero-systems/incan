@@ -377,6 +377,10 @@ impl CheckedInputBody<'_> {
         execution: &[usize],
         seen: &mut SourceCoverage,
     ) -> Result<(), &'static str> {
+        if let Some(receiver) = super::super::builtins::builtin_str_encode_receiver(self.facts, expression) {
+            self.visit_operation_expression(receiver, parameters, execution, seen)?;
+            return self.require_operation(expression.span, &[receiver], parameters, execution, seen);
+        }
         self.visit_operation_expression(receiver, parameters, execution, seen)?;
         let retained = super::super::builtins::retained_iterator_method(self.facts, expression.span).is_some();
         let place_method = super::super::builtins::builtin_place_method_writes(self.facts, expression.span).is_some();

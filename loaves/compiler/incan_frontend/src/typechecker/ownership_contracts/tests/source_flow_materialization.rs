@@ -56,9 +56,8 @@ fn ordinary_argument_accepts_only_fresh_closed_selected_call_results() -> Result
 /// its root and still needs retained-owner projection instead of acquiring transfer authority from the list literal.
 #[test]
 fn list_element_accepts_only_fresh_closed_selected_model_results() -> Result<(), Box<dyn std::error::Error>> {
-    let accepted = checked(
-        "model Field:\n    value: bytes\ndef make(seed: int) -> Field:\n    return Field(value=b\"row\")\ndef collect(seed: Borrowed[int]) -> list[Field]:\n    return [make(seed)]\n",
-    )?;
+    let accepted_source = "model Field:\n    value: bytes\ndef make(seed: int) -> Field:\n    return Field(value=b\"row\")\ndef collect(seed: Borrowed[int]) -> list[Field]:\n    return [make(seed)]\n";
+    let accepted = checked(accepted_source)?;
     assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
     assert!(
         accepted
@@ -68,6 +67,22 @@ fn list_element_accepts_only_fresh_closed_selected_model_results() -> Result<(),
             .iter()
             .any(|(owner, flow)| { owner.declaration_name == "collect" && matches!(flow, InputFlow::Checked { .. }) })
     );
+    let accepted_graph = accepted
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find(|(owner, _)| owner.declaration_name == "collect")
+        .and_then(|(_, flow)| match flow {
+            InputFlow::Checked { graph, .. } => Some(graph),
+            _ => None,
+        })
+        .ok_or("missing checked collect graph")?;
+    assert!(accepted_graph.value_uses.iter().any(|(span, value_use)| {
+        value_use.kind == flow::ValueUseKind::CallResult
+            && accepted_source.get(span.start..span.end) == Some("make(seed)")
+            && value_use.accesses.is_empty()
+    }));
 
     for (label, refused_source, reason, stop) in [
         (

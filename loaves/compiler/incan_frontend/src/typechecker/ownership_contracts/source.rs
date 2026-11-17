@@ -2,6 +2,7 @@
 //! profile; an empty graph is never substituted for missing call, capture, suspension or returned-dependency facts.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use super::TypeChecker;
 use super::flow::{
@@ -123,6 +124,8 @@ pub(super) enum ViewSource {
 /// Invocation-local projection state, borrowing immutable checked identities and types rather than resolving names.
 struct Builder<'a> {
     checker: &'a TypeChecker,
+    /// Full source-time nominal scope retained for exact comparison while the current checked body is active.
+    nominal_scope: Arc<BTreeMap<String, CanonicalSymbolId>>,
     owner: CanonicalSymbolId,
     /// Whether an ordinary iteration-only profile may evaluate fresh aggregate list elements. Explicit ownership
     /// profiles keep their established refusal until retained aggregate storage has a complete transfer proof.
@@ -143,8 +146,6 @@ struct Builder<'a> {
     awaited: BTreeSet<Span>,
     /// Direct calls currently evaluated as the carrier of `?`; only their exact closed carrier may use that route.
     try_calls: BTreeSet<Span>,
-    /// Selected closed model calls currently authenticated as one exact fresh list element.
-    fresh_list_calls: BTreeSet<Span>,
     /// Canonical locals introduced by the active loop headers; every poll produces fresh owned storage.
     fresh_loop_locals: BTreeSet<CanonicalSymbolId>,
     /// Unannotated locals whose initializer was classified as an independent materialization.
@@ -265,6 +266,7 @@ fn build_graph(
     }
     let mut builder = Builder {
         checker,
+        nominal_scope: checker.checked_nominal_type_identities(),
         owner: identity.clone(),
         allow_fresh_aggregate_elements,
         locals: checker
@@ -322,7 +324,6 @@ fn build_graph(
         closures: BTreeMap::new(),
         awaited: BTreeSet::new(),
         try_calls: BTreeSet::new(),
-        fresh_list_calls: BTreeSet::new(),
         fresh_loop_locals: BTreeSet::new(),
         independent_locals: BTreeSet::new(),
         independent_call_results: BTreeSet::new(),
@@ -570,6 +571,13 @@ impl Builder<'_> {
                         return self.enum_view_construction(arguments, &view_fields, expression.span, incoming);
                     }
                     return self.variant_construction(arguments, expression.span, incoming);
+                }
+                if let Some(receiver) =
+                    super::builtins::builtin_str_encode_receiver(&self.checker.type_info, expression)
+                {
+                    let incoming = self.expression(receiver, incoming, false)?;
+                    let (incoming, dependency) = self.retain_operation_operand(receiver, incoming)?;
+                    return self.finish_operation(expression.span, dependency.into_iter().collect(), incoming);
                 }
                 match super::builtins::builtin_place_method_writes(&self.checker.type_info, expression.span) {
                     Some(writes) => self.builtin_place_method(receiver, writes, arguments, expression.span, incoming),

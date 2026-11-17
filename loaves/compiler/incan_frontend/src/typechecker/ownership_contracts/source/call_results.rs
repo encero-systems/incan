@@ -1,7 +1,31 @@
 //! Closed result shapes that source-call projection can classify without retained dependencies.
 
+use crate::ast::{Expr, Spanned};
 use crate::symbols::ResolvedType;
+use crate::typechecker::TypeCheckInfo;
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
+use incan_semantics_core::SemanticSourceTargetKind;
+
+/// Select the only source-less field projection this profile can authenticate: one canonical stored field directly
+/// on a direct call result. Classification proves the call's independence separately; source evaluation and replay
+/// share this exact shape so neither can reinterpret a nested, indexed, method, `?` or computed expression.
+pub(in crate::typechecker::ownership_contracts) fn direct_call_field_projection<'a>(
+    facts: &TypeCheckInfo,
+    expression: &'a Spanned<Expr>,
+) -> Option<&'a Spanned<Expr>> {
+    let Expr::Field(base, _) = &expression.node else {
+        return None;
+    };
+    if !matches!(base.node, Expr::Call(..))
+        || facts.computed_property_access(expression.span).is_some()
+        || !facts
+            .resolved_identity(expression.span)
+            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Field)
+    {
+        return None;
+    }
+    Some(base)
+}
 
 /// This initial call profile admits only closed scalar/owned byte-string results and builtin `Result`/`Option`
 /// carriers of them, with no possible retained source dependency. Other aggregates, references, native and generic
