@@ -440,6 +440,7 @@ pub class TypedCellSource with Source[CrumbError]:
     column_views: list[MappedView] = []
     column_origins: list[int] = []
     column_present: list[bool] = []
+    outer_some: bool = false
     fields: list[StoredField] = []
     variant: int = -1
     model_begun: bool = false
@@ -548,6 +549,8 @@ pub class TypedCellSource with Source[CrumbError]:
 
     def none(mut self) -> Result[None, CrumbError]:
         """Read one absent optional layer and reject a present tag."""
+        if self.outer_some:
+            return Err(CrumbError.invalid_input("present optional field cannot reconstruct None"))
         mut cursor = self.option_cursor()?
         if cursor.byte(self.budget).map_err(as_crumb)? != 0 or cursor.remaining() != 0:
             return Err(CrumbError.invalid_input("typed None cell"))
@@ -555,6 +558,14 @@ pub class TypedCellSource with Source[CrumbError]:
 
     def some[V with Reconstruct](mut self) -> Result[Option[V], CrumbError]:
         """Read one optional layer and reconstruct its present child directly."""
+        if self.outer_some:
+            match self.node:
+                TypeNode.Container(ContainerKind.Option, arguments) =>
+                    if len(arguments) == 1:
+                        mut child = TypedCellSource.create(arguments[0], self.view, self.origin, self.dictionary, self.budget)
+                        return Ok(Some(child.read_child[V]()?))
+                _ => pass
+            return Err(CrumbError.invalid_input("present optional field shape"))
         mut cursor = self.option_cursor()?
         tag = cursor.byte(self.budget).map_err(as_crumb)?
         if tag == 0:
@@ -696,21 +707,14 @@ pub class TypedCellSource with Source[CrumbError]:
             self.field_seen[selected_field] = true
             if not self.column_present[selected_field]:
                 return Ok(None)
-            mut column_node = field.shape.storage_type
-            if field.shape.absent == AbsentPolicy.NoneValue:
-                match column_node:
-                    TypeNode.Container(ContainerKind.Option, arguments) =>
-                        if len(arguments) != 1:
-                            return Err(CrumbError.invalid_input("typed optional field shape"))
-                        column_node = arguments[0]
-                    _ => return Err(CrumbError.invalid_input("typed optional field shape"))
             mut column_child = TypedCellSource.create(
-                column_node,
+                field.shape.storage_type,
                 self.column_views[selected_field],
                 self.column_origins[selected_field],
                 self.dictionary,
                 self.budget,
             )
+            column_child.outer_some = field.shape.absent == AbsentPolicy.NoneValue
             return Ok(Some(column_child.read_child[V]()?))
         index = match self.record:
             None => return Err(CrumbError.invalid_input("typed root model not begun"))
@@ -728,15 +732,8 @@ pub class TypedCellSource with Source[CrumbError]:
             self.budget,
         ).map_err(as_crumb)?
         raw, origin = selected(index.cells, position, self.budget).map_err(as_crumb)?
-        mut node = field.shape.storage_type
-        if field.shape.absent == AbsentPolicy.NoneValue:
-            match node:
-                TypeNode.Container(ContainerKind.Option, arguments) =>
-                    if len(arguments) != 1:
-                        return Err(CrumbError.invalid_input("typed optional field shape"))
-                    node = arguments[0]
-                _ => return Err(CrumbError.invalid_input("typed optional field shape"))
-        mut child = TypedCellSource.create(node, raw, origin, self.dictionary, self.budget)
+        mut child = TypedCellSource.create(field.shape.storage_type, raw, origin, self.dictionary, self.budget)
+        child.outer_some = field.shape.absent == AbsentPolicy.NoneValue
         return Ok(Some(child.read_child[V]()?))
 
     def end_model(mut self) -> Result[None, CrumbError]:
@@ -798,7 +795,13 @@ pub class TypedCellSource with Source[CrumbError]:
         return CrumbError.invalid_input("missing typed field " + str(info.name))
 
     def takes_default(self, info: FieldInfo) -> bool:
-        """Cell sources never invent a missing field default."""
+        """Permit only a declared empty collection whose stored description admits that absence."""
+        if not info.default_is_empty:
+            return false
+        identity = copy_frozen_bytes(info.identity)
+        for field in self.fields:
+            if field.shape.identity == identity:
+                return field.shape.absent == AbsentPolicy.Empty
         return false
 
     def invalid(mut self, error: ValidationError) -> CrumbError:

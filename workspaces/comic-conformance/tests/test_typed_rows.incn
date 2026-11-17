@@ -199,7 +199,7 @@ def test_nested_typed_model_uses_its_dictionary_and_reconstructs() -> Result[Non
     child = Metadata.Map([
         MetadataEntry(key="id", value=Metadata.Binary(copy_frozen_bytes(info.identity))),
         MetadataEntry(key="name", value=Metadata.Text("child")),
-        MetadataEntry(key="type", value=Metadata.Text("record@7265636f726400")),
+        MetadataEntry(key="type", value=Metadata.Text("record@7265636f7264")),
         MetadataEntry(key="canonical", value=Metadata.Boolean(true)),
         MetadataEntry(key="absent", value=Metadata.Text("required")),
         MetadataEntry(key="properties", value=Metadata.Map([])),
@@ -226,4 +226,64 @@ def test_nested_typed_model_uses_its_dictionary_and_reconstructs() -> Result[Non
     rows = TypedRowReader.create(backing(encoded)?, descriptions, registry, false, budget).map_err((error) => error.message())?
     mut source = rows.source(0, NestedAmount.__shape__()).map_err((error) => error.message())?
     assert NestedAmount.__reconstruct__(source).map_err((error) => error.message())? == input
+    return Ok(None)
+
+
+@derive(Eq)
+model OptionalAmount with Reconstruct:
+    """One optional layer, exposing its typed Some/None independently of field presence."""
+    value: Option[TypedI8]
+
+    @staticmethod
+    def __shape__() -> ShapeInfo:
+        return ShapeInfo(name="OptionalAmount", identity=b"", renamed_from=NO_RENAMES,
+            renamed_from_lifecycle=None, spelling="option<i8>", fields=NO_FIELDS, variants=NO_VARIANTS)
+
+    def __walk__[E, W with Walker[E]](self, mut walker: W) -> Result[None, E]:
+        match self.value:
+            Some(value) => return walker.some(value)
+            None => return walker.none()
+
+    @staticmethod
+    def __reconstruct__[E, S with Source[E]](mut source: S) -> Result[Self, E]:
+        return Ok(OptionalAmount(value=source.some[TypedI8]()?))
+
+
+def test_present_optional_field_restores_its_outer_layer_from_the_bitmap() -> Result[None, str]:
+    """A present field stores only the unwrapped integer while its caller requests the entire optional type."""
+    info = AmountLayout.__fields__()[0]
+    member = Metadata.Map([
+        MetadataEntry(key="id", value=Metadata.Binary(copy_frozen_bytes(info.identity))),
+        MetadataEntry(key="name", value=Metadata.Text("amount")),
+        MetadataEntry(key="type", value=Metadata.Text("option<i8>")),
+        MetadataEntry(key="canonical", value=Metadata.Boolean(true)),
+        MetadataEntry(key="absent", value=Metadata.Text("none")),
+        MetadataEntry(key="properties", value=Metadata.Map([])),
+    ])
+    layout = Description(mode=DescriptionMode.Inline, metadata=Metadata.Map([
+        MetadataEntry(key="kind", value=Metadata.Text("Record")),
+        MetadataEntry(key="nominal", value=Metadata.Binary(b"record\x00")),
+        MetadataEntry(key="path", value=Metadata.Text("fixture.OptionalAmount")),
+        MetadataEntry(key="fields", value=Metadata.List([member])),
+        MetadataEntry(key="properties", value=Metadata.Map([])),
+    ]))
+    supplied = [layout]
+    mut budget = Budget.create(bytes=1048576, elements=1048576, depth=64).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    present = ValueField(identity=copy_frozen_bytes(info.identity), canonical=true, absent=AbsentPolicy.NoneValue,
+        value=Value.Some([Value.Integer(IntegerValue.Signed(23i128))]))
+    absent = ValueField(identity=copy_frozen_bytes(info.identity), canonical=true, absent=AbsentPolicy.NoneValue,
+        value=Value.NoneValue)
+    records = [RowRecord(key=b"record\x00", value=Value.Record([present])), RowRecord(key=b"record\x00", value=Value.Record([absent]))]
+    encoded = write_rows(supplied, records, registry, false, budget).map_err((e) => e.message())?
+    rows = TypedRowReader.create(backing(encoded)?, supplied, registry, false, budget).map_err((e) => e.message())?
+    shape = TypedAmount.__shape__()
+    mut first = rows.source(0, shape).map_err((e) => e.message())?
+    first.begin_model(shape).map_err((e) => e.message())?
+    assert first.field[OptionalAmount](info).map_err((e) => e.message())? == Some(OptionalAmount(value=Some(TypedI8(value=23i128))))
+    first.end_model().map_err((e) => e.message())?
+    mut second = rows.source(1, shape).map_err((e) => e.message())?
+    second.begin_model(shape).map_err((e) => e.message())?
+    assert second.field[OptionalAmount](info).map_err((e) => e.message())?.is_none()
+    second.end_model().map_err((e) => e.message())?
     return Ok(None)
