@@ -38,18 +38,21 @@ pub model ReaderFrontier:
 
     pub def enqueue(mut self, graph: Snapshot, producer: str, outputs: list[RecordKey]) -> Result[None, str]:
         """An equal producer supplies no outputs and therefore opens no incoming-edge index."""
-        if len(outputs) == 0:
-            return Ok(None)
-        for key in readers_of(graph, outputs, CHECKER_PROFILE)?:
+        for output in outputs:
+            self.enqueue_output(graph, producer, output)?
+        return Ok(None)
+
+    def enqueue_output(mut self, graph: Snapshot, producer: str, output: RecordKey) -> Result[None, str]:
+        """Record only the exact incoming edge that authorized each direct reader."""
+        for key in readers_of(graph, [output], CHECKER_PROFILE)?:
             if key.family != "local" or key.identity == producer:
                 continue
             if key.identity in self.evaluated:
                 return Err("ranked reader requires joint evaluation after a previously settled dependency")
             if key.identity in self.pending:
                 mut known = self.pending[key.identity]
-                for trigger in outputs:
-                    if trigger not in known.triggers:
-                        known.triggers.append(trigger)
+                if output not in known.triggers:
+                    known.triggers.append(output)
                 self.pending[key.identity] = known
                 continue
             admission = reusable_evaluation(graph, key, CHECKER_PROFILE)?
@@ -74,7 +77,7 @@ pub model ReaderFrontier:
                             if len(records) != 1 or records[0].local != selected.value:
                                 return Err("ranked reader lacks a complete authenticated checking pair")
                             self.pending[key.identity] = Reader(prior=records[0], module=order.members[0], rank=order.rank,
-                                dependencies=dependencies, target=key, triggers=outputs)
+                                dependencies=dependencies, target=key, triggers=[output])
                         None => return Err("ranked reader is missing its namespace certificate")
                 None => return Err("ranked reader is missing its prior checked value")
         return Ok(None)
