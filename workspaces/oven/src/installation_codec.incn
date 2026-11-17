@@ -11,7 +11,7 @@ from frozen_inputs import Document
 from page_values import read_value, write_value
 from payload_types import InstalledPayload, PayloadAdmission
 
-pub const PROFILE: str = "incan.installation-page/22"
+pub const PROFILE: str = "incan.installation-page/23"
 
 
 pub model StandardManifest:
@@ -61,7 +61,8 @@ pub def encode(page: Installation) -> Result[bytes, str]:
 pub def decode(view: MappedView) -> Result[Installation, str]:
     """Refuse unknown versions, truncated or duplicate rows, malformed identities and trailing bytes."""
     mut reader = Reader(view=view)
-    if reader.text()? != PROFILE:
+    profile = reader.text()?
+    if profile != PROFILE and profile != "incan.installation-page/22":
         return Err("unsupported installation page version")
     toolchain = read_toolchain(reader)?
     mut manifests: list[StandardManifest] = []
@@ -89,7 +90,7 @@ pub def decode(view: MappedView) -> Result[Installation, str]:
     mut payloads: list[InstalledPayload] = []
     mut payload_paths: set[str] = set()
     for _index in range(reader.count(56)?):
-        payload = read_payload(reader)?
+        payload = read_payload(reader, profile)?
         if payload.path in payload_paths or len(payload.admission.payload) != 64:
             return Err("installation page has duplicate payload paths or invalid digests")
         payload_paths.add(payload.path)
@@ -110,22 +111,18 @@ pub def decode(view: MappedView) -> Result[Installation, str]:
     )
 
 
-def read_payload(mut reader: Reader) -> Result[InstalledPayload, str]:
+def read_payload(mut reader: Reader, profile: str) -> Result[InstalledPayload, str]:
     """Read the producer identity and exact admitted payload generation without reconstructing publication JSON."""
-    return Ok(
-        InstalledPayload(
-            path=reader.text()?,
-            record=reader.text()?,
-            record_stamp=reader.text()?,
-            admission=PayloadAdmission(
-                identity=reader.text()?,
-                payload=reader.text()?,
-                observation=reader.text()?,
-                provenance=reader.texts()?,
-                facts=reader.text()?,
-            ),
-        ),
+    path = reader.text()?
+    record = reader.text()?
+    stamp = reader.text()?
+    mut proof = PayloadAdmission(
+        identity=reader.text()?, payload=reader.text()?, observation=reader.text()?, provenance=reader.texts()?,
+        facts=reader.text()?,
     )
+    if profile == PROFILE:
+        proof.refusal = reader.text()?
+    return Ok(InstalledPayload(path=path, record=record, record_stamp=stamp, admission=proof))
 
 
 def write_payload(buffer: _BytesIO, payload: InstalledPayload) -> Result[None, str]:
@@ -141,7 +138,8 @@ def write_payload(buffer: _BytesIO, payload: InstalledPayload) -> Result[None, s
     ]:
         put_text(buffer, value)?
     put_texts(buffer, admission.provenance)?
-    return put_text(buffer, admission.facts)
+    put_text(buffer, admission.facts)?
+    return put_text(buffer, admission.refusal)
 
 
 def read_toolchain(mut reader: Reader) -> Result[InstalledCompiler, str]:

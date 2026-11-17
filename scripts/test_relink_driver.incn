@@ -7,6 +7,7 @@ from std.fs import Path
 from std.hash import file_digest, sha256
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
+from pub::internal_models.unit_admission import decode_unit_admission
 from native_build import NativeContext, build_support_tool, runtime_root, share_seed_generations
 from relink_driver import (
     install_driver,
@@ -218,11 +219,18 @@ def test_the_compiler_home_readmits_a_direct_registry_extern_by_its_link_spellin
     # 2. This is the production readmission boundary, not a command-recording stub.
     readmit(builder.0, compiler, [])?
     located = hexlify(sha256.digest(artifact.0.encode("utf-8")))
-    record = compiler.joinpath("cache/unit-admissions").joinpath(f"{located}.json")
-    document = JsonValue
-        .parse(record.read_text("utf-8", "strict").map_err((error) => error.message())?)
-        .map_err((error) => error.message())?
-    admitted = document.require("unit").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+    directory = compiler.joinpath("cache/unit-admissions")
+    current = directory.joinpath(f"{located}.crumb")
+    mut admitted = ""
+    if current.is_file():
+        raw = current.read_bytes().map_err((error) => error.message())?
+        proof = decode_unit_admission(raw, artifact.0)?
+        assert proof.refusal == ""
+        admitted = proof.identity
+    else:
+        legacy = directory.joinpath(f"{located}.json")
+        document = JsonValue.parse(legacy.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err((error) => error.message())?
+        admitted = document.require("unit").and_then((value) => value.expect_str()).map_err((error) => error.message())?
     assert admitted == identity, f"{artifact.0}: expected {identity}, admitted {admitted}"
     return Ok(None)
 

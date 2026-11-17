@@ -1,0 +1,59 @@
+"""The private, path-bound proof of an imported artifact's producer and verified bytes."""
+
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from crumb_rows import ModelField, model_description, required_value
+from graph_crumb_fields import decode_graph_row, encode_graph_row, items, text
+
+
+const ADMISSION: bytes = b"unitadm"
+
+
+pub model PayloadAdmission:
+    """Proof transferable across a rename while the filesystem observation still matches."""
+
+    pub identity: str
+    pub payload: str
+    pub observation: str
+    pub provenance: list[str]
+    pub facts: str = ""
+    pub refusal: str = ""
+
+
+def description() -> Description:
+    return model_description(ADMISSION, "incan.oven.unit-admission/2", [
+        ModelField(identity=b"facts_", name="facts", storage="string"),
+        ModelField(identity=b"locati", name="location", storage="string"),
+        ModelField(identity=b"observ", name="observation", storage="string"),
+        ModelField(identity=b"origin", name="source_provenance", storage="list<string>"),
+        ModelField(identity=b"payloa", name="payload", storage="string"),
+        ModelField(identity=b"refuse", name="refusal", storage="string"),
+        ModelField(identity=b"unit__", name="unit", storage="string"),
+    ])
+
+
+pub def encode_unit_admission(location: str, proof: PayloadAdmission) -> Result[bytes, str]:
+    """Bind the proof to the location at which its generation was observed."""
+    return encode_graph_row(ADMISSION, description(), [
+        required_value(b"facts_", Value.Text(proof.facts)),
+        required_value(b"locati", Value.Text(location)),
+        required_value(b"observ", Value.Text(proof.observation)),
+        required_value(b"origin", Value.List([Value.Text(origin) for origin in proof.provenance])),
+        required_value(b"payloa", Value.Text(proof.payload)),
+        required_value(b"refuse", Value.Text(proof.refusal)),
+        required_value(b"unit__", Value.Text(proof.identity)),
+    ])
+
+
+pub def decode_unit_admission(encoded: bytes, location: str) -> Result[PayloadAdmission, str]:
+    """Require the expected admission schema and exact artifact path before returning its proof."""
+    fields = decode_graph_row(encoded, ADMISSION, description(), 7)?
+    if text(fields[1].value)? != location:
+        return Err(f"{location}: unit admission belongs to a different artifact path")
+    mut origins: list[str] = []
+    for origin in items(fields[3].value)?:
+        origins.append(text(origin)?)
+    return Ok(PayloadAdmission(
+        identity=text(fields[6].value)?, payload=text(fields[4].value)?, observation=text(fields[2].value)?,
+        provenance=origins, facts=text(fields[0].value)?, refusal=text(fields[5].value)?,
+    ))
