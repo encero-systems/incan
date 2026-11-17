@@ -78,7 +78,7 @@ pub def read_evaluation(encoded: bytes) -> Result[Evaluation, str]:
 
 pub def evaluation_value_digest(encoded: bytes) -> Result[str, str]:
     """Project only the digest when page freshness needs no other evaluation field."""
-    return digest_text(decode_graph_field(encoded, EVALUATION, evaluation_description(), b"digest")?)
+    return digest_text(decode_graph_field(encoded, evaluation_description(), b"digest")?)
 
 
 def digest_text(value: Value) -> Result[str, str]:
@@ -169,4 +169,4 @@ pub def encode_pointer(output: str) -> Result[bytes, str]:
 
 pub def read_pointer(encoded: bytes) -> Result[str, str]:
     """Read the exact record addressed by one current slot."""
-    return text(decode_graph_field(encoded, POINTER, pointer_description(), b"output")?)
+    return text(decode_graph_field(encoded, pointer_description(), b"output")?)
