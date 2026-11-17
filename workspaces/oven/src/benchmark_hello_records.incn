@@ -13,7 +13,6 @@ from compiler_record_admission import compiler_record_profile
 from files import parse_json, read, read_json, write
 from json_fields import array_value, required_items, required_text, string_value
 from observation import file_digest
-from sealed_set import verify
 from toolchain import located
 
 
@@ -149,10 +148,12 @@ def compare(hello: Path, output: Path) -> Result[None, str]:
         census.problems.append("semantic root inventory is incomplete")
     mut selected_surfaces: set[str] = set()
     mut ranges: Dict[str, int] = {}
+    mut members: set[str] = set()
     match needed_ranges(roots, surfaces):
-        Ok((found, owners)) =>
+        Ok((found, owners, identities)) =>
             ranges = found
             selected_surfaces = owners
+            members = identities
         Err(reason) => census.problems.append("body range closure unresolved: " + reason)
     for owner in selected_surfaces:
         reached.add(owner)
@@ -161,8 +162,21 @@ def compare(hello: Path, output: Path) -> Result[None, str]:
         for key in selected.facets.get(prefix + "metadata/" + name_hash(name), []):
             expected[key] = selected.lengths[key]
         if name in selected_surfaces:
-            for key in selected.facets.get(prefix + "executable-descriptor/" + name_hash(name), []):
-                expected[key] = selected.lengths[key]
+            heads = selected.facets.get(prefix + "executable-range-set/" + name_hash(name), [])
+            if len(heads) == 1:
+                expected[heads[0]] = selected.lengths[heads[0]]
+                for member in members:
+                    pair = member.split("\t")
+                    if pair[0] == name:
+                        addressed = selected.facets.get(prefix + "executable-range/" + name_hash(pair[1]), [])
+                        if len(addressed) != 1:
+                            census.problems.append(f"missing or ambiguous executable member: {member}")
+                        for key in addressed:
+                            expected[key] = selected.lengths[key]
+            else:
+                census.problems.append("installed package lacks a unique authenticated range head: " + name)
+                for key in selected.facets.get(prefix + "executable-descriptor/" + name_hash(name), []):
+                    expected[key] = selected.lengths[key]
     for binding in sorted([item for item in runtime]):
         parts = binding.split("/")
         if len(parts) != 2:
@@ -205,21 +219,32 @@ def sealed_selection(toolchain: Path, manifest: JsonValue) -> Result[Selection, 
     """Verify the externally pinned sealed transport and independently index logical object byte lengths."""
     pin = manifest.require("compiler_records").map_err((error) => "installed compiler record pin missing: " + error.message())?
     directory = toolchain.joinpath(required_text(pin, "root")?)
-    verified = verify(directory, required_text(pin, "digest")?, compiler_record_profile()).map_err((error) => error.message())?
-    if verified.origin != "installed-toolchain" or verified.producer != file_digest(Path(located(toolchain, required_text(manifest, "driver")?)))?:
-        return Err("sealed set has an unrelated origin or compiler producer")
-    table = array_value(read_json(directory.joinpath("manifest.json"))?)?
+    path = directory.joinpath("manifest.json")
+    encoded = path.read_bytes().map_err((error) => error.message())?
+    if hexlify(sha256.digest(encoded)) != required_text(pin, "digest")?:
+        return Err("installed directory differs from the measured toolchain pin")
+    table = array_value(parse_json(str(RustString.from_utf8(encoded).map_err((error) => str(error))?))?)?
+    if len(table) != 10 or string_value(table[0])? != "incan.sealed-set/2":
+        return Err("unrecognized installed directory format")
+    expected = compiler_record_profile()
+    profile = [string_value(field)? for field in array_value(table[1])?]
+    if profile != [expected.identity, expected.schema, expected.codec] or string_value(table[2])? != "installed-toolchain" or string_value(table[3])? != file_digest(Path(located(toolchain, required_text(manifest, "driver")?)))?:
+        return Err("sealed set has an unrelated profile, origin or compiler producer")
     mut sizes: Dict[str, int] = {}
     for item in array_value(table[8])?:
         pair = array_value(item)?
-        sizes[string_value(pair[0])?] = pair[1].expect_int().map_err((error) => error.message())?
+        digest = string_value(pair[0])?
+        size = pair[1].expect_int().map_err((error) => error.message())?
+        if digest in sizes or len(digest) != 64 or size < 0:
+            return Err("duplicated or malformed object in the authenticated directory")
+        sizes[digest] = size
     mut selected = Selection()
     for item in array_value(table[5])?:
         entry = array_value(item)?
         key = string_value(entry[0])?
         value = string_value(entry[2])?
         parts = key.split("/")
-        if len(parts) != 6 or parts[0] != "loaf" or value not in sizes or value != string_value(entry[1])?:
+        if len(parts) != 6 or parts[0] != "loaf" or key in selected.lengths or value not in sizes or value != string_value(entry[1])?:
             return Err(f"unrecognized installed compiler record {key}")
         selected.lengths[key] = sizes[value]
         selector = "/".join(parts[:4]) + "/" + parts[5]
@@ -231,6 +256,7 @@ def observed(trace: Path, selected: Selection, surfaces: Dict[str, Surface], mut
     """Read physical events from the timed build only, including whole-surface authentication and repeat opens."""
     mut paths: Dict[str, str] = {}
     mut reads = 0
+    mut sealed: set[str] = set()
     for row in events(trace)?:
         phase = required_text(row, "phase")?
         if phase == "body_surface_open":
@@ -242,6 +268,13 @@ def observed(trace: Path, selected: Selection, surfaces: Dict[str, Surface], mut
             paths[path] = digest
             header = number(row, "header_bytes")?
             verified = number(row, "verified_bytes")?
+            match row.get("proof"):
+                Some(proof) =>
+                    if proof.as_str().unwrap_or("") == "sealed-range":
+                        sealed.add(path)
+                None => pass
+            if verified > 0 or header > 0:
+                census.problems.append(f"whole-sidecar verification read {verified} bytes and header read {header} bytes: {path}")
             census.rows.append(f"verification-scan\t1\t{verified}\t{path}")
             census.rows.append(f"surface-header\t1\t{header}\t{path}")
         elif phase in ["body_fragment_read", "record_read"]:
@@ -254,6 +287,9 @@ def observed(trace: Path, selected: Selection, surfaces: Dict[str, Surface], mut
                 path = required_text(row, "path")?
                 if path not in paths:
                     census.problems.append("unverified body range: " + path)
+                if path in sealed:
+                    if not row.require("range_authenticated").map_err((error) => error.message())?.expect_bool().map_err((error) => error.message())?:
+                        census.problems.append("selected fragment has no range authentication: " + path)
                 key = "body/" + range_key(paths.get(path, "unknown"), required_text(row, "identity")?, number(row, "offset")?, number(row, "absolute_offset")?)
             size = number(row, "bytes")?
             census.counts[key] = census.counts.get(key, 0) + 1
@@ -361,7 +397,7 @@ def events(trace: Path) -> Result[list[JsonValue], str]:
         for line in read(path)?.split("\n"):
             if "\"kind\":\"event\"" not in line:
                 continue
-            for phase in ["dependency_root", "dependency_roots_complete", "dependency_fact", "body_surface_open", "body_fragment_read", "record_read"]:
+            for phase in ["dependency_root", "dependency_roots_complete", "dependency_fact", "dependency_family", "body_surface_open", "body_fragment_read", "record_read"]:
                 if f"\"phase\":\"{phase}\"" in line:
                     result.append(parse_json(line)?.require("fields").map_err((error) => error.message())?)
                     break
