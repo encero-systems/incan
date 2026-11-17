@@ -184,7 +184,7 @@ def unit_function(name: str, span: SourceSpan, locals: int) -> Function:
     )
 
 
-def interface_plan(report: Path) -> Result[str, str]:
+def interface_plan(report: Path) -> Result[bytes, str]:
     """Read the encoded plan from the published native-interface record."""
     return Ok(decode_native_interface(read(report.joinpath(INTERFACE_REPORT))?)?.plan)
 

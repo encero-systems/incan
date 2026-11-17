@@ -1,7 +1,10 @@
 """Loss-check the complete native interface for ordinary programs through the existing function codec."""
 
-from rust::serde import Serialize, Deserialize
-from rust::serde_json import to_string, from_str, Error as JsonError
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from pub::internal_models.crumb_rows import ModelField, model_description, required_value
+from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, integer, items, number, text, tuple_items
+from pub::internal_models.plan_function_records import encode_entry_record
 from _plan import Plan, ExternalFunction, Function
 from _types import source_span
 from function_records import encode_product, decode_product, encode_runtime, decode_runtime, product_nominals
@@ -9,22 +12,11 @@ from layout_records import encode_models, decode_models, encode_enums, decode_en
 from nominal_identities import NominalKind, NominalReference, ProductNominal
 
 
-@derive(Serialize, Deserialize)
-model StoredReference:
-    """One keyed product ordinal's position and native name in this interface's own model or enum table."""
-
-    kind: NominalKind
-    index: int
-    name: str
-
-
-@derive(Serialize, Deserialize)
 model StoredPlan:
     """Every nonempty field admitted by the bounded ordinary-program profile."""
 
-    schema: int
     functions: list[str]
-    references: list[list[StoredReference]]
+    references: list[list[NominalReference]]
     runtime: list[str]
     programs: list[str]
     models: list[str]
@@ -35,21 +27,12 @@ model StoredPlan:
     column: int
 
 
-@derive(Serialize, Deserialize)
-model StoredEntry:
-    """The standalone program-entry contribution selected from an already checked main function."""
-
-    schema: str
-    entry: str
-    inputs: list[str]
+pub def encode_entry_binding(entry: str, inputs: list[str]) -> Result[bytes, str]:
+    """Bind the standalone entry under the same typed row the graph retains."""
+    return encode_entry_record(entry, inputs)
 
 
-pub def encode_entry_binding(entry: str, inputs: list[str]) -> Result[str, str]:
-    """Encode the entry selection independently of the function's instructions and physical source positions."""
-    return to_string(StoredEntry(schema="incan.plan-entry/1", entry=entry, inputs=inputs)).map_err((error) => str(error))
-
-
-pub def encode_record_plan(plan: &Plan) -> Result[str, str]:
+pub def encode_record_plan(plan: &Plan) -> Result[bytes, str]:
     """
     Encode one complete plan or explicitly refuse a field the codec cannot preserve.
 
@@ -69,7 +52,7 @@ pub def encode_record_plan_products(
     plan: &Plan,
     functions: list[str],
     references: list[list[NominalReference]] = [],
-) -> Result[str, str]:
+) -> Result[bytes, str]:
     """
     Encode a complete interface while retaining its keyed function-product bytes in declaration order.
 
@@ -91,36 +74,30 @@ pub def encode_record_plan_products(
         return Err("native-interface product count differs from its plan functions")
     if len(references) != 0 and len(references) != len(functions):
         return Err("native-interface product references differ from its plan functions")
-    mut stored_references: list[list[StoredReference]] = []
-    for index in range(len(functions)):
-        mut stored: list[StoredReference] = []
-        if len(references) != 0:
-            for reference in references[index]:
-                stored.append(StoredReference(kind=reference.kind, index=reference.index, name=reference.name))
-        stored_references.append(stored)
+    mut stored_references: list[list[NominalReference]] = references
+    if len(stored_references) == 0:
+        for _ in functions:
+            stored_references.append([])
     stored = StoredPlan(
-        schema=3, functions=functions, references=stored_references, runtime=encode_runtime(plan.externals)?,
+        functions=functions, references=stored_references, runtime=encode_runtime(plan.externals)?,
         programs=plan.programs, models=encode_models(plan.models)?, enums=encode_enums(plan.enums)?,
         zip_carriers=encode_zip_carriers(plan.zip_carriers)?,
         file=str(plan.span.file), line=plan.span.line, column=plan.span.column,
     )
-    encoded = to_string(stored).map_err((error) => str(error))?
+    encoded = write_plan(stored)?
     if decode_record_plan(encoded)? != plan.clone():
         return Err("native-interface codec changed complete native plan facts")
     return Ok(encoded)
 
 
-pub def decode_record_plan(encoded: str) -> Result[Plan, str]:
+pub def decode_record_plan(encoded: bytes) -> Result[Plan, str]:
     """Restore one exact bounded native plan without resolving names or lowering a body."""
-    stored = read_plan(encoded).map_err((error) => str(error))?
-    if stored.schema != 3 or len(stored.functions) == 0 or len(stored.references) != len(stored.functions):
+    stored = read_plan(encoded)?
+    if len(stored.functions) == 0 or len(stored.references) != len(stored.functions):
         return Err("unsupported native-interface schema")
     mut functions: list[Function] = []
     for index in range(len(stored.functions)):
-        mut references: list[NominalReference] = []
-        for reference in stored.references[index]:
-            references.append(NominalReference(kind=reference.kind, index=reference.index, name=reference.name))
-        function, _demand = decode_product(stored.functions[index], references)?
+        function, _demand = decode_product(stored.functions[index], stored.references[index])?
         functions.append(function)
     return Ok(
         Plan(
@@ -132,9 +109,9 @@ pub def decode_record_plan(encoded: str) -> Result[Plan, str]:
     )
 
 
-pub def record_plan_products(encoded: str) -> Result[list[str], str]:
+pub def record_plan_products(encoded: bytes) -> Result[list[str], str]:
     """Expose the whole interface's ordered function contributions for byte-equivalence checks."""
-    return Ok(read_plan(encoded).map_err((error) => str(error))?.functions)
+    return Ok(read_plan(encoded)?.functions)
 
 
 def interface_nominals(plan: &Plan, references: list[NominalReference]) -> Result[list[ProductNominal], str]:
@@ -154,6 +131,70 @@ def interface_nominals(plan: &Plan, references: list[NominalReference]) -> Resul
     return Ok(nominals)
 
 
-def read_plan(encoded: str) -> Result[StoredPlan, JsonError]:
-    """Bind the native generic decoder to the versioned interface model."""
-    return from_str(encoded)
+def plan_description() -> Description:
+    """A unit interface preserves all native tables, reference ordinals and the plan's diagnostic span."""
+    return model_description(b"mirpln\x00", "incan.native-plan/4", [
+        ModelField(identity=b"enums_", name="enums", storage="list<string>"),
+        ModelField(identity=b"functs", name="functions", storage="list<string>"),
+        ModelField(identity=b"models", name="models", storage="list<string>"),
+        ModelField(identity=b"progra", name="programs", storage="list<string>"),
+        ModelField(identity=b"refers", name="references", storage="list<list<tuple<string,i64,string>>>"),
+        ModelField(identity=b"runtim", name="runtime", storage="list<string>"),
+        ModelField(identity=b"span__", name="span", storage="tuple<string,i64,i64>"),
+        ModelField(identity=b"zipcar", name="zip_carriers", storage="list<string>"),
+    ])
+
+
+def text_list(values: list[str]) -> Value:
+    """Keep table order and each element's exact bytes of UTF-8 text."""
+    return Value.List([Value.Text(value) for value in values])
+
+
+def read_text_list(value: Value) -> Result[list[str], str]:
+    """Read one ordered textual table without coercing or dropping a field."""
+    mut values: list[str] = []
+    for element in items(value)?:
+        values.append(text(element)?)
+    return Ok(values)
+
+
+def write_plan(plan: StoredPlan) -> Result[bytes, str]:
+    """Serialize each independently typed native table with its full ordinal and position information."""
+    mut groups: list[Value] = []
+    for references in plan.references:
+        mut members: list[Value] = []
+        for reference in references:
+            kind = "model" if reference.kind == NominalKind.Model else "enum"
+            members.append(Value.Tuple([Value.Text(kind), integer(reference.index), Value.Text(reference.name)]))
+        groups.append(Value.List(members))
+    return encode_graph_row(b"mirpln\x00", plan_description(), [
+        required_value(b"enums_", text_list(plan.enums)),
+        required_value(b"functs", text_list(plan.functions)),
+        required_value(b"models", text_list(plan.models)),
+        required_value(b"progra", text_list(plan.programs)),
+        required_value(b"refers", Value.List(groups)),
+        required_value(b"runtim", text_list(plan.runtime)),
+        required_value(b"span__", Value.Tuple([Value.Text(plan.file), integer(plan.line), integer(plan.column)])),
+        required_value(b"zipcar", text_list(plan.zip_carriers)),
+    ])
+
+
+def read_plan(encoded: bytes) -> Result[StoredPlan, str]:
+    """Admit the whole interface before selecting carriers, functions and declarations by their original positions."""
+    fields = decode_graph_row(encoded, b"mirpln\x00", plan_description(), 8)?
+    mut references: list[list[NominalReference]] = []
+    for group in items(fields[4].value)?:
+        mut members: list[NominalReference] = []
+        for member in items(group)?:
+            part = tuple_items(member, 3)?
+            kind = match text(part[0])?:
+                "model" => NominalKind.Model
+                "enum" => NominalKind.Enum
+                _ => return Err("invalid native interface nominal kind")
+            members.append(NominalReference(kind=kind, index=number(part[1])?, name=text(part[2])?))
+        references.append(members)
+    span = tuple_items(fields[6].value, 3)?
+    return Ok(StoredPlan(enums=read_text_list(fields[0].value)?, functions=read_text_list(fields[1].value)?,
+        models=read_text_list(fields[2].value)?, programs=read_text_list(fields[3].value)?, references=references,
+        runtime=read_text_list(fields[5].value)?, file=text(span[0])?, line=number(span[1])?, column=number(span[2])?,
+        zip_carriers=read_text_list(fields[7].value)?))

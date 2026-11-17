@@ -53,7 +53,9 @@ pub def test_whole_plan_keeps_keyed_product_bytes() -> Result[None, str]:
         enums=[], models=[], functions=[first, second], externals=second_runtime,
         programs=[], span=span,
     )
-    assert record_plan_products(encode_record_plan_products(plan, keyed)?)? == keyed
+    encoded = encode_record_plan_products(plan, keyed)?
+    assert encoded[:4] == b"CRMB"
+    assert record_plan_products(encoded)? == keyed
     return Ok(None)
 
 
