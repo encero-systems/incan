@@ -14,7 +14,7 @@ from payload_types import PayloadAdmission
 from frozen_inputs import payload as frozen_payload
 from frozen_inputs import admit_registry_stores, cached_registry_store, read as frozen_document, registry_selection
 
-const PUBLICATION_SCHEMA: str = "incan.oven.unit-publication/1"
+pub const PUBLICATION_SCHEMA: str = "incan.oven.unit-publication/1"
 
 
 def registry_store_admitted(entries: str) -> Result[bool, str]:
