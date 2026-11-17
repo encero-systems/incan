@@ -17,6 +17,7 @@ from std.primitives.hash import sha256
 from rust::std::fs import remove_dir_all
 from pub::incan_platform.store import Snapshot
 from pub::internal_models.checker_records import CHECKER_PROFILE
+from compiler_body_keys import IDENTITY_PROFILE
 from compiler_body_values import encode_body_inventory, select_body_inventory_except, select_body_inventory_of
 from compiler_graph_records import family_listing, owner_evaluations
 from files import discard_file
@@ -79,7 +80,7 @@ pub def keep_check_pages(
     3. Park the page of each owner this request invalidates, and return each page it no longer does.
     """
     # 1. The output index names each current evaluation without reading or validating it.
-    source = selection_source(graph, unit)?
+    source = selection_source(graph, unit, origin)?
     mut state = recorded_selection(directory)
     mut written = 0
     # 2. A new evaluation in the view selects its owners again; another compiler context or a removed directory, all.
@@ -124,7 +125,7 @@ def refresh_pages(
     Keep the page of every owner whose evaluations are unchanged, remove the pages of owners whose evaluations changed
     or left the view, and select, encode and write pages for the changed owners alone.
     """
-    current = owner_evaluations(graph, [family for family in PAGE_FAMILIES], CHECKER_PROFILE, origin)?
+    current = owner_evaluations(graph, [family for family in PAGE_FAMILIES], CHECKER_PROFILE, origin, IDENTITY_PROFILE)?
     mut changed: list[str] = []
     for identity in sorted([owner for owner in current.keys()]):
         if state.owners.get(identity, "") != current[identity]:
@@ -207,11 +208,11 @@ def checked_context(unit: UnitDescription) -> Result[str, str]:
         None => return Err("checked-body pages require the complete compiler context")
 
 
-def selection_source(graph: Snapshot, unit: UnitDescription) -> Result[str, str]:
+def selection_source(graph: Snapshot, unit: UnitDescription, origin: str) -> Result[str, str]:
     """The compiler context and the revision of each checked-body output index entry in the view, as one digest."""
     mut parts = [checked_context(unit)?]
     for family in PAGE_FAMILIES:
-        parts.extend(family_listing(graph, family, CHECKER_PROFILE)?)
+        parts.extend(family_listing(graph, family, CHECKER_PROFILE, IDENTITY_PROFILE, origin)?)
     return Ok(hexlify(sha256.digest("\n".join(parts).encode("utf-8"))))
 
 
@@ -238,7 +239,7 @@ def select_pages(
             source=source,
             context=checked_context(unit)?,
             pages=keys,
-            owners=owner_evaluations(graph, [family for family in PAGE_FAMILIES], CHECKER_PROFILE, origin)?,
+            owners=owner_evaluations(graph, [family for family in PAGE_FAMILIES], CHECKER_PROFILE, origin, IDENTITY_PROFILE)?,
             parked=[],
         ),
     )
