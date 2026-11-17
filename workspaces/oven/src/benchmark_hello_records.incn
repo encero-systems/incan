@@ -68,7 +68,10 @@ def compare(hello: Path, output: Path) -> Result[None, str]:
     source = hello.joinpath("src/hello.incn")
     if file_digest(source)? != read(hello.joinpath("cold.source.sha256"))?.strip():
         return Err("hello source differs from the measured input")
-    executed = Command.new(oven.0).args(["inspect", "dependencies", source.0, "--profile", "release"])
+    inspector = home.joinpath("bin/oven")
+    if file_digest(inspector)? != provenance[2]:
+        return Err("installed Oven operational surface differs from the measured client")
+    executed = Command.new(inspector.0).args(["inspect", "dependencies", source.0, "--profile", "release"])
         .env("INCAN_HOME", home.0).env("INCAN_ENGINE", "records").env("INCAN_ENGINE_TRACE", trace.0)
         .env("INCAN_BAKERY", output.joinpath("inspection-store").0).env("OVEN_OWNER", "off")
         .env_remove("INCAN_STDLIB").env_remove("INCAN_SOURCE_ROOT").current_dir(hello.0)
