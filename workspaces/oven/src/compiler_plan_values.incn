@@ -4,6 +4,8 @@ from pub::incan_platform.store import Snapshot
 from pub::internal_models.records import RecordKey
 from compiler_body_values import SelectedBodyPage
 from compiler_graph_records import reusable_family_records, readers_of
+from pub::internal_models.plan_module_records import PLAN_MODULE_FAMILY, PLAN_MODULE_PAGE, decode_plan_module
+from std.encoding.hex import hexlify
 
 pub const LOWERING_PROFILE: str = "incan.lowering-records/3"
 
@@ -20,13 +22,22 @@ pub def plan_owners_reading(selected: Snapshot, changed: list[RecordKey]) -> Res
 pub def select_plan_inventory_except(
     selected: Snapshot,
     invalid: list[str],
+    admitted: list[str] = [],
 ) -> Result[list[SelectedBodyPage], str]:
-    """Materialize only witnessed plan functions whose stable declaration owner was not invalidated by this edit."""
+    """
+    Materialize only witnessed plan functions whose stable declaration owner was not invalidated by this edit. A
+    function whose product key is in `admitted` travels in its module's plan record and gets no page of its own.
+    """
+    mut carried: set[str] = set()
+    for product in admitted:
+        carried.add(product)
     mut pages: list[SelectedBodyPage] = []
     for record in reusable_family_records(selected, "plan-function", LOWERING_PROFILE)?:
         if record.key.identity in invalid:
             continue
         key = record.key.context
+        if record.key.facet != "entry" and key in carried:
+            continue
         if not canonical_digest(key):
             return Err("selected plan-function record has a noncanonical product key")
         mut extension = ".incnfunction"
@@ -44,3 +55,54 @@ def canonical_digest(value: str) -> bool:
     for digit in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"]:
         remaining = remaining.replace(digit, "")
     return remaining == ""
+
+
+pub model AdmittedPlanModule:
+    """A module plan record the engine selected for a compile: its key, the module as lowering names it, its value."""
+
+    pub key: RecordKey
+    pub module: str
+    pub value: bytes
+
+
+pub model PlanModuleSelection:
+    """The module plan records admitted for one activation: a page for each, and the product keys they carry."""
+
+    pub pages: list[SelectedBodyPage] = []
+    pub keys: list[str] = []
+    pub records: list[AdmittedPlanModule] = []
+
+
+pub def select_plan_modules(
+    selected: Snapshot,
+    invalid_modules: list[str],
+    invalid_owners: list[str],
+) -> Result[PlanModuleSelection, str]:
+    """
+    Admit whole every module whose plan record still validates in the selected graph and that this request leaves
+    alone: the module is not among `invalid_modules`, whose namespace this edit reaches, and none of its plan
+    functions is keyed by one of `invalid_owners`, the owners this request checks again or whose signature witnesses
+    changed. The compiler restores an admitted module's functions from the record's page and lowers none of its
+    bodies.
+    """
+    mut refused: set[str] = set()
+    for owner in invalid_owners:
+        refused.add(owner)
+    mut selection = PlanModuleSelection()
+    for record in reusable_family_records(selected, PLAN_MODULE_FAMILY, LOWERING_PROFILE)?:
+        if record.key.identity in invalid_modules:
+            continue
+        value = decode_plan_module(record.value).map_err((error) => f"selected plan-module record refused: {error:?}")?
+        mut valid = true
+        for function in value.functions:
+            if function.identity in refused or not canonical_digest(function.key):
+                valid = false
+        if not valid:
+            continue
+        selection.pages.append(
+            SelectedBodyPage(key=hexlify(value.module.encode("utf-8")) + PLAN_MODULE_PAGE, value=record.value),
+        )
+        selection.records.append(AdmittedPlanModule(key=record.key, module=value.module, value=record.value))
+        for function in value.functions:
+            selection.keys.append(function.key)
+    return Ok(selection)
