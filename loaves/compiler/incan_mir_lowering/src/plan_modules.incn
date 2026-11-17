@@ -50,9 +50,9 @@ pub model AdmittedPage:
     """An admitted module's final events by native function name, and the producer generation this request selected."""
 
     pub generation: str
-    pub events: Dict[str, str]
+    pub events: Dict[str, bytes]
 
-    pub def event(self, function: str) -> Option[str]:
+    pub def event(self, function: str) -> Option[bytes]:
         """
         The final event of the body lowered to this native function, when the page holds one. The name carries no
         source position, so a body that moved in its file, as under an added comment, still finds its event.

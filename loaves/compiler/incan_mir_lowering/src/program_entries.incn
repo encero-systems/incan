@@ -307,7 +307,7 @@ def lower_selected_module(
             admitted = admitted_page(scalar_products, module)
         diagnostic_owner = f" in {body.name} at {file}"
         restored_before = len(restored)
-        mut module_event: Option[str] = None
+        mut module_event: Option[bytes] = None
         if len(admitted.events) > 0:
             module_event = admitted.event(evaluator_name(context, body))
         function, runtime, pending, synthesized = lower_ordinary_frame(
@@ -416,7 +416,7 @@ pub def lower_ordinary_bodies_serial(
                 continue
             diagnostic_owner = f" in {body.name} at {files[index]}"
             restored_before = len(restored)
-            mut module_event: Option[str] = None
+            mut module_event: Option[bytes] = None
             if len(admitted.events) > 0:
                 module_event = admitted.event(evaluator_name(context, body))
             function, runtime, pending, synthesized = lower_ordinary_frame(
@@ -484,7 +484,7 @@ def lower_ordinary_frame(
     admitted: &BTreeMap[CompilerNodeId, str],
     record_report: Option[str],
     mut nominals: UnitNominals,
-    module_event: Option[str],
+    module_event: Option[bytes],
     generation: str,
     mut restored: list[AdmittedFunction],
 ) -> Result[tuple[Function, list[ExternalFunction], list[Instance], list[Function]], str]:

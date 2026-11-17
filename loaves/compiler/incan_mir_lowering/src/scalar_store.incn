@@ -434,7 +434,7 @@ pub def reported(directory: Option[str], inputs: list[str]) -> bool:
 
 
 pub def admitted_payload(
-    event: str,
+    event: bytes,
     span: SourceSpan,
     name: str,
     overflow: bool,
@@ -452,7 +452,11 @@ pub def admitted_payload(
     Returns the placed payload, the declarations it names and the generic instance requests its lowering made. A
     product that does not fit is a miss: the body takes the keyed route.
     """
-    decoded = match decode_event(event):
+    text = match event.decode():
+        Ok(value) => value
+        Err(_) => return None
+
+    decoded = match decode_event(text):
         Ok(value) => value
         Err(_) => return None
 

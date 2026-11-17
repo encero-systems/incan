@@ -21,7 +21,6 @@ from pub::internal_models import (
 )
 from pub::internal_models.checker_records import CHECKER_PROFILE
 from pub::internal_models.compiler_records import RUNTIME_INSTANCE_IDENTITY
-from pub::internal_models.plan_module_records import PlanModuleFunction
 from pub::internal_models.records import (
     ReadScope,
     RecordKey,
@@ -840,7 +839,6 @@ def prepare_lowering_records(
             return Err("multiple graph-eligible Body IR owners have the same canonical identity")
         bodies[value.symbol] = value
     mut events: list[JsonValue] = []
-    mut texts: Dict[str, str] = {}
     for path in sorted([path.0 for path in report.iterdir().map_err((error) => error.message())?]):
         entry = Path(path)
         if not entry.is_file() or not path.endswith(".event"):
@@ -850,7 +848,6 @@ def prepare_lowering_records(
         if event.require("schema").map_err((error) => error.message())?.expect_int().map_err((error) => error.message())? != 2:
             return Err("lowering output has an unsupported schema")
         events.append(event)
-        texts[entry.name()] = text
     mut plan_keys: list[RecordKey] = []
     mut staged: list[StagedPlan] = []
     # Scalar demand and plan suppliers settle before the entry-binding contribution reads main's demand.
@@ -913,14 +910,7 @@ def prepare_lowering_records(
         )?
         staged_source.add(encode_record_key(plan_key)?, product)
         plan_keys.append(plan_key)
-        recorded = PlanModuleFunction(
-            identity=identity,
-            symbol=event_identity,
-            function=function,
-            key=key,
-            event=texts[key + ".event"],
-        )
-        staged.append(staged_plan(module_file, event, recorded, plan_key)?)
+        staged.append(staged_plan(module_file, event, identity, event_identity, function, key, plan_key)?)
     for event in events:
         if not is_entry_event(event)?:
             continue
