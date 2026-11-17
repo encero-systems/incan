@@ -54,7 +54,7 @@ pub def required_graph_frames(report: JsonValue, store: Path) -> Result[GraphFra
         selected = snapshots[witness]
         if role == "capture-mode":
             continue
-        location = find(selected.root, selected.index, key).map_err((error) => str(error))?
+        location = find(selected.root, selected.index, key).map_err((error) => f"{error.object}: {error.detail}")?
         if let Some(found) = location:
             add_frame(result, key, found)
             if role == "evaluation" and not found.tombstone:
@@ -71,7 +71,7 @@ def evaluation_closure(selected: Snapshot, key: str, mut result: GraphFrames) ->
         return Err("graph evaluation differs from its selected key")
     receipt_key = "incan.engine.receipt\t" + evaluation.receipt_root
     for dependency in [evaluation.output, receipt_key]:
-        match find(selected.root, selected.index, dependency).map_err((error) => str(error))?:
+        match find(selected.root, selected.index, dependency).map_err((error) => f"{error.object}: {error.detail}")?:
             Some(found) => add_frame(result, dependency, found)
             None => return Err("evaluation lacks a required value: " + dependency)
     encoded = required_value(selected, receipt_key)?
@@ -91,7 +91,7 @@ def evaluation_closure(selected: Snapshot, key: str, mut result: GraphFrames) ->
                             return Err("invalid membership request in certified receipt")
                         mut names: list[str] = []
                         mut next = "end"
-                        for entry in entries_with_prefix(selected.root, selected.index, prefix).map_err((error) => str(error))?:
+                        for entry in entries_with_prefix(selected.root, selected.index, prefix).map_err((error) => f"{error.object}: {error.detail}")?:
                             if (page.lower != "" and entry.key < page.lower) or (page.upper != "" and entry.key >= page.upper):
                                 continue
                             if page.continuation not in ["", "end"] and entry.key <= page.continuation:
@@ -112,7 +112,7 @@ def evaluation_closure(selected: Snapshot, key: str, mut result: GraphFrames) ->
                     _ => return Err("membership witness has a nonmember request")
             ReadWitness.Found(previous, _) =>
                 record = encode_record_key(previous.request.key)?
-                match find(selected.root, selected.index, record).map_err((error) => str(error))?:
+                match find(selected.root, selected.index, record).map_err((error) => f"{error.object}: {error.detail}")?:
                     None => return Ok(None)
                     Some(found) =>
                         add_frame(result, record, found)
@@ -120,13 +120,13 @@ def evaluation_closure(selected: Snapshot, key: str, mut result: GraphFrames) ->
                             return Ok(None)
             ReadWitness.Deleted(previous) =>
                 record = encode_record_key(previous.request.key)?
-                if let Some(found) = find(selected.root, selected.index, record).map_err((error) => str(error))?:
+                if let Some(found) = find(selected.root, selected.index, record).map_err((error) => f"{error.object}: {error.detail}")?:
                     add_frame(result, record, found)
                     if not found.tombstone:
                         return Ok(None)
             ReadWitness.Absent(previous) =>
                 record = encode_record_key(previous.request.key)?
-                if let Some(found) = find(selected.root, selected.index, record).map_err((error) => str(error))?:
+                if let Some(found) = find(selected.root, selected.index, record).map_err((error) => f"{error.object}: {error.detail}")?:
                     add_frame(result, record, found)
                     return Ok(None)
     return Ok(None)
