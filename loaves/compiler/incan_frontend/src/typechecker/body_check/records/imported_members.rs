@@ -4,9 +4,9 @@ use super::*;
 use crate::symbols::{SymbolKind, TypeInfo};
 use incan_semantics_core::SymbolOrigin;
 
-/// The checked fields of every imported model and class, each under its stable identity within its nominal. A
-/// constructor of an imported nominal names the field each argument initializes, so its caller's record names them.
-pub(super) fn field_identities(checker: &TypeChecker) -> Vec<(String, CanonicalSymbolId)> {
+/// Resolve recorded member references to the current declaration anchors carried by their imported nominal.
+/// A package variant's own anchor identifies its executable representation.
+pub(super) fn identities(checker: &TypeChecker) -> Vec<(String, CanonicalSymbolId)> {
     let mut identities = Vec::new();
     for (index, symbol) in checker.symbols.all_symbols().iter().enumerate() {
         let Some(owner) = checker.symbols.identity_of(index) else {
@@ -15,24 +15,26 @@ pub(super) fn field_identities(checker: &TypeChecker) -> Vec<(String, CanonicalS
         if !matches!(owner.origin, SymbolOrigin::Module(_) | SymbolOrigin::Package { .. }) {
             continue;
         }
+        let mut record = |member: &CanonicalSymbolId, kind: SemanticSourceTargetKind| {
+            if member.kind == kind
+                && let Ok(identity) = stable_member_identity(member, owner, 0)
+            {
+                identities.push((identity, member.clone()));
+            }
+        };
         let fields = match &symbol.kind {
             SymbolKind::Type(TypeInfo::Model(info)) => &info.fields,
             SymbolKind::Type(TypeInfo::Class(info)) => &info.fields,
+            SymbolKind::Type(TypeInfo::Enum(info)) => {
+                for variant in info.variant_identities.values() {
+                    record(variant, SemanticSourceTargetKind::Variant);
+                }
+                continue;
+            }
             _ => continue,
         };
-        let Some(stable_owner) = StableDeclarationId::from_canonical(owner, None, None) else {
-            continue;
-        };
         for field in fields.values().filter_map(|field| field.identity.as_ref()) {
-            let context = StableDeclarationContext {
-                owner: stable_owner.clone(),
-                binding_ordinal: 0,
-            };
-            if field.kind == SemanticSourceTargetKind::Field
-                && let Some(stable) = StableDeclarationId::from_canonical(field, None, Some(context))
-            {
-                identities.push((stable.render_compact(), field.clone()));
-            }
+            record(field, SemanticSourceTargetKind::Field);
         }
     }
     identities
