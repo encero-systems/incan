@@ -358,7 +358,7 @@ pub(crate) fn produce_final_record(
     checker.visibility_point = super::super::VisibilityPoint::Collected;
     checker.prepare_program_body_facts();
     let positions = Positions::for_decoded_local(&checker, &program, owner, &local)?;
-    let restored = restore_pending(&positions, owner, &local)?;
+    let restored = restore_pending(&mut checker, &program, &positions, owner, &local)?;
     checker.body_checks.push(BodyCheckInput::Local(restored));
     checker.settle_body_checks(&program);
     let view = checker.checked_body(owner).ok_or(NodeBindingError::MissingOwner)?;
@@ -418,11 +418,7 @@ pub(super) fn validate_local(local: &BodyLocal) -> Result<(), NodeBindingError> 
     unsupported::rust_interop_artifacts(&local.rust)?;
     unsupported::trait_artifacts(&local.traits)?;
     unsupported::cabi_interop_artifacts(&local.c_abi)?;
-    if !local.iterator_sum_items.is_empty()
-        || !local.dictionary.is_empty()
-        || !local.diagnostic_slots.is_empty()
-        || !local.warning_slots.is_empty()
-    {
+    if !local.iterator_sum_items.is_empty() || !local.dictionary.is_empty() {
         return Err(NodeBindingError::Unsupported("pending local decisions"));
     }
     Ok(())
