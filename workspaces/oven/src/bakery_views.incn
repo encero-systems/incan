@@ -29,12 +29,16 @@ pub model ViewSelection:
 
 def view_description() -> Description:
     """Encode the immutable generation separately from the selected unit identity."""
-    return model_description(VIEW_ROW, "incan.bakery.view/2", [
-        ModelField(identity=b"ident_", name="identity", storage="string"),
-        ModelField(identity=b"layout", name="layout", storage="string"),
-        ModelField(identity=b"legacy", name="legacy_layout", storage="boolean"),
-        ModelField(identity=b"snapsh", name="snapshot", storage="binary"),
-    ])
+    return model_description(
+        VIEW_ROW,
+        "incan.bakery.view/2",
+        [
+            ModelField(identity=b"ident_", name="identity", storage="string"),
+            ModelField(identity=b"layout", name="layout", storage="string"),
+            ModelField(identity=b"legacy", name="legacy_layout", storage="boolean"),
+            ModelField(identity=b"snapsh", name="snapshot", storage="binary"),
+        ],
+    )
 
 
 pub def layout_identity(fact: Fact, legacy: bool) -> Result[str, str]:
@@ -46,12 +50,16 @@ pub def layout_identity(fact: Fact, legacy: bool) -> Result[str, str]:
 
 pub def write_view(directory: Path, selection: ViewSelection) -> Result[None, str]:
     """Publish the selection atomically after the view's members are present."""
-    data = encode_graph_row(VIEW_ROW, view_description(), [
-        required_value(b"ident_", Value.Text(selection.identity)),
-        required_value(b"layout", Value.Text(selection.layout)),
-        required_value(b"legacy", Value.Boolean(selection.legacy)),
-        required_value(b"snapsh", Value.Binary(selection.snapshot)),
-    ])?
+    data = encode_graph_row(
+        VIEW_ROW,
+        view_description(),
+        [
+            required_value(b"ident_", Value.Text(selection.identity)),
+            required_value(b"layout", Value.Text(selection.layout)),
+            required_value(b"legacy", Value.Boolean(selection.legacy)),
+            required_value(b"snapsh", Value.Binary(selection.snapshot)),
+        ],
+    )?
     return publish_binary(directory.joinpath(VIEW_RECORD), data)
 
 
@@ -64,9 +72,11 @@ pub def read_view(directory: Path) -> Result[Option[ViewSelection], str]:
         legacy = match fields[2].value:
             Value.Boolean(flag) => flag
             _ => return Err("invalid layout version flag")
+
         snapshot = match fields[3].value:
             Value.Binary(value) => value
             _ => return Err("invalid library snapshot bytes")
+
         layout = text(fields[1].value)?
         if (layout == "") != (len(snapshot) == 0) or (layout != "" and snapshot[:4] != b"CRMB"):
             return Err("invalid bakery view selection")
