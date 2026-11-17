@@ -55,7 +55,7 @@ pub model NativeInterface:
     """The standalone entry key and its complete loss-checked native plan."""
 
     pub entry: str
-    pub plan: str
+    pub plan: bytes
 
 
 def event_description() -> Description:
@@ -156,9 +156,9 @@ pub def decode_lowering_refusal(encoded: bytes) -> Result[LoweringRefusal, str]:
 
 def interface_description() -> Description:
     """A complete unit interface has one selected entry."""
-    return model_description(INTERFACE, "incan.native-interface/2", [
+    return model_description(INTERFACE, "incan.native-interface/3", [
         ModelField(identity=b"entry_", name="entry", storage="string"),
-        ModelField(identity=b"plan__", name="plan", storage="string"),
+        ModelField(identity=b"plan__", name="plan", storage="binary"),
     ])
 
 
@@ -166,14 +166,17 @@ pub def encode_native_interface(value: NativeInterface) -> Result[bytes, str]:
     """Bind the keyed entry to the native plan verified by the producer."""
     return encode_graph_row(INTERFACE, interface_description(), [
         required_value(b"entry_", Value.Text(value.entry)),
-        required_value(b"plan__", Value.Text(value.plan)),
+        required_value(b"plan__", Value.Binary(value.plan)),
     ])
 
 
 pub def decode_native_interface(encoded: bytes) -> Result[NativeInterface, str]:
     """Read the complete producer report from its versioned Crumb row."""
     fields = decode_graph_row(encoded, INTERFACE, interface_description(), 2)?
-    return Ok(NativeInterface(entry=text(fields[0].value)?, plan=text(fields[1].value)?))
+    plan = match fields[1].value:
+        Value.Binary(value) => value
+        _ => return Err("native interface has no binary plan")
+    return Ok(NativeInterface(entry=text(fields[0].value)?, plan=plan))
 
 
 pub const ADMITTED_DEFINITIONS: str = "admitted-definitions.crumb"
