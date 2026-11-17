@@ -234,6 +234,7 @@ impl TypeChecker {
                 .ownership_contracts
                 .clone_from(&self.dependency_input_contracts);
         } else {
+            self.constructor_defaults.clear();
             self.dependency_input_contracts.clear();
         }
         self.type_info.declarations.record_package_identity = self.record_package_identity.clone();

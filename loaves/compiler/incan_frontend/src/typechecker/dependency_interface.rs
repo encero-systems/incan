@@ -13,7 +13,7 @@ use serde::Serialize;
 use stable_encoding::stable_encode;
 
 /// Schema version for the complete dependency-interface snapshot compared by the shadow oracle.
-pub const MODULE_DEPENDENCY_INTERFACE_SNAPSHOT_VERSION: u32 = 5;
+pub const MODULE_DEPENDENCY_INTERFACE_SNAPSHOT_VERSION: u32 = 6;
 
 /// Build-scoped immutable preparations shared by the fresh checkers of one collected module graph.
 ///
@@ -76,6 +76,8 @@ pub struct ModuleDependencyInterface {
     /// types and access obligations as a caller in the provider's own module.
     input_contracts:
         Arc<std::collections::BTreeMap<CanonicalSymbolId, crate::ownership_metadata::CheckedOwnershipContract>>,
+    /// Closed ownership defaults include any private constructor reached by a public declaration.
+    constructor_defaults: Arc<HashMap<CanonicalSymbolId, Vec<Option<ownership_contracts::defaults::DefaultValue>>>>,
     /// Source re-export links published by the provider.
     member_reexports: Arc<HashMap<String, DependencyMemberReexport>>,
     /// Public-library re-export links needed only by Body IR checking.
@@ -198,6 +200,7 @@ impl TypeChecker {
             shared_map_table("declaration_nominal_scopes", &self.declaration_nominal_scopes),
             map_table("retained_nominal_carriers", &self.retained_nominal_carriers),
             map_table("declaration_callables", &self.declaration_callables),
+            map_table("constructor_defaults", &self.constructor_defaults.0),
             map_table("input_contracts", &self.dependency_input_contracts),
             nested_table("member_reexports", &self.dependency_member_reexports),
             nested_table("body_ir_pub_reexports", &self.body_ir_dependency_pub_reexports),
@@ -485,6 +488,14 @@ impl TypeChecker {
                     .map(|(identity, callable)| (identity.clone(), callable.clone()))
                     .collect(),
             ),
+            constructor_defaults: Arc::new(
+                self.constructor_defaults
+                    .0
+                    .iter()
+                    .filter(|(identity, _)| owned_identity(identity))
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect(),
+            ),
             input_contracts: Arc::new(
                 self.dependency_input_contracts
                     .iter()
@@ -624,6 +635,7 @@ impl TypeChecker {
         self.declaration_nominal_scopes.clear();
         self.retained_nominal_carriers.clear();
         self.declaration_callables.clear();
+        self.constructor_defaults.clear();
         self.dependency_input_contracts.clear();
         self.dependency_member_reexports.clear();
         self.body_ir_dependency_pub_reexports.clear();
@@ -680,6 +692,12 @@ impl TypeChecker {
         self.declaration_callables.extend(
             interface
                 .declaration_callables
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone())),
+        );
+        self.constructor_defaults.0.extend(
+            interface
+                .constructor_defaults
                 .iter()
                 .map(|(key, value)| (key.clone(), value.clone())),
         );
@@ -844,6 +862,9 @@ impl TypeChecker {
                 |identity| identity_owned_by(identity, &module_path),
             ),
             filtered_map_table("declaration_callables", &self.declaration_callables, |identity| {
+                identity_owned_by(identity, &module_path)
+            }),
+            filtered_map_table("constructor_defaults", &self.constructor_defaults.0, |identity| {
                 identity_owned_by(identity, &module_path)
             }),
             filtered_map_table("input_contracts", &self.dependency_input_contracts, |identity| {

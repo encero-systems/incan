@@ -41,6 +41,7 @@ impl TypeChecker {
             loop_item_candidates: std::collections::BTreeMap::new(),
             active_loop_items: std::collections::BTreeMap::new(),
             refused_ownership_authorities: HashSet::new(),
+            constructor_defaults: Default::default(),
             diagnostic_owner_ranges: Vec::new(),
             body_open_diagnostics: Vec::new(),
             symbols: SymbolTable::new(),
