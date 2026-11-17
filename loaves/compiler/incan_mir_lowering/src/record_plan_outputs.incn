@@ -96,7 +96,7 @@ def keyed_plan_products(
     events: &list[LoweringEvent],
     mut references: list[list[NominalReference]],
     mut carried: list[str],
-) -> Result[list[str], str]:
+) -> Result[list[bytes], str]:
     """
     Make each keyed product byte-identical to its whole-plan function, relocated to the declaration's position.
 
@@ -106,7 +106,7 @@ def keyed_plan_products(
     per keyed product, the positions its declaration ordinals take in this unit, and `carried` the names of the helper
     frames those products carry.
     """
-    mut keyed: list[str] = []
+    mut keyed: list[bytes] = []
     for function in plan.functions:
         matches = [event for event in events if event.function == function.name]
         if len(matches) == 0:

@@ -7,11 +7,16 @@ first-seen order, and the product names each ordinal's declaration by its stable
 replaces each ordinal by the position the current unit resolved for that identity.
 """
 
-from rust::serde import Serialize, Deserialize
+from std.primitives.crumb.values import Value, IntegerValue
+from pub::internal_models.crumb_rows import required_value
+from pub::internal_models.graph_crumb_fields import items, integer as wire_integer, number, text
+from plan_wire_rows import WirePositions, wire_fields, wire_variant, unsigned_value, float_value, read_float, boolean_value
+
+
 from _types import TupleElement, ListLeaf, PlanType
 
 
-@derive(Clone, Eq, Serialize, Deserialize)
+@derive(Clone, Eq)
 pub enum NominalKind(str):
     """The unit table a plan type's nominal position selects."""
 
@@ -32,7 +37,7 @@ pub model NominalReference:
     pub name: str = ""
 
 
-@derive(Clone, PartialEq, Serialize, Deserialize)
+@derive(Clone, PartialEq)
 pub model ProductNominal:
     """A declaration a product names: its table kind, stable index-free identity and checked-meaning digest."""
 
@@ -406,3 +411,37 @@ pub def describe_nominals(references: &list[NominalReference], unit: &UnitNomina
         if nominal.identity == "":
             return Err("plan product names a declaration without a stable identity")
     return Ok(nominals)
+
+# Generated native-plan wire projections.
+
+
+pub def wire_nominal_kind(value: NominalKind) -> Value:
+    match value:
+        NominalKind.Model => return Value.Enum(b"^,aL#\xf0", [])
+        NominalKind.Enum => return Value.Enum(b"T\x10\x8d\xaf\xaa\xc5", [])
+
+
+pub def read_wire_nominal_kind(value: Value, positions: &WirePositions) -> Result[NominalKind, str]:
+    identity, fields = wire_variant(value)?
+    if identity == b"^,aL#\xf0" and len(fields) == 0:
+        return Ok(NominalKind.Model)
+    if identity == b"T\x10\x8d\xaf\xaa\xc5" and len(fields) == 0:
+        return Ok(NominalKind.Enum)
+    return Err("unknown or incomplete NominalKind alternative")
+
+
+pub def wire_product_nominal(value: ProductNominal) -> Value:
+    return Value.Record([
+        required_value(b"\x0b'\xc1X\xfe\xb3", wire_nominal_kind(value.kind)),
+        required_value(b"h\x9fjbs\x84", Value.Text(value.identity)),
+        required_value(b"\x0b\xf4t\x89cc", Value.Text(value.digest)),
+    ])
+
+
+pub def read_wire_product_nominal(value: Value, positions: &WirePositions) -> Result[ProductNominal, str]:
+    fields = wire_fields(value, 3)?
+    return Ok(ProductNominal(
+        kind=read_wire_nominal_kind(fields[0].value, positions)?,
+        identity=text(fields[2].value)?,
+        digest=text(fields[1].value)?,
+    ))

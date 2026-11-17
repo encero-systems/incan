@@ -119,9 +119,7 @@ impl PlanReader {
             if key.strip_prefix("sha256:") != Some(event.key.as_str()) {
                 return Err(format!("native function event key differs for {}", event.function));
             }
-            let mut authenticated = vec![product.function.clone()];
-            authenticated.extend(product.requests.iter().cloned());
-            let digest = incan_semantics_core::semantic_digest::semantic_digest(&authenticated)
+            let digest = internal_models::plan_function_digest(&product.function, &product.requests)
                 .map_err(|error| format!("cannot fingerprint native function product: {error}"))?;
             if digest != product.digest {
                 return Err(format!("native function product digest differs for {}", event.function));

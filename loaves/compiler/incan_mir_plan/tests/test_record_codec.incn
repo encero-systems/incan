@@ -1,5 +1,7 @@
 """Complete native-interface round trips include SDK layouts and selected entries, not only function instructions."""
 
+from pub::internal_models.plan_wire_rows import read_wire
+from pub::internal_models.plan_wire_schema import stored_product_descriptions
 from _plan import Plan, Function, ExternalFunction, ModelDeclaration, EnumDeclaration, EnumVariant, Carrier
 from _types import PlanType, ListLeaf, SourceSpan, source_span
 from _body import Local, BasicBlock, Terminator, TerminatorKind, Parameter
@@ -55,7 +57,14 @@ pub def test_whole_plan_keeps_keyed_product_bytes() -> Result[None, str]:
     )
     encoded = encode_record_plan_products(plan, keyed)?
     assert encoded[:4] == b"CRMB"
+    assert keyed[0][:4] == b"CRMB" and keyed[1][:4] == b"CRMB"
     assert record_plan_products(encoded)? == keyed
+    match read_wire(keyed[0], b"mirpln\x00", stored_product_descriptions()):
+        Ok(_) => assert false, "a function product was accepted under the unit plan selector"
+        Err(_) => pass
+    match encode_record_plan_products(plan, [keyed[0], b"{}"]):
+        Ok(_) => assert false, "a textual child reached native-plan publication"
+        Err(_) => pass
     return Ok(None)
 
 

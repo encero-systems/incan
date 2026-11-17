@@ -1,5 +1,6 @@
 """Keyed plan products name models and enums by declaration identity, never by a position in the unit's tables."""
 
+from std.encoding.hex import hexlify
 from _plan import Function, ExternalFunction
 from _types import PlanType, ListLeaf, SourceSpan, source_span
 from _body import Local, BasicBlock, Terminator, TerminatorKind, Parameter
@@ -27,7 +28,7 @@ pub def test_product_survives_an_unrelated_declaration() -> Result[None, str]:
     captured, captured_runtime = point_function(0, 0, "Point_0_37", "Shape_39_75", span)
     product = keyed_product(captured, captured_runtime, before)?
     assert product_identities(product)? == [point("v1"), shape("v1")]
-    assert "Point_0_37" not in product, "the product retained a position-dependent native name"
+    assert hexlify(b"Point_0_37") not in hexlify(product), "the product retained a position-dependent native name"
     # The unrelated declarations shift both named declarations' positions; the product bytes do not depend on them.
     after = unit_nominals(
         [line_model(), point("v1")], [color(), shape("v1")], ["Line_0_20", "Point_22_59"], ["Color_61_90", "Shape_92_128"],
@@ -71,7 +72,7 @@ pub def test_product_refuses_a_nominal_without_an_identity() -> Result[None, str
     return Ok(None)
 
 
-def keyed_product(function: Function, runtime: list[ExternalFunction], unit: &UnitNominals) -> Result[str, str]:
+def keyed_product(function: Function, runtime: list[ExternalFunction], unit: &UnitNominals) -> Result[bytes, str]:
     """Capture a product the way lowering does: name every referenced position, then encode."""
     references = product_nominals(function, runtime)?
     return encode_product(function, runtime, describe_nominals(references, unit)?)

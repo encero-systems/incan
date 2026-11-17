@@ -10,6 +10,7 @@ from pub::internal_models.plan_function_records import (
     PlanFunctionRecord,
     decode_plan_function_record,
     encode_plan_function_record,
+    plan_function_digest,
 )
 from pub::incan_mir_plan import (
     ExternalFunction,
@@ -29,13 +30,13 @@ from record_positions import index_positions, place_positions, relocate_product
 
 
 # A record whose key is its checked meaning; its spans name Body IR nodes by ordinal through a request-local position map.
-const RECORD_FUNCTION: str = "incan.record-function/3"
+const RECORD_FUNCTION: str = "incan.record-function/4"
 
 
 pub def scalar_inputs(body: str, name: str, span: SourceSpan, overflow_checks: bool, reads: str) -> list[str]:
     """Bind a native product to its checked body, consumed signatures, physical frame and diagnostic provenance."""
     return [
-        "incan.scalar-function/5",
+        "incan.scalar-function/6",
         body,
         name,
         str(span.file),
@@ -283,7 +284,7 @@ def encoded_record(
         payload = index_positions(relative, positions)?
         if place_positions(payload, positions)? != relative:
             return Err("plan-function position map changed native facts")
-    digest = fingerprint([payload] + requests)?
+    digest = plan_function_digest(payload, requests)?
     record = PlanFunctionRecord(inputs=inputs, function=payload, requests=requests, digest=digest)
     return encode_plan_function_record(record)
 
@@ -293,14 +294,14 @@ def record_payload(
     inputs: list[str],
     span: Option[SourceSpan] = None,
     positions: list[tuple[int, int]] = [],
-) -> Option[str]:
+) -> Option[bytes]:
     """Treat invalid schema, changed inputs and altered native bytes as cache misses before decoding a function."""
     match decode_record(encoded):
         Err(_) => return None
         Ok(record) =>
             if record.inputs != inputs:
                 return None
-            match fingerprint([record.function] + record.requests):
+            match plan_function_digest(record.function, record.requests):
                 Err(_) => return None
                 Ok(digest) =>
                     if record.digest != digest:
@@ -388,7 +389,7 @@ pub def admitted_payload(
     overflow: bool,
     reads: str,
     generation: str,
-) -> Option[tuple[str, list[ProductNominal], list[str]]]:
+) -> Option[tuple[bytes, list[ProductNominal], list[str]]]:
     """
     Read the product of a body from the final event of its module's admitted plan record.
 
@@ -430,7 +431,7 @@ pub def admitted_payload(
 
 
 pub def admitted_function(
-    payload: str,
+    payload: bytes,
     resolved: list[NominalReference],
 ) -> Option[tuple[Function, list[ExternalFunction], list[Function]]]:
     """

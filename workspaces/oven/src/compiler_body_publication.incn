@@ -2,7 +2,6 @@
 
 from std.fs import Path
 from std.environ import get_or
-from std.json import parse
 from pub::internal_models.lowering_events import INTERFACE_REPORT, LoweringEvent, decode_lowering_event, decode_lowering_refusal, decode_native_interface
 from pub::internal_models.plan_function_records import decode_plan_function_record, encode_lowering_demand
 from rust::std::fs import remove_dir_all
@@ -975,12 +974,7 @@ def require_plan_refusal(report: Path) -> Result[None, str]:
 def lowering_demand(product: bytes) -> Result[bytes, str]:
     """Select the witnessed lowering inputs and the native runtime declarations they require."""
     record = decode_plan_function_record(product)?
-    native = parse(record.function).map_err((error) => error.message())?
-    runtime = native.require("runtime").and_then((field) => field.expect_array()).map_err((error) => error.message())?
-    mut signatures: list[str] = []
-    for external in runtime:
-        signatures.append(external.to_json().map_err((error) => error.message())?)
-    return encode_lowering_demand(record.inputs, signatures)
+    return encode_lowering_demand(record.inputs, record.function)
 
 
 def check_reused_output(

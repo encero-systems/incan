@@ -1,0 +1,56 @@
+"""The graph's native plan profile uses compiler-owned Crumb descriptions for its stored functions and layouts."""
+
+from std.primitives.crumb.descriptions import Description, DescriptionMode
+from std.primitives.crumb.records import RowRecord
+from std.primitives.crumb.registrations import KindRegistry
+from std.primitives.crumb.row_writer import write_rows
+from std.primitives.crumb.values import IntegerValue, Metadata, MetadataEntry, Value, ValueField
+from crumb_rows import ModelField, admit_rows, description_field
+from graph_crumb_fields import graph_read_budget
+
+
+pub def write_wire(key: bytes, descriptions: list[Description], value: Value) -> Result[bytes, str]:
+    """Write a schema-checked row under the same byte, element and nesting limits as other graph records."""
+    mut budget = graph_read_budget()?
+    registry = KindRegistry.create([], budget).map_err((error) => error.message())?
+    encoded = write_rows(descriptions, [RowRecord(key=key, value=value)], registry, false, budget).map_err((error) => error.message())?
+    if len(encoded) > 67108864:
+        return Err("native plan wire exceeds its byte limit")
+    return Ok(encoded)
+
+
+pub def read_wire(encoded: bytes, key: bytes, supplied: list[Description]) -> Result[Value, str]:
+    """Authenticate every reachable schema and the sole root selector before interpreting the native payload."""
+    mut budget = graph_read_budget()?
+    rows = admit_rows(encoded, supplied, 67108864, budget)?
+    dictionary = rows.descriptions(budget).map_err((error) => error.message())?
+    if rows.len() != 1 or len(dictionary) != len(supplied):
+        return Err("native plan wire requires one row and its exact declaration closure")
+    for entry in dictionary:
+        if entry.mode != DescriptionMode.Reference:
+            return Err("native plan wire requires referenced compiler schemas")
+    row = rows.read_record(0, budget).map_err((error) => error.message())?
+    if row.key != key:
+        return Err("unexpected native plan root selector")
+    return Ok(row.value)
+
+
+pub def variant_schema(identity: bytes, name: str, fields: list[ModelField]) -> Metadata:
+    """Describe a closed native alternative and its identity-addressed positional payload."""
+    return Metadata.Map([
+        MetadataEntry(key="id", value=Metadata.Binary(identity)),
+        MetadataEntry(key="name", value=Metadata.Text(name)),
+        MetadataEntry(key="fields", value=Metadata.List([description_field(field) for field in fields])),
+        MetadataEntry(key="properties", value=Metadata.Map([])),
+    ])
+
+
+pub def enum_schema(key: bytes, name: str, variants: list[Metadata]) -> Description:
+    """A graph-local sum type with stable member identities and explicit positional types."""
+    return Description(mode=DescriptionMode.Reference, metadata=Metadata.Map([
+        MetadataEntry(key="kind", value=Metadata.Text("Enum")),
+        MetadataEntry(key="nominal", value=Metadata.Binary(key)),
+        MetadataEntry(key="path", value=Metadata.Text(name)),
+        MetadataEntry(key="properties", value=Metadata.Map([])),
+        MetadataEntry(key="variants", value=Metadata.List(variants)),
+    ]))

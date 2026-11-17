@@ -6,8 +6,30 @@ product-local ordinal. The product names each ordinal's declaration by stable id
 position in the unit's tables. Places, operands, operations and statements cross `body_records`.
 """
 
-from rust::serde import Serialize, Deserialize
-from rust::serde_json import to_string, from_str, Error as JsonError
+from std.primitives.crumb.values import Value, IntegerValue
+from pub::internal_models.crumb_rows import required_value
+from pub::internal_models.graph_crumb_fields import items, integer as wire_integer, number, text
+from plan_wire_rows import WirePositions, wire_fields, wire_variant, unsigned_value, float_value, read_float, boolean_value
+from body_records import (
+    read_wire_stored_operand,
+    read_wire_stored_place,
+    read_wire_stored_span,
+    read_wire_stored_statement,
+    read_wire_stored_type,
+    wire_stored_operand,
+    wire_stored_place,
+    wire_stored_span,
+    wire_stored_statement,
+    wire_stored_type,
+)
+from nominal_identities import (
+    read_wire_product_nominal,
+    wire_product_nominal,
+)
+from plan_wire_rows import read_wire, write_wire, PositionChange
+from pub::internal_models.plan_wire_schema import stored_product_descriptions, stored_function_descriptions, stored_external_descriptions
+
+
 from _plan import ExternalFunction, Function, GenericLoan
 from _types import PlanType, SourceSpan
 from nominal_identities import (
@@ -60,7 +82,6 @@ from _body import (
 const RUST_BINDING: str = "rust::"
 
 
-@derive(Serialize, Deserialize)
 enum StoredUnwind:
     """Exact cleanup control flow for scalar overflow assertions."""
 
@@ -69,7 +90,6 @@ enum StoredUnwind:
     Terminate
 
 
-@derive(Serialize, Deserialize)
 enum StoredExit:
     """Scalar/text control flow, direct calls and explicit drops; coroutines refuse this codec."""
 
@@ -83,7 +103,6 @@ enum StoredExit:
     Resume
 
 
-@derive(Serialize, Deserialize)
 enum StoredTarget:
     """Retain direct dependency targets and checked instantiations without resolving their names or types again."""
 
@@ -102,7 +121,6 @@ enum StoredTarget:
     Value(StoredOperand)
 
 
-@derive(Serialize, Deserialize)
 model StoredBlock:
     """One complete native scalar block, including cleanup status and terminator provenance."""
 
@@ -113,7 +131,6 @@ model StoredBlock:
     span: StoredSpan
 
 
-@derive(Serialize, Deserialize)
 model StoredSlot:
     """A native local's layout type, with product-local nominal ordinals, and diagnostic source position."""
 
@@ -121,7 +138,6 @@ model StoredSlot:
     span: StoredSpan
 
 
-@derive(Serialize, Deserialize)
 model StoredParameter:
     """A named parameter whose exact native slot is retained in declaration order."""
 
@@ -129,7 +145,6 @@ model StoredParameter:
     slot: StoredSlot
 
 
-@derive(Serialize, Deserialize)
 model StoredLoan:
     """One type parameter's occurrence in a closed instance's signature, with its concrete type."""
 
@@ -139,7 +154,6 @@ model StoredLoan:
     ty: StoredType
 
 
-@derive(Serialize, Deserialize)
 model StoredFunction:
     """A versioned complete function, a closed generic instance included; unsupported native attributes refuse."""
 
@@ -155,7 +169,6 @@ model StoredFunction:
     retained_result_source: int
 
 
-@derive(Serialize, Deserialize)
 model StoredExternal:
     """Every field of one dependency signature used by a retained function."""
 
@@ -166,7 +179,6 @@ model StoredExternal:
     span: StoredSpan
 
 
-@derive(Serialize, Deserialize)
 model StoredProduct:
     """
     A complete function and its dependency requirements, authenticated together by the store owner.
@@ -176,10 +188,10 @@ model StoredProduct:
     """
 
     schema: int
-    function: str
+    function: StoredFunction
     runtime: list[StoredExternal]
     nominals: list[ProductNominal]
-    frames: list[str]
+    frames: list[StoredFunction]
 
 
 pub def product_nominals(
@@ -198,7 +210,7 @@ pub def encode_product(
     runtime: &list[ExternalFunction],
     nominals: list[ProductNominal] = [],
     frames: list[Function] = [],
-) -> Result[str, str]:
+) -> Result[bytes, str]:
     """
     Retain a complete function, its synthesized helper frames and its dependency requirements, naming every model and
     enum by declaration identity.
@@ -217,7 +229,7 @@ pub def encode_product(
         if nominals[ordinal].kind != remap.references[ordinal].kind:
             return Err("plan product declaration identity names another table")
     stored.nominals = nominals
-    text = to_string(stored).map_err((error) => str(error))?
+    text = write_wire(b"G\xc7\x7f$\xca!\x00", stored_product_descriptions(), wire_stored_product(stored))?
     # 3. Requirements and positions are part of the native product, not an assumed side effect of lowering again.
     restored_function, restored = decode_product(text, remap.references)?
     if not same_function(restored_function, function):
@@ -233,41 +245,41 @@ pub def encode_product(
     return Ok(text)
 
 
-pub def product_identities(text: str) -> Result[list[ProductNominal], str]:
+pub def product_identities(text: bytes) -> Result[list[ProductNominal], str]:
     """Read the declarations a product names, so its consumer can resolve each one in the current unit."""
-    stored = decode_product_record(text).map_err((error) => str(error))?
-    if stored.schema != 6:
+    stored = decode_product_record(text)?
+    if stored.schema != 7:
         return Err("unknown native product schema")
     return Ok(stored.nominals)
 
 
-pub def product_frame_names(text: str) -> Result[list[str], str]:
+pub def product_frame_names(text: bytes) -> Result[list[str], str]:
     """Name a product's helper frames in emission order, without resolving any declaration."""
-    stored = decode_product_record(text).map_err((error) => str(error))?
-    if stored.schema != 6:
+    stored = decode_product_record(text)?
+    if stored.schema != 7:
         return Err("unknown native product schema")
     mut names: list[str] = []
     for frame in stored.frames:
-        names.append(decode_record(frame).map_err((error) => str(error))?.name)
+        names.append(frame.name)
     return Ok(names)
 
 
-pub def decode_frames(text: str, references: list[NominalReference] = []) -> Result[list[Function], str]:
+pub def decode_frames(text: bytes, references: list[NominalReference] = []) -> Result[list[Function], str]:
     """Restore a product's helper frames, binding their ordinals exactly as the product's function binds them."""
-    stored = decode_product_record(text).map_err((error) => str(error))?
-    if stored.schema != 6:
+    stored = decode_product_record(text)?
+    if stored.schema != 7:
         return Err("unknown native product schema")
     if len(references) != len(stored.nominals):
         return Err("plan product declaration identities differ from their resolved positions")
     mut remap = binding_remap(references)
     mut frames: list[Function] = []
     for frame in stored.frames:
-        frames.append(decode_function(frame, remap)?)
+        frames.append(restore_function(frame, remap)?)
     return Ok(frames)
 
 
 pub def decode_product(
-    text: str,
+    text: bytes,
     references: list[NominalReference] = [],
 ) -> Result[tuple[Function, list[ExternalFunction]], str]:
     """
@@ -278,8 +290,8 @@ pub def decode_product(
     3. Restore the complete function and every dependency signature.
     """
     # 1. An unknown schema remains an ordinary cache miss at the store boundary.
-    stored = decode_product_record(text).map_err((error) => str(error))?
-    if stored.schema != 6:
+    stored = decode_product_record(text)?
+    if stored.schema != 7:
         return Err("unknown native product schema")
     # 2. The consumer resolves declarations; this codec only checks that every ordinal has a position.
     if len(references) != len(stored.nominals):
@@ -289,37 +301,38 @@ pub def decode_product(
             return Err("plan product resolved a declaration in another table")
     mut remap = binding_remap(references)
     # 3. Both parts cross the private product boundary explicitly.
-    function = decode_function(stored.function, remap)?
+    function = restore_function(stored.function, remap)?
     mut restored: list[ExternalFunction] = []
     for value in stored.runtime:
         restored.append(restore_external(value, remap)?)
     return Ok((function, restored))
 
 
-pub def encode_runtime(runtime: &list[ExternalFunction]) -> Result[list[str], str]:
+pub def encode_runtime(runtime: &list[ExternalFunction]) -> Result[list[bytes], str]:
     """Encode a unit's resolved runtime inventory, loss-checked; its positions index the unit's own tables."""
     mut remap = preserving_remap()
-    mut encoded: list[str] = []
+    mut encoded: list[bytes] = []
     for value in runtime:
-        encoded.append(to_string(store_external(value, remap)?).map_err((error) => str(error))?)
+        encoded.append(write_wire(b"t\xaa^\x89\x16D\x00", stored_external_descriptions(), wire_stored_external(store_external(value, remap)?))?)
     if not same_runtime(decode_runtime(encoded)?, runtime):
         return Err("native runtime inventory round trip changed its signatures")
     return Ok(encoded)
 
 
-pub def decode_runtime(encoded: list[str]) -> Result[list[ExternalFunction], str]:
+pub def decode_runtime(encoded: list[bytes]) -> Result[list[ExternalFunction], str]:
     """Restore a unit's resolved runtime inventory in its recorded order."""
     mut remap = preserving_remap()
     mut runtime: list[ExternalFunction] = []
     for text in encoded:
-        runtime.append(restore_external(decode_external_record(text).map_err((error) => str(error))?, remap)?)
+        runtime.append(restore_external(decode_external_record(text)?, remap)?)
     return Ok(runtime)
 
 
-pub def encode_scalar(function: &Function) -> Result[str, str]:
+pub def encode_scalar(function: &Function) -> Result[bytes, str]:
     """Retain one complete function that names no model or enum; the enclosing product retains its requirements."""
     mut remap = capture_remap()
-    text = encode_function(function, remap)?
+    record = store_function(function, remap)?
+    text = write_wire(b"\x03\xa6%\x81$\xed\x00", stored_function_descriptions(), wire_stored_function(record))?
     if len(remap.references) != 0:
         return Err("a bare function record refuses models and enums; retain it as a product")
     # A loss in any native field refuses capture instead of becoming an accepted cache hit.
@@ -329,11 +342,11 @@ pub def encode_scalar(function: &Function) -> Result[str, str]:
     return Ok(text)
 
 
-pub def decode_scalar(text: str) -> Result[Function, str]:
+pub def decode_scalar(text: bytes) -> Result[Function, str]:
     """Restore a bare function record, which names no model or enum."""
     references: list[NominalReference] = []
     mut remap = binding_remap(references)
-    return decode_function(text, remap)
+    return restore_function(read_wire_stored_function(read_wire(text, b"\x03\xa6%\x81$\xed\x00", stored_function_descriptions())?, WirePositions())?, remap)
 
 
 def stored_product(
@@ -343,18 +356,18 @@ def stored_product(
     mut remap: NominalRemap,
 ) -> Result[StoredProduct, str]:
     """Encode the function, its requirements and then its frames, assigning nominal ordinals in that first-seen order."""
-    encoded = encode_function(function, remap)?
+    encoded = store_function(function, remap)?
     mut externals: list[StoredExternal] = []
     for value in runtime:
         externals.append(store_external(value, remap)?)
-    mut stored_frames: list[str] = []
+    mut stored_frames: list[StoredFunction] = []
     for frame in frames:
-        stored_frames.append(encode_function(frame, remap)?)
+        stored_frames.append(store_function(frame, remap)?)
     nominals: list[ProductNominal] = []
-    return Ok(StoredProduct(schema=6, function=encoded, runtime=externals, nominals=nominals, frames=stored_frames))
+    return Ok(StoredProduct(schema=7, function=encoded, runtime=externals, nominals=nominals, frames=stored_frames))
 
 
-def encode_function(function: &Function, mut remap: NominalRemap) -> Result[str, str]:
+def store_function(function: &Function, mut remap: NominalRemap) -> Result[StoredFunction, str]:
     """
     Encode one complete function's native storage, control flow and source locations.
 
@@ -383,7 +396,7 @@ def encode_function(function: &Function, mut remap: NominalRemap) -> Result[str,
             StoredLoan(slot=loan.slot, path=list(loan.path), parameter=loan.parameter, ty=store_type(loan.ty, remap)?),
         )
     stored = StoredFunction(
-        schema=6,
+        schema=7,
         name=function.name,
         parameters=parameters,
         result=store_type(function.return_type, remap)?,
@@ -394,10 +407,10 @@ def encode_function(function: &Function, mut remap: NominalRemap) -> Result[str,
         loans=loans,
         retained_result_source=function.retained_result_source,
     )
-    return to_string(stored).map_err((error) => str(error))
+    return Ok(stored)
 
 
-def decode_function(text: str, mut remap: NominalRemap) -> Result[Function, str]:
+def restore_function(stored: StoredFunction, mut remap: NominalRemap) -> Result[Function, str]:
     """
     Restore a function only from a recognized complete record.
 
@@ -405,8 +418,7 @@ def decode_function(text: str, mut remap: NominalRemap) -> Result[Function, str]
     2. Restore its exact native fields, generic loans and source locations, binding nominal ordinals through `remap`.
     """
     # 1. Malformed or unfamiliar records are cache misses at the caller.
-    stored = decode_record(text).map_err((error) => str(error))?
-    if stored.schema != 6:
+    if stored.schema != 7:
         return Err("unknown scalar function product schema")
     # 2. Native attributes and coroutine fields were refused by the producer.
     mut parameters: list[Parameter] = []
@@ -453,19 +465,26 @@ def same_function(left: &Function, right: &Function) -> bool:
     return left == right
 
 
-def decode_record(text: str) -> Result[StoredFunction, JsonError]:
-    """Give the native serde decoder its expected wire type through the ordinary return contract."""
-    return from_str(text)
+def decode_product_record(encoded: bytes) -> Result[StoredProduct, str]:
+    return read_wire_stored_product(read_wire(encoded, b"G\xc7\x7f$\xca!\x00", stored_product_descriptions())?, WirePositions())
 
 
-def decode_product_record(text: str) -> Result[StoredProduct, JsonError]:
-    """Give the existing serde decoder the complete product's expected wire type."""
-    return from_str(text)
+pub def transform_product_positions(encoded: bytes, positions: WirePositions) -> Result[bytes, str]:
+    """Rebuild only native span positions while retaining every other typed field and all helper frames."""
+    schema = stored_product_descriptions()
+    value = read_wire(encoded, b"G\xc7\x7f$\xca!\x00", schema)?
+    mut mapping = positions
+    match mapping.change:
+        PositionChange.Relocate(_, _, file, line) =>
+            root = read_wire_stored_product(value, WirePositions())?.function.span
+            mapping.change = PositionChange.Relocate(root.file, root.line, file, line)
+        _ => pass
+    stored = read_wire_stored_product(value, mapping)?
+    return write_wire(b"G\xc7\x7f$\xca!\x00", schema, wire_stored_product(stored))
 
 
-def decode_external_record(text: str) -> Result[StoredExternal, JsonError]:
-    """Give the existing serde decoder one runtime signature's expected wire type."""
-    return from_str(text)
+def decode_external_record(encoded: bytes) -> Result[StoredExternal, str]:
+    return read_wire_stored_external(read_wire(encoded, b"t\xaa^\x89\x16D\x00", stored_external_descriptions())?, WirePositions())
 
 
 def same_runtime(left: &list[ExternalFunction], right: &list[ExternalFunction]) -> bool:
@@ -754,3 +773,247 @@ def restore_block(block: StoredBlock, mut remap: NominalRemap) -> Result[BasicBl
             span=restore_span(block.span),
         ),
     )
+
+# Generated native-plan wire projections.
+
+
+def wire_stored_block(value: StoredBlock) -> Value:
+    return Value.Record([
+        required_value(b"U\xa8\x1c\xf2\x1eq", Value.List([wire_stored_statement(item0) for item0 in value.statements])),
+        required_value(b"\xe5\x96\x89\x9f\x11K", wire_stored_exit(value.exit)),
+        required_value(b"\x927\x9a<f\xb7", wire_stored_span(value.exit_span)),
+        required_value(b"a\x14\x96\xf4\x12\xca", Value.Boolean(value.cleanup)),
+        required_value(b"7\xa0\x02Z\xa1\xf2", wire_stored_span(value.span)),
+    ])
+
+
+def read_wire_stored_block(value: Value, positions: &WirePositions) -> Result[StoredBlock, str]:
+    fields = wire_fields(value, 5)?
+    return Ok(StoredBlock(
+        statements=[read_wire_stored_statement(item0, positions)? for item0 in items(fields[1].value)?],
+        exit=read_wire_stored_exit(fields[4].value, positions)?,
+        exit_span=read_wire_stored_span(fields[3].value, positions)?,
+        cleanup=boolean_value(fields[2].value)?,
+        span=read_wire_stored_span(fields[0].value, positions)?,
+    ))
+
+
+def wire_stored_exit(value: StoredExit) -> Value:
+    match value:
+        StoredExit.Goto(field0) => return Value.Enum(b"\xf1\x07\x91\x11\xa1\xc1", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0))])
+        StoredExit.Switch(field0, field1, field2) => return Value.Enum(b"9\x92\x1at\x0b\xf2", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_operand(field0)), required_value(b"k\x86\xb2s\xff4", wire_integer(field1)), required_value(b"\xd4s^:&^", wire_integer(field2))])
+        StoredExit.Call(field0, field1, field2, field3, field4, field5) => return Value.Enum(b"\xd6\xe6E\xb7\xd2\xb2", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_target(field0)), required_value(b"k\x86\xb2s\xff4", wire_stored_span(field1)), required_value(b"\xd4s^:&^", Value.List([wire_stored_operand(item0) for item0 in field2])), required_value(b"N\x07@\x85b\xbe", wire_stored_place(field3)), required_value(b"K\x22ww\xd4\xdd", wire_integer(field4)), required_value(b"\xef-\x12}\xe3{", wire_stored_unwind(field5))])
+        StoredExit.Drop(field0, field1, field2) => return Value.Enum(b"\xc8\xaf\x9a\xe3zH", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_place(field0)), required_value(b"k\x86\xb2s\xff4", wire_integer(field1)), required_value(b"\xd4s^:&^", wire_stored_unwind(field2))])
+        StoredExit.Overflow(field0, field1, field2, field3, field4, field5) => return Value.Enum(b"\x17\xb8\xdc\xf5>K", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_operand(field0)), required_value(b"k\x86\xb2s\xff4", wire_integer(field1)), required_value(b"\xd4s^:&^", wire_stored_operand(field2)), required_value(b"N\x07@\x85b\xbe", wire_stored_operand(field3)), required_value(b"K\x22ww\xd4\xdd", wire_integer(field4)), required_value(b"\xef-\x12}\xe3{", wire_stored_unwind(field5))])
+        StoredExit.Return => return Value.Enum(b"k\x01C\xd08d", [])
+        StoredExit.Unreachable => return Value.Enum(b"\xab\xaaF\xad\xb4\xe1", [])
+        StoredExit.Resume => return Value.Enum(b"\xd6@\xc7B\x1d\xa0", [])
+
+
+def read_wire_stored_exit(value: Value, positions: &WirePositions) -> Result[StoredExit, str]:
+    identity, fields = wire_variant(value)?
+    if identity == b"\xf1\x07\x91\x11\xa1\xc1" and len(fields) == 1:
+        return Ok(StoredExit.Goto(number(fields[0].value)?))
+    if identity == b"9\x92\x1at\x0b\xf2" and len(fields) == 3:
+        return Ok(StoredExit.Switch(read_wire_stored_operand(fields[0].value, positions)?, number(fields[1].value)?, number(fields[2].value)?))
+    if identity == b"\xd6\xe6E\xb7\xd2\xb2" and len(fields) == 6:
+        return Ok(StoredExit.Call(read_wire_stored_target(fields[2].value, positions)?, read_wire_stored_span(fields[3].value, positions)?, [read_wire_stored_operand(item0, positions)? for item0 in items(fields[4].value)?], read_wire_stored_place(fields[1].value, positions)?, number(fields[0].value)?, read_wire_stored_unwind(fields[5].value, positions)?))
+    if identity == b"\xc8\xaf\x9a\xe3zH" and len(fields) == 3:
+        return Ok(StoredExit.Drop(read_wire_stored_place(fields[0].value, positions)?, number(fields[1].value)?, read_wire_stored_unwind(fields[2].value, positions)?))
+    if identity == b"\x17\xb8\xdc\xf5>K" and len(fields) == 6:
+        return Ok(StoredExit.Overflow(read_wire_stored_operand(fields[2].value, positions)?, number(fields[3].value)?, read_wire_stored_operand(fields[4].value, positions)?, read_wire_stored_operand(fields[1].value, positions)?, number(fields[0].value)?, read_wire_stored_unwind(fields[5].value, positions)?))
+    if identity == b"k\x01C\xd08d" and len(fields) == 0:
+        return Ok(StoredExit.Return)
+    if identity == b"\xab\xaaF\xad\xb4\xe1" and len(fields) == 0:
+        return Ok(StoredExit.Unreachable)
+    if identity == b"\xd6@\xc7B\x1d\xa0" and len(fields) == 0:
+        return Ok(StoredExit.Resume)
+    return Err("unknown or incomplete StoredExit alternative")
+
+
+def wire_stored_external(value: StoredExternal) -> Value:
+    return Value.Record([
+        required_value(b"\xa0\xaf\x9f\x86[\xf6", Value.Text(value.path)),
+        required_value(b"\xb1\x92\x01}\xa4\x7f", Value.List([wire_stored_type(item0) for item0 in value.arguments])),
+        required_value(b"\xf5(!*Im", Value.List([wire_stored_type(item0) for item0 in value.parameters])),
+        required_value(b"\xf6\xa2\x14\xf7\xa5\xfc", wire_stored_type(value.result)),
+        required_value(b"7\xa0\x02Z\xa1\xf2", wire_stored_span(value.span)),
+    ])
+
+
+def read_wire_stored_external(value: Value, positions: &WirePositions) -> Result[StoredExternal, str]:
+    fields = wire_fields(value, 5)?
+    return Ok(StoredExternal(
+        path=text(fields[1].value)?,
+        arguments=[read_wire_stored_type(item0, positions)? for item0 in items(fields[2].value)?],
+        parameters=[read_wire_stored_type(item0, positions)? for item0 in items(fields[3].value)?],
+        result=read_wire_stored_type(fields[4].value, positions)?,
+        span=read_wire_stored_span(fields[0].value, positions)?,
+    ))
+
+
+def wire_stored_function(value: StoredFunction) -> Value:
+    return Value.Record([
+        required_value(b"\xdf\x0a\xd6\xe48\x80", wire_integer(value.schema)),
+        required_value(b"\x82\xa3S\x7f\xf0\xdb", Value.Text(value.name)),
+        required_value(b"\xf5(!*Im", Value.List([wire_stored_parameter(item0) for item0 in value.parameters])),
+        required_value(b"\xf6\xa2\x14\xf7\xa5\xfc", wire_stored_type(value.result)),
+        required_value(b"\xe9\xe8\xd4\xb1\x93\xcf", Value.List([wire_stored_slot(item0) for item0 in value.locals])),
+        required_value(b"*\x12\xda\x17\xd2|", Value.List([wire_stored_block(item0) for item0 in value.blocks])),
+        required_value(b"7\xa0\x02Z\xa1\xf2", wire_stored_span(value.span)),
+        required_value(b"8\x05\xee\xed\xa5\xe1", Value.List([Value.List([Value.Text(item1) for item1 in item0]) for item0 in value.lifetimes])),
+        required_value(b"\xbe\x9a\xa7IM\x82", Value.List([wire_stored_loan(item0) for item0 in value.loans])),
+        required_value(b"\x01\x8a\x9c\xec\xfa\x93", wire_integer(value.retained_result_source)),
+    ])
+
+
+def read_wire_stored_function(value: Value, positions: &WirePositions) -> Result[StoredFunction, str]:
+    fields = wire_fields(value, 10)?
+    return Ok(StoredFunction(
+        schema=number(fields[6].value)?,
+        name=text(fields[4].value)?,
+        parameters=[read_wire_stored_parameter(item0, positions)? for item0 in items(fields[8].value)?],
+        result=read_wire_stored_type(fields[9].value, positions)?,
+        locals=[read_wire_stored_slot(item0, positions)? for item0 in items(fields[7].value)?],
+        blocks=[read_wire_stored_block(item0, positions)? for item0 in items(fields[1].value)?],
+        span=read_wire_stored_span(fields[2].value, positions)?,
+        lifetimes=[[text(item1)? for item1 in items(item0)?] for item0 in items(fields[3].value)?],
+        loans=[read_wire_stored_loan(item0, positions)? for item0 in items(fields[5].value)?],
+        retained_result_source=number(fields[0].value)?,
+    ))
+
+
+def wire_stored_loan(value: StoredLoan) -> Value:
+    return Value.Record([
+        required_value(b"eX\x83\x831\xb7", wire_integer(value.slot)),
+        required_value(b"\xa0\xaf\x9f\x86[\xf6", Value.List([wire_integer(item0) for item0 in value.path])),
+        required_value(b"c\x906\x1d\xfd\xff", wire_integer(value.parameter)),
+        required_value(b"O\x9d\xb7\xf8\xe5\x06", wire_stored_type(value.ty)),
+    ])
+
+
+def read_wire_stored_loan(value: Value, positions: &WirePositions) -> Result[StoredLoan, str]:
+    fields = wire_fields(value, 4)?
+    return Ok(StoredLoan(
+        slot=number(fields[2].value)?,
+        path=[number(item0)? for item0 in items(fields[3].value)?],
+        parameter=number(fields[1].value)?,
+        ty=read_wire_stored_type(fields[0].value, positions)?,
+    ))
+
+
+def wire_stored_parameter(value: StoredParameter) -> Value:
+    return Value.Record([
+        required_value(b"\x82\xa3S\x7f\xf0\xdb", Value.Text(value.name)),
+        required_value(b"eX\x83\x831\xb7", wire_stored_slot(value.slot)),
+    ])
+
+
+def read_wire_stored_parameter(value: Value, positions: &WirePositions) -> Result[StoredParameter, str]:
+    fields = wire_fields(value, 2)?
+    return Ok(StoredParameter(
+        name=text(fields[1].value)?,
+        slot=read_wire_stored_slot(fields[0].value, positions)?,
+    ))
+
+
+def wire_stored_product(value: StoredProduct) -> Value:
+    return Value.Record([
+        required_value(b"\xdf\x0a\xd6\xe48\x80", wire_integer(value.schema)),
+        required_value(b"x\xf9\xac\x01\x8eU", wire_stored_function(value.function)),
+        required_value(b"\xd9,j\x81\xb2\xff", Value.List([wire_stored_external(item0) for item0 in value.runtime])),
+        required_value(b"wYS3\xedF", Value.List([wire_product_nominal(item0) for item0 in value.nominals])),
+        required_value(b"YL\xfd&\x07\xd4", Value.List([wire_stored_function(item0) for item0 in value.frames])),
+    ])
+
+
+def read_wire_stored_product(value: Value, positions: &WirePositions) -> Result[StoredProduct, str]:
+    fields = wire_fields(value, 5)?
+    return Ok(StoredProduct(
+        schema=number(fields[4].value)?,
+        function=read_wire_stored_function(fields[2].value, positions)?,
+        runtime=[read_wire_stored_external(item0, positions)? for item0 in items(fields[3].value)?],
+        nominals=[read_wire_product_nominal(item0, positions)? for item0 in items(fields[1].value)?],
+        frames=[read_wire_stored_function(item0, positions)? for item0 in items(fields[0].value)?],
+    ))
+
+
+def wire_stored_slot(value: StoredSlot) -> Value:
+    return Value.Record([
+        required_value(b"O\x9d\xb7\xf8\xe5\x06", wire_stored_type(value.ty)),
+        required_value(b"7\xa0\x02Z\xa1\xf2", wire_stored_span(value.span)),
+    ])
+
+
+def read_wire_stored_slot(value: Value, positions: &WirePositions) -> Result[StoredSlot, str]:
+    fields = wire_fields(value, 2)?
+    return Ok(StoredSlot(
+        ty=read_wire_stored_type(fields[1].value, positions)?,
+        span=read_wire_stored_span(fields[0].value, positions)?,
+    ))
+
+
+def wire_stored_target(value: StoredTarget) -> Value:
+    match value:
+        StoredTarget.Planned(field0) => return Value.Enum(b"\xfbo|\x93\xe6\xbf", [required_value(b"_\xec\xebf\xff\xc8", Value.Text(field0))])
+        StoredTarget.External(field0) => return Value.Enum(b"h\xc1\x14\xea\x9c\x8c", [required_value(b"_\xec\xebf\xff\xc8", Value.Text(field0))])
+        StoredTarget.Instantiated(field0, field1) => return Value.Enum(b"\x12\xfds\xf8Q\xe0", [required_value(b"_\xec\xebf\xff\xc8", Value.Text(field0)), required_value(b"k\x86\xb2s\xff4", Value.List([wire_stored_type(item0) for item0 in field1]))])
+        StoredTarget.CloneModel(field0) => return Value.Enum(b"\xc8\x948\xc6\xc9\xb9", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0))])
+        StoredTarget.CloneEnum(field0) => return Value.Enum(b"P\x03\xf3_;\xc1", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0))])
+        StoredTarget.ClosureBody(field0, field1) => return Value.Enum(b"\x81@\xe21\x84\x11", [required_value(b"_\xec\xebf\xff\xc8", Value.Text(field0)), required_value(b"k\x86\xb2s\xff4", wire_integer(field1))])
+        StoredTarget.ClosureBodyOnce(field0, field1) => return Value.Enum(b"q9EI8$", [required_value(b"_\xec\xebf\xff\xc8", Value.Text(field0)), required_value(b"k\x86\xb2s\xff4", wire_integer(field1))])
+        StoredTarget.CallClosure(field0) => return Value.Enum(b"\xb7i\xac\x8f\xcd\xa0", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_type(item0) for item0 in field0]))])
+        StoredTarget.CallClosureOnce(field0) => return Value.Enum(b"\xc4i\xacQ\xb1\x89", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_type(item0) for item0 in field0]))])
+        StoredTarget.CallBorrowingClosure(field0) => return Value.Enum(b"\xa3C\xf89\x18\xe2", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_type(item0) for item0 in field0]))])
+        StoredTarget.SharedCallableBody(field0) => return Value.Enum(b"\xd76^\xdcH\xed", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_type(item0) for item0 in field0]))])
+        StoredTarget.CloneClosure(field0) => return Value.Enum(b"\x07\xb9v\xcd\xac\xf6", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_type(item0) for item0 in field0]))])
+        StoredTarget.Value(field0) => return Value.Enum(b"\x8e7\x95=#\xda", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_operand(field0))])
+
+
+def read_wire_stored_target(value: Value, positions: &WirePositions) -> Result[StoredTarget, str]:
+    identity, fields = wire_variant(value)?
+    if identity == b"\xfbo|\x93\xe6\xbf" and len(fields) == 1:
+        return Ok(StoredTarget.Planned(text(fields[0].value)?))
+    if identity == b"h\xc1\x14\xea\x9c\x8c" and len(fields) == 1:
+        return Ok(StoredTarget.External(text(fields[0].value)?))
+    if identity == b"\x12\xfds\xf8Q\xe0" and len(fields) == 2:
+        return Ok(StoredTarget.Instantiated(text(fields[0].value)?, [read_wire_stored_type(item0, positions)? for item0 in items(fields[1].value)?]))
+    if identity == b"\xc8\x948\xc6\xc9\xb9" and len(fields) == 1:
+        return Ok(StoredTarget.CloneModel(number(fields[0].value)?))
+    if identity == b"P\x03\xf3_;\xc1" and len(fields) == 1:
+        return Ok(StoredTarget.CloneEnum(number(fields[0].value)?))
+    if identity == b"\x81@\xe21\x84\x11" and len(fields) == 2:
+        return Ok(StoredTarget.ClosureBody(text(fields[0].value)?, number(fields[1].value)?))
+    if identity == b"q9EI8$" and len(fields) == 2:
+        return Ok(StoredTarget.ClosureBodyOnce(text(fields[0].value)?, number(fields[1].value)?))
+    if identity == b"\xb7i\xac\x8f\xcd\xa0" and len(fields) == 1:
+        return Ok(StoredTarget.CallClosure([read_wire_stored_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\xc4i\xacQ\xb1\x89" and len(fields) == 1:
+        return Ok(StoredTarget.CallClosureOnce([read_wire_stored_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\xa3C\xf89\x18\xe2" and len(fields) == 1:
+        return Ok(StoredTarget.CallBorrowingClosure([read_wire_stored_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\xd76^\xdcH\xed" and len(fields) == 1:
+        return Ok(StoredTarget.SharedCallableBody([read_wire_stored_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\x07\xb9v\xcd\xac\xf6" and len(fields) == 1:
+        return Ok(StoredTarget.CloneClosure([read_wire_stored_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\x8e7\x95=#\xda" and len(fields) == 1:
+        return Ok(StoredTarget.Value(read_wire_stored_operand(fields[0].value, positions)?))
+    return Err("unknown or incomplete StoredTarget alternative")
+
+
+def wire_stored_unwind(value: StoredUnwind) -> Value:
+    match value:
+        StoredUnwind.Continue => return Value.Enum(b"1\xfb\xef\x16%\x94", [])
+        StoredUnwind.Cleanup(field0) => return Value.Enum(b"\x9f\x1b#{]\xc3", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0))])
+        StoredUnwind.Terminate => return Value.Enum(b"\xf9\x13\xf0\x92\x10\xe8", [])
+
+
+def read_wire_stored_unwind(value: Value, positions: &WirePositions) -> Result[StoredUnwind, str]:
+    identity, fields = wire_variant(value)?
+    if identity == b"1\xfb\xef\x16%\x94" and len(fields) == 0:
+        return Ok(StoredUnwind.Continue)
+    if identity == b"\x9f\x1b#{]\xc3" and len(fields) == 1:
+        return Ok(StoredUnwind.Cleanup(number(fields[0].value)?))
+    if identity == b"\xf9\x13\xf0\x92\x10\xe8" and len(fields) == 0:
+        return Ok(StoredUnwind.Terminate)
+    return Err("unknown or incomplete StoredUnwind alternative")
