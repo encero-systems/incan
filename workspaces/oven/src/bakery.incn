@@ -26,6 +26,7 @@ from rust::std::string import String as RustString
 from std.encoding.hex import hexlify
 from std.environ import get_or
 from std.hash import file_digest
+from graph_read_demands import note_graph_demand
 from std.fs import Path
 from std.primitives.locking import LockGuard
 from files import make_directory, read_json
@@ -108,6 +109,7 @@ pub def find(store: Path, identity: str) -> Result[Option[Fact], str]:
 def find_unit(store: Path, identity: str) -> Result[Option[Fact], str]:
     """Find an intact unit; damage names its object and requires an explicit owner repair."""
     view = snapshot(store).map_err(store_failure)?
+    note_graph_demand("baked-unit", view, record_key(identity))
     match store_lookup(view, record_key(identity)).map_err(store_failure)?:
         Lookup.Found(value) => return checked_fact(store, identity, owned(value))
         Lookup.Deleted => return Ok(None)
@@ -331,7 +333,9 @@ pub def has_files_under(fact: Fact, prefix: str) -> bool:
 pub def lookup(store: Path, name: str) -> Result[Option[str], str]:
     """The identity last selected by a name; a damaged binding is an error, never absence."""
     key = name_key(name)
-    match get(snapshot(store).map_err(store_failure)?, key).map_err(store_failure)?:
+    selected = snapshot(store).map_err(store_failure)?
+    note_graph_demand("bakery-name", selected, key)
+    match get(selected, key).map_err(store_failure)?:
         None => return Ok(None)
         Some(value) =>
             match RustString.from_utf8(value):
