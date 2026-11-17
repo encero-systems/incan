@@ -332,18 +332,52 @@ fn constructed_nested_models_keep_direct_input_authority() -> Result<(), Box<dyn
     Ok(())
 }
 
-/// A model's omitted field computation remains outside represented construction until its default is retained.
+/// The constructor keeps a proven closed initializer in its declaration slot. A call in an omitted default
+/// still refuses the caller's explicit input flow before executable access to that input can be represented.
 #[test]
-fn construction_defaults_stay_refused() -> Result<(), Box<dyn std::error::Error>> {
-    let module = staged(
-        "model Page:\n    title: str = \"default\"\ndef read(value: Borrowed[int]) -> int:\n    return value\ndef main() -> int:\n    page = Page()\n    return read(1)\n",
-        false,
-    )?;
+fn construction_defaults_retain_only_proven_omissions() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Page:\n    title: str = \"default\"\ndef read(value: Borrowed[int]) -> int:\n    return value\ndef main() -> int:\n    page = Page()\n    return read(1)\n";
+    let module = staged(source, false)?;
     let body = module
         .bodies
         .iter()
         .find(|body| body.name == "main")
         .ok_or("no caller")?;
+    assert!(body.first_representation_gap().is_none());
+    let (constructor, operands) = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::Constructor(target), args),
+                ..
+            } => Some((target, args)),
+            _ => None,
+        })
+        .ok_or("missing represented Page construction")?;
+    assert_eq!(
+        constructor
+            .canonical
+            .as_ref()
+            .map(|owner| owner.declaration_name.as_str()),
+        Some("Page")
+    );
+    assert!(operands.is_empty());
+    assert!(
+        matches!(&constructor.binding, bir::ArgumentBinding::Resolved { arguments, defaulted_slots } if arguments.is_empty() && defaulted_slots.as_slice() == [0])
+    );
+
+    let effectful = format!(
+        "def make_title() -> str:\n    return \"user\"\n{}",
+        source.replace("= \"default\"", "= make_title()")
+    );
+    let refused = staged(&effectful, false)?;
+    let body = refused
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("no refused caller")?;
     assert!(body.first_representation_gap().is_some());
     Ok(())
 }
