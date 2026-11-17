@@ -6,7 +6,7 @@ from crumb_rows import ModelField, model_description, required_value
 from graph_crumb_fields import decode_graph_row, encode_graph_row, items, text
 
 
-const ADMISSION: bytes = b"unitadm"
+const ADMISSION: bytes = b"unitad\x00"
 
 
 pub model PayloadAdmission:

@@ -28,7 +28,7 @@ from toolchain import (
 from compiler_facts import admit_fact, verified_fact, relocate_fact, fact_identity
 from unit_rust import add_extern, compile_library_unit, prepare_linked
 from unit_publication import admit_payload, import_publication, published_facts, published_identity, record_path, record_payload, verified_payload, relocate_payload
-from pub::internal_models.unit_admission import decode_unit_admission
+from pub::internal_models.unit_admission import decode_unit_admission, encode_unit_admission
 from unit_freshness import ArtifactIdentities, artifact_files, record, fingerprint
 from engine_client import service_generation, service_identity
 from engine_endpoint import connect_with
@@ -1177,6 +1177,7 @@ def check_unit_admission(scratch: Path) -> Result[None, str]:
     raw = current.read_bytes().map_err((error) => error.message())?
     assert raw[:4] == b"CRMB"
     decoded = decode_unit_admission(raw, manifest.0)?
+    assert encode_unit_admission(manifest.0, decoded)? == raw
     assert decoded.identity == "unit proof" and decoded.payload == digest
     assert decoded.provenance == ["source owner"] and decoded.facts == "semantic proof"
     assert decoded.refusal == "producer refused"
