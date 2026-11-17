@@ -5,6 +5,7 @@ from rust::serde_json import to_string, from_str, Error as JsonError
 from rust::incan_semantics_core::semantic_digest import semantic_digest
 from rust::std::process import id as process_id
 from std.fs import Path
+from pub::internal_models.lowering_events import decode_lowering_event
 from pub::internal_models.plan_function_records import (
     PlanFunctionRecord,
     decode_plan_function_record,
@@ -475,19 +476,15 @@ pub def admitted_payload(
     Returns the placed payload, the declarations it names and the generic instance requests its lowering made. A
     product that does not fit is a miss: the body takes the keyed route.
     """
-    text = match event.decode():
+    decoded = match decode_lowering_event(event):
         Ok(value) => value
         Err(_) => return None
 
-    decoded = match decode_event(text):
+    record = match decode_plan_function_record(decoded.product):
         Ok(value) => value
         Err(_) => return None
 
-    record = match decode_event_product(decoded.product):
-        Ok(value) => value
-        Err(_) => return None
-
-    if record.schema != 4 or len(record.inputs) < 2:
+    if len(record.inputs) < 2:
         return None
     expected = record_scalar_inputs(record.inputs[1], name, span, overflow, reads, len(decoded.positions)) + [
         generation,
