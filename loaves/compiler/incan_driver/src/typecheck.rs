@@ -145,7 +145,8 @@ pub fn typecheck_modules(
                     .namespace(&source)
                     .map(|record| {
                         record.filter(|record| {
-                            record.interface.module_name == module.name && record.interface.module_path == module.path_segments
+                            record.interface.module_name == module.name
+                                && record.interface.module_path == module.path_segments
                         })
                     })
                     .map_err(|error| format!("graph namespace `{source}` refused: {error:?}")),
