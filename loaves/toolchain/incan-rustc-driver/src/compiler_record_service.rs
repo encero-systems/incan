@@ -38,21 +38,27 @@ fn evaluate(value: incan_worker_host::Evaluate, home: &str) -> Result<RecordMess
     let snapshot = value.snapshot.clone();
     let activation =
         incan_worker_host::resolve_checking_activation(home.to_owned(), &value).map_err(|error| error.to_string())?;
-    match activation.ready.output.family.as_str() {
-        "declaration" => evaluate_closed_declaration(activation, snapshot, home),
-        "local" => evaluate_local(activation, snapshot, home),
-        "final" => evaluate_final(activation, snapshot, home),
-        family => Err(format!("unsupported-producer:{family}:{}", value.work_root)),
+    let output = &activation.ready.output;
+    let produced = match output.family.as_str() {
+        "declaration" => evaluate_closed_declaration(&activation, snapshot, home),
+        "local" => evaluate_local(&activation, snapshot, home),
+        "final" => evaluate_final(&activation, snapshot, home),
+        family => return Err(format!("unsupported-producer:{family}:{}", value.work_root)),
+    }?;
+    if let RecordMessage::Produced(done) = &produced {
+        tracing::debug!(target: "incan::invocation", owner = %output.identity, family = %output.family,
+            root = %done.staged_root, "completed ranked checking producer");
     }
+    Ok(produced)
 }
 
 /// Execute the earlier namespace signature stage without admitting a body check or an undiscovered supplier.
 fn evaluate_closed_declaration(
-    activation: incan_worker_host::ResolvedCheckingActivation,
+    activation: &incan_worker_host::ResolvedCheckingActivation,
     snapshot: String,
     home: &str,
 ) -> Result<RecordMessage, String> {
-    let inputs = incan_worker_host::read_local_activation(&activation).map_err(|error| error.to_string())?;
+    let inputs = incan_worker_host::read_local_activation(activation).map_err(|error| error.to_string())?;
     let Some(rows) =
         incan_frontend::checker_records::produce_closed_declaration(&inputs.source, &inputs.owner, inputs.declaration)
             .map_err(|error| format!("closed declaration producer refused: {error:?}"))?
@@ -76,11 +82,11 @@ fn evaluate_closed_declaration(
 /// adapter receives only their decoded source/declaration/environment values; it never receives a `TypeChecker` or
 /// invokes `check_program_internal`.
 fn evaluate_local(
-    activation: incan_worker_host::ResolvedCheckingActivation,
+    activation: &incan_worker_host::ResolvedCheckingActivation,
     snapshot: String,
     home: &str,
 ) -> Result<RecordMessage, String> {
-    let inputs = incan_worker_host::read_local_activation(&activation).map_err(|error| error.to_string())?;
+    let inputs = incan_worker_host::read_local_activation(activation).map_err(|error| error.to_string())?;
     let environment = environment_values(
         inputs.environment,
         inputs.environment_names,
@@ -106,11 +112,11 @@ fn evaluate_local(
 
 /// Decode one local predecessor, enter its single-owner settlement operation and stage the canonical final value.
 fn evaluate_final(
-    activation: incan_worker_host::ResolvedCheckingActivation,
+    activation: &incan_worker_host::ResolvedCheckingActivation,
     snapshot: String,
     home: &str,
 ) -> Result<RecordMessage, String> {
-    let inputs = incan_worker_host::read_final_activation(&activation).map_err(|error| error.to_string())?;
+    let inputs = incan_worker_host::read_final_activation(activation).map_err(|error| error.to_string())?;
     let environment = environment_values(
         inputs.environment,
         inputs.environment_names,
