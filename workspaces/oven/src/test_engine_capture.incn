@@ -544,5 +544,6 @@ pub def test_unsettled_metadata_are_read_again_and_the_epoch_encodes_determinist
     head = encode_head(identity, identity)?
     assert read_head(head)? == (identity, identity)
     assert read_head(identity.encode("utf-8"))? == (identity, "")
+    assert read_head(f"{identity} {identity}".encode("utf-8"))? == (identity, "")
     assert read_head(b"invalid").is_err()
     return Ok(None)

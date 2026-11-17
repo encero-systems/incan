@@ -27,7 +27,7 @@ from std.encoding.hex import hexlify
 from std.fs import Path
 from std.hash import sha256
 from std.json import JsonValue, parse
-from files import json_text
+from engine_capture_identity import capture_identity
 from home import StandardPackage, home, standard_library_dir
 from manifest_intent import parse_document
 from loaf_local_graph import unique
@@ -196,19 +196,11 @@ pub model BuildEpoch:
 
     pub def identity(self) -> Result[str, str]:
         """The digest of the roots, the selection and what each path in reach held; metadata never enters it."""
-        found = [JsonValue.array(
-            [JsonValue.string(item.path), JsonValue.string(item.role.value()), JsonValue.string(item.digest)],
-        ) for item in self.inputs]
-        content = JsonValue.array(
-            [
-                JsonValue.string(EPOCH_SCHEMA),
-                texts(self.roots),
-                self.selection.encoded(),
-                JsonValue.array(found),
-                JsonValue.array([item.encoded() for item in self.absent]),
-            ],
+        return capture_identity(
+            self.roots, self.selection.command, self.selection.profile, self.selection.features,
+            [(item.path, item.role.value(), item.digest) for item in self.inputs],
+            [(item.path, item.role.value()) for item in self.absent],
         )
-        return Ok(hexlify(sha256.digest(json_text(content)?.encode("utf-8"))))
 
     pub def witnesses(self) -> list[LookupWitness]:
         """The lookups this epoch recorded: those that resolved to a file and those that found nothing."""

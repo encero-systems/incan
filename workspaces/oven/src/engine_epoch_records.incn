@@ -26,7 +26,8 @@ from engine_capture import (
 from observation import FileMetadata
 
 const EPOCH: bytes = b"bldepo\x00"
-const HEAD: bytes = b"bldhea\x00"
+const HEAD: bytes = b"bldhd3\x00"
+const LEGACY_HEAD: bytes = b"bldhea\x00"
 const META: str = "tuple<i64,i64,i64,i64,i64,i64>"
 
 
@@ -55,11 +56,11 @@ def epoch_description() -> Description:
     )
 
 
-def head_description() -> Description:
+def head_description(key: bytes = HEAD, profile: str = "incan.engine.capture-head/3") -> Description:
     """The physical revision and semantic identity are independently selected by the capture head."""
     return model_description(
-        HEAD,
-        "incan.engine.capture-head/2",
+        key,
+        profile,
         [
             ModelField(identity=b"ident_", name="identity", storage="string"),
             ModelField(identity=b"revisi", name="revision", storage="string"),
@@ -253,9 +254,16 @@ pub def encode_head(revision: str, identity: str) -> Result[bytes, str]:
 pub def read_head(data: bytes) -> Result[tuple[str, str], str]:
     """Recognize the earlier revision-only head and validate every stored SHA-256 identifier."""
     mut fields: list[str] = []
+    mut current_identity = false
     if data[:4] == b"CRMB":
-        row = decode_graph_row(data, HEAD, head_description(), 2)?
-        fields = [text(row[1].value)?, text(row[0].value)?]
+        match decode_graph_row(data, HEAD, head_description(), 2):
+            Ok(row) =>
+                fields = [text(row[1].value)?, text(row[0].value)?]
+                current_identity = true
+            Err(_) =>
+                legacy = head_description(LEGACY_HEAD, "incan.engine.capture-head/2")
+                row = decode_graph_row(data, LEGACY_HEAD, legacy, 2)?
+                fields = [text(row[1].value)?, text(row[0].value)?]
     else:
         fields = str(from_utf8(data).map_err((error) => str(error))?).split(" ")
     if len(fields) not in [1, 2]:
@@ -266,6 +274,7 @@ pub def read_head(data: bytes) -> Result[tuple[str, str], str]:
         for character in field:
             if character not in "0123456789abcdef":
                 return Err("malformed capture identity")
-    if len(fields) == 1:
+    if not current_identity:
+        # The prior epoch remains readable. Recompute its JSON-derived identity once under the Crumb schema.
         return Ok((fields[0], ""))
     return Ok((fields[0], fields[1]))
