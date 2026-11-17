@@ -91,6 +91,7 @@ def compare(hello: Path, output: Path) -> Result[None, str]:
         directories[name] = directory
     mut roots: list[BodyDemand] = []
     mut surfaces: Dict[str, Surface] = {}
+    mut fragment_digests: Dict[str, str] = {}
     mut expected: Dict[str, int] = {}
     mut census = Census()
     mut runtime: set[str] = set()
@@ -102,6 +103,16 @@ def compare(hello: Path, output: Path) -> Result[None, str]:
             if declared >= 0 or required_text(row, "source")? != source.0:
                 return Err("mixed dependency-root completions")
             declared = number(row, "roots")?
+            continue
+        if phase == "body_fragment_read":
+            match row.get("fragment_digest"):
+                Some(value) =>
+                    member = required_text(row, "loaf")? + "\t" + required_text(row, "identity")?
+                    digest = string_value(value)?
+                    if member in fragment_digests and fragment_digests[member] != digest:
+                        return Err("conflicting fragment digests for " + member)
+                    fragment_digests[member] = digest
+                None => pass
             continue
         if phase not in ["dependency_root", "dependency_fact", "dependency_family", "body_surface_open"]:
             continue
@@ -149,7 +160,7 @@ def compare(hello: Path, output: Path) -> Result[None, str]:
     mut selected_surfaces: set[str] = set()
     mut ranges: Dict[str, int] = {}
     mut members: set[str] = set()
-    match needed_ranges(roots, surfaces):
+    match needed_ranges(roots, surfaces, fragment_digests):
         Ok((found, owners, identities)) =>
             ranges = found
             selected_surfaces = owners

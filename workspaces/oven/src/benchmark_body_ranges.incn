@@ -1,8 +1,9 @@
 """Replay published executable-fragment requirements from canonical dependency roots for the hello read census."""
 
 from rust::incan_semantics_core import CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin, decode_incan_symbol_identity, encode_incan_symbol_identity
-from rust::incan_semantics_core::executable_representation import DeclarationCoverage, ExecutableDeclaration, SurfaceIndex, SurfaceReader
-from std.fs import Path
+from rust::incan_semantics_core::executable_representation import DeclarationCoverage, ExecutableDeclaration, SurfaceIndex
+from std.fs import MappedView, Path
+from pub::incan_platform.store.index import view_digest
 from std.hash import sha256
 from std.encoding.hex import hexlify
 from std.json import JsonValue
@@ -13,7 +14,8 @@ pub model Surface:
     """One independently opened artifact and its verified relative fragment address space."""
 
     pub index: SurfaceIndex
-    pub payload: bytes
+    pub payload: MappedView
+    pub sealed: bool
     pub digest: str
     pub prefix: int
 
@@ -31,24 +33,46 @@ pub def indexed_surface(row: JsonValue, directory: Path) -> Result[Surface, str]
     path = Path(required_text(row, "path")?)
     if path.parent().resolve().map_err((error) => error.message())?.0 != directory.resolve().map_err((error) => error.message())?.0:
         return Err(f"body artifact outside its prepared Loaf directory: {path.0}")
-    encoded = path.read_bytes().map_err((error) => error.message())?
-    digest = hexlify(sha256.digest(encoded))
-    if digest != required_text(row, "digest")?:
-        return Err(f"inspected surface digest differs from {path.0}")
-    reader = SurfaceReader.open(encoded).map_err((error) => str(error))?
-    mut prefix = 0
-    while prefix < len(encoded) and int(encoded[prefix]) >= 128:
-        prefix += 1
-    prefix += 1
-    if prefix + 8 > len(encoded):
-        return Err(f"missing index length in {path.0}")
-    mut length = 0
-    for index in range(8):
-        length = length * 256 + int(encoded[prefix + 7 - index])
-    prefix += 8 + length
-    if prefix > len(encoded) or reader.index().library != required_text(row, "loaf")?:
-        return Err(f"unusable index in {path.0}")
-    return Ok(Surface(index=reader.index().clone(), payload=encoded[prefix:], digest=digest, prefix=prefix))
+    mapped = path.map_read().map_err((error) => error.message())?
+    view = match mapped.view(0, mapped.len()):
+        Some(value) => value
+        None => return Err(f"body mapping has no range: {path.0}")
+    digest = required_text(row, "digest")?
+    mut sealed = false
+    match row.get("proof"):
+        Some(proof) => sealed = proof.as_str().unwrap_or("") == "sealed-range"
+        None => pass
+    mut version = 0
+    while version < 5:
+        byte = match view.read_u8(version):
+            Some(value) => int(value)
+            None => return Err("short executable version prefix")
+        version += 1
+        if byte < 128:
+            break
+    length = match view.read_u64_le(version):
+        Some(value) => int(value)
+        None => return Err("short executable index length")
+    prefix = version + 8 + length
+    header = match view.slice(0, prefix):
+        Some(value) => value
+        None => return Err("executable header extends beyond file")
+    if sealed:
+        if hexlify(view_digest(header)) != required_text(row, "header_digest")?:
+            return Err(f"header differs from the sealed package: {path.0}")
+    elif hexlify(view_digest(view)) != digest:
+        return Err(f"sidecar differs from the legacy package: {path.0}")
+    encoded = match header.slice(version + 8, length):
+        Some(part) => part.to_bytes()
+        None => return Err("invalid executable index range")
+    payload = match view.slice(prefix, view.len() - prefix):
+        Some(part) => part
+        None => return Err("invalid executable payload offset")
+    size: u64 = payload.len().wrapping_resize()
+    index = SurfaceIndex.decode(encoded, size).map_err((error) => str(error))?
+    if index.library != required_text(row, "loaf")?:
+        return Err(f"executable index names another package: {path.0}")
+    return Ok(Surface(index=index, payload=payload, sealed=sealed, digest=digest, prefix=prefix))
 
 
 pub def range_key(digest: str, identity: str, offset: int, absolute: int) -> str:
@@ -56,7 +80,7 @@ pub def range_key(digest: str, identity: str, offset: int, absolute: int) -> str
     return f"{digest}\t{identity}\t{offset}\t{absolute}"
 
 
-pub def needed_ranges(roots: list[BodyDemand], surfaces: Dict[str, Surface]) -> Result[tuple[Dict[str, int], set[str], set[str]], str]:
+pub def needed_ranges(roots: list[BodyDemand], surfaces: Dict[str, Surface], fragment_digests: Dict[str, str]) -> Result[tuple[Dict[str, int], set[str], set[str]], str]:
     """Start with settled roots and follow published type-context, private, transitive and lazy-default edges."""
     mut pending = roots
     mut visited: set[str] = set()
@@ -99,7 +123,12 @@ pub def needed_ranges(roots: list[BodyDemand], surfaces: Dict[str, Surface]) -> 
                 ranges[range_key(surface.digest, item.identity, start, surface.prefix + start)] = size
                 for dependency in requirements:
                     pending.append(BodyDemand(identity=encode_incan_symbol_identity(dependency), requester=package, optional=false))
-                fragment = surface.index.decode_declaration(identity, surface.payload[start:start + size]).map_err((error) => str(error))?
+                raw = match surface.payload.slice(start, size):
+                    Some(part) => part.to_bytes()
+                    None => return Err(f"invalid published fragment range: {item.identity}")
+                if surface.sealed and hexlify(sha256.digest(raw)) != fragment_digests.get(package + "\t" + item.identity, ""):
+                    return Err(f"fragment differs from its sealed range: {item.identity}")
+                fragment = surface.index.decode_declaration(identity, raw).map_err((error) => str(error))?
                 match fragment:
                     ExecutableDeclaration.NominalWithTraits(_, implementations) =>
                         for link in implementations:
