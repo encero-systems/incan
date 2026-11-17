@@ -9,9 +9,9 @@ from pub::internal_models import (
     encode_ready_work, envelope_key,
 )
 from pub::internal_models.checker_records import CHECKER_PROFILE
-from pub::internal_models.records import ReadScope, ReadWitness, RecordRead, RecordRequest, RecordSource
+from pub::internal_models.records import ReadScope, ReadWitness, RecordRead, RecordRequest, RecordSelection, RecordSource
 from record_protocol import Prepare, Prepared
-from record_snapshot import ResolvedSnapshot, resolve_snapshot
+from record_snapshot import ResolvedSnapshot, resolve_snapshot, valid_digest
 
 
 def required_record(snapshot: &ResolvedSnapshot, key: str) -> Result[bytes, str]:
@@ -35,7 +35,13 @@ pub def prepare_checking(home: str, request: &Prepare) -> Result[Prepared, str]:
     output = demand.keys[0]
     if request.stage not in ["check-body", output.family]:
         return Err("checking demand does not belong to the requested stage")
-    basis_bytes = required_record(resolved, checking_basis_key(output)?)?
+    pointer = required_record(resolved, checking_basis_key(output)?)?
+    basis_root = pointer.decode().map_err((_) => "invalid checking receipt root")?
+    if not valid_digest(basis_root):
+        return Err("invalid checking receipt root")
+    basis_bytes = required_record(resolved, "incan.engine.receipt\t" + basis_root)?
+    if hexlify(sha256.digest(basis_bytes)) != basis_root:
+        return Err("checking supplier evidence differs from its receipt root")
     basis = decode_read_receipt(basis_bytes)?
     if basis.scope.profile != request.producer_profile or basis.preparation.output != output:
         return Err("checking supplier evidence belongs to another output or profile")
@@ -51,25 +57,51 @@ pub def prepare_checking(home: str, request: &Prepare) -> Result[Prepared, str]:
     source = resolved.record_source(scope)
     mut reads: list[RecordRequest] = []
     mut owner_sources = 0
+    mut own_declarations = 0
+    mut own_locals = 0
+    mut headers = 0
+    mut declaration_slots: set[str] = set()
+    mut declarations: set[str] = set()
     for witness in basis.witnesses:
         match witness:
-            ReadWitness.Found(prior, selected) =>
+            ReadWitness.Found(prior, _) =>
                 supplier = prior.request
+                if supplier.selection != RecordSelection.Field("value") or supplier.key.origin != output.origin:
+                    return Err("checking preparation requires a full project scalar input")
                 if supplier.key.family == "owner-source":
-                    if supplier.key.origin != output.origin or supplier.key.identity != module:
+                    if supplier.key.identity != module:
                         return Err("checking source does not belong to its certified namespace")
                     owner_sources += 1
+                elif supplier.key.family == "module-header":
+                    if supplier.key.identity != module or supplier.key.facet != "module":
+                        return Err("checking header does not belong to its certified namespace")
+                    headers += 1
+                elif supplier.key.family == "declaration":
+                    declarations.add(supplier.key.identity)
+                    if supplier.key.identity == output.identity:
+                        own_declarations += 1
+                elif supplier.key.family == "local":
+                    if supplier.key.identity != output.identity or output.family != "final":
+                        return Err("checking preparation selected an unrelated local predecessor")
+                    own_locals += 1
+                elif supplier.key.family not in ["declaration-slot", "owner-census", "declaration-signature"]:
+                    return Err("checking preparation requires compiler discovery for " + supplier.key.family)
                 match source.read(scope, supplier):
                     RecordRead.Found(current) =>
                         # Only typed checker values can vary after selection. A source, census or declaration-slot
                         # change requires fresh supplier discovery before this owner may be scheduled.
-                        if supplier.key.family not in ["local", "declaration"] and current.selection_digest != selected:
+                        if supplier.key.family not in ["local", "declaration"] and current.evidence.semantic_digest != prior.semantic_digest:
                             return Err("checking supplier discovery is stale for " + supplier.key.family)
+                        if supplier.key.family == "declaration-slot":
+                            declaration_slots.add(current.value.decode().map_err((_) => "checking declaration slot has no stable identity")?)
                     _ => return Err("checking supplier is unfinished or outside its preparation")
                 reads.append(supplier)
             _ => return Err("checking preparation requires a new compiler selector for exclusion or member evidence")
-    if owner_sources != 1:
-        return Err("checking preparation requires one certified owner source")
+    if owner_sources != 1 or own_declarations != 1 or headers != 1 or (output.family == "final" and own_locals != 1):
+        return Err("checking preparation requires complete owner-specific predecessors")
+    for identity in declaration_slots:
+        if identity not in declarations:
+            return Err("checking preparation requires the declaration selected by each call slot")
     mut dependency = 0
     if output.family == "final":
         dependency = 1
@@ -77,7 +109,7 @@ pub def prepare_checking(home: str, request: &Prepare) -> Result[Prepared, str]:
     ready = ReadyWork(output=output, stage=ProducerStage.CheckBody, profile=profile)
     prepared = PreparedInputs(
         output=output, snapshot=InputSnapshot(root=RecordRoot(digest=request.snapshot)), profile=profile,
-        required_reads=reads, selector_witnesses=RecordRoot(digest=hexlify(sha256.digest(basis_bytes))),
+        required_reads=reads, selector_witnesses=RecordRoot(digest=basis_root),
         rank_certificate=RankCertificate(
             rank=ProducerRank(namespace=order.rank, stage=ProducerStage.CheckBody, dependency=dependency),
             evidence=RecordRoot(digest=evidence),

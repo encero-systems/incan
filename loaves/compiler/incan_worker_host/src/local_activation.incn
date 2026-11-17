@@ -77,6 +77,9 @@ pub def read_local_activation(activation: &ResolvedCheckingActivation) -> Result
                 environment.append(fields)
                 environment_names.append(request.key.facet)
                 environment_identities.append(request.key.identity)
+        elif request.key.family in ["owner-census", "declaration-slot", "declaration-signature"]:
+            # These checked scalar reads fix the selection of typed declarations in the prepared environment.
+            pass
         else:
             return Err("local activation prepared an unsupported input family")
     completed = reader.finish().map_err((_) => "local activation read receipt is incomplete")?

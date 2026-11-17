@@ -8,7 +8,7 @@ from pub::internal_models.plan_function_records import decode_plan_function_reco
 from rust::std::fs import remove_dir_all
 from rust::incan_semantics_core import encode_incan_symbol_identity
 from rust::incan_semantics_core::executable_representation import decode_owner
-from pub::incan_platform.store import Snapshot, Transaction, begin, commit, get, stage_put
+from pub::incan_platform.store import Snapshot, Transaction, begin, commit, get, stage_delete, stage_put
 from pub::internal_models import (
     CompiledBodyDependencyRead,
     CompiledBodyFallback,
@@ -20,7 +20,6 @@ from pub::internal_models import (
     NamespaceOrder,
     certified_namespace_order,
     checking_basis_key,
-    encode_read_receipt,
     GraphNamespaceValue,
     encode_graph_namespace_value,
     record_root,
@@ -301,13 +300,16 @@ def stage_compiled_body_values(
 ) -> Result[int, str]:
     """Stage each compiler-produced local, final and Body IR value with its exact source and dependency witnesses."""
     mut published = 0
+    mut declarations: Dict[str, RecordKey] = {}
+    for value in values:
+        declarations[value.identity] = body_key("declaration", origin, value.identity, value.name, root(value.declaration)?)
     for value in values:
         mut position = NamespaceOrder()
         if order.contains_key(value.module):
             position = order[value.module]
         projection = projections[value.module]
         owner = compiled_owner_source(projection, value.module, value.name, value.identity)?
-        declaration_key = body_key("declaration", origin, value.identity, value.name, root(value.declaration)?)
+        declaration_key = declarations[value.identity]
         local_key = body_key("local", origin, value.identity, "checked", root(value.local)?)
         mut local_reads = [
             prepared_product_request(owner.key),
@@ -315,7 +317,14 @@ def stage_compiled_body_values(
             prepared_product_request(projection.census.key),
             prepared_product_request(declaration_key),
         ]
+        mut independent = len(position.members) == 1
+        mut environment: set[str] = set()
         for dependency in value.dependency_reads:
+            if dependency.package is not None or dependency.identity not in declarations:
+                independent = false
+            elif dependency.identity != value.identity and dependency.identity not in environment:
+                local_reads.append(prepared_product_request(declarations[dependency.identity]))
+                environment.add(dependency.identity)
             match dependency_read_key(projections, unit, origin, dependency, editable_packages)?:
                 Some(key) => local_reads.append(prepared_product_request(key))
                 None => pass
@@ -326,44 +335,32 @@ def stage_compiled_body_values(
                 Some(key) => local_reads.append(prepared_product_request(key))
                 None => pass
         local_receipt = source.receipt(scope, local_key, local_reads, position.evidence)?
-        if len(position.members) == 1:
-            stage_put(prepared, checking_basis_key(local_key)?, encode_read_receipt(local_receipt)?)
-        _ = prepare_evaluation(
+        local = prepare_evaluation(
             prepared,
             "compiled-local-" + value.identity,
             ProducerRank(namespace=position.rank, stage=ProducerStage.CheckBody, dependency=0),
             value.local,
             local_receipt,
         )?
+        if independent:
+            stage_put(prepared, checking_basis_key(local_key)?, local.receipt_root.encode("utf-8"))
+        else:
+            stage_delete(prepared, checking_basis_key(local_key)?)
         source.add(encode_record_key(local_key)?, value.local)
         final_key = body_key("final", origin, value.identity, "checked", root(value.final)?)
-        mut final_reads = [
-            prepared_product_request(owner.key),
-            prepared_product_request(projection.header.key),
-            prepared_product_request(projection.census.key),
-            prepared_product_request(declaration_key),
-            prepared_product_request(local_key),
-        ]
-        for dependency in value.dependency_reads:
-            match dependency_read_key(projections, unit, origin, dependency, editable_packages)?:
-                Some(key) => final_reads.append(prepared_product_request(key))
-                None => pass
-            match dependency_invalidation_key(unit, origin, dependency)?:
-                Some(key) => final_reads.append(prepared_product_request(key))
-                None => pass
-            match dependency_signature_key(projections, unit, origin, dependency, editable_packages)?:
-                Some(key) => final_reads.append(prepared_product_request(key))
-                None => pass
+        final_reads = local_reads + [prepared_product_request(local_key)]
         final_receipt = source.receipt(scope, final_key, final_reads, position.evidence)?
-        if len(position.members) == 1:
-            stage_put(prepared, checking_basis_key(final_key)?, encode_read_receipt(final_receipt)?)
-        _ = prepare_evaluation(
+        settled = prepare_evaluation(
             prepared,
             "compiled-final-" + value.identity,
             ProducerRank(namespace=position.rank, stage=ProducerStage.CheckBody, dependency=1),
             value.final,
             final_receipt,
         )?
+        if independent:
+            stage_put(prepared, checking_basis_key(final_key)?, settled.receipt_root.encode("utf-8"))
+        else:
+            stage_delete(prepared, checking_basis_key(final_key)?)
         source.add(encode_record_key(final_key)?, value.final)
         body_ir_key = body_key("body-ir", origin, value.identity, "checked", root(value.final)?)
         body_ir_receipt = source.receipt(scope, body_ir_key, [prepared_product_request(final_key)], position.evidence)?
