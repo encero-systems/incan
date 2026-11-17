@@ -3,8 +3,9 @@
 from std.primitives.crumb import Budget
 from std.primitives.crumb.descriptions import Description, DescriptionMode
 from std.primitives.crumb.records import RowRecord
+from std.primitives.crumb.row_reader import RowSet
 from std.primitives.crumb.values import IntegerValue, Value, ValueField
-from crumb_rows import admit_rows, decode_rows, encode_rows
+from crumb_rows import admit_rows, encode_rows
 from record_scope import MemberSelection, PayloadSelection, RecordKey, RecordRequest, RecordSelection, valid_key
 
 pub const KEY_TYPE: str = "tuple<string,string,string,string,string,string>"
@@ -19,10 +20,12 @@ pub def encode_graph_row(key: bytes, description: Description, fields: list[Valu
 
 pub def decode_graph_row(encoded: bytes, key: bytes, description: Description, count: int) -> Result[list[ValueField], str]:
     """Require exactly the expected row, selector and field count before any domain projection."""
-    rows = decode_rows(encoded, [description], MAX_GRAPH_RECORD_BYTES)?
-    if len(rows) != 1 or rows[0].key != key:
+    mut budget = graph_read_budget()?
+    rows = admit_graph_row(encoded, description, budget)?
+    row = rows.read_record(0, budget).map_err((error) => error.message())?
+    if row.key != key:
         return Err("unexpected compiler graph Crumb row")
-    match rows[0].value:
+    match row.value:
         Value.Record(fields) =>
             if len(fields) == count:
                 return Ok(fields)
@@ -116,12 +119,23 @@ pub def read_request(value: Value) -> Result[RecordRequest, str]:
 
 pub def decode_graph_field(encoded: bytes, description: Description, field: bytes) -> Result[Value, str]:
     """Read one projected field only after admission of the complete envelope and exact row type."""
-    mut budget = Budget.create(bytes=MAX_GRAPH_RECORD_BYTES * 4, elements=4194304, depth=128).map_err((error) => error.message())?
+    mut budget = graph_read_budget()?
+    rows = admit_graph_row(encoded, description, budget)?
+    return rows.read_field(0, field, budget).map_err((error) => error.message())
+
+
+def graph_read_budget() -> Result[Budget, str]:
+    """Use the same bound whether materializing a graph row or projecting a single field."""
+    return Budget.create(bytes=MAX_GRAPH_RECORD_BYTES * 4, elements=4194304, depth=128).map_err((error) => error.message())
+
+
+def admit_graph_row(encoded: bytes, description: Description, mut budget: Budget) -> Result[RowSet, str]:
+    """Authenticate the sole dictionary schema before exposing any logical fields."""
     rows = admit_rows(encoded, [description], MAX_GRAPH_RECORD_BYTES, budget)?
     dictionary = rows.descriptions(budget).map_err((error) => error.message())?
     if rows.len() != 1 or len(dictionary) != 1:
         return Err("unexpected compiler graph Crumb row")
     # The only referenced dictionary entry was resolved using our one supplied description.
     match dictionary[0].mode:
-        DescriptionMode.Reference => return rows.read_field(0, field, budget).map_err((error) => error.message())
+        DescriptionMode.Reference => return Ok(rows)
         DescriptionMode.Inline => return Err("unexpected inline compiler graph description")
