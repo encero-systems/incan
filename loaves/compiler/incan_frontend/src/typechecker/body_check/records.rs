@@ -357,7 +357,7 @@ impl Positions {
             }
         }
         // A constructor of an imported model or class names the checked field each of its arguments initializes.
-        identities.extend(imported_members::field_identities(checker));
+        identities.extend(imported_members::identities(checker));
         let type_identities = admitted_type_identities(checker);
         let nested = checker
             .checked_body(owner)
@@ -983,9 +983,16 @@ fn restore_identity_context(
         return Err(NodeBindingError::MissingNode);
     }
     let name = next(values)?;
-    let canonical = positions
-        .canonical(&identity)
-        .unwrap_or_else(|_| owner.generated_member(name, kind.clone()));
+    let canonical = match positions.canonical(&identity) {
+        Ok(member) => member,
+        Err(error)
+            if kind == SemanticSourceTargetKind::Variant
+                && matches!(owner.origin, incan_semantics_core::SymbolOrigin::Package { .. }) =>
+        {
+            return Err(error);
+        }
+        Err(_) => owner.generated_member(name, kind.clone()),
+    };
     if canonical.declaration_name != name
         || canonical.kind != kind
         || stable_member_identity(&canonical, &owner, binding_ordinal)? != identity
