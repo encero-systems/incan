@@ -5,13 +5,17 @@ from rust::std::string import String as RustString
 from std.fs import Path
 from std.environ import get_optional, get_or
 from std.json import JsonValue, parse
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from pub::internal_models.crumb_rows import ModelField, model_description, required_value
+from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, text
 from pub::incan_platform.ipc import session_id
 from bakery import bakery
 from core_process import executable
 from compiler_worker import collect_console, relay_console
 from engine_channel import Channel, SendOutcome
 from engine_endpoint import connect, owner_uid
-from engine_epochs import record_text, prepare_submit
+from engine_epochs import prepare_submit
 from engine_messages import Complete, CompletionStatus, Message, Release, Submit
 from engine_programs import read_program, program_handle, selected_program, restore_program
 from engine_proofs import report
@@ -19,12 +23,11 @@ from overlay_request import OverlayRequest, parse_served
 from overlay_hover import overlay_hover
 from engine_state import Identity
 from engine_wire import Refusal
-from files import json_text
 from incan_units import run_program
 from json_fields import required_text
 from observation import file_metadata, trace
 from retained_readings import installed_digest
-from pub::incan_platform.store import HOME_VIEW, Snapshot, begin, commit, fork, put, view_snapshot
+from pub::incan_platform.store import HOME_VIEW, Snapshot, begin, commit, fork, get, put, view_snapshot
 from store_path_conversion import claim, snapshot
 from toolchain import load_toolchain, toolchain_directory
 from installation_page import admitted_identity
@@ -541,13 +544,24 @@ pub def admitted_installation(store: Path, view: str, key: str, admission: str) 
     return admitted_compiler(snapshot(store, view).map_err((error) => error.message())?, key, admission)
 
 
+const INSTALLATION_ROW: bytes = b"enginst"
+
+
+def compiler_admission_description() -> Description:
+    """Match the selected installation page to its portable compiler identity."""
+    return model_description(INSTALLATION_ROW, "incan.engine.installation/2", [
+        ModelField(identity=b"admitt", name="admission", storage="string"),
+        ModelField(identity=b"compil", name="compiler", storage="string"),
+    ])
+
+
 pub def record_installation(store: Path, view: str, key: str, admission: str, compiler: str) -> Result[str, str]:
     """Record `compiler` as the admitted compiler of one installation in `view` of the bakery."""
-    value = json_text(
-        JsonValue.object({"admission": JsonValue.string(admission), "compiler": JsonValue.string(compiler)}),
-    )?
+    value = encode_graph_row(INSTALLATION_ROW, compiler_admission_description(), [
+        required_value(b"admitt", Value.Text(admission)), required_value(b"compil", Value.Text(compiler)),
+    ])?
     selected = snapshot(store, view).map_err((error) => error.message())?
-    _ = commit(put(begin(selected), key, value.encode("utf-8"))).map_err((error) => error.message())?
+    _ = commit(put(begin(selected), key, value)).map_err((error) => error.message())?
     return Ok(compiler)
 
 
@@ -563,8 +577,14 @@ def selected_installation(directory: Path) -> Result[str, str]:
 
 def admitted_compiler(selected: Snapshot, key: str, admission: str) -> Result[Option[str], str]:
     """Read the portable compiler identity selected by the immutable installation-page identity in its key."""
-    if let Some(text) = record_text(selected, key)?:
-        previous = parse(text).map_err((error) => error.message())?
+    if let Some(data) = get(selected, key).map_err((error) => error.message())?:
+        if data[:4] == b"CRMB":
+            fields = decode_graph_row(data, INSTALLATION_ROW, compiler_admission_description(), 2)?
+            if text(fields[0].value)? == admission:
+                return Ok(Some(text(fields[1].value)?))
+            return Ok(None)
+        prior = RustString.from_utf8(data).map_err((error) => str(error))?
+        previous = parse(str(prior)).map_err((error) => error.message())?
         if required_text(previous, "admission")? == admission:
             return Ok(Some(required_text(previous, "compiler")?))
     return Ok(None)

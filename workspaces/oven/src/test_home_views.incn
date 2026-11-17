@@ -5,7 +5,8 @@ from std.json import JsonValue
 from home_paths import BAKERY_OVERRIDE, BakeryLocation
 from engine_client import admitted_installation, project_view_name, record_installation
 from home_views import bind_home_view
-from pub::incan_platform.store import HOME_VIEW
+from pub::incan_platform.store import HOME_VIEW, begin, commit, get, put
+from store_path_conversion import snapshot
 from scratch import scratch_directory
 
 
@@ -80,6 +81,14 @@ pub def test_installation_admission_lives_in_the_home_view() -> Result[None, str
         Some(compiler) =>
             assert compiler == "compiler-1", compiler
         None => return Err("the home's own admission is not visible in its view")
+    selected = snapshot(store, "home-first").map_err((error) => error.message())?
+    match get(selected, key).map_err((error) => error.message())?:
+        Some(row) => assert row[:4] == b"CRMB"
+        None => return Err("installation did not save its record")
+    assert admitted_installation(store, "home-first", key, "another-page")? is None
+    older = b'{"admission":"page-1","compiler":"older-compiler"}'
+    _ = commit(put(begin(selected), key, older)).map_err((error) => error.message())?
+    assert admitted_installation(store, "home-first", key, "page-1")? == Some("older-compiler")
     for other in ["home-second", HOME_VIEW]:
         match admitted_installation(store, other, key, "page-1")?:
             Some(_) => return Err(f"one home's installation admission is visible in view {other}")
