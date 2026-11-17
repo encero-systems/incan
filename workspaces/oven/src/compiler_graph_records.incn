@@ -1,7 +1,6 @@
 """Atomic ranked-graph publication for compiler values, completed receipts and their forward and reverse edges."""
 
 from std.encoding.hex import hexlify
-from std.json import JsonValue, parse
 from std.primitives.hash import sha256
 from pub::incan_platform.store import (
     Snapshot,
@@ -21,7 +20,6 @@ from pub::internal_models import (
     StoreRecordSource,
     decode_read_receipt,
     encode_read_receipt,
-    stage_name,
 )
 from pub::internal_models.records import (
     ReadReceipt,
@@ -31,13 +29,12 @@ from pub::internal_models.records import (
     READ_SCHEMA,
     RecordKey,
     RecordRequest,
-    RecordSelection,
     encode_record_key,
 )
-from files import json_text
-
-const EVALUATION_SCHEMA: str = "incan.engine.evaluation/1"
-const EDGE_SCHEMA: str = "incan.engine.read-edge/2"
+from compiler_graph_rows import (
+    IncomingEdge, OutgoingEdge, encode_evaluation, encode_incoming, encode_outgoing, encode_pointer,
+    evaluation_value_digest, read_evaluation, read_identity, read_incoming, read_outgoing, read_pointer,
+)
 
 
 pub model PublishedEvaluation:
@@ -135,15 +132,17 @@ pub def prepare_evaluation(
     stage_put(transaction, value_key, value)
     stage_put(transaction, receipt_key, receipt_bytes)
     stage_put(transaction, evaluation_key, evaluation)
-    stage_put(transaction, output_index_key(receipt.scope.profile, value_key)?, value_key.encode("utf-8"))
+    stage_put(transaction, output_index_key(receipt.scope.profile, value_key)?, encode_pointer(value_key)?)
     outgoing = outgoing_prefix(receipt.scope.profile, record_slot(value_key)?)
-    mut encoded: list[bytes] = []
+    mut forward: list[OutgoingEdge] = []
     for fact in edges:
-        encoded.append(encode_edge(value_key, receipt.scope.profile, fact)?)
-    incoming = incoming_keys(encoded)?
-    for index in range(len(encoded)):
-        stage_put(transaction, f"{outgoing}{index}", encoded[index])
-        stage_put(transaction, incoming[index], encode_incoming(value_key, receipt.scope.profile, edges[index])?)
+        forward.append(OutgoingEdge(reader=value_key, profile=receipt.scope.profile, kind=fact.kind, request=fact.request, evidence=fact.evidence))
+    incoming = incoming_keys(forward)?
+    slot = record_slot(value_key)?
+    for index in range(len(forward)):
+        stage_put(transaction, f"{outgoing}{index}", encode_outgoing(forward[index])?)
+        reverse = IncomingEdge(reader=slot, profile=receipt.scope.profile, target=edges[index].target)
+        stage_put(transaction, incoming[index], encode_incoming(reverse)?)
     return Ok(
         PreparedEvaluation(
             value_key=value_key,
@@ -175,15 +174,11 @@ pub def reusable_evaluation(
         Some(value) => value
         None => return Ok(None)
 
-    evaluation = evaluation_document(encoded)?
-    if (
-        required_text(evaluation, "outcome")? != "produced"
-        or required_text(evaluation, "profile")? != profile
-        or required_text(evaluation, "output")? != value_key
-    ):
+    evaluation = read_evaluation(encoded)?
+    if evaluation.profile != profile or evaluation.output != value_key:
         return Err("selected compiler evaluation has mismatched authority")
-    receipt_root = required_digest(evaluation, "receipt_root")?
-    value_digest = required_digest(evaluation, "value_digest")?
+    receipt_root = evaluation.receipt_root
+    value_digest = evaluation.value_digest
     receipt_bytes = required_value(selected, "incan.engine.receipt\t" + receipt_root)?
     if digest(receipt_bytes) != receipt_root:
         return Err("selected compiler receipt differs from its content root")
@@ -260,7 +255,7 @@ pub def owner_evaluations(
             if let Some(document) = get(selected, evaluation_record_key(profile, value_key)).map_err(
                 (error) => error.message(),
             )?:
-                evaluation = required_digest(evaluation_document(document)?, "value_digest")?
+                evaluation = evaluation_value_digest(document)?
             mut listed: list[str] = []
             if key.identity in parts:
                 listed = parts[key.identity]
@@ -309,7 +304,7 @@ pub def family_outputs(
                 if let Some(names) = included:
                     if fields[5] not in names:
                         continue
-            output = required_value(selected, indexed)?.decode().map_err((_) => "compiler output index entry is not UTF-8")?
+            output = read_pointer(required_value(selected, indexed)?)?
             if output_index_key(profile, output)? != indexed:
                 return Err("compiler output index entry names a record of another slot")
             listed.append(output)
@@ -332,7 +327,7 @@ def family_range(family: str, profile: str) -> Result[str, str]:
     """The key range of the output index that holds one family/profile's entries."""
     if family == "" or profile == "" or "\t" in family or "\t" in profile:
         return Err("reusable compiler family selection requires delimiter-free family and profile names")
-    return Ok("incan.engine.output\t" + profile + "\t" + family + "\t")
+    return Ok("incan.engine.output/2\t" + profile + "\t" + family + "\t")
 
 
 pub def readers_of(selected: Snapshot, changed: list[RecordKey], profile: str) -> Result[list[RecordKey], str]:
@@ -343,18 +338,12 @@ pub def readers_of(selected: Snapshot, changed: list[RecordKey], profile: str) -
     mut readers: Dict[str, RecordKey] = {}
     for target in changed:
         exact = encode_record_key(target)?
-        prefix = "incan.engine.edge-in\t" + record_slot(exact)? + "\t"
+        prefix = "incan.engine.edge-in/3\t" + record_slot(exact)? + "\t"
         for indexed in keys_with_prefix(selected, prefix).map_err((error) => error.message())?:
-            edge = parse(required_value(selected, indexed)?.decode().map_err((_) => "compiler graph edge is not UTF-8")?).map_err(
-                (error) => error.message(),
-            )?
-            if (
-                required_text(edge, "schema")? != EDGE_SCHEMA
-                or required_text(edge, "profile")? != profile
-                or required_text(edge, "target")? != exact
-            ):
+            edge = read_incoming(required_value(selected, indexed)?)?
+            if edge.profile != profile or edge.target != exact:
                 continue
-            if let Some(reader) = current_reader(selected, profile, required_text(edge, "reader")?)?:
+            if let Some(reader) = current_reader(selected, profile, edge.reader)?:
                 readers[reader] = decode_record_key(reader)?
     return Ok([readers[key] for key in sorted([item for item in readers.keys()])])
 
@@ -379,7 +368,7 @@ pub def supersede_outputs(selected: Snapshot, mut transaction: Transaction) -> R
             writing.add(write.key)
     mut slots: set[str] = set()
     for key in writing:
-        if key.startswith("incan.engine.output\t") and len(key.split("\t")) == 7:
+        if key.startswith("incan.engine.output/2\t") and len(key.split("\t")) == 7:
             slots.add(key)
     for slot in sorted([item for item in slots]):
         # An earlier Oven keyed a slot's outputs by their context as well; the slot's own entry replaces them.
@@ -397,9 +386,9 @@ def retire_edges(
     writing: set[str],
 ) -> Result[None, str]:
     """Remove a slot's earlier outgoing edges and their incoming entries, except those written again."""
-    mut earlier: list[bytes] = []
+    mut earlier: list[OutgoingEdge] = []
     for key in keys_with_prefix(selected, outgoing).map_err((error) => error.message())?:
-        earlier.append(required_value(selected, key)?)
+        earlier.append(read_outgoing(required_value(selected, key)?)?)
         if key not in writing:
             stage_delete(transaction, key)
     mut retired: set[str] = set()
@@ -415,10 +404,10 @@ def outgoing_prefix(profile: str, slot: str) -> str:
     Where an evaluation's outgoing edges are listed: under its profile and slot, not its evaluated context, so the next
     evaluation of the slot writes its edges over the earlier one's instead of beside them.
     """
-    return f"incan.engine.edge-out\t{profile}\t{slot}\t"
+    return f"incan.engine.edge-out/3\t{profile}\t{slot}\t"
 
 
-def incoming_keys(encoded: list[bytes]) -> Result[list[str], str]:
+def incoming_keys(edges: list[OutgoingEdge]) -> Result[list[str], str]:
     """
     The reverse index entries of one evaluation's encoded edges, in their order. Each is the slot of the edge's target
     and its kind, the identity of the read itself (the reading slot, profile and selection), and the edge's place among
@@ -431,15 +420,10 @@ def incoming_keys(encoded: list[bytes]) -> Result[list[str], str]:
     mut reads: list[str] = []
     mut targets: list[str] = []
     mut by_read: Dict[str, set[str]] = {}
-    for edge in encoded:
-        document = parse(edge.decode().map_err((_) => "compiler graph edge is not UTF-8")?).map_err(
-            (error) => error.message(),
-        )?
-        selection = json_text(document.require("selection").map_err((error) => error.message())?)?
-        identity = record_slot(required_text(document, "reader")?)? + "\n" + required_text(document, "profile")?
-        target = required_text(document, "target")?
-        kind = required_text(document, "kind")?
-        read = f"{record_slot(target)?}\t{kind}\t{digest((identity + "\n" + selection).encode("utf-8"))}"
+    for edge in edges:
+        target = encode_record_key(edge.request.key)?
+        identity = read_identity(record_slot(edge.reader)?, edge)?
+        read = f"{record_slot(target)?}\t{edge.kind}\t{identity}"
         mut seen = by_read.get(read).unwrap_or(set())
         seen.add(target)
         by_read[read] = seen
@@ -448,7 +432,7 @@ def incoming_keys(encoded: list[bytes]) -> Result[list[str], str]:
     mut keys: list[str] = []
     for index in range(len(reads)):
         place = len([other for other in by_read[reads[index]] if other < targets[index]])
-        keys.append(f"incan.engine.edge-in\t{reads[index]}\t{place}")
+        keys.append(f"incan.engine.edge-in/3\t{reads[index]}\t{place}")
     return Ok(keys)
 
 
@@ -471,7 +455,7 @@ def output_index_key(profile: str, output: str) -> Result[str, str]:
     Where one profile's current output of a slot is indexed: under the slot, not the output's evaluated context, so the
     next evaluation of the slot writes its entry over the earlier one's. The entry's value is the output's record key.
     """
-    return Ok("incan.engine.output\t" + profile + "\t" + record_slot(output)?)
+    return Ok("incan.engine.output/2\t" + profile + "\t" + record_slot(output)?)
 
 
 def decode_record_key(encoded: str) -> Result[RecordKey, str]:
@@ -518,27 +502,6 @@ def edge(kind: str, request: RecordRequest, evidence: str) -> Result[EdgeFact, s
     return Ok(EdgeFact(kind=kind, target=encode_record_key(request.key)?, request=request, evidence=evidence))
 
 
-def encode_evaluation(
-    profile: str,
-    output: str,
-    claim_key: str,
-    value_digest: str,
-    receipt_root: str,
-    rank: ProducerRank,
-) -> Result[bytes, str]:
-    """Encode the selected produced outcome and its rank without duplicating receipt witnesses."""
-    document = JsonValue.object(
-        {"schema": JsonValue.string(EVALUATION_SCHEMA), "outcome": JsonValue.string("produced"), "profile": JsonValue.string(
-            profile,
-        ), "output": JsonValue.string(output), "claim_key": JsonValue.string(claim_key), "value_digest": JsonValue.string(
-            value_digest,
-        ), "receipt_root": JsonValue.string(receipt_root), "rank_namespace": JsonValue.int(rank.namespace), "rank_stage": JsonValue.string(
-            stage_name(rank.stage),
-        ), "rank_dependency": JsonValue.int(rank.dependency)},
-    )
-    return Ok(json_text(document)?.encode("utf-8"))
-
-
 def current_reader(selected: Snapshot, profile: str, reader: str) -> Result[Option[str], str]:
     """
     The record an incoming entry's reader names now. The entry names the reading slot, and the output index names the
@@ -546,62 +509,11 @@ def current_reader(selected: Snapshot, profile: str, reader: str) -> Result[Opti
     """
     if len(reader.split("\t")) == 6:
         return Ok(Some(reader))
-    indexed = "incan.engine.output\t" + profile + "\t" + reader
+    indexed = "incan.engine.output/2\t" + profile + "\t" + reader
     match get(selected, indexed).map_err((error) => error.message())?:
         Some(output) =>
-            return Ok(Some(output.decode().map_err((_) => "compiler output index entry is not UTF-8")?))
+            return Ok(Some(read_pointer(output)?))
         None => return Ok(None)
-
-
-def encode_incoming(reader: str, profile: str, edge: EdgeFact) -> Result[bytes, str]:
-    """
-    Encode an incoming entry's value: the reading slot, the profile and the exact record read. Neither the reader's
-    evaluated context nor the read's evidence is in it, so the next evaluation of the slot that reads the same record
-    stages the same bytes, and the commit leaves the entry as it is.
-    """
-    document = JsonValue.object(
-        {
-            "schema": JsonValue.string(EDGE_SCHEMA),
-            "reader": JsonValue.string(record_slot(reader)?),
-            "profile": JsonValue.string(profile),
-            "target": JsonValue.string(edge.target),
-        },
-    )
-    return Ok(json_text(document)?.encode("utf-8"))
-
-
-def encode_edge(reader: str, profile: str, edge: EdgeFact) -> Result[bytes, str]:
-    """Encode an outgoing edge's value: the read, its exact target and the evidence it witnessed."""
-    document = JsonValue.object(
-        {"schema": JsonValue.string(EDGE_SCHEMA), "reader": JsonValue.string(reader), "profile": JsonValue.string(
-            profile,
-        ), "kind": JsonValue.string(edge.kind), "target": JsonValue.string(edge.target), "selection": selection_document(
-            edge.request,
-        ), "evidence": JsonValue.string(edge.evidence)},
-    )
-    return Ok(json_text(document)?.encode("utf-8"))
-
-
-def selection_document(request: RecordRequest) -> JsonValue:
-    """Encode the exact field, payload range or bounded member selector for edge validation."""
-    mut fields: Dict[str, JsonValue] = {"byte_limit": JsonValue.int(request.byte_limit)}
-    match request.selection:
-        RecordSelection.Field(name) =>
-            fields["kind"] = JsonValue.string("field")
-            fields["name"] = JsonValue.string(name)
-        RecordSelection.Payload(payload) =>
-            fields["kind"] = JsonValue.string("payload")
-            fields["reference"] = JsonValue.string(payload.reference)
-            fields["offset"] = JsonValue.int(payload.offset)
-            fields["length"] = JsonValue.int(payload.length)
-        RecordSelection.Members(members) =>
-            fields["kind"] = JsonValue.string("members")
-            fields["selector"] = JsonValue.string(members.selector)
-            fields["order"] = JsonValue.string(members.order)
-            fields["lower"] = JsonValue.string(members.lower)
-            fields["upper"] = JsonValue.string(members.upper)
-            fields["continuation"] = JsonValue.string(members.continuation)
-    return JsonValue.object(fields)
 
 
 def witnesses_validate(selected: Snapshot, receipt: ReadReceipt) -> Result[bool, str]:
@@ -651,37 +563,11 @@ def witness_request(witness: ReadWitness) -> RecordRequest:
         ReadWitness.Members(_, request, _, _) => return request
 
 
-def evaluation_document(encoded: bytes) -> Result[JsonValue, str]:
-    """Decode one evaluation document and require its exact engine-owned schema."""
-    document = parse(encoded.decode().map_err((_) => "compiler evaluation is not UTF-8")?).map_err(
-        (error) => error.message(),
-    )?
-    if required_text(document, "schema")? != EVALUATION_SCHEMA:
-        return Err("unsupported compiler evaluation schema")
-    return Ok(document)
-
-
 def required_value(selected: Snapshot, key: str) -> Result[bytes, str]:
     """Read one graph-owned value whose absence makes the selected evaluation incomplete."""
     match get(selected, key).map_err((error) => error.message())?:
         Some(value) => return Ok(value)
         None => return Err("selected compiler evaluation is incomplete")
-
-
-def required_text(value: JsonValue, key: str) -> Result[str, str]:
-    """Read one required evaluation string without coercion."""
-    return value.require(key).map_err((error) => error.message())?.expect_str().map_err((error) => error.message())
-
-
-def required_digest(value: JsonValue, key: str) -> Result[str, str]:
-    """Read one required lowercase SHA-256 digest."""
-    selected = required_text(value, key)?
-    if len(selected) != 64:
-        return Err("compiler evaluation has an invalid content digest")
-    for character in selected:
-        if character not in "0123456789abcdef":
-            return Err("compiler evaluation has an invalid content digest")
-    return Ok(selected)
 
 
 def digest(value: bytes) -> str:

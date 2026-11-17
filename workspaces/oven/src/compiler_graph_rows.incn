@@ -1,0 +1,172 @@
+"""Typed Crumb storage for a producer evaluation, its dependency edges and output index pointers."""
+
+from std.encoding.hex import hexlify
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.hashes import value_hash
+from std.primitives.crumb.values import Projection, Value
+from pub::internal_models.crumb_rows import ModelField, model_description, operation_budget, required_value
+from pub::internal_models.graph_crumb_fields import (
+    REQUEST_TYPE, decode_graph_field, decode_graph_row, encode_graph_row, integer, read_request, request_value, text,
+)
+from pub::internal_models import ProducerRank, stage_name
+from pub::internal_models.records import RecordKey, RecordRequest
+
+const EVALUATION: bytes = b"evalua\x00"
+const INCOMING: bytes = b"edginc\x00"
+const OUTGOING: bytes = b"edgout\x00"
+const POINTER: bytes = b"outptr\x00"
+
+
+pub model Evaluation:
+    """The authority and content roots required to admit a selected graph value."""
+    pub output: str
+    pub profile: str
+    pub receipt_root: str
+    pub value_digest: str
+
+
+pub model IncomingEdge:
+    """Stable reading slot, profile and target used to find the current reader."""
+    pub reader: str
+    pub profile: str
+    pub target: str
+
+
+pub model OutgoingEdge:
+    """A witnessed read emitted by an evaluation under one producer profile."""
+    pub reader: str
+    pub profile: str
+    pub kind: str
+    pub request: RecordRequest
+    pub evidence: str
+
+
+def evaluation_description() -> Description:
+    """The row selector identifies a produced evaluation. Refusals have no produced evaluation row."""
+    return model_description(EVALUATION, "incan.engine.evaluation/2", [
+        ModelField(identity=b"claim_", name="claim_key", storage="string"),
+        ModelField(identity=b"dep___", name="rank_dependency", storage="i64"),
+        ModelField(identity=b"digest", name="value_digest", storage="string"),
+        ModelField(identity=b"namesp", name="rank_namespace", storage="i64"),
+        ModelField(identity=b"output", name="output", storage="string"),
+        ModelField(identity=b"profil", name="profile", storage="string"),
+        ModelField(identity=b"receip", name="receipt_root", storage="string"),
+        ModelField(identity=b"stage_", name="rank_stage", storage="string"),
+    ])
+
+
+pub def encode_evaluation(profile: str, output: str, claim: str, value_digest: str, receipt_root: str, rank: ProducerRank) -> Result[bytes, str]:
+    """Bind a produced output and receipt to their exact activation and rank."""
+    return encode_graph_row(EVALUATION, evaluation_description(), [
+        required_value(b"claim_", Value.Text(claim)),
+        required_value(b"dep___", integer(rank.dependency)),
+        required_value(b"digest", Value.Text(value_digest)),
+        required_value(b"namesp", integer(rank.namespace)),
+        required_value(b"output", Value.Text(output)),
+        required_value(b"profil", Value.Text(profile)),
+        required_value(b"receip", Value.Text(receipt_root)),
+        required_value(b"stage_", Value.Text(stage_name(rank.stage))),
+    ])
+
+
+pub def read_evaluation(encoded: bytes) -> Result[Evaluation, str]:
+    """Admit the complete evaluation record before dereferencing its two content roots."""
+    fields = decode_graph_row(encoded, EVALUATION, evaluation_description(), 8)?
+    return Ok(Evaluation(output=text(fields[4].value)?, profile=text(fields[5].value)?,
+        receipt_root=digest_text(fields[6].value)?, value_digest=digest_text(fields[2].value)?))
+
+
+pub def evaluation_value_digest(encoded: bytes) -> Result[str, str]:
+    """Project only the digest when page freshness needs no other evaluation field."""
+    return digest_text(decode_graph_field(encoded, EVALUATION, evaluation_description(), b"digest")?)
+
+
+def digest_text(value: Value) -> Result[str, str]:
+    """Require a canonical lowercase SHA-256 content name."""
+    digest = text(value)?
+    if len(digest) != 64:
+        return Err("compiler evaluation has an invalid content digest")
+    for character in digest:
+        if character not in "0123456789abcdef":
+            return Err("compiler evaluation has an invalid content digest")
+    return Ok(digest)
+
+
+def incoming_description() -> Description:
+    """Only the stable reader slot and exact target survive in a reverse edge."""
+    return model_description(INCOMING, "incan.engine.incoming-edge/3", [
+        ModelField(identity=b"profil", name="profile", storage="string"),
+        ModelField(identity=b"reader", name="reader", storage="string"),
+        ModelField(identity=b"target", name="target", storage="string"),
+    ])
+
+
+pub def encode_incoming(edge: IncomingEdge) -> Result[bytes, str]:
+    """Repeated reads from the same slot and profile produce identical reverse-index bytes."""
+    return encode_graph_row(INCOMING, incoming_description(), [
+        required_value(b"profil", Value.Text(edge.profile)),
+        required_value(b"reader", Value.Text(edge.reader)),
+        required_value(b"target", Value.Text(edge.target)),
+    ])
+
+
+pub def read_incoming(encoded: bytes) -> Result[IncomingEdge, str]:
+    """Verify a reverse-index entry before selecting its reader."""
+    fields = decode_graph_row(encoded, INCOMING, incoming_description(), 3)?
+    return Ok(IncomingEdge(profile=text(fields[0].value)?, reader=text(fields[1].value)?, target=text(fields[2].value)?))
+
+
+def outgoing_description() -> Description:
+    """A forward edge retains the request and evidence for exactly one produced output."""
+    return model_description(OUTGOING, "incan.engine.outgoing-edge/3", [
+        ModelField(identity=b"eviden", name="evidence", storage="string"),
+        ModelField(identity=b"kind__", name="kind", storage="string"),
+        ModelField(identity=b"profil", name="profile", storage="string"),
+        ModelField(identity=b"reader", name="reader", storage="string"),
+        ModelField(identity=b"reques", name="request", storage=REQUEST_TYPE),
+    ])
+
+
+pub def encode_outgoing(edge: OutgoingEdge) -> Result[bytes, str]:
+    """Bind the reader to its exact input selection, witness kind and evidence."""
+    return encode_graph_row(OUTGOING, outgoing_description(), [
+        required_value(b"eviden", Value.Text(edge.evidence)),
+        required_value(b"kind__", Value.Text(edge.kind)),
+        required_value(b"profil", Value.Text(edge.profile)),
+        required_value(b"reader", Value.Text(edge.reader)),
+        required_value(b"reques", request_value(edge.request)),
+    ])
+
+
+pub def read_outgoing(encoded: bytes) -> Result[OutgoingEdge, str]:
+    """Read a persisted outgoing edge to retire its reverse entry."""
+    fields = decode_graph_row(encoded, OUTGOING, outgoing_description(), 5)?
+    return Ok(OutgoingEdge(evidence=text(fields[0].value)?, kind=text(fields[1].value)?, profile=text(fields[2].value)?,
+        reader=text(fields[3].value)?, request=read_request(fields[4].value)?))
+
+
+pub def read_identity(reader_slot: str, edge: OutgoingEdge) -> Result[str, str]:
+    """Hash the read's logical slot, profile, selector and limit; changing either context leaves its slot intact."""
+    target = edge.request.key
+    stable_key = RecordKey(family=target.family, identity_profile=target.identity_profile, origin=target.origin,
+        identity=target.identity, facet=target.facet, context="")
+    stable_request = RecordRequest(key=stable_key, selection=edge.request.selection, byte_limit=edge.request.byte_limit)
+    value = Value.Tuple([Value.Text(reader_slot), Value.Text(edge.profile), request_value(stable_request)])
+    mut budget = operation_budget()?
+    logical = value_hash(value, Projection.Canonical, budget).map_err((error) => error.message())?
+    return Ok(hexlify(logical.digest))
+
+
+def pointer_description() -> Description:
+    """One current output record key, independently addressable through its slot."""
+    return model_description(POINTER, "incan.engine.output-pointer/2", [ModelField(identity=b"output", name="output", storage="string")])
+
+
+pub def encode_pointer(output: str) -> Result[bytes, str]:
+    """Write the current output selected by this slot."""
+    return encode_graph_row(POINTER, pointer_description(), [required_value(b"output", Value.Text(output))])
+
+
+pub def read_pointer(encoded: bytes) -> Result[str, str]:
+    """Read the exact record addressed by one current slot."""
+    return text(decode_graph_field(encoded, POINTER, pointer_description(), b"output")?)

@@ -4,7 +4,7 @@ from std.primitives.crumb import Budget
 from std.primitives.crumb.descriptions import Description, DescriptionMode
 from std.primitives.crumb.records import RowRecord
 from std.primitives.crumb.registrations import KindRegistry
-from std.primitives.crumb.row_reader import read_rows
+from std.primitives.crumb.row_reader import RowSet, read_rows
 from std.primitives.crumb.row_writer import write_rows
 from std.primitives.crumb.types import AbsentPolicy
 from std.primitives.crumb.values import Metadata, MetadataEntry, Value, ValueField
@@ -58,16 +58,8 @@ pub def encode_rows(description: Description, records: list[RowRecord], maximum:
 
 pub def decode_rows(encoded: bytes, descriptions: list[Description], maximum: int) -> Result[list[RowRecord], str]:
     """Admit one complete envelope and materialize only its bounded logical rows."""
-    if len(encoded) > maximum:
-        return Err("encoded Crumb rows exceed their byte boundary")
     mut budget = Budget.create(bytes=maximum * 4, elements=4194304, depth=128).map_err((error) => error.message())?
-    registry = KindRegistry.create([], budget).map_err((error) => error.message())?
-    owner = MappedFile.owned(encoded)?
-    view = match owner.view(0, owner.len()):
-        Some(selected) => selected
-        None => return Err("Crumb row envelope has no complete view")
-
-    rows = read_rows(view, descriptions, registry, false, budget).map_err((error) => error.message())?
+    rows = admit_rows(encoded, descriptions, maximum, budget)?
     mut records: list[RowRecord] = []
     for index in range(rows.len()):
         records.append(rows.read_record(index, budget).map_err((error) => error.message())?)
@@ -86,3 +78,16 @@ def description_field(field: ModelField) -> Metadata:
             MetadataEntry(key="properties", value=Metadata.Map([])),
         ],
     )
+
+
+pub def admit_rows(encoded: bytes, descriptions: list[Description], maximum: int, mut budget: Budget) -> Result[RowSet, str]:
+    """Retain the validated logical row view so callers may read a field without decoding its siblings."""
+    if len(encoded) > maximum:
+        return Err("encoded Crumb rows exceed their byte boundary")
+    registry = KindRegistry.create([], budget).map_err((error) => error.message())?
+    owner = MappedFile.owned(encoded)?
+    view = match owner.view(0, owner.len()):
+        Some(selected) => selected
+        None => return Err("Crumb row envelope has no complete view")
+
+    return read_rows(view, descriptions, registry, false, budget).map_err((error) => error.message())

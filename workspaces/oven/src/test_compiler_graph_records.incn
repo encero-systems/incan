@@ -106,10 +106,10 @@ pub def test_value_evaluation_and_edges_publish_in_one_generation() -> Result[No
     assert receipt_bytes[:4] == b"CRMB"
     assert decode_read_receipt(receipt_bytes)?.operations == receipt.operations
     assert decode_read_receipt(receipt_bytes[:-1]).is_err()
-    assert get(published.snapshot, published.evaluation_key).map_err((error) => error.message())? is not None
+    assert required(before=published.snapshot, key=published.evaluation_key)?[:4] == b"CRMB"
     selected = keys(published.snapshot).map_err((error) => error.message())?
-    assert count_prefix(selected, "incan.engine.edge-out\t") == 4
-    assert count_prefix(selected, "incan.engine.edge-in\t") == 4
+    assert count_prefix(selected, "incan.engine.edge-out/3\t") == 4
+    assert count_prefix(selected, "incan.engine.edge-in/3\t") == 4
     assert published.edge_count == 4
     return Ok(None)
 
