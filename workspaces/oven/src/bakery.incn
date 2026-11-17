@@ -66,7 +66,7 @@ from store_path_conversion import (
 )
 from unit import UnitDescription
 from unit_freshness import Key, fingerprint
-from bakery_records import Fact, FactFile, claim_file, decode_fact, encode_fact, record_key, staging_root, store_failure
+from bakery_records import Fact, FactFile, claim_file, decode_fact, encode_fact, layout_fact_text, record_key, staging_root, store_failure
 from bakery_roots import collect, preview_collection
 
 const VIEW_RECORD: str = "fact.json"
@@ -279,7 +279,7 @@ pub def prepare_seal(
     fact = Fact(identity=identity, kind=kind, name=name, reaches=reaches, files=files)
     mut transaction = begin(snapshot(store).map_err(store_failure)?)
     transaction.payloads = digests
-    transaction = put(transaction, record_key(identity), encode_fact(fact, provenance)?.encode("utf-8"), EXPECT_REPAIR)
+    transaction = put(transaction, record_key(identity), encode_fact(fact, provenance)?, EXPECT_REPAIR)
     transaction = put(transaction, name_key(name), identity.encode("utf-8"))
     _ = staged.remove_tree()
     release(store, staged.name())
@@ -566,7 +566,7 @@ def library_fact(store: Path, marker: JsonValue) -> Result[Fact, str]:
 
 def library_layout(fact: Fact) -> Result[str, str]:
     """Name the exact member payloads, keeping earlier layouts valid after a unit-record repair."""
-    return fingerprint(["incan.bakery.library-layout/1", encode_fact(fact, "library bindings")?])
+    return fingerprint(["incan.bakery.library-layout/1", layout_fact_text(fact, "library bindings")?])
 
 
 def bind_library(store: Path, fact: Fact) -> Result[Path, str]:
@@ -607,7 +607,7 @@ def bind_library(store: Path, fact: Fact) -> Result[Path, str]:
     if not selected.joinpath(VIEW_RECORD).is_file():
         marker = JsonValue.object(
             {"identity": JsonValue.string(fact.identity), "layout": JsonValue.string(layout), "fact": JsonValue.string(
-                encode_fact(fact, "library bindings")?,
+                layout_fact_text(fact, "library bindings")?,
             )},
         )
         publish(selected.joinpath(VIEW_RECORD), json_text(marker)?)?

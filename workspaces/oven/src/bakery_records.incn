@@ -5,10 +5,15 @@ from std.encoding.hex import hexlify
 from std.hash import sha256
 from std.fs import Path
 from std.json import JsonValue
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from pub::internal_models.crumb_rows import ModelField, model_description, required_value
+from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, integer as integer_field, items, number, text, tuple_items
 from files import json_text
 from json_fields import required_items, required_text, string_value
 from pub::incan_platform.store.files import StoreError
 
+const UNIT_ROW: bytes = b"bakunit"
 const UNIT_SCHEMA: str = "incan.bakery.unit/1"
 
 
@@ -41,8 +46,51 @@ pub def store_failure(error: StoreError) -> str:
     return error.message()
 
 
-pub def encode_fact(fact: Fact, provenance: str) -> Result[str, str]:
-    """The canonical text of a unit record."""
+def unit_description() -> Description:
+    """Name the unit schema and distinguish content fields from diagnostic provenance."""
+    return model_description(UNIT_ROW, "incan.bakery.unit/2", [
+        ModelField(identity=b"files_", name="files", storage="list<tuple<string,string,i64,boolean>>"),
+        ModelField(identity=b"ident_", name="identity", storage="string"),
+        ModelField(identity=b"kind__", name="kind", storage="string"),
+        ModelField(identity=b"name__", name="name", storage="string"),
+        ModelField(identity=b"proven", name="provenance", storage="string", canonical=false),
+        ModelField(identity=b"reache", name="reaches", storage="list<string>"),
+    ])
+
+
+pub def encode_fact(fact: Fact, provenance: str) -> Result[bytes, str]:
+    """Store a unit's exact members and reachability edges as one typed Crumb."""
+    mut files: list[Value] = []
+    for file in fact.files:
+        files.append(Value.Tuple([Value.Text(file.path), Value.Text(file.digest), integer_field(file.size), Value.Boolean(file.program)]))
+    return encode_graph_row(UNIT_ROW, unit_description(), [
+        required_value(b"files_", Value.List(files)),
+        required_value(b"ident_", Value.Text(fact.identity)),
+        required_value(b"kind__", Value.Text(fact.kind)),
+        required_value(b"name__", Value.Text(fact.name)),
+        required_value(b"proven", Value.Text(provenance), false),
+        required_value(b"reache", Value.List([Value.Text(identity) for identity in fact.reaches])),
+    ])
+
+
+def read_unit(encoded: bytes) -> Result[Fact, str]:
+    """Recover the member files and edges from an authenticated unit row."""
+    fields = decode_graph_row(encoded, UNIT_ROW, unit_description(), 6)?
+    mut files: list[FactFile] = []
+    for entry in items(fields[0].value)?:
+        parts = tuple_items(entry, 4)?
+        program = match parts[3]:
+            Value.Boolean(flag) => flag
+            _ => return Err("invalid bakery member mode")
+        files.append(FactFile(path=text(parts[0])?, digest=text(parts[1])?, size=number(parts[2])?, program=program))
+    mut reaches: list[str] = []
+    for member in items(fields[5].value)?:
+        reaches.append(text(member)?)
+    return Ok(Fact(identity=text(fields[1].value)?, kind=text(fields[2].value)?, name=text(fields[3].value)?, reaches=reaches, files=files))
+
+
+pub def layout_fact_text(fact: Fact, provenance: str) -> Result[str, str]:
+    """Reproduce the original immutable library layout fingerprint and its embedded snapshot."""
     mut files: list[JsonValue] = []
     for file in fact.files:
         files.append(
@@ -64,6 +112,11 @@ pub def encode_fact(fact: Fact, provenance: str) -> Result[str, str]:
 
 pub def decode_fact(value: bytes) -> Option[Fact]:
     """A unit record, when `value` is one."""
+    if value[:4] == b"CRMB":
+        match read_unit(value):
+            Ok(fact) => return Some(fact)
+            Err(_) => return None
+    # Previously baked units and immutable library layouts retain their original snapshot.
     match RustString.from_utf8(value):
         Err(_) => return None
         Ok(text) =>

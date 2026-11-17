@@ -21,7 +21,7 @@ from bakery import (
     verify_all,
     repair_derived,
 )
-from bakery_records import Fact, claim_file, staging_root
+from bakery_records import Fact, claim_file, decode_fact, layout_fact_text, record_key, staging_root
 from bakery_roots import collect, lease_unit, leased_units, register_root
 from pub::incan_platform.process_lease import ProcessLease
 from pub::incan_platform.store import Snapshot, begin, commit, delete, fork, get, keys, put, segments
@@ -296,6 +296,19 @@ pub def test_collection_preserves_published_units_for_cold_and_warm_readers() ->
                 destination = scratch.path().joinpath("selected/payload")
                 view(store, fact, "payload", destination)?
                 assert read(destination)? == "library"
+    # Mix a previously baked unit into the current generation before reopening and collecting it.
+    key = record_key(library)
+    published = snapshot(store).map_err((error) => error.message())?
+    match get(published, key).map_err((error) => error.message())?:
+        Some(row) =>
+            assert row[:4] == b"CRMB"
+            assert decode_fact(row[:len(row) - 1]) is None
+        None => return Err("published bakery unit has no record")
+    original = baked(store, library)?
+    legacy = layout_fact_text(original, "previous installation")?.encode("utf-8")
+    _ = commit(put(begin(published), key, legacy)).map_err((error) => error.message())?
+    _ = collect(store, 86400)?
+    assert payload_text(store, library, "payload")? == "library"
     prove_prepared_payload_survives_collection(store, scratch.path())?
     prove_superseded_payloads_are_collected(store, scratch.path())?
     active = prove_active_staging_survives(store)?
