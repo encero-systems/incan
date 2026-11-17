@@ -263,6 +263,29 @@ fn direct_selected_call_uses_one_persisted_call_result_authority() -> Result<(),
     require_replayed_body(consumer, "use", &[PersistedUse::CallResult("produce()")], false)
 }
 
+/// A record can take an ordinary string parameter once. Both checked provider routes retain the move and prevent
+/// a second use or an attempt to move the contents of a borrowed parameter.
+#[test]
+fn constructor_records_single_transfer_of_plain_text_parameter() -> Result<(), Box<dyn std::error::Error>> {
+    let accepted = "from views import RowRecord\n\ndef collect(seed: Borrowed[int], text: str) -> RowRecord:\n    return RowRecord(value=text)\n";
+    require_replayed_body(
+        accepted,
+        "collect",
+        &[PersistedUse::Move {
+            source: "text",
+            root: "text",
+        }],
+        true,
+    )?;
+    let borrowed = accepted.replace("text: str", "text: Borrowed[str]");
+    require_module_diagnostic_at(&borrowed, "INCAN-T0123", "text")?;
+    let reused = accepted.replace(
+        "return RowRecord",
+        "first = RowRecord(value=text)\n    return RowRecord",
+    );
+    require_module_diagnostic_at(&reused, "INCAN-T0126", "text")
+}
+
 /// A constructor may move an exact imported enum Parameter once. Other imported nominals, borrowed values and field
 /// projections cannot borrow that authority, and reusing the enum remains a graph conflict.
 #[test]

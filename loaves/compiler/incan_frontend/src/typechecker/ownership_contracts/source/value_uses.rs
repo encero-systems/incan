@@ -526,8 +526,9 @@ impl Builder<'_> {
             })))
     }
 
-    /// Whether one constructor field consumes a whole plain enum Parameter or one exact unaliased Local. Local
-    /// mutability does not prevent final transfer; the persisted Move constrains the root against later reuse.
+    /// Whether one constructor field consumes a whole plain string or enum parameter, or one exact unaliased local.
+    /// Local mutability does not prevent final transfer; the persisted Move constrains the root against later
+    /// reuse.
     fn constructor_move(&mut self, value: &Spanned<Expr>, expected: &ResolvedType) -> Result<bool, Unavailable> {
         if !self
             .checker
@@ -556,13 +557,14 @@ impl Builder<'_> {
             .permissions
             .get(&path.place.root)
             .is_some_and(|permission| permission.transferable);
-        let plain_enum_parameter = identity.kind == SemanticSourceTargetKind::Parameter
+        let plain_parameter = identity.kind == SemanticSourceTargetKind::Parameter
             && !self.declared_constrained_inputs.contains(&path.place.root)
-            && matches!(expected,
-                ResolvedType::Named(owner) | ResolvedType::Generic(owner, _)
-                    if matches!(self.checker.lookup_type_info(owner), Some(TypeInfo::Enum(_)))
-                        || self.source_nominal_identity(owner)
-                            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Enum));
+            && (matches!(expected, ResolvedType::Str)
+                || matches!(expected,
+                    ResolvedType::Named(owner) | ResolvedType::Generic(owner, _)
+                        if matches!(self.checker.lookup_type_info(owner), Some(TypeInfo::Enum(_)))
+                            || self.source_nominal_identity(owner)
+                                .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Enum)));
         let whole_local = identity.kind == SemanticSourceTargetKind::Local
             && !self.aliases.contains_key(identity)
             && !self.graph.local_loans.contains_key(identity)
@@ -574,7 +576,7 @@ impl Builder<'_> {
                 .permissions
                 .get(&path.place.root)
                 .is_some_and(|permission| permission.transferable);
-        Ok(transferable && (plain_enum_parameter || whole_local))
+        Ok(transferable && (plain_parameter || whole_local))
     }
 
     /// Whether one constructor field reads a scalar element from an authenticated independent local snapshot.
