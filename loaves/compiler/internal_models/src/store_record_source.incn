@@ -3,6 +3,7 @@
 from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
 from pub::incan_platform.store import BindingLookup, Snapshot, lookup_binding, lookup_members
+from source_value_records import SOURCE_PROFILE, source_value
 from record_scope import (
     AbsentFact,
     DeletedFact,
@@ -66,7 +67,11 @@ pub class StoreRecordSource with RecordSource:
                     AbsentFact(scope=scope, request=request, exclusion_digest=absent.exclusion_digest),
                 )
             Ok(BindingLookup.Present(present)) =>
-                match selected_record_bytes(present.value, request):
+                logical = match source_value(request.key, present.value):
+                    Ok(bytes) => bytes
+                    Err(_) => return RecordRead.Failed(ReadFault.DamagedRecord)
+
+                match selected_record_bytes(logical, request):
                     None => return RecordRead.Failed(ReadFault.InvalidEvidence)
                     Some(value) =>
                         digest = hexlify(
@@ -78,11 +83,14 @@ pub class StoreRecordSource with RecordSource:
                                 ).encode("utf-8"),
                             ),
                         )
+                        mut semantic = present.semantic_digest
+                        if request.key.identity_profile == SOURCE_PROFILE:
+                            semantic = hexlify(sha256.digest(logical))
                         evidence = RevisionEvidence(
                             scope=scope,
                             request=request,
                             revision=present.revision,
-                            semantic_digest=present.semantic_digest,
+                            semantic_digest=semantic,
                         )
                         return RecordRead.Found(SelectedFact(evidence=evidence, value=value, selection_digest=digest))
 

@@ -1,6 +1,7 @@
 """Ranked compiler graph records publish their value, receipt and both edge directions atomically."""
 
 import compiler_source_projection
+from pub::internal_models.source_value_records import read_documentation
 from pub::incan_platform.store import Snapshot, begin, commit, delete, get, keys, put
 from pub::incan_platform.store import snapshot as store_snapshot
 from pub::incan_platform.store.memory import root as memory_root
@@ -340,6 +341,17 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
     assert before.header.text == "from std import env\ntype Count = int", before.header.text
     assert before.header.digest() == after.header.digest()
     verify_documentation_changes_no_record(original, before)?
+    documented = project_source("package", "src/main.incn", original.replace("    return 1", "    \"First version\"\n    return 1"))?
+    revised_docs = project_source("package", "src/main.incn", original.replace("    return 1", "    \"Second version\"\n    return 1"))?
+    assert documented.encoded_documentation()? != revised_docs.encoded_documentation()?
+    assert documented.documentation_key() == revised_docs.documentation_key()
+    original_owner = projected_owner(documented, "first")?
+    edited_docs_owner = projected_owner(revised_docs, "first")?
+    assert original_owner.encoded()? == edited_docs_owner.encoded()?
+    assert original_owner.digest() == edited_docs_owner.digest()
+    assert original_owner.encoded()?[:4] == b"CRMB"
+    assert read_documentation(revised_docs.encoded_documentation()?)? == revised_docs.documentation
+    assert len(revised_docs.documentation) == 1 and revised_docs.documentation[0].0 == "first"
     assert len(before.owners) == 4 and len(after.owners) == 4, f"owner counts: {len(before.owners)}, {len(after.owners)}"
     mut changed = 0
     for index in range(len(before.owners)):
@@ -382,7 +394,7 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
 
     selected = store_snapshot(memory_root()).map_err((error) => error.message())?
     published = publish_source_projection(selected, before)?
-    assert len(published.keys) == 11
+    assert len(published.keys) == 12
     for key in published.keys:
         assert get(published.snapshot, key).map_err((error) => error.message())? is not None
 

@@ -3,7 +3,8 @@
 from std.fs import Path
 from pub::incan_platform.store import Snapshot, Transaction, begin, commit, get, stage_put
 from pub::internal_models.records import RecordKey, encode_record_key
-from compiler_source_projection import project_source, signature_record
+from pub::internal_models.source_value_records import source_value
+from compiler_source_projection import SourceProjectionRecord, project_source, signature_record
 from engine_capture import CapturedInput, InputRole
 from unit import UnitDescription, dependency_source_roots
 
@@ -47,20 +48,33 @@ pub def prepare_captured_source_inputs(
             if let Some(identity) = captured_source_identity(unit, input.path)?:
                 source = Path(input.path).read_text("utf-8", "strict").map_err((error) => error.message())?
                 projection = project_source(identity[0], identity[1], source)?
+                doc_key = projection.documentation_key()
+                doc_slot = encode_record_key(doc_key)?
+                documentation = projection.encoded_documentation()?
+                if get(selected, doc_slot).map_err((error) => error.message())? != Some(documentation):
+                    changed.append(doc_key)
+                    stage_put(prepared, doc_slot, documentation)
                 for record in [projection.header, projection.declarations, projection.census]:
                     key = encode_record_key(record.key)?
-                    value = record.text.encode("utf-8")
-                    if get(selected, key).map_err((error) => error.message())? != Some(value):
+                    if stage_changed_projection(selected, prepared, key, record)?:
                         changed.append(record.key)
-                    stage_put(prepared, key, value)
                 for owner in projection.owners:
                     for record in [owner, signature_record(owner)]:
                         key = encode_record_key(record.key)?
-                        value = record.text.encode("utf-8")
-                        if get(selected, key).map_err((error) => error.message())? != Some(value):
+                        if stage_changed_projection(selected, prepared, key, record)?:
                             changed.append(record.key)
-                        stage_put(prepared, key, value)
     return Ok(PreparedSourceInputs(transaction=prepared, keys=changed))
+
+
+def stage_changed_projection(selected: Snapshot, mut transaction: Transaction, key: str, record: SourceProjectionRecord) -> Result[bool, str]:
+    """An encoding upgrade preserves the logical source and its existing checker witnesses."""
+    encoded = record.encoded()?
+    changed = match get(selected, key).map_err((error) => error.message())?:
+        None => true
+        Some(previous) => source_value(record.key, previous)? != record.text.encode("utf-8")
+
+    stage_put(transaction, key, encoded)
+    return Ok(changed)
 
 
 def captured_source_identity(unit: UnitDescription, path: str) -> Result[Option[Tuple[str, str]], str]:

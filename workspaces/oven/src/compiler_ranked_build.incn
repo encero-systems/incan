@@ -2,6 +2,7 @@
 
 from std.encoding.hex import hexlify
 from std.fs import Path
+from pub::internal_models.source_value_records import source_value
 from std.primitives.hash import sha256
 from pub::incan_platform.store import Snapshot, Transaction, begin, commit, get, stage_put
 from pub::incan_platform.store.codec import KIND_VALUE
@@ -118,7 +119,7 @@ def changed_owner(graph: Snapshot, prior: RecordKey, captured: &Dict[str, bytes]
                     if not captured.contains_key(encoded_key) or key.identity != order.members[0]:
                         return Ok(None)
                     current = captured[encoded_key]
-                    changed = digest(current) != previous.semantic_digest
+                    changed = digest(source_value(key, current)?) != previous.semantic_digest
                     if changed != (family == "owner-source"):
                         return Ok(None)
                     if family == "owner-source":
@@ -211,7 +212,7 @@ def evaluate(store: Path, view: str, toolchain: Toolchain, pending: BuildOwner, 
         key = encode_record_key(expected_read.key)?
         if key not in owner.inputs:
             return Err("ranked compiler returned a read outside its captured inputs")
-        input = owner.inputs[key]
+        input = source_value(expected_read.key, owner.inputs[key])?
         match receipt.witnesses[index]:
             ReadWitness.Found(observed, _) =>
                 if observed.scope != receipt.scope or observed.request != expected_read or observed.semantic_digest != digest(input):

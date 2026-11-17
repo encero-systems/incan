@@ -2,6 +2,7 @@
 
 from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
+from pub::internal_models.source_value_records import source_value
 from pub::internal_models.records import (
     PayloadSelection,
     PreparationEvidence,
@@ -78,13 +79,17 @@ pub class PreparedBodyRecordSource with RecordSource:
 
         if key not in self.values:
             return RecordRead.Failed(ReadFault.UnfinishedSupplier)
-        value = self.values[key]
+        physical = self.values[key]
+        value = match source_value(request.key, physical):
+            Ok(logical) => logical
+            Err(_) => return RecordRead.Failed(ReadFault.DamagedRecord)
+
         selected = match selected_record_bytes(value, request):
             Some(result) => result
             None => return RecordRead.Failed(ReadFault.InvalidEvidence)
 
         semantic = hexlify(sha256.digest(value))
-        evidence = RevisionEvidence(scope=scope, request=request, revision=semantic, semantic_digest=semantic)
+        evidence = RevisionEvidence(scope=scope, request=request, revision=hexlify(sha256.digest(physical)), semantic_digest=semantic)
         return RecordRead.Found(SelectedFact(evidence=evidence, value=selected, selection_digest=semantic))
 
 

@@ -11,9 +11,9 @@ from std.fs import Path
 from pub::incan_platform.store import Snapshot, begin, commit, put
 from pub::internal_models import CompiledNamespaceValue
 from pub::internal_models.records import RecordKey, encode_record_key
-from semantic_text import comment_free, documentation_free
+from semantic_text import comment_free, documentation_free, split_documentation
 
-const SOURCE_PROFILE: str = "incan.source-projection/1"
+from pub::internal_models.source_value_records import SOURCE_PROFILE, encode_documentation, encode_source_text
 
 
 pub model SourceProjectionRecord:
@@ -23,6 +23,10 @@ pub model SourceProjectionRecord:
     pub text: str
     pub start: int
     pub end: int
+
+    pub def encoded(self) -> Result[bytes, str]:
+        """The Crumb value retained in the store under this record's logical key."""
+        return encode_source_text(self.text)
 
     pub def digest(self) -> str:
         """Return the semantic identity of this slice without folding file-wide coordinates into it."""
@@ -36,6 +40,15 @@ pub model SourceProjection:
     pub declarations: SourceProjectionRecord
     pub census: SourceProjectionRecord
     pub owners: list[SourceProjectionRecord]
+    pub documentation: list[tuple[str, str]]
+
+    pub def documentation_key(self) -> RecordKey:
+        """The latest documentation inventory replaces the previous one even when an owner was removed."""
+        return RecordKey(family="source-documentation", identity_profile="incan.source-documentation/1",
+            origin=self.header.key.origin, identity=self.header.key.identity, facet="module", context="")
+
+    pub def encoded_documentation(self) -> Result[bytes, str]:
+        return encode_documentation(self.documentation)
 
 
 pub model PublishedSourceProjection:
@@ -119,6 +132,7 @@ class SourceProjector:
         mut header = ""
         mut declarations = ""
         mut owners: list[SourceProjectionRecord] = []
+        mut docs: list[tuple[str, str]] = []
         if len(self.boundaries) == 0:
             header = self.source
         else:
@@ -133,7 +147,9 @@ class SourceProjector:
                 if boundary.owner == "":
                     header += text
                 else:
-                    semantic = documentation_free(text)
+                    semantic, documentation = split_documentation(text)
+                    if documentation != "":
+                        docs.append((boundary.owner, documentation))
                     declarations += boundary.owner + "\n" + declaration_surface(semantic) + "\n"
                     owners.append(
                         SourceProjectionRecord(
@@ -147,11 +163,14 @@ class SourceProjector:
                         owners.append(semantic_record(field, documentation_free(field.text)))
                     for default in field_default_records(boundary.owner, text, boundary.start, self.origin, self.path):
                         owners.append(semantic_record(default, comment_free(default.text)))
+        header_semantic, module_docs = split_documentation(header)
+        if module_docs != "":
+            docs.append(("", module_docs))
         return Ok(
             SourceProjection(
                 header=SourceProjectionRecord(
                     key=source_key("module-header", self.origin, self.path, "module"),
-                    text=documentation_free(header),
+                    text=header_semantic,
                     start=0,
                     end=len(self.source),
                 ),
@@ -168,6 +187,7 @@ class SourceProjector:
                     end=len(self.source),
                 ),
                 owners=owners,
+                documentation=docs,
             ),
         )
 
@@ -298,20 +318,23 @@ pub def publish_source_projection(
     mut transaction = put(
         begin(selected),
         encode_record_key(projection.header.key)?,
-        projection.header.text.encode("utf-8"),
+        projection.header.encoded()?,
     )
     mut published = [encode_record_key(projection.header.key)?]
     declaration_key = encode_record_key(projection.declarations.key)?
-    transaction = put(transaction, declaration_key, projection.declarations.text.encode("utf-8"))
+    transaction = put(transaction, declaration_key, projection.declarations.encoded()?)
     published.append(declaration_key)
     census_key = encode_record_key(projection.census.key)?
-    transaction = put(transaction, census_key, projection.census.text.encode("utf-8"))
+    transaction = put(transaction, census_key, projection.census.encoded()?)
     published.append(census_key)
     for owner in projection.owners:
         for record in [owner, signature_record(owner)]:
             key = encode_record_key(record.key)?
-            transaction = put(transaction, key, record.text.encode("utf-8"))
+            transaction = put(transaction, key, record.encoded()?)
             published.append(key)
+    doc_key = encode_record_key(projection.documentation_key())?
+    transaction = put(transaction, doc_key, projection.encoded_documentation()?)
+    published.append(doc_key)
     snapshot = commit(transaction).map_err((error) => error.message())?
     return Ok(PublishedSourceProjection(snapshot=snapshot, keys=published))
 

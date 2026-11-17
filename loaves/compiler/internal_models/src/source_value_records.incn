@@ -1,0 +1,54 @@
+"""Typed source-projection values and the semantic bytes supplied to checking workers."""
+
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from crumb_rows import ModelField, model_description, required_value
+from graph_crumb_fields import decode_graph_field, encode_graph_row, items, text, tuple_items
+from record_scope import RecordKey
+
+pub const SOURCE_PROFILE: str = "incan.source-projection/1"
+const SOURCE_TEXT: bytes = b"srctxt\x00"
+
+
+def description() -> Description:
+    return model_description(SOURCE_TEXT, "incan.source-text/1", [
+        ModelField(identity=b"source", name="source", storage="string"),
+    ])
+
+
+pub def encode_source_text(source: str) -> Result[bytes, str]:
+    """Persist the exact semantic slice independently of coordinates and documentation."""
+    return encode_graph_row(SOURCE_TEXT, description(), [required_value(b"source", Value.Text(source))])
+
+
+pub def source_value(key: RecordKey, stored: bytes) -> Result[bytes, str]:
+    """Project schema-checked source bytes. Earlier snapshots contain plain UTF-8 under the same logical key."""
+    if key.identity_profile != SOURCE_PROFILE:
+        return Ok(stored)
+    if stored[:5] in [b"CRMB\x01", b"CRMB\x02"]:
+        return Ok(text(decode_graph_field(stored, description(), b"source")?)?.encode("utf-8"))
+    _ = stored.decode().map_err((_) => "legacy source projection is not UTF-8")?
+    return Ok(stored)
+
+
+const DOCUMENTATION: bytes = b"srcdoc\x00"
+
+
+def documentation_description() -> Description:
+    return model_description(DOCUMENTATION, "incan.source-documentation/1", [
+        ModelField(identity=b"owners", name="documentation", storage="list<tuple<string,string>>"),
+    ])
+
+
+pub def encode_documentation(entries: list[tuple[str, str]]) -> Result[bytes, str]:
+    """Each entry carries the owning declaration and the source spelling of its documentation."""
+    values = [Value.Tuple([Value.Text(owner), Value.Text(content)]) for owner, content in entries]
+    return encode_graph_row(DOCUMENTATION, documentation_description(), [required_value(b"owners", Value.List(values))])
+
+
+pub def read_documentation(encoded: bytes) -> Result[list[tuple[str, str]], str]:
+    mut result: list[tuple[str, str]] = []
+    for entry in items(decode_graph_field(encoded, documentation_description(), b"owners")?)?:
+        pair = tuple_items(entry, 2)?
+        result.append((text(pair[0])?, text(pair[1])?))
+    return Ok(result)
