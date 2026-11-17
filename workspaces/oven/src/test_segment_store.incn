@@ -436,6 +436,15 @@ pub def test_a_family_selection_reads_its_range_however_many_records_earlier_edi
         observed = read_counts()
         assert observed.records - prior.records == 1
         assert observed.decoded - prior.decoded == len(pointer)
+        # A module page already supplied this exact output. Selection reads the current pointer to confirm its
+        # context and skips the individual evaluation, receipt, value and dependency witnesses.
+        carried = OutputSlots(origin=target.origin, identity_profile=target.identity_profile,
+            included=Some([target.identity]), excluded_outputs=[wanted])
+        prior_carried = read_counts()
+        assert len(reusable_family_records(with_neighbours, target.family, "p", Some(carried))?) == 0
+        after_carried = read_counts()
+        assert after_carried.records - prior_carried.records == 1
+        assert after_carried.decoded - prior_carried.decoded == len(pointer)
         every = keys(latest).map_err((error) => error.message())?
         for prefix in ["incan.engine.output/2\tp\tbody-ir\t", "incan.engine.output/2\tp\t", "incan.engine.receipt\t5", edge]:
             assert keys_with_prefix(latest, prefix).map_err((error) => error.message())? == [
