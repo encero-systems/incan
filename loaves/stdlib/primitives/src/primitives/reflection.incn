@@ -49,6 +49,9 @@ pub model VariantInfo:
     pub renamed_from_lifecycle: Option[LifecycleInfo]
 
 
+const NO_DECLARATIONS: FrozenList[ShapeInfo] = []
+
+
 pub model ShapeInfo:
     """
     A complete stored shape, independently of a value or its public-field inspection view.
@@ -67,7 +70,7 @@ pub model ShapeInfo:
     pub fields: FrozenList[FieldInfo]
     pub variants: FrozenList[VariantInfo]
     pub selector: Option[FrozenStr] = None
-    pub declarations: FrozenList[ShapeInfo] = []
+    pub declarations: FrozenList[ShapeInfo] = NO_DECLARATIONS
 
     @staticmethod
     pub def of[T with Walk]() -> ShapeInfo:
