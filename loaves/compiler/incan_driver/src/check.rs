@@ -168,6 +168,16 @@ pub fn check_report(
     rust: &RustFactsSetup,
     records: GraphBodyRecords,
 ) -> CliResult<DiagnosticReport> {
+    check_report_observed(unit, rust, records, &mut |_, _| {})
+}
+
+/// Inspect completed semantic products in the same project and provider environment that performed the check.
+fn check_report_observed(
+    unit: &UnitDescription,
+    rust: &RustFactsSetup,
+    records: GraphBodyRecords,
+    observe: &mut dyn FnMut(&ParsedModule, &TypeChecker),
+) -> CliResult<DiagnosticReport> {
     let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::check_pipeline").entered();
     // Opening the session and extracting Rust facts read artifacts and run rustc, so their failures stay retryable.
     let import_failure = |error: CliError| DiagnosticReport {
@@ -197,7 +207,8 @@ pub fn check_report(
     roots.extend(resolved_root.as_deref());
     let mut bodies = CheckedBodies::default();
     let typecheck = session.typecheck_unit(&modules, None, &mut |module, checker| {
-        bodies.observe(&roots, module, checker)
+        bodies.observe(&roots, module, checker);
+        observe(module, checker);
     });
     let mut report = match typecheck {
         Ok(checked) => DiagnosticReport {
@@ -212,6 +223,70 @@ pub fn check_report(
     };
     report.bodies = bodies;
     Ok(report)
+}
+
+/// Evaluate one ranked reader with the unit's real imported interfaces, Rust facts and source-level checker.
+/// The caller receives fresh local and final products only if every other top-level owner restored its prior work.
+pub fn ranked_reader(
+    unit: &UnitDescription,
+    rust: &RustFactsSetup,
+    records: GraphBodyRecords,
+    module: &str,
+    identity: &str,
+) -> CliResult<incan_frontend::checker_records::CheckedOwnerRecordFields> {
+    use incan_frontend::checker_records::{CheckedOwnerRecordOutput, checked_record_outputs};
+    let name = identity
+        .split_once('|')
+        .and_then(|(qualified, _)| qualified.strip_prefix("function:"))
+        .and_then(|qualified| qualified.rsplit_once("::"))
+        .map(|(_, name)| name)
+        .ok_or_else(|| CliError::failure("ranked demand has no project function identity"))?;
+    let source = unit.project_root.join(module);
+    let mut selected = None;
+    let report = check_report_observed(
+        unit,
+        rust,
+        records.for_ranked_owner(identity),
+        &mut |current, checker| {
+            if current.file_path == source {
+                selected = Some(checked_record_outputs(
+                    &current.ast,
+                    checker,
+                    &current.path_segments,
+                    Some(name),
+                ));
+            }
+        },
+    )?;
+    if !report.ok {
+        return Err(CliError::failure(report.human_message.unwrap_or_else(|| {
+            format!("ranked checker refused: {:?}", report.diagnostics)
+        })));
+    }
+    let checked: Vec<_> = report
+        .bodies
+        .modules
+        .iter()
+        .flat_map(|entry| entry.checked.iter().map(move |name| (&entry.module, name)))
+        .collect();
+    if checked.len() != 1 || checked[0].0 != module || checked[0].1 != name {
+        return Err(CliError::failure(format!(
+            "ranked checker did not evaluate exactly its selected owner: {checked:?}"
+        )));
+    }
+    let outputs = selected
+        .ok_or_else(|| CliError::failure("ranked checker did not visit the certified module"))?
+        .map_err(CliError::failure)?;
+    match outputs.into_iter().next() {
+        Some(CheckedOwnerRecordOutput::Value(fields)) if fields.identity == identity => Ok(fields),
+        Some(CheckedOwnerRecordOutput::Fallback(refusal)) => Err(CliError::failure(format!(
+            "ranked owner is a full-source fallback: {}",
+            refusal.reason
+        ))),
+        _ => Err(CliError::failure(
+            "ranked checker did not produce the requested stable identity",
+        )),
+    }
 }
 
 /// Project collected CLI diagnostics into their stable machine-readable form, preserving input order.

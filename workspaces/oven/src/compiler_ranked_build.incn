@@ -21,9 +21,14 @@ from compiler_graph_records import OutputSlots, decode_record_key, family_output
 from compiler_record_envelopes import RankedActivation, RankedCheckingSweep
 from compiler_snapshot import StagedSnapshot, stage_snapshot
 from compiler_worker import activate_record
+from compiler_reader_frontier import ReaderFrontier, evaluate_reader
+from jec import begin as begin_work, record as record_work
+from pub::incan_platform.trace import Operation
 from home_paths import home as compiler_home
 from store_path_conversion import snapshot
 from toolchain import Toolchain
+from unit import UnitDescription
+from unit_freshness import Key
 
 const BASIS_FAMILY: str = "incan.compiler.checking-basis"
 const CERTIFICATE_FAMILY: str = "incan.compiler.namespace-order"
@@ -46,6 +51,7 @@ model BuildOwner:
     name: str
     inputs: Dict[str, bytes]
     prior_declaration_root: str
+    prior_declaration: RecordKey
     equal_declaration: bool = false
     predecessors: list[RecordKey] = []
     local: bytes = b""
@@ -98,6 +104,7 @@ def changed_owner(graph: Snapshot, prior: RecordKey, captured: &Dict[str, bytes]
     mut inputs = {basis_key: pointer, receipt_key: encoded, certificate_key: certificate}
     mut name = ""
     mut prior_declaration_root = ""
+    mut prior_declaration = prior
     mut families: set[str] = set()
     for witness in basis.witnesses:
         match witness:
@@ -111,6 +118,7 @@ def changed_owner(graph: Snapshot, prior: RecordKey, captured: &Dict[str, bytes]
                 if family == "declaration":
                     if key.identity != prior.identity:
                         return Ok(None)
+                    prior_declaration = previous.request.key
                     key.family = "prior-declaration"
                     inputs[encode_record_key(key)?] = required(graph, encoded_key)?
                     prior_declaration_root = previous.semantic_digest
@@ -127,7 +135,7 @@ def changed_owner(graph: Snapshot, prior: RecordKey, captured: &Dict[str, bytes]
             _ => return Ok(None)
     if len(families) != 4 or name == "":
         return Ok(None)
-    return Ok(Some(BuildOwner(prior=prior, name=name, namespace=order.rank, inputs=inputs, prior_declaration_root=prior_declaration_root)))
+    return Ok(Some(BuildOwner(prior=prior, name=name, namespace=order.rank, inputs=inputs, prior_declaration_root=prior_declaration_root, prior_declaration=prior_declaration)))
 
 
 def submit(store: Path, view: str, toolchain: Toolchain, owner: &BuildOwner, family: str) -> Result[Submitted, str]:
@@ -239,7 +247,8 @@ def evaluate(store: Path, view: str, toolchain: Toolchain, pending: BuildOwner, 
     return Ok(owner)
 
 
-pub def ranked_build_pages(store: Path, inputs: &RankedBuildInputs, toolchain: Toolchain) -> Result[list[SelectedBodyPage], str]:
+pub def ranked_build_pages(store: Path, inputs: &RankedBuildInputs, toolchain: Toolchain, unit: UnitDescription, key: Key,
+    retained: list[SelectedBodyPage]) -> Result[list[SelectedBodyPage], str]:
     """Run only the source-changed certified frontier. Equal settled values retain the old Body IR frame."""
     if len(inputs.invalid) == 0:
         return Ok([])
@@ -263,6 +272,7 @@ pub def ranked_build_pages(store: Path, inputs: &RankedBuildInputs, toolchain: T
     # then pins that revision. Concurrent requests can share immutable envelopes without following one another.
     view = "compiler-checking-" + digest((graph.view + "\n" + origin).encode("utf-8"))
     mut result: list[SelectedBodyRecord] = []
+    mut readers = ReaderFrontier()
     for rank in sorted([value for value in ranks]):
         for family in ["declaration", "local", "final"]:
             mut jobs: Dict[str, Submitted] = {}
@@ -280,8 +290,13 @@ pub def ranked_build_pages(store: Path, inputs: &RankedBuildInputs, toolchain: T
                     None => break
 
                 identity = activation.ready.output.identity
+                clock = begin_work()
                 mut updated = evaluate(store, view, toolchain, owners[identity], jobs[identity])?
-                if family == "local" and updated.equal_declaration:
+                if not updated.refused:
+                    record_work(Operation.EnginePrepare, "ranked-stage\t" + identity + "\t" + family, clock)
+                if family == "declaration" and not updated.refused and not updated.equal_declaration:
+                    readers.enqueue(graph, identity, [updated.prior_declaration])?
+                elif family == "local" and updated.equal_declaration:
                     for old in select_body_inventory_of(graph, CHECKER_PROFILE, origin, [identity])?:
                         if old.local == updated.local:
                             # The earlier producer authenticated both of this closed owner's semantic inputs.
@@ -295,4 +310,17 @@ pub def ranked_build_pages(store: Path, inputs: &RankedBuildInputs, toolchain: T
                             frame = old.body_ir
                     result.append(SelectedBodyRecord(identity=identity, local=updated.local, final=updated.settled, body_ir=frame))
                 owners[identity] = updated
-    return encode_body_inventory(result)
+    mut refreshed = encode_body_inventory(result)?
+    while true:
+        reader = match readers.next()?:
+            Some(value) => value
+            None => break
+
+        clock = begin_work()
+        current = evaluate_reader(unit, toolchain, key, reader, retained + refreshed)?
+        readers.settle(graph, origin, reader, current)?
+        record_work(Operation.EnginePrepare, "ranked-reader\t" + current.identity + "\t" + digest(reader.prior.local)
+            + "\t" + digest(current.local) + "\t" + digest(reader.prior.final) + "\t" + digest(current.final)
+            + "\t" + str(readers.remaining()), clock)
+        refreshed.extend(encode_body_inventory([current])?)
+    return Ok(refreshed)
