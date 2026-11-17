@@ -66,6 +66,8 @@ pub enum RecordFamily {
     PublicIdentities,
     /// The runtime callables native lowering binds by their public path.
     RuntimeBindings,
+    /// One authenticated public runtime facade, addressed by the path selected by lowering.
+    RuntimeBinding,
     /// One declaration's signature: what a caller checks a use against.
     DeclarationSignature,
     /// One nominal declaration's fields or variants.
@@ -106,6 +108,7 @@ impl RecordFamily {
             Self::ExecutableDescriptor => "executable-descriptor",
             Self::PublicIdentities => "public-identities",
             Self::RuntimeBindings => "runtime-bindings",
+            Self::RuntimeBinding => "runtime-binding",
             Self::DeclarationSignature => "declaration-signature",
             Self::Layout => "layout",
             Self::Default => "default",
@@ -193,13 +196,13 @@ impl LibraryManifest {
         }
         let identities = own_public_identities(self);
         records.push(record(RecordFamily::PublicIdentities, 0, &self.name, &identities)?);
-        // Native lowering reads this one by name, never the contract metadata it is derived from.
-        records.push(record(
-            RecordFamily::RuntimeBindings,
-            0,
-            &self.name,
-            &runtime_bindings(self),
-        )?);
+        let bindings = runtime_bindings(self);
+        records.push(record(RecordFamily::RuntimeBindings, 0, &self.name, &bindings)?);
+        if matches!(self.name.as_str(), "incan_native_runtime" | "incan_stdlib_primitives") {
+            named(&mut records, RecordFamily::RuntimeBinding, &bindings, |binding| {
+                &binding.path
+            })?;
+        }
         if let Some(rust_abi) = &self.rust_abi {
             records.push(record(RecordFamily::RustAbi, 0, &self.name, rust_abi)?);
         }

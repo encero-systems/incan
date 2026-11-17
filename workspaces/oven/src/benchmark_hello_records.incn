@@ -151,9 +151,17 @@ def compare(hello: Path, output: Path) -> Result[None, str]:
             for key in selected.facets.get(prefix + "executable-descriptor/" + name_hash(name), []):
                 expected[key] = selected.lengths[key]
     for binding in sorted([item for item in runtime]):
-        census.rows.append(f"selected-runtime-binding\t1\tunknown\t{binding}")
-    if len(runtime) > 0:
-        census.problems.append(f"{len(runtime)} runtime bindings selected; installed runtime groups lack individual byte lengths")
+        parts = binding.split("/")
+        if len(parts) != 2:
+            return Err(f"unexpected runtime binding identity: {binding}")
+        selector = "loaf/" + directories[parts[0]].name() + "/" + parts[0] + "/runtime-binding/" + name_hash(parts[1])
+        matches = selected.facets.get(selector, [])
+        if len(matches) == 0:
+            census.rows.append(f"selected-runtime-binding\t1\tunknown\t{binding}")
+            census.problems.append(f"installed runtime group lacks a separately addressed binding: {binding}")
+        for key in matches:
+            expected[key] = selected.lengths[key]
+            census.rows.append(f"selected-runtime-binding\t1\t{selected.lengths[key]}\t{binding}")
     for key in ranges.keys():
         expected["body/" + key] = ranges[key]
     observed(hello.joinpath("cold-trace"), selected, surfaces, census)?

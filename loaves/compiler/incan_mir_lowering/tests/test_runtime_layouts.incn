@@ -6,7 +6,10 @@ from rust::incan_semantics_core import (
     SemanticSourceTargetKind as RustDeclarationKind,
 )
 from rust::incan_semantics_core::body_ir import BodyIrModule, RuntimeCallableBinding
-from runtime_calls import layout_runtime_requirements
+from std.encoding.hex import hexlify
+from std.hash import sha256
+from pub::incan_mir_plan import ExternalFunction, PlanType, source_span
+from runtime_calls import layout_runtime_requirements, selected_runtime_requirements
 
 
 pub def test_undecorated_program_reads_no_binding_state_layouts() -> None:
@@ -25,3 +28,19 @@ pub def test_undecorated_program_reads_no_binding_state_layouts() -> None:
     )
     requirements = layout_runtime_requirements([entry], "main.incn")
     assert len(requirements) == 0, "an undecorated program loaded the generic-decorator binding layouts"
+
+pub def test_planning_requests_the_one_selected_sealed_runtime_path() -> Result[None, str]:
+    """The unit has two addressable facades and selects one twice plus an external path the runtime does not publish."""
+    mut entry = BodyIrModule.declarations_only("main")
+    used = "incan_native_runtime::used"
+    for path in [used, "incan_native_runtime::unused"]:
+        entry.runtime_binding_selectors.append(hexlify(sha256.digest(path.encode("utf-8"))))
+    span = source_span(file="main.incn", line=1, column=1)
+    mut calls: list[ExternalFunction] = []
+    for path in [used, used, "incan_native_runtime::unpublished"]:
+        calls.append(ExternalFunction(path=path, parameters=[], return_type=PlanType.Unit, span=span))
+    requirements = selected_runtime_requirements(entry, calls, [])?
+    assert len(requirements) == 1
+    assert requirements[0].path == used
+    assert requirements[0].canonical == None
+    return Ok(None)

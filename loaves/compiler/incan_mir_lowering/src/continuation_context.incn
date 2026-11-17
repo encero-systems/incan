@@ -19,6 +19,7 @@ pub model ContinuationInputs:
 pub def refresh_entry_context(mut context: &mut BodyIrModule, entry: &BodyIrModule) -> None:
     """Refresh the compact entry-owned facts the frontend can extend while resolving runtime declarations."""
     context.runtime_callable_bindings = list(entry.runtime_callable_bindings)
+    context.runtime_binding_selectors = list(entry.runtime_binding_selectors)
     context.loaf_callables = list(entry.loaf_callables)
     context.entrypoint_effects = list(entry.entrypoint_effects)
     context.program_entrypoints = list(entry.program_entrypoints)
