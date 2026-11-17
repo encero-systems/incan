@@ -11,9 +11,9 @@ from pub::incan_worker_host.record_snapshot import SNAPSHOT_FORMAT_PROFILE, stag
 from pub::internal_models import (
     DEMAND_FAMILY, PREPARED_FAMILY, WORK_FAMILY, DemandPage, ProducerProfile, ProducerStage, ReadyWork,
     RecordRoot, checking_basis_key, decode_namespace_order, decode_prepared_inputs, decode_read_receipt,
-    encode_checking_completion, encode_demand_page, encode_ready_work, envelope_key, record_root,
+    encode_checking_completion, encode_demand_page, encode_ready_work, envelope_key,
 )
-from pub::internal_models.checker_records import CHECKER_PROFILE
+from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily, decode_owned_record
 from pub::internal_models.records import ReadWitness, RecordKey, encode_record_key
 from compiler_body_keys import IDENTITY_PROFILE
 from compiler_body_values import SelectedBodyPage, SelectedBodyRecord, encode_body_inventory, select_body_inventory_of
@@ -202,8 +202,31 @@ def evaluate(store: Path, view: str, toolchain: Toolchain, pending: BuildOwner, 
     receipt = decode_read_receipt(encoded)?
     if receipt.preparation.output != output or receipt.scope.snapshot != job.selected.digest or receipt.scope.profile != CHECKER_PROFILE or receipt.preparation.rank_certificate != job.activation.prepared.rank_certificate.evidence.digest or receipt.preparation.selector_witnesses != job.activation.prepared.selector_witnesses.digest:
         return Err("ranked compiler output receipt disagrees with its preparation")
+    reads = job.activation.prepared.required_reads
+    if receipt.operations != len(reads) or len(receipt.witnesses) != len(reads):
+        return Err("ranked compiler did not complete every prepared read")
+    mut response_bytes = 0
+    for index in range(len(reads)):
+        expected_read = reads[index]
+        key = encode_record_key(expected_read.key)?
+        if key not in owner.inputs:
+            return Err("ranked compiler returned a read outside its captured inputs")
+        input = owner.inputs[key]
+        match receipt.witnesses[index]:
+            ReadWitness.Found(observed, _) =>
+                if observed.scope != receipt.scope or observed.request != expected_read or observed.semantic_digest != digest(input):
+                    return Err("ranked compiler read evidence differs from its captured scalar")
+            _ => return Err("ranked compiler returned an unexpected selection result")
+        response_bytes += len(input)
+    if receipt.response_bytes != response_bytes:
+        return Err("ranked compiler response count differs from its selected scalars")
+    checked = decode_owned_record(value, CHECKER_PROFILE, output.identity).map_err((_) => "ranked compiler returned a different owner or checking profile")?
+    if not ((output.family == "declaration" and checked.family == CheckedFamily.Declaration)
+        or (output.family == "local" and checked.family == CheckedFamily.Local)
+        or (output.family == "final" and checked.family == CheckedFamily.Final)):
+        return Err("ranked compiler returned a different checking stage")
     mut completed = output
-    completed.context = record_root(value).map_err((_) => "ranked compiler returned an invalid checker record")?
+    completed.context = checked.root
     owner.inputs[encode_record_key(completed)?] = value
     owner.inputs[completed_checker_key(completed)?] = encode_checking_completion(produced.staged_root, encoded)?
     owner.predecessors.append(completed)
