@@ -198,13 +198,24 @@ pub def reusable_evaluation(
     return Ok(Some(ReusableEvaluation(value=value, receipt=receipt)))
 
 
-pub def reusable_family_records(selected: Snapshot, family: str, profile: str) -> Result[list[ReusableRecord], str]:
+pub model OutputSlots:
+    """A selection over output-index keys that can be answered before reading their values."""
+
+    pub origin: str
+    pub identity_profile: str = ""
+    pub included: Option[list[str]] = None
+    pub excluded: list[str] = []
+
+
+pub def reusable_family_records(
+    selected: Snapshot, family: str, profile: str, slots: Option[OutputSlots] = None,
+) -> Result[list[ReusableRecord], str]:
     """
     Select every witnessed value in one family/profile from the graph's engine-owned output index, reading only that
     family's range of it. The index holds one entry per slot, which names the slot's current record.
     """
     mut records: list[ReusableRecord] = []
-    for output in family_outputs(selected, family, profile)?:
+    for output in family_outputs(selected, family, profile, slots)?:
         key = decode_record_key(output)?
         match reusable_evaluation(selected, key, profile)?:
             Some(reused) => records.append(ReusableRecord(key=key, value=reused.value, receipt=reused.receipt))
@@ -218,20 +229,14 @@ pub def reusable_owner_records(
     profile: str,
     origin: str,
     owners: list[str],
+    identity_profile: str = "",
 ) -> Result[list[ReusableRecord], str]:
     """
     Select the witnessed values of one family/profile for only the owners of `origin` that `owners` names, reading and
     validating no other owner's evaluation.
     """
-    mut records: list[ReusableRecord] = []
-    for output in family_outputs(selected, family, profile)?:
-        key = decode_record_key(output)?
-        if key.origin != origin or key.identity not in owners:
-            continue
-        match reusable_evaluation(selected, key, profile)?:
-            Some(reused) => records.append(ReusableRecord(key=key, value=reused.value, receipt=reused.receipt))
-            None => pass
-    return Ok(records)
+    slots = OutputSlots(origin=origin, identity_profile=identity_profile, included=Some(owners))
+    return reusable_family_records(selected, family, profile, Some(slots))
 
 
 pub def owner_evaluations(
@@ -239,6 +244,7 @@ pub def owner_evaluations(
     families: list[str],
     profile: str,
     origin: str,
+    identity_profile: str = "",
 ) -> Result[Dict[str, str], str]:
     """
     Each owner of `origin` with current outputs in `families`, and one digest of its outputs' keys and the value
@@ -246,11 +252,10 @@ pub def owner_evaluations(
     digest; evaluating the same value again does not. No value is read or validated.
     """
     mut parts: Dict[str, list[str]] = {}
+    slots = OutputSlots(origin=origin, identity_profile=identity_profile)
     for family in families:
-        for value_key in family_outputs(selected, family, profile)?:
+        for value_key in family_outputs(selected, family, profile, Some(slots))?:
             key = decode_record_key(value_key)?
-            if key.origin != origin:
-                continue
             mut evaluation = ""
             if let Some(document) = get(selected, evaluation_record_key(profile, value_key)).map_err(
                 (error) => error.message(),
@@ -267,30 +272,60 @@ pub def owner_evaluations(
     return Ok(owners)
 
 
-pub def family_outputs(selected: Snapshot, family: str, profile: str) -> Result[list[str], str]:
-    """
-    One family/profile's current outputs, as encoded record keys in the order of their slots. Each is the value of its
-    slot's entry in the graph's output index; no output is read, decoded or validated.
-    """
+pub def family_outputs(
+    selected: Snapshot, family: str, profile: str, slots: Option[OutputSlots] = None,
+) -> Result[list[str], str]:
+    """Read pointers only for selected slots; no evaluation or compiler value is read."""
+    base = family_range(family, profile)?
+    mut ranges = [base]
+    mut included: Option[set[str]] = None
+    mut excluded: set[str] = set()
+    if let Some(scope) = slots:
+        if "\t" in scope.origin or "\t" in scope.identity_profile:
+            return Err("invalid compiler output range")
+        excluded = set(scope.excluded)
+        if let Some(owners) = scope.included:
+            if len(owners) == 0:
+                return Ok([])
+            included = Some(set(owners))
+        if scope.identity_profile != "":
+            base = base + scope.identity_profile + "\t" + scope.origin + "\t"
+            ranges = [base]
+            if let Some(names) = included:
+                ranges = []
+                for name in sorted([name for name in names]):
+                    if "\t" in name:
+                        return Err("invalid compiler output owner")
+                    ranges.append(base + name + "\t")
     mut listed: list[str] = []
-    for indexed in keys_with_prefix(selected, family_range(family, profile)?).map_err((error) => error.message())?:
-        if len(indexed.split("\t")) != 7:
-            # An entry an earlier Oven keyed by the record's context as well; the slot's next evaluation retires it.
-            continue
-        output = required_value(selected, indexed)?.decode().map_err((_) => "compiler output index entry is not UTF-8")?
-        if output_index_key(profile, output)? != indexed:
-            return Err("compiler output index entry names a record of another slot")
-        listed.append(output)
+    for prefix in ranges:
+        for indexed in keys_with_prefix(selected, prefix).map_err((error) => error.message())?:
+            fields = indexed.split("\t")
+            if len(fields) != 7:
+                continue
+            if let Some(scope) = slots:
+                if fields[4] != scope.origin or fields[5] in excluded:
+                    continue
+                if let Some(names) = included:
+                    if fields[5] not in names:
+                        continue
+            output = required_value(selected, indexed)?.decode().map_err((_) => "compiler output index entry is not UTF-8")?
+            if output_index_key(profile, output)? != indexed:
+                return Err("compiler output index entry names a record of another slot")
+            listed.append(output)
     return Ok(listed)
 
 
-pub def family_listing(selected: Snapshot, family: str, profile: str) -> Result[list[str], str]:
-    """
-    The revision of every entry in one family/profile's range of the output index, in key order, read from the index
-    alone. A slot's entry is keyed by the slot and holds its current record's key, so the listing changes whenever a
-    slot of the family is evaluated in another context, joins the family or leaves it, and no entry's value is read.
-    """
-    return revisions_with_prefix(selected, family_range(family, profile)?).map_err((error) => error.message())
+pub def family_listing(
+    selected: Snapshot, family: str, profile: str, identity_profile: str = "", origin: str = "",
+) -> Result[list[str], str]:
+    """The ordered output index revisions for one family, optionally restricted to the program's origin."""
+    prefix = family_range(family, profile)?
+    if identity_profile == "":
+        return revisions_with_prefix(selected, prefix).map_err((error) => error.message())
+    if "\t" in identity_profile or "\t" in origin:
+        return Err("invalid compiler output range")
+    return revisions_with_prefix(selected, prefix + identity_profile + "\t" + origin + "\t").map_err((error) => error.message())
 
 
 def family_range(family: str, profile: str) -> Result[str, str]:

@@ -50,6 +50,8 @@ from pub::incan_platform.store.memory import root as memory_root
 from pub::incan_platform.store.path import StorePath
 from store_path_conversion import compact, payload_intact, payload_path, put_payload, snapshot
 from compiler_graph_records import (
+    OutputSlots,
+    family_outputs,
     family_listing,
     prepare_evaluation,
     readers_of,
@@ -419,6 +421,18 @@ pub def test_a_family_selection_reads_its_range_however_many_records_earlier_edi
         assert len(reusable_family_records(latest, "body-ir", "p")?) == 0
         assert len(readers_of(latest, [target], "p")?) == 0
         pages.append(read_counts().pages - before.pages)
+        # The project asks for one owner. Unrelated index entries must never be materialized.
+        mut neighbours = begin(latest)
+        neighbours = put(neighbours, "incan.engine.output\tp\tbody-ir\tprofile\torigin\tother\tfacet", b"unrelated pointer")
+        neighbours = put(neighbours, "incan.engine.output\tp\tbody-ir\tprofile\tanother\tfunction:main\tfacet", b"foreign pointer")
+        with_neighbours = commit(neighbours).map_err((error) => error.message())?
+        wanted = encode_record_key(target)?
+        slots = OutputSlots(origin=target.origin, identity_profile=target.identity_profile, included=Some([target.identity]))
+        prior = read_counts()
+        assert family_outputs(with_neighbours, target.family, "p", Some(slots))? == [wanted]
+        observed = read_counts()
+        assert observed.records - prior.records == 1
+        assert observed.decoded - prior.decoded == len(wanted.encode())
         every = keys(latest).map_err((error) => error.message())?
         for prefix in ["incan.engine.output\tp\tbody-ir\t", "incan.engine.output\tp\t", "incan.engine.receipt\t5", edge]:
             assert keys_with_prefix(latest, prefix).map_err((error) => error.message())? == [

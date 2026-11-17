@@ -2,7 +2,7 @@
 
 from pub::internal_models.records import RecordKey
 
-const IDENTITY_PROFILE: str = "incan.stable-declaration/1"
+pub const IDENTITY_PROFILE: str = "incan.stable-declaration/1"
 
 
 pub def project_declaration_slot(origin: str, module: str, name: str) -> RecordKey:

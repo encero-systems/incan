@@ -5,7 +5,9 @@ from std.primitives.hash import sha256
 from pub::incan_platform.store import Snapshot
 from pub::internal_models import GraphBodyValue, ProducerRank, encode_graph_body_values
 from pub::internal_models.records import ReadReceipt, RecordKey
+from compiler_body_keys import IDENTITY_PROFILE
 from compiler_graph_records import (
+    OutputSlots,
     PublishedEvaluation,
     ReusableRecord,
     publish_evaluation,
@@ -55,9 +57,8 @@ pub def select_namespace_inventory_except(
 ) -> Result[list[SelectedBodyPage], str]:
     """Select this project origin's namespaces whose source and imported declaration witnesses remain current."""
     mut pages: list[SelectedBodyPage] = []
-    for record in reusable_family_records(selected, "namespace", profile)?:
-        if record.key.origin != origin or record.key.identity in invalid:
-            continue
+    slots = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, excluded=invalid)
+    for record in reusable_family_records(selected, "namespace", profile, Some(slots))?:
         key = "namespace-" + hexlify(sha256.digest(record.key.identity.encode("utf-8")))
         pages.append(SelectedBodyPage(key=key, value=record.value))
     return Ok(pages)
@@ -107,11 +108,11 @@ pub def select_body_inventory_except(
     invalid: list[str],
 ) -> Result[list[SelectedBodyRecord], str]:
     """Select this project origin's complete owners except those reached by its current source changes."""
-    locals = reusable_family_records(selected, "local", profile)?
-    finals = reusable_family_records(selected, "final", profile)?
-    bodies = reusable_family_records(selected, "body-ir", profile)?
-    owned = [local for local in locals if local.key.origin == origin and local.key.identity not in invalid]
-    return Ok(paired_records(owned, finals, bodies))
+    slots = Some(OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, excluded=invalid))
+    locals = reusable_family_records(selected, "local", profile, slots)?
+    finals = reusable_family_records(selected, "final", profile, slots)?
+    bodies = reusable_family_records(selected, "body-ir", profile, slots)?
+    return Ok(paired_records(locals, finals, bodies))
 
 
 pub def select_body_inventory_of(
@@ -121,9 +122,9 @@ pub def select_body_inventory_of(
     owners: list[str],
 ) -> Result[list[SelectedBodyRecord], str]:
     """Select the complete owners of this project origin that `owners` names, validating no other owner's records."""
-    locals = reusable_owner_records(selected, "local", profile, origin, owners)?
-    finals = reusable_owner_records(selected, "final", profile, origin, owners)?
-    bodies = reusable_owner_records(selected, "body-ir", profile, origin, owners)?
+    locals = reusable_owner_records(selected, "local", profile, origin, owners, IDENTITY_PROFILE)?
+    finals = reusable_owner_records(selected, "final", profile, origin, owners, IDENTITY_PROFILE)?
+    bodies = reusable_owner_records(selected, "body-ir", profile, origin, owners, IDENTITY_PROFILE)?
     return Ok(paired_records(locals, finals, bodies))
 
 
