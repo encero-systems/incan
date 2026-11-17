@@ -126,7 +126,7 @@ pub from activation_envelopes import (
     envelope_key,
     stage_name,
 )
-pub from namespace_order import NamespaceOrder, certified_namespace_order
+pub from namespace_order import NamespaceOrder, certified_namespace_order, decode_namespace_order
 pub from checker_record_models import (
     CodecFault,
     GraphBodyValue,

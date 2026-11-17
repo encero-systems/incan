@@ -2,7 +2,21 @@
 
 from std.encoding.hex import hexlify
 from std.hash import sha256
-from std.json import JsonValue
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from crumb_rows import ModelField, model_description, required_value
+from graph_crumb_fields import decode_graph_row, encode_graph_row, items, text
+
+const ORDER_SELECTOR: bytes = b"nsrank\x00"
+
+
+def order_description() -> Description:
+    """Bind the project identity, mutually importing namespaces and full predecessor closure."""
+    return model_description(ORDER_SELECTOR, "incan.compiler.namespace-order/1", [
+        ModelField(identity=b"closed", name="closure", storage="list<string>"),
+        ModelField(identity=b"member", name="members", storage="list<string>"),
+        ModelField(identity=b"origin", name="origin", storage="string"),
+    ])
 
 
 pub model NamespaceOrder:
@@ -13,6 +27,43 @@ pub model NamespaceOrder:
     pub evidence: str = "compiled-check"
     pub members: list[str] = []
     pub certificate: bytes = b""
+
+
+def encoded_order(origin: str, members: list[str], closure: list[str]) -> Result[bytes, str]:
+    """Emit the canonical typed Crumb value used for both publication and verification."""
+    return encode_graph_row(ORDER_SELECTOR, order_description(), [
+        required_value(b"closed", Value.List([Value.Text(name) for name in closure])),
+        required_value(b"member", Value.List([Value.Text(name) for name in members])),
+        required_value(b"origin", Value.Text(origin)),
+    ])
+
+
+def namespace_names(value: Value) -> Result[list[str], str]:
+    """Require the canonical strictly increasing spelling of a nonempty namespace set."""
+    mut names: list[str] = []
+    for element in items(value)?:
+        name = text(element)?
+        if name == "" or (len(names) > 0 and name <= names[len(names) - 1]):
+            return Err("noncanonical certified namespace names")
+        names.append(name)
+    if len(names) == 0:
+        return Err("empty certified namespace set")
+    return Ok(names)
+
+
+pub def decode_namespace_order(certificate: bytes, expected_origin: str) -> Result[NamespaceOrder, str]:
+    """Recompute the canonical rank certificate and require its full origin-bound Crumb payload."""
+    fields = decode_graph_row(certificate, ORDER_SELECTOR, order_description(), 3)?
+    closure = namespace_names(fields[0].value)?
+    members = namespace_names(fields[1].value)?
+    if text(fields[2].value)? != expected_origin:
+        return Err("certified namespace order belongs to another origin")
+    for member in members:
+        if member not in closure:
+            return Err("certified namespace group lies outside its closure")
+    if encoded_order(expected_origin, members, closure)? != certificate:
+        return Err("noncanonical namespace order certificate")
+    return Ok(NamespaceOrder(rank=len(closure) - len(members), evidence="sha256:" + hexlify(sha256.digest(certificate)), members=members, certificate=certificate))
 
 
 pub def certified_namespace_order(
@@ -53,13 +104,7 @@ pub def certified_namespace_order(
         if complete:
             members = sorted(group)
             dependencies = sorted([name for name in closure])
-            proof = JsonValue.array([
-                JsonValue.string("incan.namespace-order/1"),
-                JsonValue.string(origin),
-                JsonValue.array([JsonValue.string(name) for name in members]),
-                JsonValue.array([JsonValue.string(name) for name in dependencies]),
-            ]).to_json().map_err((error) => error.message())?
-            certificate = proof.encode("utf-8")
+            certificate = encoded_order(origin, members, dependencies)?
             result[module] = NamespaceOrder(
                 rank=len(closure) - len(members),
                 evidence="sha256:" + hexlify(sha256.digest(certificate)),
