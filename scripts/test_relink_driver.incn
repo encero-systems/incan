@@ -7,7 +7,7 @@ from std.hash import file_digest
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
 from native_build import NativeContext, build_support_tool, runtime_root, share_seed_generations
-from relink_driver import install_driver, prepare_compiler_home, readmit, withdraw_installed_providers
+from relink_driver import install_driver, prepare_compiler_home, readmit, refresh_compiler_home, withdraw_installed_providers
 from release_support import TOOLCHAIN_DIRECTORY
 
 # The fields of an installed manifest every compiler home needs, before its registry fields.
@@ -21,6 +21,8 @@ def test_compiler_home_reports_each_manifest_change() -> Result[None, str]:
     1. The first preparation writes the manifest.
     2. Preparing again for the same installation changes nothing.
     3. A relink that installs another driver changes it again, so its admitted page must be replaced.
+    4. Standard publication that replaces provider paths changes it again and the compiler home names the final
+       installed providers, never the earlier home.
     """
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     installed = temporary.path().joinpath("home")
@@ -40,6 +42,69 @@ def test_compiler_home_reports_each_manifest_change() -> Result[None, str]:
         .write_bytes(b"{\"driver\":\"bin/incan-rustc-driver-b\",\"sysroot\":\"sysroot\",\"externs\":[]}")
         .map_err((error) => error.message())?
     assert prepare_compiler_home(installed, compiler)?
+    # 4. Provider publication happens after driver installation during a standard relink.
+    manifest
+        .write_bytes(
+            b"{\"driver\":\"bin/incan-rustc-driver-b\",\"sysroot\":\"sysroot\",\"externs\":[{\"name\":\"final_provider\",\"path\":\"native/final/libfinal.rlib\"}],\"search\":[\"native/final\"]}",
+        )
+        .map_err((error) => error.message())?
+    assert prepare_compiler_home(installed, compiler)?
+    compiler_text = compiler
+        .joinpath(TOOLCHAIN_DIRECTORY + "/toolchain.json")
+        .read_text("utf-8", "strict")
+        .map_err((error) => error.message())?
+    final_root = installed.resolve().map_err((error) => error.message())?.joinpath(TOOLCHAIN_DIRECTORY + "/native/final")
+    assert final_root.0 in compiler_text, compiler_text
+    assert not prepare_compiler_home(installed, compiler)?
+    return Ok(None)
+
+
+def test_standard_provider_refresh_rebinds_and_readmits_the_compiler_home() -> Result[None, str]:
+    """
+    A standard relink publishes its final providers after installing the driver. The compiler home is rebound and
+    re-admitted when those provider paths change even though the driver identity does not.
+
+    1. Initial preparation admits the seed provider paths once; an unchanged repeat does nothing.
+    2. Replacing only extern and search paths triggers a second admission.
+    3. The compiler manifest names only the final providers under the installed home.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    installed = temporary.path().joinpath("home")
+    compiler = installed.joinpath("compiler-build")
+    toolchain = installed.joinpath(TOOLCHAIN_DIRECTORY)
+    toolchain.joinpath("native/seed").mkdir(true, true).map_err((error) => error.message())?
+    toolchain.joinpath("native/final").mkdir(true, true).map_err((error) => error.message())?
+    manifest = toolchain.joinpath("toolchain.json")
+    manifest
+        .write_bytes(
+            b"{\"driver\":\"bin/incan-rustc-driver-a\",\"sysroot\":\"sysroot\",\"externs\":[{\"name\":\"provider\",\"path\":\"native/seed/libprovider.rlib\"}],\"search\":[\"native/seed\"]}",
+        )
+        .map_err((error) => error.message())?
+    requests = temporary.path().joinpath("requests")
+    builder = temporary.path().joinpath("accepting")
+    script = "#!/bin/sh\nprintf '%s %s\\n' \"$INCAN_HOME\" \"$*\" >> " + requests.0 + "\necho re-admitted\n"
+    executable(builder, script)?
+    # 1. One changed manifest means one admission; the unchanged repeat means none.
+    refresh_compiler_home(builder.0, installed, compiler, [], true)?
+    refresh_compiler_home(builder.0, installed, compiler, [], true)?
+    # 2. Standard publication changes provider paths without changing the driver.
+    manifest
+        .write_bytes(
+            b"{\"driver\":\"bin/incan-rustc-driver-a\",\"sysroot\":\"sysroot\",\"externs\":[{\"name\":\"provider\",\"path\":\"native/final/libprovider.rlib\"}],\"search\":[\"native/final\"]}",
+        )
+        .map_err((error) => error.message())?
+    refresh_compiler_home(builder.0, installed, compiler, [], true)?
+    recorded = requests.read_text("utf-8", "strict").map_err((error) => error.message())?
+    expected = f"{compiler.0} --internal-readmit\n{compiler.0} --internal-readmit\n"
+    assert recorded == expected, recorded
+    # 3. Only the final installed provider paths remain in the compiler manifest.
+    compiler_text = compiler
+        .joinpath(TOOLCHAIN_DIRECTORY + "/toolchain.json")
+        .read_text("utf-8", "strict")
+        .map_err((error) => error.message())?
+    root = installed.resolve().map_err((error) => error.message())?.joinpath(TOOLCHAIN_DIRECTORY + "/native")
+    assert root.joinpath("final").0 in compiler_text, compiler_text
+    assert root.joinpath("seed").0 not in compiler_text, compiler_text
     return Ok(None)
 
 

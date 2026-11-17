@@ -125,9 +125,8 @@ pub def run(relink: Relink) -> Result[None, str]:
         # As a release builds it with its seed: the relinked compiler would read the standard Loaves it replaces.
         helper = Some(build_support_tool(standard_context(relink)?, Path(relink.helper_home))?)
     compiler_home = relink.toolchain_home.joinpath("compiler-build")
-    if prepare_compiler_home(relink.toolchain_home, compiler_home)? and relink.readmit:
-        # The compiler home selects the installation's current driver; its admitted page still names the earlier one.
-        readmit(relink.builder, compiler_home, [])?
+    # The compiler home selects the installation's current driver; its admitted page may still name the earlier one.
+    refresh_compiler_home(relink.builder, relink.toolchain_home, compiler_home, [], relink.readmit)?
     prepared = started.elapsed().as_secs_f64()
     build_driver(relink, sysroot, compiler_home, relink.log)?
     compiled = started.elapsed().as_secs_f64()
@@ -142,10 +141,13 @@ pub def run(relink: Relink) -> Result[None, str]:
     if relink.readmit:
         # Both homes select the new driver now, and the records of the files it replaced retire with them.
         readmit(relink.builder, relink.toolchain_home, removed)?
-        if prepare_compiler_home(relink.toolchain_home, compiler_home)?:
-            readmit(relink.builder, compiler_home, removed)?
+        refresh_compiler_home(relink.builder, relink.toolchain_home, compiler_home, removed, true)?
     if let Some(built_helper) = helper:
         rebuild_standard(standard_context(relink)?, built_helper)?
+        # Standard publication rewrites the installed provider paths after the compiler home was prepared. Bind the
+        # compiler home to that final manifest too, so a copied relink never keeps the seed home's externs and search
+        # roots after the installed home has moved to the relinked providers.
+        refresh_compiler_home(relink.builder, relink.toolchain_home, compiler_home, [], relink.readmit)?
     ended = started.elapsed().as_secs_f64()
     report_relink_timing(
         [("setup", prepared), ("compilation", compiled - prepared), ("install", ended - compiled), ("total", ended)],
@@ -244,6 +246,19 @@ pub def prepare_compiler_home(installed_home: Path, compiler_home: Path) -> Resu
         return Ok(false)
     replace_text(target, text)?
     return Ok(true)
+
+
+pub def refresh_compiler_home(
+    builder: str,
+    installed_home: Path,
+    compiler_home: Path,
+    removed: list[str],
+    admit: bool,
+) -> Result[None, str]:
+    """Bind the compiler home to the installed manifest and re-admit it exactly when that manifest changed."""
+    if prepare_compiler_home(installed_home, compiler_home)? and admit:
+        readmit(builder, compiler_home, removed)?
+    return Ok(None)
 
 
 def share_tree(selected: Path, destination: Path, tree: str) -> Result[None, str]:
