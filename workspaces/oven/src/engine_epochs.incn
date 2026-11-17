@@ -3,6 +3,9 @@
 from rust::std::str import from_utf8
 from std.environ import get_optional
 from std.fs import Path
+from std.encoding.hex import hexlify
+from std.hash import sha256
+from engine_epoch_records import encode_epoch, encode_head, read_epoch, read_head
 from engine_capture import (
     BuildEpoch,
     CaptureRequest,
@@ -11,7 +14,6 @@ from engine_capture import (
     InputSelection,
     SelectedHome,
     capture,
-    decoded_epoch,
     selected_home,
 )
 from engine_messages import Submit
@@ -111,12 +113,12 @@ pub def prepare_submit(store: Path, submit: Submit) -> Result[CapturedRequest, s
                 )
             # 3. Metadata belongs to a captured revision, while the epoch's semantic identity excludes it.
             publishing = begin_work()
-            encoded = epoch.encoded()?
-            revision = fingerprint([encoded])?
+            encoded = encode_epoch(epoch)?
+            revision = hexlify(sha256.digest(encoded))
             identity = epoch.identity()?
             mut transaction = begin_compared(before)
-            transaction = put(transaction, epoch_key(revision), encoded.encode("utf-8"))
-            transaction = put(transaction, head, f"{revision} {identity}".encode("utf-8"))
+            transaction = put(transaction, epoch_key(revision), encoded)
+            transaction = put(transaction, head, encode_head(revision, identity)?)
 
             record_work(Operation.EngineCaptureEncode, source.0, publishing)
             return Ok(
@@ -195,45 +197,40 @@ def refreshed_request(
 ) -> Result[CapturedRequest, str]:
     """`captured` with an epoch of the same identity and fresher metadata, staged for publication with its reach."""
     mut refreshed = captured
-    encoded = epoch.encoded()?
+    encoded = encode_epoch(epoch)?
     refreshed.epoch = epoch
-    refreshed.revision = fingerprint([encoded])?
+    refreshed.revision = hexlify(sha256.digest(encoded))
     refreshed.reach = reach
     mut transaction = begin_compared(captured.snapshot)
-    transaction = put(transaction, epoch_key(refreshed.revision), encoded.encode("utf-8"))
-    transaction = put(transaction, captured.head, f"{refreshed.revision} {captured.identity}".encode("utf-8"))
+    transaction = put(transaction, epoch_key(refreshed.revision), encoded)
+    transaction = put(transaction, captured.head, encode_head(refreshed.revision, captured.identity)?)
     refreshed.transaction = Some(transaction)
     return Ok(refreshed)
 
 
 def previous_epoch(view: Snapshot, head: str) -> Result[tuple[str, str, Option[BuildEpoch]], str]:
     """Read the selected revision and semantic identity; a revision-only head is upgraded once after capture."""
-    match record_text(view, head)?:
+    match record_bytes(view, head)?:
         None => return Ok(("", "", None))
-        Some(text) =>
-            fields = text.split(" ")
-            if len(fields) not in [1, 2]:
-                return Err("malformed capture head")
-            for field in fields:
-                if len(field) != 64:
-                    return Err("malformed capture identity")
-                for character in field:
-                    if character not in "0123456789abcdef":
-                        return Err("malformed capture identity")
-            revision = fields[0]
-            mut identity = ""
-            if len(fields) == 2:
-                identity = fields[1]
-            match record_text(view, epoch_key(revision))?:
+        Some(data) =>
+            revision, identity = read_head(data)?
+            match record_bytes(view, epoch_key(revision))?:
                 None => return Err("capture head names a missing epoch record")
-                Some(encoded) => return Ok((revision, identity, Some(decoded_epoch(encoded)?)))
+                Some(encoded) => return Ok((revision, identity, Some(read_epoch(encoded)?)))
 
 
 pub def load_epoch(store: Path, revision: str, view: str) -> Result[BuildEpoch, str]:
     """Activate one exact persisted capture revision for a producer; callers drop it when that activation ends."""
-    match record_text(snapshot(store, view).map_err((error) => error.message())?, epoch_key(revision))?:
+    match record_bytes(snapshot(store, view).map_err((error) => error.message())?, epoch_key(revision))?:
         None => return Err("captured epoch record is missing")
-        Some(text) => return decoded_epoch(text)
+        Some(data) => return read_epoch(data)
+
+
+def record_bytes(view: Snapshot, key: str) -> Result[Option[bytes], str]:
+    match lookup(view, key).map_err((error) => error.message())?:
+        Lookup.Found(value) => return Ok(Some(owned(value)))
+        Lookup.Absent => return Ok(None)
+        Lookup.Deleted => return Ok(None)
 
 
 pub def record_text(view: Snapshot, key: str) -> Result[Option[str], str]:

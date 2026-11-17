@@ -17,9 +17,9 @@ from engine_capture import (
     READ_ATTEMPTS,
     capture,
     capture_with,
-    decoded_epoch,
     read_file,
 )
+from engine_epoch_records import encode_epoch, encode_head, read_epoch, read_head
 from engine_epochs import capture_submit, prepare_submit, after_projection
 from pub::incan_platform.store import commit
 from engine_messages import Submit
@@ -506,8 +506,18 @@ pub def test_unsettled_metadata_are_read_again_and_the_epoch_encodes_determinist
     again = capture(request, Some(epoch), admitted, 3600)?
     assert again.counters.in_reach.reads == first.counters.in_reach.reads
     assert epoch_of(again)?.identity()? == epoch.identity()?
-    text = epoch.encoded()?
-    decoded = decoded_epoch(text)?
+    encoded = encode_epoch(epoch)?
+    assert encoded[:4] == b"CRMB"
+    decoded = read_epoch(encoded)?
     assert decoded == epoch
-    assert decoded.encoded()? == text
+    assert encode_epoch(decoded)? == encoded
+    legacy = b'["incan.engine.build-epoch/2",["/app"],["check","release",[]],[],[],[],[],[]]'
+    previous = read_epoch(legacy)?
+    assert previous.roots == ["/app"] and previous.selection.command == "check"
+    assert read_epoch(encoded[:len(encoded) - 1]).is_err()
+    identity = epoch.identity()?
+    head = encode_head(identity, identity)?
+    assert read_head(head)? == (identity, identity)
+    assert read_head(identity.encode("utf-8"))? == (identity, "")
+    assert read_head(b"invalid").is_err()
     return Ok(None)

@@ -1,0 +1,142 @@
+"""Typed capture revisions and selection heads, with readers for captures saved by earlier Oven installations."""
+
+from rust::std::str import from_utf8
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from pub::internal_models.crumb_rows import ModelField, model_description, required_value
+from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, integer as signed, items, number, text, tuple_items
+from engine_capture import BuildEpoch, CapturedInput, CapturedListing, Declarations, InputPath, InputSelection, decoded_epoch, role_of
+from observation import FileMetadata
+
+const EPOCH: bytes = b"bldepoc"
+const HEAD: bytes = b"bldhead"
+const META: str = "tuple<i64,i64,i64,i64,i64,i64>"
+
+
+def epoch_description() -> Description:
+    """The captured revision includes filesystem observations as well as the program inputs."""
+    return model_description(EPOCH, "incan.engine.build-epoch/3", [
+        ModelField(identity=b"absent", name="absent", storage="list<tuple<string,string>>"),
+        ModelField(identity=b"admitt", name="admitted", storage="list<string>"),
+        ModelField(identity=b"declar", name="declarations", storage="list<tuple<string,list<tuple<string,string>>,string,string,list<string>>>"),
+        ModelField(identity=b"inputs", name="inputs", storage=f"list<tuple<string,string,{META},string,boolean>>"),
+        ModelField(identity=b"listin", name="listings", storage=f"list<tuple<string,{META},boolean,list<string>,list<string>>>"),
+        ModelField(identity=b"roots_", name="roots", storage="list<string>"),
+        ModelField(identity=b"select", name="selection", storage="tuple<string,string,list<string>>"),
+    ])
+
+
+def head_description() -> Description:
+    """The physical revision and semantic identity are independently selected by the capture head."""
+    return model_description(HEAD, "incan.engine.capture-head/2", [
+        ModelField(identity=b"ident_", name="identity", storage="string"),
+        ModelField(identity=b"revisi", name="revision", storage="string"),
+    ])
+
+
+def texts(values: list[str]) -> Value:
+    return Value.List([Value.Text(item) for item in values])
+
+
+def read_texts(value: Value) -> Result[list[str], str]:
+    mut found: list[str] = []
+    for item in items(value)?:
+        found.append(text(item)?)
+    return Ok(found)
+
+
+def flag(value: Value) -> Result[bool, str]:
+    match value:
+        Value.Boolean(found) => return Ok(found)
+        _ => return Err("expected capture flag")
+
+
+def metadata(value: FileMetadata) -> Value:
+    return Value.Tuple([signed(value.device), signed(value.inode), signed(value.size), signed(value.mode), signed(value.modified_ns), signed(value.changed_ns)])
+
+
+def read_metadata(value: Value) -> Result[FileMetadata, str]:
+    p = tuple_items(value, 6)?
+    return Ok(FileMetadata(device=number(p[0])?, inode=number(p[1])?, size=number(p[2])?, mode=number(p[3])?, modified_ns=number(p[4])?, changed_ns=number(p[5])?))
+
+
+def paths(values: list[InputPath]) -> Value:
+    return Value.List([Value.Tuple([Value.Text(p.path), Value.Text(p.role.value())]) for p in values])
+
+
+def read_paths(value: Value) -> Result[list[InputPath], str]:
+    mut found: list[InputPath] = []
+    for item in items(value)?:
+        p = tuple_items(item, 2)?
+        found.append(InputPath(path=text(p[0])?, role=role_of(text(p[1])?)?))
+    return Ok(found)
+
+
+pub def encode_epoch(epoch: BuildEpoch) -> Result[bytes, str]:
+    """Store roots, absences, editable inputs and manifest declarations without parsing source files again."""
+    selection = Value.Tuple([Value.Text(epoch.selection.command), Value.Text(epoch.selection.profile), texts(sorted(epoch.selection.features))])
+    mut inputs: list[Value] = []
+    for item in epoch.inputs:
+        inputs.append(Value.Tuple([Value.Text(item.path), Value.Text(item.role.value()), metadata(item.metadata), Value.Text(item.digest), Value.Boolean(item.settled)]))
+    mut listings: list[Value] = []
+    for listing in epoch.listings:
+        listings.append(Value.Tuple([Value.Text(listing.path), metadata(listing.metadata), Value.Boolean(listing.settled), texts(listing.files), texts(listing.directories)]))
+    mut declarations: list[Value] = []
+    for decl in epoch.declarations:
+        declarations.append(Value.Tuple([Value.Text(decl.manifest), paths(decl.files), Value.Text(decl.source_root), Value.Text(decl.rust_source_root), texts(decl.dependencies)]))
+    return encode_graph_row(EPOCH, epoch_description(), [
+        required_value(b"absent", paths(epoch.absent)),
+        required_value(b"admitt", texts(epoch.admitted)),
+        required_value(b"declar", Value.List(declarations)),
+        required_value(b"inputs", Value.List(inputs)),
+        required_value(b"listin", Value.List(listings)),
+        required_value(b"roots_", texts(epoch.roots)),
+        required_value(b"select", selection),
+    ])
+
+
+pub def read_epoch(data: bytes) -> Result[BuildEpoch, str]:
+    """Reopen the exact captured revision through its versioned record encoding."""
+    if data[:4] != b"CRMB":
+        return decoded_epoch(str(from_utf8(data).map_err((error) => str(error))?))
+    f = decode_graph_row(data, EPOCH, epoch_description(), 7)?
+    mut declarations: list[Declarations] = []
+    for item in items(f[2].value)?:
+        p = tuple_items(item, 5)?
+        declarations.append(Declarations(manifest=text(p[0])?, files=read_paths(p[1])?, source_root=text(p[2])?, rust_source_root=text(p[3])?, dependencies=read_texts(p[4])?))
+    mut inputs: list[CapturedInput] = []
+    for item in items(f[3].value)?:
+        p = tuple_items(item, 5)?
+        inputs.append(CapturedInput(path=text(p[0])?, role=role_of(text(p[1])?)?, metadata=read_metadata(p[2])?, digest=text(p[3])?, settled=flag(p[4])?))
+    mut listings: list[CapturedListing] = []
+    for item in items(f[4].value)?:
+        p = tuple_items(item, 5)?
+        listings.append(CapturedListing(path=text(p[0])?, metadata=read_metadata(p[1])?, settled=flag(p[2])?, files=read_texts(p[3])?, directories=read_texts(p[4])?))
+    selected = tuple_items(f[6].value, 3)?
+    selection = InputSelection(command=text(selected[0])?, profile=text(selected[1])?, features=read_texts(selected[2])?)
+    return Ok(BuildEpoch(roots=read_texts(f[5].value)?, selection=selection, inputs=inputs, absent=read_paths(f[0].value)?, listings=listings, declarations=declarations, admitted=read_texts(f[1].value)?))
+
+
+pub def encode_head(revision: str, identity: str) -> Result[bytes, str]:
+    return encode_graph_row(HEAD, head_description(), [required_value(b"ident_", Value.Text(identity)), required_value(b"revisi", Value.Text(revision))])
+
+
+pub def read_head(data: bytes) -> Result[tuple[str, str], str]:
+    """Recognize the earlier revision-only head and validate every stored SHA-256 identifier."""
+    mut fields: list[str] = []
+    if data[:4] == b"CRMB":
+        row = decode_graph_row(data, HEAD, head_description(), 2)?
+        fields = [text(row[1].value)?, text(row[0].value)?]
+    else:
+        fields = str(from_utf8(data).map_err((error) => str(error))?).split(" ")
+    if len(fields) not in [1, 2]:
+        return Err("malformed capture head")
+    for field in fields:
+        if len(field) != 64:
+            return Err("malformed capture identity")
+        for character in field:
+            if character not in "0123456789abcdef":
+                return Err("malformed capture identity")
+    if len(fields) == 1:
+        return Ok((fields[0], ""))
+    return Ok((fields[0], fields[1]))
