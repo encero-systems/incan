@@ -40,6 +40,7 @@ from bakery import (
 from bakery_records import Fact
 from bakery_roots import lease_unit, register_root
 from compiler_body_values import SelectedBodyPage
+from compiler_ranked_build import RankedBuildInputs, ranked_build_pages
 from compiler_refusals import check_or_replay
 from observation import trace, trace_launch
 from project_library import library_loaf, library_output, shared_library
@@ -211,6 +212,7 @@ pub def obtain_executable(
     selected_store: Option[Path] = None,
     defer_publication: bool = false,
     graph_body_records: Option[list[SelectedBodyPage]] = None,
+    ranked: Option[RankedBuildInputs] = None,
 ) -> Result[Made, str]:
     """
     Obtain the executable of `key` from the home bakery and make `output` a view of it.
@@ -253,6 +255,13 @@ pub def obtain_executable(
         trace(f"{label}: reused (built meanwhile by another command)")
         return Ok(made)
     # 4. A failed bake publishes nothing; its staging directory goes with it.
+    mut selected_pages = graph_body_records
+    if let Some(inputs) = ranked:
+        mut pages: list[SelectedBodyPage] = []
+        if let Some(retained) = selected_pages:
+            pages = retained
+        pages.extend(ranked_build_pages(store, inputs, toolchain)?)
+        selected_pages = Some(pages)
     staged = staging(store, identity, prior_size(store, unit_name(unit)))?
     code = compile_staged(
         unit,
@@ -261,7 +270,7 @@ pub def obtain_executable(
         key,
         bake_reason(store, unit),
         shared,
-        graph_body_records,
+        selected_pages,
     )?
     if code != 0:
         _ = staged.remove_tree()
