@@ -30,13 +30,13 @@ from record_positions import index_positions, place_positions, relocate_product
 
 
 # A record whose key is its checked meaning; its spans name Body IR nodes by ordinal through a request-local position map.
-const RECORD_FUNCTION: str = "incan.record-function/6"
+const RECORD_FUNCTION: str = "incan.record-function/7"
 
 
 pub def scalar_inputs(body: str, name: str, span: SourceSpan, overflow_checks: bool, reads: str) -> list[str]:
     """Bind a native product to its checked body, consumed signatures, physical frame and diagnostic provenance."""
     return [
-        "incan.scalar-function/8",
+        "incan.scalar-function/9",
         body,
         name,
         str(span.file),
