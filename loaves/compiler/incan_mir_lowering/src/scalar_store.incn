@@ -1,7 +1,7 @@
 """Read and atomically retain native plan products under their producer's complete input witnesses."""
 
 from pub::internal_models.lowering_events import (
-    EventPosition, EventReference, LoweringEvent, LoweringRefusal, encode_lowering_event, encode_lowering_refusal,
+    EventPosition, EventReference, LoweringEvent, LoweringRefusal, decode_lowering_event, encode_lowering_event, encode_lowering_refusal,
 )
 from rust::incan_semantics_core::semantic_digest import semantic_digest
 from rust::std::process import id as process_id
@@ -210,7 +210,6 @@ pub def report_scalar(
             runtime_requirements=runtime,
             references=stored,
             positions=event_nodes(positions),
-            module=module,
         )
         report = encode_lowering_event(event)?
         path = Path(root).joinpath(digest.replace("sha256:", "") + ".event")
@@ -401,19 +400,15 @@ pub def admitted_payload(
     Returns the placed payload, the declarations it names and the generic instance requests its lowering made. A
     product that does not fit is a miss: the body takes the keyed route.
     """
-    text = match event.decode():
+    decoded = match decode_lowering_event(event):
         Ok(value) => value
         Err(_) => return None
 
-    decoded = match decode_event(text):
+    record = match decode_plan_function_record(decoded.product):
         Ok(value) => value
         Err(_) => return None
 
-    record = match decode_event_product(decoded.product):
-        Ok(value) => value
-        Err(_) => return None
-
-    if record.schema != 4 or len(record.inputs) < 2:
+    if len(record.inputs) < 2:
         return None
     expected = record_scalar_inputs(record.inputs[1], name, span, overflow, reads, len(decoded.positions)) + [
         generation,

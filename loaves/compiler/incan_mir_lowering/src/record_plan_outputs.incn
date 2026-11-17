@@ -1,8 +1,9 @@
 """Retain the existing scalar plan's entry selection and complete native interface as record producer outputs."""
 
 from std.fs import Path
+from std.json import JsonValue
 from pub::internal_models.lowering_events import (
-    INTERFACE_REPORT, LoweringEvent, NativeInterface, decode_lowering_event, decode_lowering_refusal, encode_lowering_event, encode_native_interface,
+    INTERFACE_REPORT, EventReference, LoweringEvent, NativeInterface, decode_lowering_event, decode_lowering_refusal, encode_lowering_event, encode_native_interface,
 )
 from pub::internal_models.plan_function_records import decode_plan_function_record, encode_entry_record
 from pub::incan_mir_plan import (
@@ -116,16 +117,14 @@ def keyed_plan_products(
         resolved = plan_positions(plan, event_references(event)?)?
         nodes = event_positions(event)
         frames = carried_frames(plan, event.product, carried)?
-        mut record = event.product
         mut positions = resolved
         if not event.admitted:
             final_record, final_positions = finalize_scalar(products, event.key, function, event.reused, resolved, nodes, frames)?
-            if final_record != record:
+            if final_record != event.product:
                 event.product = final_record
                 write(report.joinpath(event.key + ".event"), encode_lowering_event(event)?)?
-            record = final_record
             positions = final_positions
-        product = decode_plan_function_record(record)?.function
+        product = decode_plan_function_record(event.product)?.function
         keyed.append(relocate_product(place_positions(product, nodes)?, str(function.span.file), function.span.line)?)
         references.append(positions)
     return Ok(keyed)
@@ -220,7 +219,7 @@ def plan_positions(plan: &Plan, references: list[NominalReference]) -> Result[li
 const ADMITTED_DEFINITIONS: str = "admitted-definitions.json"
 
 
-def append_admitted_events(mut events: list[JsonValue], products: str, report: Path) -> Result[None, str]:
+def append_admitted_events(mut events: list[LoweringEvent], products: str, report: Path) -> Result[None, str]:
     """
     Add the final event of every function this request restored from an admitted module's plan record.
 
@@ -230,7 +229,7 @@ def append_admitted_events(mut events: list[JsonValue], products: str, report: P
     """
     mut reported: set[str] = set()
     for event in events:
-        reported.add(text(event, "function").unwrap_or(""))
+        reported.add(event.function)
     # The native adapter fingerprints each definition by its product key and digest; it reads them from one list.
     mut definitions: list[JsonValue] = []
     for note in read_admitted(report)?:
@@ -246,38 +245,33 @@ def append_admitted_events(mut events: list[JsonValue], products: str, report: P
                 continue
             if function.function not in stored:
                 return Err(f"admitted plan module {note.module} holds no event for {function.function}")
-            encoded_event = stored[function.function].decode().map_err((_) => "admitted lowering event is not UTF-8")?
-            event = parse(encoded_event).map_err((error) => error.message())?
-            # The body may have moved in its file since the record was folded; its identity is this request's.
-            event_key = text(event, "key")?
-            record = parse(text(event, "product")?).map_err((error) => error.message())?
-            mut fields = event.expect_object().map_err((error) => error.message())?
-            mut references: list[JsonValue] = []
-            for reference in function.references:
-                kind = parse(to_string(reference.kind).map_err((error) => str(error))?).map_err(
-                    (error) => error.message(),
-                )?
-                references.append(
-                    JsonValue.object(
-                        {"kind": kind, "index": JsonValue.int(reference.index), "name": JsonValue.string(reference.name)},
-                    ),
-                )
-            fields["references"] = JsonValue.array(references)
-            fields["reused"] = JsonValue.bool(true)
-            fields["admitted"] = JsonValue.bool(true)
-            fields["identity"] = JsonValue.string(function.identity)
-            events.append(JsonValue.object(fields))
+            mut event = decode_lowering_event(stored[function.function])?
+            if event.function != function.function or event.module != note.module:
+                return Err("admitted lowering event names a different function or module")
+            record = decode_plan_function_record(event.product)?
+            event.references = [
+                EventReference(
+                    kind="enum" if reference.kind == NominalKind.Enum else "model",
+                    index=reference.index,
+                    name=reference.name,
+                ) for reference in function.references
+            ]
+            event.reused = true
+            event.admitted = true
+            event.identity = function.identity
+            events.append(event)
             reported.add(function.function)
             definitions.append(
                 JsonValue.object(
                     {"function": JsonValue.string(function.function), "identity": JsonValue.string(function.identity), "key": JsonValue.string(
-                        event_key,
-                    ), "digest": JsonValue.string(text(record, "digest")?)},
+                        event.key,
+                    ), "digest": JsonValue.string(record.digest)},
                 ),
             )
     listed = report.joinpath(ADMITTED_DEFINITIONS)
     if len(definitions) > 0:
-        write(listed, JsonValue.array(definitions))?
+        listing = JsonValue.array(definitions).to_json().map_err((error) => error.message())?
+        listed.write_text(listing, "utf-8", "strict", None).map_err((error) => error.message())?
     elif listed.is_file():
         listed.unlink().map_err((error) => error.message())?
     return Ok(None)
