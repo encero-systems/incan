@@ -116,6 +116,12 @@ def measure_subject(bench: Bench, subject: str, archive: Path) -> Result[tuple[i
     store = root.joinpath("store")
     build(bench, root, target, trace, store, "base")?
     base = work(trace)?
+    mut failures: list[str] = []
+    mut required = [edited.0]
+    if subject == "oven":
+        required.append(target.joinpath("src/main.incn").0)
+    if not observed_cold_work(base, required):
+        failures.append(f"{subject}: the initial build did not check and build Body IR for {required}")
     save(edited, replacement)?
     build(bench, root, target, trace, store, "warm")?
     warm_digest = digest(binary)?
@@ -127,7 +133,6 @@ def measure_subject(bench: Bench, subject: str, archive: Path) -> Result[tuple[i
     elapsed = check_ns + body_ns
     save(root.joinpath("warm.tsv"), "check_ns\tbody_ir_ns\tbody_ir_modules\texecutable_sha256\tchecked_modules\n"
         + f"{check_ns}\t{body_ns}\t{', '.join(built)}\t{warm_digest}\t{', '.join(checked)}\n")?
-    mut failures: list[str] = []
     if check_ns <= 0 or body_ns <= 0 or elapsed <= 0:
         failures.append(f"{subject}: missing positive checking or Body IR samples")
     if checked != [edited.0] or built != [edited.0]:
@@ -138,8 +143,14 @@ def measure_subject(bench: Bench, subject: str, archive: Path) -> Result[tuple[i
     if subject == "oven":
         _ = run_command("tar", ["-xf", archive.0, "-C", checkout.0])?
     save(edited, replacement)?
-    build(bench, root, target, root.joinpath("cold-trace"), root.joinpath("cold-store"), "cold")?
+    cold_trace = root.joinpath("cold-trace")
+    build(bench, root, target, cold_trace, root.joinpath("cold-store"), "cold")?
+    cold = work(cold_trace)?
     cold_digest = digest(binary)?
+    save(root.joinpath("cold.tsv"), "check_ns\tbody_ir_ns\tchecked_module_count\tbody_ir_module_count\n"
+        + f"{cold.check_ns}\t{cold.body_ir_ns}\t{len(cold.checked)}\t{len(cold.body_ir)}\n")?
+    if not observed_cold_work(cold, required):
+        failures.append(f"{subject}: the independent cold build did not check and build Body IR for {required}")
     save(root.joinpath("cold.sha256"), cold_digest + "\n")?
     if warm_digest != cold_digest:
         failures.append(f"{subject}: warm executable {warm_digest} differs from cold {cold_digest}")
@@ -232,6 +243,16 @@ def work(trace: Path) -> Result[Work, str]:
         if len(starts) != len(completed):
             return Err(f"incomplete compiler stage spans in {file.0}")
     return Ok(result)
+
+
+def observed_cold_work(sample: Work, required: list[str]) -> bool:
+    """Both cold invocations must actually measure both phases on the authored subject."""
+    if sample.check_ns <= 0 or sample.body_ir_ns <= 0:
+        return false
+    for path in required:
+        if sample.checked.get(path, 0) <= 0 or sample.body_ir.get(path, 0) <= 0:
+            return false
+    return true
 
 
 def visits_since(current: Dict[str, int], previous: Dict[str, int]) -> list[str]:
