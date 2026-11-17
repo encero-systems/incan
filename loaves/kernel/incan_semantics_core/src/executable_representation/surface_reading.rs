@@ -157,6 +157,11 @@ impl<'bytes> SurfaceReader<'bytes> {
         Ok(Self { index, payload })
     }
 
+    /// The bounded payload following the checked wire index, used to seal addressable fragments on installation.
+    pub fn payload(&self) -> &'bytes [u8] {
+        self.payload
+    }
+
     /// Declared package coverage, inspectable without decoding executable payloads.
     pub fn index(&self) -> &SurfaceIndex {
         &self.index

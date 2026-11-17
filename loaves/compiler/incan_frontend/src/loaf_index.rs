@@ -57,6 +57,7 @@ fn publish_private_record(path: &Path, bytes: &[u8], suffix: &str) -> std::io::R
 
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 
+use crate::library_manifest::executable_ranges::{HEAD, RANGE, RangeHead, RangeRecord};
 use crate::library_manifest::executable_surface::ExecutableSurface;
 use crate::library_manifest::{ExportIdentity, ExportIdentityKind, LibraryManifest};
 
@@ -480,15 +481,60 @@ impl LoafIndex {
         Ok(Some((indexed.execution_manifest()?, indexed.bodies_path())))
     }
 
-    /// Read what executable resolution needs of one Loaf, and locate its governed bodies sidecar.
+    /// Select the installed range head bound to this inventory or the original whole-surface reader for older
+    /// publications.
     pub(crate) fn executable_surface_artifact(
         &self,
         key: &str,
-    ) -> Result<Option<(Arc<ExecutableSurface>, PathBuf)>, LoafIndexError> {
+    ) -> Result<Option<(Arc<ExecutableSurface>, PathBuf, Option<RangeHead>)>, LoafIndexError> {
         let Some(indexed) = self.entries.get(key) else {
             return Ok(None);
         };
-        Ok(Some((indexed.executable_surface()?, indexed.bodies_path())))
+        let identity = &indexed.summary.identity;
+        if compiler_record_set::configured()
+            && let Some(head) =
+                compiler_record_set::range_value::<RangeHead>(&indexed.dir, &identity.name, HEAD, &identity.name)?
+        {
+            if head.package != identity.name
+                || head.version != identity.version
+                || head.manifest_digest != identity.digest
+                || head.payload_offset > head.file_bytes
+                || !incan_semantics_core::executable_representation::supports_version(
+                    head.descriptor.representation_version,
+                )
+            {
+                return Err(LoafIndexError::Unreadable {
+                    path: indexed.bodies_path(),
+                    reason: "sealed executable range head differs from admitted package".into(),
+                });
+            }
+            let surface = ExecutableSurface {
+                name: head.package.clone(),
+                version: head.version.clone(),
+                descriptor: Some(head.descriptor.clone()),
+                public_identities: BTreeSet::new(),
+            };
+            return Ok(Some((Arc::new(surface), indexed.bodies_path(), Some(head))));
+        }
+        Ok(Some((indexed.executable_surface()?, indexed.bodies_path(), None)))
+    }
+
+    /// Resolve one qualified membership under a selected range head. An absent row in this pin is an absent
+    /// declaration.
+    pub(crate) fn executable_range(
+        &self,
+        key: &str,
+        identity: &CanonicalSymbolId,
+    ) -> Result<Option<RangeRecord>, LoafIndexError> {
+        let Some(indexed) = self.entries.get(key) else {
+            return Ok(None);
+        };
+        compiler_record_set::range_value(
+            &indexed.dir,
+            &indexed.summary.identity.name,
+            RANGE,
+            &incan_semantics_core::encode_incan_symbol_identity(identity),
+        )
     }
 
     /// Read the authenticated manifest projection needed to resolve executable declarations.
