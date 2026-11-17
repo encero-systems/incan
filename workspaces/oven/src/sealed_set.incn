@@ -150,6 +150,14 @@ pub def verify(directory: Path, root: str, supported: Profile) -> Result[SetSpec
 
 
 pub def admit(root: Path, directory: Path, set_root: str, supported: Profile) -> Result[Snapshot, StoreError]:
+    """Admit the verified transport and return the resulting snapshot."""
+    published, _spec = admit_with_spec(root, directory, set_root, supported)?
+    return Ok(published)
+
+
+pub def admit_with_spec(
+    root: Path, directory: Path, set_root: str, supported: Profile,
+) -> Result[tuple[Snapshot, SetSpec], StoreError]:
     """
     Admit missing immutable objects and one set receipt, without creating any plan or namespace selection.
 
@@ -186,9 +194,9 @@ pub def admit(root: Path, directory: Path, set_root: str, supported: Profile) ->
     # 2. Content names are checked by both the transport verifier and the store's immutable installer.
     transaction.payloads = install_objects(root, directory, verified.objects, already)?
     if already:
-        return Ok(view)
+        return Ok((view, verified.spec))
     # 3. No namespace binding is written; imported revisions coexist until a plan explicitly selects one.
-    return commit(transaction)
+    return Ok((commit(transaction)?, verified.spec))
 
 
 pub def record_key(spec: SetSpec, record: Record) -> Result[str, StoreError]:
