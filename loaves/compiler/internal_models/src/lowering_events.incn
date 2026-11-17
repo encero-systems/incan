@@ -211,3 +211,67 @@ pub def decode_admitted_definitions(encoded: bytes) -> Result[list[AdmittedDefin
         parts = tuple_items(value, 4)?
         definitions.append(AdmittedDefinition(function=text(parts[0])?, identity=text(parts[1])?, key=text(parts[2])?, digest=text(parts[3])?))
     return Ok(definitions)
+
+
+pub model AdmittedFunction:
+    """A restored function's identity and native declaration positions in this request."""
+    pub function: str
+    pub identity: str
+    pub references: list[EventReference]
+
+
+pub model AdmittedModule:
+    """Actual restored functions of a named module, including whether every ordinary body was restored."""
+    pub module: str
+    pub complete: bool
+    pub functions: list[AdmittedFunction]
+
+
+def note_description() -> Description:
+    """The note keeps each function's references grouped with its canonical identity."""
+    return model_description(b"admnot\x00", "incan.module-admission/2", [
+        ModelField(identity=b"all___", name="complete", storage="boolean"),
+        ModelField(identity=b"funct_", name="functions", storage="list<tuple<string,string,list<tuple<string,i64,string>>>>"),
+        ModelField(identity=b"module", name="module", storage="string"),
+    ])
+
+
+pub def encode_module_note(value: AdmittedModule) -> Result[bytes, str]:
+    """Publish a complete, versioned worker note for native assembly and reuse counting."""
+    mut functions: list[Value] = []
+    for function in value.functions:
+        references = [Value.Tuple([Value.Text(reference.kind), integer(reference.index), Value.Text(reference.name)]) for reference in function.references]
+        functions.append(Value.Tuple([Value.Text(function.function), Value.Text(function.identity), Value.List(references)]))
+    return encode_graph_row(b"admnot\x00", note_description(), [
+        required_value(b"all___", Value.Boolean(value.complete)),
+        required_value(b"funct_", Value.List(functions)),
+        required_value(b"module", Value.Text(value.module)),
+    ])
+
+
+pub def decode_module_note(encoded: bytes) -> Result[AdmittedModule, str]:
+    """Admit one produced note and every restored function before counting the module or restoring its inputs."""
+    fields = decode_graph_row(encoded, b"admnot\x00", note_description(), 3)?
+    complete = match fields[0].value:
+        Value.Boolean(flag) => flag
+        _ => return Err("invalid module admission status")
+    mut functions: list[AdmittedFunction] = []
+    mut names: set[str] = set()
+    for value in items(fields[1].value)?:
+        parts = tuple_items(value, 3)?
+        name = text(parts[0])?
+        if name == "" or name in names:
+            return Err("module admission repeated or omitted a function name")
+        names.add(name)
+        mut references: list[EventReference] = []
+        for cell in items(parts[2])?:
+            reference = tuple_items(cell, 3)?
+            kind = text(reference[0])?
+            if kind not in ["model", "enum"]:
+                return Err("invalid module admission reference kind")
+            references.append(EventReference(kind=kind, index=number(reference[1])?, name=text(reference[2])?))
+        functions.append(AdmittedFunction(function=name, identity=text(parts[1])?, references=references))
+    module = text(fields[2].value)?
+    if module == "" or len(functions) == 0:
+        return Err("module admission lacks its module or restored function")
+    return Ok(AdmittedModule(module=module, complete=complete, functions=functions))

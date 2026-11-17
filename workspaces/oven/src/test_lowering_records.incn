@@ -14,6 +14,7 @@ from engine_messages import Message, Stop
 from engine_wire import zero_id
 from rust_target import decoded
 from store_path_conversion import snapshot as store_snapshot
+from pub::internal_models.lowering_events import AdmittedFunction, AdmittedModule, encode_module_note
 from pub::internal_models.plan_module_records import ADMITTED_MODULE_NOTE, PARTIAL_MODULE_NOTE
 from pub::incan_platform.store import index_levels as store_index_levels, keys_with_prefix
 
@@ -22,10 +23,17 @@ pub def test_partial_module_admission_count() -> Result[None, str]:
     """The native assembly consumes partially restored pages while the whole-module counter excludes them."""
     scratch = scratch_directory()?
     report = scratch.path()
-    write(report.joinpath("61" + ADMITTED_MODULE_NOTE), "")?
-    write(report.joinpath("62" + PARTIAL_MODULE_NOTE), "")?
+    function = AdmittedFunction(function="main", identity="function:main", references=[])
+    whole = encode_module_note(AdmittedModule(module="a", complete=true, functions=[function]))?
+    partial = encode_module_note(AdmittedModule(module="b", complete=false, functions=[function]))?
+    report.joinpath("61" + ADMITTED_MODULE_NOTE).write_bytes(whole).map_err((error) => error.message())?
+    report.joinpath("62" + PARTIAL_MODULE_NOTE).write_bytes(partial).map_err((error) => error.message())?
     assert restored_modules(report)? == ["a", "b"]
     assert restored_modules(report, whole_only=true)? == ["a"]
+    report.joinpath("62" + ADMITTED_MODULE_NOTE).write_bytes(partial).map_err((error) => error.message())?
+    match restored_modules(report, whole_only=true):
+        Ok(_) => return Err("a partially restored module was counted as complete")
+        Err(reason) => assert "disagrees with its filename" in reason
     return Ok(None)
 
 

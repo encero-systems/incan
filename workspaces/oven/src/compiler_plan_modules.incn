@@ -3,7 +3,7 @@
 from std.fs import Path
 from std.primitives.hash import sha256
 from std.encoding.hex import hexlify, unhexlify
-from pub::internal_models.lowering_events import LoweringEvent, encode_lowering_event
+from pub::internal_models.lowering_events import LoweringEvent, decode_module_note, encode_lowering_event
 from pub::incan_platform.store import Snapshot, Transaction, get
 from pub::internal_models import ProducerRank, ProducerStage
 from pub::internal_models.plan_module_records import (
@@ -110,7 +110,11 @@ pub def restored_modules(report: Path, whole_only: bool = false) -> Result[list[
             suffix = PARTIAL_MODULE_NOTE
         if name.endswith(suffix):
             octets = unhexlify(name[:len(name) - len(suffix)]).map_err((error) => error.message())?
-            modules.append(octets.decode().map_err((_) => "plan module note has a malformed name")?)
+            module = octets.decode().map_err((_) => "plan module note has a malformed name")?
+            note = decode_module_note(entry.read_bytes().map_err((error) => error.message())?)?
+            if note.module != module or note.complete != (suffix == ADMITTED_MODULE_NOTE):
+                return Err("module admission note disagrees with its filename")
+            modules.append(module)
     return Ok(sorted(modules))
 
 
