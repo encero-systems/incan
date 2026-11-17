@@ -6,7 +6,11 @@ from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue, parse
 from compiler_plan_modules import restored_modules
-from compiler_body_rows import read_compiled_body_outputs
+from compiler_body_keys import IDENTITY_PROFILE
+from compiler_body_values import select_body_inventory_except
+from compiler_graph_records import OutputSlots, reusable_family_records
+from pub::internal_models.checker_records import CHECKER_PROFILE, record_root
+from pub::internal_models.records import ReadWitness, encode_record_key
 from files import write
 from scratch import scratch_directory
 from engine_client import service_generation, service_identity
@@ -17,7 +21,7 @@ from rust_target import decoded
 from store_path_conversion import snapshot as store_snapshot
 from pub::internal_models.lowering_events import AdmittedFunction, AdmittedModule, encode_module_note
 from pub::internal_models.plan_module_records import ADMITTED_MODULE_NOTE, PARTIAL_MODULE_NOTE
-from pub::incan_platform.store import index_levels as store_index_levels, keys_with_prefix
+from pub::incan_platform.store import get, index_levels as store_index_levels, keys_with_prefix
 
 
 pub def test_partial_module_admission_count() -> Result[None, str]:
@@ -55,7 +59,6 @@ pub def test_importer_rename_checks_only_its_direct_signature_reader() -> Result
     cold = report_fixture_build(binary, project, store, Some(trace))?
     cold_checks = importer_statement_checks(trace)?
     assert len(importer_ranked_completions(trace)?) == 0
-    cold_outputs = importer_output_paths(project)?
     stop_example_engine(binary, store)?
     warm_trace = root.joinpath("warm-trace")
     warm_trace.mkdir(true, true).map_err((error) => error.message())?
@@ -80,9 +83,7 @@ pub def test_importer_rename_checks_only_its_direct_signature_reader() -> Result
     assert importer_frontier_order(warm_trace)? == stages, diagnostic
     assert proof_count(warm, "body_evaluations")? == 2, diagnostic
     assert proof_count(warm, "plan_function_reuses")? > 0, diagnostic
-    generated = [path for path in importer_output_paths(project)? if path not in cold_outputs]
-    assert len(generated) == 1
-    warm_values = importer_checked_values(Path(generated[0]))?
+    warm_values = importer_checked_values(store)?
     project.joinpath("target").move(root.joinpath("warm-target")).map_err((error) => error.message())?
     control = root.joinpath("cold-edited-store")
     control_trace = root.joinpath("cold-edited-trace")
@@ -93,27 +94,33 @@ pub def test_importer_rename_checks_only_its_direct_signature_reader() -> Result
     assert proof_count(control_proof, "reusable_declarations")? == 6
     assert sorted(importer_statement_checks(control_trace)?) == sorted(cold_checks)
     assert len(importer_ranked_completions(control_trace)?) == 0
-    control_outputs = importer_output_paths(project)?
-    assert len(control_outputs) == 1
-    assert importer_checked_values(Path(control_outputs[0]))? == warm_values
+    assert importer_checked_values(control)? == warm_values
     return Ok(None)
 
 
-def importer_output_paths(project: Path) -> Result[list[str], str]:
-    """Name each compiler sidecar by its immutable unit description so two revisions cannot be confused."""
-    paths = project.joinpath("target/incan/units").iterdir().map_err((error) => error.message())?
-    return Ok([path.0 for path in paths if path.name().endswith(".unit.json.graph-body-output")])
-
-
-def importer_checked_values(output: Path) -> Result[Dict[str, list[bytes]], str]:
-    """Match each evaluated owner's checker values and actual Body IR with a fresh build of the edited sources."""
-    rows = read_compiled_body_outputs(output)?
-    assert len(rows.fallbacks) == 0
+def importer_checked_values(store: Path) -> Result[Dict[str, list[bytes]], str]:
+    """Read all six owners' published declaration, local, final and Body IR bytes from the build-selected graph."""
+    selected = store_snapshot(store).map_err((error) => error.message())?
+    origin = "codegraph_importer_experiment"
+    scope = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE)
+    mut declarations: Dict[str, bytes] = {}
+    for local in reusable_family_records(selected, "local", CHECKER_PROFILE, Some(scope))?:
+        for witness in local.receipt.witnesses:
+            if let ReadWitness.Found(prior, _) = witness:
+                key = prior.request.key
+                if key.family == "declaration" and key.identity == local.key.identity and key.origin == origin:
+                    assert key.identity not in declarations
+                    match get(selected, encode_record_key(key)?).map_err((error) => error.message())?:
+                        None => return Err("a published importer local lost its declaration")
+                        Some(value) =>
+                            assert record_root(value).map_err((error) => f"invalid importer declaration: {error:?}")? == key.context
+                            declarations[key.identity] = value
+    assert len(declarations) == 6
     mut values: Dict[str, list[bytes]] = {}
-    for record in rows.values:
-        if record.name in ["supported_schema", "import_jsonl"]:
-            values[record.identity] = [record.declaration, record.local, record.final, record.body_ir]
-    assert len(values) == 2
+    for row in select_body_inventory_except(selected, CHECKER_PROFILE, origin, [])?:
+        assert row.identity in declarations and row.identity not in values
+        values[row.identity] = [declarations[row.identity], row.local, row.final, row.body_ir]
+    assert len(values) == 6
     return Ok(values)
 
 
