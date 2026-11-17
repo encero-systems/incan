@@ -14,8 +14,7 @@ from pub::incan_platform.store import store_identity
 from pub::incan_worker_host.record_snapshot import (
     SnapshotHandle,
     canonical_roots,
-    encode_snapshot_handle,
-    snapshot_handle_digest,
+    encode_snapshot_record,
     snapshot_record_key,
 )
 from store_path_conversion import store_path
@@ -90,11 +89,11 @@ pub def stage_snapshot(
         lease=lease_token(selected),
         format_profile=format_profile,
     )
-    encoded = encode_snapshot_handle(handle)?
-    digest = snapshot_handle_digest(handle)?
+    encoded = encode_snapshot_record(handle)?
+    digest = hexlify(sha256.digest(encoded))
     view = home_view(home, store, identity)?
     home_snapshot = placed_snapshot(root, view).map_err((error) => error.message())?
-    published = commit(put(begin(home_snapshot), snapshot_record_key(digest), encoded.encode("utf-8"))).map_err(
+    published = commit(put(begin(home_snapshot), snapshot_record_key(digest), encoded)).map_err(
         (error) => error.message(),
     )?
     return Ok(StagedSnapshot.retained(digest, home, selected, published))

@@ -43,6 +43,8 @@ pub from record_snapshot import (
     ResolvedSnapshot,
     encode_store_view,
     encode_snapshot_handle,
+    encode_snapshot_record,
+    read_snapshot_record,
     snapshot_handle_digest,
     snapshot_record_key,
     canonical_roots,
