@@ -25,12 +25,12 @@ pub def test_partial_module_admission_count() -> Result[None, str]:
     report = scratch.path()
     function = AdmittedFunction(function="main", identity="function:main", references=[])
     whole = encode_module_note(AdmittedModule(module="a", complete=true, functions=[function]))?
-    partial = encode_module_note(AdmittedModule(module="b", complete=false, functions=[function]))?
+    partial_note = encode_module_note(AdmittedModule(module="b", complete=false, functions=[function]))?
     report.joinpath("61" + ADMITTED_MODULE_NOTE).write_bytes(whole).map_err((error) => error.message())?
-    report.joinpath("62" + PARTIAL_MODULE_NOTE).write_bytes(partial).map_err((error) => error.message())?
+    report.joinpath("62" + PARTIAL_MODULE_NOTE).write_bytes(partial_note).map_err((error) => error.message())?
     assert restored_modules(report)? == ["a", "b"]
     assert restored_modules(report, whole_only=true)? == ["a"]
-    report.joinpath("62" + ADMITTED_MODULE_NOTE).write_bytes(partial).map_err((error) => error.message())?
+    report.joinpath("62" + ADMITTED_MODULE_NOTE).write_bytes(partial_note).map_err((error) => error.message())?
     match restored_modules(report, whole_only=true):
         Ok(_) => return Err("a partially restored module was counted as complete")
         Err(reason) => assert "disagrees with its filename" in reason
