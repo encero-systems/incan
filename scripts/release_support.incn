@@ -782,12 +782,9 @@ pub def finish_background_step(step: BackgroundStep, timeout_seconds: int) -> Re
 
 pub def cancel_background_step(step: BackgroundStep) -> Result[None, str]:
     """Stop and reap a background step and its complete observed descendant tree after an earlier refusal."""
-    termination = terminate_release_process_tree(int(step.child.borrow().id()))
-    reap_error = match step.child.borrow_mut().wait():
-        Ok(_) => None
-        Err(error) => Some(f"cannot reap {step.name}: {error}")
-
-    require_release_termination(termination, reap_error)?
+    root = int(step.child.borrow().id())
+    observed = release_process_census(process_table(), root)
+    stop_child_process_tree(step.child, observed, step.name)?
     finish_step_trace(step.trace, step.span)?
     return Ok(None)
 
@@ -915,16 +912,53 @@ pub def release_process_census(census: Result[list[ProcessResource], str], root:
         Err(message) => return ReleaseTermination(members=[root], census_error=Some(message))
 
 
+pub def merge_release_terminations(known: ReleaseTermination, observed: ReleaseTermination) -> ReleaseTermination:
+    """Union observed process custody and retain every degraded-census diagnostic."""
+    mut members = known.members.clone()
+    for pid in observed.members:
+        if pid not in members:
+            members.append(pid)
+    mut census_error = known.census_error.clone()
+    if let Some(message) = observed.census_error:
+        match census_error:
+            Some(prior) => census_error = Some(prior + "; " + message)
+            None => census_error = Some(message)
+    return ReleaseTermination(members=sorted(members), census_error=census_error)
+
+
 def terminate_release_process_tree(root: int) -> ReleaseTermination:
     """Signal every observed owned process and process group, even when descendant census is degraded."""
     termination = release_process_census(process_table(), root)
+    signal_release_termination(termination)
+    return termination
+
+
+def signal_release_termination(termination: &ReleaseTermination) -> None:
+    """Signal every captured process and process group, escalating members that remain alive."""
     for pid in termination.members:
         signal_release_process(pid, "TERM")
     sleep(Duration.from_millis(100))
     for pid in termination.members:
         if release_process_alive(pid):
             signal_release_process(pid, "KILL")
-    return termination
+
+
+pub def stop_child_process_tree(
+    child: Rc[RefCell[Child]],
+    observed: ReleaseTermination,
+    name: str,
+) -> Result[None, str]:
+    """Stop and reap one child plus every descendant captured while it ran or still visible at cancellation."""
+    root = int(child.borrow().id())
+    current = release_process_census(process_table(), root)
+    termination = merge_release_terminations(observed, current)
+    signal_release_termination(termination)
+    reap_error = match child.borrow_mut().wait():
+        Ok(_) => None
+        Err(error) => Some(f"cannot reap {name}: {error}")
+
+    require_release_termination(termination, reap_error)?
+    return Ok(None)
 
 
 def signal_release_process(pid: int, signal: str) -> None:

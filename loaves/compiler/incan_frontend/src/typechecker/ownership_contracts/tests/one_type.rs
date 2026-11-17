@@ -27,7 +27,7 @@ pub(super) fn consumer_checkers(
     provider: &str,
     consumer: &str,
 ) -> Result<Vec<(&'static str, TypeChecker)>, Box<dyn std::error::Error>> {
-    consumer_checkers_with_package(provider, consumer, None)
+    consumer_checkers_with_package_path(provider, consumer, None, vec!["views".to_string()])
 }
 
 /// Check both dependency routes inside one real package, so imported sibling-module identities remain Package.
@@ -35,18 +35,19 @@ pub(super) fn package_consumer_checkers(
     provider: &str,
     consumer: &str,
 ) -> Result<Vec<(&'static str, TypeChecker)>, Box<dyn std::error::Error>> {
-    consumer_checkers_with_package(provider, consumer, Some("fixture_records"))
+    consumer_checkers_with_package_path(provider, consumer, Some("fixture_records"), vec!["views".to_string()])
 }
 
-fn consumer_checkers_with_package(
+/// Check both dependency routes while assigning the provider its exact package module identity.
+fn consumer_checkers_with_package_path(
     provider: &str,
     consumer: &str,
     package: Option<&str>,
+    path: Vec<String>,
 ) -> Result<Vec<(&'static str, TypeChecker)>, Box<dyn std::error::Error>> {
     let provider_program = parsed(provider)?;
     let consumer_program = parsed(consumer)?;
     let dependencies = [("views", &provider_program)];
-    let path = vec!["views".to_string()];
     let mut collected = TypeChecker::default();
     collected.set_current_package_identity(package.map(str::to_owned));
     collected.register_dependency_module_path_segments("views", path.clone());
@@ -69,6 +70,260 @@ fn consumer_checkers_with_package(
         sealed.errors = errors;
     }
     Ok(vec![("collected", collected), ("sealed", sealed)])
+}
+
+/// Only the canonical `incan_stdlib_system::fs::path::Path.joinpath` call returns an independently owned lexical
+/// value without an explicit `Owned` source signature. Same-spelled package methods, a different receiver nominal,
+/// and a changed result nominal must retain the ordinary dependency refusal.
+#[test]
+fn standard_path_joinpath_independent_result_requires_exact_canonical_surface() -> Result<(), Box<dyn std::error::Error>>
+{
+    let path_module = vec!["fs".to_string(), "path".to_string()];
+    let provider = "pub type Path = newtype str:\n    pub def joinpath(self, segment: str) -> Path:\n        return Path(self.0 + segment)\n";
+    let consumer = "from views import Path\n\ndef owned_child(root: Borrowed[Path]) -> Owned[Path]:\n    return root.joinpath(\"/\").joinpath(\"owned\")\n";
+    let consumer_program = parsed(consumer)?;
+    let returned = consumer_program
+        .declarations
+        .iter()
+        .find_map(|declaration| match &declaration.node {
+            crate::ast::Declaration::Function(function) if function.name == "owned_child" => function.body.first(),
+            _ => None,
+        })
+        .and_then(|statement| match &statement.node {
+            crate::ast::Statement::Return(Some(returned)) => Some(returned),
+            _ => None,
+        })
+        .ok_or("missing owned_child return")?;
+    let Expr::MethodCall(outer_receiver, _, _, _) = &returned.node else {
+        return Err("owned_child outer return is not a method call".into());
+    };
+    let Expr::MethodCall(inner_receiver, _, _, _) = &outer_receiver.node else {
+        return Err("owned_child inner return is not a method call".into());
+    };
+    let receiver_spans = [
+        (outer_receiver.span, inner_receiver.span),
+        (returned.span, outer_receiver.span),
+    ];
+    for (route, checker) in
+        consumer_checkers_with_package_path(provider, consumer, Some("incan_stdlib_system"), path_module.clone())?
+    {
+        let (owner, flow) = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == "owned_child")
+            .ok_or_else(|| format!("{route}: missing owned_child flow"))?;
+        let calls = checker
+            .type_info
+            .protocols
+            .explicit_input_calls
+            .iter()
+            .filter(|(_, call)| call.callee.declaration_name == "joinpath" && call.owner.as_ref() == Some(owner))
+            .collect::<Vec<_>>();
+        assert_eq!(calls.len(), 2, "{route}");
+        for (span, call) in &calls {
+            let span = **span;
+            let receiver_span = receiver_spans
+                .iter()
+                .find_map(|(call_span, receiver_span)| (*call_span == span).then_some(*receiver_span))
+                .ok_or_else(|| format!("{route}: joinpath call lost its source receiver"))?;
+            assert!(
+                matches!(&call.callee.origin,
+                    incan_semantics_core::SymbolOrigin::Package { library, module_path }
+                        if library == "incan_stdlib_system"
+                            && module_path.iter().map(String::as_str).eq(["fs", "path"])),
+                "{route}: {:?}",
+                call.callee
+            );
+            assert_eq!(call.kind, InputCallKind::Ordinary, "{route}");
+            assert_eq!(call.receiver, Some(crate::ast::Receiver::Immutable), "{route}");
+            assert_eq!(
+                call.callee.namespace,
+                incan_semantics_core::SymbolNamespace::Member,
+                "{route}: callee namespace"
+            );
+            assert_eq!(
+                call.callee.kind,
+                incan_semantics_core::SemanticSourceTargetKind::Method,
+                "{route}: callee kind"
+            );
+            assert_eq!(
+                checker.type_info.resolved_builtin_method_call(span),
+                None,
+                "{route}: builtin method selection"
+            );
+            assert_eq!(checker.type_info.resolved_identity(span), Some(&call.callee), "{route}");
+            assert_eq!(
+                checker.type_info.call_site_callable_params(span),
+                Some(call.parameters.as_slice()),
+                "{route}"
+            );
+            let [parameter] = call.parameters.as_slice() else {
+                return Err(format!("{route}: joinpath retained {} parameters", call.parameters.len()).into());
+            };
+            assert_eq!(parameter.kind, crate::ast::ParamKind::Normal, "{route}: parameter kind");
+            assert!(!parameter.is_mut, "{route}: mutable parameter");
+            assert_eq!(parameter.ty, ResolvedType::Str, "{route}: parameter type");
+            let result_type = checker
+                .type_info
+                .expr_type(span)
+                .ok_or_else(|| format!("{route}: joinpath result lost its checked type"))?;
+            let mut result_path = Vec::new();
+            let result_value_type = checker
+                .explicit_ownership_value_type(result_type)
+                .map(|value| {
+                    result_path.push(0);
+                    value
+                })
+                .unwrap_or_else(|| result_type.clone());
+            let ResolvedType::Named(_) = result_value_type else {
+                return Err(format!("{route}: joinpath result lost its Path type: {result_type:?}").into());
+            };
+            let result_identity = checker
+                .type_info
+                .expressions
+                .expression_type_identities
+                .get(&span)
+                .and_then(|identities| identities.get(&result_path))
+                .ok_or_else(|| format!("{route}: joinpath result lost its expression nominal identity"))?;
+            assert_eq!(result_identity.declaration_name, "Path", "{route}");
+            assert_eq!(
+                result_identity.namespace,
+                incan_semantics_core::SymbolNamespace::OrdinaryLexical,
+                "{route}: result namespace"
+            );
+            assert_eq!(
+                result_identity.kind,
+                incan_semantics_core::SemanticSourceTargetKind::Newtype,
+                "{route}"
+            );
+            assert!(
+                matches!(&result_identity.origin,
+                    incan_semantics_core::SymbolOrigin::Package { library, module_path }
+                        if library == "incan_stdlib_system"
+                            && module_path.iter().map(String::as_str).eq(["fs", "path"])),
+                "{route}: {result_identity:?}"
+            );
+            let receiver_type = checker
+                .type_info
+                .expr_type(receiver_span)
+                .ok_or_else(|| format!("{route}: joinpath receiver lost its checked type"))?;
+            let mut receiver_path = Vec::new();
+            let receiver_value_type = checker
+                .explicit_ownership_value_type(receiver_type)
+                .map(|value| {
+                    receiver_path.push(0);
+                    value
+                })
+                .unwrap_or_else(|| receiver_type.clone());
+            let receiver_value_type = match receiver_value_type {
+                ResolvedType::Ref(inner) => {
+                    receiver_path.push(0);
+                    *inner
+                }
+                other => other,
+            };
+            let ResolvedType::Named(_) = receiver_value_type else {
+                return Err(format!(
+                    "{route}: joinpath receiver is not canonical Path after value normalization: {receiver_type:?}"
+                )
+                .into());
+            };
+            let receiver_identity = checker
+                .type_info
+                .expressions
+                .expression_type_identities
+                .get(&receiver_span)
+                .and_then(|identities| identities.get(&receiver_path))
+                .ok_or_else(|| format!("{route}: joinpath receiver lost its expression nominal identity"))?;
+            assert_eq!(receiver_identity, result_identity, "{route}: receiver/result identity");
+            assert!(
+                !checker.type_holds_borrow(checker.type_info.expr_type(span).ok_or("missing result")?),
+                "{route}"
+            );
+            assert!(
+                !checker.type_holds_native_loan(checker.type_info.expr_type(span).ok_or("missing result")?),
+                "{route}"
+            );
+        }
+        let InputFlow::Checked { graph, .. } = flow else {
+            return Err(format!("{route}: canonical Path.joinpath was refused: {flow:?}").into());
+        };
+        for (span, _) in calls {
+            assert!(
+                graph.invocations.contains_key(span),
+                "{route}: missing joinpath invocation"
+            );
+        }
+        assert!(checker.errors.is_empty(), "{route}: {:?}", checker.errors);
+    }
+
+    let wrong_package =
+        consumer_checkers_with_package_path(provider, consumer, Some("lookalike_system"), path_module.clone())?;
+    for (route, checker) in wrong_package {
+        assert_unavailable_reason(
+            route,
+            &checker,
+            "owned_child",
+            "call result needs retained dependency facts",
+        )?;
+    }
+
+    let other_provider = "pub type Other = newtype str:\n    pub def joinpath(self, segment: str) -> Other:\n        return Other(self.0 + segment)\n";
+    let other_consumer = "from views import Other\n\ndef owned_child(root: Borrowed[Other]) -> Owned[Other]:\n    return root.joinpath(\"/\").joinpath(\"owned\")\n";
+    for (route, checker) in consumer_checkers_with_package_path(
+        other_provider,
+        other_consumer,
+        Some("incan_stdlib_system"),
+        path_module.clone(),
+    )? {
+        assert_unavailable_reason(
+            route,
+            &checker,
+            "owned_child",
+            "call result needs retained dependency facts",
+        )?;
+    }
+
+    let changed_result_provider = "pub type Branch = newtype str:\n    pub def joinpath(self, segment: str) -> Branch:\n        return Branch(self.0 + segment)\n\npub type Path = newtype str:\n    pub def joinpath(self, segment: str) -> Branch:\n        return Branch(self.0 + segment)\n";
+    let changed_result_consumer = "from views import Branch, Path\n\ndef owned_child(root: Borrowed[Path]) -> Owned[Branch]:\n    return root.joinpath(\"/\").joinpath(\"owned\")\n";
+    for (route, checker) in consumer_checkers_with_package_path(
+        changed_result_provider,
+        changed_result_consumer,
+        Some("incan_stdlib_system"),
+        path_module,
+    )? {
+        assert_unavailable_reason(
+            route,
+            &checker,
+            "owned_child",
+            "call result needs retained dependency facts",
+        )?;
+    }
+    Ok(())
+}
+
+/// Require one named callable to remain on the expected source-flow refusal route.
+fn assert_unavailable_reason(
+    route: &str,
+    checker: &TypeChecker,
+    callable: &str,
+    expected: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let state = checker
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find(|(owner, _)| owner.declaration_name == callable)
+        .map(|(_, state)| state)
+        .ok_or_else(|| format!("{route}: missing {callable} flow"))?;
+    let InputFlow::Unavailable(unavailable) = state else {
+        return Err(format!("{route}: {callable} unexpectedly acquired checked flow: {state:?}").into());
+    };
+    assert_eq!(unavailable.reason, expected, "{route}");
+    Ok(())
 }
 
 /// A fresh imported `Result` call may feed the compiler-selected `Result.map_err` combinator. The inner Package
@@ -175,6 +430,97 @@ fn builtin_result_map_err_requires_fresh_selected_package_result() -> Result<(),
         );
         assert!(matches!(flow, InputFlow::Checked { .. }), "{route}: {flow:?}");
         assert!(checker.errors.is_empty(), "{route}: {:?}", checker.errors);
+    }
+
+    let method_provider = "pub class Encoder:\n    pub def encode(self) -> Result[int, str]:\n        return Ok(1)\n";
+    let method_consumer = "from views import Encoder\n\ndef use_method(seed: Borrowed[int]) -> Result[int, int]:\n    encoder = Encoder()\n    return encoder.encode().map_err((_) => 1)\n";
+    let method_program = parsed(method_consumer)?;
+    let method_function = method_program
+        .declarations
+        .iter()
+        .find_map(|declaration| match &declaration.node {
+            crate::ast::Declaration::Function(function) if function.name == "use_method" => Some(function),
+            _ => None,
+        })
+        .ok_or("missing use_method function")?;
+    for (route, checker) in package_consumer_checkers(method_provider, method_consumer)? {
+        let (owner, flow) = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == "use_method")
+            .ok_or_else(|| format!("{route}: missing use_method flow"))?;
+        let InputFlow::Checked { graph, .. } = flow else {
+            return Err(format!("{route}: direct method Result did not retain checked flow: {flow:?}").into());
+        };
+        let (inner_span, inner) = checker
+            .type_info
+            .protocols
+            .explicit_input_calls
+            .iter()
+            .find(|(_, call)| call.callee.declaration_name == "encode" && call.owner.as_ref() == Some(owner))
+            .ok_or_else(|| format!("{route}: missing imported method producer"))?;
+        assert_eq!(inner.kind, InputCallKind::Ordinary, "{route}");
+        assert_eq!(inner.receiver, Some(crate::ast::Receiver::Immutable), "{route}");
+        assert_eq!(
+            inner.callee.kind,
+            incan_semantics_core::SemanticSourceTargetKind::Method,
+            "{route}"
+        );
+        let invocation = graph
+            .invocations
+            .get(inner_span)
+            .ok_or_else(|| format!("{route}: method producer lost its invocation"))?;
+        let receiver = invocation
+            .receiver
+            .ok_or_else(|| format!("{route}: method producer lost its receiver loan"))?;
+        let loan = graph
+            .loans
+            .get(receiver.0)
+            .ok_or_else(|| format!("{route}: method producer receiver loan is outside the graph"))?;
+        assert_eq!(loan.kind, super::super::flow::LoanKind::Shared, "{route}");
+        assert!(!loan.writable, "{route}");
+        assert!(checker.errors.is_empty(), "{route}: {:?}", checker.errors);
+
+        let mut corrupted = checker.type_info.clone();
+        let InputFlow::Checked { graph, .. } = corrupted
+            .protocols
+            .explicit_input_flow
+            .get_mut(owner)
+            .ok_or_else(|| format!("{route}: missing copied method flow"))?
+        else {
+            return Err(format!("{route}: copied method flow is unavailable").into());
+        };
+        let receiver = graph
+            .invocations
+            .get(inner_span)
+            .and_then(|invocation| invocation.receiver)
+            .ok_or_else(|| format!("{route}: copied method producer lost its receiver"))?;
+        graph
+            .loans
+            .get_mut(receiver.0)
+            .ok_or_else(|| format!("{route}: copied method receiver loan is outside the graph"))?
+            .span = *inner_span;
+        assert!(
+            corrupted.executable_function_input(owner, method_function).is_err(),
+            "{route}: substituted method receiver span replayed"
+        );
+    }
+
+    let stored_method_consumer = "from views import Encoder\n\ndef use_method(seed: Borrowed[int]) -> Result[int, int]:\n    encoder = Encoder()\n    result = encoder.encode()\n    return result.map_err((_) => 1)\n";
+    for (route, checker) in package_consumer_checkers(method_provider, stored_method_consumer)? {
+        let state = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == "use_method")
+            .map(|(_, state)| state)
+            .ok_or_else(|| format!("{route}: missing stored method Result flow"))?;
+        if matches!(state, InputFlow::Checked { .. }) {
+            return Err(format!("{route}: stored method Result acquired direct map_err admission").into());
+        }
     }
 
     let user_source = "model Mapper:\n    value: int\n\n    def map_err(self, replacement: str) -> int:\n        return len(replacement)\n\ndef user_map(value: Borrowed[str]) -> int:\n    mapper = Mapper(value=1)\n    return mapper.map_err(value)\n";

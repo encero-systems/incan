@@ -92,6 +92,7 @@ pub(in crate::typechecker::ownership_contracts) struct SelectedResultMapErr {
     pub result: ResolvedType,
     pub inner_kind: InputCallKind,
     pub inner_callee: CanonicalSymbolId,
+    pub inner_receiver: Option<crate::ast::Span>,
     pub outer_callee: CanonicalSymbolId,
 }
 
@@ -127,12 +128,22 @@ pub(in crate::typechecker::ownership_contracts) fn selected_result_map_err_surfa
     if !matches!(&parameter.ty, ResolvedType::Function(parameters, _) if parameters.len() == 1)
         || !matches!(callback.node, Expr::Closure(..))
         || facts.expr_type(callback.span) != Some(&parameter.ty)
-        || !matches!(receiver.node, Expr::Call(..))
     {
         return None;
     }
     let inner = facts.protocols.explicit_input_calls.get(&receiver.span)?;
     let contract = facts.selected_input_contract(inner).ok()?;
+    let inner_receiver = match &receiver.node {
+        Expr::Call(..) if inner.receiver.is_none() => None,
+        Expr::MethodCall(method_receiver, ..)
+            if inner.kind == InputCallKind::Ordinary
+                && inner.receiver == Some(crate::ast::Receiver::Immutable)
+                && facts.resolved_identity(receiver.span) == Some(&inner.callee) =>
+        {
+            Some(method_receiver.span)
+        }
+        _ => return None,
+    };
     let selected = match inner.kind {
         InputCallKind::Ordinary => contract.is_none(),
         InputCallKind::Explicit => contract.is_some_and(|contract| {
@@ -153,7 +164,6 @@ pub(in crate::typechecker::ownership_contracts) fn selected_result_map_err_surfa
     };
     if !selected
         || inner.owner.as_ref() != Some(owner)
-        || inner.receiver.is_some()
         || !matches!(
             inner.callee.origin,
             incan_semantics_core::SymbolOrigin::Module(_) | incan_semantics_core::SymbolOrigin::Package { .. }
@@ -175,6 +185,7 @@ pub(in crate::typechecker::ownership_contracts) fn selected_result_map_err_surfa
         result: result.clone(),
         inner_kind: inner.kind,
         inner_callee: inner.callee.clone(),
+        inner_receiver,
         outer_callee: outer.callee.clone(),
     })
 }
@@ -207,6 +218,16 @@ pub(in crate::typechecker::ownership_contracts) fn retained_result_map_err(
     let expected = (selected.inner_kind == InputCallKind::Explicit).then_some(&selected.result);
     if inner.callee != selected.inner_callee || inner.result_requirement.as_ref() != expected {
         return None;
+    }
+    match (selected.inner_receiver, inner.receiver) {
+        (None, None) => {}
+        (Some(receiver), Some(loan)) => {
+            let loan = graph.loans.get(loan.0)?;
+            if loan.kind != flow::LoanKind::Shared || loan.writable || loan.span != receiver {
+                return None;
+            }
+        }
+        _ => return None,
     }
     let outer = graph.invocations.get(&invocation)?;
     let [callback] = outer.arguments.as_slice() else {

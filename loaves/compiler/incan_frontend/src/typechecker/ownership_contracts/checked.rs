@@ -9,6 +9,7 @@ use crate::ownership_metadata::{
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::symbols::{CallableParam, MethodInfo, ResolvedType, TypeInfo};
 use incan_lang::lang::builtins::BuiltinMethodId;
+use incan_lang::lang::surface::clone_methods::CloneMethodId;
 use incan_lang::lang::surface::result_methods::ResultMethodId;
 use incan_lang::lang::types::ownership;
 use incan_semantics_core::{CanonicalSymbolId, IncanInputAccess, SemanticSourceTargetKind, SymbolOrigin};
@@ -25,6 +26,38 @@ struct Signature<'a> {
 }
 
 impl TypeChecker {
+    /// Retain one compiler-selected builtin `Clone.clone` invocation after its receiver and zero-argument surface
+    /// have checked. Compiler-owned Clone members have no source declaration, so this exact fact lets source flow
+    /// reuse the normal invocation path without treating a same-spelled user method as a copy operation.
+    pub(in crate::typechecker) fn record_selected_clone_input_call(&mut self, span: Span) {
+        let Some(owner) = self.current_body_identity().cloned() else {
+            return;
+        };
+        let callee = crate::symbols::canonical_builtin_member_identity(
+            incan_lang::lang::traits::as_str(incan_lang::lang::traits::TraitId::Clone),
+            incan_lang::lang::trait_bounds::rust::CLONE_METHOD,
+        );
+        let selected_identity = self.type_info.resolved_identity(span) == Some(&callee)
+            || self.type_info.traits.inferred_method_identities.get(&span) == Some(&callee);
+        if !selected_identity
+            || self.type_info.resolved_builtin_method_call(span) != Some(BuiltinMethodId::Clone(CloneMethodId::Clone))
+        {
+            return;
+        }
+        self.type_info.record_call_site_callable_params_exact(span, &[]);
+        self.type_info.protocols.explicit_input_calls.insert(
+            span,
+            super::InputCall {
+                site: span,
+                kind: super::InputCallKind::Ordinary,
+                owner: Some(owner),
+                callee,
+                parameters: Vec::new(),
+                receiver: Some(Receiver::Immutable),
+            },
+        );
+    }
+
     /// Retain the compiler-selected `Result.map_err` call only after its callback and result have both checked.
     /// This is the builtin combinator's exact selected surface, not a fallback for arbitrary builtin methods.
     pub(in crate::typechecker) fn record_selected_result_map_err_input_call(
