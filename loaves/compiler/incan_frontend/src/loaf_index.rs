@@ -521,6 +521,11 @@ impl LoafIndex {
         let Some(indexed) = self.entries.get(key) else {
             return Ok(None);
         };
+        tracing::trace!(
+            target: "incan::invocation", phase = "dependency_fact", loaf = %indexed.summary.identity.name,
+            family = crate::library_manifest::compiler_records::RecordFamily::of_declaration(facet).as_str(),
+            name = declaration,
+        );
         Ok(Some(indexed.declaration_facts(facet, declaration)?))
     }
 
@@ -530,6 +535,10 @@ impl LoafIndex {
         let Some(indexed) = self.entries.get(key) else {
             return Ok(None);
         };
+        tracing::trace!(
+            target: "incan::invocation", phase = "dependency_fact", loaf = %indexed.summary.identity.name,
+            family = "public-namespace", name = %path.join("::"),
+        );
         indexed.public_namespace(path)
     }
 
@@ -543,6 +552,10 @@ impl LoafIndex {
         let Some(indexed) = self.entries.get(key) else {
             return Ok(None);
         };
+        tracing::trace!(
+            target: "incan::invocation", phase = "dependency_fact", loaf = %indexed.summary.identity.name,
+            family = "type-scope", name = %module.join("::"),
+        );
         indexed.type_scope(module)
     }
 

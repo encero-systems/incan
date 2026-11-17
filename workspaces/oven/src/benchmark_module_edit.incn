@@ -162,7 +162,10 @@ def measure_subject(bench: Bench, subject: str, archive: Path) -> Result[tuple[i
 def build(bench: Bench, root: Path, target: Path, trace: Path, store: Path, label: str) -> Result[None, str]:
     """Record the normal installed command and complete output for each build on its explicit bakery."""
     trace.mkdir(true, true).map_err((error) => error.message())?
-    output = Command.new(bench.oven.0)
+    mut command = Command.new(bench.oven.0)
+    if label == "cold" and target.name() == "hello.incn":
+        command.env("INCAN_NATIVE_PLAN_REPORT", root.joinpath("cold.native-plan.tsv").0)
+    output = command
         .args(["build", target.0, "--profile", "release", "--engine-report"])
         .current_dir(root.0)
         .env("INCAN_HOME", bench.home.0)
