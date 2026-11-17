@@ -204,7 +204,7 @@ pub def import_payload(path: Path, identity: str, expected_payload: str = "") ->
         return Err("unit identity refused: imported producer has no portable identity")
     # A transported record describes these bytes even when its former location or generation is stale.
     local = record_path(path)
-    if existing != local and local.is_file():
+    if existing.0 != local.0 and local.is_file():
         transported = read_evidence(local, path)?
         if transported.identity != proof.identity or transported.payload != proof.payload:
             return Err(f"{path.0}: transported producer or payload disagrees with its admission")
@@ -213,7 +213,10 @@ pub def import_payload(path: Path, identity: str, expected_payload: str = "") ->
         proof.facts = transported.facts
     before = observe(path)?.stamp
     if existing.is_file() and proof.observation == before:
-        if existing == local or (existing == imported_record(path)? and not local.is_file()):
+        if existing.0 == local.0:
+            return Ok(None)
+        cache_record = imported_record(path)?
+        if existing.0 == cache_record.0 and not local.is_file():
             return Ok(None)
         return write_imported(path, proof)
     digest = file_digest(path)?
