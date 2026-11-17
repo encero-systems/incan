@@ -74,7 +74,8 @@ fn lower_with_namespaces(
     let provider_operations = ProviderOperationCatalog::from_loaves(session.loaves())?;
     let unit = session.unit();
     let library_package = (unit.kind == UnitKind::Library).then_some(unit.package.as_str());
-    let cycle_peers = crate::modules::import_cycle_peers(modules, session.own_standard_package());
+    let imports = crate::modules::SourceModuleImports::new(modules, session.own_standard_package());
+    let cycle_peers = imports.cycle_peers();
     let type_infos = modules
         .iter()
         .map(|module| {
@@ -83,7 +84,7 @@ fn lower_with_namespaces(
                 .ok_or("module analysis is missing")
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let components = authored_components(modules, session.own_standard_package(), &cycle_peers);
+    let components = authored_components(&imports, &cycle_peers);
     let waves = component_waves(&components, modules.len())?;
     let mut authored = (0..modules.len()).map(|_| None).collect::<Vec<Option<BodyIrModule>>>();
     for wave in waves {
@@ -126,14 +127,12 @@ fn lower_with_namespaces(
 
 /// Group source modules into import-cycle components and retain their external dependency closures.
 fn authored_components(
-    modules: &[ParsedModule],
-    own_standard_package: Option<&'static incan_lang::lang::standard_packages::StandardPackageNamespacePolicy>,
+    imports: &crate::modules::SourceModuleImports,
     cycle_peers: &[Vec<usize>],
 ) -> Vec<AuthoredComponent> {
-    let module_idx_by_key = crate::modules::module_key_index(modules);
-    let mut claimed = vec![false; modules.len()];
+    let mut claimed = vec![false; cycle_peers.len()];
     let mut components = Vec::new();
-    for index in 0..modules.len() {
+    for index in 0..cycle_peers.len() {
         if claimed[index] {
             continue;
         }
@@ -148,14 +147,7 @@ fn authored_components(
         let member_set = members.iter().copied().collect::<BTreeSet<_>>();
         let dependencies = members
             .iter()
-            .flat_map(|&member| {
-                crate::modules::imported_module_dep_indexes_for(
-                    modules,
-                    member,
-                    &module_idx_by_key,
-                    own_standard_package,
-                )
-            })
+            .flat_map(|&member| imports.dependencies(member))
             .filter(|dependency| !member_set.contains(dependency))
             .collect::<BTreeSet<_>>()
             .into_iter()
