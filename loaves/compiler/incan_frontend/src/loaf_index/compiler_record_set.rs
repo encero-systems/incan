@@ -1249,6 +1249,120 @@ mod tests {
     }
 
     #[test]
+    fn sealed_ranges_read_only_the_requested_trait_and_refuse_changed_bytes_and_wrong_membership()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::executable_resolution::resolve_loaf_declarations;
+        use crate::library_manifest::executable_ranges::{RANGE, export_ranges, record_key};
+        use crate::library_manifest::executable_surface::own_public_identities;
+        use incan_semantics_core::body_ir::BodyIrModule;
+        use incan_semantics_core::encode_incan_symbol_identity;
+        use incan_semantics_core::executable_representation::{
+            DeclarationCoverage, SurfaceReader, build_surface, representation_version,
+        };
+        let root = tempfile::tempdir()?;
+        let name = "prices";
+        let dir = root.path().join("debug");
+        fs::create_dir(&dir)?;
+        let mut manifest = surfaced_library_for(name, "pub trait First:\n    pass\n\npub trait Other:\n    pass\n")?;
+        let public = own_public_identities(&manifest);
+        let first = public
+            .iter()
+            .find(|identity| identity.declaration_name == "First")
+            .ok_or("missing First")?;
+        let other = public
+            .iter()
+            .find(|identity| identity.declaration_name == "Other")
+            .ok_or("missing Other")?;
+        let mut module = BodyIrModule::declarations_only(name.into());
+        module.trait_declarations = vec![first.clone(), other.clone()];
+        let bytes = build_surface(&[module], name, &manifest.version, &public, &BTreeSet::new())?;
+        manifest.contract_metadata.executable_representation = Some(ExecutableRepresentationExport {
+            representation_version: representation_version(&bytes)?,
+            content_digest: content_name(&bytes),
+        });
+        let path = dir.join("prices.incnbody");
+        fs::write(&path, &bytes)?;
+        let mut set = installed_library(root.path(), &manifest)?;
+        let first_key = record_key(RANGE, &encode_incan_symbol_identity(first));
+        let other_key = record_key(RANGE, &encode_incan_symbol_identity(other));
+        let mut other_content = None;
+        for (key, value) in export_ranges(&manifest, &content_name(b"prices manifest"), &bytes)? {
+            let digest = content_name(&value);
+            if key == other_key {
+                other_content = Some(digest.clone());
+            }
+            fs::write(root.path().join("payloads").join(&digest), value)?;
+            set.entries.push(RecordEntry {
+                key: format!("loaf/debug/{name}/{key}"),
+                revision: digest.clone(),
+                value: digest,
+            });
+        }
+        let mut wrong_entries = set
+            .entries
+            .iter()
+            .map(|row| RecordEntry {
+                key: row.key.clone(),
+                revision: row.revision.clone(),
+                value: row.value.clone(),
+            })
+            .collect::<Vec<_>>();
+        let other_content = other_content.ok_or("missing second range publication")?;
+        let first_row = wrong_entries
+            .iter_mut()
+            .find(|e| e.key.ends_with(&first_key))
+            .ok_or("missing first range publication")?;
+        first_row.revision = other_content.clone();
+        first_row.value = other_content;
+        let selected = thread_selection::select(RecordSet::new(root.path().into(), set.entries));
+        let index = crate::loaf_index::LoafIndex::deferred([(name.to_owned(), name.to_owned(), dir.clone(), false)])?;
+        let roots = BTreeSet::from([first.clone()]);
+        let run = |index: &crate::loaf_index::LoafIndex| resolve_loaf_declarations(index, &roots, &BTreeSet::new());
+        let accepted = run(&index)?;
+        assert_eq!(accepted.decoded_declarations, 1);
+        let reader = SurfaceReader::open(&bytes)?;
+        let address = |id| -> Result<(usize, u64), Box<dyn std::error::Error>> {
+            let DeclarationCoverage::Covered { offset, length, .. } = reader.index().coverage(id)? else {
+                return Err("trait was not covered".into());
+            };
+            Ok((
+                bytes.len() - reader.payload().len() + usize::try_from(*offset)?,
+                *length,
+            ))
+        };
+        let (first_offset, first_len) = address(first)?;
+        let (other_offset, _) = address(other)?;
+        assert_eq!(accepted.payload_bytes_read, first_len);
+        let keys = thread_selection::read_keys();
+        assert_eq!(keys.iter().filter(|key| key.contains("/executable-range/")).count(), 1);
+        assert!(keys.iter().any(|key| key.ends_with(&first_key)));
+        assert!(!keys.iter().any(|key| key.contains("/public-identities/")));
+        let mut changed = bytes.clone();
+        changed[other_offset] ^= 1;
+        fs::write(&path, &changed)?;
+        assert_eq!(run(&index)?.decoded_declarations, 1);
+        changed[first_offset] ^= 1;
+        fs::write(&path, &changed)?;
+        assert!(
+            run(&index)
+                .expect_err("changed selected fragment must fail")
+                .to_string()
+                .contains("sealed digest")
+        );
+        fs::write(&path, &bytes)?;
+        drop(selected);
+        let _substituted = thread_selection::select(RecordSet::new(root.path().into(), wrong_entries));
+        let fresh = crate::loaf_index::LoafIndex::deferred([(name.to_owned(), name.to_owned(), dir, false)])?;
+        assert!(
+            run(&fresh)
+                .expect_err("substituted membership must fail")
+                .to_string()
+                .contains("another declaration")
+        );
+        Ok(())
+    }
+
+    #[test]
     fn native_lowering_reads_a_loafs_runtime_bindings_by_name() -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
         let manifest = surfaced_library()?;
