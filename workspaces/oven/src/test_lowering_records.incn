@@ -45,6 +45,7 @@ pub def test_importer_rename_checks_only_its_direct_signature_reader() -> Result
     project.mkdir(true, true).map_err((error) => error.message())?
     fixture = Path("examples/pro/codegraph_importer")
     fixture.joinpath("src").copy(project.joinpath("src"), false, false).map_err((error) => error.message())?
+    fixture.joinpath("tests").copy(project.joinpath("tests"), false, false).map_err((error) => error.message())?
     fixture.joinpath("loaf.toml").copy(project.joinpath("loaf.toml"), false, false).map_err((error) => error.message())?
     trace = root.joinpath("trace")
     trace.mkdir(true, true).map_err((error) => error.message())?
