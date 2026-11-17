@@ -984,6 +984,30 @@ mod tests {
         Ok(())
     }
 
+    /// Both isolated producers derive the qualified owner and match the independently checked module byte for byte.
+    #[test]
+    fn scoped_producers_recompute_a_qualified_project_owner() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def supported_schema(version: str) -> bool:\n    return version == \"1\"\n";
+        let module = vec!["project".to_owned(), "importer".to_owned()];
+        let parsed = program(source)?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(module.clone()));
+        checker.check_program(&parsed).map_err(|errors| format!("{errors:?}"))?;
+        let outputs = checked_owner_record_outputs(&parsed, &checker, &module)?;
+        let [CheckedOwnerRecordOutput::Value(owner)] = outputs.as_slice() else {
+            return Err("expected one reusable project owner".into());
+        };
+        let mut local = super::produce_local_record(source, "supported_schema", owner.declaration.clone(), vec![])?;
+        assert_eq!(local, owner.local);
+        local
+            .first_mut()
+            .ok_or("missing local header")?
+            .insert(3, "local".into());
+        let settled = super::produce_final_record(source, "supported_schema", local, vec![])?;
+        assert_eq!(settled, owner.final_value);
+        Ok(())
+    }
+
     /// After a provider edit shifts its variant, restoring the consumer must bind to the variant's current span.
     #[test]
     fn restored_enum_member_uses_the_current_provider_anchor() -> Result<(), Box<dyn std::error::Error>> {
