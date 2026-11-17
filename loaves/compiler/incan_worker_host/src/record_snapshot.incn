@@ -9,7 +9,7 @@ from std.primitives.hash import sha256
 from std.primitives.crumb.descriptions import Description
 from std.primitives.crumb.values import Value
 from pub::internal_models.crumb_rows import ModelField, model_description, required_value
-from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, integer, items, number, text
+from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, integer as signed, items, number, text
 from pub::incan_platform.store import Lookup, Snapshot, begin, commit, lease, lease_token, lookup, owned, put, read_manifest
 from pub::incan_platform.store import read_store_identity, snapshot as store_snapshot
 from pub::incan_platform.store.disk import root as disk_root
@@ -207,7 +207,7 @@ pub def encode_snapshot_record(handle: SnapshotHandle) -> Result[bytes, str]:
         return Err("snapshot descriptor requires a positive generation and canonical allowed roots")
     return encode_graph_row(SNAPSHOT_ROW, snapshot_description(), [
         required_value(b"format", Value.Text(handle.format_profile)),
-        required_value(b"genera", integer(handle.generation)),
+        required_value(b"genera", signed(handle.generation)),
         required_value(b"lease_", Value.Text(handle.lease)),
         required_value(b"manife", Value.Text(handle.manifest)),
         required_value(b"revisi", Value.Text(handle.view_revision)),
