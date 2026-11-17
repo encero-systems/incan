@@ -240,9 +240,9 @@ pub def test_frozen_inputs_get_zero_stats() -> Result[None, str]:
     expected_frames = parse("""[{"key":"read-key","revision":"rev","reads":2,"frame_bytes":57,"value_bytes":21}]""").map_err((error) => error.message())?
     expected_demands = parse("""[{"role":"signature","store":"store","generation":7,"manifest":"manifest","view":"view","key":"demand-key"}]""").map_err((error) => error.message())?
     expected_refusals = parse("""{"changed-signature":3}""").map_err((error) => error.message())?
-    assert proof.require("store_reads").map_err((error) => error.message())? == expected_frames
-    assert proof.require("graph_demands").map_err((error) => error.message())? == expected_demands
-    assert proof.require("artifact_refusals").map_err((error) => error.message())? == expected_refusals
+    assert proof.require("store_reads").map_err((error) => error.message())?.equals(expected_frames)
+    assert proof.require("graph_demands").map_err((error) => error.message())?.equals(expected_demands)
+    assert proof.require("artifact_refusals").map_err((error) => error.message())?.equals(expected_refusals)
     assert proof.require("frozen_stats").map_err((error) => error.message())?.expect_int().map_err(
         (error) => error.message(),
     )? == 1

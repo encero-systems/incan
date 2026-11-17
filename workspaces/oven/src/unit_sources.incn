@@ -18,11 +18,12 @@ from std.hash import sha256
 from std.json import JsonValue
 from compiler_worker import captured_resident
 from driver_command import driver_command
-from files import json_text, make_directory, parse_json, read_json, write
+from files import make_directory, parse_json, read_json, write
 from json_fields import required_items, required_text
 from loaf_local_graph import unique
 from observation import Ledger, trace
-from publication import publish
+from publication import publish_binary
+from source_graph_records import decode_scopes, encode_scopes
 from rust_target import decoded
 from toolchain import Toolchain
 from unit import UnitDescription, manifest_candidates
@@ -102,7 +103,7 @@ pub def graph_location(project_root: str, profile: str, kind: str, entry: str) -
         Ok(found) => resolved = found.0
         Err(_) => pass
     name = hexlify(sha256.digest(f"{profile}\n{kind}\n{resolved}".encode("utf-8")))[:24]
-    return Path(project_root).joinpath("target/incan/units/source-graphs").joinpath(f"{name}.json")
+    return Path(project_root).joinpath("target/incan/units/source-graphs").joinpath(f"{name}.crumb")
 
 
 pub def recorded_reach(source: Path, profile: str) -> Option[SourceGraph]:
@@ -120,7 +121,7 @@ pub def recorded_reach(source: Path, profile: str) -> Option[SourceGraph]:
             break
     mut read: list[str] = []
     mut absent: list[str] = []
-    for entry in recorded_entries(graph_location(project.0, profile, "program", source.0)):
+    for entry in recorded_entries(graph_location(project.0, profile, "program", source.0), false):
         for item in required_items(entry, "read").unwrap_or([]):
             read.append(required_text(item, "path").unwrap_or(""))
         for item in required_items(entry, "absent").unwrap_or([]):
@@ -154,11 +155,16 @@ def recorded_graph(location: Path, scope: str, mut project: Ledger) -> Result[Op
     return Ok(None)
 
 
-def recorded_entries(location: Path) -> list[JsonValue]:
+def recorded_entries(location: Path, include_imports: bool = true) -> list[JsonValue]:
     """The graphs a record holds, newest first; a missing, malformed or older record holds none."""
-    if not location.is_file():
+    if location.is_file():
+        match location.read_bytes():
+            Ok(encoded) => return decode_scopes(encoded, include_imports).unwrap_or([])
+            Err(_) => return []
+    legacy = location.parent().joinpath(location.stem() + ".json")
+    if not legacy.is_file():
         return []
-    match read_json(location):
+    match read_json(legacy):
         Err(_) => return []
         Ok(document) =>
             if required_text(document, "schema").unwrap_or("") != GRAPH_SCHEMA:
@@ -253,8 +259,8 @@ def retain(location: Path, scope: str, graph: SourceGraph, mut project: Ledger) 
             continue
         if current_graph(entry, project)? is not None:
             graphs.append(entry)
-    document = JsonValue.object({"schema": JsonValue.string(GRAPH_SCHEMA), "graphs": JsonValue.array(graphs)})
-    _ = publish(location, json_text(document)?)
+    if let Ok(encoded) = encode_scopes(graphs):
+        _ = publish_binary(location, encoded)
     return Ok(None)
 
 
