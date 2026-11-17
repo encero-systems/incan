@@ -31,7 +31,7 @@ pub def test_a_pack_exports_records_for_the_manifests_it_ships_only() -> Result[
     write(stage.joinpath("toolchain.json"), "{}")?
     # 2. The export reads exactly what ships.
     shipped_manifests(stage, view)?
-    assert manifests(view, view)? == shipped, "the export's manifests are not the shipped ones"
+    assert manifests(view, view)? == sorted(shipped), "the export's manifests are not the shipped ones"
     for relative in shipped:
         assert not view.joinpath(relative).is_symlink(), "the compiler's export skips a linked manifest"
         assert read(view.joinpath(relative))? == f"artifact {relative}"
