@@ -10,8 +10,8 @@ from crate.primitives.crumb.encoding_errors import BinaryError
 from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.registrations import KindRegistry
 from crate.primitives.crumb.typed_cells import TypedCellSource, TypedCellWriter
+from crate.primitives.crumb.typed_shapes import shape_key
 from crate.primitives.reflection import ShapeInfo
-from crate.primitives.text import copy_frozen_bytes
 from crate.primitives.views import MappedView
 
 
@@ -56,7 +56,7 @@ pub class TypedRowWriter:
     pub def root(self, shape: ShapeInfo) -> Result[TypedCellWriter, CrumbError]:
         """Return a Walker bound to one exact caller-supplied root description."""
         mut budget = self.budget.snapshot()
-        description = slot(self.dictionary, copy_frozen_bytes(shape.identity), budget)?
+        description = slot(self.dictionary, shape_key(shape, budget)?, budget)?
         return Ok(TypedCellWriter.create_root(self.dictionary.entries[description], budget.snapshot(), Some(self.dictionary)))
 
     pub def append(mut self, writer: TypedCellWriter) -> Result[None, CrumbError]:
@@ -145,7 +145,7 @@ pub class TypedRowReader:
         if index < 0 or index >= len(self.rows):
             return Err(CrumbError.invalid_input("typed row index"))
         mut budget = self.budget.snapshot()
-        expected = slot(self.dictionary, copy_frozen_bytes(shape.identity), budget)?
+        expected = slot(self.dictionary, shape_key(shape, budget)?, budget)?
         if self.rows[index].description != expected:
             return Err(CrumbError.invalid_input("typed row description"))
         return Ok(

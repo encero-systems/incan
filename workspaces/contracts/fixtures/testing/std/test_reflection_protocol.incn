@@ -49,10 +49,10 @@ class StoredText with Walk:
         """Describe this handwritten scalar representation."""
         return ShapeInfo(
             name="str",
-            identity=b"",
+            identity=None,
             renamed_from=NO_RENAMES,
             renamed_from_lifecycle=None,
-            spelling="string",
+            spelling=Some("string"),
             fields=NO_FIELDS,
             variants=NO_VARIANTS,
         )
@@ -76,7 +76,7 @@ def test_public_recursive_walker() -> Result[None, str]:
     walker.element(StoredText(value="second"))?
     assert walker.values == ["first", "second"]
     shape: PublicShapeInfo = ShapeInfo.of[StoredText]()
-    assert shape.spelling == "string"
+    assert shape.spelling == Some("string")
     metadata: PublicFieldInfo = ReflectedCount.__fields__()[0]
     lifecycle = LifecycleInfo(since="0.6", retire_in="0.9", message="Stored count", by="author", issue="migration")
     expected = FieldInfo(
@@ -100,10 +100,10 @@ def test_public_recursive_walker() -> Result[None, str]:
     # This proves interchangeability; automatic shape generation belongs to the following checkpoint.
     model_shape = ShapeInfo(
         name="ReflectedCount",
-        identity=b"",
+        identity=None,
         renamed_from=COUNT_RENAMES,
         renamed_from_lifecycle=metadata.renamed_from_lifecycle,
-        spelling="test-only",
+        spelling=Some("test-only"),
         fields=NO_FIELDS,
         variants=NO_VARIANTS,
     )

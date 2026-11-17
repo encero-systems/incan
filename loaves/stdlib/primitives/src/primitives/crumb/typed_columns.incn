@@ -17,8 +17,8 @@ from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.registrations import KindRegistry
 from crate.primitives.crumb.typed_cells import TypedCellSource, TypedCellWriter
 from crate.primitives.crumb.types import AbsentPolicy, NominalKind
+from crate.primitives.crumb.typed_shapes import shape_key
 from crate.primitives.reflection import ShapeInfo
-from crate.primitives.text import copy_frozen_bytes
 from crate.primitives.views import MappedView
 
 
@@ -79,7 +79,7 @@ pub class TypedColumnWriter:
     pub def root(self, shape: ShapeInfo) -> Result[TypedCellWriter, CrumbError]:
         """Return a Walker bound to one exact caller-supplied root description."""
         mut budget = self.budget.snapshot()
-        description = slot(self.dictionary, copy_frozen_bytes(shape.identity), budget)?
+        description = slot(self.dictionary, shape_key(shape, budget)?, budget)?
         if self.dictionary.entries[description].kind != NominalKind.Record:
             return Err(CrumbError.invalid_input("typed columns require a record root"))
         return Ok(TypedCellWriter.create_root(self.dictionary.entries[description], budget.snapshot(), Some(self.dictionary)))
@@ -197,7 +197,7 @@ pub class TypedColumnReader:
         if index < 0 or index >= self.rows:
             return Err(CrumbError.invalid_input("typed column row index"))
         mut budget = self.budget.snapshot()
-        expected = slot(self.dictionary, copy_frozen_bytes(shape.identity), budget)?
+        expected = slot(self.dictionary, shape_key(shape, budget)?, budget)?
         mut selected_group = -1
         for position in range(len(self.groups)):
             if index >= self.groups[position].start and index < self.groups[position].end:

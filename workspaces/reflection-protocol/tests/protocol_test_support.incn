@@ -22,10 +22,10 @@ pub def text_shape() -> ShapeInfo:
     """A manually declared scalar representation, with no nominal authority claim."""
     return ShapeInfo(
         name="str",
-        identity=b"",
+        identity=None,
         renamed_from=NO_RENAMES,
         renamed_from_lifecycle=None,
-        spelling="string",
+        spelling=Some("string"),
         fields=NO_FIELDS,
         variants=NO_VARIANTS,
     )
@@ -224,10 +224,10 @@ pub class ReferenceValue with Walk:
         """The test uses an explicit custom reference spelling."""
         return ShapeInfo(
             name="ReferenceValue",
-            identity=b"",
+            identity=None,
             renamed_from=NO_RENAMES,
             renamed_from_lifecycle=None,
-            spelling="ref@object",
+            spelling=Some("ref@object"),
             fields=NO_FIELDS,
             variants=NO_VARIANTS,
         )
@@ -250,10 +250,10 @@ pub class NestedReferences with Walk:
         """Describe this custom sequence independently of its instances."""
         return ShapeInfo(
             name="NestedReferences",
-            identity=b"",
+            identity=None,
             renamed_from=NO_RENAMES,
             renamed_from_lifecycle=None,
-            spelling="list[ref@object]",
+            spelling=Some("list[ref@object]"),
             fields=NO_FIELDS,
             variants=NO_VARIANTS,
         )

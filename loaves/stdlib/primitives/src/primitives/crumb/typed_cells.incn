@@ -15,6 +15,7 @@ from crate.primitives.crumb.scalar_cells import integer_cell, decimal_native_cel
 from crate.primitives.crumb.scalar_read import scalar, typed_integer, typed_boolean, typed_text, typed_bytes, typed_decimal
 from crate.primitives.crumb.types import AbsentPolicy, ContainerKind, NominalKind, ScalarKind, TypeNode
 from crate.primitives.crumb.values import IntegerValue
+from crate.primitives.crumb.typed_shapes import shape_key
 from crate.primitives.reflection import DecimalValue, FieldInfo, Reconstruct, SequenceKind, ShapeInfo, Source, VariantInfo, Walk, Walker
 from crate.primitives.text import copy_frozen_bytes, encode_utf8
 from crate.primitives.views import MappedView
@@ -277,7 +278,7 @@ pub class TypedCellWriter with Walker[CrumbError]:
     def begin_model(mut self, shape: ShapeInfo) -> Result[None, CrumbError]:
         """Bind a root model walk to the caller's exact admitted description."""
         description = self.writer_description()?
-        if description.kind != NominalKind.Record or copy_frozen_bytes(shape.identity) != description.key or self.model_begun:
+        if description.kind != NominalKind.Record or shape_key(shape, self.budget)? != description.key or self.model_begun:
             return Err(CrumbError.invalid_input("typed root model shape"))
         return self.begin_fields(description.fields)
 
@@ -676,7 +677,7 @@ pub class TypedCellSource with Source[CrumbError]:
     def begin_model(mut self, shape: ShapeInfo) -> Result[None, CrumbError]:
         """Bind a root model reconstruction to the caller's exact admitted description."""
         description = self.source_description()?
-        if description.kind != NominalKind.Record or copy_frozen_bytes(shape.identity) != description.key or self.model_begun:
+        if description.kind != NominalKind.Record or shape_key(shape, self.budget)? != description.key or self.model_begun:
             return Err(CrumbError.invalid_input("typed root model shape"))
         if len(self.column_views) == 0:
             mut cursor = EncodingCursor.create(self.view, self.origin).map_err(as_crumb)?
@@ -756,7 +757,7 @@ pub class TypedCellSource with Source[CrumbError]:
     def begin_variant(mut self, shape: ShapeInfo) -> Result[VariantInfo, CrumbError]:
         """Resolve the physical slot against the checked variant identity before exposing its fields."""
         description = self.source_description()?
-        if description.kind != NominalKind.Enum or self.model_begun or copy_frozen_bytes(shape.identity) != description.key:
+        if description.kind != NominalKind.Enum or self.model_begun or shape_key(shape, self.budget)? != description.key:
             return Err(CrumbError.invalid_input("typed enum shape"))
         mut cursor = EncodingCursor.create(self.view, self.origin).map_err(as_crumb)?
         index = cursor.length(self.budget).map_err(as_crumb)?

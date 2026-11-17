@@ -1,5 +1,9 @@
 """Admit compiler-provided field and variant identities as finite Crumb descriptions for typed rows."""
 
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.identity import closed_selector
+from crate.primitives.crumb.selectors import parse_type
+from crate.primitives.crumb.types import TypeNode
 from crate.primitives.crumb.descriptions import Description, DescriptionMode
 from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.values import Metadata, MetadataEntry
@@ -35,10 +39,28 @@ def stored_fields(fields: FrozenList[FieldInfo]) -> Result[list[Metadata], Crumb
     return Ok(result)
 
 
-pub def shape_description(shape: ShapeInfo) -> Result[Description, CrumbError]:
+pub def shape_key(shape: ShapeInfo, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Frame a checked closed selector, including generic arguments, only for the declaration it names."""
+    identity = match shape.identity:
+        Some(value) => copy_frozen_bytes(value)
+        None => return Err(CrumbError.invalid_input("missing persistent declaration identity for " + str(shape.name)))
+    selector = match shape.selector:
+        Some(value) => parse_type(str(value), budget)?
+        None => return Err(CrumbError.invalid_input("missing closed declaration selector for " + str(shape.name)))
+    match selector:
+        TypeNode.Nominal(_, _, Some(member), _) =>
+            if member == identity:
+                return closed_selector(selector, budget)
+        _ => pass
+    return Err(CrumbError.invalid_input("shape selector does not name its checked declaration"))
+
+
+pub def shape_description(shape: ShapeInfo, mut budget: Budget) -> Result[Description, CrumbError]:
     """Materialize only the closed declarations supplied by the compiler; recursive references remain selectors."""
-    key = copy_frozen_bytes(shape.identity)
-    spelling = str(shape.spelling)
+    key = shape_key(shape, budget)?
+    spelling = match shape.spelling:
+        Some(value) => str(value)
+        None => return Err(CrumbError.invalid_input("missing persistent structural spelling for " + str(shape.name)))
     mut metadata = [
         MetadataEntry(key="nominal", value=Metadata.Binary(key)),
         MetadataEntry(key="path", value=Metadata.Text(str(shape.name))),
@@ -63,11 +85,11 @@ pub def shape_description(shape: ShapeInfo) -> Result[Description, CrumbError]:
     return Ok(Description(metadata=Metadata.Map(metadata), mode=DescriptionMode.Reference))
 
 
-pub def shape_descriptions(root: ShapeInfo) -> Result[list[Description], CrumbError]:
+pub def shape_descriptions(root: ShapeInfo, mut budget: Budget) -> Result[list[Description], CrumbError]:
     """Read the finite declaration closure before admitting its nominal references as one dictionary."""
-    mut descriptions = [shape_description(root)?]
+    mut descriptions = [shape_description(root, budget)?]
     for reachable in root.declarations:
         if len(reachable.declarations) != 0:
             return Err(CrumbError.invalid_input("reached declarations must be flat"))
-        descriptions.append(shape_description(reachable)?)
+        descriptions.append(shape_description(reachable, budget)?)
     return Ok(descriptions)

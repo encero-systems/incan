@@ -85,8 +85,9 @@ def test_manual_reconstruction_and_errors() -> Result[None, str]:
 def test_shape_aliases_and_no_value_construction() -> Result[None, str]:
     """Both imports select one carrier and the shape comes from the adopter's static member."""
     shape: PublicShapeInfo = ShapeInfo.of[TextValue]()
-    assert shape.spelling == "string"
-    assert len(shape.identity) == 0
+    assert shape.spelling == Some("string")
+    assert shape.identity.is_none()
+    assert shape.selector.is_none()
     history = LifecycleInfo(since=Some("1.0"), by=Some("review"))
     assert history.since == Some("1.0")
     value: PublicDecimalValue = DecimalValue.new(coefficient=1990, precision=10, scale=2).map_err((_) => "decimal")?

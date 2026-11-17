@@ -53,18 +53,20 @@ pub model ShapeInfo:
     """
     A complete stored shape, independently of a value or its public-field inspection view.
 
-    Identity is the closed nominal selector K; spelling is structural S. Neither grants authority
+    Identity names a declaration within its registered package. Selector names a closed instantiation,
+    and spelling describes its stored structure. Missing persistent metadata grants no authority
     to a foreign type. Fields and variants use their checked six-byte identities in ascending order.
     Recursive shapes keep finite checked selectors rather than recursively allocating metadata.
     """
 
     pub name: FrozenStr
-    pub identity: FrozenBytes
+    pub identity: Option[FrozenBytes]
     pub renamed_from: FrozenList[FrozenStr]
     pub renamed_from_lifecycle: Option[LifecycleInfo]
-    pub spelling: FrozenStr
+    pub spelling: Option[FrozenStr]
     pub fields: FrozenList[FieldInfo]
     pub variants: FrozenList[VariantInfo]
+    pub selector: Option[FrozenStr] = None
     pub declarations: FrozenList[ShapeInfo] = []
 
     @staticmethod

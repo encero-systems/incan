@@ -42,10 +42,10 @@ model TypedI8 with Reconstruct:
         """Describe the scalar spelling used by the caller's field description."""
         return ShapeInfo(
             name="TypedI8",
-            identity=b"",
+            identity=None,
             renamed_from=NO_RENAMES,
             renamed_from_lifecycle=None,
-            spelling="i8",
+            spelling=Some("i8"),
             fields=NO_FIELDS,
             variants=NO_VARIANTS,
         )
@@ -73,10 +73,10 @@ model TypedAmount with Reconstruct:
         """Return the caller-owned closed selector and exact root field metadata."""
         return ShapeInfo(
             name="TypedAmount",
-            identity=b"record\x00",
+            identity=Some(b"record"), selector=Some("record@7265636f7264"),
             renamed_from=NO_RENAMES,
             renamed_from_lifecycle=None,
-            spelling="record@7265636f726400",
+            spelling=Some("record{cf38d95c9c6b:i8:1:r}"),
             fields=AmountLayout.__fields__(),
             variants=NO_VARIANTS,
         )
@@ -174,8 +174,8 @@ model NestedAmount with Reconstruct:
 
     @staticmethod
     def __shape__() -> ShapeInfo:
-        return ShapeInfo(name="NestedAmount", identity=b"parent\x00", renamed_from=NO_RENAMES,
-            renamed_from_lifecycle=None, spelling="record@706172656e7400", fields=NestedLayout.__fields__(), variants=NO_VARIANTS)
+        return ShapeInfo(name="NestedAmount", identity=Some(b"parent"), selector=Some("record@706172656e74"), renamed_from=NO_RENAMES,
+            renamed_from_lifecycle=None, spelling=Some("record{ddc9e6691942:record{cf38d95c9c6b:i8:1:r}:1:r}"), fields=NestedLayout.__fields__(), variants=NO_VARIANTS)
 
     def __walk__[E, W with Walker[E]](self, mut walker: W) -> Result[None, E]:
         walker.begin_model(Self.__shape__())?
@@ -236,8 +236,8 @@ model OptionalAmount with Reconstruct:
 
     @staticmethod
     def __shape__() -> ShapeInfo:
-        return ShapeInfo(name="OptionalAmount", identity=b"", renamed_from=NO_RENAMES,
-            renamed_from_lifecycle=None, spelling="option<i8>", fields=NO_FIELDS, variants=NO_VARIANTS)
+        return ShapeInfo(name="OptionalAmount", identity=None, renamed_from=NO_RENAMES,
+            renamed_from_lifecycle=None, spelling=Some("option<i8>"), fields=NO_FIELDS, variants=NO_VARIANTS)
 
     def __walk__[E, W with Walker[E]](self, mut walker: W) -> Result[None, E]:
         match self.value:
