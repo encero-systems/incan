@@ -15,6 +15,8 @@ from pub::internal_models import (
     ProducerRank,
     ProducerStage,
     CompiledBodyOutputs,
+    NamespaceOrder,
+    certified_namespace_order,
     GraphNamespaceValue,
     encode_graph_namespace_value,
     record_root,
@@ -240,7 +242,11 @@ pub def prepare_compiled_bodies(
     rechecked = staged.rechecked
 
     # 3. A cold whole check stages the same graph values later edited activations replace independently.
-    stage_compiled_namespaces(prepared, source, scope, projections, outputs.namespaces, origin)?
+    mut closures: Dict[str, list[str]] = {}
+    for namespace in outputs.namespaces:
+        closures[namespace.module] = namespace.dependencies
+    order = certified_namespace_order(origin, closures)?
+    stage_compiled_namespaces(prepared, source, scope, projections, outputs.namespaces, origin, order)?
     published = stage_compiled_body_values(
         prepared,
         source,
@@ -250,6 +256,7 @@ pub def prepare_compiled_bodies(
         unit,
         origin,
         editable_packages,
+        order,
     )?
     prepared = prepare_optional_lowering_records(
         prepared,
@@ -286,10 +293,14 @@ def stage_compiled_body_values(
     unit: UnitDescription,
     origin: str,
     editable_packages: list[str],
+    order: &Dict[str, NamespaceOrder],
 ) -> Result[int, str]:
     """Stage each compiler-produced local, final and Body IR value with its exact source and dependency witnesses."""
     mut published = 0
     for value in values:
+        mut position = NamespaceOrder()
+        if value.module in order:
+            position = order[value.module]
         projection = projections[value.module]
         owner = compiled_owner_source(projection, value.module, value.name, value.identity)?
         declaration_key = body_key("declaration", origin, value.identity, value.name, root(value.declaration)?)
@@ -310,11 +321,11 @@ def stage_compiled_body_values(
             match dependency_signature_key(projections, unit, origin, dependency, editable_packages)?:
                 Some(key) => local_reads.append(prepared_product_request(key))
                 None => pass
-        local_receipt = source.receipt(scope, local_key, local_reads)?
+        local_receipt = source.receipt(scope, local_key, local_reads, position.evidence)?
         _ = prepare_evaluation(
             prepared,
             "compiled-local-" + value.identity,
-            ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=0),
+            ProducerRank(namespace=position.rank, stage=ProducerStage.CheckBody, dependency=0),
             value.local,
             local_receipt,
         )?
@@ -337,21 +348,21 @@ def stage_compiled_body_values(
             match dependency_signature_key(projections, unit, origin, dependency, editable_packages)?:
                 Some(key) => final_reads.append(prepared_product_request(key))
                 None => pass
-        final_receipt = source.receipt(scope, final_key, final_reads)?
+        final_receipt = source.receipt(scope, final_key, final_reads, position.evidence)?
         _ = prepare_evaluation(
             prepared,
             "compiled-final-" + value.identity,
-            ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=1),
+            ProducerRank(namespace=position.rank, stage=ProducerStage.CheckBody, dependency=1),
             value.final,
             final_receipt,
         )?
         source.add(encode_record_key(final_key)?, value.final)
         body_ir_key = body_key("body-ir", origin, value.identity, "checked", root(value.final)?)
-        body_ir_receipt = source.receipt(scope, body_ir_key, [prepared_product_request(final_key)])?
+        body_ir_receipt = source.receipt(scope, body_ir_key, [prepared_product_request(final_key)], position.evidence)?
         _ = prepare_evaluation(
             prepared,
             "compiled-body-ir-" + value.identity,
-            ProducerRank(namespace=0, stage=ProducerStage.BodyIr, dependency=0),
+            ProducerRank(namespace=position.rank, stage=ProducerStage.BodyIr, dependency=0),
             value.body_ir,
             body_ir_receipt,
         )?
@@ -367,6 +378,7 @@ def stage_compiled_namespaces(
     projections: &Dict[str, SourceProjection],
     namespaces: list[CompiledNamespaceValue],
     origin: str,
+    order: &Dict[str, NamespaceOrder],
 ) -> Result[None, str]:
     """
     Stage every checked namespace row with its projection owners and imported declaration indexes as witnesses.
@@ -395,11 +407,15 @@ def stage_compiled_namespaces(
                 lowering_inputs=namespace.lowering_inputs,
             ),
         ).map_err((error) => f"compiled namespace output refused: {error:?}")?
-        receipt = source.receipt(scope, key, reads)?
+        mut position = NamespaceOrder()
+        if namespace.module in order:
+            position = order[namespace.module]
+            stage_put(prepared, "incan.compiler.namespace-order\t" + position.evidence, position.certificate)
+        receipt = source.receipt(scope, key, reads, position.evidence)?
         _ = prepare_evaluation(
             prepared,
             "compiled-namespace-" + namespace.module,
-            ProducerRank(namespace=0, stage=ProducerStage.Signature, dependency=0),
+            ProducerRank(namespace=position.rank, stage=ProducerStage.Signature, dependency=0),
             value,
             receipt,
         )?

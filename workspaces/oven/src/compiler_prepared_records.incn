@@ -50,11 +50,12 @@ pub class PreparedBodyRecordSource with RecordSource:
         scope: ReadScope,
         output: RecordKey,
         requests: list[RecordRequest],
+        rank_certificate: str = "compiled-check",
     ) -> Result[ReadReceipt, str]:
         """Authenticate one producer's exact inputs from the caller-owned publication transaction."""
         preparation = PreparationEvidence(
             output=output,
-            rank_certificate="compiled-check",
+            rank_certificate=rank_certificate,
             selector_witnesses="compiled-check",
         )
         mut reads = RecordReads.start(scope, preparation, requests)
