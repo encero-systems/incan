@@ -214,7 +214,8 @@ def work(trace: Path) -> Result[Work, str]:
         file = Path(path)
         if not file.name().startswith("engine-compiler-") or not file.name().endswith(".jsonl"):
             continue
-        mut starts: Dict[str, tuple[str, int]] = {}
+        mut starts: Dict[str, int] = {}
+        mut checking: set[str] = set()
         mut completed: set[str] = set()
         for line in file.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
             if "\"kind\":\"begin\"" in line and ("\"incan_driver::typecheck_modules\"" in line or "\"incan_rustc_driver::build_body_ir\"" in line):
@@ -222,18 +223,19 @@ def work(trace: Path) -> Result[Work, str]:
                 id = text(row, "id")?
                 if id in starts:
                     return Err(f"repeated compiler span {id} in {file.0}")
-                starts[id] = (text(row, "function")?, trace_nanoseconds(row)?)
-            elif len(starts) > len(completed) and "\"kind\":\"end\"" in line:
+                starts[id] = trace_nanoseconds(row)?
+                if text(row, "function")? == "incan_driver::typecheck_modules":
+                    checking.add(id)
+            elif len(starts) > 0 and "\"kind\":\"end\"" in line:
                 row = parse(line).map_err((error) => error.message())?
                 id = text(row, "id")?
                 if id in starts:
                     if id in completed:
                         return Err(f"repeated compiler completion {id} in {file.0}")
-                    name, start = starts[id]
-                    elapsed = trace_nanoseconds(row)? - start
+                    elapsed = trace_nanoseconds(row)? - starts[id]
                     if elapsed <= 0:
-                        return Err(f"invalid {name} duration in {file.0}")
-                    if name == "incan_driver::typecheck_modules":
+                        return Err(f"invalid duration for compiler span {id} in {file.0}")
+                    if id in checking:
                         result.check_ns += elapsed
                     else:
                         result.body_ir_ns += elapsed
