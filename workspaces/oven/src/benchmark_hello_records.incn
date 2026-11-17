@@ -65,6 +65,8 @@ def compare(hello: Path, output: Path) -> Result[None, str]:
     trace = output.joinpath("dependency-trace")
     trace.mkdir(false, false).map_err((error) => error.message())?
     source = hello.joinpath("src/hello.incn")
+    if file_digest(source)? != read(hello.joinpath("cold.source.sha256"))?.strip():
+        return Err("hello source differs from the measured input")
     executed = Command.new(oven.0).args(["inspect", "dependencies", source.0, "--profile", "release"])
         .env("INCAN_HOME", home.0).env("INCAN_ENGINE", "records").env("INCAN_ENGINE_TRACE", trace.0)
         .env("INCAN_BAKERY", output.joinpath("inspection-store").0).env("OVEN_OWNER", "off")
@@ -104,7 +106,8 @@ def compare(hello: Path, output: Path) -> Result[None, str]:
         if name not in directories:
             return Err(f"dependency inspector referenced unprepared Loaf {name}")
         prefix = "loaf/" + directories[name].name() + "/" + name + "/"
-        reached.add(name)
+        if phase in ["dependency_root", "dependency_fact"]:
+            reached.add(name)
         if phase == "body_surface_open":
             if name not in surfaces:
                 surfaces[name] = indexed_surface(row, directories[name])?
@@ -131,26 +134,31 @@ def compare(hello: Path, output: Path) -> Result[None, str]:
                     census.problems.append(f"fallback needed for unaddressed {family}: {name}/{member}")
     if declared != len(roots) or declared < 0:
         census.problems.append("semantic root inventory is incomplete")
+    mut selected_surfaces: set[str] = set()
+    mut ranges: Dict[str, int] = {}
+    match needed_ranges(roots, surfaces):
+        Ok((found, owners)) =>
+            ranges = found
+            selected_surfaces = owners
+        Err(reason) => census.problems.append("body range closure unresolved: " + reason)
+    for owner in selected_surfaces:
+        reached.add(owner)
     for name in reached:
         prefix = "loaf/" + directories[name].name() + "/" + name + "/"
         for key in selected.facets.get(prefix + "metadata/" + name_hash(name), []):
             expected[key] = selected.lengths[key]
-        if name in surfaces:
+        if name in selected_surfaces:
             for key in selected.facets.get(prefix + "executable-descriptor/" + name_hash(name), []):
                 expected[key] = selected.lengths[key]
     for binding in sorted([item for item in runtime]):
         census.rows.append(f"selected-runtime-binding\t1\tunknown\t{binding}")
     if len(runtime) > 0:
         census.problems.append(f"{len(runtime)} runtime bindings selected; installed runtime groups lack individual byte lengths")
-    mut ranges: Dict[str, int] = {}
-    match needed_ranges(roots, surfaces):
-        Ok(found) => ranges = found
-        Err(reason) => census.problems.append("body range closure unresolved: " + reason)
     for key in ranges.keys():
         expected["body/" + key] = ranges[key]
-    census = observed(hello.joinpath("cold-trace"), selected, surfaces, census)?
-    census = reconcile(expected, census)
-    census = frames(hello.joinpath("cold.stdout"), census)?
+    observed(hello.joinpath("cold-trace"), selected, surfaces, census)?
+    reconcile(expected, census)
+    frames(hello.joinpath("cold.stdout"), census)?
     match read(hello.joinpath("cold.native-plan.tsv")):
         Err(reason) => census.problems.append("missing emitted function report: " + reason)
         Ok(plan) =>
@@ -198,7 +206,7 @@ def sealed_selection(toolchain: Path, manifest: JsonValue) -> Result[Selection, 
     return Ok(selected)
 
 
-def observed(trace: Path, selected: Selection, surfaces: Dict[str, Surface], mut census: Census) -> Result[Census, str]:
+def observed(trace: Path, selected: Selection, surfaces: Dict[str, Surface], mut census: Census) -> Result[None, str]:
     """Read physical events from the timed build only, including whole-surface authentication and repeat opens."""
     mut paths: Dict[str, str] = {}
     mut reads = 0
@@ -232,10 +240,10 @@ def observed(trace: Path, selected: Selection, surfaces: Dict[str, Surface], mut
             reads += 1
     if reads == 0:
         census.problems.append("no measured compiler reads")
-    return Ok(census)
+    return Ok(None)
 
 
-def reconcile(expected: Dict[str, int], mut census: Census) -> Census:
+def reconcile(expected: Dict[str, int], mut census: Census) -> None:
     """Require one exact-length read per independently selected key or covered range and no unexplained reads."""
     for key in sorted([item for item in expected.keys()]):
         needed = expected[key]
@@ -256,10 +264,9 @@ def reconcile(expected: Dict[str, int], mut census: Census) -> Census:
         census.rows.append(f"{label}\t{reads}\t{actual}\t{key}")
     if len(expected) == 0:
         census.problems.append("empty required record inventory")
-    return census
 
 
-def frames(path: Path, mut census: Census) -> Result[Census, str]:
+def frames(path: Path, mut census: Census) -> Result[None, str]:
     """Cross-check graph read totals, preserve framing overhead and refuse frames without a selected-value witness."""
     mut reports = 0
     for line in read(path)?.split("\n"):
@@ -277,20 +284,22 @@ def frames(path: Path, mut census: Census) -> Result[Census, str]:
             size = number(item, "value_bytes")?
             frame = number(item, "frame_bytes")?
             count += reads
-            physical += frame
-            logical += size
-            if reads < 1 or size < 0 or frame < size:
+            physical += reads * frame
+            logical += reads * size
+            if reads < 1 or size < 0 or frame - size != 8 + len(key.encode("utf-8")):
                 census.problems.append("invalid graph store accounting: " + key)
-            census.rows.append(f"graph-frame\t{reads}\t{frame}\t{key}\t{revision}")
-            census.rows.append(f"graph-value\t{reads}\t{size}\t{key}\t{revision}")
-            census.rows.append(f"frame-overhead\t{reads}\t{frame - size}\t{key}\t{revision}")
-        if count != number(report, "store_frames_read")? or physical != number(report, "store_frame_bytes")? or logical != number(report, "store_decoded_bytes")?:
+            census.rows.append(f"graph-frame\t{reads}\t{reads * frame}\t{key}\t{revision}")
+            census.rows.append(f"graph-value\t{reads}\t{reads * size}\t{key}\t{revision}")
+            census.rows.append(f"frame-overhead\t{reads}\t{reads * (frame - size)}\t{key}\t{revision}")
+        if count != number(report, "store_frames_read")? or physical != number(report, "store_frame_bytes")?:
             census.problems.append("graph frame totals do not reconcile")
+        copied = number(report, "store_decoded_bytes")?
+        census.rows.append(f"graph-owned-copies\tunknown\t{copied}\tall-owned-values")
         if count > 0:
             census.problems.append(f"{count} graph reads/{logical} value bytes need an independent selected key/revision witness")
     if reports != 1:
         census.problems.append(f"expected one engine proof, received {reports}")
-    return Ok(census)
+    return Ok(None)
 
 
 def events(trace: Path) -> Result[list[JsonValue], str]:
