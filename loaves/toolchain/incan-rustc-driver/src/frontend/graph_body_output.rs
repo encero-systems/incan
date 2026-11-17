@@ -447,7 +447,12 @@ fn record_refusal(stage: &str, rows: &[Vec<String>], error: internal_models::Cod
             }
         }
         if let Some(row) = rows.get(valid_end) {
-            let key = row.iter().take(3).map(String::as_str).collect::<Vec<_>>().join(" ");
+            let key = row
+                .iter()
+                .take(3)
+                .map(|part| part.chars().take(64).collect::<String>())
+                .collect::<Vec<_>>()
+                .join(" ");
             reason.push_str(&format!(" at row {valid_end} [{key}]"));
         }
     }
