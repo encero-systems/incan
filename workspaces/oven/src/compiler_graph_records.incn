@@ -687,3 +687,12 @@ def required_digest(value: JsonValue, key: str) -> Result[str, str]:
 def digest(value: bytes) -> str:
     """Return one lowercase content identity."""
     return hexlify(sha256.digest(value))
+
+
+pub def retire_output(mut transaction: Transaction, profile: str, output: RecordKey) -> Result[None, str]:
+    """
+    Take one output out of its profile's output index without a successor, so no later request selects it. Its value,
+    evaluation and receipt stay, content named, as a superseded output's do.
+    """
+    stage_delete(transaction, output_index_key(profile, encode_record_key(output)?)?)
+    return Ok(None)

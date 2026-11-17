@@ -12,6 +12,7 @@ from pub::incan_mir_plan import (
     GenericEnumDeclaration,
     PlanType,
     UnitNominals,
+    resolve_nominals,
 )
 from rust::incan_semantics_core import (
     IncanType as RustType,
@@ -30,6 +31,8 @@ from rust::std::panic import resume_unwind
 from rust::std::sync import Arc
 from rust::std::thread import JoinHandle, spawn
 from scalar_store import (
+    admitted_function,
+    admitted_payload,
     retained_scalar,
     report_scalar,
     report_scalar_refusal,
@@ -57,6 +60,7 @@ from function_frames import lower_function
 from checked_values import location
 from plan_product_inputs import ordinary_product_inputs
 from instance_products import encode_requests, restore_requests
+from plan_modules import AdmittedFunction, admitted_page, admitted_reference, report_admitted
 from parallel_ranges import balanced_module_ranges
 
 
@@ -290,13 +294,22 @@ def lower_selected_module(
     mut traces: list[str] = []
     mut names = function_names()
     mut signatures = external_index()
+    # The module's admitted plan record, read once at its first ordinary body, and the functions restored from it.
+    mut module = ""
+    mut admitted = admitted_page(None, "")
+    mut restored: list[AdmittedFunction] = []
     for position in positions:
         body = body_at(context.bodies, position)
         if not ordinary_body(context, body, emitted, kind):
             continue
-        if trace:
-            traces.append(f"lowering: body {body_module_identity(body)?} {body.name} {body.span.start}")
+        if module == "":
+            module = body_module_identity(body)?
+            admitted = admitted_page(scalar_products, module)
         diagnostic_owner = f" in {body.name} at {file}"
+        restored_before = len(restored)
+        mut module_event: Option[str] = None
+        if len(admitted.events) > 0:
+            module_event = admitted.event(evaluator_name(context, body))
         function, runtime, pending, synthesized = lower_ordinary_frame(
             context,
             program,
@@ -309,7 +322,13 @@ def lower_selected_module(
             scalar_bodies,
             record_report,
             nominals,
+            module_event,
+            admitted.generation,
+            restored,
         ).map_err((reason) => reason + diagnostic_owner)?
+        # Only a body that took the keyed route was lowered or looked up; a restored body is not traced.
+        if trace and len(restored) == restored_before:
+            traces.append(f"lowering: body {module} {body.name} {body.span.start}")
         merge_instance_requests(instances, pending)
         if len(named_functions(names, functions, function.name)) != 0:
             return Err(f"unsupported Body IR overloaded function {body.name}")
@@ -332,6 +351,8 @@ def lower_selected_module(
         append_async_entry(context, body, function, entry, tests, intrinsics, functions, externals)?
         append_generator_constructor(program.constructors.as_ref(), functions, context, body, source, file, intrinsics)?
         merge_indexed(externals, signatures, runtime)?
+    if module != "":
+        report_admitted(record_report, module, restored)?
     return Ok(
         ModuleFrames(
             functions=functions,
@@ -385,14 +406,19 @@ pub def lower_ordinary_bodies_serial(
                 for selected_position in selected:
                     positions.append(int(selected_position.clone()))
             None => pass
+        # The module's admitted plan record and the functions restored from it, as in `lower_selected_module`.
+        module = str(checked_owner)
+        admitted = admitted_page(scalar_products, module)
+        mut restored: list[AdmittedFunction] = []
         for position in positions:
             body = body_at(context.bodies, position)
             if not ordinary_body(context, body, emitted_frames, kind):
                 continue
-            if trace:
-                identity = body_module_identity(body)?
-                emit("lowering", "INCAN_TRACE_LOWERING", f"lowering: body {identity} {body.name} {body.span.start}")
             diagnostic_owner = f" in {body.name} at {files[index]}"
+            restored_before = len(restored)
+            mut module_event: Option[str] = None
+            if len(admitted.events) > 0:
+                module_event = admitted.event(evaluator_name(context, body))
             function, runtime, pending, synthesized = lower_ordinary_frame(
                 context,
                 program,
@@ -405,7 +431,12 @@ pub def lower_ordinary_bodies_serial(
                 scalar_bodies,
                 record_report,
                 nominals,
+                module_event,
+                admitted.generation,
+                restored,
             ).map_err((reason) => reason + diagnostic_owner)?
+            if trace and len(restored) == restored_before:
+                emit("lowering", "INCAN_TRACE_LOWERING", f"lowering: body {module} {body.name} {body.span.start}")
             merge_instance_requests(instances, pending)
             # Frames any helper appended since the last check are named first, so the check covers every frame.
             if len(named_functions(names, functions, function.name)) != 0:
@@ -437,6 +468,7 @@ pub def lower_ordinary_bodies_serial(
                 intrinsics,
             )?
             merge_indexed(externals, signatures, runtime)?
+        report_admitted(record_report, module, restored)?
     return Ok(None)
 
 
@@ -452,12 +484,48 @@ def lower_ordinary_frame(
     admitted: &BTreeMap[CompilerNodeId, str],
     record_report: Option[str],
     mut nominals: UnitNominals,
+    module_event: Option[str],
+    generation: str,
+    mut restored: list[AdmittedFunction],
 ) -> Result[tuple[Function, list[ExternalFunction], list[Instance], list[Function]], str]:
     """
     Read only producer-admitted products, or lower normally and retain an exact witnessed result.
 
     A product names the unit's models and enums by declaration identity; `nominals` describes the current tables.
+
+    A body of an admitted module comes with `module_event`, its final event in the module's plan record. It is then
+    neither serialized, keyed nor lowered, and reports no event: its function, helper frames and generic instance
+    requests come from the event, and `restored` receives it for the module's note. An event that does not restore
+    leaves the body on the keyed route below.
     """
+    if let Some(event) = module_event:
+        if let Some(reads) = admitted.get(body.direct_call_id):
+            sync_carriers(nominals, program, intrinsics)
+            stored = admitted_payload(
+                event,
+                location(body.span, source, file),
+                evaluator_name(context, body),
+                program.overflow_checks,
+                str(reads),
+                generation,
+            )
+            if let Some(found) = stored:
+                payload, identities, encoded = found
+                if let Some(resolved) = resolve_nominals(identities, nominals):
+                    if let Some(product) = admitted_function(payload, resolved):
+                        function, runtime, frames = product
+                        if let Some(requests) = restore_requests(encoded, context):
+                            mut restored_identity = ""
+                            if let Some(canonical) = body.canonical:
+                                restored_identity = encode_incan_symbol_identity(canonical)
+                            restored.append(
+                                AdmittedFunction(
+                                    function=function.name,
+                                    identity=restored_identity,
+                                    references=[admitted_reference(reference) for reference in resolved],
+                                ),
+                            )
+                            return Ok((function, runtime, requests, frames))
     product_inputs = ordinary_product_inputs(
         context, body, source, file, program.overflow_checks, products, admitted, record_report is not None,
     )
@@ -470,6 +538,10 @@ def lower_ordinary_frame(
         inputs = Some(witness_inputs)
         positions = body_positions
     mut record_identity = ""
+    # An ordinary frame's event names its declaring module, so Bakery can fold a module's events into one record.
+    mut event_module = ""
+    if record_report is not None and body.canonical is not None:
+        event_module = body_module_identity(body)?
     if record_report is not None:
         match body.canonical:
             None =>
@@ -506,6 +578,7 @@ def lower_ordinary_frame(
                         len(runtime),
                         references,
                         positions,
+                        event_module,
                     )?
                     return Ok((function, runtime, requests, frames))
     function, runtime, pending, synthesized = lower_function(
@@ -542,6 +615,7 @@ def lower_ordinary_frame(
                                 len(runtime),
                                 references,
                                 positions,
+                                event_module,
                             )?
                         Err(reason) =>
                             # The ordinary compiler already has its complete lowered function. Record the optional
