@@ -19,6 +19,8 @@ from pub::internal_models import (
     CompiledBodyOutputs,
     NamespaceOrder,
     certified_namespace_order,
+    checking_basis_key,
+    encode_read_receipt,
     GraphNamespaceValue,
     encode_graph_namespace_value,
     record_root,
@@ -324,6 +326,8 @@ def stage_compiled_body_values(
                 Some(key) => local_reads.append(prepared_product_request(key))
                 None => pass
         local_receipt = source.receipt(scope, local_key, local_reads, position.evidence)?
+        if len(position.members) == 1:
+            stage_put(prepared, checking_basis_key(local_key)?, encode_read_receipt(local_receipt)?)
         _ = prepare_evaluation(
             prepared,
             "compiled-local-" + value.identity,
@@ -351,6 +355,8 @@ def stage_compiled_body_values(
                 Some(key) => final_reads.append(prepared_product_request(key))
                 None => pass
         final_receipt = source.receipt(scope, final_key, final_reads, position.evidence)?
+        if len(position.members) == 1:
+            stage_put(prepared, checking_basis_key(final_key)?, encode_read_receipt(final_receipt)?)
         _ = prepare_evaluation(
             prepared,
             "compiled-final-" + value.identity,

@@ -1,0 +1,89 @@
+"""Compiler-owned preparation for a previously witnessed single-owner checking contribution."""
+
+from std.encoding.hex import hexlify
+from std.primitives.hash import sha256
+from pub::incan_platform.store import Lookup, owned
+from pub::internal_models import (
+    DEMAND_FAMILY, InputSnapshot, PreparedInputs, ProducerProfile, ProducerRank, ProducerStage, RankCertificate,
+    ReadyWork, RecordRoot, checking_basis_key, decode_demand_page, decode_namespace_order, decode_read_receipt, encode_prepared_inputs,
+    encode_ready_work, envelope_key,
+)
+from pub::internal_models.checker_records import CHECKER_PROFILE
+from pub::internal_models.records import ReadScope, ReadWitness, RecordRead, RecordRequest, RecordSource
+from record_protocol import Prepare, Prepared
+from record_snapshot import ResolvedSnapshot, resolve_snapshot
+
+
+def required_record(snapshot: &ResolvedSnapshot, key: str) -> Result[bytes, str]:
+    """Require one preparation input inside the exact leased snapshot."""
+    match snapshot.read(key).map_err((error) => error.message())?:
+        Lookup.Found(value) => return Ok(owned(value))
+        _ => return Err("checking preparation is missing " + key)
+
+
+pub def prepare_checking(home: str, request: &Prepare) -> Result[Prepared, str]:
+    """Validate current selector evidence before staging the rank, exact supplier requests and ready-work page."""
+    if request.producer_profile != CHECKER_PROFILE:
+        return Err("unsupported checking producer profile")
+    resolved = resolve_snapshot(home, request.snapshot).map_err((error) => error.message())?
+    demand_bytes = required_record(resolved, envelope_key(DEMAND_FAMILY, request.demand_root)?)?
+    if hexlify(sha256.digest(demand_bytes)) != request.demand_root:
+        return Err("checking demand differs from its content root")
+    demand = decode_demand_page(demand_bytes)?
+    if len(demand.keys) != 1 or demand.keys[0].family not in ["local", "final"]:
+        return Err("checking preparation requires one local or final output")
+    output = demand.keys[0]
+    if request.stage not in ["check-body", output.family]:
+        return Err("checking demand does not belong to the requested stage")
+    basis_bytes = required_record(resolved, checking_basis_key(output)?)?
+    basis = decode_read_receipt(basis_bytes)?
+    if basis.scope.profile != request.producer_profile or basis.preparation.output != output:
+        return Err("checking supplier evidence belongs to another output or profile")
+    evidence = basis.preparation.rank_certificate
+    certificate = required_record(resolved, "incan.compiler.namespace-order\t" + evidence)?
+    order = decode_namespace_order(certificate, output.origin)?
+    if evidence != order.evidence:
+        return Err("checking namespace order differs from its content root")
+    if len(order.members) != 1:
+        return Err("checking preparation requires the compiler's joint namespace producer")
+    module = order.members[0]
+    scope = ReadScope(snapshot=request.snapshot, profile=request.producer_profile)
+    source = resolved.record_source(scope)
+    mut reads: list[RecordRequest] = []
+    mut owner_sources = 0
+    for witness in basis.witnesses:
+        match witness:
+            ReadWitness.Found(prior, selected) =>
+                supplier = prior.request
+                if supplier.key.family == "owner-source":
+                    if supplier.key.origin != output.origin or supplier.key.identity != module:
+                        return Err("checking source does not belong to its certified namespace")
+                    owner_sources += 1
+                match source.read(scope, supplier):
+                    RecordRead.Found(current) =>
+                        # Only typed checker values can vary after selection. A source, census or declaration-slot
+                        # change requires fresh supplier discovery before this owner may be scheduled.
+                        if supplier.key.family not in ["local", "declaration"] and current.selection_digest != selected:
+                            return Err("checking supplier discovery is stale for " + supplier.key.family)
+                    _ => return Err("checking supplier is unfinished or outside its preparation")
+                reads.append(supplier)
+            _ => return Err("checking preparation requires a new compiler selector for exclusion or member evidence")
+    if owner_sources != 1:
+        return Err("checking preparation requires one certified owner source")
+    mut dependency = 0
+    if output.family == "final":
+        dependency = 1
+    profile = ProducerProfile(identity=RecordRoot(digest=request.producer_profile))
+    ready = ReadyWork(output=output, stage=ProducerStage.CheckBody, profile=profile)
+    prepared = PreparedInputs(
+        output=output, snapshot=InputSnapshot(root=RecordRoot(digest=request.snapshot)), profile=profile,
+        required_reads=reads, selector_witnesses=RecordRoot(digest=hexlify(sha256.digest(basis_bytes))),
+        rank_certificate=RankCertificate(
+            rank=ProducerRank(namespace=order.rank, stage=ProducerStage.CheckBody, dependency=dependency),
+            evidence=RecordRoot(digest=evidence),
+        ),
+    )
+    root = resolved.stage_checking_envelopes(encode_prepared_inputs(prepared)?, encode_ready_work(ready)?).map_err(
+        (error) => error.message(),
+    )?
+    return Ok(Prepared(prepared_root=root))

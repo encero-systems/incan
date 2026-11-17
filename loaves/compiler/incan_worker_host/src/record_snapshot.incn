@@ -11,6 +11,7 @@ from pub::incan_platform.store import read_store_identity, snapshot as store_sna
 from pub::incan_platform.store.disk import root as disk_root
 from pub::incan_platform.store.files import StoreError
 from pub::internal_models.records import ReadScope, StoreRecordSource
+from pub::internal_models import PREPARED_FAMILY, WORK_FAMILY, envelope_key
 
 pub const SNAPSHOT_FORMAT_PROFILE: str = "incan.compiler-records/1"
 pub const STORE_VIEW_SCHEMA: str = "incan.store-view/1"
@@ -97,6 +98,33 @@ pub class ResolvedSnapshot:
     pub def record_source(self, scope: ReadScope) -> StoreRecordSource:
         """Transfer this resolved snapshot and its allowed roots into the compiler's authenticated read boundary."""
         return StoreRecordSource.open(self.snapshot, scope, self.allowed_roots)
+
+    pub def stage_checking_envelopes(self, prepared: bytes, work: bytes) -> Result[str, SnapshotFault]:
+        """Publish content-named transport pages without replacing the pinned inputs of the pending evaluation."""
+        prepared_root = digest(prepared)
+        prepared_key = envelope_key(PREPARED_FAMILY, prepared_root).map_err((detail) => fault(SnapshotFaultKind.InvalidDescriptor, detail))?
+        work_key = envelope_key(WORK_FAMILY, digest(work)).map_err((detail) => fault(SnapshotFaultKind.InvalidDescriptor, detail))?
+        if not allowed(self.allowed_roots, prepared_key) or not allowed(self.allowed_roots, work_key):
+            return Err(fault(SnapshotFaultKind.RootOutside, "checking envelopes"))
+        current = store_snapshot(self.snapshot.root, self.snapshot.view).map_err((error) => store_fault(error))?
+        _ = commit(put(put(begin(current), prepared_key, prepared), work_key, work)).map_err((error) => store_fault(error))?
+        return Ok(prepared_root)
+
+    pub def checking_envelope(self, family: str, root: str) -> Result[bytes, SnapshotFault]:
+        """Resolve only immutable, hash-verified work descriptors through the latest staging view."""
+        if family != WORK_FAMILY and family != PREPARED_FAMILY:
+            return Err(fault(SnapshotFaultKind.InvalidDescriptor, family))
+        key = envelope_key(family, root).map_err((detail) => fault(SnapshotFaultKind.InvalidDescriptor, detail))?
+        if not allowed(self.allowed_roots, key):
+            return Err(fault(SnapshotFaultKind.RootOutside, key))
+        current = store_snapshot(self.snapshot.root, self.snapshot.view).map_err((error) => store_fault(error))?
+        match lookup(current, key).map_err((error) => store_fault(error))?:
+            Lookup.Found(found) =>
+                value = owned(found)
+                if digest(value) != root:
+                    return Err(fault(SnapshotFaultKind.InvalidDescriptor, key))
+                return Ok(value)
+            _ => return Err(fault(SnapshotFaultKind.MissingDescriptor, key))
 
     pub def stage_compiler_outputs(
         self,

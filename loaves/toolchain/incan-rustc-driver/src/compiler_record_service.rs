@@ -19,6 +19,12 @@ pub(crate) fn activate(request: RecordMessage, home: &str) -> RecordMessage {
             Ok(produced) => produced,
             Err(error) => fault(error),
         },
+        RecordMessage::Prepare(value) if matches!(value.stage.as_str(), "check-body" | "local" | "final") => {
+            match incan_worker_host::prepare_checking(home.to_owned(), &value) {
+                Ok(prepared) => RecordMessage::Prepared(prepared),
+                Err(error) => fault(error.to_string()),
+            }
+        }
         RecordMessage::Prepare(value) => fault(format!("unsupported-producer:{}:{}", value.stage, value.demand_root)),
         _ => fault("protocol-fault".to_owned()),
     }
