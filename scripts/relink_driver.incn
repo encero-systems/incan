@@ -294,10 +294,34 @@ def compiler_manifest(manifest: JsonValue, base: str) -> Result[str, str]:
     units = registry_text(manifest, "registry_units")
     lock = registry_text(manifest, "registry_lock")
     if units.startswith("registry/") and (lock == "" or lock.startswith("registry/")):
+        fields["search"] = JsonValue.array(
+            [JsonValue.string(compiler_registry_path(path, base)) for path in manifest_list(manifest, "search")?],
+        )
+        mut externs: list[JsonValue] = []
+        for entry in manifest_entries(manifest, "externs")?:
+            mut extern = entry.expect_object().map_err((error) => error.message())?
+            extern["path"] = JsonValue.string(compiler_registry_path(manifest_text(entry, "path")?, base))
+            externs.append(JsonValue.object(extern))
+        fields["externs"] = JsonValue.array(externs)
         fields["registry_units"] = JsonValue.string(units)
         if lock != "":
             fields["registry_lock"] = JsonValue.string(lock)
     return JsonValue.object(fields).to_pretty_json().map_err((error) => error.message())
+
+
+def compiler_registry_path(path: str, base: str) -> str:
+    """Name an installed registry artifact through the compiler home's registry link; keep other paths absolute."""
+    installed = absolute(path, base)
+    registry = f"{base}/registry"
+    if installed == registry:
+        return "registry"
+    prefix = registry + "/"
+    if installed.startswith(prefix):
+        suffix = installed[len(prefix):]
+        components = suffix.split("/")
+        if "" not in components and "." not in components and ".." not in components:
+            return "registry/" + suffix
+    return installed
 
 
 def registry_text(manifest: JsonValue, key: str) -> str:
