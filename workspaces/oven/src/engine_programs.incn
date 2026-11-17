@@ -364,7 +364,7 @@ pub def obtain(
     invalid_plans = plan_owners_reading(graph, projected.keys)?
     # A module this request leaves alone travels whole: one page of its plan record in place of one per function.
     plan_modules = select_plan_modules(graph, origin, invalid_namespaces, invalid + invalid_plans)?
-    selected_bodies.extend(select_plan_inventory_except(graph, origin, invalid_plans, plan_modules.keys)?)
+    selected_bodies.extend(select_plan_inventory_except(graph, origin, invalid_plans, plan_modules.outputs)?)
     selected_bodies.extend(plan_modules.pages)
     produced = obtain_executable(ready, toolchain, binary, native_key, true, Some(store), true, Some(selected_bodies))?
     # A bakery hit plans nothing; the report beside the key is the earlier build's.
