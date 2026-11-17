@@ -188,8 +188,12 @@ impl RecordSet {
         self.bytes_read.fetch_add(bytes, Ordering::Relaxed);
         #[cfg(test)]
         thread_selection::note_read(key);
-        #[cfg(not(test))]
-        let _ = key;
+        tracing::trace!(
+            target: "incan::invocation",
+            phase = "record_read",
+            record = key,
+            bytes
+        );
     }
 }
 
