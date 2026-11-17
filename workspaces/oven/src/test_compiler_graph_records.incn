@@ -71,6 +71,10 @@ from compiler_body_publication import (
 from engine_capture import CapturedInput, InputRole
 from observation import file_metadata
 from pub::internal_models.lowering_events import LoweringEvent, LoweringRefusal, encode_lowering_event, encode_lowering_refusal
+from std.primitives.crumb.descriptions import Description, DescriptionMode
+from std.primitives.crumb.values import Value
+from pub::internal_models.crumb_rows import ModelField, model_description, required_value
+from pub::internal_models.graph_crumb_fields import KEY_TYPE, encode_graph_row
 from std.fs import Path
 from compiler_body_fallbacks import fallback_reasons
 from compiler_plan_values import LOWERING_PROFILE
@@ -125,6 +129,10 @@ pub def test_local_envelopes_persist_and_sweep_in_rank_order() -> Result[None, s
     persisted = persist_activation(before, DemandPage(keys=[first.ready.output]), first.prepared, first.ready)?
     demand_bytes = required(before=persisted.snapshot, key=persisted.demand_key)?
     assert demand_bytes[:4] == b"CRMB"
+    forged = model_description(b"demand\x00", "another.schema", [ModelField(identity=b"keys__", name="keys", storage=f"list<{KEY_TYPE}>")])
+    inline = Description(metadata=forged.metadata, mode=DescriptionMode.Inline)
+    impostor = encode_graph_row(b"demand\x00", inline, [required_value(b"keys__", Value.List([]))])?
+    assert decode_demand_page(impostor).is_err()
     assert decode_ready_work(demand_bytes).is_err()
     demand = decode_demand_page(demand_bytes)?
     prepared_bytes = required(before=persisted.snapshot, key=persisted.prepared_key)?
