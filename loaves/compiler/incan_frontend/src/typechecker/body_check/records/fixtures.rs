@@ -191,6 +191,34 @@ pub(crate) fn produce_local_record(
         .ok_or_else(|| NodeBindingError::InvalidField("projected local record is absent".into()))
 }
 
+/// Recover the project module of a top-level function from the selected record's stable owner. Both producers
+/// subsequently bind the complete identity and syntax root against the freshly collected owner before using it.
+fn projected_checker(name: &str, fields: &Fields) -> Result<TypeChecker, NodeBindingError> {
+    let identity = fields
+        .first()
+        .filter(|header| header.first().is_some_and(|tag| tag == "header"))
+        .and_then(|header| header.get(1))
+        .ok_or(NodeBindingError::MissingOwner)?;
+    let qualified = identity
+        .split_once('|')
+        .map_or(identity.as_str(), |(owner, _)| owner)
+        .strip_prefix("function:")
+        .ok_or(NodeBindingError::WrongOwner)?;
+    let (module, function) = qualified.rsplit_once("::").ok_or(NodeBindingError::WrongOwner)?;
+    if function != name || module.starts_with("pub::") || module.starts_with("rust::") {
+        return Err(NodeBindingError::WrongOwner);
+    }
+    let mut checker = TypeChecker::new();
+    if !module.is_empty() {
+        let path: Vec<_> = module.split("::").map(str::to_owned).collect();
+        if path.iter().any(String::is_empty) {
+            return Err(NodeBindingError::WrongOwner);
+        }
+        checker.set_current_module_path(Some(path));
+    }
+    Ok(checker)
+}
+
 /// Build the private checker used by the local-record producer so tests can inspect its publication boundary.
 fn projected_local_checker(
     source: &str,
@@ -206,7 +234,7 @@ fn projected_local_checker(
         .find(|item| matches!(&item.node, crate::ast::Declaration::Function(function) if function.name == name))
         .ok_or(NodeBindingError::MissingOwner)?;
     let owner = selected.span;
-    let mut checker = TypeChecker::new();
+    let mut checker = projected_checker(name, &declaration)?;
     checker.reset_program_check(&program, false);
     checker.collect_program_check_declarations(&program);
     checker.record_program_header_facts();
@@ -346,7 +374,7 @@ pub(crate) fn produce_final_record(
         .find(|item| matches!(&item.node, crate::ast::Declaration::Function(function) if function.name == name))
         .map(|item| item.span)
         .ok_or(NodeBindingError::MissingOwner)?;
-    let mut checker = TypeChecker::new();
+    let mut checker = projected_checker(name, &local)?;
     checker.reset_program_check(&program, false);
     checker.collect_program_check_declarations(&program);
     checker.record_program_header_facts();
