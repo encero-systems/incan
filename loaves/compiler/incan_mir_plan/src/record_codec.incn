@@ -164,7 +164,7 @@ def write_plan(plan: StoredPlan) -> Result[bytes, str]:
     for references in plan.references:
         mut members: list[Value] = []
         for reference in references:
-            kind = "model" if reference.kind == NominalKind.Model else "enum"
+            kind = reference.kind.value()
             members.append(Value.Tuple([Value.Text(kind), integer(reference.index), Value.Text(reference.name)]))
         groups.append(Value.List(members))
     return encode_graph_row(b"mirpln\x00", plan_description(), [
