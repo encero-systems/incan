@@ -3,7 +3,7 @@
 from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
 from pub::incan_platform.store import Snapshot
-from pub::internal_models import GraphBodyValue, ProducerRank, encode_graph_body_values
+from pub::internal_models import GraphBodyValue, ProducerRank, encode_graph_body_values, encode_graph_checking_pair
 from pub::internal_models.records import ReadReceipt, RecordKey
 from compiler_body_keys import IDENTITY_PROFILE
 from compiler_graph_records import (
@@ -106,13 +106,14 @@ pub def select_body_inventory_except(
     profile: str,
     origin: str,
     invalid: list[str],
+    mint_body_ir: bool = false,
 ) -> Result[list[SelectedBodyRecord], str]:
     """Select this project origin's complete owners except those reached by its current source changes."""
     slots = Some(OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, excluded=invalid))
     locals = reusable_family_records(selected, "local", profile, slots)?
     finals = reusable_family_records(selected, "final", profile, slots)?
     bodies = reusable_family_records(selected, "body-ir", profile, slots)?
-    return Ok(paired_records(locals, finals, bodies))
+    return Ok(paired_records(locals, finals, bodies, mint_body_ir))
 
 
 pub def select_body_inventory_of(
@@ -132,6 +133,7 @@ def paired_records(
     locals: list[ReusableRecord],
     finals: list[ReusableRecord],
     bodies: list[ReusableRecord],
+    mint_body_ir: bool = false,
 ) -> list[SelectedBodyRecord]:
     """Each local value whose final value and Body IR frame were selected too, as one owner's complete record."""
     mut selected_records: list[SelectedBodyRecord] = []
@@ -148,7 +150,11 @@ def paired_records(
                                 body_ir=body.value,
                             ),
                         )
-                    None => pass
+                    None =>
+                        if mint_body_ir:
+                            selected_records.append(SelectedBodyRecord(
+                                identity=local.key.identity, local=local.value, final=final.value, body_ir=b"",
+                            ))
             None => pass
     return selected_records
 
@@ -157,9 +163,15 @@ pub def encode_body_inventory(records: list[SelectedBodyRecord]) -> Result[list[
     """Encode each graph-admitted checker pair and owner frame as one bounded, identity-addressed page."""
     mut pages: list[SelectedBodyPage] = []
     for record in records:
-        value = encode_graph_body_values(
-            [GraphBodyValue(identity=record.identity, local=record.local, final=record.final, body_ir=record.body_ir)],
-        ).map_err((error) => f"selected body page refused: {error:?}")?
+        mut value = b""
+        if len(record.body_ir) == 0:
+            value = encode_graph_checking_pair(record.identity, record.local, record.final).map_err(
+                (error) => f"selected checking pair refused: {error:?}",
+            )?
+        else:
+            value = encode_graph_body_values(
+                [GraphBodyValue(identity=record.identity, local=record.local, final=record.final, body_ir=record.body_ir)],
+            ).map_err((error) => f"selected body page refused: {error:?}")?
         pages.append(SelectedBodyPage(key=hexlify(sha256.digest(record.identity.encode("utf-8"))), value=value))
     return Ok(pages)
 

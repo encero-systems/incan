@@ -55,6 +55,7 @@ from compiler_prepared_records import PreparedBodyRecordSource
 from compiler_record_envelopes import RankedActivation, RankedCheckingSweep, persist_activation
 from compiler_body_values import (
     encode_body_inventory,
+    select_body_inventory_except,
     invalid_body_owners,
     publish_body_values,
     select_body_inventory,
@@ -179,6 +180,23 @@ pub def test_local_envelopes_persist_and_sweep_in_rank_order() -> Result[None, s
     match certified_namespace_order("project", {"first": ["second"], "second": ["third"], "third": []}):
         Ok(_) => return Err("accepted an incomplete transitive import closure")
         Err(_) => pass
+    return Ok(None)
+
+
+pub def test_build_admits_a_settled_checker_pair_while_body_ir_is_pending() -> Result[None, str]:
+    """The build can reuse completed checking before Body IR exists, while an invalidated owner stays excluded."""
+    base = commit(put(begin(store_snapshot(memory_root()).map_err((error) => error.message())?), "seed", b"yes")).map_err((error) => error.message())?
+    mut local = family_key("local", "pending-body-ir")
+    local.identity_profile = "incan.stable-declaration/1"
+    mut final = family_key("final", "pending-body-ir")
+    final.identity_profile = local.identity_profile
+    compiled = publish_evaluation(base, "pending-local", ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=0), b"pending", fixture_receipt_many(base, local, [])?)?
+    settled = publish_evaluation(compiled.snapshot, "settled-final", ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=1), b"settled", fixture_receipt(compiled.snapshot, final, record_request(local))?)?
+    assert len(select_body_inventory_except(settled.snapshot, "profile", local.origin, [])?) == 0
+    pair = select_body_inventory_except(settled.snapshot, "profile", local.origin, [], mint_body_ir=true)?
+    assert len(pair) == 1 and pair[0].identity == local.identity
+    assert pair[0].local == b"pending" and pair[0].final == b"settled" and len(pair[0].body_ir) == 0
+    assert len(select_body_inventory_except(settled.snapshot, "profile", local.origin, [local.identity], mint_body_ir=true)?) == 0
     return Ok(None)
 
 

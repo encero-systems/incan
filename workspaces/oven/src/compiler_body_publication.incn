@@ -133,6 +133,7 @@ model AuthenticatedCompiledBodies:
     origin: str
     owner_evaluations: int
     owner_reuses: int
+    body_ir_evaluations: int
 
 
 model StagedCompiledBodySources:
@@ -159,10 +160,14 @@ def authenticate_compiled_bodies(
     outputs = read_compiled_body_outputs(output)?
     remove_dir_all(output.0).map_err((error) => f"cannot consume compiled body output {output.0}: {error}")?
     chosen = set([record.identity for record in retained])
+    with_frame = set([record.identity for record in retained if len(record.body_ir) > 0])
     restored_identities = set([owner for owner in restored if owner in chosen])
     mut owner_evaluations = len(outputs.fallbacks)
     mut owner_reuses = 0
+    mut body_ir_evaluations = len(outputs.fallbacks)
     for value in outputs.values:
+        if value.identity not in restored_identities or value.identity not in with_frame:
+            body_ir_evaluations += 1
         if value.identity in restored_identities:
             owner_reuses += 1
         else:
@@ -183,6 +188,7 @@ def authenticate_compiled_bodies(
             origin=origin,
             owner_evaluations=owner_evaluations,
             owner_reuses=owner_reuses,
+            body_ir_evaluations=body_ir_evaluations,
         ),
     )
 
@@ -281,7 +287,7 @@ pub def prepare_compiled_bodies(
             bodies=published,
             fallbacks=len(outputs.fallbacks),
             checking_evaluations=owner_evaluations,
-            body_ir_evaluations=owner_evaluations,
+            body_ir_evaluations=authenticated.body_ir_evaluations,
             body_reuses=owner_reuses,
         ),
     )
@@ -757,6 +763,8 @@ def lowering_witnesses(
         )
     for record in retained:
         if record.identity in [value.identity for value in witnesses]:
+            continue
+        if len(record.body_ir) == 0:
             continue
         decoded = decode_owner(record.body_ir).map_err((error) => str(error))?
         if decoded.identity != record.identity:
