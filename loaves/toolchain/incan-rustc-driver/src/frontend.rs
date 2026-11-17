@@ -516,6 +516,30 @@ pub fn dependency_report(arguments: &[String]) -> Result<(), Box<dyn std::error:
         None,
         None,
     )?;
+    // The dependency inspection's roots come from checked source and final planning, independently of the
+    // storage reads of the measured build. Preserve canonical identities (including overloads) for replay.
+    if tracing::enabled!(target: "incan::invocation", tracing::Level::TRACE) {
+        let mut roots = 0usize;
+        for identity in program
+            .dependencies
+            .requested
+            .difference(&program.dependencies.checked_local)
+        {
+            let SymbolOrigin::Package { library, .. } = &identity.origin else {
+                continue;
+            };
+            let runtime = match program.dependencies.origins.get(identity) {
+                Some(RootOrigin::Runtime { path, .. }) => path.as_str(),
+                _ => "",
+            };
+            tracing::trace!(
+                target: "incan::invocation", phase = "dependency_root", source = %source.display(), loaf = %library,
+                identity = %incan_semantics_core::encode_incan_symbol_identity(identity), runtime,
+            );
+            roots += 1;
+        }
+        tracing::trace!(target: "incan::invocation", phase = "dependency_roots_complete", source = %source.display(), roots);
+    }
     print!(
         "{}",
         crate::dependency_report::render(
