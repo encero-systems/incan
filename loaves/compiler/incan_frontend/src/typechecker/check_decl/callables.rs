@@ -394,6 +394,12 @@ impl TypeChecker {
             None
         } else {
             self.check_work.function_bodies += 1;
+            tracing::debug!(
+                target: "incan::invocation",
+                module = %self.current_module_path.as_deref().unwrap_or_default().join("::"),
+                owner = %func.name,
+                "checked owner statements"
+            );
             self.check_callable_body(
                 &func.body,
                 func.is_async(),

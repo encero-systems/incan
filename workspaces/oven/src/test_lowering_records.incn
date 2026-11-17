@@ -16,6 +16,59 @@ from store_path_conversion import snapshot as store_snapshot
 from pub::incan_platform.store import index_levels as store_index_levels, keys_with_prefix
 
 
+pub def test_importer_rename_checks_only_its_direct_signature_reader() -> Result[None, str]:
+    """An installed build checks the renamed function and its caller once each, stopping before load_summary."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    project = root.joinpath("importer")
+    project.mkdir(true, true).map_err((error) => error.message())?
+    fixture = Path("examples/pro/codegraph_importer")
+    fixture.joinpath("src").copy(project.joinpath("src"), false, false).map_err((error) => error.message())?
+    fixture.joinpath("loaf.toml").copy(project.joinpath("loaf.toml"), false, false).map_err((error) => error.message())?
+    trace = root.joinpath("trace")
+    trace.mkdir(true, true).map_err((error) => error.message())?
+    store = root.joinpath("store")
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    cold = report_fixture_build(binary, project, store, Some(trace))?
+    cold_checks = importer_statement_checks(trace)?
+    file = project.joinpath("src/importer.incn")
+    original = file.read_text("utf-8", "strict").map_err((error) => error.message())?
+    edited = original.replace("supported_schema(version: int)", "supported_schema(schema_version: int)").replace(
+        "return version >= 1 and version <= 9", "return schema_version >= 1 and schema_version <= 9",
+    )
+    assert edited != original
+    write(file, edited)?
+    warm = report_fixture_build(binary, project, store, Some(trace))?
+    stop_example_engine(binary, store)?
+    all_checks = importer_statement_checks(trace)?
+    diagnostic = warm.to_json().map_err((error) => error.message())?
+    assert proof_count(cold, "all_declarations")? == 6
+    assert proof_count(cold, "reusable_declarations")? == 6
+    assert len(cold_checks) == 6
+    assert sorted(all_checks) == sorted(cold_checks + ["importer::supported_schema", "importer::import_jsonl"]), diagnostic
+    assert proof_count(warm, "body_evaluations")? == 2, diagnostic
+    assert proof_count(warm, "plan_function_evaluations")? == 1, diagnostic
+    return Ok(None)
+
+
+def importer_statement_checks(trace: Path) -> Result[list[str], str]:
+    """Read actual entries into the statement checker for the two project modules."""
+    mut checked: list[str] = []
+    for file in trace.iterdir().map_err((error) => error.message())?:
+        if not file.name().startswith("engine-compiler-"):
+            continue
+        records = file.read_text("utf-8", "strict").map_err((error) => error.message())?
+        for line in records.split("\n"):
+            if "checked owner statements" not in line:
+                continue
+            fields = parse(line).and_then((record) => record.require("fields")).map_err((error) => error.message())?
+            module = fields.require("module").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+            if module in ["main", "importer"]:
+                owner = fields.require("owner").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+                checked.append(module + "::" + owner)
+    return Ok(checked)
+
+
 pub def test_lowering_record_worked_example() -> Result[None, str]:
     """
     Body edits and moves reuse callers; comment and documentation edits check nothing; a callee signature edit
@@ -792,20 +845,20 @@ def command_proof(output: bytes) -> Result[JsonValue, str]:
     return parse(lines[0]).map_err((error) => error.message())
 
 
-def report_fixture_build(binary: str, project: Path, store: Path) -> Result[JsonValue, str]:
+def report_fixture_build(binary: str, project: Path, store: Path, trace: Option[Path] = None) -> Result[JsonValue, str]:
     """Build one fixture through the records engine and decode its requested report."""
-    outcome = Command
-        .new(binary)
-        .arg("build")
+    mut command = Command.new(binary)
+    command.arg("build")
         .arg(project.0)
         .args(["--profile", "release", "--engine-report"])
         .env("INCAN_ENGINE", "records")
         .env("INCAN_BAKERY", store.0)
-        .output()
-        .map_err((error) => str(error))?
+    if let Some(directory) = trace:
+        command.env("INCAN_ENGINE_TRACE", directory.0)
+    outcome = command.output().map_err((error) => str(error))?
     output = from_utf8(outcome.stdout).map_err((error) => str(error))?
     errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
-    if not outcome.status.success() or errors != "":
+    if not outcome.status.success() or (errors != "" and (trace is None or "warning[INCAN-T0125]" not in errors)):
         return Err(f"checker report fixture: status={outcome.status.code()} stdout={output} stderr={errors}")
     return command_proof(outcome.stdout)
 
