@@ -79,6 +79,7 @@ from std.primitives.crumb.values import Value
 from pub::internal_models.crumb_rows import ModelField, model_description, required_value
 from pub::internal_models.graph_crumb_fields import KEY_TYPE, encode_graph_row
 from std.fs import Path
+from std.io import BytesIO
 from compiler_body_fallbacks import fallback_reasons
 from compiler_plan_values import LOWERING_PROFILE
 from compiler_source_projection import project_source, publish_source_projection, signature_record
@@ -173,7 +174,10 @@ pub def test_local_envelopes_persist_and_sweep_in_rank_order() -> Result[None, s
     assert roundtrip.rank == 1
     assert roundtrip.evidence == order["left"].evidence
     assert decode_namespace_order(order["left"].certificate, "another-project").is_err()
-    assert decode_namespace_order(order["left"].certificate + b"x", "project").is_err()
+    tampered = BytesIO(order["left"].certificate)
+    tampered.seek(0, 2).map_err((error) => error.message())?
+    tampered.write_bytes(b"x").map_err((error) => error.message())?
+    assert decode_namespace_order(tampered.getvalue(), "project").is_err()
     assert order["consumer"].rank == 3
     assert order["entry"].rank == 4
     assert "incomplete" not in order
