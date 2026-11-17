@@ -159,3 +159,4 @@ pub from compiled_body_rows import (
 pub from plan_function_records import PlanFunctionRecord, encode_plan_function_record, decode_plan_function_record
 pub from read_receipts import RECEIPT_SCHEMA, decode_read_receipt, encode_read_receipt
 pub from lowering_events import INTERFACE_REPORT, decode_native_interface, decode_lowering_event
+pub from lowering_events import ADMITTED_DEFINITIONS, decode_admitted_definitions

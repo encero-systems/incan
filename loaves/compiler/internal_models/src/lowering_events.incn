@@ -174,3 +174,40 @@ pub def decode_native_interface(encoded: bytes) -> Result[NativeInterface, str]:
     """Read the complete producer report from its versioned Crumb row."""
     fields = decode_graph_row(encoded, INTERFACE, interface_description(), 2)?
     return Ok(NativeInterface(entry=text(fields[0].value)?, plan=text(fields[1].value)?))
+
+
+pub const ADMITTED_DEFINITIONS: str = "admitted-definitions.crumb"
+
+
+pub model AdmittedDefinition:
+    """A restored function's authenticated native definition inputs."""
+    pub function: str
+    pub identity: str
+    pub key: str
+    pub digest: str
+
+
+def definitions_description() -> Description:
+    """Each entry includes the same fingerprint inputs as a function that reported a fresh event."""
+    return model_description(b"admdef\x00", "incan.admitted-definitions/1", [
+        ModelField(identity=b"define", name="definitions", storage="list<tuple<string,string,string,string>>"),
+    ])
+
+
+pub def encode_admitted_definitions(definitions: list[AdmittedDefinition]) -> Result[bytes, str]:
+    """Persist the named, restored definitions without duplicating their full products."""
+    mut values: list[Value] = []
+    for definition in definitions:
+        values.append(Value.Tuple([Value.Text(definition.function), Value.Text(definition.identity),
+            Value.Text(definition.key), Value.Text(definition.digest)]))
+    return encode_graph_row(b"admdef\x00", definitions_description(), [required_value(b"define", Value.List(values))])
+
+
+pub def decode_admitted_definitions(encoded: bytes) -> Result[list[AdmittedDefinition], str]:
+    """Read the exact function identity, key and digest used to populate the native query inputs."""
+    fields = decode_graph_row(encoded, b"admdef\x00", definitions_description(), 1)?
+    mut definitions: list[AdmittedDefinition] = []
+    for value in items(fields[0].value)?:
+        parts = tuple_items(value, 4)?
+        definitions.append(AdmittedDefinition(function=text(parts[0])?, identity=text(parts[1])?, key=text(parts[2])?, digest=text(parts[3])?))
+    return Ok(definitions)
