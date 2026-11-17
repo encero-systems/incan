@@ -7,11 +7,12 @@ from std.primitives.crumb.registrations import KindRegistry
 from std.primitives.crumb.column_writer import write_columns
 from std.primitives.crumb.typed_columns import TypedColumnWriter
 from std.primitives.crumb.row_writer import write_rows
-from std.primitives.crumb.typed_rows import TypedRowWriter
+from std.primitives.crumb.typed_rows import TypedRowReader, TypedRowWriter
 from std.primitives.crumb.types import AbsentPolicy
 from std.primitives.crumb.values import IntegerValue, Metadata, MetadataEntry, Value, ValueField
 from std.primitives.reflection import FieldInfo, Reconstruct, ShapeInfo, Source, VariantInfo, Walk, Walker
 from std.primitives.text import copy_frozen_bytes
+from encoding_test_support import backing
 
 
 const NO_RENAMES: FrozenList[FrozenStr] = []
@@ -158,4 +159,71 @@ def test_typed_columns_are_byte_identical_and_reconstruct_without_value_nodes() 
     typed.append(root).map_err((e) => e.message())?
     actual = typed.finish().map_err((e) => e.message())?
     assert actual == expected
+    return Ok(None)
+
+
+model NestedLayout:
+    """The compiler supplies the parent field's stable identity."""
+    pub child: TypedAmount
+
+
+@derive(Eq)
+model NestedAmount with Reconstruct:
+    """A root whose only stored field is another nominal, exposing the same typed callbacks a native function needs."""
+    child: TypedAmount
+
+    @staticmethod
+    def __shape__() -> ShapeInfo:
+        return ShapeInfo(name="NestedAmount", identity=b"parent\x00", renamed_from=NO_RENAMES,
+            renamed_from_lifecycle=None, spelling="record@706172656e7400", fields=NestedLayout.__fields__(), variants=NO_VARIANTS)
+
+    def __walk__[E, W with Walker[E]](self, mut walker: W) -> Result[None, E]:
+        walker.begin_model(Self.__shape__())?
+        walker.field(NestedLayout.__fields__()[0], self.child)?
+        return walker.end_model()
+
+    @staticmethod
+    def __reconstruct__[E, S with Source[E]](mut source: S) -> Result[Self, E]:
+        info = NestedLayout.__fields__()[0]
+        source.begin_model(Self.__shape__())?
+        child = match source.field[TypedAmount](info)?:
+            Some(value) => value
+            None => return Err(source.missing(info))
+        source.end_model()?
+        return Ok(NestedAmount(child=child))
+
+
+def test_nested_typed_model_uses_its_dictionary_and_reconstructs() -> Result[None, str]:
+    """The typed root and child must match an independent Value encoding and preserve the child's scalar on read."""
+    info = NestedLayout.__fields__()[0]
+    child = Metadata.Map([
+        MetadataEntry(key="id", value=Metadata.Binary(copy_frozen_bytes(info.identity))),
+        MetadataEntry(key="name", value=Metadata.Text("child")),
+        MetadataEntry(key="type", value=Metadata.Text("record@7265636f726400")),
+        MetadataEntry(key="canonical", value=Metadata.Boolean(true)),
+        MetadataEntry(key="absent", value=Metadata.Text("required")),
+        MetadataEntry(key="properties", value=Metadata.Map([])),
+    ])
+    parent = Description(mode=DescriptionMode.Inline, metadata=Metadata.Map([
+        MetadataEntry(key="kind", value=Metadata.Text("Record")),
+        MetadataEntry(key="nominal", value=Metadata.Binary(b"parent\x00")),
+        MetadataEntry(key="path", value=Metadata.Text("fixture.NestedAmount")),
+        MetadataEntry(key="fields", value=Metadata.List([child])),
+        MetadataEntry(key="properties", value=Metadata.Map([])),
+    ]))
+    descriptions = [parent, description()]
+    mut budget = Budget.create(bytes=1048576, elements=1048576, depth=64).map_err((error) => error.message())?
+    registry = KindRegistry.create([], budget).map_err((error) => error.message())?
+    field = ValueField(identity=copy_frozen_bytes(info.identity), canonical=true, absent=AbsentPolicy.Required, value=value_record(7i128).value)
+    expected = write_rows(descriptions, [RowRecord(key=b"parent\x00", value=Value.Record([field]))], registry, false, budget).map_err((error) => error.message())?
+    mut writer = TypedRowWriter.create(descriptions, registry, false, budget).map_err((error) => error.message())?
+    mut root = writer.root(NestedAmount.__shape__()).map_err((error) => error.message())?
+    input = NestedAmount(child=TypedAmount(amount=TypedI8(value=7i128)))
+    input.__walk__(root).map_err((error) => error.message())?
+    writer.append(root).map_err((error) => error.message())?
+    encoded = writer.finish().map_err((error) => error.message())?
+    assert encoded == expected
+    rows = TypedRowReader.create(backing(encoded)?, descriptions, registry, false, budget).map_err((error) => error.message())?
+    mut source = rows.source(0, NestedAmount.__shape__()).map_err((error) => error.message())?
+    assert NestedAmount.__reconstruct__(source).map_err((error) => error.message())? == input
     return Ok(None)
