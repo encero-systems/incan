@@ -80,7 +80,9 @@ pub class TypedColumnWriter:
         """Return a Walker bound to one exact caller-supplied root description."""
         mut budget = self.budget.snapshot()
         description = slot(self.dictionary, copy_frozen_bytes(shape.identity), budget)?
-        return Ok(TypedCellWriter.create_root(self.dictionary.entries[description], budget.snapshot()))
+        if self.dictionary.entries[description].kind != NominalKind.Record:
+            return Err(CrumbError.invalid_input("typed columns require a record root"))
+        return Ok(TypedCellWriter.create_root(self.dictionary.entries[description], budget.snapshot(), Some(self.dictionary)))
 
     pub def append(mut self, writer: TypedCellWriter) -> Result[None, CrumbError]:
         """Retain one completed root's typed cells without constructing a schema-less record."""
