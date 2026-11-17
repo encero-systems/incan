@@ -353,9 +353,13 @@ fn lower_component(
                 )
                 .map_err(|error| format!("Body IR free-function input baseline: {error}"))?;
             }
-            let _invocation =
-                tracing::trace_span!(target: "incan::invocation", "incan_driver::build_body_ir_module", module = index)
-                    .entered();
+            let _invocation = tracing::trace_span!(
+                target: "incan::invocation",
+                "incan_driver::build_body_ir_module",
+                module = index,
+                file = %module.file_path.display(),
+            )
+            .entered();
             let mut lowered = incan_frontend::body_ir::build_body_ir_module_unsettled(
                 &module.ast,
                 &module.path_segments,

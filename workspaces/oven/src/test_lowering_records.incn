@@ -233,6 +233,7 @@ pub def test_one_module_edit_lowers_only_that_module() -> Result[None, str]:
     for name in ["lone_alpha", "lone_beta", "lone_gamma", "main"]:
         assert cold.get("lower:" + name, 0) > 0, f"the cold build traced no lowered body of {name}"
         assert cold.get("check:" + name + ".incn", 0) > 0, f"the cold build traced no checker entry for {name}"
+        assert cold.get("body-ir:" + name + ".incn", 0) > 0, f"the cold build traced no Body IR entry for {name}"
     assert cold.get("body-ir", 0) >= 4, "the cold build did not observe Body IR for all four modules"
     write(root.joinpath("lone_beta.incn"), lone_module("lone_beta", "5"))?
     edited = traced_example_run(binary, source, store, observations, "16")?
@@ -326,6 +327,11 @@ def observed_module_work(trace: Path) -> Result[Dict[str, int], str]:
                 key = "check:" + Path(path).name()
                 counts[key] = counts.get(key, 0) + 1
             elif "\"kind\":\"begin\"" in line and "\"function\":\"incan_driver::build_body_ir_module\"" in line:
+                document = parse(line).map_err((error) => error.message())?
+                fields = document.require("fields").map_err((error) => error.message())?
+                path = fields.require("file").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
+                key = "body-ir:" + Path(path).name()
+                counts[key] = counts.get(key, 0) + 1
                 counts["body-ir"] = counts.get("body-ir", 0) + 1
             else:
                 parts = line.split("\"key\":\"lowering: body ")
@@ -338,7 +344,7 @@ def observed_module_work(trace: Path) -> Result[Dict[str, int], str]:
 def verify_module_work(previous: Dict[str, int], current: Dict[str, int], edited: str) -> Result[None, str]:
     """Each warm edit checks its own module, builds one module's Body IR, and lowers only that module's bodies."""
     changed = sorted([key for key in current.keys() if current[key] > previous.get(key, 0)])
-    expected = sorted(["body-ir", "check:" + edited + ".incn", "lower:" + edited])
+    expected = sorted(["body-ir", "body-ir:" + edited + ".incn", "check:" + edited + ".incn", "lower:" + edited])
     if changed != expected:
         return Err(f"edit of {edited} entered {changed}, expected {expected}")
     if current["body-ir"] - previous.get("body-ir", 0) != 1:
