@@ -218,7 +218,7 @@ def work(trace: Path) -> Result[Work, str]:
                 id = text(row, "id")?
                 if id in starts:
                     return Err(f"repeated compiler span {id} in {file.0}")
-                starts[id] = (text(row, "function")?, integer(row, "time_ns")?)
+                starts[id] = (text(row, "function")?, trace_nanoseconds(row)?)
             elif len(starts) > len(completed) and "\"kind\":\"end\"" in line:
                 row = parse(line).map_err((error) => error.message())?
                 id = text(row, "id")?
@@ -226,7 +226,7 @@ def work(trace: Path) -> Result[Work, str]:
                     if id in completed:
                         return Err(f"repeated compiler completion {id} in {file.0}")
                     name, start = starts[id]
-                    elapsed = integer(row, "time_ns")? - start
+                    elapsed = trace_nanoseconds(row)? - start
                     if elapsed <= 0:
                         return Err(f"invalid {name} duration in {file.0}")
                     if name == "incan_driver::typecheck_modules":
@@ -289,6 +289,6 @@ def text(row: JsonValue, key: str) -> Result[str, str]:
     return row.require(key).map_err((error) => error.message())?.expect_str().map_err((error) => error.message())
 
 
-def integer(row: JsonValue, key: str) -> Result[int, str]:
-    """Require a trace nanosecond field."""
-    return row.require(key).map_err((error) => error.message())?.expect_int().map_err((error) => error.message())
+def trace_nanoseconds(row: JsonValue) -> Result[int, str]:
+    """Require this trace boundary’s nanosecond timestamp."""
+    return row.require("time_ns").map_err((error) => error.message())?.expect_int().map_err((error) => error.message())
