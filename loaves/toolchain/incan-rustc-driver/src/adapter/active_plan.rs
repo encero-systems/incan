@@ -1,15 +1,12 @@
 //! One compilation's record-backed native definitions and stable rustc definition index.
 
 use super::*;
-use serde::Deserialize;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
 const NATIVE_CGU_PARTITIONS: usize = 16;
-/// The file in a plan report that lists the functions restored from admitted module plan records.
-const ADMITTED_DEFINITIONS: &str = "admitted-definitions.json";
 
 /// The exact record input attached to one compiler definition.
 #[derive(Clone)]
@@ -34,14 +31,6 @@ impl DefinitionInput {
     pub(crate) fn partition(&self) -> usize {
         stable_partition(&self.name)
     }
-}
-
-#[derive(Deserialize)]
-struct AdmittedDefinition {
-    function: String,
-    identity: String,
-    key: String,
-    digest: String,
 }
 
 /// A record-backed plan reader. Missing record input keeps ordinary compilation available but makes the unit
@@ -177,11 +166,11 @@ impl PlanReader {
         plan: &Plan,
         inputs: &mut HashMap<String, DefinitionInput>,
     ) -> Result<(), String> {
-        let path = report.join(ADMITTED_DEFINITIONS);
+        let path = report.join(internal_models::ADMITTED_DEFINITIONS);
         if !path.is_file() {
             return Ok(());
         }
-        let definitions: Vec<AdmittedDefinition> = serde_json::from_slice(
+        let definitions = internal_models::decode_admitted_definitions(
             &std::fs::read(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))?,
         )
         .map_err(|error| format!("cannot decode {}: {error}", path.display()))?;
