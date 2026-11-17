@@ -21,7 +21,9 @@ from engine_capture import (
 )
 from engine_epoch_records import encode_epoch, encode_head, read_epoch, read_head
 from engine_epochs import capture_submit, prepare_submit, after_projection
-from pub::incan_platform.store import commit
+from pub::incan_platform.store import FrameRead, begin, commit, get, put
+from store_path_conversion import snapshot
+from graph_read_demands import GraphDemand
 from engine_messages import Submit
 from engine_programs import ProgramOutcome
 from engine_proofs import retain as retain_report, report as read_report
@@ -216,8 +218,31 @@ pub def test_frozen_inputs_get_zero_stats() -> Result[None, str]:
     reports = scratch.path().joinpath("reports")
     make_directory(reports)?
     run = "00000000000000000000000000000000"
-    _ = retain_report(reports, run, counters, ProgramOutcome(code=0))?
+    frame = FrameRead(key="read-key", revision="rev", reads=2, frame_bytes=57, value_bytes=21)
+    demand = GraphDemand(role="signature", store="store", generation=7, manifest="manifest", view="view", key="demand-key")
+    outcome = ProgramOutcome(code=0, frame_reads=[frame], graph_demands=[demand], artifact_refusals={"changed-signature": 3})
+    _ = retain_report(reports, run, counters, outcome)?
+    selected = snapshot(reports).map_err((error) => error.message())?
+    stored = get(selected, f"incan.engine.proofs\t{run}").map_err((error) => error.message())?
+    match stored:
+        Some(encoded) =>
+            assert encoded[:4] == b"CRMB"
+            other_run = "11111111111111111111111111111111"
+            _ = commit(put(begin(selected), f"incan.engine.proofs\t{other_run}", encoded)).map_err((error) => error.message())?
+            assert read_report(reports, other_run).is_err()
+        None => return Err("the requested engine proof was not retained")
+    old_run = "22222222222222222222222222222222"
+    legacy = "{\"schema\":\"incan.engine.proofs/3\"}"
+    prior = snapshot(reports).map_err((error) => error.message())?
+    _ = commit(put(begin(prior), f"incan.engine.proofs\t{old_run}", legacy.encode("utf-8"))).map_err((error) => error.message())?
+    assert read_report(reports, old_run)? == legacy
     proof = parse(read_report(reports, run)?).map_err((error) => error.message())?
+    expected_frames = parse("""[{"key":"read-key","revision":"rev","reads":2,"frame_bytes":57,"value_bytes":21}]""").map_err((error) => error.message())?
+    expected_demands = parse("""[{"role":"signature","store":"store","generation":7,"manifest":"manifest","view":"view","key":"demand-key"}]""").map_err((error) => error.message())?
+    expected_refusals = parse("""{"changed-signature":3}""").map_err((error) => error.message())?
+    assert proof.require("store_reads").map_err((error) => error.message())? == expected_frames
+    assert proof.require("graph_demands").map_err((error) => error.message())? == expected_demands
+    assert proof.require("artifact_refusals").map_err((error) => error.message())? == expected_refusals
     assert proof.require("frozen_stats").map_err((error) => error.message())?.expect_int().map_err(
         (error) => error.message(),
     )? == 1

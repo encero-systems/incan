@@ -1,0 +1,63 @@
+"""Produce the public engine-report representation from a retained compiler proof."""
+
+from std.json import JsonValue
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from pub::internal_models.crumb_rows import ModelField, model_description
+from pub::internal_models.graph_crumb_fields import decode_graph_row, items, number, text, tuple_items
+from files import json_text
+
+pub const PROOF: bytes = b"engprf\x00"
+
+
+pub def proof_description() -> Description:
+    """Counter names may extend across releases. Physical reads and logical demands have separate field contracts."""
+    return model_description(PROOF, "incan.engine.proof-report/1", [
+        ModelField(identity=b"checks", name="checker_reuse", storage="string"),
+        ModelField(identity=b"counts", name="counters", storage="list<tuple<string,i64>>"),
+        ModelField(identity=b"demand", name="graph_demands", storage="list<tuple<string,string,i64,string,string,string>>"),
+        ModelField(identity=b"frames", name="store_reads", storage="list<tuple<string,string,i64,i64,i64>>"),
+        ModelField(identity=b"refuse", name="artifact_refusals", storage="list<tuple<string,i64>>"),
+        ModelField(identity=b"run_id", name="run", storage="string"),
+    ])
+
+
+def read_counts(value: Value) -> Result[Dict[str, JsonValue], str]:
+    mut result: Dict[str, JsonValue] = {}
+    for entry in items(value)?:
+        pair = tuple_items(entry, 2)?
+        name = text(pair[0])?
+        if name in result:
+            return Err(f"duplicate engine proof counter {name}")
+        result[name] = JsonValue.int(number(pair[1])?)
+    return Ok(result)
+
+
+pub def report_json(encoded: bytes, run: str) -> Result[str, str]:
+    """Render the public report only after the expected schema and run are admitted."""
+    fields = decode_graph_row(encoded, PROOF, proof_description(), 6)?
+    if text(fields[5].value)? != run:
+        return Err("proof record names another run")
+    mut document = read_counts(fields[1].value)?
+    for reserved in ["schema", "run", "granularity", "checker_reuse", "artifact_refusals", "store_reads", "graph_demands"]:
+        if reserved in document:
+            return Err(f"invalid engine proof counter {reserved}")
+    document["schema"] = JsonValue.string("incan.engine.proofs/3")
+    document["run"] = JsonValue.string(run)
+    document["granularity"] = JsonValue.string("unit-record")
+    document["checker_reuse"] = JsonValue.string(text(fields[0].value)?)
+    document["artifact_refusals"] = JsonValue.object(read_counts(fields[4].value)?)
+    mut frames: list[JsonValue] = []
+    for value in items(fields[3].value)?:
+        frame = tuple_items(value, 5)?
+        frames.append(JsonValue.object({"key": JsonValue.string(text(frame[0])?), "revision": JsonValue.string(text(frame[1])?),
+            "reads": JsonValue.int(number(frame[2])?), "frame_bytes": JsonValue.int(number(frame[3])?), "value_bytes": JsonValue.int(number(frame[4])?)}))
+    document["store_reads"] = JsonValue.array(frames)
+    mut demands: list[JsonValue] = []
+    for value in items(fields[2].value)?:
+        demand = tuple_items(value, 6)?
+        demands.append(JsonValue.object({"role": JsonValue.string(text(demand[0])?), "store": JsonValue.string(text(demand[1])?),
+            "generation": JsonValue.int(number(demand[2])?), "manifest": JsonValue.string(text(demand[3])?),
+            "view": JsonValue.string(text(demand[4])?), "key": JsonValue.string(text(demand[5])?)}))
+    document["graph_demands"] = JsonValue.array(demands)
+    return json_text(JsonValue.object(document))
