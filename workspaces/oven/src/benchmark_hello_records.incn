@@ -19,6 +19,8 @@ from toolchain import located
 model Selection:
     """A semantic facet selector can name several independently addressed overloads."""
 
+    directory_digest: str
+    directory_bytes: int
     lengths: Dict[str, int] = {}
     facets: Dict[str, list[str]] = {}
 
@@ -26,6 +28,7 @@ model Selection:
 model Census:
     """Keep all measured reads and all failures, including repeats of one key."""
 
+    overhead_bytes: int = 0
     counts: Dict[str, int] = {}
     sizes: Dict[str, int] = {}
     problems: list[str] = []
@@ -232,7 +235,9 @@ def sealed_selection(toolchain: Path, manifest: JsonValue) -> Result[Selection, 
     directory = toolchain.joinpath(required_text(pin, "root")?)
     path = directory.joinpath("manifest.json")
     encoded = path.read_bytes().map_err((error) => error.message())?
-    if hexlify(sha256.digest(encoded)) != required_text(pin, "digest")?:
+    directory_digest = required_text(pin, "digest")?
+    directory_bytes = len(encoded)
+    if hexlify(sha256.digest(encoded)) != directory_digest:
         return Err("installed directory differs from the measured toolchain pin")
     table = array_value(parse_json(str(RustString.from_utf8(encoded).map_err((error) => str(error))?))?)?
     if len(table) != 10 or string_value(table[0])? != "incan.sealed-set/2":
@@ -249,7 +254,7 @@ def sealed_selection(toolchain: Path, manifest: JsonValue) -> Result[Selection, 
         if digest in sizes or len(digest) != 64 or size < 0:
             return Err("duplicated or malformed object in the authenticated directory")
         sizes[digest] = size
-    mut selected = Selection()
+    mut selected = Selection(directory_digest=directory_digest, directory_bytes=directory_bytes)
     for item in array_value(table[5])?:
         entry = array_value(item)?
         key = string_value(entry[0])?
@@ -267,10 +272,18 @@ def observed(trace: Path, selected: Selection, surfaces: Dict[str, Surface], mut
     """Read physical events from the timed build only, including whole-surface authentication and repeat opens."""
     mut paths: Dict[str, str] = {}
     mut reads = 0
+    mut directory_reads = 0
     mut sealed: set[str] = set()
     for row in events(trace)?:
         phase = required_text(row, "phase")?
-        if phase == "body_surface_open":
+        if phase == "record_directory_read":
+            size = number(row, "bytes")?
+            if required_text(row, "digest")? != selected.directory_digest or size != selected.directory_bytes:
+                census.problems.append("opened a compiler directory that differs from the independently pinned manifest")
+            directory_reads += 1
+            census.overhead_bytes += size
+            census.rows.append(f"sealed-directory\t1\t{size}\t{selected.directory_digest}")
+        elif phase == "body_surface_open":
             path = required_text(row, "path")?
             digest = required_text(row, "digest")?
             package = required_text(row, "loaf")?
@@ -284,11 +297,12 @@ def observed(trace: Path, selected: Selection, surfaces: Dict[str, Surface], mut
                     if proof.as_str().unwrap_or("") == "sealed-range":
                         sealed.add(path)
                 None => pass
+            census.overhead_bytes += verified + header
             if verified > 0 or header > 0:
                 census.problems.append(f"whole-sidecar verification read {verified} bytes and header read {header} bytes: {path}")
             census.rows.append(f"verification-scan\t1\t{verified}\t{path}")
             census.rows.append(f"surface-header\t1\t{header}\t{path}")
-        elif phase in ["body_fragment_read", "record_read"]:
+        elif phase in ["body_fragment_read", "record_read", "record_directory_read"]:
             mut key = ""
             if phase == "record_read":
                 key = required_text(row, "record")?
@@ -306,6 +320,8 @@ def observed(trace: Path, selected: Selection, surfaces: Dict[str, Surface], mut
             census.counts[key] = census.counts.get(key, 0) + 1
             census.sizes[key] = census.sizes.get(key, 0) + size
             reads += 1
+    if directory_reads == 0:
+        census.problems.append("missing physical read witness for the installed record directory")
     if reads == 0:
         census.problems.append("no measured compiler reads")
     return Ok(None)
@@ -341,6 +357,7 @@ def reconcile(expected: Dict[str, int], mut census: Census) -> None:
     census.rows.append(f"known-required-total\t{len(expected)}\t{total_required}\tsealed-records-and-body-fragments")
     census.rows.append(f"observed-total\t{read_count}\t{total_observed}\tsealed-records-and-body-fragments")
     census.rows.append(f"observed-minus-known-required\t{read_count - len(expected)}\t{total_observed - total_required}\tsealed-records-and-body-fragments")
+    census.rows.append(f"observed-physical-bytes\tunknown\t{total_observed + census.overhead_bytes}\tsealed-directory-record-values-and-executable-reads")
     census.rows.append(f"repeated-reads\t{duplicates}\tunknown\tsealed-records-and-body-fragments")
     if len(expected) == 0:
         census.problems.append("empty required record inventory")
@@ -408,7 +425,7 @@ def events(trace: Path) -> Result[list[JsonValue], str]:
         for line in read(path)?.split("\n"):
             if "\"kind\":\"event\"" not in line:
                 continue
-            for phase in ["dependency_root", "dependency_roots_complete", "dependency_fact", "dependency_family", "body_surface_open", "body_fragment_read", "record_read"]:
+            for phase in ["dependency_root", "dependency_roots_complete", "dependency_fact", "dependency_family", "body_surface_open", "body_fragment_read", "record_read", "record_directory_read"]:
                 if f"\"phase\":\"{phase}\"" in line:
                     result.append(parse_json(line)?.require("fields").map_err((error) => error.message())?)
                     break
