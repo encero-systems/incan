@@ -35,6 +35,7 @@ from release_support import (
     reference_cache_root,
     reference_census_jobs,
     reference_worker_arguments,
+    release_process_census,
     release_process_tree,
     reclaim_paths,
     record_tree_sample,
@@ -131,6 +132,14 @@ def test_release_process_tree_follows_complete_parent_chains() -> Result[None, s
         ProcessResource(pid=20, parent=10, footprint=0, lifetime_peak=0, resident=0, name="child"),
     ]
     assert release_process_tree(rows, 10) == [10, 20, 30]
+    return Ok(None)
+
+
+def test_failed_process_census_keeps_root_and_group_custody() -> Result[None, str]:
+    """A failed descendant probe still returns the root identity for mandatory process and group termination."""
+    termination = release_process_census(Err("probe refused"), 41)
+    assert termination.members == [41]
+    assert termination.census_error == Some("probe refused")
     return Ok(None)
 
 

@@ -189,9 +189,7 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
     # 3. The candidate is built here, or is the bundle the workflow signed; a refusal stops the overlapping census.
     candidate = match produce_candidate(run):
         Ok(built) => built
-        Err(message) =>
-            _ = cancel_background_step(reference)
-            return Err(message)
+        Err(message) => refuse_candidate_after_cancellation(reference, message)?
 
     if not run.options.prove_fixed_point and not signed:
         reclaim(run, "build-lane", [run.paths.lane])?
@@ -227,6 +225,13 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
         reclaim(run, "qualified-build-inputs", [run.paths.home, run.paths.source])?
     complete_receipt(run, counts)?
     return Ok(run.paths.output.joinpath("receipt.json"))
+
+
+def refuse_candidate_after_cancellation(reference: BackgroundStep, message: str) -> Result[Candidate, str]:
+    """Preserve both the candidate refusal and any failure to stop its overlapping reference census."""
+    match cancel_background_step(reference):
+        Ok(_) => return Err(message)
+        Err(cancel_message) => return Err(f"{message}; release cancellation failed: {cancel_message}")
 
 
 def produce_candidate(run: ReleaseRun) -> Result[Candidate, str]:

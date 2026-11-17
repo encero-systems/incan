@@ -66,6 +66,13 @@ pub model ReleaseOptions:
     pub signed_bundle: str = ""
 
 
+pub model ReleaseTermination:
+    """The captured release process identities plus any degraded process-census evidence."""
+
+    pub members: list[int]
+    pub census_error: Option[str]
+
+
 pub model VerificationOptions:
     """Installed-verification evidence directory, worker count, and per-command timeout."""
 
@@ -724,9 +731,12 @@ pub def run_step(step: Step) -> Result[int, str]:
                 return Ok(status_code(status))
             None =>
                 if started.elapsed().as_secs() >= step.timeout_seconds:
-                    members = terminate_release_process_tree(int(child.id()))?
-                    _ = child.wait()
-                    require_release_processes_stopped(members)?
+                    termination = terminate_release_process_tree(int(child.id()))
+                    reap_error = match child.wait():
+                        Ok(_) => None
+                        Err(error) => Some(f"cannot reap {step.name}: {error}")
+
+                    require_release_termination(termination, reap_error)?
                     finish_step_trace(step.trace, span)?
                     return Err(f"{step.name} timed out after {step.timeout_seconds}s; log: {step.log.0}")
                 sleep(Duration.from_millis(20))
@@ -759,9 +769,12 @@ pub def finish_background_step(step: BackgroundStep, timeout_seconds: int) -> Re
                 return Ok((status_code(status), step.started.elapsed().as_secs_f64()))
             None =>
                 if timeout_seconds > 0 and step.started.elapsed().as_secs() >= timeout_seconds:
-                    members = terminate_release_process_tree(int(step.child.borrow().id()))?
-                    _ = step.child.borrow_mut().wait()
-                    require_release_processes_stopped(members)?
+                    termination = terminate_release_process_tree(int(step.child.borrow().id()))
+                    reap_error = match step.child.borrow_mut().wait():
+                        Ok(_) => None
+                        Err(error) => Some(f"cannot reap {step.name}: {error}")
+
+                    require_release_termination(termination, reap_error)?
                     finish_step_trace(step.trace, step.span)?
                     return Err(f"{step.name} timed out after {timeout_seconds}s; log: {step.log.0}")
                 sleep(Duration.from_millis(20))
@@ -769,9 +782,12 @@ pub def finish_background_step(step: BackgroundStep, timeout_seconds: int) -> Re
 
 pub def cancel_background_step(step: BackgroundStep) -> Result[None, str]:
     """Stop and reap a background step and its complete observed descendant tree after an earlier refusal."""
-    members = terminate_release_process_tree(int(step.child.borrow().id()))?
-    _ = step.child.borrow_mut().wait().map_err((error) => f"cannot reap {step.name}: {error}")?
-    require_release_processes_stopped(members)?
+    termination = terminate_release_process_tree(int(step.child.borrow().id()))
+    reap_error = match step.child.borrow_mut().wait():
+        Ok(_) => None
+        Err(error) => Some(f"cannot reap {step.name}: {error}")
+
+    require_release_termination(termination, reap_error)?
     finish_step_trace(step.trace, step.span)?
     return Ok(None)
 
@@ -821,9 +837,12 @@ pub def run_reserved_steps(
                         failed.append(item.position)
                 None =>
                     if item.timeout_seconds > 0 and item.started.elapsed().as_secs() >= item.timeout_seconds:
-                        members = terminate_release_process_tree(int(item.child.borrow().id()))?
-                        _ = item.child.borrow_mut().wait()
-                        require_release_processes_stopped(members)?
+                        termination = terminate_release_process_tree(int(item.child.borrow().id()))
+                        reap_error = match item.child.borrow_mut().wait():
+                            Ok(_) => None
+                            Err(error) => Some(f"cannot reap {item.name}: {error}")
+
+                        require_release_termination(termination, reap_error)?
                         finish_step_trace(item.trace, item.span)?
                         append_timing(timings, item.name, item.started.elapsed().as_secs_f64())?
                         failed.append(item.position)
@@ -889,16 +908,23 @@ pub def release_process_tree(rows: list[ProcessResource], root: int) -> list[int
     return sorted([pid for pid in members])
 
 
-def terminate_release_process_tree(root: int) -> Result[list[int], str]:
-    """Signal every observed owned process and process group, then force any survivor before the root is reaped."""
-    members = release_process_tree(process_table()?, root)
-    for pid in members:
+pub def release_process_census(census: Result[list[ProcessResource], str], root: int) -> ReleaseTermination:
+    """Keep root and process-group custody even when the broader descendant census is unavailable."""
+    match census:
+        Ok(rows) => return ReleaseTermination(members=release_process_tree(rows, root), census_error=None)
+        Err(message) => return ReleaseTermination(members=[root], census_error=Some(message))
+
+
+def terminate_release_process_tree(root: int) -> ReleaseTermination:
+    """Signal every observed owned process and process group, even when descendant census is degraded."""
+    termination = release_process_census(process_table(), root)
+    for pid in termination.members:
         signal_release_process(pid, "TERM")
     sleep(Duration.from_millis(100))
-    for pid in members:
+    for pid in termination.members:
         if release_process_alive(pid):
             signal_release_process(pid, "KILL")
-    return Ok(members)
+    return termination
 
 
 def signal_release_process(pid: int, signal: str) -> None:
@@ -929,6 +955,21 @@ def require_release_processes_stopped(members: list[int]) -> Result[None, str]:
         sleep(Duration.from_millis(20))
     remaining = [pid for pid in members if release_process_alive(pid)]
     return Err(f"release cancellation left processes alive: {remaining}")
+
+
+def require_release_termination(termination: ReleaseTermination, reap_error: Option[str]) -> Result[None, str]:
+    """Report every custody-proof failure only after signaling, reaping, and survivor checks have all run."""
+    mut failures: list[str] = []
+    match require_release_processes_stopped(termination.members):
+        Ok(_) => None
+        Err(message) => failures.append(message)
+    if let Some(message) = reap_error:
+        failures.append(message)
+    if let Some(message) = termination.census_error:
+        failures.append(f"process census failed before root and process-group termination: {message}")
+    if len(failures) > 0:
+        return Err("; ".join(failures))
+    return Ok(None)
 
 
 pub def begin_step_trace(trace: Option[ReleaseTrace], name: str) -> Result[Option[ReleaseSpan], str]:
