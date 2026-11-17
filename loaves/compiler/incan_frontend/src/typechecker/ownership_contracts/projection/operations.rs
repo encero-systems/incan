@@ -651,14 +651,8 @@ impl CheckedInputBody<'_> {
                 let Some((mut place, loan)) = self.operation_borrowed_place(base, parameters)? else {
                     return Ok(None);
                 };
-                let field = self
-                    .facts
-                    .resolved_identity(expression.span)
-                    .filter(|field| field.kind == SemanticSourceTargetKind::Field)
+                let field = super::super::source::call_results::stored_projection_identity(self.facts, expression)
                     .ok_or("operation alias projection lacks its canonical field")?;
-                if self.facts.computed_property_access(expression.span).is_some() {
-                    return Err("operation alias cannot infer computed property access");
-                }
                 place.projection.push(flow::Projection::Field(field.clone()));
                 Ok(Some((place, loan)))
             }

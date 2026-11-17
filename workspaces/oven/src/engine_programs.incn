@@ -24,7 +24,8 @@ from compiler_body_values import (
     select_body_inventory_except,
     select_namespace_inventory_except,
 )
-from compiler_plan_values import select_plan_inventory_except, plan_owners_reading
+from compiler_plan_values import select_plan_inventory_except, plan_owners_reading, select_plan_modules
+from compiler_plan_modules import restored_modules
 from compiler_graph_records import supersede_outputs
 from engine_epochs import record_text, load_epoch
 from features import FeatureRequest
@@ -102,6 +103,8 @@ pub model ProgramOutcome:
     pub lowering_demand_evaluations: int = 0
     pub lowering_demand_reuses: int = 0
     pub native_interface_evaluations: int = 0
+    # Modules whose functions the compiler restored from their module plan records, lowering none of their bodies.
+    pub plan_module_reuses: int = 0
     pub reusable_declarations: int = 0
     pub all_declarations: int = 0
     pub checker_reuse: str = "0/0 reusable declarations"
@@ -354,13 +357,18 @@ pub def obtain(
     selected_bodies.extend(select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, invalid_namespaces)?)
     # Lowering revalidates its exact checked inputs; a changed raw source slice may still produce equal meaning.
     invalid_plans = plan_owners_reading(graph, projected.keys)?
-    selected_bodies.extend(select_plan_inventory_except(graph, invalid_plans)?)
+    # A module this request leaves alone travels whole: one page of its plan record in place of one per function.
+    plan_modules = select_plan_modules(graph, origin, invalid_namespaces, invalid + invalid_plans)?
+    selected_bodies.extend(select_plan_inventory_except(graph, origin, invalid_plans, plan_modules.keys)?)
+    selected_bodies.extend(plan_modules.pages)
     produced = obtain_executable(ready, toolchain, binary, native_key, true, Some(store), true, Some(selected_bodies))?
     # A bakery hit plans nothing; the report beside the key is the earlier build's.
     mut plan_counts = PlanRecordCounts()
+    mut plan_module_reuses = 0
     if produced.evaluations > 0:
         reading_plan_sidecars = begin_work()
         plan_counts = plan_record_counts(ready, compiled_key)?
+        plan_module_reuses = len(restored_modules(plan_record_report_path(ready, compiled_key))?)
         record_work(
             Operation.EngineSidecarAuthentication,
             plan_record_report_path(ready, compiled_key).0,
@@ -416,6 +424,7 @@ pub def obtain(
             Some(graph),
             retained_bodies,
             checker_counts.restored,
+            plan_modules.records,
         )?
         request_transaction = bodies.transaction
         body_evaluations = bodies.checking_evaluations
@@ -453,6 +462,7 @@ pub def obtain(
             lowering_demand_evaluations=plan_counts.lowering_demand_evaluations,
             lowering_demand_reuses=plan_counts.lowering_demand_reuses,
             native_interface_evaluations=plan_counts.native_interface_evaluations,
+            plan_module_reuses=plan_module_reuses,
             reusable_declarations=checker_counts.reusable_declarations,
             all_declarations=checker_counts.all_declarations,
             checker_reuse=checker_counts.summary,

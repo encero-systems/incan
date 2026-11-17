@@ -2,11 +2,14 @@
 
 use super::*;
 use rustc_hir::def::DefKind;
+use serde::Deserialize;
 use rustc_hir::def_id::DefId;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
 const NATIVE_CGU_PARTITIONS: usize = 16;
+/// The file in a plan report that lists the functions restored from admitted module plan records.
+const ADMITTED_DEFINITIONS: &str = "admitted-definitions.json";
 
 /// The exact record input attached to one compiler definition.
 #[derive(Clone)]
@@ -31,6 +34,16 @@ impl DefinitionInput {
     pub(crate) fn partition(&self) -> usize {
         stable_partition(&self.name)
     }
+}
+
+/// One function restored from its module's admitted plan record. Lowering reports no event for it: the engine
+/// authenticated the record before selecting it, so only the key and digest that fingerprint the definition arrive.
+#[derive(Deserialize)]
+struct AdmittedDefinition {
+    function: String,
+    identity: String,
+    key: String,
+    digest: String,
 }
 
 /// A record-backed plan reader. Missing record input keeps ordinary compilation available but makes the unit
@@ -151,11 +164,52 @@ impl PlanReader {
                 return Err(format!("native plan report repeats function {}", event.function));
             }
         }
+        Self::read_admitted_definitions(report, plan, &mut inputs)?;
         if inputs.len() != plan.functions.len() || plan.functions.iter().any(|value| !inputs.contains_key(&value.name))
         {
             return Err("native plan report does not cover every active function".into());
         }
         Ok(inputs)
+    }
+
+    /// Add the definitions of functions restored from admitted module plan records, which reported no event. A
+    /// function that also reported an event keeps the input its event authenticated.
+    fn read_admitted_definitions(
+        report: &Path,
+        plan: &Plan,
+        inputs: &mut HashMap<String, DefinitionInput>,
+    ) -> Result<(), String> {
+        let path = report.join(ADMITTED_DEFINITIONS);
+        if !path.is_file() {
+            return Ok(());
+        }
+        let definitions: Vec<AdmittedDefinition> = serde_json::from_slice(
+            &std::fs::read(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))?,
+        )
+        .map_err(|error| format!("cannot decode {}: {error}", path.display()))?;
+        for definition in definitions {
+            if inputs.contains_key(&definition.function) {
+                continue;
+            }
+            if !plan.functions.iter().any(|value| value.name == definition.function) {
+                return Err(format!(
+                    "admitted function product is outside the active plan for {}",
+                    definition.function
+                ));
+            }
+            let fingerprint =
+                incan_semantics_core::semantic_digest::semantic_digest(&vec![definition.key, definition.digest])
+                    .map_err(|error| format!("cannot fingerprint native function record: {error}"))?;
+            inputs.insert(
+                definition.function.clone(),
+                DefinitionInput {
+                    name: definition.function,
+                    identity: definition.identity,
+                    fingerprint: fingerprint.trim_start_matches("sha256:").to_owned(),
+                },
+            );
+        }
+        Ok(())
     }
 
     fn layout_inputs(plan: &Plan) -> Result<HashMap<String, DefinitionInput>, String> {

@@ -333,14 +333,8 @@ impl CheckedInputBody<'_> {
             }
             Expr::Field(base, _) => {
                 let (mut place, through) = self.call_place(base)?.ok_or("input field has no stored owner")?;
-                let field = self
-                    .facts
-                    .resolved_identity(expression.span)
-                    .filter(|identity| identity.kind == SemanticSourceTargetKind::Field)
+                let field = super::super::source::call_results::stored_projection_identity(self.facts, expression)
                     .ok_or("input field has no canonical declaration")?;
-                if self.facts.computed_property_access(expression.span).is_some() {
-                    return Err("input field is a computed property");
-                }
                 place.projection.push(flow::Projection::Field(field.clone()));
                 Ok(Some((place, through)))
             }

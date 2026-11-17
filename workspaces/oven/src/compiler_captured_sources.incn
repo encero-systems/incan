@@ -47,7 +47,7 @@ pub def prepare_captured_source_inputs(
             if let Some(identity) = captured_source_identity(unit, input.path)?:
                 source = Path(input.path).read_text("utf-8", "strict").map_err((error) => error.message())?
                 projection = project_source(identity[0], identity[1], source)?
-                for record in [projection.header, projection.declarations]:
+                for record in [projection.header, projection.declarations, projection.census]:
                     key = encode_record_key(record.key)?
                     value = record.text.encode("utf-8")
                     if get(selected, key).map_err((error) => error.message())? != Some(value):

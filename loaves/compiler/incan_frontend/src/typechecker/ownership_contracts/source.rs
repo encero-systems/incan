@@ -418,6 +418,9 @@ impl Builder<'_> {
         if let Some(result) = self.retained_result(expression, incoming.clone(), false)? {
             return Ok(result.incoming);
         }
+        if let Some(plan) = self.fresh_newtype_slot(expression) {
+            return self.apply_value_use(expression, plan, incoming);
+        }
         // A checker-resolved module constant is an immutable value, not a storage place in this body's access graph.
         if matches!(expression.node, Expr::Ident(_) | Expr::Field(_, _))
             && self

@@ -1,7 +1,7 @@
 """Read and atomically retain native plan products under their producer's complete input witnesses."""
 
 from pub::internal_models.lowering_events import (
-    EventPosition, EventReference, LoweringEvent, LoweringRefusal, encode_lowering_event, encode_lowering_refusal,
+    EventPosition, EventReference, LoweringEvent, LoweringRefusal, decode_lowering_event, encode_lowering_event, encode_lowering_refusal,
 )
 from rust::incan_semantics_core::semantic_digest import semantic_digest
 from rust::std::process import id as process_id
@@ -379,3 +379,69 @@ pub def reported(directory: Option[str], inputs: list[str]) -> bool:
             match fingerprint(inputs):
                 Err(_) => return false
                 Ok(digest) => return Path(root).joinpath(digest.replace("sha256:", "") + ".event").is_file()
+
+
+pub def admitted_payload(
+    event: bytes,
+    span: SourceSpan,
+    name: str,
+    overflow: bool,
+    reads: str,
+    generation: str,
+) -> Option[tuple[str, list[ProductNominal], list[str]]]:
+    """
+    Read the product of a body from the final event of its module's admitted plan record.
+
+    Bakery admitted the module because every witness of it still validates, so the product is not looked up by a key
+    computed from the body: the body is neither serialized nor digested. Every input of the product but the checked
+    meaning is compared with what the body has now: its producer, overflow policy, frame name, file, checker witness
+    and node count. The product's node ordinals take the positions the event recorded for the unchanged body.
+
+    Returns the placed payload, the declarations it names and the generic instance requests its lowering made. A
+    product that does not fit is a miss: the body takes the keyed route.
+    """
+    decoded = match decode_lowering_event(event):
+        Ok(value) => value
+        Err(_) => return None
+
+    record = match decode_plan_function_record(decoded.product):
+        Ok(value) => value
+        Err(_) => return None
+
+    if len(record.inputs) < 2:
+        return None
+    expected = record_scalar_inputs(record.inputs[1], name, span, overflow, reads, len(decoded.positions)) + [
+        generation,
+    ]
+    if record.inputs != expected:
+        return None
+    positions = [(position.line, position.column) for position in decoded.positions]
+    placed = match place_positions(record.function, positions):
+        Ok(value) => value
+        Err(_) => return None
+
+    payload = match relocate_product(placed, str(span.file), span.line):
+        Ok(value) => value
+        Err(_) => return None
+
+    match product_identities(payload):
+        Ok(identities) => return Some((payload, identities, record.requests))
+        Err(_) => return None
+
+
+pub def admitted_function(
+    payload: str,
+    resolved: list[NominalReference],
+) -> Option[tuple[Function, list[ExternalFunction], list[Function]]]:
+    """
+    Decode an admitted product whose declarations resolved in the current unit: its function, the runtime it demands
+    and the helper frames it carries. A product that does not decode is a miss.
+    """
+    product = match decode_product(payload, resolved):
+        Ok(value) => value
+        Err(_) => return None
+
+    function, runtime = product
+    match decode_frames(payload, resolved):
+        Ok(frames) => return Some((function, runtime, frames))
+        Err(_) => return None

@@ -24,15 +24,9 @@ from pub::internal_models import (
 from pub::internal_models.checker_records import CHECKER_PROFILE
 from pub::internal_models.compiler_records import RUNTIME_INSTANCE_IDENTITY
 from pub::internal_models.records import (
-    PreparationEvidence,
-    ReadReceipt,
     ReadScope,
-    RecordRead,
     RecordKey,
-    RecordReads,
     RecordRequest,
-    RecordSelection,
-    PayloadSelection,
     ReadWitness,
     encode_record_key,
 )
@@ -46,6 +40,9 @@ pub from compiler_captured_sources import (
     source_origin,
 )
 from compiler_prepared_records import PreparedBodyRecordSource
+pub from compiler_prepared_records import prepared_product_request
+from compiler_plan_modules import StagedPlan, carry_selected, stage_plan_modules, staged_plan
+from compiler_plan_values import AdmittedPlanModule
 from compiler_body_fallbacks import (
     fallback_lowering_event,
     fallback_reasons,
@@ -214,6 +211,7 @@ pub def prepare_compiled_bodies(
     selected: Option[Snapshot] = None,
     retained: list[SelectedBodyRecord] = [],
     restored: list[str] = [],
+    plan_modules: list[AdmittedPlanModule] = [],
 ) -> Result[PreparedCompiledBodies, str]:
     """
     Stage one successful compiler sidecar through source projections and witnessed checker evaluations.
@@ -266,6 +264,7 @@ pub def prepare_compiled_bodies(
         origin,
         rechecked,
         plan_output,
+        plan_modules,
     )?
     record_work(Operation.EngineGraphStaging, output.0, staging)
     return Ok(
@@ -313,7 +312,7 @@ def stage_compiled_body_values(
             match dependency_signature_key(projections, unit, origin, dependency, editable_packages)?:
                 Some(key) => local_reads.append(prepared_product_request(key))
                 None => pass
-        local_receipt = prepared_receipt(source, scope, local_key, local_reads)?
+        local_receipt = source.receipt(scope, local_key, local_reads)?
         _ = prepare_evaluation(
             prepared,
             "compiled-local-" + value.identity,
@@ -340,7 +339,7 @@ def stage_compiled_body_values(
             match dependency_signature_key(projections, unit, origin, dependency, editable_packages)?:
                 Some(key) => final_reads.append(prepared_product_request(key))
                 None => pass
-        final_receipt = prepared_receipt(source, scope, final_key, final_reads)?
+        final_receipt = source.receipt(scope, final_key, final_reads)?
         _ = prepare_evaluation(
             prepared,
             "compiled-final-" + value.identity,
@@ -350,7 +349,7 @@ def stage_compiled_body_values(
         )?
         source.add(encode_record_key(final_key)?, value.final)
         body_ir_key = body_key("body-ir", origin, value.identity, "checked", root(value.final)?)
-        body_ir_receipt = prepared_receipt(source, scope, body_ir_key, [prepared_product_request(final_key)])?
+        body_ir_receipt = source.receipt(scope, body_ir_key, [prepared_product_request(final_key)])?
         _ = prepare_evaluation(
             prepared,
             "compiled-body-ir-" + value.identity,
@@ -398,7 +397,7 @@ def stage_compiled_namespaces(
                 lowering_inputs=namespace.lowering_inputs,
             ),
         ).map_err((error) => f"compiled namespace output refused: {error:?}")?
-        receipt = prepared_receipt(source, scope, key, reads)?
+        receipt = source.receipt(scope, key, reads)?
         _ = prepare_evaluation(
             prepared,
             "compiled-namespace-" + namespace.module,
@@ -422,6 +421,7 @@ def prepare_optional_lowering_records(
     origin: str,
     rechecked: list[str],
     plan_output: Option[Path],
+    plan_modules: list[AdmittedPlanModule] = [],
 ) -> Result[Transaction, str]:
     """Stage lowering records only when this compiler activation requested a plan report."""
     if let Some(report) = plan_output:
@@ -437,6 +437,7 @@ def prepare_optional_lowering_records(
             unit,
             selected,
             [namespace.module for namespace in outputs.namespaces],
+            plan_modules,
         )
     return Ok(prepared)
 
@@ -817,6 +818,7 @@ def prepare_lowering_records(
     unit: UnitDescription,
     selected: Option[Snapshot],
     namespaces: list[str] = [],
+    admitted: list[AdmittedPlanModule] = [],
 ) -> Result[Transaction, str]:
     """
     Stage evaluated lowering-demand and plan-function values through their exact Body IR witnesses.
@@ -846,6 +848,7 @@ def prepare_lowering_records(
         event = decode_lowering_event(entry.read_bytes().map_err((error) => error.message())?)?
         events.append(event)
     mut plan_keys: list[RecordKey] = []
+    mut staged: list[StagedPlan] = []
     # Scalar demand and plan suppliers settle before the entry-binding contribution reads main's demand.
     for event in events:
         if event.role == "entry":
@@ -866,21 +869,25 @@ def prepare_lowering_records(
         mut identity = event_identity
         mut signature_reads: list[RecordRequest] = []
         mut body_reads: list[RecordRequest] = []
+        mut module_file = ""
         if member:
             match member_namespace(unit, namespaces, event_identity)?:
                 None => continue
-                Some(module) => body_reads = [prepared_product_request(namespace_key(origin, module))]
+                Some(module) =>
+                    body_reads = [prepared_product_request(namespace_key(origin, module))]
+                    module_file = module
         elif not runtime:
             body = body_value(bodies, fallbacks, event_identity)?
             # A retained body is already byte-matched to this selected graph above. Its native plan may still be fresh
             # when a linked Rust unit changed without changing the checked source body or its callable signature.
             identity = body.identity
+            module_file = body.module
             signature_reads = [prepared_product_request(key) for key in body.signature_reads]
             body_ir_key = body_key("body-ir", origin, identity, "checked", root(body.final)?)
             body_reads = [prepared_product_request(body_ir_key)] + signature_reads
         demand_key = body_key("lowering-demand", origin, identity, function, key)
         demand_value = lowering_demand(product)?
-        demand_receipt = prepared_receipt(staged_source, scope, demand_key, body_reads)?
+        demand_receipt = staged_source.receipt(scope, demand_key, body_reads)?
         check_reused_output(selected, event, demand_key, demand_value)?
         _ = prepare_evaluation(
             prepared,
@@ -892,12 +899,7 @@ def prepare_lowering_records(
         staged_source.add(encode_record_key(demand_key)?, demand_value)
         plan_key = body_key("plan-function", origin, identity, "body:" + function, key)
         check_reused_output(selected, event, plan_key, product)?
-        plan_receipt = prepared_receipt(
-            staged_source,
-            scope,
-            plan_key,
-            [prepared_product_request(demand_key)] + signature_reads,
-        )?
+        plan_receipt = staged_source.receipt(scope, plan_key, [prepared_product_request(demand_key)] + signature_reads)?
         _ = prepare_evaluation(
             prepared,
             "plan-function-" + identity,
@@ -907,6 +909,7 @@ def prepare_lowering_records(
         )?
         staged_source.add(encode_record_key(plan_key)?, product)
         plan_keys.append(plan_key)
+        staged.append(staged_plan(module_file, event, identity, event_identity, function, key, plan_key)?)
     for event in events:
         if event.role != "entry":
             continue
@@ -920,7 +923,9 @@ def prepare_lowering_records(
         key = body_key("plan-function", origin, body.identity, "entry", event.key)
         product = event.product
         check_reused_output(selected, event, key, product)?
-        receipt = prepared_receipt(staged_source, scope, key, [prepared_product_request(demand_key)])?
+        # A request that restored main's module from its plan record staged no demand for main; the graph holds it.
+        carry_selected(staged_source, selected, demand_key)?
+        receipt = staged_source.receipt(scope, key, [prepared_product_request(demand_key)])?
         _ = prepare_evaluation(
             prepared,
             "plan-entry-" + body.identity,
@@ -930,10 +935,12 @@ def prepare_lowering_records(
         )?
         staged_source.add(encode_record_key(key)?, product)
         plan_keys.append(key)
+    # Each module's plan functions fold into its module record; a restored module's record joins the interface's reads.
+    carried = stage_plan_modules(prepared, staged_source, scope, selected, origin, rechecked, staged, report, admitted)?
     if not report.joinpath(INTERFACE_REPORT).is_file():
         require_plan_refusal(report)?
         return Ok(prepared)
-    prepare_native_interface(prepared, staged_source, scope, unit, origin, values, report, plan_keys)?
+    prepare_native_interface(prepared, staged_source, scope, unit, origin, values, report, plan_keys + carried)?
     return Ok(prepared)
 
 
@@ -1000,7 +1007,7 @@ def prepare_native_interface(
                 source.add(encode_record_key(owner.key)?, owner.text.encode("utf-8"))
                 reads.append(prepared_product_request(owner.key))
             modules.append(body.module)
-    receipt = prepared_receipt(source, scope, key, reads)?
+    receipt = source.receipt(scope, key, reads)?
     _ = prepare_evaluation(
         transaction,
         "native-interface-" + origin,
@@ -1194,36 +1201,3 @@ def dependency_invalidation_key(
 def root(encoded: bytes) -> Result[str, str]:
     """Map codec faults at the engine boundary without weakening checker-record validation."""
     return record_root(encoded).map_err((error) => f"compiled checker root refused: {error:?}")
-
-
-pub def prepared_product_request(key: RecordKey) -> RecordRequest:
-    """Read scalar facts while binding opaque Body IR and plans through a bounded semantic witness."""
-    if key.family in ["body-ir", "plan-function", "namespace"]:
-        selected = PayloadSelection(reference=key.context, offset=0, length=0)
-        return RecordRequest(key=key, selection=RecordSelection.Payload(selected))
-    return RecordRequest(key=key, selection=RecordSelection.Field("value"))
-
-
-def prepared_receipt(
-    source: &PreparedBodyRecordSource,
-    scope: ReadScope,
-    output: RecordKey,
-    requests: list[RecordRequest],
-) -> Result[ReadReceipt, str]:
-    """Authenticate one producer's exact inputs from the caller-owned publication transaction."""
-    preparation = PreparationEvidence(
-        output=output,
-        rank_certificate="compiled-check",
-        selector_witnesses="compiled-check",
-    )
-    mut reads = RecordReads.start(scope, preparation, requests)
-    for item in requests:
-        match reads.read(source, item):
-            RecordRead.Failed(fault) =>
-                return Err(
-                    f"compiled body publication for {encode_record_key(output)?} could not read " + f"{encode_record_key(
-                        item.key,
-                    )?}: {fault:?}",
-                )
-            _ => pass
-    return reads.finish().map_err((_) => "compiled body publication produced an incomplete receipt")

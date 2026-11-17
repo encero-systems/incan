@@ -58,6 +58,7 @@ from compiler_body_values import (
     select_body_inventory,
     select_body_values,
 )
+from compiler_captured_sources import publish_captured_source_inputs
 from compiler_body_publication import (
     dependency_owner,
     prepare_captured_source_inputs,
@@ -1026,6 +1027,22 @@ def verify_linked_capture(mut unit: UnitDescription, root: Path) -> Result[None,
     assert len(declarations) == 2, "symlinked roots dropped captured declaration witnesses"
     assert declarations[0].origin == "app" and declarations[0].identity == "src/main.incn"
     assert declarations[1].origin == "provider" and declarations[1].identity == "lib"
+    first = commit(prepared.transaction).map_err((error) => error.message())?
+    path = project.joinpath("src/main.incn")
+    original = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    extra = "\n\ndef additional(value: int) -> int:\n    return value\n"
+    path.write_text(original + extra, "utf-8", "strict", None).map_err((error) => error.message())?
+    added = publish_captured_source_inputs(first, unit, inputs)?
+    added_memberships = [key for key in added.keys if key.family == "owner-census"]
+    assert len(added_memberships) == 1 and added_memberships[0].origin == "app"
+    signature = extra.replace("value: int", "number: int").replace("return value", "return number")
+    path.write_text(original + signature, "utf-8", "strict", None).map_err((error) => error.message())?
+    renamed = publish_captured_source_inputs(added.snapshot, unit, inputs)?
+    assert len([key for key in renamed.keys if key.family == "declaration-signature"]) == 1
+    assert len([key for key in renamed.keys if key.family == "owner-census"]) == 0
+    path.write_text(original, "utf-8", "strict", None).map_err((error) => error.message())?
+    removed = publish_captured_source_inputs(renamed.snapshot, unit, inputs)?
+    assert [key for key in removed.keys if key.family == "owner-census"] == added_memberships
     return Ok(None)
 
 

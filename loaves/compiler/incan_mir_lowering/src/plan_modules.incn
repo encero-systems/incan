@@ -1,0 +1,136 @@
+"""A module's admitted plan record: the page a worker restores its functions from, and the note of what it restored."""
+
+from rust::serde import Serialize, Deserialize
+from rust::serde_json import to_string, from_str, Error as JsonError
+from std.encoding.hex import hexlify
+from std.fs import Path
+from pub::incan_mir_plan import NominalKind, NominalReference
+from pub::internal_models.plan_module_records import PLAN_MODULE_PAGE, decode_plan_module
+
+# The extension of the note a worker leaves in the plan report for each module it restored functions of.
+pub const ADMITTED_NOTE: str = ".admitted"
+
+
+@derive(Serialize, Deserialize)
+pub model AdmittedReference:
+    """The unit position and native name one declaration of a restored product resolved to in this request."""
+
+    pub kind: NominalKind
+    pub index: int
+    pub name: str
+
+
+@derive(Serialize, Deserialize)
+pub model AdmittedFunction:
+    """
+    One function restored from its module's plan record: the canonical identity its body has in this request, which
+    moves with the body's place in its file, and where its declarations are in this unit.
+    """
+
+    pub function: str
+    pub identity: str
+    pub references: list[AdmittedReference]
+
+
+@derive(Serialize, Deserialize)
+pub model AdmittedModule:
+    """The functions of one module that this request restored from the module's plan record."""
+
+    pub schema: int
+    pub module: str
+    pub functions: list[AdmittedFunction]
+
+
+pub def module_page(products: str, module: str) -> Path:
+    """Where Bakery places the plan record of an admitted module: named by the module, never by a product key."""
+    return Path(products).joinpath(hexlify(module.encode("utf-8")) + PLAN_MODULE_PAGE)
+
+
+pub model AdmittedPage:
+    """An admitted module's final events by native function name, and the producer generation this request selected."""
+
+    pub generation: str
+    pub events: Dict[str, bytes]
+
+    pub def event(self, function: str) -> Option[bytes]:
+        """
+        The final event of the body lowered to this native function, when the page holds one. The name carries no
+        source position, so a body that moved in its file, as under an added comment, still finds its event.
+        """
+        if function in self.events:
+            return Some(self.events[function])
+        return None
+
+
+pub def admitted_page(products: Option[str], module: str) -> AdmittedPage:
+    """
+    The final events of an admitted module, by the native function name of the body each belongs to.
+
+    Bakery writes the page only for a module whose every witness still validates. No page, or a page that does not
+    decode or names another module, admits nothing: every body then takes the keyed route.
+    """
+    mut page = AdmittedPage(generation="", events={})
+    directory = match products:
+        Some(value) => value
+        None => return page
+
+    path = module_page(directory, module)
+    if not path.is_file():
+        return page
+    encoded = match path.read_bytes():
+        Ok(value) => value
+        Err(_) => return page
+
+    generation = match Path(directory).joinpath("producer-profile").read_text("utf-8", "strict"):
+        Ok(value) => value
+        Err(_) => return page
+
+    match decode_plan_module(encoded):
+        Err(_) => return page
+        Ok(record) =>
+            if record.module != module:
+                return page
+            page.generation = generation
+            for function in record.functions:
+                page.events[function.function] = function.event
+    return page
+
+
+pub def admitted_reference(reference: NominalReference) -> AdmittedReference:
+    """Keep one resolved declaration position for the note."""
+    return AdmittedReference(kind=reference.kind, index=reference.index, name=reference.name)
+
+
+pub def report_admitted(report: Option[str], module: str, functions: list[AdmittedFunction]) -> Result[None, str]:
+    """
+    Note, beside the request's events, the functions this request restored from `module`'s plan record. A module that
+    restored none leaves no note, and an earlier pass's note for it is removed.
+    """
+    if len(functions) == 0:
+        if let Some(root) = report:
+            stale = Path(root).joinpath(hexlify(module.encode("utf-8")) + ADMITTED_NOTE)
+            if stale.is_file():
+                stale.unlink().map_err((error) => error.message())?
+        return Ok(None)
+    if let Some(root) = report:
+        note = AdmittedModule(schema=1, module=module, functions=functions)
+        text = to_string(note).map_err((error) => str(error))?
+        path = Path(root).joinpath(hexlify(module.encode("utf-8")) + ADMITTED_NOTE)
+        path.parent().mkdir(true, true).map_err((error) => error.message())?
+        path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
+    return Ok(None)
+
+
+pub def read_admitted(report: Path) -> Result[list[AdmittedModule], str]:
+    """Read every module note of a plan report, in name order."""
+    mut notes: list[AdmittedModule] = []
+    for path in sorted([str(path.0) for path in report.iterdir().map_err((error) => error.message())?]):
+        if path.endswith(ADMITTED_NOTE):
+            text = Path(path).read_text("utf-8", "strict").map_err((error) => error.message())?
+            notes.append(decode_note(text).map_err((error) => str(error))?)
+    return Ok(notes)
+
+
+def decode_note(text: str) -> Result[AdmittedModule, JsonError]:
+    """Pass the expected note type to the native generic decoder through its result contract."""
+    return from_str(text)
