@@ -219,6 +219,78 @@ fn projected_checker(name: &str, fields: &Fields) -> Result<TypeChecker, NodeBin
     Ok(checker)
 }
 
+/// Certify a project function whose signature resolves entirely through the scalar type registry and whose body
+/// can only read its parameters. Run its actual declaration rules and settlement without entering its statements.
+pub(crate) fn produce_closed_declaration(
+    source: &str,
+    name: &str,
+    previous: Fields,
+) -> Result<Option<Fields>, NodeBindingError> {
+    use crate::ast::{Declaration, Expr, FunctionDecl, Literal, ParamKind, Statement, Type};
+    use incan_lang::lang::types::{BuiltinTypeName, builtin_type_name};
+
+    fn scalar(ty: &Type) -> bool {
+        matches!(ty, Type::Simple(name) if matches!(builtin_type_name(name), Some(BuiltinTypeName::Numeric(_))))
+    }
+    fn closed(expr: &Expr, function: &FunctionDecl) -> bool {
+        match expr {
+            Expr::Ident(name) => function.params.iter().any(|parameter| parameter.node.name == *name),
+            Expr::Literal(Literal::Int(_) | Literal::Float(_) | Literal::Bool(_)) => true,
+            Expr::Paren(inner) | Expr::Unary(_, inner) => closed(&inner.node, function),
+            Expr::Binary(left, _, right) => closed(&left.node, function) && closed(&right.node, function),
+            _ => false,
+        }
+    }
+    let tokens = crate::lexer::lex(source).map_err(|_| NodeBindingError::Unsupported("projected syntax"))?;
+    let program = crate::parser::parse(&tokens).map_err(|_| NodeBindingError::Unsupported("projected syntax"))?;
+    let Some((function, owner)) = program.declarations.iter().find_map(|item| match &item.node {
+        Declaration::Function(function) if function.name == name => Some((function, item.span)),
+        _ => None,
+    }) else {
+        return Ok(None);
+    };
+    let [statement] = function.body.as_slice() else {
+        return Ok(None);
+    };
+    let Statement::Return(Some(expression)) = &statement.node else {
+        return Ok(None);
+    };
+    if !function.decorators.is_empty()
+        || !function.type_params.is_empty()
+        || !function.surface_modifiers.is_empty()
+        || function.result_source.is_some()
+        || !scalar(&function.return_type.node)
+        || !function.params.iter().all(|param| {
+            param.node.kind == ParamKind::Normal
+                && !param.node.is_mut
+                && param.node.default.is_none()
+                && scalar(&param.node.ty.node)
+        })
+        || !closed(&expression.node, function)
+    {
+        return Ok(None);
+    }
+    let mut checker = projected_checker(name, &previous)?;
+    checker.reset_program_check(&program, false);
+    checker.collect_program_check_declarations(&program);
+    checker.record_program_header_facts();
+    checker.record_source_declaration_identities(&program);
+    // The complete prior identity must still designate the collected declaration under this revision's signature.
+    if decoded_owner(&checker, &program, &previous)? != owner {
+        return Ok(None);
+    }
+    checker.record_type_param_declaration_spans(&program);
+    checker.visibility_point = super::super::VisibilityPoint::Collected;
+    checker.prepare_program_body_facts();
+    let _frame =
+        checker.check_declaration_owner(owner, |checker| checker.prepare_function_declaration(function, owner));
+    checker.settle_body_checks(&program);
+    if checker.check_work().function_bodies != 0 || !checker.errors.is_empty() {
+        return Ok(None);
+    }
+    Ok(checker.produced_declaration_record(owner).cloned())
+}
+
 /// Build the private checker used by the local-record producer so tests can inspect its publication boundary.
 fn projected_local_checker(
     source: &str,
