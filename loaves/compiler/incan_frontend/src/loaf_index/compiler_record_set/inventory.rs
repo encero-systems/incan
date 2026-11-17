@@ -55,10 +55,8 @@ pub(super) fn read_summary(set: &RecordSet, dir: &Path, name: &str) -> Result<Op
         return Ok(Some(summary.clone()));
     }
     let entries = set
-        .entries
-        .iter()
-        .filter(|entry| entry.key.starts_with(&prefix))
-        .collect::<Vec<_>>();
+        .members(&prefix, None, 2)
+        .map_err(|reason| unreadable(dir, name, reason))?;
     if entries.is_empty() {
         return Ok(None);
     }
@@ -69,7 +67,7 @@ pub(super) fn read_summary(set: &RecordSet, dir: &Path, name: &str) -> Result<Op
             "compiler-record metadata requires exactly one value".to_owned(),
         ));
     }
-    let entry = entries[0];
+    let entry = &entries[0];
     if entry.revision != entry.value {
         return Err(unreadable(
             dir,

@@ -161,6 +161,11 @@ static pages_read: dict[str, int] = {}
 static CHECKED: CheckedPages = CheckedPages()
 
 
+pub def page_checked_bytes() -> int:
+    """Physical bytes hashed on first access to immutable index pages in this process."""
+    return pages_read.get("checked_bytes", 0)
+
+
 pub def page_reads() -> int:
     """How many index pages this process has read."""
     return pages_read.get("pages", 0)
@@ -312,7 +317,7 @@ pub def entries(root: Path, top: str) -> Result[list[Entry], IndexError]:
     return Ok(result)
 
 
-pub def entries_with_prefix(root: Path, top: str, prefix: str) -> Result[list[Entry], IndexError]:
+pub def entries_with_prefix(root: Path, top: str, prefix: str, limit: int = 0) -> Result[list[Entry], IndexError]:
     """
     The leaf entries whose keys start with `prefix`, sorted by key, reading only the pages whose range can hold one.
 
@@ -328,6 +333,8 @@ pub def entries_with_prefix(root: Path, top: str, prefix: str) -> Result[list[En
         for entry in page.entries:
             if entry.key.startswith(prefix):
                 result.append(entry)
+                if limit > 0 and len(result) == limit:
+                    break
         return Ok(result)
     for position in range(len(page.entries)):
         entry = page.entries[position]
@@ -335,7 +342,12 @@ pub def entries_with_prefix(root: Path, top: str, prefix: str) -> Result[list[En
             break
         if position + 1 < len(page.entries) and page.entries[position + 1].key <= prefix:
             continue
-        result.extend(entries_with_prefix(root, entry.child, prefix)?)
+        mut remaining = 0
+        if limit > 0:
+            remaining = limit - len(result)
+        result.extend(entries_with_prefix(root, entry.child, prefix, remaining)?)
+        if limit > 0 and len(result) == limit:
+            break
     return Ok(result)
 
 
@@ -406,6 +418,7 @@ def mapped_page(root: Path, reference: str) -> Result[Layout, IndexError]:
         None => return Err(malformed(path, "the page lies outside its file"))
         Some(view) =>
             pages_read["checked"] = pages_read.get("checked", 0) + 1
+            pages_read["checked_bytes"] = pages_read.get("checked_bytes", 0) + view.len()
             if hexlify(view_digest(view)) != location.digest:
                 return Err(IndexError(object=path.value, detail="index page does not match its digest"))
             CHECKED.keep(

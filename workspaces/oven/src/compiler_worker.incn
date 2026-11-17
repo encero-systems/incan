@@ -419,6 +419,8 @@ pub def generation_for(toolchain: Toolchain, compiler: str) -> Result[str, str]:
     mut selected = [SCHEMA, RECORD_SCHEMA, compiler]
     if let Some(pin) = toolchain.compiler_records:
         selected.append(f"compiler-records {pin.digest}")
+        if pin.directory != "":
+            selected.append(f"compiler-directory {pin.directory}")
     return Ok(fingerprint(selected + environment()?)?[0:16])
 
 

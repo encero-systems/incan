@@ -22,6 +22,7 @@ use incan_vocab::{KeywordActivation, KeywordRegistration, KeywordSpec};
 use crate::rust_abi_cache::{RustAbiCache, RustTypeAliasLookup, ShippedRustAbiCache};
 
 mod compiler_record_set;
+pub use compiler_record_set::install_directory_reader;
 mod decoded_manifest;
 mod lazy_entry;
 mod manifest_input;

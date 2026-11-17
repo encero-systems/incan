@@ -30,6 +30,8 @@ use crate::library_manifest::executable_surface::ExecutableSurface;
 use incan_semantics_core::body_ir::RuntimeCallableBinding;
 
 mod declaration_records;
+mod directory;
+pub use directory::install_directory_reader;
 mod inventory;
 mod runtime_bindings;
 #[cfg(test)]
@@ -66,6 +68,7 @@ pub(super) fn configured() -> bool {
 }
 
 /// One compiler-record membership from the pinned sealed-set manifest.
+#[derive(Clone)]
 struct RecordEntry {
     key: String,
     revision: String,
@@ -76,6 +79,7 @@ struct RecordEntry {
 struct RecordSet {
     root: PathBuf,
     entries: Vec<RecordEntry>,
+    directory: Option<(String, String)>,
     /// Authenticated values for demanded executable range heads and memberships.
     range_values: Mutex<BTreeMap<String, Vec<u8>>>,
     /// Records this process has read from the payload directory.
@@ -151,6 +155,7 @@ impl RecordSet {
         entries.sort_unstable_by(|a, b| a.key.cmp(&b.key));
         Self {
             range_values: Mutex::default(),
+            directory: None,
             root,
             entries,
             records_read: AtomicUsize::new(0),
@@ -219,17 +224,15 @@ pub(super) fn range_value<T: DeserializeOwned>(
         .and_then(|value| value.to_str())
         .ok_or_else(|| unreadable(dir, name, "Loaf profile is not UTF-8".into()))?;
     let key = format!("loaf/{profile}/{name}/{}", record_key(family, member));
-    let Ok(i) = set.entries.binary_search_by(|entry| entry.key.cmp(&key)) else {
-        return Ok(None);
-    };
-    let entry = &set.entries[i];
+    let prefix = format!("loaf/{profile}/{name}/{family}/");
+    let hash = format!("{:x}", Sha256::digest(member.as_bytes()));
+    let rows = set
+        .members(&prefix, Some(&hash), 0)
+        .map_err(|reason| unreadable(dir, name, reason))?;
     let fail = |reason| unreadable(dir, name, record_failure(&key, reason));
-    if i.checked_sub(1)
-        .and_then(|n| set.entries.get(n))
-        .is_some_and(|item| item.key == key)
-        || set.entries.get(i + 1).is_some_and(|item| item.key == key)
-    {
-        return Err(fail("ambiguous installed executable member".into()));
+    let Some(entry) = rows.first() else { return Ok(None) };
+    if rows.len() != 1 || entry.key != key {
+        return Err(fail("ambiguous or invalid installed executable member".into()));
     }
     if entry.revision != entry.value {
         return Err(fail("distinct revision and content identities".into()));
@@ -292,12 +295,14 @@ fn read_surface_in(
     if let Some(found) = set.surfaces.lock().unwrap_or_else(PoisonError::into_inner).get(&prefix) {
         return Ok(Some(found.clone()));
     }
-    let entries = set
-        .entries
-        .iter()
-        .filter(|entry| entry.key.starts_with(&prefix))
-        .collect::<Vec<_>>();
-    let selected = select_records(entries, &prefix, dir, name)?
+    let mut entries = Vec::new();
+    for family in ["metadata", EXECUTABLE_DESCRIPTOR, PUBLIC_IDENTITIES] {
+        entries.extend(
+            set.members(&format!("{prefix}{family}/"), None, 0)
+                .map_err(|reason| unreadable(dir, name, reason))?,
+        );
+    }
+    let selected = select_records(entries.iter().collect(), &prefix, dir, name)?
         .into_iter()
         .filter(|(family, _, _)| matches!(*family, "metadata" | EXECUTABLE_DESCRIPTOR | PUBLIC_IDENTITIES))
         .collect::<Vec<_>>();
@@ -393,15 +398,13 @@ fn read_group(
             loaf = name
         )
         .entered();
-        set.entries
-            .iter()
-            .filter(|entry| entry.key.starts_with(&prefix))
-            .collect::<Vec<_>>()
+        set.members(&prefix, None, 0)
+            .map_err(|reason| unreadable(dir, name, reason))?
     };
     if entries.is_empty() {
         return Ok(None);
     }
-    let selected = select_records(entries, &prefix, dir, name)?
+    let selected = select_records(entries.iter().collect(), &prefix, dir, name)?
         .into_iter()
         .filter(|(family, _, _)| projection.admits(family))
         .collect::<Vec<_>>();
@@ -663,6 +666,17 @@ fn load_installed() -> Result<Option<RecordSet>, String> {
         .into_string()
         .map_err(|_| "compiler-record digest is not UTF-8".to_owned())?;
     valid_digest(&digest)?;
+    if let Some(top) = std::env::var_os("INCAN_COMPILER_RECORD_DIRECTORY") {
+        let top = top
+            .into_string()
+            .map_err(|_| "non-UTF-8 compiler directory root".to_owned())?;
+        if top.is_empty() {
+            return Err("empty compiler directory root".into());
+        }
+        let mut set = RecordSet::new(root, Vec::new());
+        set.directory = Some((digest, top));
+        return Ok(Some(set));
+    }
     let path = root.join("manifest.json");
     let bytes = fs::read(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     if !digest_matches(&bytes, &digest) {
@@ -729,7 +743,10 @@ pub(super) fn read_vocabulary(dir: &Path, name: &str) -> Result<Option<(VocabExp
         .and_then(|part| part.to_str())
         .ok_or_else(|| unreadable(dir, name, "Loaf profile directory is not UTF-8".to_owned()))?;
     let prefix = format!("loaf/{profile}/{name}/vocabulary/");
-    let mut matching = set.entries.iter().filter(|entry| entry.key.starts_with(&prefix));
+    let rows = set
+        .members(&prefix, None, 2)
+        .map_err(|reason| unreadable(dir, name, reason))?;
+    let mut matching = rows.iter();
     let Some(entry) = matching.next() else {
         return Ok(None);
     };
