@@ -119,8 +119,6 @@ struct RuntimeDependencyContext {
     package: String,
     /// Declaration-only runtime modules that stabilize lowering layouts without becoming dependency roots.
     layout_modules: Vec<BodyIrModule>,
-    /// Whether `layout_modules` already occupy the active program's prepared prefix.
-    layout_modules_installed: bool,
     sources: Vec<String>,
     files: Vec<String>,
     entry: usize,
