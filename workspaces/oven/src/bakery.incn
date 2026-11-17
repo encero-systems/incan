@@ -28,15 +28,13 @@ from std.environ import get_or
 from std.hash import file_digest
 from std.fs import Path
 from std.primitives.locking import LockGuard
-from std.json import JsonValue
-from files import json_text, make_directory, read_json
+from files import make_directory, read_json
 from home_paths import home
 pub from home_paths import bakery
 from pub::incan_platform.trace import Operation
 from jec import begin as begin_work, record as record_work
 from json_fields import required_text
 from observation import observe, trace
-from publication import publish
 from unit_publication import record_path, record_verified_payload, source_origins
 from storage_admission import extend, release, reserve, tree_bytes
 from pub::incan_platform.store import (
@@ -65,11 +63,13 @@ from store_path_conversion import (
     snapshot,
 )
 from unit import UnitDescription
-from unit_freshness import Key, fingerprint
-from bakery_records import Fact, FactFile, claim_file, decode_fact, encode_fact, layout_fact_text, record_key, staging_root, store_failure
+from unit_freshness import Key
+from bakery_records import Fact, FactFile, claim_file, decode_fact, encode_fact, record_key, staging_root, store_failure
 from bakery_roots import collect, preview_collection
 
-const VIEW_RECORD: str = "fact.json"
+pub from bakery_views import forget_view
+from bakery_views import ViewSelection, layout_identity, read_view, write_view
+
 const VERIFY: int = -2
 const OPEN_FILE: u32 = 420
 const OPEN_PROGRAM: u32 = 493
@@ -411,15 +411,15 @@ def view_unit_directory(store: Path, fact: Fact, destination: Path, prefix: str 
     Make the directory `destination` a view of a whole unit, or of its files below `prefix`.
 
     A new view is assembled beside the destination and swapped in, so it is never half written. A whole-unit view also
-    holds `fact.json`, which names the unit it was viewed from.
+    holds a typed selection naming the unit it was viewed from.
     """
     mut files = fact.files
     if prefix != "":
         files = [file for file in fact.files if file.path.startswith(prefix + "/")]
     mut same_identity = prefix != ""
-    if prefix == "" and destination.joinpath(VIEW_RECORD).is_file():
-        marker = read_json(destination.joinpath(VIEW_RECORD))?
-        same_identity = required_text(marker, "identity")? == fact.identity
+    if prefix == "":
+        if let Some(selection) = read_view(destination)?:
+            same_identity = selection.identity == fact.identity
     if (
         same_identity
         and not destination.is_symlink()
@@ -437,8 +437,7 @@ def view_unit_directory(store: Path, fact: Fact, destination: Path, prefix: str 
         make_directory(target.parent())?
         clone(payload_path(store, file.digest), target, file.program)?
     if prefix == "":
-        marker = JsonValue.object({"identity": JsonValue.string(fact.identity)})
-        publish(staged.joinpath(VIEW_RECORD), json_text(marker)?)?
+        write_view(staged, ViewSelection(identity=fact.identity))?
     swap_in(staged, destination, store, files, prefix)?
     admit_views(files, destination, prefix)?
     return Ok(None)
@@ -504,20 +503,10 @@ pub def reached(store: Path, directories: list[str]) -> Result[list[str], str]:
     _ = store
     mut identities: list[str] = []
     for directory in directories:
-        record = Path(directory).joinpath(VIEW_RECORD)
-        if record.is_file():
-            identity = required_text(read_json(record)?, "identity")?
-            if identity not in identities:
-                identities.append(identity)
+        if let Some(selection) = read_view(Path(directory))?:
+            if selection.identity not in identities:
+                identities.append(selection.identity)
     return Ok(identities)
-
-
-pub def forget_view(directory: Path) -> Result[None, str]:
-    """Remove only a directory's fact selection before an unbaked producer replaces its local outputs."""
-    marker = directory.joinpath(VIEW_RECORD)
-    if marker.is_file():
-        marker.unlink().map_err((error) => f"cannot {error.message()}")?
-    return Ok(None)
 
 
 pub def library_directory(store: Path, directory: Path) -> Result[Path, str]:
@@ -534,45 +523,39 @@ pub def library_directory(store: Path, directory: Path) -> Result[Path, str]:
     2. Under a layout claim, bind every member to its canonical payload and admit its producer records.
     """
     # 1. A view selects an exact fact; the name index never substitutes another revision.
-    marker = directory.joinpath(VIEW_RECORD)
-    if not marker.is_file():
-        return Ok(directory)
+    marker = match read_view(directory)?:
+        Some(existing) => existing
+        None => return Ok(directory)
     canonical = store.resolve().map_err((error) => f"cannot {error.message()}")?
-    fact = library_fact(canonical, read_json(marker)?)?
-    return bind_library(canonical, fact)
+    fact = library_fact(canonical, marker)?
+    if marker.layout != "":
+        return bind_library(canonical, fact, marker.layout, marker.legacy)
+    return bind_library(canonical, fact, layout_identity(fact, false)?)
 
 
-def library_fact(store: Path, marker: JsonValue) -> Result[Fact, str]:
-    """Read a layout's exact payload snapshot, or a project's current unit selection, refusing damaged payloads."""
-    if marker.get("layout") != None:
-        document = required_text(marker, "fact")?
-        match decode_fact(document.encode("utf-8")):
+def library_fact(store: Path, marker: ViewSelection) -> Result[Fact, str]:
+    """Read a layout's exact payload snapshot or a project's current unit, verifying its physical payloads."""
+    if marker.layout != "":
+        match decode_fact(marker.snapshot):
             None => return Err("invalid library layout fact")
             Some(fact) =>
                 if (
-                    required_text(marker, "identity")? != fact.identity
-                    or required_text(marker, "layout")? != library_layout(fact)?
+                    marker.identity != fact.identity
+                    or marker.layout != layout_identity(fact, marker.legacy)?
                 ):
                     return Err("library layout names another payload set")
                 for file in fact.files:
                     if not payload_current(store, file):
                         return Err(f"{file.path}: library payload is damaged")
                 return Ok(fact)
-    identity = required_text(marker, "identity")?
+    identity = marker.identity
     match find(store, identity)?:
         None => return Err(f"library's baked unit is absent: {identity}")
         Some(fact) => return Ok(fact)
 
 
-def library_layout(fact: Fact) -> Result[str, str]:
-    """Name the exact member payloads, keeping earlier layouts valid after a unit-record repair."""
-    return fingerprint(["incan.bakery.library-layout/1", layout_fact_text(fact, "library bindings")?])
-
-
-def bind_library(store: Path, fact: Fact) -> Result[Path, str]:
+def bind_library(store: Path, fact: Fact, layout: str, legacy: bool = false) -> Result[Path, str]:
     """Complete immutable filename bindings under a claim before returning the library to any consumer."""
-    # 2. A crashed first binder is completed by the next caller before any consumer gets the directory.
-    layout = library_layout(fact)?
     held = claim(store, f"library-layout/{layout}")?
     selected = store.joinpath("libraries").joinpath(layout)
     make_directory(selected)?
@@ -604,13 +587,8 @@ def bind_library(store: Path, fact: Fact) -> Result[Path, str]:
             return Err(f"{target.0}: library binding is not a payload link")
         else:
             link_payload(store, source, target)?
-    if not selected.joinpath(VIEW_RECORD).is_file():
-        marker = JsonValue.object(
-            {"identity": JsonValue.string(fact.identity), "layout": JsonValue.string(layout), "fact": JsonValue.string(
-                layout_fact_text(fact, "library bindings")?,
-            )},
-        )
-        publish(selected.joinpath(VIEW_RECORD), json_text(marker)?)?
+    if read_view(selected)? is None:
+        write_view(selected, ViewSelection(identity=fact.identity, layout=layout, snapshot=encode_fact(fact, "library bindings")?, legacy=legacy))?
     admit_views(fact.files, selected, "")?
     return Ok(selected)
 
@@ -636,14 +614,13 @@ pub def viewed_fact(directory: Path) -> Result[Option[Path], str]:
     Only changed or missing view members are cloned again; intact members keep their file generations. A view whose unit is no longer baked, or is damaged, is
     refused with a named integrity error; normal lookup never repairs frozen bytes.
     """
-    record = directory.joinpath(VIEW_RECORD)
-    if not record.is_file():
-        return Ok(None)
-    marker = read_json(record)?
+    marker = match read_view(directory)?:
+        Some(existing) => existing
+        None => return Ok(None)
     store = bakery()?
-    if marker.get("layout") != None:
+    if marker.layout != "":
         return Ok(Some(library_directory(store, directory)?))
-    identity = required_text(marker, "identity")?
+    identity = marker.identity
     match find(store, identity)?:
         None => return Ok(None)
         Some(fact) =>

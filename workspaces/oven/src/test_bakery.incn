@@ -4,6 +4,7 @@ from rust::std::fs import Permissions, remove_dir_all, rename, set_permissions
 from rust::std::os::unix::fs import PermissionsExt
 from rust::std::process import Command
 from std.fs import Path
+from std.json import JsonValue
 from std.fs.locking import FileLock
 from bakery import (
     claim,
@@ -22,11 +23,12 @@ from bakery import (
     repair_derived,
 )
 from bakery_records import Fact, claim_file, decode_fact, layout_fact_text, record_key, staging_root
+from bakery_views import read_view
 from bakery_roots import collect, lease_unit, leased_units, register_root
 from pub::incan_platform.process_lease import ProcessLease
 from pub::incan_platform.store import Snapshot, begin, commit, delete, fork, get, keys, put, segments
 from store_path_conversion import payload_path, put_payload, readmit_payload, snapshot
-from files import make_directory, read, write as write_file
+from files import json_text, make_directory, read, write as write_file
 from incan_units import compile_executable, obtain_executable
 from scratch import scratch_directory
 from toolchain import Toolchain
@@ -451,8 +453,11 @@ def verify_equal_payload_identity_change(root: Path) -> Result[None, str]:
     assert bake(store, second, "identical payload")?
     view_directory(store, baked(store, first)?, target)?
     view_directory(store, baked(store, second)?, target)?
-    marker = read(target.joinpath("fact.json"))?
-    assert second in marker, "equal payloads retained the previous unit identity"
+    match read_view(target)?:
+        Some(marker) => assert marker.identity == second, "equal payloads retained the previous unit identity"
+        None => return Err("view has no unit selection")
+    raw = target.joinpath("fact.crumb").read_bytes().map_err((error) => error.message())?
+    assert raw[:4] == b"CRMB"
     transaction = begin(snapshot(store).map_err((error) => error.message())?)
     removed = delete(transaction, f"incan.bakery.unit\t{first}")
     _ = commit(removed).map_err((error) => error.message())?
@@ -471,6 +476,16 @@ def verify_frozen_library_bindings(root: Path) -> Result[None, str]:
     target = root.joinpath("target/library")
     view_directory(store, fact, target)?
     original = library_directory(store, target)?
+    # A consumer may still carry a v1 layout even after its bakery has moved.
+    prior_snapshot = layout_fact_text(fact, "library bindings")?
+    prior_layout = fingerprint(["incan.bakery.library-layout/1", prior_snapshot])?
+    transported = root.joinpath("previous-library")
+    prior_marker = JsonValue.object({"identity": JsonValue.string(identity), "layout": JsonValue.string(prior_layout), "fact": JsonValue.string(prior_snapshot)})
+    write(transported.joinpath("fact.json"), json_text(prior_marker)?)?
+    prior_directory = library_directory(store, transported)?
+    assert prior_directory.name() == prior_layout
+    assert library_directory(store, prior_directory)?.0 == prior_directory.0
+    assert read(prior_directory.joinpath("payload"))? == "first library"
     damage_unit_record(store, identity)?
     replacement = staging(store, identity)?
     write(replacement.joinpath("payload"), "repaired library")?

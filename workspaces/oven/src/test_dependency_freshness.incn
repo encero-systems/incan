@@ -1004,6 +1004,7 @@ def verify_completed_library_abi(scratch: Path) -> Result[None, str]:
     # An unbaked replacement must not inherit a previous portable view's fact selection.
     remove(record_path(Path(setup.toolchain.externs[0].path)))?
     assert compile_library_unit(library, setup.toolchain, output)? == 0
+    assert not output.parent().joinpath("fact.crumb").is_file()
     assert not output.parent().joinpath("fact.json").is_file()
     assert library_directory(bakery()?, output.parent())?.0 == output.parent().0
     assert read(attempts)? == "xx"
