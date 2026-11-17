@@ -634,7 +634,7 @@ def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Ca
 
 
 def build_bridge_compiler(run: ReleaseRun, candidate: Candidate) -> Result[None, str]:
-    """Relink and readmit one exact bridge compiler so it can compile the byte-exact qualified source generation."""
+    """Relink one exact bridge compiler and its providers before compiling the byte-exact qualified source generation."""
     bridge = exact_seed_bridge_source(run)?
     started = Instant.now()
     span = run.trace.begin("bridge-driver-build")?
@@ -649,6 +649,8 @@ def build_bridge_compiler(run: ReleaseRun, candidate: Candidate) -> Result[None,
             refresh=false,
             log=run.paths.output.joinpath("bridge-driver-build.log"),
             readmit=true,
+            standard=true,
+            helper_home=run.paths.home.0,
         ),
     )
     run.trace.finish(span)?
