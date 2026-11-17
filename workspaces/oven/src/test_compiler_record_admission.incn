@@ -61,6 +61,11 @@ pub def test_a_shipped_sealed_set_installs_without_converting_or_copying() -> Re
     # 3. Nothing was converted, copied or rewritten.
     assert pin.digest == sealed.digest, "the shipped pin is kept"
     assert sealed_inventory(installed)? == before, "admission wrote no object"
+    missing = CompilerRecordPin(root="missing-transport", digest=sealed.digest, directory=sealed.directory)
+    match installed_records(driver.0, installed, Some(missing)):
+        Ok(_) => return Err("a pinned incomplete compiler directory was re-created")
+        Err(reason) => assert reason == "missing sealed manifest for the shipped compiler directory"
+    assert read_directory(installed.0, "malformed.page", sealed.digest, "", 1).is_err()
     legacy = installed_records(driver.0, installed, Some(CompilerRecordPin(root=sealed.root, digest=sealed.digest)))?
     assert legacy.directory == "", "earlier pins without an index still admit their exact sealed transport"
     top = sealed.directory.split(":")
