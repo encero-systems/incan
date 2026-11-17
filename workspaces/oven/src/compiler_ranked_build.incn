@@ -115,7 +115,7 @@ def changed_owner(graph: Snapshot, prior: RecordKey, captured: &Dict[str, bytes]
                     inputs[encode_record_key(key)?] = required(graph, encoded_key)?
                     prior_declaration_root = previous.semantic_digest
                 else:
-                    if encoded_key not in captured or key.identity != order.members[0]:
+                    if not captured.contains_key(encoded_key) or key.identity != order.members[0]:
                         return Ok(None)
                     current = captured[encoded_key]
                     changed = digest(current) != previous.semantic_digest
@@ -179,8 +179,9 @@ def page(graph: Snapshot, kind: str, root: str) -> Result[bytes, str]:
     return Ok(value)
 
 
-def evaluate(store: Path, view: str, toolchain: Toolchain, mut owner: BuildOwner, job: &Submitted) -> Result[BuildOwner, str]:
+def evaluate(store: Path, view: str, toolchain: Toolchain, pending: BuildOwner, job: &Submitted) -> Result[BuildOwner, str]:
     """Settle one reserved contribution, retaining only the typed record and verified predecessor evidence."""
+    mut owner = pending
     output = job.activation.ready.output
     request = RecordMessage.Evaluate(Evaluate(work_root=job.work_root, snapshot=job.selected.digest,
         prepared_root=job.prepared_root, reservation=job.prepared_root, cancellation_generation=0))
