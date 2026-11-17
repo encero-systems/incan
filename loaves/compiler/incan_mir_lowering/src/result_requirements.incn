@@ -1,12 +1,27 @@
 """Discharge retained generic source-result obligations before lowering a concrete native frame."""
 
-from rust::incan_semantics_core import IncanType
-from rust::incan_semantics_core::body_ir import Body
+from rust::incan_semantics_core import (
+    IncanType,
+    CanonicalSymbolId,
+    SemanticSourceTargetKind,
+    SymbolOrigin,
+)
+from rust::incan_semantics_core::body_ir import Body, NominalDeclaration, EnumDeclaration, nominal_carrier_key
 from rust::incan_lang::lang::types::collections import CollectionTypeId
+from rust::std::collections import BTreeMap
+from decls import ViewLifetimeLayout
 
 
-pub def validate_result_requirements(body: &Body) -> Result[None, str]:
+pub def validate_result_requirements(
+    body: &Body,
+    declarations: &list[NominalDeclaration],
+    enums: &list[EnumDeclaration],
+) -> Result[None, str]:
     """Unresolved or dependent substitutions retain a refusal, never implicit independent storage."""
+    mut layouts = ViewLifetimeLayout.start(declarations, enums)
+    mut identities: BTreeMap[str, CanonicalSymbolId] = BTreeMap.new()
+    for name, identity in body.named_type_identities.iter():
+        _ = identities.insert(str(name), identity.clone())
     match body.checked_input_profile:
         None => return Ok(None)
         Some(profile) =>
@@ -14,7 +29,7 @@ pub def validate_result_requirements(body: &Body) -> Result[None, str]:
                 return Err("generic result profile lost its dependency requirements")
             for requirement in profile.result_requirements:
                 anchor, ty = requirement
-                if not independent_result(ty):
+                if not independent_result_with_layout(ty, identities, declarations, enums, layouts):
                     return Err(f"generic result needs retained dependency facts in {body.name} at {anchor.start}")
     return Ok(None)
 
@@ -35,3 +50,205 @@ pub def independent_result(ty: &IncanType) -> bool:
                     return false
             return true
         None => return false
+
+
+pub def independent_result_with_layout(
+    ty: &IncanType,
+    identities: &BTreeMap[str, CanonicalSymbolId],
+    declarations: &list[NominalDeclaration],
+    enums: &list[EnumDeclaration],
+    mut layouts: ViewLifetimeLayout,
+) -> bool:
+    """Prove one retained Result/Option requirement through exact declaration identities and owned storage only."""
+    mut visiting: list[CanonicalSymbolId] = []
+    mut complete: list[CanonicalSymbolId] = []
+    match ty:
+        IncanType.Generic(base="Result", args=arguments) =>
+            if len(arguments) != 2:
+                return false
+            for argument in arguments:
+                if not independent_payload(argument, identities, declarations, enums, layouts, visiting, complete):
+                    return false
+            return true
+        IncanType.Generic(base="Option", args=arguments) =>
+            if len(arguments) != 1:
+                return false
+            return independent_payload(arguments[0], identities, declarations, enums, layouts, visiting, complete)
+        _ => return false
+
+
+def independent_payload(
+    ty: &IncanType,
+    identities: &BTreeMap[str, CanonicalSymbolId],
+    declarations: &list[NominalDeclaration],
+    enums: &list[EnumDeclaration],
+    mut layouts: ViewLifetimeLayout,
+    mut visiting: list[CanonicalSymbolId],
+    mut complete: list[CanonicalSymbolId],
+) -> bool:
+    """Accept the exhaustive owned payload grammar; every unlisted semantic type remains dependent."""
+    match ty:
+        IncanType.Primitive(_kind) => return true
+        IncanType.Named(name) =>
+            match identities.get(name):
+                Some(identity) =>
+                    return independent_named(
+                        str(name), identity, declarations, enums, layouts, visiting, complete,
+                    )
+                None => return false
+        IncanType.Generic(base="List", args=arguments) =>
+            if len(arguments) != 1:
+                return false
+            return independent_payload(
+                arguments[0], identities, declarations, enums, layouts, visiting, complete,
+            )
+        IncanType.Generic(base="Option", args=arguments) =>
+            if len(arguments) != 1:
+                return false
+            return independent_payload(
+                arguments[0], identities, declarations, enums, layouts, visiting, complete,
+            )
+        IncanType.Generic(base="Result", args=arguments) =>
+            if len(arguments) != 2:
+                return false
+            for argument in arguments:
+                if not independent_payload(argument, identities, declarations, enums, layouts, visiting, complete):
+                    return false
+            return true
+        _ => return false
+
+
+def independent_named(
+    name: str,
+    identity: &CanonicalSymbolId,
+    declarations: &list[NominalDeclaration],
+    enums: &list[EnumDeclaration],
+    mut layouts: ViewLifetimeLayout,
+    mut visiting: list[CanonicalSymbolId],
+    mut complete: list[CanonicalSymbolId],
+) -> bool:
+    """Resolve one Named key to exactly one canonical source declaration and prove its recursive owned closure."""
+    if not source_nominal_identity(identity):
+        return false
+
+    mut canonical_matches = 0
+    mut carrier_matches = 0
+    mut nominal = -1
+    mut enum_index = -1
+    for index in range(len(declarations)):
+        declaration = declarations[index]
+        expected = canonical_carrier_name(declaration.canonical, str(declaration.name))
+        if expected == name and declaration.carrier_name() == expected:
+            carrier_matches += 1
+        if declaration.canonical == identity:
+            canonical_matches += 1
+            nominal = index
+    for index in range(len(enums)):
+        declaration = enums[index]
+        expected = canonical_carrier_name(declaration.canonical, str(declaration.name))
+        if expected == name and declaration.carrier_name() == expected:
+            carrier_matches += 1
+        if declaration.canonical == identity:
+            canonical_matches += 1
+            enum_index = index
+    if canonical_matches != 1 or carrier_matches != 1:
+        return false
+
+    mut selected = false
+    if nominal >= 0:
+        declaration = declarations[nominal]
+        expected = canonical_carrier_name(declaration.canonical, str(declaration.name))
+        selected = (
+            expected == name
+            and declaration.carrier_name() == expected
+            and declaration.canonical.kind in [
+                SemanticSourceTargetKind.Model,
+                SemanticSourceTargetKind.Class,
+                SemanticSourceTargetKind.Newtype,
+            ]
+            and len(declaration.type_parameters) == 0
+            and declaration.type_parameter_count == 0
+            and len(declaration.native_type_arguments) == 0
+        )
+    elif enum_index >= 0:
+        declaration = enums[enum_index]
+        expected = canonical_carrier_name(declaration.canonical, str(declaration.name))
+        selected = (
+            expected == name
+            and declaration.carrier_name() == expected
+            and declaration.canonical.kind == SemanticSourceTargetKind.Enum
+            and len(declaration.type_parameters) == 0
+            and len(declaration.native_type_arguments) == 0
+        )
+    if not selected:
+        return false
+    # A cycle or cached success closes only after this occurrence's spelling and declaration were reauthenticated.
+    if identity.clone() in complete:
+        return true
+    if identity.clone() in visiting:
+        return true
+
+    visiting.append(identity.clone())
+    mut accepted = false
+    if nominal >= 0:
+        declaration = declarations[nominal]
+        accepted = layouts.selected_nominal_is_complete_zero(declaration, declarations, enums)
+        if accepted:
+            for field in declaration.field_types:
+                if not independent_payload(
+                    field,
+                    declaration.named_type_identities,
+                    declarations,
+                    enums,
+                    layouts,
+                    visiting,
+                    complete,
+                ):
+                    accepted = false
+                    break
+    elif enum_index >= 0:
+        declaration = enums[enum_index]
+        accepted = layouts.selected_enum_is_complete_zero(declaration, declarations, enums)
+        if accepted:
+            for variant in declaration.variants:
+                for field in variant.fields:
+                    if not independent_payload(
+                        field,
+                        declaration.named_type_identities,
+                        declarations,
+                        enums,
+                        layouts,
+                        visiting,
+                        complete,
+                    ):
+                        accepted = false
+                        break
+                if not accepted:
+                    break
+    _ = visiting.pop()
+    if accepted:
+        complete.append(identity.clone())
+    return accepted
+
+
+def canonical_carrier_name(identity: &CanonicalSymbolId, fallback: str) -> str:
+    """Use the identity-derived carrier whenever the declaration has one; source aliases never replace this key."""
+    match nominal_carrier_key(identity):
+        Some(name) => return str(name)
+        None => return fallback
+
+
+def source_nominal_identity(identity: &CanonicalSymbolId) -> bool:
+    """Admit only authored source nominal identities; a Rust/native/builtin identity never selects source storage."""
+    if identity.kind not in [
+        SemanticSourceTargetKind.Model,
+        SemanticSourceTargetKind.Class,
+        SemanticSourceTargetKind.Newtype,
+        SemanticSourceTargetKind.Enum,
+    ]:
+        return false
+    origin: SymbolOrigin = identity.origin
+    match origin:
+        SymbolOrigin.Module(_path) => return true
+        SymbolOrigin.Package(library=_library, module_path=_path) => return true
+        _ => return false

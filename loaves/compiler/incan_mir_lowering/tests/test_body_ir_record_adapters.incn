@@ -6,6 +6,7 @@ from body_ir_record_adapters import (
     authored_body_ir_module,
     native_body,
     native_body_ir_module,
+    native_nominal_declaration,
 )
 from pub::internal_models.body_ir_declarations import (
     CompilerBody,
@@ -23,12 +24,25 @@ from pub::internal_models.compiler_records import (
     CanonicalSymbolId,
     DeclarationKind,
     HirSourceSpan,
+    PackageIdentity,
     SymbolNamespace,
     SymbolOrigin,
 )
+from compiler_record_adapters import native_canonical_symbol_id
+from models import model_type
+from native_type_identity import constructor_index
+from options import retain_carrier
+from pub::incan_mir_plan import Carrier, ListLeaf, PlanType, EnumDeclaration as PlanEnumDeclaration
 from rust::std::collections import BTreeMap
-from rust::incan_semantics_core import CompilerNodeId
-from rust::incan_semantics_core::body_ir import NewtypeDeserialize, NewtypeStringConversion, StringConversionContract
+from rust::incan_semantics_core import CompilerNodeId, IncanType as RustType, generic
+from rust::incan_semantics_core::body_ir import (
+    NominalDeclaration as RustNominalDeclaration,
+    NewtypeDeserialize,
+    NewtypeStringConversion,
+    StringConversionContract,
+    nominal_carrier_key,
+)
+from symbols import model_symbol
 
 
 pub def test_body_record_round_trip_preserves_shared_identities_and_statements() -> Result[None, str]:
@@ -163,6 +177,162 @@ pub def test_module_adapter_keeps_invocation_selections_explicit() -> Result[Non
     return Ok(None)
 
 
+pub def test_model_type_selects_exact_imported_carrier_and_legacy_name() -> Result[None, str]:
+    """Resolve an imported carrier by its authenticated owner while preserving unique legacy source-name lookup."""
+    owner = imported_identity("CanonicalSymbolId")
+    carrier = carrier_key(owner)?
+    target = nominal(
+        owner.clone(),
+        "CanonicalSymbolId",
+        [NamedTypeIdentity(name=carrier.clone(), identity=owner.clone())],
+    )
+    decoy_owner = identity("Shadow", DeclarationKind.Model)
+    decoy = nominal(
+        decoy_owner.clone(),
+        carrier.clone(),
+        [NamedTypeIdentity(name=carrier.clone(), identity=decoy_owner)],
+    )
+    before = native_nominals([decoy.clone(), target.clone()])?
+    before_index = constructor_index(before)
+    assert model_type(before_index, before, RustType.Named(carrier.clone()))? == PlanType.Model(
+        1,
+        model_symbol("CanonicalSymbolId"),
+    )
+    after = native_nominals([target.clone(), decoy])?
+    after_index = constructor_index(after)
+    assert model_type(after_index, after, RustType.Named(carrier))? == PlanType.Model(
+        0,
+        model_symbol("CanonicalSymbolId"),
+    )
+
+    legacy_owner = identity("LegacyPacket", DeclarationKind.Model)
+    legacy = native_nominals([nominal(legacy_owner, "LegacyPacket", [])])?
+    legacy_index = constructor_index(legacy)
+    assert model_type(legacy_index, legacy, RustType.Named("LegacyPacket"))? == PlanType.Model(
+        0,
+        model_symbol("LegacyPacket"),
+    )
+    return Ok(None)
+
+
+pub def test_model_type_refuses_unauthenticated_or_ambiguous_nominal_owners() -> Result[None, str]:
+    """Refuse carrier aliases without one closed self-bound owner and legacy spellings with multiple declarations."""
+    owner = imported_identity("CanonicalSymbolId")
+    carrier = carrier_key(owner)?
+    missing = native_nominals([nominal(owner.clone(), "CanonicalSymbolId", [])])?
+    missing_index = constructor_index(missing)
+    assert model_type(missing_index, missing, RustType.Named(carrier.clone())).is_err()
+
+    foreign = imported_identity("ForeignCanonicalSymbolId")
+    foreign_binding = native_nominals(
+        [nominal(
+            owner.clone(),
+            "CanonicalSymbolId",
+            [NamedTypeIdentity(name=carrier.clone(), identity=foreign.clone())],
+        )],
+    )?
+    foreign_index = constructor_index(foreign_binding)
+    assert model_type(foreign_index, foreign_binding, RustType.Named(carrier.clone())).is_err()
+
+    absent: list[RustNominalDeclaration] = []
+    absent_index = constructor_index(absent)
+    assert model_type(absent_index, absent, RustType.Named(carrier.clone())).is_err()
+
+    decoy_owner = identity("Shadow", DeclarationKind.Model)
+    no_owner = native_nominals(
+        [nominal(
+            decoy_owner.clone(),
+            carrier.clone(),
+            [NamedTypeIdentity(name=carrier.clone(), identity=decoy_owner)],
+        )],
+    )?
+    no_owner_index = constructor_index(no_owner)
+    assert model_type(no_owner_index, no_owner, RustType.Named(carrier.clone())).is_err()
+
+    mut open = nominal(
+        owner.clone(),
+        "CanonicalSymbolId",
+        [NamedTypeIdentity(name=carrier.clone(), identity=owner.clone())],
+    )
+    open.type_parameters = ["T"]
+    open.type_parameter_count = 1
+    open_declarations = native_nominals([open])?
+    open_index = constructor_index(open_declarations)
+    assert model_type(open_index, open_declarations, RustType.Named(carrier.clone())).is_err()
+
+    authenticated = nominal(
+        owner.clone(),
+        "CanonicalSymbolId",
+        [NamedTypeIdentity(name=carrier.clone(), identity=owner.clone())],
+    )
+    duplicate = native_nominals([authenticated.clone(), authenticated.clone()])?
+    duplicate_index = constructor_index(duplicate)
+    assert model_type(duplicate_index, duplicate, RustType.Named(carrier.clone())).is_err()
+
+    unbound_duplicate = nominal(owner.clone(), "CanonicalSymbolId", [])
+    for mixed in [
+        [authenticated.clone(), unbound_duplicate.clone()],
+        [unbound_duplicate, authenticated],
+    ]:
+        mixed_declarations = native_nominals(mixed)?
+        mixed_index = constructor_index(mixed_declarations)
+        assert model_type(mixed_index, mixed_declarations, RustType.Named(carrier.clone())).is_err()
+
+    foreign_carrier = carrier_key(foreign)?
+    wrong_carrier = native_nominals(
+        [nominal(
+            owner,
+            "CanonicalSymbolId",
+            [NamedTypeIdentity(name=foreign_carrier.clone(), identity=foreign)],
+        )],
+    )?
+    wrong_index = constructor_index(wrong_carrier)
+    assert model_type(wrong_index, wrong_carrier, RustType.Named(foreign_carrier)).is_err()
+
+    legacy_duplicate = native_nominals(
+        [
+            nominal(identity("LegacyPacket", DeclarationKind.Model), "LegacyPacket", []),
+            nominal(identity("OtherLegacyPacket", DeclarationKind.Model), "LegacyPacket", []),
+        ],
+    )?
+    legacy_duplicate_index = constructor_index(legacy_duplicate)
+    assert model_type(legacy_duplicate_index, legacy_duplicate, RustType.Named("LegacyPacket")).is_err()
+    return Ok(None)
+
+
+pub def test_nested_option_list_retains_exact_imported_model_carrier() -> Result[None, str]:
+    """Retain Option[List[model]] only through the same exact imported carrier authority used by scalar layouts."""
+    owner = imported_identity("CanonicalSymbolId")
+    carrier = carrier_key(owner)?
+    target = nominal(
+        owner.clone(),
+        "CanonicalSymbolId",
+        [NamedTypeIdentity(name=carrier.clone(), identity=owner.clone())],
+    )
+    mut authored = empty_module()
+    authored.nominal_declarations = [target]
+    constructors = constructor_index(native_nominals(authored.nominal_declarations.clone())?)
+    native = native_body_ir_module(authored)?
+    mut intrinsics: list[PlanEnumDeclaration] = []
+    ty = generic("Option", [generic("List", [RustType.Named(carrier.clone())])])
+    retain_carrier(constructors, native, intrinsics, ty, "src/main.incn")?
+    assert len(intrinsics) == 1
+    assert intrinsics[0].carrier == Carrier.Option
+    assert intrinsics[0].variants[0].fields == []
+    assert intrinsics[0].variants[1].fields == [
+        PlanType.List(ListLeaf.Model(0, model_symbol("CanonicalSymbolId")), 1),
+    ]
+
+    mut rejected_authored = empty_module()
+    rejected_authored.nominal_declarations = [nominal(owner, "CanonicalSymbolId", [])]
+    rejected_index = constructor_index(native_nominals(rejected_authored.nominal_declarations.clone())?)
+    rejected = native_body_ir_module(rejected_authored)?
+    mut rejected_intrinsics: list[PlanEnumDeclaration] = []
+    assert retain_carrier(rejected_index, rejected, rejected_intrinsics, ty, "src/main.incn").is_err()
+    assert len(rejected_intrinsics) == 0
+    return Ok(None)
+
+
 def empty_body(name: str) -> CompilerBody:
     """Build one complete scalar Body for reversible adapter controls."""
     return CompilerBody(
@@ -237,4 +407,74 @@ def identity(name: str, kind: DeclarationKind) -> CanonicalSymbolId:
         kind=kind,
         scope_discriminant=None,
         declaration_span=HirSourceSpan(file="src/main.incn", start=0, end=10),
+    )
+
+
+def imported_identity(name: str) -> CanonicalSymbolId:
+    """Build one package-owned model identity whose carrier key differs from its source declaration name."""
+    return CanonicalSymbolId(
+        namespace=SymbolNamespace.OrdinaryLexical,
+        origin=SymbolOrigin.Package(
+            PackageIdentity(name="internal_models", version="0.6.0-dev.9"),
+            ["compiler_records"],
+        ),
+        declaration_name=str(name),
+        kind=DeclarationKind.Model,
+        scope_discriminant=None,
+        declaration_span=HirSourceSpan(file="registry/internal_models/compiler_records.incn", start=0, end=10),
+    )
+
+
+def carrier_key(owner: &CanonicalSymbolId) -> Result[str, str]:
+    """Read the exact native carrier spelling for one valid authored source identity."""
+    native = native_canonical_symbol_id(owner)?
+    match nominal_carrier_key(native):
+        Some(key) => return Ok(str(key))
+        None => return Err("test identity has no nominal carrier key")
+
+
+def native_nominals(declarations: list[CompilerNominalDeclaration]) -> Result[list[RustNominalDeclaration], str]:
+    """Restore one authored nominal inventory without adding unselected declaration authority."""
+    mut native: list[RustNominalDeclaration] = []
+    for declaration in declarations:
+        native.append(native_nominal_declaration(declaration)?)
+    return Ok(native)
+
+
+def nominal(
+    owner: CanonicalSymbolId,
+    name: str,
+    identities: list[NamedTypeIdentity],
+) -> CompilerNominalDeclaration:
+    """Build one complete fieldless source model while exposing only the identity facts varied by each control."""
+    return CompilerNominalDeclaration(
+        trait_adoptions=[],
+        native_item="",
+        class_inheritance=None,
+        native_type_arguments=[],
+        direct_declaration_id=CompilerNodeId.declaration_span("app", 0, 10),
+        canonical=owner,
+        name=str(name),
+        fields=[],
+        field_identities=[],
+        field_types=[],
+        owned_callable_fields=[],
+        field_public=[],
+        field_aliases=[],
+        reflection_fields=None,
+        reflection_metadata=None,
+        comparison_equality=None,
+        public=false,
+        has_field_defaults=false,
+        field_default_body=[],
+        validated_constructor=None,
+        method_partial_defaults=[],
+        display_method=None,
+        newtype_deserialize=NewtypeDeserialize.Unselected,
+        newtype_string_conversion=NewtypeStringConversion.Unselected,
+        derives=[],
+        named_type_identities=identities,
+        type_parameters=[],
+        type_parameter_count=0,
+        record_package_identity=None,
     )

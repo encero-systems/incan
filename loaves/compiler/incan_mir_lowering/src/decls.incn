@@ -219,6 +219,10 @@ model ViewLifetimeCount:
     count: int
     complete: bool
 
+    def is_complete_zero(self) -> bool:
+        """Admit independence only when measurement completed and found no stored view lifetime."""
+        return self.complete and self.count == 0
+
 
 pub class ViewLifetimeLayout:
     """Index view-bearing nominal layouts, then memoize their ordered native lifetime counts."""
@@ -337,6 +341,24 @@ pub class ViewLifetimeLayout:
     ) -> int:
         """Count physical references retained by an enum's payloads in source variant order."""
         return self.named(declaration.carrier_name(), declarations, enums).count
+
+    pub def selected_nominal_is_complete_zero(
+        mut self,
+        declaration: &NominalDeclaration,
+        declarations: &list[NominalDeclaration],
+        enums: &list[RustEnumDeclaration],
+    ) -> bool:
+        """Prove one already canonical-selected nominal has a complete layout with no view lifetime."""
+        return self.nominal_fields(declaration, declarations, enums).is_complete_zero()
+
+    pub def selected_enum_is_complete_zero(
+        mut self,
+        declaration: &RustEnumDeclaration,
+        declarations: &list[NominalDeclaration],
+        enums: &list[RustEnumDeclaration],
+    ) -> bool:
+        """Prove one already canonical-selected enum has a complete layout with no view lifetime."""
+        return self.enum_fields(declaration, declarations, enums).is_complete_zero()
 
     def named(
         mut self,

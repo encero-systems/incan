@@ -396,7 +396,7 @@ impl CheckedInputBody<'_> {
                 _ => return Err("operation coverage needs checked fixed call arguments"),
             };
             if matches!(value.node, Expr::Closure(..))
-                && self.capture_free_result_map_err_callback(expression.span, receiver.span, value.span)
+                && self.capture_free_result_map_err_callback(expression.span, receiver, arguments)
             {
                 continue;
             }

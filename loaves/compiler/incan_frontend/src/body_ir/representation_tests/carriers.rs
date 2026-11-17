@@ -179,6 +179,102 @@ pub(super) fn assert_nominal_carrier_maps_stay_shared() -> Result<(), Box<dyn st
     Ok(())
 }
 
+/// A package-owned provider declaration authenticates its own carrier before a consumer retains a nested field.
+pub(super) fn assert_package_provider_declaration_retains_own_carrier() -> Result<(), Box<dyn std::error::Error>> {
+    let provider_source = "pub model CarrierValue:\n    pub number: int\n";
+    let consumer_source =
+        "from provider import CarrierValue\npub model Envelope:\n    pub values: Option[list[CarrierValue]]\n";
+    let provider_tokens = crate::lexer::lex(provider_source).map_err(|errors| format!("{errors:?}"))?;
+    let provider_program = crate::parser::parse(&provider_tokens).map_err(|errors| format!("{errors:?}"))?;
+    let provider_path = vec!["provider".to_owned()];
+    let package = "carrier_package";
+    let mut provider_checker = TypeChecker::new();
+    provider_checker.set_current_module_path(Some(provider_path.clone()));
+    provider_checker.set_current_package_identity(Some(package.to_owned()));
+    provider_checker
+        .check_program(&provider_program)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let provider_facts = provider_checker.into_type_info();
+    let providers = ProviderOperationCatalog::new();
+    let provider_context = BodyIrContext {
+        modules: crate::body_ir::ContextModules::default(),
+        provider_operations: &providers,
+        registry_package: None,
+        library_package: Some(package),
+        include_inline_tests: false,
+    };
+    let provider = super::build_body_ir_module(&provider_program, &provider_path, &provider_facts, &provider_context);
+    let owners = provider
+        .nominal_declarations
+        .iter()
+        .filter(|declaration| declaration.canonical.declaration_name == "CarrierValue")
+        .collect::<Vec<_>>();
+    assert_eq!(owners.len(), 1, "provider retained an ambiguous canonical declaration");
+    let owner = owners[0];
+    let key = bir::nominal_carrier_key(&owner.canonical).ok_or("missing package carrier key")?;
+    assert_eq!(owner.named_type_identities.get(&key), Some(&owner.canonical));
+    assert_eq!(owner.carrier_name(), key);
+
+    let consumer_tokens = crate::lexer::lex(consumer_source).map_err(|errors| format!("{errors:?}"))?;
+    let consumer_program = crate::parser::parse(&consumer_tokens).map_err(|errors| format!("{errors:?}"))?;
+    let consumer_path = vec!["consumer".to_owned()];
+    let mut consumer_checker = TypeChecker::new();
+    consumer_checker.set_current_module_path(Some(consumer_path.clone()));
+    consumer_checker.set_current_package_identity(Some(package.to_owned()));
+    consumer_checker.register_dependency_module_path_segments("provider", provider_path.clone());
+    consumer_checker
+        .check_with_imports(&consumer_program, &[("provider", &provider_program)])
+        .map_err(|errors| format!("{errors:?}"))?;
+    let consumer_facts = consumer_checker.into_type_info();
+    let provider_modules = [provider.clone()];
+    let consumer_context = BodyIrContext {
+        modules: (&provider_modules).into(),
+        provider_operations: &providers,
+        registry_package: None,
+        library_package: Some(package),
+        include_inline_tests: false,
+    };
+    let consumer = super::build_body_ir_module(&consumer_program, &consumer_path, &consumer_facts, &consumer_context);
+    let field = consumer
+        .nominal_declarations
+        .iter()
+        .find(|declaration| declaration.canonical.declaration_name == "Envelope")
+        .and_then(|declaration| declaration.field_types.first())
+        .ok_or("missing consumer field")?;
+    assert!(matches!(
+        field,
+        super::IncanType::Generic { base, args }
+            if base == "Option"
+                && matches!(args.as_slice(), [super::IncanType::Generic { base, args }]
+                    if base == "List"
+                        && matches!(args.as_slice(), [super::IncanType::Named(name)] if name == &key))
+    ));
+
+    let mut conflict = super::build_module_seed(&provider_program, &provider_path, &provider_facts, &provider_context);
+    let declaration = conflict
+        .nominal_declarations
+        .iter_mut()
+        .find(|declaration| declaration.canonical.declaration_name == "CarrierValue")
+        .ok_or("missing conflict provider")?;
+    let mut foreign = declaration.canonical.clone();
+    foreign.declaration_name = "ForeignValue".to_owned();
+    declaration.named_type_identities.insert(key.clone(), foreign.clone());
+    super::nominal_carriers::retain(
+        &mut conflict,
+        &provider_facts,
+        crate::body_ir::ContextModules::default(),
+        &std::collections::HashSet::new(),
+    );
+    let refused = conflict
+        .nominal_declarations
+        .iter()
+        .find(|declaration| declaration.canonical.declaration_name == "CarrierValue")
+        .ok_or("missing retained conflict provider")?;
+    assert_eq!(refused.named_type_identities.get(&key), Some(&foreign));
+    assert_ne!(refused.carrier_name(), key);
+    Ok(())
+}
+
 /// Prove a module's bodies start from one identity map built once for the module rather than a copy each: the
 /// module-wide checked bindings can outweigh the bodies themselves.
 pub(super) fn assert_module_bodies_share_one_identity_map() -> Result<(), Box<dyn std::error::Error>> {
@@ -593,6 +689,97 @@ pub(super) fn assert_builtin_method_identities() -> Result<(), Box<dyn std::erro
     assert!(
         expected.iter().all(|operation| carried.contains(operation)),
         "Body IR operations: {carried:?}",
+    );
+    Ok(())
+}
+
+/// Checked direct Rust serde imports retain their canonical derive paths without depending on ABI macro metadata.
+/// Same-spelled local or foreign bindings grant no serde layout authority.
+pub(super) fn assert_checked_serde_derive_selection() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::serde import Serialize, Deserialize
+
+@derive(Eq, Serialize, Deserialize)
+pub model SerdeRecord:
+    pub value: int
+
+@derive(Eq, Serialize, Deserialize)
+pub model SerdeSibling:
+    pub label: str
+"#;
+    let (_, facts, module) = checked_seed(source)?;
+    assert!(facts.derivations.native_macro_paths.is_empty());
+    for name in ["SerdeRecord", "SerdeSibling"] {
+        let selected = facts
+            .declarations
+            .body_ir_model_derives
+            .get(name)
+            .ok_or("missing checked Body IR model derive selection")?;
+        assert!(selected.iter().any(|derive| derive == "serde::Serialize"));
+        assert!(selected.iter().any(|derive| derive == "serde::Deserialize"));
+        assert!(
+            !selected
+                .iter()
+                .any(|derive| derive == "Serialize" || derive == "Deserialize")
+        );
+        assert!(facts.declarations.rust_native_derive_types.contains(name));
+    }
+    assert_eq!(module.nominal_declarations.len(), 2);
+    assert_eq!(
+        module
+            .nominal_declarations
+            .iter()
+            .map(|declaration| declaration.canonical.declaration_name.as_str())
+            .collect::<Vec<_>>(),
+        ["SerdeRecord", "SerdeSibling"]
+    );
+    for declaration in &module.nominal_declarations {
+        assert!(declaration.derives.iter().any(|derive| derive == "serde::Serialize"));
+        assert!(declaration.derives.iter().any(|derive| derive == "serde::Deserialize"));
+        assert!(
+            !declaration
+                .derives
+                .iter()
+                .any(|derive| derive == "Serialize" || derive == "Deserialize")
+        );
+    }
+
+    let foreign = r#"
+from rust::foreign_macros import Serialize
+
+@derive(Eq, Serialize)
+pub model ForeignRecord:
+    pub value: int
+"#;
+    let (_, foreign_facts, foreign_module) = checked_seed(foreign)?;
+    let foreign_selected = foreign_facts
+        .declarations
+        .body_ir_model_derives
+        .get("ForeignRecord")
+        .ok_or("missing foreign derive selection")?;
+    assert!(foreign_facts.derivations.native_macro_paths.is_empty());
+    assert!(foreign_selected.iter().any(|derive| derive == "Serialize"));
+    assert!(!foreign_selected.iter().any(|derive| derive == "serde::Serialize"));
+    assert!(foreign_module.nominal_declarations.is_empty());
+
+    let local = r#"
+trait Serialize:
+    def marker(self) -> int: ...
+
+@derive(Serialize)
+pub model LocalRecord:
+    pub value: int
+"#;
+    let tokens = crate::lexer::lex(local).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let errors = TypeChecker::new()
+        .check_program(&program)
+        .expect_err("local same-spelled Serialize trait must not be a derive macro");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("derive") && error.message.contains("Serialize")),
+        "local derive errors: {errors:?}"
     );
     Ok(())
 }

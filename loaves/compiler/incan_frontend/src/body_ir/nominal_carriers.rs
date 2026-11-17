@@ -65,6 +65,7 @@ pub(super) fn retain(
     let constructors = constructor_arguments::collect(module, context);
     let module_identities = super::parameter_types::retained_type_identities(facts);
     for declaration in &mut module.nominal_declarations {
+        retain_declaration_carrier(declaration);
         for ty in &mut declaration.field_types {
             qualify_type(ty, None, &declaration.named_type_identities);
         }
@@ -219,12 +220,7 @@ pub(crate) fn retain_published_module(module: &mut bir::BodyIrModule) {
     for declaration in &mut module.nominal_declarations {
         // Older source-owned standard layouts were published under short names. Preserve the authenticated
         // declaration owner in its carrier slot too; a conflicting retained key remains refused.
-        if let Some(key) = nominal_carrier_key(&declaration.canonical) {
-            declaration
-                .named_type_identities
-                .entry(key)
-                .or_insert_with(|| declaration.canonical.clone());
-        }
+        retain_declaration_carrier(declaration);
         for ty in &mut declaration.field_types {
             qualify_type(ty, None, &declaration.named_type_identities);
         }
@@ -256,6 +252,16 @@ pub(crate) fn retain_published_module(module: &mut bir::BodyIrModule) {
             retain_published_frame(body);
             storage.ty = body.return_type.clone();
         }
+    }
+}
+
+/// Bind one declaration's encoded carrier to its exact checked owner without replacing a conflicting retained fact.
+fn retain_declaration_carrier(declaration: &mut bir::NominalDeclaration) {
+    if let Some(key) = nominal_carrier_key(&declaration.canonical) {
+        declaration
+            .named_type_identities
+            .entry(key)
+            .or_insert_with(|| declaration.canonical.clone());
     }
 }
 

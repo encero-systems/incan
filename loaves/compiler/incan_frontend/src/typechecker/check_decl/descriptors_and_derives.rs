@@ -352,7 +352,9 @@ impl TypeChecker {
             if paths.is_empty() {
                 let imported = self.rust_import_path_for_local_name(name);
                 let candidate = imported.as_deref().unwrap_or(name);
-                if let Some(path) = self.checked_native_derive_macro(candidate) {
+                if imported.is_some() && matches!(candidate, "serde::Serialize" | "serde::Deserialize") {
+                    paths.push(candidate.to_owned());
+                } else if let Some(path) = self.checked_native_derive_macro(candidate) {
                     paths.push(path);
                 } else {
                     paths.push(name.clone());
