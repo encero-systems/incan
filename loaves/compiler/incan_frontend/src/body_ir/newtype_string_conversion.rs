@@ -214,19 +214,15 @@ pub fn compilation_string_conversion_contract<'program>(
 /// Recognize the standard environment parser by its admitted provider identities, including every overload.
 /// Facade spellings and equal-named user functions grant no conversion bridge; the owning std namespace supplies it.
 fn reaches_environment_conversion(loaves: &LoafIndex, requested: &BTreeSet<CanonicalSymbolId>) -> bool {
-    let module = ["std".to_owned(), "environ".to_owned()];
-    let Some(provider) = loaves.admitted_owner_of(&module) else {
-        return false;
-    };
-    // Every overload must be a function supplied by this standard package. Unrelated packages and empty
-    // closures need none of its contract metadata. A possible match still requires its exact published identity.
-    if !requested.iter().any(|identity| {
-        identity.kind == SemanticSourceTargetKind::Function
-            && matches!(&identity.origin, SymbolOrigin::Package { library, .. } if *library == provider.name)
-    }) {
+    // A parser overload is a function. A unit which has requested no package function cannot reach it.
+    // Other units still check every published canonical option, including re-exports owned by another package.
+    if !requested
+        .iter()
+        .any(|identity| identity.kind == SemanticSourceTargetKind::Function)
+    {
         return false;
     }
-    let Some(owner) = loaves.entry(&provider.key) else {
+    let Some(owner) = loaves.owner_of(&["std".to_owned(), "environ".to_owned()]) else {
         return false;
     };
     let manifest = &owner.artifact.manifest;
