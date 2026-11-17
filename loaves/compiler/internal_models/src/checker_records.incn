@@ -22,6 +22,7 @@ pub from checker_record_models import (
     GraphNamespaceValue,
 )
 from crumb_rows import ModelField, decode_rows, encode_rows, model_description, operation_budget, required_value
+from graph_crumb_fields import decode_graph_row, encode_graph_row
 
 pub const CHECKER_SCHEMA: str = "incan.checker-fields/10"
 pub const CHECKER_PROFILE: str = "incan.checker-free-functions/17"
@@ -29,6 +30,7 @@ const MAX_RECORD_BYTES: int = 65536
 const MAX_FIELDS: int = 4096
 const CHECKER_SELECTOR: bytes = b"checkr\x00"
 const GRAPH_BODY_SELECTOR: bytes = b"grbody\x00"
+const GRAPH_CHECKING_SELECTOR: bytes = b"grchec\x00"
 const GRAPH_NAMESPACE_SELECTOR: bytes = b"grnams\x00"
 # One selected-input request carries bounded checker records plus native owner frames; bound that request at 64 MiB
 # while individual checker records retain their narrower 64 KiB limit.
@@ -204,6 +206,15 @@ def graph_body_description() -> Description:
             ModelField(identity=b"local_", name="local", storage="binary"),
         ],
     )
+
+
+def graph_checking_description() -> Description:
+    """A settled checking pair permits Body IR production from the current graph revision."""
+    return model_description(GRAPH_CHECKING_SELECTOR, "incan.checker-graph-pair/1", [
+        ModelField(identity=b"final_", name="final", storage="binary"),
+        ModelField(identity=b"ident_", name="identity", storage="string"),
+        ModelField(identity=b"local_", name="local", storage="binary"),
+    ])
 
 
 def graph_namespace_description() -> Description:
@@ -391,6 +402,26 @@ pub def encode_graph_body_values(values: list[GraphBodyValue]) -> Result[bytes, 
     return encode_rows(graph_body_description(), rows, MAX_GRAPH_TRANSPORT_BYTES).map_err((_) => CodecFault.Limit)
 
 
+pub def encode_graph_checking_pair(identity: str, local: bytes, final: bytes) -> Result[bytes, CodecFault]:
+    """Publish completed checking work as one typed input for an independent Body IR evaluation."""
+    _ = checked_pair(identity, local, final)?
+    return encode_graph_row(GRAPH_CHECKING_SELECTOR, graph_checking_description(), [
+        required_value(b"final_", Value.Binary(final)),
+        required_value(b"ident_", Value.Text(identity)),
+        required_value(b"local_", Value.Binary(local)),
+    ]).map_err((reason) => CodecFault.Encoding(reason))
+
+
+pub def decode_graph_checking_inputs(encoded: bytes) -> Result[list[GraphBodyFields], CodecFault]:
+    """Accept only a complete graph body or one separately typed settled pair ready for Body IR."""
+    if let Ok(complete) = decode_graph_body_values(encoded):
+        return Ok(complete)
+    fields = decode_graph_row(encoded, GRAPH_CHECKING_SELECTOR, graph_checking_description(), 3).map_err((_) => CodecFault.Malformed)?
+    identity = text_value(fields[1].value)?
+    records = checked_pair(identity, binary_value(fields[2].value)?, binary_value(fields[0].value)?)?
+    return Ok([GraphBodyFields(identity=identity, local=native_fields(records[0])?, final_fields=native_fields(records[1])?, body_ir=b"")])
+
+
 pub def decode_graph_body_values(encoded: bytes) -> Result[list[GraphBodyFields], CodecFault]:
     """Decode and authenticate every selected body pair before projecting its canonical native field primitives."""
     rows = decode_rows(encoded, [graph_body_description()], MAX_GRAPH_TRANSPORT_BYTES).map_err(
@@ -512,11 +543,16 @@ pub def record_root(encoded: bytes) -> Result[str, CodecFault]:
 
 
 def validate_graph_body_value(value: GraphBodyValue) -> Result[list[CheckedRecord], CodecFault]:
-    """Bind a selected pair to its compiler-owned identity and require one shared semantic body root."""
+    """Require a complete checked body transport to supply both the checking pair and executable frame."""
     if len(value.body_ir) == 0:
         return Err(CodecFault.Malformed)
-    local = decode_owned_record(value.local, CHECKER_PROFILE, value.identity)?
-    final = decode_owned_record(value.final, CHECKER_PROFILE, value.identity)?
+    return checked_pair(value.identity, value.local, value.final)
+
+
+def checked_pair(identity: str, pending: bytes, settled: bytes) -> Result[list[CheckedRecord], CodecFault]:
+    """Bind both independently produced stages to one checked identity and semantic syntax root."""
+    local = decode_owned_record(pending, CHECKER_PROFILE, identity)?
+    final = decode_owned_record(settled, CHECKER_PROFILE, identity)?
     if local.family != CheckedFamily.Local or final.family != CheckedFamily.Final:
         return Err(CodecFault.Malformed)
     if local.root != final.root:
