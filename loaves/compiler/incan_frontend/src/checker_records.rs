@@ -947,6 +947,12 @@ mod tests {
         ))
     }
 
+    /// A registry-only builtin has no physical root-scope symbol to supply its restored callee identity.
+    #[test]
+    fn registry_builtin_callee_restores_after_source_moves() -> Result<(), Box<dyn std::error::Error>> {
+        reusable_ordinary_calls("def main() -> None:\n    println(json_stringify(1))\n")
+    }
+
     /// A nominal expression retains its canonical type identity without excluding an otherwise reusable owner.
     #[test]
     fn nominal_expression_type_identities_publish_reusable_owner() -> Result<(), Box<dyn std::error::Error>> {

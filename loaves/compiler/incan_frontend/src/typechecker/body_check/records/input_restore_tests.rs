@@ -38,6 +38,54 @@ fn checked_expression_nominal_admits_its_record_identity() -> Result<(), Box<dyn
     Ok(())
 }
 
+/// Only the native result selected at this expression can supply a missing nominal type identity.
+#[test]
+fn restored_native_result_requires_the_same_checked_call() -> Result<(), Box<dyn std::error::Error>> {
+    let (program, checker, owner) = fixture("def entry() -> int:\n    return 1\n", "entry")?;
+    let positions = Positions::new(&checker, &program, owner, false)?;
+    let path = positions.nodes.anchor(owner)?.path;
+    let mut local = BodyLocal {
+        owner,
+        ..BodyLocal::default()
+    };
+    let canonical =
+        incan_semantics_core::body_ir::rust_item_identity("std::env::Args").ok_or("missing native identity")?;
+    let stable = incan_semantics_core::stable_identity::StableDeclarationId::from_canonical(&canonical, None, None)
+        .ok_or("missing stable native identity")?
+        .render_compact();
+    let row = vec!["type-identity".into(), path, "root".into(), stable];
+    let mut identities = BTreeMap::new();
+    assert!(super::super::restore_local(&positions, &mut local, &mut identities, &row).is_err());
+    local.rust.checked_calls.insert(
+        owner,
+        crate::typechecker::type_info::RustCheckedCall {
+            storage: None,
+            source_type_parameters: Vec::new(),
+            signature_loans: Vec::new(),
+            receiver_adjustments: Vec::new(),
+            path: "std::env::args".into(),
+            type_arguments: Vec::new(),
+            parameters: Vec::new(),
+            return_type: crate::symbols::ResolvedType::RustPath("std::env::Args".into()),
+            result_item_path: Some("std::env::Args".into()),
+            has_receiver: false,
+        },
+    );
+    let mut wrong = row.clone();
+    wrong[3] = wrong[3].replace("Args", "Other");
+    assert!(super::super::restore_local(&positions, &mut local, &mut identities, &wrong).is_err());
+    super::super::restore_local(&positions, &mut local, &mut identities, &row)?;
+    assert_eq!(
+        local
+            .expressions
+            .expression_type_identities
+            .get(&owner)
+            .and_then(|identities| identities.get(&Vec::new())),
+        Some(&canonical)
+    );
+    Ok(())
+}
+
 /// Structural checked types keep their enum shape instead of falling back to a native Debug spelling.
 #[test]
 fn structural_checked_type_variants_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
