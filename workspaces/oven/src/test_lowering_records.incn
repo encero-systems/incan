@@ -155,19 +155,17 @@ pub def test_one_module_edit_lowers_only_that_module() -> Result[None, str]:
     calls = "lone_alpha_one(1) + lone_alpha_two(1) + lone_beta_one(1) + lone_beta_two(1) + lone_gamma_one(1) + lone_gamma_two(1)"
     write(source, imports + "\n\ndef main() -> None:\n    println(" + calls + ")\n")?
     _ = traced_example_run(binary, source, store, observations, "12")?
-    cold = lowered_bodies(observations)?
+    cold = observed_module_work(observations)?
     for name in ["lone_alpha", "lone_beta", "lone_gamma", "main"]:
-        assert cold.get(name, 0) > 0, f"the cold build traced no lowered body of {name}"
+        assert cold.get("lower:" + name, 0) > 0, f"the cold build traced no lowered body of {name}"
+        assert cold.get("check:" + name + ".incn", 0) > 0, f"the cold build traced no checker entry for {name}"
+    assert cold.get("body-ir", 0) >= 4, "the cold build did not observe Body IR for all four modules"
     write(root.joinpath("lone_beta.incn"), lone_module("lone_beta", "5"))?
     edited = traced_example_run(binary, source, store, observations, "16")?
     diagnostic = edited.to_json().map_err((error) => error.message())?
     assert proof_count(edited, "plan_function_evaluations")? == 1, diagnostic
-    warm = lowered_bodies(observations)?
-    mut lowered: list[str] = []
-    for name in sorted([module for module in warm.keys()]):
-        if warm[name] > cold.get(name, 0):
-            lowered.append(name)
-    assert lowered == ["lone_beta"], f"an edit to lone_beta lowered bodies of {len(lowered)} modules: {", ".join(lowered)}"
+    warm = observed_module_work(observations)?
+    verify_module_work(cold, warm, "lone_beta")?
     # The three unchanged modules, `main` among them, are restored from their module plan records.
     assert proof_count(edited, "plan_module_reuses")? == 3, diagnostic
     # A later edit of a module that was restored lowers that module again, and its edit reaches the program.
@@ -176,6 +174,7 @@ pub def test_one_module_edit_lowers_only_that_module() -> Result[None, str]:
     again_diagnostic = again.to_json().map_err((error) => error.message())?
     assert proof_count(again, "plan_function_evaluations")? == 1, again_diagnostic
     assert proof_count(again, "plan_module_reuses")? == 3, again_diagnostic
+    verify_module_work(warm, observed_module_work(observations)?, "lone_alpha")?
     return stop_example_engine(binary, store)
 
 
@@ -204,19 +203,38 @@ def traced_example_run(binary: str, source: Path, store: Path, trace: Path, expe
     return command_proof(outcome.stdout)
 
 
-def lowered_bodies(trace: Path) -> Result[Dict[str, int], str]:
-    """Count the bodies lowering visited so far, by module, from the compiler workers' `lowering: body` records."""
+def observed_module_work(trace: Path) -> Result[Dict[str, int], str]:
+    """Count actual checker and Body IR module entries and lowering work on this fixture's cumulative trace."""
     mut counts: Dict[str, int] = {}
     for entry in trace.iterdir().map_err((error) => error.message())?:
         if not entry.is_file():
             continue
         for line in entry.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
-            parts = line.split("\"key\":\"lowering: body ")
-            if len(parts) < 2:
-                continue
-            module = parts[1].split(" ")[0]
-            counts[module] = counts.get(module, 0) + 1
+            if "\"kind\":\"begin\"" in line and "\"function\":\"incan_driver::typecheck_module\"" in line:
+                document = parse(line).map_err((error) => error.message())?
+                fields = document.require("fields").map_err((error) => error.message())?
+                path = fields.require("module").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
+                key = "check:" + Path(path).name()
+                counts[key] = counts.get(key, 0) + 1
+            elif "\"kind\":\"begin\"" in line and "\"function\":\"incan_driver::build_body_ir_module\"" in line:
+                counts["body-ir"] = counts.get("body-ir", 0) + 1
+            else:
+                parts = line.split("\"key\":\"lowering: body ")
+                if len(parts) > 1:
+                    key = "lower:" + parts[1].split(" ")[0]
+                    counts[key] = counts.get(key, 0) + 1
     return Ok(counts)
+
+
+def verify_module_work(previous: Dict[str, int], current: Dict[str, int], edited: str) -> Result[None, str]:
+    """Each warm edit checks its own module, builds one module's Body IR, and lowers only that module's bodies."""
+    changed = sorted([key for key in current.keys() if current[key] > previous.get(key, 0)])
+    expected = sorted(["body-ir", "check:" + edited + ".incn", "lower:" + edited])
+    if changed != expected:
+        return Err(f"edit of {edited} entered {changed}, expected {expected}")
+    if current["body-ir"] - previous.get("body-ir", 0) != 1:
+        return Err(f"edit of {edited} rebuilt more than one module's Body IR")
+    return Ok(None)
 
 
 pub def test_body_edits_keep_one_indexed_output_per_slot() -> Result[None, str]:
