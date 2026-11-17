@@ -107,3 +107,6 @@ pub from record_codec import (
     encode_entry_binding,
     record_plan_products,
 )
+
+pub from plan_wire_rows import WirePositions, PositionChange
+pub from function_records import transform_product_positions

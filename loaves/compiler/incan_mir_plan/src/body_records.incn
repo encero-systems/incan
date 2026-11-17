@@ -6,7 +6,16 @@ Every model and enum position, whether in a type, a projection, a construction o
 current unit resolved for the declaration the product names.
 """
 
-from rust::serde import Serialize, Deserialize
+from std.primitives.crumb.values import Value, IntegerValue
+from pub::internal_models.crumb_rows import required_value
+from pub::internal_models.graph_crumb_fields import items, integer as wire_integer, number, text
+from plan_wire_rows import WirePositions, wire_fields, wire_variant, unsigned_value, float_value, read_float, boolean_value
+from layout_type_records import (
+    read_wire_stored_layout_plan_type,
+    wire_stored_layout_plan_type,
+)
+
+
 from _types import PlanType, SourceSpan, source_span
 from layout_type_records import StoredLayoutPlanType, retain_plan_type, restore_plan_type
 from nominal_identities import NominalKind, NominalRemap, remap_type
@@ -26,7 +35,6 @@ from _body import (
 )
 
 
-@derive(Serialize, Deserialize)
 pub model StoredSpan:
     """Portable source provenance without serializing the shared file handle's allocation."""
 
@@ -35,7 +43,6 @@ pub model StoredSpan:
     pub column: int
 
 
-@derive(Serialize, Deserialize)
 pub enum StoredType:
     """
     Incan-facing scalar and text shapes; native carrier spelling stays behind this adapter.
@@ -61,7 +68,6 @@ pub enum StoredType:
     Layout(StoredLayoutPlanType)
 
 
-@derive(Serialize, Deserialize)
 pub model StoredFieldStep:
     """One typed field path step: its slot, the field's type, an optional variant downcast and dereference count."""
 
@@ -71,7 +77,6 @@ pub model StoredFieldStep:
     pub dereferences: int
 
 
-@derive(Serialize, Deserialize)
 pub enum StoredProjection:
     """A whole local, checked arithmetic component, typed dereference, field path or enum payload read."""
 
@@ -87,7 +92,6 @@ pub enum StoredProjection:
     DerefFields(list[StoredFieldStep])
 
 
-@derive(Serialize, Deserialize)
 pub model StoredPlace:
     """One local and its exact projection, with source provenance."""
 
@@ -96,7 +100,6 @@ pub model StoredPlace:
     pub span: StoredSpan
 
 
-@derive(Serialize, Deserialize)
 pub enum StoredConstant:
     """The exact primitive, borrowed static text, sized numeric and type-token literals admitted by this codec."""
 
@@ -109,7 +112,6 @@ pub enum StoredConstant:
     TypeToken(list[StoredType])
 
 
-@derive(Serialize, Deserialize)
 pub enum StoredRead:
     """Retain explicit ownership intent rather than infer it when restoring an operand."""
 
@@ -118,7 +120,6 @@ pub enum StoredRead:
     Literal(StoredConstant)
 
 
-@derive(Serialize, Deserialize)
 pub model StoredOperand:
     """One native operand and its original diagnostic location."""
 
@@ -126,7 +127,6 @@ pub model StoredOperand:
     pub span: StoredSpan
 
 
-@derive(Serialize, Deserialize)
 pub enum StoredRvalue:
     """
     Self-contained operations; any operation with external context refuses capture.
@@ -160,7 +160,6 @@ pub enum StoredRvalue:
     ClosureObject(StoredPlace)
 
 
-@derive(Serialize, Deserialize)
 pub enum StoredStatementKind:
     """Exact assignment and storage-lifetime operations."""
 
@@ -169,7 +168,6 @@ pub enum StoredStatementKind:
     Dead(int)
 
 
-@derive(Serialize, Deserialize)
 pub model StoredStatement:
     """Keep the statement's location independently of its value and destination."""
 
@@ -556,3 +554,328 @@ pub def restore_statement(statement: StoredStatement, mut remap: NominalRemap) -
             return Ok(Statement(kind=kind, span=span))
         StoredStatementKind.Live(local) => return Ok(Statement(kind=StatementKind.StorageLive(local), span=span))
         StoredStatementKind.Dead(local) => return Ok(Statement(kind=StatementKind.StorageDead(local), span=span))
+
+# Generated native-plan wire projections.
+
+
+pub def wire_stored_constant(value: StoredConstant) -> Value:
+    match value:
+        StoredConstant.Int(field0) => return Value.Enum(b"\x0b_`\x80p\xc6", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0))])
+        StoredConstant.Float(field0) => return Value.Enum(b"\x1ai<\x00\xc4\x0c", [required_value(b"_\xec\xebf\xff\xc8", float_value(field0))])
+        StoredConstant.Bool(field0) => return Value.Enum(b"I\xf4\x11\xf0\xa1\xa7", [required_value(b"_\xec\xebf\xff\xc8", Value.Boolean(field0))])
+        StoredConstant.Unit => return Value.Enum(b"NTY`\xf1\xbf", [])
+        StoredConstant.Text(field0) => return Value.Enum(b"q\x98\x8cM\x8e\x08", [required_value(b"_\xec\xebf\xff\xc8", Value.Text(field0))])
+        StoredConstant.Numeric(field0, field1) => return Value.Enum(b"6u-l\xd1G", [required_value(b"_\xec\xebf\xff\xc8", Value.Text(field0)), required_value(b"k\x86\xb2s\xff4", wire_stored_type(field1))])
+        StoredConstant.TypeToken(field0) => return Value.Enum(b"\xeb\x90\x0dwd\xd0", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_type(item0) for item0 in field0]))])
+
+
+pub def read_wire_stored_constant(value: Value, positions: &WirePositions) -> Result[StoredConstant, str]:
+    identity, fields = wire_variant(value)?
+    if identity == b"\x0b_`\x80p\xc6" and len(fields) == 1:
+        return Ok(StoredConstant.Int(number(fields[0].value)?))
+    if identity == b"\x1ai<\x00\xc4\x0c" and len(fields) == 1:
+        return Ok(StoredConstant.Float(read_float(fields[0].value)?))
+    if identity == b"I\xf4\x11\xf0\xa1\xa7" and len(fields) == 1:
+        return Ok(StoredConstant.Bool(boolean_value(fields[0].value)?))
+    if identity == b"NTY`\xf1\xbf" and len(fields) == 0:
+        return Ok(StoredConstant.Unit)
+    if identity == b"q\x98\x8cM\x8e\x08" and len(fields) == 1:
+        return Ok(StoredConstant.Text(text(fields[0].value)?))
+    if identity == b"6u-l\xd1G" and len(fields) == 2:
+        return Ok(StoredConstant.Numeric(text(fields[0].value)?, read_wire_stored_type(fields[1].value, positions)?))
+    if identity == b"\xeb\x90\x0dwd\xd0" and len(fields) == 1:
+        return Ok(StoredConstant.TypeToken([read_wire_stored_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    return Err("unknown or incomplete StoredConstant alternative")
+
+
+pub def wire_stored_field_step(value: StoredFieldStep) -> Value:
+    return Value.Record([
+        required_value(b"eX\x83\x831\xb7", wire_integer(value.slot)),
+        required_value(b"O\x9d\xb7\xf8\xe5\x06", wire_stored_type(value.ty)),
+        required_value(b"\xcb{\xf5bB\x0b", wire_integer(value.variant)),
+        required_value(b"3\x8e0\xd7\xaa\x17", wire_integer(value.dereferences)),
+    ])
+
+
+pub def read_wire_stored_field_step(value: Value, positions: &WirePositions) -> Result[StoredFieldStep, str]:
+    fields = wire_fields(value, 4)?
+    return Ok(StoredFieldStep(
+        slot=number(fields[2].value)?,
+        ty=read_wire_stored_type(fields[1].value, positions)?,
+        variant=number(fields[3].value)?,
+        dereferences=number(fields[0].value)?,
+    ))
+
+
+pub def wire_stored_operand(value: StoredOperand) -> Value:
+    return Value.Record([
+        required_value(b"\x0b'\xc1X\xfe\xb3", wire_stored_read(value.kind)),
+        required_value(b"7\xa0\x02Z\xa1\xf2", wire_stored_span(value.span)),
+    ])
+
+
+pub def read_wire_stored_operand(value: Value, positions: &WirePositions) -> Result[StoredOperand, str]:
+    fields = wire_fields(value, 2)?
+    return Ok(StoredOperand(
+        kind=read_wire_stored_read(fields[0].value, positions)?,
+        span=read_wire_stored_span(fields[1].value, positions)?,
+    ))
+
+
+pub def wire_stored_place(value: StoredPlace) -> Value:
+    return Value.Record([
+        required_value(b"%\xbf\x8e\x1a#\x93", wire_integer(value.local)),
+        required_value(b"\x1b%\x0e\xa1\x99\xbe", wire_stored_projection(value.projection)),
+        required_value(b"7\xa0\x02Z\xa1\xf2", wire_stored_span(value.span)),
+    ])
+
+
+pub def read_wire_stored_place(value: Value, positions: &WirePositions) -> Result[StoredPlace, str]:
+    fields = wire_fields(value, 3)?
+    return Ok(StoredPlace(
+        local=number(fields[1].value)?,
+        projection=read_wire_stored_projection(fields[0].value, positions)?,
+        span=read_wire_stored_span(fields[2].value, positions)?,
+    ))
+
+
+pub def wire_stored_projection(value: StoredProjection) -> Value:
+    match value:
+        StoredProjection.Whole => return Value.Enum(b"\xfdU\x05`\x93\x8c", [])
+        StoredProjection.Value => return Value.Enum(b"\x8e7\x95=#\xda", [])
+        StoredProjection.Overflow => return Value.Enum(b"\x17\xb8\xdc\xf5>K", [])
+        StoredProjection.NumericValue(field0) => return Value.Enum(b"\x04I\xf5\xd2N?", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_type(field0))])
+        StoredProjection.VariantField(field0, field1, field2) => return Value.Enum(b"\xc0\x01\x8e\x9e\x9f\x16", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0)), required_value(b"k\x86\xb2s\xff4", wire_integer(field1)), required_value(b"\xd4s^:&^", wire_stored_type(field2))])
+        StoredProjection.Field(field0, field1) => return Value.Enum(b"\xf4_\xc1\xdf\xdc\x96", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0)), required_value(b"k\x86\xb2s\xff4", wire_stored_type(field1))])
+        StoredProjection.Deref(field0) => return Value.Enum(b"\x12/\x9b\xd7h\xa6", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_type(field0))])
+        StoredProjection.DerefField(field0, field1) => return Value.Enum(b"\x84\xdd\xaa\x99\xf0\x90", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0)), required_value(b"k\x86\xb2s\xff4", wire_stored_type(field1))])
+        StoredProjection.Fields(field0) => return Value.Enum(b"aoH\xc1\xdb\x19", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_field_step(item0) for item0 in field0]))])
+        StoredProjection.DerefFields(field0) => return Value.Enum(b"g\x93\xd8#\xbc\xbe", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_field_step(item0) for item0 in field0]))])
+
+
+pub def read_wire_stored_projection(value: Value, positions: &WirePositions) -> Result[StoredProjection, str]:
+    identity, fields = wire_variant(value)?
+    if identity == b"\xfdU\x05`\x93\x8c" and len(fields) == 0:
+        return Ok(StoredProjection.Whole)
+    if identity == b"\x8e7\x95=#\xda" and len(fields) == 0:
+        return Ok(StoredProjection.Value)
+    if identity == b"\x17\xb8\xdc\xf5>K" and len(fields) == 0:
+        return Ok(StoredProjection.Overflow)
+    if identity == b"\x04I\xf5\xd2N?" and len(fields) == 1:
+        return Ok(StoredProjection.NumericValue(read_wire_stored_type(fields[0].value, positions)?))
+    if identity == b"\xc0\x01\x8e\x9e\x9f\x16" and len(fields) == 3:
+        return Ok(StoredProjection.VariantField(number(fields[0].value)?, number(fields[1].value)?, read_wire_stored_type(fields[2].value, positions)?))
+    if identity == b"\xf4_\xc1\xdf\xdc\x96" and len(fields) == 2:
+        return Ok(StoredProjection.Field(number(fields[0].value)?, read_wire_stored_type(fields[1].value, positions)?))
+    if identity == b"\x12/\x9b\xd7h\xa6" and len(fields) == 1:
+        return Ok(StoredProjection.Deref(read_wire_stored_type(fields[0].value, positions)?))
+    if identity == b"\x84\xdd\xaa\x99\xf0\x90" and len(fields) == 2:
+        return Ok(StoredProjection.DerefField(number(fields[0].value)?, read_wire_stored_type(fields[1].value, positions)?))
+    if identity == b"aoH\xc1\xdb\x19" and len(fields) == 1:
+        return Ok(StoredProjection.Fields([read_wire_stored_field_step(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"g\x93\xd8#\xbc\xbe" and len(fields) == 1:
+        return Ok(StoredProjection.DerefFields([read_wire_stored_field_step(item0, positions)? for item0 in items(fields[0].value)?]))
+    return Err("unknown or incomplete StoredProjection alternative")
+
+
+pub def wire_stored_read(value: StoredRead) -> Value:
+    match value:
+        StoredRead.Copy(field0) => return Value.Enum(b"\xe2\x1f\x93_\x11\xd7", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_place(field0))])
+        StoredRead.Move(field0) => return Value.Enum(b"n\xcc=\xf6\xbf\xfd", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_place(field0))])
+        StoredRead.Literal(field0) => return Value.Enum(b"\xa6#\x0c*\x81\xab", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_constant(field0))])
+
+
+pub def read_wire_stored_read(value: Value, positions: &WirePositions) -> Result[StoredRead, str]:
+    identity, fields = wire_variant(value)?
+    if identity == b"\xe2\x1f\x93_\x11\xd7" and len(fields) == 1:
+        return Ok(StoredRead.Copy(read_wire_stored_place(fields[0].value, positions)?))
+    if identity == b"n\xcc=\xf6\xbf\xfd" and len(fields) == 1:
+        return Ok(StoredRead.Move(read_wire_stored_place(fields[0].value, positions)?))
+    if identity == b"\xa6#\x0c*\x81\xab" and len(fields) == 1:
+        return Ok(StoredRead.Literal(read_wire_stored_constant(fields[0].value, positions)?))
+    return Err("unknown or incomplete StoredRead alternative")
+
+
+pub def wire_stored_rvalue(value: StoredRvalue) -> Value:
+    match value:
+        StoredRvalue.Use(field0) => return Value.Enum(b"\xc3m\x81\x9e{\xc6", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_operand(field0))])
+        StoredRvalue.Binary(field0, field1, field2) => return Value.Enum(b"\xee\x1c\x82w\xca\xf5", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0)), required_value(b"k\x86\xb2s\xff4", wire_stored_operand(field1)), required_value(b"\xd4s^:&^", wire_stored_operand(field2))])
+        StoredRvalue.Unary(field0, field1) => return Value.Enum(b"~\x98\x83P\x9d\x02", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0)), required_value(b"k\x86\xb2s\xff4", wire_stored_operand(field1))])
+        StoredRvalue.IntToFloat(field0) => return Value.Enum(b"9\x15+\x9f}\xe3", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_operand(field0))])
+        StoredRvalue.FloatToInt(field0) => return Value.Enum(b"\x8b\xc2\xe2\xc7a\x1f", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_operand(field0))])
+        StoredRvalue.BoolToInt(field0) => return Value.Enum(b"01\xa6\xb1\xeb^", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_operand(field0))])
+        StoredRvalue.Array(field0) => return Value.Enum(b"\xf0\xcf9\xd0\xbe>", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_operand(item0) for item0 in field0]))])
+        StoredRvalue.Borrow(field0) => return Value.Enum(b".\xdf\xb1h\xb3\x8b", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_place(field0))])
+        StoredRvalue.UnsizeSlice(field0) => return Value.Enum(b"\xecWL\xe3\xa7d", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_operand(field0))])
+        StoredRvalue.NativeAlias(field0, field1, field2) => return Value.Enum(b"\xdd\xb0\x0b=6\xb4", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_operand(field0)), required_value(b"k\x86\xb2s\xff4", wire_stored_type(field1)), required_value(b"\xd4s^:&^", wire_stored_type(field2))])
+        StoredRvalue.FrozenText(field0) => return Value.Enum(b"\x0fAV\x17\xca$", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_operand(field0))])
+        StoredRvalue.FrozenBytes(field0) => return Value.Enum(b"\xa5\x1aU\xd1;\xee", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_integer(item0) for item0 in field0]))])
+        StoredRvalue.NumericCast(field0, field1, field2) => return Value.Enum(b"\xdeJ\xe4\xd3\x93\xf0", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_operand(field0)), required_value(b"k\x86\xb2s\xff4", wire_stored_type(field1)), required_value(b"\xd4s^:&^", wire_stored_type(field2))])
+        StoredRvalue.Enum(field0, field1, field2) => return Value.Enum(b"T\x10\x8d\xaf\xaa\xc5", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0)), required_value(b"k\x86\xb2s\xff4", wire_integer(field1)), required_value(b"\xd4s^:&^", Value.List([wire_stored_operand(item0) for item0 in field2]))])
+        StoredRvalue.Discriminant(field0) => return Value.Enum(b"x\xbc\x9c&\x03\x1a", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_place(field0))])
+        StoredRvalue.TagToInt(field0) => return Value.Enum(b"\xe7#\xb0\xbd\x03\xf7", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_operand(field0))])
+        StoredRvalue.Model(field0, field1) => return Value.Enum(b"^,aL#\xf0", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0)), required_value(b"k\x86\xb2s\xff4", Value.List([wire_stored_operand(item0) for item0 in field1]))])
+        StoredRvalue.Tuple(field0) => return Value.Enum(b"\xf16\xeex\xc3;", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_operand(item0) for item0 in field0]))])
+        StoredRvalue.Range(field0) => return Value.Enum(b"]\xe7J\x81\xb1\x92", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_operand(item0) for item0 in field0]))])
+        StoredRvalue.MutBorrow(field0) => return Value.Enum(b"\xa87!2_\xde", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_place(field0))])
+        StoredRvalue.IsVariant(field0, field1) => return Value.Enum(b"ivP2h\xd9", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_place(field0)), required_value(b"k\x86\xb2s\xff4", wire_integer(field1))])
+        StoredRvalue.ReifyFunction(field0) => return Value.Enum(b"S\xe4\x16\xfd%\xcf", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_operand(field0))])
+        StoredRvalue.FunctionAddress(field0) => return Value.Enum(b"\xc4\xe4\xd4\xc6~\xe2", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_operand(field0))])
+        StoredRvalue.ClosureObject(field0) => return Value.Enum(b"s!\xe9q\x11\xd7", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_place(field0))])
+
+
+pub def read_wire_stored_rvalue(value: Value, positions: &WirePositions) -> Result[StoredRvalue, str]:
+    identity, fields = wire_variant(value)?
+    if identity == b"\xc3m\x81\x9e{\xc6" and len(fields) == 1:
+        return Ok(StoredRvalue.Use(read_wire_stored_operand(fields[0].value, positions)?))
+    if identity == b"\xee\x1c\x82w\xca\xf5" and len(fields) == 3:
+        return Ok(StoredRvalue.Binary(number(fields[0].value)?, read_wire_stored_operand(fields[1].value, positions)?, read_wire_stored_operand(fields[2].value, positions)?))
+    if identity == b"~\x98\x83P\x9d\x02" and len(fields) == 2:
+        return Ok(StoredRvalue.Unary(number(fields[0].value)?, read_wire_stored_operand(fields[1].value, positions)?))
+    if identity == b"9\x15+\x9f}\xe3" and len(fields) == 1:
+        return Ok(StoredRvalue.IntToFloat(read_wire_stored_operand(fields[0].value, positions)?))
+    if identity == b"\x8b\xc2\xe2\xc7a\x1f" and len(fields) == 1:
+        return Ok(StoredRvalue.FloatToInt(read_wire_stored_operand(fields[0].value, positions)?))
+    if identity == b"01\xa6\xb1\xeb^" and len(fields) == 1:
+        return Ok(StoredRvalue.BoolToInt(read_wire_stored_operand(fields[0].value, positions)?))
+    if identity == b"\xf0\xcf9\xd0\xbe>" and len(fields) == 1:
+        return Ok(StoredRvalue.Array([read_wire_stored_operand(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b".\xdf\xb1h\xb3\x8b" and len(fields) == 1:
+        return Ok(StoredRvalue.Borrow(read_wire_stored_place(fields[0].value, positions)?))
+    if identity == b"\xecWL\xe3\xa7d" and len(fields) == 1:
+        return Ok(StoredRvalue.UnsizeSlice(read_wire_stored_operand(fields[0].value, positions)?))
+    if identity == b"\xdd\xb0\x0b=6\xb4" and len(fields) == 3:
+        return Ok(StoredRvalue.NativeAlias(read_wire_stored_operand(fields[0].value, positions)?, read_wire_stored_type(fields[1].value, positions)?, read_wire_stored_type(fields[2].value, positions)?))
+    if identity == b"\x0fAV\x17\xca$" and len(fields) == 1:
+        return Ok(StoredRvalue.FrozenText(read_wire_stored_operand(fields[0].value, positions)?))
+    if identity == b"\xa5\x1aU\xd1;\xee" and len(fields) == 1:
+        return Ok(StoredRvalue.FrozenBytes([number(item0)? for item0 in items(fields[0].value)?]))
+    if identity == b"\xdeJ\xe4\xd3\x93\xf0" and len(fields) == 3:
+        return Ok(StoredRvalue.NumericCast(read_wire_stored_operand(fields[0].value, positions)?, read_wire_stored_type(fields[1].value, positions)?, read_wire_stored_type(fields[2].value, positions)?))
+    if identity == b"T\x10\x8d\xaf\xaa\xc5" and len(fields) == 3:
+        return Ok(StoredRvalue.Enum(number(fields[0].value)?, number(fields[1].value)?, [read_wire_stored_operand(item0, positions)? for item0 in items(fields[2].value)?]))
+    if identity == b"x\xbc\x9c&\x03\x1a" and len(fields) == 1:
+        return Ok(StoredRvalue.Discriminant(read_wire_stored_place(fields[0].value, positions)?))
+    if identity == b"\xe7#\xb0\xbd\x03\xf7" and len(fields) == 1:
+        return Ok(StoredRvalue.TagToInt(read_wire_stored_operand(fields[0].value, positions)?))
+    if identity == b"^,aL#\xf0" and len(fields) == 2:
+        return Ok(StoredRvalue.Model(number(fields[0].value)?, [read_wire_stored_operand(item0, positions)? for item0 in items(fields[1].value)?]))
+    if identity == b"\xf16\xeex\xc3;" and len(fields) == 1:
+        return Ok(StoredRvalue.Tuple([read_wire_stored_operand(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"]\xe7J\x81\xb1\x92" and len(fields) == 1:
+        return Ok(StoredRvalue.Range([read_wire_stored_operand(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\xa87!2_\xde" and len(fields) == 1:
+        return Ok(StoredRvalue.MutBorrow(read_wire_stored_place(fields[0].value, positions)?))
+    if identity == b"ivP2h\xd9" and len(fields) == 2:
+        return Ok(StoredRvalue.IsVariant(read_wire_stored_place(fields[0].value, positions)?, number(fields[1].value)?))
+    if identity == b"S\xe4\x16\xfd%\xcf" and len(fields) == 1:
+        return Ok(StoredRvalue.ReifyFunction(read_wire_stored_operand(fields[0].value, positions)?))
+    if identity == b"\xc4\xe4\xd4\xc6~\xe2" and len(fields) == 1:
+        return Ok(StoredRvalue.FunctionAddress(read_wire_stored_operand(fields[0].value, positions)?))
+    if identity == b"s!\xe9q\x11\xd7" and len(fields) == 1:
+        return Ok(StoredRvalue.ClosureObject(read_wire_stored_place(fields[0].value, positions)?))
+    return Err("unknown or incomplete StoredRvalue alternative")
+
+
+pub def wire_stored_span(value: StoredSpan) -> Value:
+    return Value.Record([
+        required_value(b";\x9c5\x8f6\xf0", Value.Text(value.file)),
+        required_value(b"8\xa9\xc1\xe7!X", wire_integer(value.line)),
+        required_value(b"\x88\x1d_\xb6\x00\x90", wire_integer(value.column)),
+    ])
+
+
+pub def read_wire_stored_span(value: Value, positions: &WirePositions) -> Result[StoredSpan, str]:
+    fields = wire_fields(value, 3)?
+    file, line, column = positions.apply(text(fields[1].value)?, number(fields[0].value)?, number(fields[2].value)?)?
+    return Ok(StoredSpan(file=file, line=line, column=column))
+
+
+pub def wire_stored_statement(value: StoredStatement) -> Value:
+    return Value.Record([
+        required_value(b"\x0b'\xc1X\xfe\xb3", wire_stored_statement_kind(value.kind)),
+        required_value(b"7\xa0\x02Z\xa1\xf2", wire_stored_span(value.span)),
+    ])
+
+
+pub def read_wire_stored_statement(value: Value, positions: &WirePositions) -> Result[StoredStatement, str]:
+    fields = wire_fields(value, 2)?
+    return Ok(StoredStatement(
+        kind=read_wire_stored_statement_kind(fields[0].value, positions)?,
+        span=read_wire_stored_span(fields[1].value, positions)?,
+    ))
+
+
+pub def wire_stored_statement_kind(value: StoredStatementKind) -> Value:
+    match value:
+        StoredStatementKind.Assign(field0, field1, field2) => return Value.Enum(b"\x8e\xce\x89\x5c\x9b2", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_place(field0)), required_value(b"k\x86\xb2s\xff4", wire_stored_rvalue(field1)), required_value(b"\xd4s^:&^", wire_stored_span(field2))])
+        StoredStatementKind.Live(field0) => return Value.Enum(b"\xb6J\xc0_\x17\xe6", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0))])
+        StoredStatementKind.Dead(field0) => return Value.Enum(b"\xec\x9b\x10\xa4\xa7\x9c", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0))])
+
+
+pub def read_wire_stored_statement_kind(value: Value, positions: &WirePositions) -> Result[StoredStatementKind, str]:
+    identity, fields = wire_variant(value)?
+    if identity == b"\x8e\xce\x89\x5c\x9b2" and len(fields) == 3:
+        return Ok(StoredStatementKind.Assign(read_wire_stored_place(fields[0].value, positions)?, read_wire_stored_rvalue(fields[1].value, positions)?, read_wire_stored_span(fields[2].value, positions)?))
+    if identity == b"\xb6J\xc0_\x17\xe6" and len(fields) == 1:
+        return Ok(StoredStatementKind.Live(number(fields[0].value)?))
+    if identity == b"\xec\x9b\x10\xa4\xa7\x9c" and len(fields) == 1:
+        return Ok(StoredStatementKind.Dead(number(fields[0].value)?))
+    return Err("unknown or incomplete StoredStatementKind alternative")
+
+
+pub def wire_stored_type(value: StoredType) -> Value:
+    match value:
+        StoredType.Int => return Value.Enum(b"\x0b_`\x80p\xc6", [])
+        StoredType.Float => return Value.Enum(b"\x1ai<\x00\xc4\x0c", [])
+        StoredType.Bool => return Value.Enum(b"I\xf4\x11\xf0\xa1\xa7", [])
+        StoredType.Unit => return Value.Enum(b"NTY`\xf1\xbf", [])
+        StoredType.CheckedInt => return Value.Enum(b"\xc3\xf45\xc7(Q", [])
+        StoredType.Never => return Value.Enum(b"c\x00\xef\x80\x0b\xb8", [])
+        StoredType.Text => return Value.Enum(b"q\x98\x8cM\x8e\x08", [])
+        StoredType.LiteralTextView => return Value.Enum(b"\xd0Y?\xda\x9f\xb6", [])
+        StoredType.TextView => return Value.Enum(b"pL \xb1\x8c\x8e", [])
+        StoredType.TextValues(field0) => return Value.Enum(b"\xd1\xbf\xdd\xae\x10V", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0))])
+        StoredType.LiteralTextValues(field0) => return Value.Enum(b"\xf7\xbfU\x17\x8c\x06", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0))])
+        StoredType.TextValuesView(field0) => return Value.Enum(b"/\x98A\xdf\x82\x04", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0))])
+        StoredType.LiteralTextValuesView(field0) => return Value.Enum(b"\xe6Zg\x16y\x07", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0))])
+        StoredType.TextSequence => return Value.Enum(b"\xdb\x01{)\xdaG", [])
+        StoredType.LiteralTextSequence => return Value.Enum(b"\x931\xa0y+U", [])
+        StoredType.Layout(field0) => return Value.Enum(b"\xa5\x11\x90\x91a\xe1", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_layout_plan_type(field0))])
+
+
+pub def read_wire_stored_type(value: Value, positions: &WirePositions) -> Result[StoredType, str]:
+    identity, fields = wire_variant(value)?
+    if identity == b"\x0b_`\x80p\xc6" and len(fields) == 0:
+        return Ok(StoredType.Int)
+    if identity == b"\x1ai<\x00\xc4\x0c" and len(fields) == 0:
+        return Ok(StoredType.Float)
+    if identity == b"I\xf4\x11\xf0\xa1\xa7" and len(fields) == 0:
+        return Ok(StoredType.Bool)
+    if identity == b"NTY`\xf1\xbf" and len(fields) == 0:
+        return Ok(StoredType.Unit)
+    if identity == b"\xc3\xf45\xc7(Q" and len(fields) == 0:
+        return Ok(StoredType.CheckedInt)
+    if identity == b"c\x00\xef\x80\x0b\xb8" and len(fields) == 0:
+        return Ok(StoredType.Never)
+    if identity == b"q\x98\x8cM\x8e\x08" and len(fields) == 0:
+        return Ok(StoredType.Text)
+    if identity == b"\xd0Y?\xda\x9f\xb6" and len(fields) == 0:
+        return Ok(StoredType.LiteralTextView)
+    if identity == b"pL \xb1\x8c\x8e" and len(fields) == 0:
+        return Ok(StoredType.TextView)
+    if identity == b"\xd1\xbf\xdd\xae\x10V" and len(fields) == 1:
+        return Ok(StoredType.TextValues(number(fields[0].value)?))
+    if identity == b"\xf7\xbfU\x17\x8c\x06" and len(fields) == 1:
+        return Ok(StoredType.LiteralTextValues(number(fields[0].value)?))
+    if identity == b"/\x98A\xdf\x82\x04" and len(fields) == 1:
+        return Ok(StoredType.TextValuesView(number(fields[0].value)?))
+    if identity == b"\xe6Zg\x16y\x07" and len(fields) == 1:
+        return Ok(StoredType.LiteralTextValuesView(number(fields[0].value)?))
+    if identity == b"\xdb\x01{)\xdaG" and len(fields) == 0:
+        return Ok(StoredType.TextSequence)
+    if identity == b"\x931\xa0y+U" and len(fields) == 0:
+        return Ok(StoredType.LiteralTextSequence)
+    if identity == b"\xa5\x11\x90\x91a\xe1" and len(fields) == 1:
+        return Ok(StoredType.Layout(read_wire_stored_layout_plan_type(fields[0].value, positions)?))
+    return Err("unknown or incomplete StoredType alternative")

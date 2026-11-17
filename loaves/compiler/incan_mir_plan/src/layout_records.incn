@@ -1,7 +1,23 @@
 """Retain every concrete native layout field without deriving storage or semantic identities during decoding."""
 
-from rust::serde import Serialize, Deserialize
-from rust::serde_json import to_string, from_str, Error as JsonError
+from std.primitives.crumb.values import Value, IntegerValue
+from pub::internal_models.crumb_rows import required_value
+from pub::internal_models.graph_crumb_fields import items, integer as wire_integer, number, text
+from plan_wire_rows import WirePositions, wire_fields, wire_variant, unsigned_value, float_value, read_float, boolean_value
+from layout_type_records import (
+    read_wire_stored_layout_carrier,
+    read_wire_stored_layout_checked_type,
+    read_wire_stored_layout_plan_type,
+    read_wire_stored_layout_tuple_element,
+    wire_stored_layout_carrier,
+    wire_stored_layout_checked_type,
+    wire_stored_layout_plan_type,
+    wire_stored_layout_tuple_element,
+)
+from plan_wire_rows import read_wire, write_wire, PositionChange
+from pub::internal_models.plan_wire_schema import stored_layout_model_declaration_descriptions, stored_layout_enum_declaration_descriptions, stored_layout_zip_carrier_descriptions
+
+
 from _types import SourceSpan, source_span
 from pub::internal_models.checked_types import CheckedType
 from _body import (
@@ -58,7 +74,6 @@ from layout_type_records import (
     restore_checked_type,
 )
 
-@derive(Serialize, Deserialize)
 model StoredSpan:
     """Allocation-free coordinates for a concrete layout declaration or field."""
 
@@ -77,7 +92,6 @@ def restore_span(value: StoredSpan) -> SourceSpan:
     return source_span(file=value.file, line=value.line, column=value.column)
 
 
-@derive(Serialize, Deserialize)
 model StoredLayoutParameter:
     """The complete serialized Parameter facts admitted by this layout profile."""
 
@@ -86,7 +100,6 @@ model StoredLayoutParameter:
     span: StoredSpan
 
 
-@derive(Serialize, Deserialize)
 model StoredLayoutFieldLifecycle:
     """The complete serialized FieldLifecycle facts admitted by this layout profile."""
 
@@ -97,7 +110,6 @@ model StoredLayoutFieldLifecycle:
     issue: Option[str]
 
 
-@derive(Serialize, Deserialize)
 model StoredLayoutFieldMetadata:
     """The complete serialized FieldMetadata facts admitted by this layout profile."""
 
@@ -115,7 +127,6 @@ model StoredLayoutFieldMetadata:
     has_default: bool
 
 
-@derive(Serialize, Deserialize)
 model StoredLayoutZipCarrier:
     """The complete serialized ZipCarrier facts admitted by this layout profile."""
 
@@ -124,7 +135,6 @@ model StoredLayoutZipCarrier:
     target: StoredLayoutPlanType
 
 
-@derive(Serialize, Deserialize)
 model StoredLayoutIteratorMethods:
     """The complete serialized IteratorMethods facts admitted by this layout profile."""
 
@@ -132,7 +142,6 @@ model StoredLayoutIteratorMethods:
     next: str
 
 
-@derive(Serialize, Deserialize)
 model StoredLayoutFallibleIteratorMethods:
     """The complete serialized FallibleIteratorMethods facts admitted by this layout profile."""
 
@@ -141,7 +150,6 @@ model StoredLayoutFallibleIteratorMethods:
     next: str
 
 
-@derive(Serialize, Deserialize)
 model StoredLayoutNativeTraitMethod:
     """The complete serialized NativeTraitMethod facts admitted by this layout profile."""
 
@@ -149,7 +157,6 @@ model StoredLayoutNativeTraitMethod:
     function: str
 
 
-@derive(Serialize, Deserialize)
 model StoredLayoutNativeTraitAdoption:
     """The complete serialized NativeTraitAdoption facts admitted by this layout profile."""
 
@@ -157,7 +164,6 @@ model StoredLayoutNativeTraitAdoption:
     methods: list[StoredLayoutNativeTraitMethod]
 
 
-@derive(Serialize, Deserialize)
 model StoredLayoutModelDeclaration:
     """The complete serialized ModelDeclaration facts admitted by this layout profile."""
 
@@ -186,7 +192,6 @@ model StoredLayoutModelDeclaration:
     unavailable_native_fields: list[int]
 
 
-@derive(Serialize, Deserialize)
 model StoredLayoutEnumDeclaration:
     """The complete serialized EnumDeclaration facts admitted by this layout profile."""
 
@@ -208,7 +213,6 @@ model StoredLayoutEnumDeclaration:
     closure_items: list[str]
 
 
-@derive(Serialize, Deserialize)
 model StoredLayoutEnumVariant:
     """The complete serialized EnumVariant facts admitted by this layout profile."""
 
@@ -564,15 +568,15 @@ def restore_optional_checked_type(value: Option[StoredLayoutCheckedType]) -> Res
         Some(item) => return Ok(Some(restore_checked_type(item)?))
 
 
-pub def encode_models(values: &list[ModelDeclaration]) -> Result[list[str], str]:
+pub def encode_models(values: &list[ModelDeclaration]) -> Result[list[bytes], str]:
     """Encode complete models inventories in their native order."""
-    mut encoded: list[str] = []
+    mut encoded: list[bytes] = []
     for value in values:
-        encoded.append(to_string(retain_model_declaration(value)?).map_err((error) => str(error))?)
+        encoded.append(write_wire(b"\x9c\xff\xb7\x00\xc4\x1f\x00", stored_layout_model_declaration_descriptions(), wire_stored_layout_model_declaration(retain_model_declaration(value)?))?)
     return Ok(encoded)
 
 
-pub def decode_models(values: list[str]) -> Result[list[ModelDeclaration], str]:
+pub def decode_models(values: list[bytes]) -> Result[list[ModelDeclaration], str]:
     """Restore complete models inventories without checking or lowering source."""
     mut decoded: list[ModelDeclaration] = []
     for value in values:
@@ -580,20 +584,20 @@ pub def decode_models(values: list[str]) -> Result[list[ModelDeclaration], str]:
     return Ok(decoded)
 
 
-def read_model_declaration(value: str) -> Result[StoredLayoutModelDeclaration, JsonError]:
+def read_model_declaration(value: bytes) -> Result[StoredLayoutModelDeclaration, str]:
     """Bind serde's decoder to this versioned layout value."""
-    return from_str(value)
+    return read_wire_stored_layout_model_declaration(read_wire(value, b"\x9c\xff\xb7\x00\xc4\x1f\x00", stored_layout_model_declaration_descriptions())?, WirePositions())
 
 
-pub def encode_enums(values: &list[EnumDeclaration]) -> Result[list[str], str]:
+pub def encode_enums(values: &list[EnumDeclaration]) -> Result[list[bytes], str]:
     """Encode complete enums inventories in their native order."""
-    mut encoded: list[str] = []
+    mut encoded: list[bytes] = []
     for value in values:
-        encoded.append(to_string(retain_enum_declaration(value)?).map_err((error) => str(error))?)
+        encoded.append(write_wire(b"\x22x[\xf6\xa0\xa6\x00", stored_layout_enum_declaration_descriptions(), wire_stored_layout_enum_declaration(retain_enum_declaration(value)?))?)
     return Ok(encoded)
 
 
-pub def decode_enums(values: list[str]) -> Result[list[EnumDeclaration], str]:
+pub def decode_enums(values: list[bytes]) -> Result[list[EnumDeclaration], str]:
     """Restore complete enums inventories without checking or lowering source."""
     mut decoded: list[EnumDeclaration] = []
     for value in values:
@@ -601,20 +605,20 @@ pub def decode_enums(values: list[str]) -> Result[list[EnumDeclaration], str]:
     return Ok(decoded)
 
 
-def read_enum_declaration(value: str) -> Result[StoredLayoutEnumDeclaration, JsonError]:
+def read_enum_declaration(value: bytes) -> Result[StoredLayoutEnumDeclaration, str]:
     """Bind serde's decoder to this versioned layout value."""
-    return from_str(value)
+    return read_wire_stored_layout_enum_declaration(read_wire(value, b"\x22x[\xf6\xa0\xa6\x00", stored_layout_enum_declaration_descriptions())?, WirePositions())
 
 
-pub def encode_zip_carriers(values: &list[ZipCarrier]) -> Result[list[str], str]:
+pub def encode_zip_carriers(values: &list[ZipCarrier]) -> Result[list[bytes], str]:
     """Encode complete zip_carriers inventories in their native order."""
-    mut encoded: list[str] = []
+    mut encoded: list[bytes] = []
     for value in values:
-        encoded.append(to_string(retain_zip_carrier(value)?).map_err((error) => str(error))?)
+        encoded.append(write_wire(b">i\xa6U\x16 \x00", stored_layout_zip_carrier_descriptions(), wire_stored_layout_zip_carrier(retain_zip_carrier(value)?))?)
     return Ok(encoded)
 
 
-pub def decode_zip_carriers(values: list[str]) -> Result[list[ZipCarrier], str]:
+pub def decode_zip_carriers(values: list[bytes]) -> Result[list[ZipCarrier], str]:
     """Restore complete zip_carriers inventories without checking or lowering source."""
     mut decoded: list[ZipCarrier] = []
     for value in values:
@@ -622,6 +626,385 @@ pub def decode_zip_carriers(values: list[str]) -> Result[list[ZipCarrier], str]:
     return Ok(decoded)
 
 
-def read_zip_carrier(value: str) -> Result[StoredLayoutZipCarrier, JsonError]:
+def read_zip_carrier(value: bytes) -> Result[StoredLayoutZipCarrier, str]:
     """Bind serde's decoder to this versioned layout value."""
-    return from_str(value)
+    return read_wire_stored_layout_zip_carrier(read_wire(value, b">i\xa6U\x16 \x00", stored_layout_zip_carrier_descriptions())?, WirePositions())
+
+# Generated native-plan wire projections.
+
+
+def wire_stored_layout_enum_declaration(value: StoredLayoutEnumDeclaration) -> Value:
+    return Value.Record([
+        required_value(b"\x82\xa3S\x7f\xf0\xdb", Value.Text(value.name)),
+        required_value(b"\xef\xa1\xf3u\xd7a", Value.Boolean(value.public)),
+        required_value(b"\xda\xd5i\xe1\x01\xad", Value.List([wire_stored_layout_enum_variant(item0) for item0 in value.variants])),
+        required_value(b"\xa8\x8f\xe6\xeca\x15", Value.List([Value.Text(item0) for item0 in value.derives])),
+        required_value(b"7\xa0\x02Z\xa1\xf2", wire_stored_span(value.span)),
+        required_value(b"a5&\xd6\xca\x1f", wire_integer(value.view_lifetime_count)),
+        required_value(b"X\x03X~g\x91", wire_stored_layout_carrier(value.carrier)),
+        required_value(b"\x18&\xb5\x1c\x02V", wire_optional_stored_layout_checked_type(value.semantic_key)),
+        required_value(b"p6\x9c\xac\xa4\xd8", Value.Text(value.source_type)),
+        required_value(b"\xef\x06\xc8!DT", Value.Boolean(value.member_debug)),
+        required_value(b"\x8a\xac\xe8\x82\x8f\xe6", Value.Text(value.library_item)),
+        required_value(b".\xeeG\xf93\xc4", Value.List([wire_stored_layout_plan_type(item0) for item0 in value.library_type_arguments])),
+        required_value(b"\x1d\x91\xf5\x83}\xa5", Value.Text(value.raw_kind)),
+        required_value(b"\x0fF&\xf8\xea\xb1", Value.List([Value.Text(item0) for item0 in value.raw_values])),
+        required_value(b";\xbbc\xd8xg", Value.List([Value.Text(item0) for item0 in value.comparison_methods])),
+        required_value(b"\xb5\x1b\x90e\x9ax", Value.List([Value.Text(item0) for item0 in value.closure_items])),
+    ])
+
+
+def read_wire_stored_layout_enum_declaration(value: Value, positions: &WirePositions) -> Result[StoredLayoutEnumDeclaration, str]:
+    fields = wire_fields(value, 16)?
+    return Ok(StoredLayoutEnumDeclaration(
+        name=text(fields[9].value)?,
+        public=boolean_value(fields[15].value)?,
+        variants=[read_wire_stored_layout_enum_variant(item0, positions)? for item0 in items(fields[13].value)?],
+        derives=[text(item0)? for item0 in items(fields[11].value)?],
+        span=read_wire_stored_span(fields[4].value, positions)?,
+        view_lifetime_count=number(fields[7].value)?,
+        carrier=read_wire_stored_layout_carrier(fields[6].value, positions)?,
+        semantic_key=read_optional_stored_layout_checked_type(fields[1].value, positions)?,
+        source_type=text(fields[8].value)?,
+        member_debug=boolean_value(fields[14].value)?,
+        library_item=text(fields[10].value)?,
+        library_type_arguments=[read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[3].value)?],
+        raw_kind=text(fields[2].value)?,
+        raw_values=[text(item0)? for item0 in items(fields[0].value)?],
+        comparison_methods=[text(item0)? for item0 in items(fields[5].value)?],
+        closure_items=[text(item0)? for item0 in items(fields[12].value)?],
+    ))
+
+
+def wire_stored_layout_enum_variant(value: StoredLayoutEnumVariant) -> Value:
+    return Value.Record([
+        required_value(b"\x82\xa3S\x7f\xf0\xdb", Value.Text(value.name)),
+        required_value(b"\xbf\xe5\xd6\x97\x16-", Value.List([wire_stored_layout_plan_type(item0) for item0 in value.fields])),
+    ])
+
+
+def read_wire_stored_layout_enum_variant(value: Value, positions: &WirePositions) -> Result[StoredLayoutEnumVariant, str]:
+    fields = wire_fields(value, 2)?
+    return Ok(StoredLayoutEnumVariant(
+        name=text(fields[0].value)?,
+        fields=[read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[1].value)?],
+    ))
+
+
+def wire_stored_layout_fallible_iterator_methods(value: StoredLayoutFallibleIteratorMethods) -> Value:
+    return Value.Record([
+        required_value(b"J3\xea\xcd_\xa6", wire_stored_layout_plan_type(value.item)),
+        required_value(b"\xca\x00\xfc\xcf\xb4\x08", wire_stored_layout_plan_type(value.error)),
+        required_value(b"\xc6\xc1\xc9\xa9\xc8T", Value.Text(value.next)),
+    ])
+
+
+def read_wire_stored_layout_fallible_iterator_methods(value: Value, positions: &WirePositions) -> Result[StoredLayoutFallibleIteratorMethods, str]:
+    fields = wire_fields(value, 3)?
+    return Ok(StoredLayoutFallibleIteratorMethods(
+        item=read_wire_stored_layout_plan_type(fields[0].value, positions)?,
+        error=read_wire_stored_layout_plan_type(fields[2].value, positions)?,
+        next=text(fields[1].value)?,
+    ))
+
+
+def wire_stored_layout_field_lifecycle(value: StoredLayoutFieldLifecycle) -> Value:
+    return Value.Record([
+        required_value(b"kZ=\xed\x01j", wire_optional_str(value.since)),
+        required_value(b"\xf3C>\xc5V\xe6", wire_optional_str(value.retire_in)),
+        required_value(b"\xabS\x0a\x13\xe4Y", wire_optional_str(value.message)),
+        required_value(b"\xa7\xe2\xd2n\x8d\x15", wire_optional_str(value.by)),
+        required_value(b"JP(F\xd0p", wire_optional_str(value.issue)),
+    ])
+
+
+def read_wire_stored_layout_field_lifecycle(value: Value, positions: &WirePositions) -> Result[StoredLayoutFieldLifecycle, str]:
+    fields = wire_fields(value, 5)?
+    return Ok(StoredLayoutFieldLifecycle(
+        since=read_optional_str(fields[1].value, positions)?,
+        retire_in=read_optional_str(fields[4].value, positions)?,
+        message=read_optional_str(fields[3].value, positions)?,
+        by=read_optional_str(fields[2].value, positions)?,
+        issue=read_optional_str(fields[0].value, positions)?,
+    ))
+
+
+def wire_stored_layout_field_metadata(value: StoredLayoutFieldMetadata) -> Value:
+    return Value.Record([
+        required_value(b"\x82\xa3S\x7f\xf0\xdb", Value.Text(value.name)),
+        required_value(b"E\xb0f\xb7\x9aM", Value.List([wire_integer(item0) for item0 in value.record_identity])),
+        required_value(b"\xbd\xeb\x90\xf5Pa", Value.Boolean(value.record_canonical)),
+        required_value(b"\xcdE\x7f.X\x1d", Value.List([Value.Text(item0) for item0 in value.renamed_from])),
+        required_value(b"\xcfZ4\xb47\x09", wire_optional_stored_layout_field_lifecycle(value.renamed_from_lifecycle)),
+        required_value(b"ZE$YP;", wire_integer(value.position)),
+        required_value(b"\xda\xd0\x8fy8\xe2", Value.Boolean(value.default_is_empty)),
+        required_value(b"\x92\x7f\x03~3p", wire_optional_str(value.stored_type)),
+        required_value(b"\x1a\x0aj6\xca\x0a", wire_optional_str(value.alias)),
+        required_value(b"\xc9\x04oz7\xad", wire_optional_str(value.description)),
+        required_value(b"%\x01\xa7\xdd\xe4V", Value.Text(value.type_name)),
+        required_value(b"h*w|#(", Value.Boolean(value.has_default)),
+    ])
+
+
+def read_wire_stored_layout_field_metadata(value: Value, positions: &WirePositions) -> Result[StoredLayoutFieldMetadata, str]:
+    fields = wire_fields(value, 12)?
+    return Ok(StoredLayoutFieldMetadata(
+        name=text(fields[5].value)?,
+        record_identity=[number(item0)? for item0 in items(fields[2].value)?],
+        record_canonical=boolean_value(fields[7].value)?,
+        renamed_from=[text(item0)? for item0 in items(fields[9].value)?],
+        renamed_from_lifecycle=read_optional_stored_layout_field_lifecycle(fields[10].value, positions)?,
+        position=number(fields[3].value)?,
+        default_is_empty=boolean_value(fields[11].value)?,
+        stored_type=read_optional_str(fields[6].value, positions)?,
+        alias=read_optional_str(fields[0].value, positions)?,
+        description=read_optional_str(fields[8].value, positions)?,
+        type_name=text(fields[1].value)?,
+        has_default=boolean_value(fields[4].value)?,
+    ))
+
+
+def wire_stored_layout_iterator_methods(value: StoredLayoutIteratorMethods) -> Value:
+    return Value.Record([
+        required_value(b"J3\xea\xcd_\xa6", wire_stored_layout_plan_type(value.item)),
+        required_value(b"\xc6\xc1\xc9\xa9\xc8T", Value.Text(value.next)),
+    ])
+
+
+def read_wire_stored_layout_iterator_methods(value: Value, positions: &WirePositions) -> Result[StoredLayoutIteratorMethods, str]:
+    fields = wire_fields(value, 2)?
+    return Ok(StoredLayoutIteratorMethods(
+        item=read_wire_stored_layout_plan_type(fields[0].value, positions)?,
+        next=text(fields[1].value)?,
+    ))
+
+
+def wire_stored_layout_model_declaration(value: StoredLayoutModelDeclaration) -> Value:
+    return Value.Record([
+        required_value(b"\x82\xa3S\x7f\xf0\xdb", Value.Text(value.name)),
+        required_value(b"\xef\xa1\xf3u\xd7a", Value.Boolean(value.public)),
+        required_value(b"\xbf\xe5\xd6\x97\x16-", Value.List([wire_stored_layout_parameter(item0) for item0 in value.fields])),
+        required_value(b"\x0b\xc43\xf3\xaa\x0b", Value.List([Value.Boolean(item0) for item0 in value.field_public])),
+        required_value(b"\xa8\x8f\xe6\xeca\x15", Value.List([Value.Text(item0) for item0 in value.derives])),
+        required_value(b"7\xa0\x02Z\xa1\xf2", wire_stored_span(value.span)),
+        required_value(b"a5&\xd6\xca\x1f", wire_integer(value.view_lifetime_count)),
+        required_value(b"*\x12\xf5\x01h\xc9", Value.Text(value.source_name)),
+        required_value(b"\x8a\xac\xe8\x82\x8f\xe6", Value.Text(value.library_item)),
+        required_value(b".\xeeG\xf93\xc4", Value.List([wire_stored_layout_plan_type(item0) for item0 in value.library_type_arguments])),
+        required_value(b"=\x15#\x88O\xbb", Value.List([Value.Text(item0) for item0 in value.field_serde_names])),
+        required_value(b"\x16\x1d\xbe\xd0\x94`", Value.Text(value.checked_deserialize)),
+        required_value(b"\x1bO\xa3\x96\xb0\xa9", wire_optional_list_stored_layout_field_metadata(value.reflection_metadata)),
+        required_value(b"xX]\xef\x10\xd5", Value.Boolean(value.field_metadata_carrier)),
+        required_value(b";\xbbc\xd8xg", Value.List([Value.Text(item0) for item0 in value.comparison_methods])),
+        required_value(b"\xa9\xe5\xb8^:\xf8", wire_optional_stored_layout_fallible_iterator_methods(value.fallible_iterator)),
+        required_value(b"\xef\x9b\xae\xdf\xf2\xf4", wire_optional_stored_layout_iterator_methods(value.iterator)),
+        required_value(b"\xde*\xfbgVR", Value.Text(value.callable_method)),
+        required_value(b"Zv\x81SH\xae", Value.List([wire_stored_layout_plan_type(item0) for item0 in value.callable_signature])),
+        required_value(b"\xe1\xc2\xa1\x8c\xea\xaf", Value.Text(value.string_conversion_root)),
+        required_value(b"\x9d\x9e\x1a\x05i\x17", Value.Text(value.string_conversion_trait)),
+        required_value(b"\xd2y,\xbf\x1f&", Value.List([wire_stored_layout_native_trait_adoption(item0) for item0 in value.native_trait_adoptions])),
+        required_value(b"\x99\xc6EI\x8d\x81", Value.List([wire_integer(item0) for item0 in value.unavailable_native_fields])),
+    ])
+
+
+def read_wire_stored_layout_model_declaration(value: Value, positions: &WirePositions) -> Result[StoredLayoutModelDeclaration, str]:
+    fields = wire_fields(value, 23)?
+    return Ok(StoredLayoutModelDeclaration(
+        name=text(fields[11].value)?,
+        public=boolean_value(fields[22].value)?,
+        fields=[read_wire_stored_layout_parameter(item0, positions)? for item0 in items(fields[17].value)?],
+        field_public=[boolean_value(item0)? for item0 in items(fields[0].value)?],
+        derives=[text(item0)? for item0 in items(fields[15].value)?],
+        span=read_wire_stored_span(fields[5].value, positions)?,
+        view_lifetime_count=number(fields[9].value)?,
+        source_name=text(fields[3].value)?,
+        library_item=text(fields[12].value)?,
+        library_type_arguments=[read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[4].value)?],
+        field_serde_names=[text(item0)? for item0 in items(fields[7].value)?],
+        checked_deserialize=text(fields[1].value)?,
+        reflection_metadata=read_optional_list_stored_layout_field_metadata(fields[2].value, positions)?,
+        field_metadata_carrier=boolean_value(fields[10].value)?,
+        comparison_methods=[text(item0)? for item0 in items(fields[6].value)?],
+        fallible_iterator=read_optional_stored_layout_fallible_iterator_methods(fields[16].value, positions)?,
+        iterator=read_optional_stored_layout_iterator_methods(fields[21].value, positions)?,
+        callable_method=text(fields[19].value)?,
+        callable_signature=[read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[8].value)?],
+        string_conversion_root=text(fields[20].value)?,
+        string_conversion_trait=text(fields[14].value)?,
+        native_trait_adoptions=[read_wire_stored_layout_native_trait_adoption(item0, positions)? for item0 in items(fields[18].value)?],
+        unavailable_native_fields=[number(item0)? for item0 in items(fields[13].value)?],
+    ))
+
+
+def wire_stored_layout_native_trait_adoption(value: StoredLayoutNativeTraitAdoption) -> Value:
+    return Value.Record([
+        required_value(b"\xa0\xaf\x9f\x86[\xf6", Value.Text(value.path)),
+        required_value(b"?8g1:\x9d", Value.List([wire_stored_layout_native_trait_method(item0) for item0 in value.methods])),
+    ])
+
+
+def read_wire_stored_layout_native_trait_adoption(value: Value, positions: &WirePositions) -> Result[StoredLayoutNativeTraitAdoption, str]:
+    fields = wire_fields(value, 2)?
+    return Ok(StoredLayoutNativeTraitAdoption(
+        path=text(fields[1].value)?,
+        methods=[read_wire_stored_layout_native_trait_method(item0, positions)? for item0 in items(fields[0].value)?],
+    ))
+
+
+def wire_stored_layout_native_trait_method(value: StoredLayoutNativeTraitMethod) -> Value:
+    return Value.Record([
+        required_value(b"\x82\xa3S\x7f\xf0\xdb", Value.Text(value.name)),
+        required_value(b"x\xf9\xac\x01\x8eU", Value.Text(value.function)),
+    ])
+
+
+def read_wire_stored_layout_native_trait_method(value: Value, positions: &WirePositions) -> Result[StoredLayoutNativeTraitMethod, str]:
+    fields = wire_fields(value, 2)?
+    return Ok(StoredLayoutNativeTraitMethod(
+        name=text(fields[1].value)?,
+        function=text(fields[0].value)?,
+    ))
+
+
+def wire_stored_layout_parameter(value: StoredLayoutParameter) -> Value:
+    return Value.Record([
+        required_value(b"\x82\xa3S\x7f\xf0\xdb", Value.Text(value.name)),
+        required_value(b"O\x9d\xb7\xf8\xe5\x06", wire_stored_layout_plan_type(value.ty)),
+        required_value(b"7\xa0\x02Z\xa1\xf2", wire_stored_span(value.span)),
+    ])
+
+
+def read_wire_stored_layout_parameter(value: Value, positions: &WirePositions) -> Result[StoredLayoutParameter, str]:
+    fields = wire_fields(value, 3)?
+    return Ok(StoredLayoutParameter(
+        name=text(fields[2].value)?,
+        ty=read_wire_stored_layout_plan_type(fields[1].value, positions)?,
+        span=read_wire_stored_span(fields[0].value, positions)?,
+    ))
+
+
+def wire_stored_layout_zip_carrier(value: StoredLayoutZipCarrier) -> Value:
+    return Value.Record([
+        required_value(b"6\x0f\x84\x03YB", wire_stored_layout_tuple_element(value.left)),
+        required_value(b"'\x04/Nn\xca", wire_stored_layout_tuple_element(value.right)),
+        required_value(b"4\xa0@\x05\xbc\xaf", wire_stored_layout_plan_type(value.target)),
+    ])
+
+
+def read_wire_stored_layout_zip_carrier(value: Value, positions: &WirePositions) -> Result[StoredLayoutZipCarrier, str]:
+    fields = wire_fields(value, 3)?
+    return Ok(StoredLayoutZipCarrier(
+        left=read_wire_stored_layout_tuple_element(fields[2].value, positions)?,
+        right=read_wire_stored_layout_tuple_element(fields[0].value, positions)?,
+        target=read_wire_stored_layout_plan_type(fields[1].value, positions)?,
+    ))
+
+
+def wire_stored_span(value: StoredSpan) -> Value:
+    return Value.Record([
+        required_value(b";\x9c5\x8f6\xf0", Value.Text(value.file)),
+        required_value(b"8\xa9\xc1\xe7!X", wire_integer(value.line)),
+        required_value(b"\x88\x1d_\xb6\x00\x90", wire_integer(value.column)),
+    ])
+
+
+def read_wire_stored_span(value: Value, positions: &WirePositions) -> Result[StoredSpan, str]:
+    fields = wire_fields(value, 3)?
+    file, line, column = positions.apply(text(fields[1].value)?, number(fields[0].value)?, number(fields[2].value)?)?
+    return Ok(StoredSpan(file=file, line=line, column=column))
+
+
+def wire_optional_stored_layout_checked_type(value: Option[StoredLayoutCheckedType]) -> Value:
+    match value:
+        Some(item) => return Value.Some([wire_stored_layout_checked_type(item)])
+        None => return Value.NoneValue
+
+
+def read_optional_stored_layout_checked_type(value: Value, positions: &WirePositions) -> Result[Option[StoredLayoutCheckedType], str]:
+    match value:
+        Value.NoneValue => return Ok(None)
+        Value.Some(children) =>
+            if len(children) == 1:
+                return Ok(Some(read_wire_stored_layout_checked_type(children[0], positions)?))
+        _ => pass
+    return Err("invalid native plan option")
+
+
+def wire_optional_stored_layout_fallible_iterator_methods(value: Option[StoredLayoutFallibleIteratorMethods]) -> Value:
+    match value:
+        Some(item) => return Value.Some([wire_stored_layout_fallible_iterator_methods(item)])
+        None => return Value.NoneValue
+
+
+def read_optional_stored_layout_fallible_iterator_methods(value: Value, positions: &WirePositions) -> Result[Option[StoredLayoutFallibleIteratorMethods], str]:
+    match value:
+        Value.NoneValue => return Ok(None)
+        Value.Some(children) =>
+            if len(children) == 1:
+                return Ok(Some(read_wire_stored_layout_fallible_iterator_methods(children[0], positions)?))
+        _ => pass
+    return Err("invalid native plan option")
+
+
+def wire_optional_stored_layout_field_lifecycle(value: Option[StoredLayoutFieldLifecycle]) -> Value:
+    match value:
+        Some(item) => return Value.Some([wire_stored_layout_field_lifecycle(item)])
+        None => return Value.NoneValue
+
+
+def read_optional_stored_layout_field_lifecycle(value: Value, positions: &WirePositions) -> Result[Option[StoredLayoutFieldLifecycle], str]:
+    match value:
+        Value.NoneValue => return Ok(None)
+        Value.Some(children) =>
+            if len(children) == 1:
+                return Ok(Some(read_wire_stored_layout_field_lifecycle(children[0], positions)?))
+        _ => pass
+    return Err("invalid native plan option")
+
+
+def wire_optional_stored_layout_iterator_methods(value: Option[StoredLayoutIteratorMethods]) -> Value:
+    match value:
+        Some(item) => return Value.Some([wire_stored_layout_iterator_methods(item)])
+        None => return Value.NoneValue
+
+
+def read_optional_stored_layout_iterator_methods(value: Value, positions: &WirePositions) -> Result[Option[StoredLayoutIteratorMethods], str]:
+    match value:
+        Value.NoneValue => return Ok(None)
+        Value.Some(children) =>
+            if len(children) == 1:
+                return Ok(Some(read_wire_stored_layout_iterator_methods(children[0], positions)?))
+        _ => pass
+    return Err("invalid native plan option")
+
+
+def wire_optional_list_stored_layout_field_metadata(value: Option[list[StoredLayoutFieldMetadata]]) -> Value:
+    match value:
+        Some(item) => return Value.Some([Value.List([wire_stored_layout_field_metadata(item0) for item0 in item])])
+        None => return Value.NoneValue
+
+
+def read_optional_list_stored_layout_field_metadata(value: Value, positions: &WirePositions) -> Result[Option[list[StoredLayoutFieldMetadata]], str]:
+    match value:
+        Value.NoneValue => return Ok(None)
+        Value.Some(children) =>
+            if len(children) == 1:
+                return Ok(Some([read_wire_stored_layout_field_metadata(item0, positions)? for item0 in items(children[0])?]))
+        _ => pass
+    return Err("invalid native plan option")
+
+
+def wire_optional_str(value: Option[str]) -> Value:
+    match value:
+        Some(item) => return Value.Some([Value.Text(item)])
+        None => return Value.NoneValue
+
+
+def read_optional_str(value: Value, positions: &WirePositions) -> Result[Option[str], str]:
+    match value:
+        Value.NoneValue => return Ok(None)
+        Value.Some(children) =>
+            if len(children) == 1:
+                return Ok(Some(text(children[0])?))
+        _ => pass
+    return Err("invalid native plan option")

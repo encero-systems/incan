@@ -1,6 +1,11 @@
 """Lossless native layout-carrier encoding; canonical source-trait tokens explicitly refuse this bounded profile."""
 
-from rust::serde import Serialize, Deserialize
+from std.primitives.crumb.values import Value, IntegerValue
+from pub::internal_models.crumb_rows import required_value
+from pub::internal_models.graph_crumb_fields import items, integer as wire_integer, number, text
+from plan_wire_rows import WirePositions, wire_fields, wire_variant, unsigned_value, float_value, read_float, boolean_value
+
+
 from _types import (
     TupleElement,
     ListLeaf,
@@ -20,7 +25,6 @@ from pub::internal_models.checked_types import (
     CheckedType,
 )
 
-@derive(Serialize, Deserialize)
 pub enum StoredLayoutTupleElement:
     """The complete serialized TupleElement facts admitted by this layout profile."""
 
@@ -49,7 +53,6 @@ pub enum StoredLayoutTupleElement:
     FrozenCollection(str, list[StoredLayoutPlanType])
 
 
-@derive(Serialize, Deserialize)
 pub enum StoredLayoutListLeaf:
     """The complete serialized ListLeaf facts admitted by this layout profile."""
 
@@ -76,7 +79,6 @@ pub enum StoredLayoutListLeaf:
     Reference(list[StoredLayoutPlanType])
 
 
-@derive(Serialize, Deserialize)
 pub enum StoredLayoutSizedNumeric:
     """The complete serialized SizedNumeric facts admitted by this layout profile."""
 
@@ -95,7 +97,6 @@ pub enum StoredLayoutSizedNumeric:
     USize
 
 
-@derive(Serialize, Deserialize)
 pub enum StoredLayoutPlanType:
     """The complete serialized PlanType facts admitted by this layout profile."""
 
@@ -195,7 +196,6 @@ pub enum StoredLayoutPlanType:
     Boxed(list[StoredLayoutPlanType])
 
 
-@derive(Serialize, Deserialize)
 pub enum StoredLayoutCarrier:
     """The complete serialized Carrier facts admitted by this layout profile."""
 
@@ -204,7 +204,6 @@ pub enum StoredLayoutCarrier:
     Result
 
 
-@derive(Serialize, Deserialize)
 pub enum StoredLayoutCheckedNumericType:
     """The complete serialized CheckedNumericType facts admitted by this layout profile."""
 
@@ -225,7 +224,6 @@ pub enum StoredLayoutCheckedNumericType:
     Bool
 
 
-@derive(Serialize, Deserialize)
 pub enum StoredLayoutCheckedPrimitiveType:
     """The complete serialized CheckedPrimitiveType facts admitted by this layout profile."""
 
@@ -240,7 +238,6 @@ pub enum StoredLayoutCheckedPrimitiveType:
     Unit
 
 
-@derive(Serialize, Deserialize)
 pub enum StoredLayoutCheckedInputAccess:
     """The complete serialized CheckedInputAccess facts admitted by this layout profile."""
 
@@ -251,7 +248,6 @@ pub enum StoredLayoutCheckedInputAccess:
     InferredShared
 
 
-@derive(Serialize, Deserialize)
 pub enum StoredLayoutCheckedCallableParamKind:
     """The complete serialized CheckedCallableParamKind facts admitted by this layout profile."""
 
@@ -260,14 +256,12 @@ pub enum StoredLayoutCheckedCallableParamKind:
     RestKeyword
 
 
-@derive(Serialize, Deserialize)
 pub enum StoredLayoutCheckedRuntimeBuiltin:
     """The complete serialized CheckedRuntimeBuiltin facts admitted by this layout profile."""
 
     ValidationError
 
 
-@derive(Serialize, Deserialize)
 pub model StoredLayoutCheckedCallableParam:
     """The complete serialized CheckedCallableParam facts admitted by this layout profile."""
 
@@ -281,7 +275,6 @@ pub model StoredLayoutCheckedCallableParam:
     pub input_access: StoredLayoutCheckedInputAccess
 
 
-@derive(Serialize, Deserialize)
 pub enum StoredLayoutCheckedType:
     """The complete serialized CheckedType facts admitted by this layout profile."""
 
@@ -888,3 +881,771 @@ pub def restore_checked_type(value: StoredLayoutCheckedType) -> Result[CheckedTy
         StoredLayoutCheckedType.NativePointer(field0, field1) => return Ok(CheckedType.NativePointer(field0, [restore_checked_type(item0)? for item0 in field1]))
         StoredLayoutCheckedType.NativeCChar => return Ok(CheckedType.NativeCChar)
         _ => return Err("native-interface refuses an unsupported CheckedType alternative")
+
+# Generated native-plan wire projections.
+
+
+pub def wire_stored_layout_carrier(value: StoredLayoutCarrier) -> Value:
+    match value:
+        StoredLayoutCarrier.Declared => return Value.Enum(b"\xdcV\xdd&\x87\xa3", [])
+        StoredLayoutCarrier.Option => return Value.Enum(b"E\xaa\xac\xba~\xa1", [])
+        StoredLayoutCarrier.Result => return Value.Enum(b"n}P\xe8OG", [])
+
+
+pub def read_wire_stored_layout_carrier(value: Value, positions: &WirePositions) -> Result[StoredLayoutCarrier, str]:
+    identity, fields = wire_variant(value)?
+    if identity == b"\xdcV\xdd&\x87\xa3" and len(fields) == 0:
+        return Ok(StoredLayoutCarrier.Declared)
+    if identity == b"E\xaa\xac\xba~\xa1" and len(fields) == 0:
+        return Ok(StoredLayoutCarrier.Option)
+    if identity == b"n}P\xe8OG" and len(fields) == 0:
+        return Ok(StoredLayoutCarrier.Result)
+    return Err("unknown or incomplete StoredLayoutCarrier alternative")
+
+
+pub def wire_stored_layout_checked_callable_param(value: StoredLayoutCheckedCallableParam) -> Value:
+    return Value.Record([
+        required_value(b"\x82\xa3S\x7f\xf0\xdb", wire_optional_str(value.name)),
+        required_value(b"O\x9d\xb7\xf8\xe5\x06", wire_stored_layout_checked_type(value.ty)),
+        required_value(b"\x0b'\xc1X\xfe\xb3", wire_stored_layout_checked_callable_param_kind(value.kind)),
+        required_value(b"h*w|#(", Value.Boolean(value.has_default)),
+        required_value(b"\xc2\xea58V\xa6", Value.Boolean(value.is_partial_preset)),
+        required_value(b"\xc5}!\xc0\xf9[", Value.Boolean(value.is_mut)),
+        required_value(b"\xa6\xcb\xca1|\x1a", Value.Boolean(value.native_owned)),
+        required_value(b"+#{X\xd0r", wire_stored_layout_checked_input_access(value.input_access)),
+    ])
+
+
+pub def read_wire_stored_layout_checked_callable_param(value: Value, positions: &WirePositions) -> Result[StoredLayoutCheckedCallableParam, str]:
+    fields = wire_fields(value, 8)?
+    return Ok(StoredLayoutCheckedCallableParam(
+        name=read_optional_str(fields[4].value, positions)?,
+        ty=read_wire_stored_layout_checked_type(fields[2].value, positions)?,
+        kind=read_wire_stored_layout_checked_callable_param_kind(fields[0].value, positions)?,
+        has_default=boolean_value(fields[3].value)?,
+        is_partial_preset=boolean_value(fields[6].value)?,
+        is_mut=boolean_value(fields[7].value)?,
+        native_owned=boolean_value(fields[5].value)?,
+        input_access=read_wire_stored_layout_checked_input_access(fields[1].value, positions)?,
+    ))
+
+
+pub def wire_stored_layout_checked_callable_param_kind(value: StoredLayoutCheckedCallableParamKind) -> Value:
+    match value:
+        StoredLayoutCheckedCallableParamKind.Normal => return Value.Enum(b"\xa7$\x8e\xebE\xeb", [])
+        StoredLayoutCheckedCallableParamKind.RestPositional => return Value.Enum(b"\xed\xe4!\xe1h\xfb", [])
+        StoredLayoutCheckedCallableParamKind.RestKeyword => return Value.Enum(b"\xff\xad\x057D!", [])
+
+
+pub def read_wire_stored_layout_checked_callable_param_kind(value: Value, positions: &WirePositions) -> Result[StoredLayoutCheckedCallableParamKind, str]:
+    identity, fields = wire_variant(value)?
+    if identity == b"\xa7$\x8e\xebE\xeb" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedCallableParamKind.Normal)
+    if identity == b"\xed\xe4!\xe1h\xfb" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedCallableParamKind.RestPositional)
+    if identity == b"\xff\xad\x057D!" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedCallableParamKind.RestKeyword)
+    return Err("unknown or incomplete StoredLayoutCheckedCallableParamKind alternative")
+
+
+pub def wire_stored_layout_checked_input_access(value: StoredLayoutCheckedInputAccess) -> Value:
+    match value:
+        StoredLayoutCheckedInputAccess.Inferred => return Value.Enum(b"\xd4a\xcb\xb4\x90f", [])
+        StoredLayoutCheckedInputAccess.Shared => return Value.Enum(b"\xe3\xc4\xb3\x9dmP", [])
+        StoredLayoutCheckedInputAccess.Exclusive => return Value.Enum(b"H\x83\xb7\xdf\xff\xb0", [])
+        StoredLayoutCheckedInputAccess.Owned => return Value.Enum(b"\x17\xb7`\xc4\x1c\xd2", [])
+        StoredLayoutCheckedInputAccess.InferredShared => return Value.Enum(b"1\xca\xf1d\xbb&", [])
+
+
+pub def read_wire_stored_layout_checked_input_access(value: Value, positions: &WirePositions) -> Result[StoredLayoutCheckedInputAccess, str]:
+    identity, fields = wire_variant(value)?
+    if identity == b"\xd4a\xcb\xb4\x90f" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedInputAccess.Inferred)
+    if identity == b"\xe3\xc4\xb3\x9dmP" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedInputAccess.Shared)
+    if identity == b"H\x83\xb7\xdf\xff\xb0" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedInputAccess.Exclusive)
+    if identity == b"\x17\xb7`\xc4\x1c\xd2" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedInputAccess.Owned)
+    if identity == b"1\xca\xf1d\xbb&" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedInputAccess.InferredShared)
+    return Err("unknown or incomplete StoredLayoutCheckedInputAccess alternative")
+
+
+pub def wire_stored_layout_checked_numeric_type(value: StoredLayoutCheckedNumericType) -> Value:
+    match value:
+        StoredLayoutCheckedNumericType.I8 => return Value.Enum(b"1Fb\x8c\x11\x8c", [])
+        StoredLayoutCheckedNumericType.I16 => return Value.Enum(b"\xb9\xff?nq\xda", [])
+        StoredLayoutCheckedNumericType.I32 => return Value.Enum(b"\xbe-,\xd01}", [])
+        StoredLayoutCheckedNumericType.I64 => return Value.Enum(b"\xc1\xc7\xe0-\xd6\xcb", [])
+        StoredLayoutCheckedNumericType.I128 => return Value.Enum(b"G\xeck\xdaM\xa3", [])
+        StoredLayoutCheckedNumericType.U8 => return Value.Enum(b"4s\xd3\x8a\x12A", [])
+        StoredLayoutCheckedNumericType.U16 => return Value.Enum(b"\xef\x09\xbc\x80\xcdb", [])
+        StoredLayoutCheckedNumericType.U32 => return Value.Enum(b"\x80\x07$\x86\xf2\xea", [])
+        StoredLayoutCheckedNumericType.U64 => return Value.Enum(b"\x84\xb8\x9e\x22ET", [])
+        StoredLayoutCheckedNumericType.U128 => return Value.Enum(b"\x0c\x80\x0d\xc4\xf9I", [])
+        StoredLayoutCheckedNumericType.F32 => return Value.Enum(b"\x82%Z\xeel\xcc", [])
+        StoredLayoutCheckedNumericType.F64 => return Value.Enum(b"\xa4M\x7ft\xc8)", [])
+        StoredLayoutCheckedNumericType.ISize => return Value.Enum(b"\xec|D\x91\xf6\x86", [])
+        StoredLayoutCheckedNumericType.USize => return Value.Enum(b"\xbaL\xadu\xa6Z", [])
+        StoredLayoutCheckedNumericType.Bool => return Value.Enum(b"I\xf4\x11\xf0\xa1\xa7", [])
+
+
+pub def read_wire_stored_layout_checked_numeric_type(value: Value, positions: &WirePositions) -> Result[StoredLayoutCheckedNumericType, str]:
+    identity, fields = wire_variant(value)?
+    if identity == b"1Fb\x8c\x11\x8c" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedNumericType.I8)
+    if identity == b"\xb9\xff?nq\xda" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedNumericType.I16)
+    if identity == b"\xbe-,\xd01}" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedNumericType.I32)
+    if identity == b"\xc1\xc7\xe0-\xd6\xcb" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedNumericType.I64)
+    if identity == b"G\xeck\xdaM\xa3" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedNumericType.I128)
+    if identity == b"4s\xd3\x8a\x12A" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedNumericType.U8)
+    if identity == b"\xef\x09\xbc\x80\xcdb" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedNumericType.U16)
+    if identity == b"\x80\x07$\x86\xf2\xea" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedNumericType.U32)
+    if identity == b"\x84\xb8\x9e\x22ET" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedNumericType.U64)
+    if identity == b"\x0c\x80\x0d\xc4\xf9I" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedNumericType.U128)
+    if identity == b"\x82%Z\xeel\xcc" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedNumericType.F32)
+    if identity == b"\xa4M\x7ft\xc8)" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedNumericType.F64)
+    if identity == b"\xec|D\x91\xf6\x86" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedNumericType.ISize)
+    if identity == b"\xbaL\xadu\xa6Z" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedNumericType.USize)
+    if identity == b"I\xf4\x11\xf0\xa1\xa7" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedNumericType.Bool)
+    return Err("unknown or incomplete StoredLayoutCheckedNumericType alternative")
+
+
+pub def wire_stored_layout_checked_primitive_type(value: StoredLayoutCheckedPrimitiveType) -> Value:
+    match value:
+        StoredLayoutCheckedPrimitiveType.Int => return Value.Enum(b"\x0b_`\x80p\xc6", [])
+        StoredLayoutCheckedPrimitiveType.Float => return Value.Enum(b"\x1ai<\x00\xc4\x0c", [])
+        StoredLayoutCheckedPrimitiveType.Numeric(field0) => return Value.Enum(b"6u-l\xd1G", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_layout_checked_numeric_type(field0))])
+        StoredLayoutCheckedPrimitiveType.Bool => return Value.Enum(b"I\xf4\x11\xf0\xa1\xa7", [])
+        StoredLayoutCheckedPrimitiveType.Str => return Value.Enum(b"\x80\x84\xa5\x1b<d", [])
+        StoredLayoutCheckedPrimitiveType.Bytes => return Value.Enum(b"M\x80\x000\x1f\xcc", [])
+        StoredLayoutCheckedPrimitiveType.FrozenStr => return Value.Enum(b"O\xab\xe1W\xe8\xf9", [])
+        StoredLayoutCheckedPrimitiveType.FrozenBytes => return Value.Enum(b"\xa5\x1aU\xd1;\xee", [])
+        StoredLayoutCheckedPrimitiveType.Unit => return Value.Enum(b"NTY`\xf1\xbf", [])
+
+
+pub def read_wire_stored_layout_checked_primitive_type(value: Value, positions: &WirePositions) -> Result[StoredLayoutCheckedPrimitiveType, str]:
+    identity, fields = wire_variant(value)?
+    if identity == b"\x0b_`\x80p\xc6" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedPrimitiveType.Int)
+    if identity == b"\x1ai<\x00\xc4\x0c" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedPrimitiveType.Float)
+    if identity == b"6u-l\xd1G" and len(fields) == 1:
+        return Ok(StoredLayoutCheckedPrimitiveType.Numeric(read_wire_stored_layout_checked_numeric_type(fields[0].value, positions)?))
+    if identity == b"I\xf4\x11\xf0\xa1\xa7" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedPrimitiveType.Bool)
+    if identity == b"\x80\x84\xa5\x1b<d" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedPrimitiveType.Str)
+    if identity == b"M\x80\x000\x1f\xcc" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedPrimitiveType.Bytes)
+    if identity == b"O\xab\xe1W\xe8\xf9" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedPrimitiveType.FrozenStr)
+    if identity == b"\xa5\x1aU\xd1;\xee" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedPrimitiveType.FrozenBytes)
+    if identity == b"NTY`\xf1\xbf" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedPrimitiveType.Unit)
+    return Err("unknown or incomplete StoredLayoutCheckedPrimitiveType alternative")
+
+
+pub def wire_stored_layout_checked_runtime_builtin(value: StoredLayoutCheckedRuntimeBuiltin) -> Value:
+    match value:
+        StoredLayoutCheckedRuntimeBuiltin.ValidationError => return Value.Enum(b"\xbd\xfa\xef\x14\xbe\x91", [])
+
+
+pub def read_wire_stored_layout_checked_runtime_builtin(value: Value, positions: &WirePositions) -> Result[StoredLayoutCheckedRuntimeBuiltin, str]:
+    identity, fields = wire_variant(value)?
+    if identity == b"\xbd\xfa\xef\x14\xbe\x91" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedRuntimeBuiltin.ValidationError)
+    return Err("unknown or incomplete StoredLayoutCheckedRuntimeBuiltin alternative")
+
+
+pub def wire_stored_layout_checked_type(value: StoredLayoutCheckedType) -> Value:
+    match value:
+        StoredLayoutCheckedType.Never => return Value.Enum(b"c\x00\xef\x80\x0b\xb8", [])
+        StoredLayoutCheckedType.Primitive(field0) => return Value.Enum(b"\x09V\x17<\xa4\x15", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_layout_checked_primitive_type(field0))])
+        StoredLayoutCheckedType.Named(field0) => return Value.Enum(b"\x86\x05`Z\xe0&", [required_value(b"_\xec\xebf\xff\xc8", Value.Text(field0))])
+        StoredLayoutCheckedType.Generic(field0, field1) => return Value.Enum(b"\x02(\xc6\xd4\x8e\xcf", [required_value(b"_\xec\xebf\xff\xc8", Value.Text(field0)), required_value(b"k\x86\xb2s\xff4", Value.List([wire_stored_layout_checked_type(item0) for item0 in field1]))])
+        StoredLayoutCheckedType.Decimal(field0, field1) => return Value.Enum(b"\x18Q}3-\x1b", [required_value(b"_\xec\xebf\xff\xc8", Value.Integer(IntegerValue.Unsigned(field0.wrapping_resize[u128]()))), required_value(b"k\x86\xb2s\xff4", Value.Integer(IntegerValue.Unsigned(field1.wrapping_resize[u128]())))])
+        StoredLayoutCheckedType.Function(field0, field1) => return Value.Enum(b"\xc8\x03q\x03\x02\xd5", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_checked_callable_param(item0) for item0 in field0])), required_value(b"k\x86\xb2s\xff4", Value.List([wire_stored_layout_checked_type(item0) for item0 in field1]))])
+        StoredLayoutCheckedType.TypeToken(field0) => return Value.Enum(b"\xeb\x90\x0dwd\xd0", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_checked_type(item0) for item0 in field0]))])
+        StoredLayoutCheckedType.Tuple(field0) => return Value.Enum(b"\xf16\xeex\xc3;", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_checked_type(item0) for item0 in field0]))])
+        StoredLayoutCheckedType.TypeVar(field0) => return Value.Enum(b"\xc7\xa4\xa1AK\xe4", [required_value(b"_\xec\xebf\xff\xc8", Value.Text(field0))])
+        StoredLayoutCheckedType.SelfType => return Value.Enum(b"\x800$\x93\xf2\xd4", [])
+        StoredLayoutCheckedType.Ref(field0) => return Value.Enum(b"\x9bn\x88\xe8\x94:", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_checked_type(item0) for item0 in field0]))])
+        StoredLayoutCheckedType.RefMut(field0) => return Value.Enum(b"\xff\xc4\x90\xa6\xa7\xb3", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_checked_type(item0) for item0 in field0]))])
+        StoredLayoutCheckedType.RustInteropPath(field0) => return Value.Enum(b"\xe7u\x7f\x0d\xdfV", [required_value(b"_\xec\xebf\xff\xc8", Value.Text(field0))])
+        StoredLayoutCheckedType.NativeBuiltin(field0) => return Value.Enum(b"o\xc7B\xf9\xdc\xbd", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_layout_checked_runtime_builtin(field0))])
+        StoredLayoutCheckedType.Unsupported(field0) => return Value.Enum(b"T2FX\xe2\xeb", [required_value(b"_\xec\xebf\xff\xc8", Value.Text(field0))])
+        StoredLayoutCheckedType.Infer => return Value.Enum(b"'@\x0f\xf4\xb8\x09", [])
+        StoredLayoutCheckedType.Unknown => return Value.Enum(b"\xb7d\xcd\xc0\xea\xb7", [])
+        StoredLayoutCheckedType.NativeArray(field0, field1) => return Value.Enum(b"0?\xb1)\xac\xe5", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_checked_type(item0) for item0 in field0])), required_value(b"k\x86\xb2s\xff4", Value.Integer(IntegerValue.Unsigned(field1.wrapping_resize[u128]())))])
+        StoredLayoutCheckedType.NativeTraitObject(field0, field1, field2) => return Value.Enum(b"\x5cz%\xe2\x9cR", [required_value(b"_\xec\xebf\xff\xc8", Value.Text(field0)), required_value(b"k\x86\xb2s\xff4", Value.Boolean(field1)), required_value(b"\xd4s^:&^", Value.Boolean(field2))])
+        StoredLayoutCheckedType.NativePointer(field0, field1) => return Value.Enum(b"\xa6\x9d@\x085\xc9", [required_value(b"_\xec\xebf\xff\xc8", Value.Boolean(field0)), required_value(b"k\x86\xb2s\xff4", Value.List([wire_stored_layout_checked_type(item0) for item0 in field1]))])
+        StoredLayoutCheckedType.NativeCChar => return Value.Enum(b"\xed\x5c1CFF", [])
+
+
+pub def read_wire_stored_layout_checked_type(value: Value, positions: &WirePositions) -> Result[StoredLayoutCheckedType, str]:
+    identity, fields = wire_variant(value)?
+    if identity == b"c\x00\xef\x80\x0b\xb8" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedType.Never)
+    if identity == b"\x09V\x17<\xa4\x15" and len(fields) == 1:
+        return Ok(StoredLayoutCheckedType.Primitive(read_wire_stored_layout_checked_primitive_type(fields[0].value, positions)?))
+    if identity == b"\x86\x05`Z\xe0&" and len(fields) == 1:
+        return Ok(StoredLayoutCheckedType.Named(text(fields[0].value)?))
+    if identity == b"\x02(\xc6\xd4\x8e\xcf" and len(fields) == 2:
+        return Ok(StoredLayoutCheckedType.Generic(text(fields[0].value)?, [read_wire_stored_layout_checked_type(item0, positions)? for item0 in items(fields[1].value)?]))
+    if identity == b"\x18Q}3-\x1b" and len(fields) == 2:
+        return Ok(StoredLayoutCheckedType.Decimal(unsigned_value(fields[0].value)?.wrapping_resize[u8](), unsigned_value(fields[1].value)?.wrapping_resize[u8]()))
+    if identity == b"\xc8\x03q\x03\x02\xd5" and len(fields) == 2:
+        return Ok(StoredLayoutCheckedType.Function([read_wire_stored_layout_checked_callable_param(item0, positions)? for item0 in items(fields[0].value)?], [read_wire_stored_layout_checked_type(item0, positions)? for item0 in items(fields[1].value)?]))
+    if identity == b"\xeb\x90\x0dwd\xd0" and len(fields) == 1:
+        return Ok(StoredLayoutCheckedType.TypeToken([read_wire_stored_layout_checked_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\xf16\xeex\xc3;" and len(fields) == 1:
+        return Ok(StoredLayoutCheckedType.Tuple([read_wire_stored_layout_checked_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\xc7\xa4\xa1AK\xe4" and len(fields) == 1:
+        return Ok(StoredLayoutCheckedType.TypeVar(text(fields[0].value)?))
+    if identity == b"\x800$\x93\xf2\xd4" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedType.SelfType)
+    if identity == b"\x9bn\x88\xe8\x94:" and len(fields) == 1:
+        return Ok(StoredLayoutCheckedType.Ref([read_wire_stored_layout_checked_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\xff\xc4\x90\xa6\xa7\xb3" and len(fields) == 1:
+        return Ok(StoredLayoutCheckedType.RefMut([read_wire_stored_layout_checked_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\xe7u\x7f\x0d\xdfV" and len(fields) == 1:
+        return Ok(StoredLayoutCheckedType.RustInteropPath(text(fields[0].value)?))
+    if identity == b"o\xc7B\xf9\xdc\xbd" and len(fields) == 1:
+        return Ok(StoredLayoutCheckedType.NativeBuiltin(read_wire_stored_layout_checked_runtime_builtin(fields[0].value, positions)?))
+    if identity == b"T2FX\xe2\xeb" and len(fields) == 1:
+        return Ok(StoredLayoutCheckedType.Unsupported(text(fields[0].value)?))
+    if identity == b"'@\x0f\xf4\xb8\x09" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedType.Infer)
+    if identity == b"\xb7d\xcd\xc0\xea\xb7" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedType.Unknown)
+    if identity == b"0?\xb1)\xac\xe5" and len(fields) == 2:
+        return Ok(StoredLayoutCheckedType.NativeArray([read_wire_stored_layout_checked_type(item0, positions)? for item0 in items(fields[0].value)?], unsigned_value(fields[1].value)?))
+    if identity == b"\x5cz%\xe2\x9cR" and len(fields) == 3:
+        return Ok(StoredLayoutCheckedType.NativeTraitObject(text(fields[0].value)?, boolean_value(fields[1].value)?, boolean_value(fields[2].value)?))
+    if identity == b"\xa6\x9d@\x085\xc9" and len(fields) == 2:
+        return Ok(StoredLayoutCheckedType.NativePointer(boolean_value(fields[0].value)?, [read_wire_stored_layout_checked_type(item0, positions)? for item0 in items(fields[1].value)?]))
+    if identity == b"\xed\x5c1CFF" and len(fields) == 0:
+        return Ok(StoredLayoutCheckedType.NativeCChar)
+    return Err("unknown or incomplete StoredLayoutCheckedType alternative")
+
+
+pub def wire_stored_layout_list_leaf(value: StoredLayoutListLeaf) -> Value:
+    match value:
+        StoredLayoutListLeaf.Int => return Value.Enum(b"\x0b_`\x80p\xc6", [])
+        StoredLayoutListLeaf.Float => return Value.Enum(b"\x1ai<\x00\xc4\x0c", [])
+        StoredLayoutListLeaf.Bool => return Value.Enum(b"I\xf4\x11\xf0\xa1\xa7", [])
+        StoredLayoutListLeaf.Str => return Value.Enum(b"\x80\x84\xa5\x1b<d", [])
+        StoredLayoutListLeaf.Tuple(field0) => return Value.Enum(b"\xf16\xeex\xc3;", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_tuple_element(item0) for item0 in field0]))])
+        StoredLayoutListLeaf.Model(field0, field1) => return Value.Enum(b"^,aL#\xf0", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0)), required_value(b"k\x86\xb2s\xff4", Value.Text(field1))])
+        StoredLayoutListLeaf.Enum(field0, field1) => return Value.Enum(b"T\x10\x8d\xaf\xaa\xc5", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0)), required_value(b"k\x86\xb2s\xff4", Value.Text(field1))])
+        StoredLayoutListLeaf.U8 => return Value.Enum(b"4s\xd3\x8a\x12A", [])
+        StoredLayoutListLeaf.Unit => return Value.Enum(b"NTY`\xf1\xbf", [])
+        StoredLayoutListLeaf.Decimal => return Value.Enum(b"\x18Q}3-\x1b", [])
+        StoredLayoutListLeaf.FrozenStr => return Value.Enum(b"O\xab\xe1W\xe8\xf9", [])
+        StoredLayoutListLeaf.FrozenBytes => return Value.Enum(b"\xa5\x1aU\xd1;\xee", [])
+        StoredLayoutListLeaf.FrozenCollection(field0, field1) => return Value.Enum(b"`ar\x85\xa4\xcb", [required_value(b"_\xec\xebf\xff\xc8", Value.Text(field0)), required_value(b"k\x86\xb2s\xff4", Value.List([wire_stored_layout_plan_type(item0) for item0 in field1]))])
+        StoredLayoutListLeaf.FunctionPointer(field0) => return Value.Enum(b"\xa7\x0a\xca\xf0X`", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_plan_type(item0) for item0 in field0]))])
+        StoredLayoutListLeaf.TypeToken(field0) => return Value.Enum(b"\xeb\x90\x0dwd\xd0", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_plan_type(item0) for item0 in field0]))])
+        StoredLayoutListLeaf.List(field0, field1) => return Value.Enum(b"o /T\xa7\xb2", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_list_leaf(item0) for item0 in field0])), required_value(b"k\x86\xb2s\xff4", wire_integer(field1))])
+        StoredLayoutListLeaf.Dict(field0) => return Value.Enum(b"\x96\x11\xd3\xd8\x00\xfc", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_list_leaf(item0) for item0 in field0]))])
+        StoredLayoutListLeaf.Set(field0) => return Value.Enum(b"\xb6\xf6\xf3\xad\x07\xb3", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_list_leaf(item0) for item0 in field0]))])
+        StoredLayoutListLeaf.USize => return Value.Enum(b"\xbaL\xadu\xa6Z", [])
+        StoredLayoutListLeaf.Numeric(field0) => return Value.Enum(b"6u-l\xd1G", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_layout_sized_numeric(field0))])
+        StoredLayoutListLeaf.Reference(field0) => return Value.Enum(b"q\xbf\x90\x93_\xc2", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_plan_type(item0) for item0 in field0]))])
+
+
+pub def read_wire_stored_layout_list_leaf(value: Value, positions: &WirePositions) -> Result[StoredLayoutListLeaf, str]:
+    identity, fields = wire_variant(value)?
+    if identity == b"\x0b_`\x80p\xc6" and len(fields) == 0:
+        return Ok(StoredLayoutListLeaf.Int)
+    if identity == b"\x1ai<\x00\xc4\x0c" and len(fields) == 0:
+        return Ok(StoredLayoutListLeaf.Float)
+    if identity == b"I\xf4\x11\xf0\xa1\xa7" and len(fields) == 0:
+        return Ok(StoredLayoutListLeaf.Bool)
+    if identity == b"\x80\x84\xa5\x1b<d" and len(fields) == 0:
+        return Ok(StoredLayoutListLeaf.Str)
+    if identity == b"\xf16\xeex\xc3;" and len(fields) == 1:
+        return Ok(StoredLayoutListLeaf.Tuple([read_wire_stored_layout_tuple_element(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"^,aL#\xf0" and len(fields) == 2:
+        return Ok(StoredLayoutListLeaf.Model(number(fields[0].value)?, text(fields[1].value)?))
+    if identity == b"T\x10\x8d\xaf\xaa\xc5" and len(fields) == 2:
+        return Ok(StoredLayoutListLeaf.Enum(number(fields[0].value)?, text(fields[1].value)?))
+    if identity == b"4s\xd3\x8a\x12A" and len(fields) == 0:
+        return Ok(StoredLayoutListLeaf.U8)
+    if identity == b"NTY`\xf1\xbf" and len(fields) == 0:
+        return Ok(StoredLayoutListLeaf.Unit)
+    if identity == b"\x18Q}3-\x1b" and len(fields) == 0:
+        return Ok(StoredLayoutListLeaf.Decimal)
+    if identity == b"O\xab\xe1W\xe8\xf9" and len(fields) == 0:
+        return Ok(StoredLayoutListLeaf.FrozenStr)
+    if identity == b"\xa5\x1aU\xd1;\xee" and len(fields) == 0:
+        return Ok(StoredLayoutListLeaf.FrozenBytes)
+    if identity == b"`ar\x85\xa4\xcb" and len(fields) == 2:
+        return Ok(StoredLayoutListLeaf.FrozenCollection(text(fields[0].value)?, [read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[1].value)?]))
+    if identity == b"\xa7\x0a\xca\xf0X`" and len(fields) == 1:
+        return Ok(StoredLayoutListLeaf.FunctionPointer([read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\xeb\x90\x0dwd\xd0" and len(fields) == 1:
+        return Ok(StoredLayoutListLeaf.TypeToken([read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"o /T\xa7\xb2" and len(fields) == 2:
+        return Ok(StoredLayoutListLeaf.List([read_wire_stored_layout_list_leaf(item0, positions)? for item0 in items(fields[0].value)?], number(fields[1].value)?))
+    if identity == b"\x96\x11\xd3\xd8\x00\xfc" and len(fields) == 1:
+        return Ok(StoredLayoutListLeaf.Dict([read_wire_stored_layout_list_leaf(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\xb6\xf6\xf3\xad\x07\xb3" and len(fields) == 1:
+        return Ok(StoredLayoutListLeaf.Set([read_wire_stored_layout_list_leaf(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\xbaL\xadu\xa6Z" and len(fields) == 0:
+        return Ok(StoredLayoutListLeaf.USize)
+    if identity == b"6u-l\xd1G" and len(fields) == 1:
+        return Ok(StoredLayoutListLeaf.Numeric(read_wire_stored_layout_sized_numeric(fields[0].value, positions)?))
+    if identity == b"q\xbf\x90\x93_\xc2" and len(fields) == 1:
+        return Ok(StoredLayoutListLeaf.Reference([read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    return Err("unknown or incomplete StoredLayoutListLeaf alternative")
+
+
+pub def wire_stored_layout_plan_type(value: StoredLayoutPlanType) -> Value:
+    match value:
+        StoredLayoutPlanType.Int => return Value.Enum(b"\x0b_`\x80p\xc6", [])
+        StoredLayoutPlanType.Float => return Value.Enum(b"\x1ai<\x00\xc4\x0c", [])
+        StoredLayoutPlanType.I8 => return Value.Enum(b"1Fb\x8c\x11\x8c", [])
+        StoredLayoutPlanType.I16 => return Value.Enum(b"\xb9\xff?nq\xda", [])
+        StoredLayoutPlanType.I32 => return Value.Enum(b"\xbe-,\xd01}", [])
+        StoredLayoutPlanType.I128 => return Value.Enum(b"G\xeck\xdaM\xa3", [])
+        StoredLayoutPlanType.ISize => return Value.Enum(b"\xec|D\x91\xf6\x86", [])
+        StoredLayoutPlanType.USize => return Value.Enum(b"\xbaL\xadu\xa6Z", [])
+        StoredLayoutPlanType.U8 => return Value.Enum(b"4s\xd3\x8a\x12A", [])
+        StoredLayoutPlanType.U16 => return Value.Enum(b"\xef\x09\xbc\x80\xcdb", [])
+        StoredLayoutPlanType.U32 => return Value.Enum(b"\x80\x07$\x86\xf2\xea", [])
+        StoredLayoutPlanType.U64 => return Value.Enum(b"\x84\xb8\x9e\x22ET", [])
+        StoredLayoutPlanType.U128 => return Value.Enum(b"\x0c\x80\x0d\xc4\xf9I", [])
+        StoredLayoutPlanType.F32 => return Value.Enum(b"\x82%Z\xeel\xcc", [])
+        StoredLayoutPlanType.F64 => return Value.Enum(b"\xa4M\x7ft\xc8)", [])
+        StoredLayoutPlanType.Bool => return Value.Enum(b"I\xf4\x11\xf0\xa1\xa7", [])
+        StoredLayoutPlanType.Unit => return Value.Enum(b"NTY`\xf1\xbf", [])
+        StoredLayoutPlanType.CheckedNumeric(field0) => return Value.Enum(b"\xa0?\xf2#F\x9f", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_layout_sized_numeric(field0))])
+        StoredLayoutPlanType.Never => return Value.Enum(b"c\x00\xef\x80\x0b\xb8", [])
+        StoredLayoutPlanType.UnitFunction => return Value.Enum(b"\xe6\xf5\xc36\x16\xf4", [])
+        StoredLayoutPlanType.EnumTag => return Value.Enum(b"\x03\xa6\xc5\x01j\x86", [])
+        StoredLayoutPlanType.CheckedInt => return Value.Enum(b"\xc3\xf45\xc7(Q", [])
+        StoredLayoutPlanType.Tuple(field0) => return Value.Enum(b"\xf16\xeex\xc3;", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_tuple_element(item0) for item0 in field0]))])
+        StoredLayoutPlanType.String => return Value.Enum(b"\xb2\xef#\x0e\x7fO", [])
+        StoredLayoutPlanType.TupleRef(field0) => return Value.Enum(b"\xbd\xb4\xa2v\x05;", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_tuple_element(item0) for item0 in field0]))])
+        StoredLayoutPlanType.TupleMutRef(field0) => return Value.Enum(b"\xaeV\xd77[\xff", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_tuple_element(item0) for item0 in field0]))])
+        StoredLayoutPlanType.StringRef => return Value.Enum(b"\xbfkl\x9f\xdb\xc5", [])
+        StoredLayoutPlanType.ScalarRef(field0) => return Value.Enum(b"\x97 \xde\x22\xd7\xd4", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_plan_type(item0) for item0 in field0]))])
+        StoredLayoutPlanType.ScalarMutRef(field0) => return Value.Enum(b"\xcbeb\x95hA", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_plan_type(item0) for item0 in field0]))])
+        StoredLayoutPlanType.StringMutRef => return Value.Enum(b"\xa45\x1e\xa3g\xb4", [])
+        StoredLayoutPlanType.Decimal => return Value.Enum(b"\x18Q}3-\x1b", [])
+        StoredLayoutPlanType.FrozenStr => return Value.Enum(b"O\xab\xe1W\xe8\xf9", [])
+        StoredLayoutPlanType.FrozenBytes => return Value.Enum(b"\xa5\x1aU\xd1;\xee", [])
+        StoredLayoutPlanType.FrozenCollection(field0, field1) => return Value.Enum(b"`ar\x85\xa4\xcb", [required_value(b"_\xec\xebf\xff\xc8", Value.Text(field0)), required_value(b"k\x86\xb2s\xff4", Value.List([wire_stored_layout_plan_type(item0) for item0 in field1]))])
+        StoredLayoutPlanType.FrozenCollectionRef(field0, field1) => return Value.Enum(b"T\xf9p\x0cZ3", [required_value(b"_\xec\xebf\xff\xc8", Value.Text(field0)), required_value(b"k\x86\xb2s\xff4", Value.List([wire_stored_layout_plan_type(item0) for item0 in field1]))])
+        StoredLayoutPlanType.TypeToken(field0) => return Value.Enum(b"\xeb\x90\x0dwd\xd0", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_plan_type(item0) for item0 in field0]))])
+        StoredLayoutPlanType.StaticText => return Value.Enum(b"\xd5\xdf\x07x\xa5\x0a", [])
+        StoredLayoutPlanType.StaticBytes => return Value.Enum(b"_\x93\x11xcg", [])
+        StoredLayoutPlanType.ValidationError => return Value.Enum(b"\xbd\xfa\xef\x14\xbe\x91", [])
+        StoredLayoutPlanType.ValidationErrorRef => return Value.Enum(b"\x1ejG\x9a\xae\xf1", [])
+        StoredLayoutPlanType.StrRef => return Value.Enum(b"(+u\x8f\x05\x8a", [])
+        StoredLayoutPlanType.StringArray(field0) => return Value.Enum(b"\x85~Q\x14\x0d\x18", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0))])
+        StoredLayoutPlanType.StrArray(field0) => return Value.Enum(b"\x8a\xe3R\x0a\xe0\xcb", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0))])
+        StoredLayoutPlanType.StringArrayRef(field0) => return Value.Enum(b"\xeb2P\xd3\xfc<", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0))])
+        StoredLayoutPlanType.StrArrayRef(field0) => return Value.Enum(b"\xb1\x90\x07D|\x13", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0))])
+        StoredLayoutPlanType.Enum(field0, field1) => return Value.Enum(b"T\x10\x8d\xaf\xaa\xc5", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0)), required_value(b"k\x86\xb2s\xff4", Value.Text(field1))])
+        StoredLayoutPlanType.EnumRef(field0, field1) => return Value.Enum(b"\xc0\xa35\x8f\x22\x01", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0)), required_value(b"k\x86\xb2s\xff4", Value.Text(field1))])
+        StoredLayoutPlanType.EnumMutRef(field0, field1) => return Value.Enum(b"zq\xac~]|", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0)), required_value(b"k\x86\xb2s\xff4", Value.Text(field1))])
+        StoredLayoutPlanType.Model(field0, field1) => return Value.Enum(b"^,aL#\xf0", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0)), required_value(b"k\x86\xb2s\xff4", Value.Text(field1))])
+        StoredLayoutPlanType.ModelRef(field0, field1) => return Value.Enum(b"C\xc3U\x17\xae\x15", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0)), required_value(b"k\x86\xb2s\xff4", Value.Text(field1))])
+        StoredLayoutPlanType.ModelMutRef(field0, field1) => return Value.Enum(b"\xb0\x02\x8e\xa2$\x98", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0)), required_value(b"k\x86\xb2s\xff4", Value.Text(field1))])
+        StoredLayoutPlanType.StringSlice => return Value.Enum(b"\x10\x99\xe21t\xe8", [])
+        StoredLayoutPlanType.StrSlice => return Value.Enum(b"\xb7\xe7\x93\x84\xb2\xfb", [])
+        StoredLayoutPlanType.List(field0, field1) => return Value.Enum(b"o /T\xa7\xb2", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_layout_list_leaf(field0)), required_value(b"k\x86\xb2s\xff4", wire_integer(field1))])
+        StoredLayoutPlanType.ListRef(field0, field1) => return Value.Enum(b"W\x16\x82\x93!\xd4", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_layout_list_leaf(field0)), required_value(b"k\x86\xb2s\xff4", wire_integer(field1))])
+        StoredLayoutPlanType.ListMutRef(field0, field1) => return Value.Enum(b"/@\x05\xe8\xd2Y", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_layout_list_leaf(field0)), required_value(b"k\x86\xb2s\xff4", wire_integer(field1))])
+        StoredLayoutPlanType.ListIntoIter(field0, field1) => return Value.Enum(b"\xfb\xa4\xbc\xc3,\x87", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_layout_list_leaf(field0)), required_value(b"k\x86\xb2s\xff4", wire_integer(field1))])
+        StoredLayoutPlanType.ListIntoIterMutRef(field0, field1) => return Value.Enum(b"W\xdeO;\xa8\x13", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_layout_list_leaf(field0)), required_value(b"k\x86\xb2s\xff4", wire_integer(field1))])
+        StoredLayoutPlanType.Set(field0) => return Value.Enum(b"\xb6\xf6\xf3\xad\x07\xb3", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_layout_list_leaf(field0))])
+        StoredLayoutPlanType.SetRef(field0) => return Value.Enum(b"\x8a\xc6\x9b\x0e\xb7\xbb", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_layout_list_leaf(field0))])
+        StoredLayoutPlanType.SetMutRef(field0) => return Value.Enum(b"\xcaydbR ", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_layout_list_leaf(field0))])
+        StoredLayoutPlanType.Dict(field0, field1) => return Value.Enum(b"\x96\x11\xd3\xd8\x00\xfc", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_layout_list_leaf(field0)), required_value(b"k\x86\xb2s\xff4", wire_stored_layout_list_leaf(field1))])
+        StoredLayoutPlanType.DictRef(field0, field1) => return Value.Enum(b"\xc2\x1fVr6\xdd", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_layout_list_leaf(field0)), required_value(b"k\x86\xb2s\xff4", wire_stored_layout_list_leaf(field1))])
+        StoredLayoutPlanType.DictMutRef(field0, field1) => return Value.Enum(b"b\xbe\xe3\xf3\xd1\xdb", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_layout_list_leaf(field0)), required_value(b"k\x86\xb2s\xff4", wire_stored_layout_list_leaf(field1))])
+        StoredLayoutPlanType.RangeValue => return Value.Enum(b"\xaf\xd5\xff\xa5\xa9\x15", [])
+        StoredLayoutPlanType.ZipIterator(field0, field1) => return Value.Enum(b"\xda\x10<v\xc1;", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_layout_tuple_element(field0)), required_value(b"k\x86\xb2s\xff4", wire_stored_layout_tuple_element(field1))])
+        StoredLayoutPlanType.ZipIteratorRef(field0, field1) => return Value.Enum(b"\xc8O\xb0\x89\x03!", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_layout_tuple_element(field0)), required_value(b"k\x86\xb2s\xff4", wire_stored_layout_tuple_element(field1))])
+        StoredLayoutPlanType.ZipIteratorMutRef(field0, field1) => return Value.Enum(b"|\x0a\x10\xd6\xf4\x8f", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_layout_tuple_element(field0)), required_value(b"k\x86\xb2s\xff4", wire_stored_layout_tuple_element(field1))])
+        StoredLayoutPlanType.Generator(field0, field1) => return Value.Enum(b"\x1a\xde`\xab\xe9?", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_layout_list_leaf(field0)), required_value(b"k\x86\xb2s\xff4", wire_integer(field1))])
+        StoredLayoutPlanType.GeneratorMutRef(field0, field1) => return Value.Enum(b"A\xe1l\xc9\xd0E", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_layout_list_leaf(field0)), required_value(b"k\x86\xb2s\xff4", wire_integer(field1))])
+        StoredLayoutPlanType.GeneratorYield(field0, field1) => return Value.Enum(b"\xb9H#:\xc32", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_layout_list_leaf(field0)), required_value(b"k\x86\xb2s\xff4", wire_integer(field1))])
+        StoredLayoutPlanType.GeneratorYieldRef(field0, field1) => return Value.Enum(b"=-X\x17O\xe0", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_layout_list_leaf(field0)), required_value(b"k\x86\xb2s\xff4", wire_integer(field1))])
+        StoredLayoutPlanType.FunctionPointer(field0) => return Value.Enum(b"\xa7\x0a\xca\xf0X`", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_plan_type(item0) for item0 in field0]))])
+        StoredLayoutPlanType.FunctionItem(field0, field1) => return Value.Enum(b"\xff\x92\x01\x14t\x9f", [required_value(b"_\xec\xebf\xff\xc8", Value.Text(field0)), required_value(b"k\x86\xb2s\xff4", Value.List([wire_stored_layout_plan_type(item0) for item0 in field1]))])
+        StoredLayoutPlanType.Closure(field0) => return Value.Enum(b"\xe9\x0da}+U", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_plan_type(item0) for item0 in field0]))])
+        StoredLayoutPlanType.NativeClosure(field0, field1, field2) => return Value.Enum(b"Y\x0f\xc7\xc6\x8e\x97", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_plan_type(item0) for item0 in field0])), required_value(b"k\x86\xb2s\xff4", Value.Boolean(field1)), required_value(b"\xd4s^:&^", Value.Boolean(field2))])
+        StoredLayoutPlanType.NativeTraitObject(field0, field1, field2) => return Value.Enum(b"\x5cz%\xe2\x9cR", [required_value(b"_\xec\xebf\xff\xc8", Value.Text(field0)), required_value(b"k\x86\xb2s\xff4", Value.Boolean(field1)), required_value(b"\xd4s^:&^", Value.Boolean(field2))])
+        StoredLayoutPlanType.SharedCallable(field0) => return Value.Enum(b"V\xfe9\xc0\xf7\xb9", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_plan_type(item0) for item0 in field0]))])
+        StoredLayoutPlanType.ClosureOnce(field0) => return Value.Enum(b"\xd3\x9eqf\x1f.", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_plan_type(item0) for item0 in field0]))])
+        StoredLayoutPlanType.ClosureRef(field0) => return Value.Enum(b"\x7f&q\xb2)\xed", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_plan_type(item0) for item0 in field0]))])
+        StoredLayoutPlanType.BorrowingClosure(field0) => return Value.Enum(b"`\xa1v\x08\xb0\xf4", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_plan_type(item0) for item0 in field0]))])
+        StoredLayoutPlanType.BorrowingClosureRef(field0) => return Value.Enum(b"\xec\xdb\xa9E\xf7\xde", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_plan_type(item0) for item0 in field0]))])
+        StoredLayoutPlanType.CallableArguments(field0) => return Value.Enum(b"\xb7\xe5\xaa\xe2\xfbm", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_plan_type(item0) for item0 in field0]))])
+        StoredLayoutPlanType.Future(field0) => return Value.Enum(b"acl\xde\xf5G", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_plan_type(item0) for item0 in field0]))])
+        StoredLayoutPlanType.NativeStr => return Value.Enum(b"\x89\xd2qrhj", [])
+        StoredLayoutPlanType.NativeSlice(field0) => return Value.Enum(b"\x1f\x04\x02YL\xb8", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_plan_type(item0) for item0 in field0]))])
+        StoredLayoutPlanType.SliceRef(field0) => return Value.Enum(b"\xa1\xf0\x0b\xce\x97\xfb", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_plan_type(item0) for item0 in field0]))])
+        StoredLayoutPlanType.SliceMutRef(field0) => return Value.Enum(b"\xabf`]\xf9\xcc", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_plan_type(item0) for item0 in field0]))])
+        StoredLayoutPlanType.NativeArray(field0, field1) => return Value.Enum(b"0?\xb1)\xac\xe5", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_plan_type(item0) for item0 in field0])), required_value(b"k\x86\xb2s\xff4", wire_integer(field1))])
+        StoredLayoutPlanType.NativeArrayRef(field0, field1) => return Value.Enum(b"x?\xbd{\xe2\x8f", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_plan_type(item0) for item0 in field0])), required_value(b"k\x86\xb2s\xff4", wire_integer(field1))])
+        StoredLayoutPlanType.NativeArrayMutRef(field0, field1) => return Value.Enum(b"o\xda\x01L\xed0", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_plan_type(item0) for item0 in field0])), required_value(b"k\x86\xb2s\xff4", wire_integer(field1))])
+        StoredLayoutPlanType.CChar => return Value.Enum(b"D,\xa28\xaa\xb8", [])
+        StoredLayoutPlanType.RawPointer(field0, field1) => return Value.Enum(b"'\xee\xe0\xd7P=", [required_value(b"_\xec\xebf\xff\xc8", Value.Boolean(field0)), required_value(b"k\x86\xb2s\xff4", Value.List([wire_stored_layout_plan_type(item0) for item0 in field1]))])
+        StoredLayoutPlanType.Boxed(field0) => return Value.Enum(b"\x1e\x82j\xeb<\xa2", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_plan_type(item0) for item0 in field0]))])
+
+
+pub def read_wire_stored_layout_plan_type(value: Value, positions: &WirePositions) -> Result[StoredLayoutPlanType, str]:
+    identity, fields = wire_variant(value)?
+    if identity == b"\x0b_`\x80p\xc6" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.Int)
+    if identity == b"\x1ai<\x00\xc4\x0c" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.Float)
+    if identity == b"1Fb\x8c\x11\x8c" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.I8)
+    if identity == b"\xb9\xff?nq\xda" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.I16)
+    if identity == b"\xbe-,\xd01}" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.I32)
+    if identity == b"G\xeck\xdaM\xa3" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.I128)
+    if identity == b"\xec|D\x91\xf6\x86" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.ISize)
+    if identity == b"\xbaL\xadu\xa6Z" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.USize)
+    if identity == b"4s\xd3\x8a\x12A" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.U8)
+    if identity == b"\xef\x09\xbc\x80\xcdb" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.U16)
+    if identity == b"\x80\x07$\x86\xf2\xea" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.U32)
+    if identity == b"\x84\xb8\x9e\x22ET" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.U64)
+    if identity == b"\x0c\x80\x0d\xc4\xf9I" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.U128)
+    if identity == b"\x82%Z\xeel\xcc" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.F32)
+    if identity == b"\xa4M\x7ft\xc8)" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.F64)
+    if identity == b"I\xf4\x11\xf0\xa1\xa7" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.Bool)
+    if identity == b"NTY`\xf1\xbf" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.Unit)
+    if identity == b"\xa0?\xf2#F\x9f" and len(fields) == 1:
+        return Ok(StoredLayoutPlanType.CheckedNumeric(read_wire_stored_layout_sized_numeric(fields[0].value, positions)?))
+    if identity == b"c\x00\xef\x80\x0b\xb8" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.Never)
+    if identity == b"\xe6\xf5\xc36\x16\xf4" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.UnitFunction)
+    if identity == b"\x03\xa6\xc5\x01j\x86" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.EnumTag)
+    if identity == b"\xc3\xf45\xc7(Q" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.CheckedInt)
+    if identity == b"\xf16\xeex\xc3;" and len(fields) == 1:
+        return Ok(StoredLayoutPlanType.Tuple([read_wire_stored_layout_tuple_element(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\xb2\xef#\x0e\x7fO" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.String)
+    if identity == b"\xbd\xb4\xa2v\x05;" and len(fields) == 1:
+        return Ok(StoredLayoutPlanType.TupleRef([read_wire_stored_layout_tuple_element(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\xaeV\xd77[\xff" and len(fields) == 1:
+        return Ok(StoredLayoutPlanType.TupleMutRef([read_wire_stored_layout_tuple_element(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\xbfkl\x9f\xdb\xc5" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.StringRef)
+    if identity == b"\x97 \xde\x22\xd7\xd4" and len(fields) == 1:
+        return Ok(StoredLayoutPlanType.ScalarRef([read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\xcbeb\x95hA" and len(fields) == 1:
+        return Ok(StoredLayoutPlanType.ScalarMutRef([read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\xa45\x1e\xa3g\xb4" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.StringMutRef)
+    if identity == b"\x18Q}3-\x1b" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.Decimal)
+    if identity == b"O\xab\xe1W\xe8\xf9" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.FrozenStr)
+    if identity == b"\xa5\x1aU\xd1;\xee" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.FrozenBytes)
+    if identity == b"`ar\x85\xa4\xcb" and len(fields) == 2:
+        return Ok(StoredLayoutPlanType.FrozenCollection(text(fields[0].value)?, [read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[1].value)?]))
+    if identity == b"T\xf9p\x0cZ3" and len(fields) == 2:
+        return Ok(StoredLayoutPlanType.FrozenCollectionRef(text(fields[0].value)?, [read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[1].value)?]))
+    if identity == b"\xeb\x90\x0dwd\xd0" and len(fields) == 1:
+        return Ok(StoredLayoutPlanType.TypeToken([read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\xd5\xdf\x07x\xa5\x0a" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.StaticText)
+    if identity == b"_\x93\x11xcg" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.StaticBytes)
+    if identity == b"\xbd\xfa\xef\x14\xbe\x91" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.ValidationError)
+    if identity == b"\x1ejG\x9a\xae\xf1" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.ValidationErrorRef)
+    if identity == b"(+u\x8f\x05\x8a" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.StrRef)
+    if identity == b"\x85~Q\x14\x0d\x18" and len(fields) == 1:
+        return Ok(StoredLayoutPlanType.StringArray(number(fields[0].value)?))
+    if identity == b"\x8a\xe3R\x0a\xe0\xcb" and len(fields) == 1:
+        return Ok(StoredLayoutPlanType.StrArray(number(fields[0].value)?))
+    if identity == b"\xeb2P\xd3\xfc<" and len(fields) == 1:
+        return Ok(StoredLayoutPlanType.StringArrayRef(number(fields[0].value)?))
+    if identity == b"\xb1\x90\x07D|\x13" and len(fields) == 1:
+        return Ok(StoredLayoutPlanType.StrArrayRef(number(fields[0].value)?))
+    if identity == b"T\x10\x8d\xaf\xaa\xc5" and len(fields) == 2:
+        return Ok(StoredLayoutPlanType.Enum(number(fields[0].value)?, text(fields[1].value)?))
+    if identity == b"\xc0\xa35\x8f\x22\x01" and len(fields) == 2:
+        return Ok(StoredLayoutPlanType.EnumRef(number(fields[0].value)?, text(fields[1].value)?))
+    if identity == b"zq\xac~]|" and len(fields) == 2:
+        return Ok(StoredLayoutPlanType.EnumMutRef(number(fields[0].value)?, text(fields[1].value)?))
+    if identity == b"^,aL#\xf0" and len(fields) == 2:
+        return Ok(StoredLayoutPlanType.Model(number(fields[0].value)?, text(fields[1].value)?))
+    if identity == b"C\xc3U\x17\xae\x15" and len(fields) == 2:
+        return Ok(StoredLayoutPlanType.ModelRef(number(fields[0].value)?, text(fields[1].value)?))
+    if identity == b"\xb0\x02\x8e\xa2$\x98" and len(fields) == 2:
+        return Ok(StoredLayoutPlanType.ModelMutRef(number(fields[0].value)?, text(fields[1].value)?))
+    if identity == b"\x10\x99\xe21t\xe8" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.StringSlice)
+    if identity == b"\xb7\xe7\x93\x84\xb2\xfb" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.StrSlice)
+    if identity == b"o /T\xa7\xb2" and len(fields) == 2:
+        return Ok(StoredLayoutPlanType.List(read_wire_stored_layout_list_leaf(fields[0].value, positions)?, number(fields[1].value)?))
+    if identity == b"W\x16\x82\x93!\xd4" and len(fields) == 2:
+        return Ok(StoredLayoutPlanType.ListRef(read_wire_stored_layout_list_leaf(fields[0].value, positions)?, number(fields[1].value)?))
+    if identity == b"/@\x05\xe8\xd2Y" and len(fields) == 2:
+        return Ok(StoredLayoutPlanType.ListMutRef(read_wire_stored_layout_list_leaf(fields[0].value, positions)?, number(fields[1].value)?))
+    if identity == b"\xfb\xa4\xbc\xc3,\x87" and len(fields) == 2:
+        return Ok(StoredLayoutPlanType.ListIntoIter(read_wire_stored_layout_list_leaf(fields[0].value, positions)?, number(fields[1].value)?))
+    if identity == b"W\xdeO;\xa8\x13" and len(fields) == 2:
+        return Ok(StoredLayoutPlanType.ListIntoIterMutRef(read_wire_stored_layout_list_leaf(fields[0].value, positions)?, number(fields[1].value)?))
+    if identity == b"\xb6\xf6\xf3\xad\x07\xb3" and len(fields) == 1:
+        return Ok(StoredLayoutPlanType.Set(read_wire_stored_layout_list_leaf(fields[0].value, positions)?))
+    if identity == b"\x8a\xc6\x9b\x0e\xb7\xbb" and len(fields) == 1:
+        return Ok(StoredLayoutPlanType.SetRef(read_wire_stored_layout_list_leaf(fields[0].value, positions)?))
+    if identity == b"\xcaydbR " and len(fields) == 1:
+        return Ok(StoredLayoutPlanType.SetMutRef(read_wire_stored_layout_list_leaf(fields[0].value, positions)?))
+    if identity == b"\x96\x11\xd3\xd8\x00\xfc" and len(fields) == 2:
+        return Ok(StoredLayoutPlanType.Dict(read_wire_stored_layout_list_leaf(fields[0].value, positions)?, read_wire_stored_layout_list_leaf(fields[1].value, positions)?))
+    if identity == b"\xc2\x1fVr6\xdd" and len(fields) == 2:
+        return Ok(StoredLayoutPlanType.DictRef(read_wire_stored_layout_list_leaf(fields[0].value, positions)?, read_wire_stored_layout_list_leaf(fields[1].value, positions)?))
+    if identity == b"b\xbe\xe3\xf3\xd1\xdb" and len(fields) == 2:
+        return Ok(StoredLayoutPlanType.DictMutRef(read_wire_stored_layout_list_leaf(fields[0].value, positions)?, read_wire_stored_layout_list_leaf(fields[1].value, positions)?))
+    if identity == b"\xaf\xd5\xff\xa5\xa9\x15" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.RangeValue)
+    if identity == b"\xda\x10<v\xc1;" and len(fields) == 2:
+        return Ok(StoredLayoutPlanType.ZipIterator(read_wire_stored_layout_tuple_element(fields[0].value, positions)?, read_wire_stored_layout_tuple_element(fields[1].value, positions)?))
+    if identity == b"\xc8O\xb0\x89\x03!" and len(fields) == 2:
+        return Ok(StoredLayoutPlanType.ZipIteratorRef(read_wire_stored_layout_tuple_element(fields[0].value, positions)?, read_wire_stored_layout_tuple_element(fields[1].value, positions)?))
+    if identity == b"|\x0a\x10\xd6\xf4\x8f" and len(fields) == 2:
+        return Ok(StoredLayoutPlanType.ZipIteratorMutRef(read_wire_stored_layout_tuple_element(fields[0].value, positions)?, read_wire_stored_layout_tuple_element(fields[1].value, positions)?))
+    if identity == b"\x1a\xde`\xab\xe9?" and len(fields) == 2:
+        return Ok(StoredLayoutPlanType.Generator(read_wire_stored_layout_list_leaf(fields[0].value, positions)?, number(fields[1].value)?))
+    if identity == b"A\xe1l\xc9\xd0E" and len(fields) == 2:
+        return Ok(StoredLayoutPlanType.GeneratorMutRef(read_wire_stored_layout_list_leaf(fields[0].value, positions)?, number(fields[1].value)?))
+    if identity == b"\xb9H#:\xc32" and len(fields) == 2:
+        return Ok(StoredLayoutPlanType.GeneratorYield(read_wire_stored_layout_list_leaf(fields[0].value, positions)?, number(fields[1].value)?))
+    if identity == b"=-X\x17O\xe0" and len(fields) == 2:
+        return Ok(StoredLayoutPlanType.GeneratorYieldRef(read_wire_stored_layout_list_leaf(fields[0].value, positions)?, number(fields[1].value)?))
+    if identity == b"\xa7\x0a\xca\xf0X`" and len(fields) == 1:
+        return Ok(StoredLayoutPlanType.FunctionPointer([read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\xff\x92\x01\x14t\x9f" and len(fields) == 2:
+        return Ok(StoredLayoutPlanType.FunctionItem(text(fields[0].value)?, [read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[1].value)?]))
+    if identity == b"\xe9\x0da}+U" and len(fields) == 1:
+        return Ok(StoredLayoutPlanType.Closure([read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"Y\x0f\xc7\xc6\x8e\x97" and len(fields) == 3:
+        return Ok(StoredLayoutPlanType.NativeClosure([read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[0].value)?], boolean_value(fields[1].value)?, boolean_value(fields[2].value)?))
+    if identity == b"\x5cz%\xe2\x9cR" and len(fields) == 3:
+        return Ok(StoredLayoutPlanType.NativeTraitObject(text(fields[0].value)?, boolean_value(fields[1].value)?, boolean_value(fields[2].value)?))
+    if identity == b"V\xfe9\xc0\xf7\xb9" and len(fields) == 1:
+        return Ok(StoredLayoutPlanType.SharedCallable([read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\xd3\x9eqf\x1f." and len(fields) == 1:
+        return Ok(StoredLayoutPlanType.ClosureOnce([read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\x7f&q\xb2)\xed" and len(fields) == 1:
+        return Ok(StoredLayoutPlanType.ClosureRef([read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"`\xa1v\x08\xb0\xf4" and len(fields) == 1:
+        return Ok(StoredLayoutPlanType.BorrowingClosure([read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\xec\xdb\xa9E\xf7\xde" and len(fields) == 1:
+        return Ok(StoredLayoutPlanType.BorrowingClosureRef([read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\xb7\xe5\xaa\xe2\xfbm" and len(fields) == 1:
+        return Ok(StoredLayoutPlanType.CallableArguments([read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"acl\xde\xf5G" and len(fields) == 1:
+        return Ok(StoredLayoutPlanType.Future([read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\x89\xd2qrhj" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.NativeStr)
+    if identity == b"\x1f\x04\x02YL\xb8" and len(fields) == 1:
+        return Ok(StoredLayoutPlanType.NativeSlice([read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\xa1\xf0\x0b\xce\x97\xfb" and len(fields) == 1:
+        return Ok(StoredLayoutPlanType.SliceRef([read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\xabf`]\xf9\xcc" and len(fields) == 1:
+        return Ok(StoredLayoutPlanType.SliceMutRef([read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"0?\xb1)\xac\xe5" and len(fields) == 2:
+        return Ok(StoredLayoutPlanType.NativeArray([read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[0].value)?], number(fields[1].value)?))
+    if identity == b"x?\xbd{\xe2\x8f" and len(fields) == 2:
+        return Ok(StoredLayoutPlanType.NativeArrayRef([read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[0].value)?], number(fields[1].value)?))
+    if identity == b"o\xda\x01L\xed0" and len(fields) == 2:
+        return Ok(StoredLayoutPlanType.NativeArrayMutRef([read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[0].value)?], number(fields[1].value)?))
+    if identity == b"D,\xa28\xaa\xb8" and len(fields) == 0:
+        return Ok(StoredLayoutPlanType.CChar)
+    if identity == b"'\xee\xe0\xd7P=" and len(fields) == 2:
+        return Ok(StoredLayoutPlanType.RawPointer(boolean_value(fields[0].value)?, [read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[1].value)?]))
+    if identity == b"\x1e\x82j\xeb<\xa2" and len(fields) == 1:
+        return Ok(StoredLayoutPlanType.Boxed([read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    return Err("unknown or incomplete StoredLayoutPlanType alternative")
+
+
+pub def wire_stored_layout_sized_numeric(value: StoredLayoutSizedNumeric) -> Value:
+    match value:
+        StoredLayoutSizedNumeric.I8 => return Value.Enum(b"1Fb\x8c\x11\x8c", [])
+        StoredLayoutSizedNumeric.I16 => return Value.Enum(b"\xb9\xff?nq\xda", [])
+        StoredLayoutSizedNumeric.I32 => return Value.Enum(b"\xbe-,\xd01}", [])
+        StoredLayoutSizedNumeric.I128 => return Value.Enum(b"G\xeck\xdaM\xa3", [])
+        StoredLayoutSizedNumeric.U8 => return Value.Enum(b"4s\xd3\x8a\x12A", [])
+        StoredLayoutSizedNumeric.U16 => return Value.Enum(b"\xef\x09\xbc\x80\xcdb", [])
+        StoredLayoutSizedNumeric.U32 => return Value.Enum(b"\x80\x07$\x86\xf2\xea", [])
+        StoredLayoutSizedNumeric.U64 => return Value.Enum(b"\x84\xb8\x9e\x22ET", [])
+        StoredLayoutSizedNumeric.U128 => return Value.Enum(b"\x0c\x80\x0d\xc4\xf9I", [])
+        StoredLayoutSizedNumeric.F32 => return Value.Enum(b"\x82%Z\xeel\xcc", [])
+        StoredLayoutSizedNumeric.F64 => return Value.Enum(b"\xa4M\x7ft\xc8)", [])
+        StoredLayoutSizedNumeric.ISize => return Value.Enum(b"\xec|D\x91\xf6\x86", [])
+        StoredLayoutSizedNumeric.USize => return Value.Enum(b"\xbaL\xadu\xa6Z", [])
+
+
+pub def read_wire_stored_layout_sized_numeric(value: Value, positions: &WirePositions) -> Result[StoredLayoutSizedNumeric, str]:
+    identity, fields = wire_variant(value)?
+    if identity == b"1Fb\x8c\x11\x8c" and len(fields) == 0:
+        return Ok(StoredLayoutSizedNumeric.I8)
+    if identity == b"\xb9\xff?nq\xda" and len(fields) == 0:
+        return Ok(StoredLayoutSizedNumeric.I16)
+    if identity == b"\xbe-,\xd01}" and len(fields) == 0:
+        return Ok(StoredLayoutSizedNumeric.I32)
+    if identity == b"G\xeck\xdaM\xa3" and len(fields) == 0:
+        return Ok(StoredLayoutSizedNumeric.I128)
+    if identity == b"4s\xd3\x8a\x12A" and len(fields) == 0:
+        return Ok(StoredLayoutSizedNumeric.U8)
+    if identity == b"\xef\x09\xbc\x80\xcdb" and len(fields) == 0:
+        return Ok(StoredLayoutSizedNumeric.U16)
+    if identity == b"\x80\x07$\x86\xf2\xea" and len(fields) == 0:
+        return Ok(StoredLayoutSizedNumeric.U32)
+    if identity == b"\x84\xb8\x9e\x22ET" and len(fields) == 0:
+        return Ok(StoredLayoutSizedNumeric.U64)
+    if identity == b"\x0c\x80\x0d\xc4\xf9I" and len(fields) == 0:
+        return Ok(StoredLayoutSizedNumeric.U128)
+    if identity == b"\x82%Z\xeel\xcc" and len(fields) == 0:
+        return Ok(StoredLayoutSizedNumeric.F32)
+    if identity == b"\xa4M\x7ft\xc8)" and len(fields) == 0:
+        return Ok(StoredLayoutSizedNumeric.F64)
+    if identity == b"\xec|D\x91\xf6\x86" and len(fields) == 0:
+        return Ok(StoredLayoutSizedNumeric.ISize)
+    if identity == b"\xbaL\xadu\xa6Z" and len(fields) == 0:
+        return Ok(StoredLayoutSizedNumeric.USize)
+    return Err("unknown or incomplete StoredLayoutSizedNumeric alternative")
+
+
+pub def wire_stored_layout_tuple_element(value: StoredLayoutTupleElement) -> Value:
+    match value:
+        StoredLayoutTupleElement.Int => return Value.Enum(b"\x0b_`\x80p\xc6", [])
+        StoredLayoutTupleElement.Float => return Value.Enum(b"\x1ai<\x00\xc4\x0c", [])
+        StoredLayoutTupleElement.Numeric(field0) => return Value.Enum(b"6u-l\xd1G", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_layout_sized_numeric(field0))])
+        StoredLayoutTupleElement.Bool => return Value.Enum(b"I\xf4\x11\xf0\xa1\xa7", [])
+        StoredLayoutTupleElement.Unit => return Value.Enum(b"NTY`\xf1\xbf", [])
+        StoredLayoutTupleElement.String => return Value.Enum(b"\xb2\xef#\x0e\x7fO", [])
+        StoredLayoutTupleElement.List(field0, field1) => return Value.Enum(b"o /T\xa7\xb2", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_layout_list_leaf(field0)), required_value(b"k\x86\xb2s\xff4", wire_integer(field1))])
+        StoredLayoutTupleElement.Dict(field0, field1) => return Value.Enum(b"\x96\x11\xd3\xd8\x00\xfc", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_layout_list_leaf(field0)), required_value(b"k\x86\xb2s\xff4", wire_stored_layout_list_leaf(field1))])
+        StoredLayoutTupleElement.Set(field0) => return Value.Enum(b"\xb6\xf6\xf3\xad\x07\xb3", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_layout_list_leaf(field0))])
+        StoredLayoutTupleElement.Model(field0, field1) => return Value.Enum(b"^,aL#\xf0", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0)), required_value(b"k\x86\xb2s\xff4", Value.Text(field1))])
+        StoredLayoutTupleElement.Enum(field0, field1) => return Value.Enum(b"T\x10\x8d\xaf\xaa\xc5", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0)), required_value(b"k\x86\xb2s\xff4", Value.Text(field1))])
+        StoredLayoutTupleElement.Tuple(field0) => return Value.Enum(b"\xf16\xeex\xc3;", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_tuple_element(item0) for item0 in field0]))])
+        StoredLayoutTupleElement.FunctionPointer(field0) => return Value.Enum(b"\xa7\x0a\xca\xf0X`", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_plan_type(item0) for item0 in field0]))])
+        StoredLayoutTupleElement.Reference(field0, field1) => return Value.Enum(b"q\xbf\x90\x93_\xc2", [required_value(b"_\xec\xebf\xff\xc8", Value.Boolean(field0)), required_value(b"k\x86\xb2s\xff4", Value.List([wire_stored_layout_plan_type(item0) for item0 in field1]))])
+        StoredLayoutTupleElement.ModelRef(field0, field1) => return Value.Enum(b"C\xc3U\x17\xae\x15", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0)), required_value(b"k\x86\xb2s\xff4", Value.Text(field1))])
+        StoredLayoutTupleElement.ModelMutRef(field0, field1) => return Value.Enum(b"\xb0\x02\x8e\xa2$\x98", [required_value(b"_\xec\xebf\xff\xc8", wire_integer(field0)), required_value(b"k\x86\xb2s\xff4", Value.Text(field1))])
+        StoredLayoutTupleElement.SliceRef(field0) => return Value.Enum(b"\xa1\xf0\x0b\xce\x97\xfb", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_plan_type(item0) for item0 in field0]))])
+        StoredLayoutTupleElement.SliceMutRef(field0) => return Value.Enum(b"\xabf`]\xf9\xcc", [required_value(b"_\xec\xebf\xff\xc8", Value.List([wire_stored_layout_plan_type(item0) for item0 in field0]))])
+        StoredLayoutTupleElement.FrozenStr => return Value.Enum(b"O\xab\xe1W\xe8\xf9", [])
+        StoredLayoutTupleElement.StaticText => return Value.Enum(b"\xd5\xdf\x07x\xa5\x0a", [])
+        StoredLayoutTupleElement.StaticBytes => return Value.Enum(b"_\x93\x11xcg", [])
+        StoredLayoutTupleElement.FrozenBytes => return Value.Enum(b"\xa5\x1aU\xd1;\xee", [])
+        StoredLayoutTupleElement.FrozenCollection(field0, field1) => return Value.Enum(b"`ar\x85\xa4\xcb", [required_value(b"_\xec\xebf\xff\xc8", Value.Text(field0)), required_value(b"k\x86\xb2s\xff4", Value.List([wire_stored_layout_plan_type(item0) for item0 in field1]))])
+
+
+pub def read_wire_stored_layout_tuple_element(value: Value, positions: &WirePositions) -> Result[StoredLayoutTupleElement, str]:
+    identity, fields = wire_variant(value)?
+    if identity == b"\x0b_`\x80p\xc6" and len(fields) == 0:
+        return Ok(StoredLayoutTupleElement.Int)
+    if identity == b"\x1ai<\x00\xc4\x0c" and len(fields) == 0:
+        return Ok(StoredLayoutTupleElement.Float)
+    if identity == b"6u-l\xd1G" and len(fields) == 1:
+        return Ok(StoredLayoutTupleElement.Numeric(read_wire_stored_layout_sized_numeric(fields[0].value, positions)?))
+    if identity == b"I\xf4\x11\xf0\xa1\xa7" and len(fields) == 0:
+        return Ok(StoredLayoutTupleElement.Bool)
+    if identity == b"NTY`\xf1\xbf" and len(fields) == 0:
+        return Ok(StoredLayoutTupleElement.Unit)
+    if identity == b"\xb2\xef#\x0e\x7fO" and len(fields) == 0:
+        return Ok(StoredLayoutTupleElement.String)
+    if identity == b"o /T\xa7\xb2" and len(fields) == 2:
+        return Ok(StoredLayoutTupleElement.List(read_wire_stored_layout_list_leaf(fields[0].value, positions)?, number(fields[1].value)?))
+    if identity == b"\x96\x11\xd3\xd8\x00\xfc" and len(fields) == 2:
+        return Ok(StoredLayoutTupleElement.Dict(read_wire_stored_layout_list_leaf(fields[0].value, positions)?, read_wire_stored_layout_list_leaf(fields[1].value, positions)?))
+    if identity == b"\xb6\xf6\xf3\xad\x07\xb3" and len(fields) == 1:
+        return Ok(StoredLayoutTupleElement.Set(read_wire_stored_layout_list_leaf(fields[0].value, positions)?))
+    if identity == b"^,aL#\xf0" and len(fields) == 2:
+        return Ok(StoredLayoutTupleElement.Model(number(fields[0].value)?, text(fields[1].value)?))
+    if identity == b"T\x10\x8d\xaf\xaa\xc5" and len(fields) == 2:
+        return Ok(StoredLayoutTupleElement.Enum(number(fields[0].value)?, text(fields[1].value)?))
+    if identity == b"\xf16\xeex\xc3;" and len(fields) == 1:
+        return Ok(StoredLayoutTupleElement.Tuple([read_wire_stored_layout_tuple_element(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\xa7\x0a\xca\xf0X`" and len(fields) == 1:
+        return Ok(StoredLayoutTupleElement.FunctionPointer([read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"q\xbf\x90\x93_\xc2" and len(fields) == 2:
+        return Ok(StoredLayoutTupleElement.Reference(boolean_value(fields[0].value)?, [read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[1].value)?]))
+    if identity == b"C\xc3U\x17\xae\x15" and len(fields) == 2:
+        return Ok(StoredLayoutTupleElement.ModelRef(number(fields[0].value)?, text(fields[1].value)?))
+    if identity == b"\xb0\x02\x8e\xa2$\x98" and len(fields) == 2:
+        return Ok(StoredLayoutTupleElement.ModelMutRef(number(fields[0].value)?, text(fields[1].value)?))
+    if identity == b"\xa1\xf0\x0b\xce\x97\xfb" and len(fields) == 1:
+        return Ok(StoredLayoutTupleElement.SliceRef([read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"\xabf`]\xf9\xcc" and len(fields) == 1:
+        return Ok(StoredLayoutTupleElement.SliceMutRef([read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[0].value)?]))
+    if identity == b"O\xab\xe1W\xe8\xf9" and len(fields) == 0:
+        return Ok(StoredLayoutTupleElement.FrozenStr)
+    if identity == b"\xd5\xdf\x07x\xa5\x0a" and len(fields) == 0:
+        return Ok(StoredLayoutTupleElement.StaticText)
+    if identity == b"_\x93\x11xcg" and len(fields) == 0:
+        return Ok(StoredLayoutTupleElement.StaticBytes)
+    if identity == b"\xa5\x1aU\xd1;\xee" and len(fields) == 0:
+        return Ok(StoredLayoutTupleElement.FrozenBytes)
+    if identity == b"`ar\x85\xa4\xcb" and len(fields) == 2:
+        return Ok(StoredLayoutTupleElement.FrozenCollection(text(fields[0].value)?, [read_wire_stored_layout_plan_type(item0, positions)? for item0 in items(fields[1].value)?]))
+    return Err("unknown or incomplete StoredLayoutTupleElement alternative")
+
+
+def wire_optional_str(value: Option[str]) -> Value:
+    match value:
+        Some(item) => return Value.Some([Value.Text(item)])
+        None => return Value.NoneValue
+
+
+def read_optional_str(value: Value, positions: &WirePositions) -> Result[Option[str], str]:
+    match value:
+        Value.NoneValue => return Ok(None)
+        Value.Some(children) =>
+            if len(children) == 1:
+                return Ok(Some(text(children[0])?))
+        _ => pass
+    return Err("invalid native plan option")

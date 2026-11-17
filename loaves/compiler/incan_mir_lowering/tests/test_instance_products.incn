@@ -57,6 +57,7 @@ pub def test_a_retained_product_is_a_crumb_row() -> Result[None, str]:
     empty_nominals: list[ProductNominal] = []
     retain_scalar(products.0, inputs, function, empty_runtime, empty_nominals, nodes)?
     encoded = only_product(products)?.read_bytes().map_err((error) => error.message())?
+    assert decode_plan_function_record(encoded)?.function[:4] == b"CRMB"
     assert encoded[:4] == b"CRMB", "a retained plan-function product is not a Crumb envelope"
     return Ok(None)
 

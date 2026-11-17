@@ -30,6 +30,7 @@ from pub::incan_mir_plan import (
     Unwind,
     source_span,
 )
+from std.encoding.hex import hexlify
 from scalar_products import decode_scalar, encode_scalar, encode_product, decode_product
 from record_positions import relocate_product
 from record_plan_codec import encode_record_plan, decode_record_plan
@@ -167,21 +168,17 @@ pub def test_native_product_records_expose_only_incan_identities() -> Result[Non
         ),
     ]
     product = encode_product(function, runtime)?
-    assert '"path":"builtin::print"' in product
-    assert '"path":"std::strings::str_concat"' in product
-    assert '"LiteralTextView"' in product and '"LiteralTextSequence"' in product
-    assert '"TextSequence"' in product and '"Text"' in product
-    for rust_name in [
-        "incan_native_runtime::", "incan_std_primitives::", "incan_stdlib::",
-        "StrRef", "StrSlice", "StringSlice", "String",
-    ]:
-        assert rust_name not in product, f"stored product exposes native representation `{rust_name}`"
+    assert product[:4] == b"CRMB"
+    for path in ["builtin::print", "std::strings::str_concat"]:
+        assert hexlify(path.encode()) in hexlify(product), f"missing Incan runtime authority {path}"
+    for rust_name in ["incan_native_runtime::", "incan_std_primitives::", "incan_stdlib::"]:
+        assert hexlify(rust_name.encode()) not in hexlify(product), f"stored product exposes native representation {rust_name}"
     restored, restored_runtime = decode_product(product)?
     assert restored == function and restored_runtime == runtime
     for path in ["std::vec::Vec::push", "core::clone::Clone::clone", "alloc::vec::Vec::new"]:
         standard = [ExternalFunction(path=path, parameters=[PlanType.StrRef], return_type=PlanType.String, span=span)]
         stored = encode_product(function, standard)?
-        assert '"path":"rust::' + path + '"' in stored, f"stored product does not name `{path}` by its Rust import"
+        assert hexlify(("rust::" + path).encode()) in hexlify(stored), f"stored product does not name `{path}` by its Rust import"
         restored_standard, restored_externals = decode_product(stored)?
         assert restored_standard == function and restored_externals == standard
     other_crate = [ExternalFunction(
