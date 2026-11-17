@@ -7,11 +7,12 @@ from std.fs import Path
 from std.hash import sha256
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
-from pub::incan_platform.store import Snapshot, begin, commit, put
+from pub::incan_platform.store import Snapshot, begin, commit, put, stage_put
 from files import read_json
 from json_fields import required_items, required_text
 from observation import file_digest
-from sealed_set import Profile, Record, SetSpec, admit, export_set
+from sealed_set import Profile, Record, SetSpec, admit, admit_with_spec, export_set
+from pub::incan_worker_host.record_directory import directory_member_key, read_directory
 from store_path_conversion import snapshot
 
 pub const COMPILER_RECORD_PROFILE: str = "incan.compiler-records/2"
@@ -25,10 +26,14 @@ pub model CompilerRecordPin:
 
     pub root: str
     pub digest: str
+    pub directory: str = ""
 
     pub def to_json(self) -> JsonValue:
         """Encode the two authoritative pin fields without exposing the converter's scratch transport."""
-        return JsonValue.object({"root": JsonValue.string(self.root), "digest": JsonValue.string(self.digest)})
+        mut fields = {"root": JsonValue.string(self.root), "digest": JsonValue.string(self.digest)}
+        if self.directory != "":
+            fields["directory"] = JsonValue.string(self.directory)
+        return JsonValue.object(fields)
 
 
 pub def convert(driver: str, installed: Path, installation: Path) -> Result[CompilerRecordPin, str]:
@@ -84,7 +89,34 @@ pub def convert(driver: str, installed: Path, installation: Path) -> Result[Comp
     # The admitted set now holds every shipped object; the shipped transport would be a third copy.
     if converted.0 == shipped.0:
         remove_dir_all(shipped.0).map_err((error) => f"cannot remove shipped compiler records {shipped.0}: {error}")?
-    return Ok(CompilerRecordPin(root=relative, digest=digest))
+    top = publish_directory(transport, digest, records)?
+    return Ok(CompilerRecordPin(root=relative, digest=digest, directory=top))
+
+
+def publish_directory(transport: Path, digest: str, records: list[Record]) -> Result[str, str]:
+    """Root one immutable logical-key index in the toolchain's pin; payloads stay in the sealed transport."""
+    view = snapshot(transport.joinpath("selection")).map_err((error) => error.message())?
+    mut staged = begin(view)
+    stage_put(staged, "@" + digest, b"")
+    for item in records:
+        stage_put(staged, directory_member_key(digest, item.key, item.revision)?, b"")
+    return Ok(commit(staged).map_err((error) => error.message())?.index)
+
+
+def validate_directory(transport: Path, pin: CompilerRecordPin, spec: SetSpec) -> Result[None, str]:
+    """At installation verify the complete relation, including absence of extras, against the admitted set."""
+    selected = read_directory(transport.joinpath("selection").0, pin.directory, pin.digest, "", 0)?
+    mut expected: Dict[str, str] = {}
+    for row in spec.records:
+        expected[row.key] = row.revision
+    if len(selected.members) != len(expected):
+        return Err("compiler directory membership differs from its sealed manifest")
+    mut seen: set[str] = set()
+    for member in selected.members:
+        if member.key in seen or expected.get(member.key, "") != member.revision:
+            return Err("installed compiler directory selects an unknown or changed member")
+        seen.add(member.key)
+    return Ok(None)
 
 
 pub def installed_records(
@@ -103,7 +135,9 @@ pub def installed_records(
         transport = installation.joinpath(pin.root)
         if transport.joinpath("manifest.json").is_file():
             store = installation.joinpath("compiler-record-store")
-            _ = admit(store, transport, pin.digest, compiler_record_profile()).map_err((error) => error.message())?
+            _, spec = admit_with_spec(store, transport, pin.digest, compiler_record_profile()).map_err((error) => error.message())?
+            if pin.directory != "":
+                validate_directory(transport, pin, spec)?
             return Ok(pin)
     return convert(driver, installation, installation)
 
@@ -113,9 +147,12 @@ pub def shipped_pin(document: JsonValue) -> Result[Option[CompilerRecordPin], st
     match document.get("compiler_records"):
         None => return Ok(None)
         Some(value) =>
-            return Ok(
-                Some(CompilerRecordPin(root=required_text(value, "root")?, digest=required_text(value, "digest")?)),
-            )
+            mut directory = ""
+            if let Some(found) = value.get("directory"):
+                directory = found.expect_str().map_err((error) => error.message())?
+                if directory == "":
+                    return Err("empty compiler selector index root")
+            return Ok(Some(CompilerRecordPin(root=required_text(value, "root")?, digest=required_text(value, "digest")?, directory=directory)))
 
 
 def export_records(driver: str, installed: Path, output: Path) -> Result[None, str]:

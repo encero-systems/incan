@@ -42,13 +42,11 @@ pub(super) fn read_runtime_bindings_in(
         return Ok(Some(found.clone()));
     }
     let entries = set
-        .entries
-        .iter()
-        .filter(|entry| entry.key.starts_with(&prefix))
-        .collect::<Vec<_>>();
+        .members(&prefix, None, 2)
+        .map_err(|reason| unreadable(dir, name, reason))?;
     let entry = match entries.as_slice() {
         [] => return Ok(None),
-        [entry] if entry.revision == entry.value => *entry,
+        [entry] if entry.revision == entry.value => entry,
         [entry] => {
             return Err(unreadable(
                 dir,
@@ -112,7 +110,10 @@ pub(in crate::loaf_index) fn runtime_binding_selectors(dir: &Path, name: &str) -
         .ok_or_else(|| unreadable(dir, name, "Loaf profile directory is not UTF-8".to_owned()))?;
     let prefix = format!("loaf/{profile}/{name}/runtime-binding/");
     let mut selectors = Vec::new();
-    for entry in set.entries.iter().filter(|entry| entry.key.starts_with(&prefix)) {
+    for entry in set
+        .members(&prefix, None, 0)
+        .map_err(|reason| unreadable(dir, name, reason))?
+    {
         let (_, digest) = entry
             .key
             .rsplit_once('/')

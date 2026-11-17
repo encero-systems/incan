@@ -121,6 +121,23 @@ fn main() -> std::process::ExitCode {
 
 /// Dispatch the command the first argument names.
 fn command() -> Result<(), Box<dyn std::error::Error>> {
+    incan_frontend::loaf_index::install_directory_reader(|path, top, seal, prefix, maximum| {
+        let answer = incan_worker_host::read_directory(
+            path.to_owned(),
+            top.to_owned(),
+            seal.to_owned(),
+            prefix.to_owned(),
+            i64::try_from(maximum).map_err(|e| e.to_string())?,
+        )?;
+        Ok((
+            answer
+                .members
+                .into_iter()
+                .map(|member| (member.key, member.revision))
+                .collect(),
+            usize::try_from(answer.checked_bytes).map_err(|e| e.to_string())?,
+        ))
+    });
     incan_driver::invocation_trace::initialize()?;
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args

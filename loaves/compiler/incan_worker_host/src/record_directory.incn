@@ -1,0 +1,53 @@
+"""Serve installed compiler membership and absence proofs from an independently pinned store index."""
+
+from pub::incan_platform.store.disk import root as disk_root
+from pub::incan_platform.store.index import entries_with_prefix, find, page_checked_bytes
+from record_snapshot import valid_digest
+
+
+pub model DirectoryMember:
+    pub key: str
+    pub revision: str
+
+
+pub model DirectoryAnswer:
+    pub members: list[DirectoryMember]
+    pub checked_bytes: int
+
+
+pub def directory_member_key(seal: str, key: str, revision: str) -> Result[str, str]:
+    """Order overlays by exact named facet then declaration ordinal; retain the original compiler key."""
+    parts = key.split("/")
+    if len(parts) != 6 or parts[0] != "loaf" or not valid_digest(parts[5]) or not valid_digest(revision):
+        return Err("invalid compiler directory member identity")
+    if len(parts[4]) < 8 or not parts[4].isdigit():
+        return Err("invalid compiler directory ordinal")
+    return Ok(seal + "\t" + "/".join(parts[:4] + [parts[5], parts[4], revision]))
+
+
+pub def read_directory(directory: str, top: str, seal: str, prefix: str, maximum: int) -> Result[DirectoryAnswer, str]:
+    """Read just the index pages containing this key range, checking the seal anchor and each traversed page."""
+    if top == "" or not valid_digest(seal) or maximum < 0:
+        return Err("invalid installed compiler directory pin")
+    path = disk_root(directory)
+    before = page_checked_bytes()
+    match find(path, top, "@" + seal).map_err((error) => error.detail)?:
+        Some(anchor) =>
+            if anchor.tombstone:
+                return Err("installed compiler directory seal anchor is deleted")
+        None => return Err("installed compiler directory belongs to another sealed set")
+    mut members: list[DirectoryMember] = []
+    for row in entries_with_prefix(path, top, seal + "\t" + prefix, maximum).map_err((error) => error.detail)?:
+        match row.location:
+            Some(location) =>
+                if location.tombstone:
+                    return Err("unexpected deleted installed compiler directory member")
+            None => return Err("missing installed compiler directory leaf location")
+        parts = row.key[len(seal) + 1:].split("/")
+        if len(parts) != 7:
+            return Err("invalid installed compiler directory leaf")
+        key = "/".join(parts[:4] + [parts[5], parts[4]])
+        if directory_member_key(seal, key, parts[6])? != row.key:
+            return Err("noncanonical installed compiler directory leaf")
+        members.append(DirectoryMember(key=key, revision=parts[6]))
+    return Ok(DirectoryAnswer(members=members, checked_bytes=page_checked_bytes() - before))

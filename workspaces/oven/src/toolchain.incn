@@ -397,7 +397,12 @@ def optional_compiler_records(document: JsonValue, directory: Path) -> Result[Op
             digest = text_field(value, "digest", ["compiler_records"])?
             if root == "" or digest == "":
                 return Err(["compiler_records"])
-            return Ok(Some(CompilerRecordPin(root=located(directory, root), digest=digest)))
+            mut top = ""
+            if value.get("directory") != None:
+                top = text_field(value, "directory", ["compiler_records"])?
+                if top == "":
+                    return Err(["compiler_records", "directory"])
+            return Ok(Some(CompilerRecordPin(root=located(directory, root), digest=digest, directory=top)))
 
 
 def optional_path(document: JsonValue, key: str, directory: Path) -> Result[str, list[str]]:
