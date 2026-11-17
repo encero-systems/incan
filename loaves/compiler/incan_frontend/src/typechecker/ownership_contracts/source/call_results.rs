@@ -1,6 +1,6 @@
 //! Closed result shapes that source-call projection can classify without retained dependencies.
 
-use crate::ast::{Expr, Spanned};
+use crate::ast::{CallArg, Expr, ParamKind, Receiver, Spanned};
 use crate::symbols::ResolvedType;
 use crate::typechecker::{ResolvedMethodDispatch, TypeCheckInfo};
 use incan_lang::lang::builtins::BuiltinMethodId;
@@ -9,13 +9,99 @@ use incan_lang::lang::surface::{list_methods::ListMethodId, option_methods::Opti
 use incan_lang::lang::traits::{self as core_traits, TraitId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_lang::lang::types::ownership::OwnershipMode;
-use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 
 use super::super::{InputCallKind, flow};
 
-/// Select the only source-less field projection this profile can authenticate: one canonical stored field directly
-/// on a direct call result. Classification proves the call's independence separately; source evaluation and replay
-/// share this exact shape so neither can reinterpret a nested, indexed, method, `?` or computed expression.
+/// Select the checked identity for one stored projection.
+///
+/// Ordinary fields carry their canonical `Field` identity. A newtype's physical `.0` slot deliberately carries the
+/// canonical `Newtype` owner used by Body IR, so accept it only when the exact member spelling and the base
+/// expression's checked root nominal identity agree. Computed properties never become stored projections.
+pub(in crate::typechecker::ownership_contracts) fn stored_projection_identity<'a>(
+    facts: &'a TypeCheckInfo,
+    expression: &Spanned<Expr>,
+) -> Option<&'a CanonicalSymbolId> {
+    let Expr::Field(base, member) = &expression.node else {
+        return None;
+    };
+    if facts.computed_property_access(expression.span).is_some() {
+        return None;
+    }
+    let identity = facts.resolved_identity(expression.span)?;
+    if identity.kind == SemanticSourceTargetKind::Field {
+        return Some(identity);
+    }
+    if member != "0"
+        || identity.namespace != SymbolNamespace::OrdinaryLexical
+        || identity.kind != SemanticSourceTargetKind::Newtype
+        || facts
+            .expressions
+            .expression_type_identities
+            .get(&base.span)
+            .and_then(|identities| identities.get(&Vec::new()))
+            != Some(identity)
+    {
+        return None;
+    }
+    Some(identity)
+}
+
+/// Authenticate a direct method result before its checked newtype `.0` slot is treated as a fresh value. Ordinary
+/// zero-parameter methods preserve the existing independent-source policy. The one parameterized exception is the
+/// exact canonical standard-library `Path.joinpath` surface already admitted by source-call construction.
+fn direct_method_newtype_result(facts: &TypeCheckInfo, base: &Spanned<Expr>, slot: &CanonicalSymbolId) -> bool {
+    let Expr::MethodCall(receiver, _, _, arguments) = &base.node else {
+        return false;
+    };
+    let Some(call) = facts.protocols.explicit_input_calls.get(&base.span) else {
+        return false;
+    };
+    if call.kind != InputCallKind::Ordinary
+        || call.owner.is_none()
+        || call.receiver != Some(Receiver::Immutable)
+        || facts.resolved_identity(base.span) != Some(&call.callee)
+        || !facts
+            .expressions
+            .expression_type_identities
+            .get(&receiver.span)
+            .is_some_and(|identities| identities.values().any(|identity| identity == slot))
+    {
+        return false;
+    }
+    if arguments.is_empty() && call.parameters.is_empty() {
+        return true;
+    }
+    let [CallArg::Positional(_)] = arguments.as_slice() else {
+        return false;
+    };
+    let [parameter] = call.parameters.as_slice() else {
+        return false;
+    };
+    call.callee.namespace == SymbolNamespace::Member
+        && call.callee.origin
+            == SymbolOrigin::Package {
+                library: "incan_stdlib_system".to_string(),
+                module_path: vec!["fs".to_string(), "path".to_string()],
+            }
+        && call.callee.declaration_name == "joinpath"
+        && call.callee.kind == SemanticSourceTargetKind::Method
+        && facts.resolved_builtin_method_call(base.span).is_none()
+        && facts.call_site_callable_params(base.span) == Some(call.parameters.as_slice())
+        && parameter.kind == ParamKind::Normal
+        && !parameter.is_mut
+        && parameter.ty == ResolvedType::Str
+        && slot.declaration_name == "Path"
+        && matches!(&slot.origin,
+            SymbolOrigin::Package { library, module_path }
+                if library == "incan_stdlib_system"
+                    && module_path.iter().map(String::as_str).eq(["fs", "path"]))
+}
+
+/// Select one source-less stored projection directly on an authenticated fresh call result. Classification proves
+/// the call's independence separately; source evaluation and replay share this exact shape so neither can reinterpret
+/// a nested, indexed, `?` or computed expression. Method results remain restricted to the existing zero-parameter
+/// policy and exact canonical `Path.joinpath`.
 pub(in crate::typechecker::ownership_contracts) fn direct_call_field_projection<'a>(
     facts: &TypeCheckInfo,
     expression: &'a Spanned<Expr>,
@@ -23,15 +109,12 @@ pub(in crate::typechecker::ownership_contracts) fn direct_call_field_projection<
     let Expr::Field(base, _) = &expression.node else {
         return None;
     };
-    if !matches!(base.node, Expr::Call(..))
-        || facts.computed_property_access(expression.span).is_some()
-        || !facts
-            .resolved_identity(expression.span)
-            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Field)
-    {
-        return None;
+    let projection = stored_projection_identity(facts, expression)?;
+    match &base.node {
+        Expr::Call(..) => Some(base),
+        Expr::MethodCall(..) if direct_method_newtype_result(facts, base, projection) => Some(base),
+        _ => None,
     }
-    Some(base)
 }
 
 /// This initial call profile admits only closed scalar/owned byte-string results and builtin `Result`/`Option`

@@ -304,6 +304,139 @@ fn standard_path_joinpath_independent_result_requires_exact_canonical_surface() 
     Ok(())
 }
 
+/// A canonical Path remains authenticated after its fresh result is stored and through every wrapped-slot shape used
+/// by the standard filesystem contract. The `.0` fact deliberately remains the canonical Newtype owner required by
+/// Body IR; source-flow construction must accept that exact owner without treating arbitrary method results as fresh.
+#[test]
+fn standard_path_wrapped_slot_survives_the_complete_value_lifecycle() -> Result<(), Box<dyn std::error::Error>> {
+    let provider = "pub type Path = newtype str:\n    pub def joinpath(self, segment: str) -> Path:\n        return Path(self.0 + segment)\n\n    pub def parent(self) -> Path:\n        return Path(self.0)\n";
+    let consumer = "from views import Path\n\ndef owned_child(root: Borrowed[Path]) -> Owned[Path]:\n    return root.joinpath(\"owned\")\n\ndef stored_path(seed: Borrowed[int]) -> str:\n    config = Path(\"config\").joinpath(\"app.toml\")\n    return config.0\n\ndef parent_path(seed: Borrowed[int]) -> str:\n    config = Path(\"config\").joinpath(\"app.toml\")\n    return config.parent().0\n\ndef direct_join(seed: Borrowed[int]) -> str:\n    return Path(\"config\").joinpath(\"log.txt\").0\n\ndef chained_join(seed: Borrowed[int]) -> str:\n    return Path(\"project\").joinpath(\"src\").joinpath(\"main.incn\").0\n\ndef helper_result(seed: Borrowed[int]) -> str:\n    return owned_child(Path(\"config\")).0\n";
+    let program = parsed(consumer)?;
+    let expected = [
+        ("stored_path", "config.0", flow::ValueUseKind::Read),
+        ("parent_path", "config.parent().0", flow::ValueUseKind::CallResult),
+        (
+            "direct_join",
+            "Path(\"config\").joinpath(\"log.txt\").0",
+            flow::ValueUseKind::CallResult,
+        ),
+        (
+            "chained_join",
+            "Path(\"project\").joinpath(\"src\").joinpath(\"main.incn\").0",
+            flow::ValueUseKind::CallResult,
+        ),
+        (
+            "helper_result",
+            "owned_child(Path(\"config\")).0",
+            flow::ValueUseKind::CallResult,
+        ),
+    ];
+    for (route, mut checker) in consumer_checkers_with_package_path(
+        provider,
+        consumer,
+        Some("incan_stdlib_system"),
+        vec!["fs".to_string(), "path".to_string()],
+    )? {
+        let mut failures = Vec::new();
+        for &(callable, source, _) in &expected {
+            let state = checker
+                .type_info
+                .protocols
+                .explicit_input_flow
+                .iter()
+                .find(|(owner, _)| owner.declaration_name == callable)
+                .map(|(_, state)| state)
+                .ok_or_else(|| format!("{route}: missing {callable} flow"))?;
+            if let InputFlow::Unavailable(unavailable) = state {
+                failures.push(format!("{callable} ({source}): {}", unavailable.reason));
+            }
+        }
+        if !failures.is_empty() {
+            return Err(format!("{route}: complete Path lifecycle refusals: {}", failures.join("; ")).into());
+        }
+        let mut stored_authority = None;
+        for &(callable, source, kind) in &expected {
+            let (owner, flow) = checker
+                .type_info
+                .protocols
+                .explicit_input_flow
+                .iter()
+                .find(|(owner, _)| owner.declaration_name == callable)
+                .ok_or_else(|| format!("{route}: missing {callable} checked flow"))?;
+            let InputFlow::Checked { graph, .. } = flow else {
+                return Err(format!("{route}: {callable} changed after refusal census: {flow:?}").into());
+            };
+            let span = if kind == flow::ValueUseKind::Read {
+                graph.nodes.iter().find_map(|node| {
+                    (consumer.get(node.span.start..node.span.end) == Some(source)
+                        && matches!(&node.event, flow::Event::Access { place, access: flow::Access::Read, .. }
+                            if matches!(place.projection.last(), Some(flow::Projection::Field(_)))))
+                    .then_some(node.span)
+                })
+            } else {
+                graph.value_uses.iter().find_map(|(span, value_use)| {
+                    (value_use.kind == kind && consumer.get(span.start..span.end) == Some(source)).then_some(*span)
+                })
+            }.ok_or_else(|| format!("{route}: {source} lacks its checked {kind:?} evidence"))?;
+            let identity = checker
+                .type_info
+                .resolved_identity(span)
+                .ok_or_else(|| format!("{route}: {source} lost its wrapped-slot identity"))?;
+            assert_eq!(
+                identity.namespace,
+                incan_semantics_core::SymbolNamespace::OrdinaryLexical,
+                "{route}"
+            );
+            assert_eq!(
+                identity.kind,
+                incan_semantics_core::SemanticSourceTargetKind::Newtype,
+                "{route}"
+            );
+            assert_eq!(identity.declaration_name, "Path", "{route}");
+            assert!(
+                matches!(&identity.origin,
+                    incan_semantics_core::SymbolOrigin::Package { library, module_path }
+                        if library == "incan_stdlib_system"
+                            && module_path.iter().map(String::as_str).eq(["fs", "path"])),
+                "{route}: {identity:?}"
+            );
+            if callable == "stored_path" {
+                stored_authority = Some((owner.clone(), span));
+            }
+        }
+        assert!(checker.errors.is_empty(), "{route}: {:?}", checker.errors);
+
+        let (owner, stored_span) =
+            stored_authority.ok_or_else(|| format!("{route}: stored projection authority is absent"))?;
+        let mut tampered = checker
+            .type_info
+            .resolved_identity(stored_span)
+            .cloned()
+            .ok_or_else(|| format!("{route}: stored projection identity is absent"))?;
+        tampered.kind = incan_semantics_core::SemanticSourceTargetKind::Function;
+        checker.type_info.record_resolved_identity(stored_span, tampered);
+        let declaration = program
+            .declarations
+            .iter()
+            .find(|declaration| {
+                matches!(&declaration.node, crate::ast::Declaration::Function(function) if function.name == "stored_path")
+            })
+            .ok_or("missing stored_path declaration")?;
+        let crate::ast::Declaration::Function(function) = &declaration.node else {
+            return Err("stored_path is not a function".into());
+        };
+        let unavailable = source::build(&checker, CallableSource::Function(function), declaration.span, &owner)
+            .expect_err("tampered wrapped-slot identity retained source-flow authority");
+        assert_eq!(unavailable.reason, "field lacks a checked stored identity", "{route}");
+        assert_eq!(
+            consumer.get(unavailable.span.start..unavailable.span.end),
+            Some("config.0"),
+            "{route}"
+        );
+    }
+    Ok(())
+}
+
 /// Require one named callable to remain on the expected source-flow refusal route.
 fn assert_unavailable_reason(
     route: &str,
