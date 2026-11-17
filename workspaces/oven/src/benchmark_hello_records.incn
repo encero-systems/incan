@@ -21,6 +21,7 @@ model Selection:
 
     directory_digest: str
     directory_bytes: int
+    directory_root: str
     lengths: Dict[str, int] = {}
     facets: Dict[str, list[str]] = {}
 
@@ -254,7 +255,12 @@ def sealed_selection(toolchain: Path, manifest: JsonValue) -> Result[Selection, 
         if digest in sizes or len(digest) != 64 or size < 0:
             return Err("duplicated or malformed object in the authenticated directory")
         sizes[digest] = size
-    mut selected = Selection(directory_digest=directory_digest, directory_bytes=directory_bytes)
+    mut top = ""
+    if let Some(value) = pin.get("directory"):
+        top = string_value(value)?
+        if top == "":
+            return Err("empty installed record directory root")
+    mut selected = Selection(directory_digest=directory_digest, directory_bytes=directory_bytes, directory_root=top)
     for item in array_value(table[5])?:
         entry = array_value(item)?
         key = string_value(entry[0])?
@@ -273,15 +279,29 @@ def observed(trace: Path, selected: Selection, surfaces: Dict[str, Surface], mut
     mut paths: Dict[str, str] = {}
     mut reads = 0
     mut directory_reads = 0
+    mut directory_bytes = 0
     mut sealed: set[str] = set()
     for row in events(trace)?:
         phase = required_text(row, "phase")?
-        if phase == "record_directory_read":
+        if phase == "record_directory_pages":
+            size = number(row, "bytes")?
+            top = required_text(row, "root")?
+            if selected.directory_root == "" or top != selected.directory_root or required_text(row, "digest")? != selected.directory_digest or size < 0:
+                census.problems.append("compiler read pages outside the toolchain's authenticated directory")
+            directory_reads += 1
+            directory_bytes += size
+            census.overhead_bytes += size
+            selector = required_text(row, "selector")?
+            census.rows.append(f"directory-page-selection\t1\t{size}\t{selector}")
+        elif phase == "record_directory_read":
+            if selected.directory_root != "":
+                census.problems.append("compiler read the entire manifest despite an authenticated lookup index")
             size = number(row, "bytes")?
             if required_text(row, "digest")? != selected.directory_digest or size != selected.directory_bytes:
                 census.problems.append("opened a compiler directory that differs from the independently pinned manifest")
             directory_reads += 1
             census.overhead_bytes += size
+            directory_bytes += size
             census.rows.append(f"sealed-directory\t1\t{size}\t{selected.directory_digest}")
         elif phase == "body_surface_open":
             path = required_text(row, "path")?
@@ -302,7 +322,7 @@ def observed(trace: Path, selected: Selection, surfaces: Dict[str, Surface], mut
                 census.problems.append(f"whole-sidecar verification read {verified} bytes and header read {header} bytes: {path}")
             census.rows.append(f"verification-scan\t1\t{verified}\t{path}")
             census.rows.append(f"surface-header\t1\t{header}\t{path}")
-        elif phase in ["body_fragment_read", "record_read", "record_directory_read"]:
+        elif phase in ["body_fragment_read", "record_read"]:
             mut key = ""
             if phase == "record_read":
                 key = required_text(row, "record")?
@@ -320,7 +340,8 @@ def observed(trace: Path, selected: Selection, surfaces: Dict[str, Surface], mut
             census.counts[key] = census.counts.get(key, 0) + 1
             census.sizes[key] = census.sizes.get(key, 0) + size
             reads += 1
-    if directory_reads == 0:
+    census.rows.append(f"directory-physical-total\t{directory_reads}\t{directory_bytes}\t{selected.directory_digest}")
+    if directory_reads == 0 or directory_bytes == 0:
         census.problems.append("missing physical read witness for the installed record directory")
     if reads == 0:
         census.problems.append("no measured compiler reads")
@@ -425,7 +446,7 @@ def events(trace: Path) -> Result[list[JsonValue], str]:
         for line in read(path)?.split("\n"):
             if "\"kind\":\"event\"" not in line:
                 continue
-            for phase in ["dependency_root", "dependency_roots_complete", "dependency_fact", "dependency_family", "body_surface_open", "body_fragment_read", "record_read", "record_directory_read"]:
+            for phase in ["dependency_root", "dependency_roots_complete", "dependency_fact", "dependency_family", "body_surface_open", "body_fragment_read", "record_read", "record_directory_read", "record_directory_pages"]:
                 if f"\"phase\":\"{phase}\"" in line:
                     result.append(parse_json(line)?.require("fields").map_err((error) => error.message())?)
                     break

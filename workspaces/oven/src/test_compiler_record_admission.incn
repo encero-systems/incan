@@ -5,7 +5,9 @@ from std.fs import Path
 from std.hash import file_digest, sha256
 from std.json import JsonValue
 from scratch import scratch_directory
-from compiler_record_admission import SHIPPED_RECORDS, convert, installed_records
+from compiler_record_admission import CompilerRecordPin, SHIPPED_RECORDS, convert, installed_records
+from pub::incan_platform.store import begin, commit, stage_put
+from store_path_conversion import snapshot
 from pub::incan_worker_host.record_directory import read_directory
 
 
@@ -32,9 +34,9 @@ pub def test_shipped_compiler_records_are_admitted_without_running_a_compiler() 
     assert len(selected.members) == 1
     assert selected.members[0].key == prefix + "00000000/" + key_hash
     assert selected.members[0].revision == key_hash
-    absent = read_directory(directory, pin.directory, pin.digest, prefix + ("0" * 64) + "/", 1)?
+    absent = read_directory(directory, pin.directory, pin.digest, prefix + hexlify(sha256.digest(b"absent")) + "/", 1)?
     assert len(absent.members) == 0
-    assert read_directory(directory, pin.directory, "0" * 64, prefix, 1).is_err()
+    assert read_directory(directory, pin.directory, hexlify(sha256.digest(b"wrong root")), prefix, 1).is_err()
 
     assert installed.joinpath("compiler-records").joinpath("manifest.json").is_file(), "the set is published"
     return Ok(None)
@@ -59,6 +61,20 @@ pub def test_a_shipped_sealed_set_installs_without_converting_or_copying() -> Re
     # 3. Nothing was converted, copied or rewritten.
     assert pin.digest == sealed.digest, "the shipped pin is kept"
     assert sealed_inventory(installed)? == before, "admission wrote no object"
+    legacy = installed_records(driver.0, installed, Some(CompilerRecordPin(root=sealed.root, digest=sealed.digest)))?
+    assert legacy.directory == "", "earlier pins without an index still admit their exact sealed transport"
+    top = sealed.directory.split(":")
+    assert len(top) == 4
+    wrong_root = ":".join(top[:3] + [hexlify(sha256.digest(b"wrong root"))])
+    bad = CompilerRecordPin(root=sealed.root, digest=sealed.digest, directory=wrong_root)
+    assert installed_records(driver.0, installed, Some(bad)).is_err(), "a changed root digest cannot authenticate the page"
+    index = installed.joinpath(sealed.root).joinpath("selection")
+    mut changed = begin(snapshot(index).map_err((error) => error.message())?)
+    other = hexlify(sha256.digest(b"extra member"))
+    stage_put(changed, sealed.digest + "\tloaf/debug/probe/metadata/" + other + "/00000001/" + other, b"")
+    extra = commit(changed).map_err((error) => error.message())?
+    swapped = CompilerRecordPin(root=sealed.root, digest=sealed.digest, directory=extra.index)
+    assert installed_records(driver.0, installed, Some(swapped)).is_err(), "even a valid root must have the complete sealed membership"
     return Ok(None)
 
 

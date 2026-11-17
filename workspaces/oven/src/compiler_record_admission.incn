@@ -7,7 +7,7 @@ from std.fs import Path
 from std.hash import sha256
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
-from pub::incan_platform.store import Snapshot, begin, commit, put, stage_put
+from pub::incan_platform.store import begin, commit, stage_put
 from files import read_json
 from json_fields import required_items, required_text
 from observation import file_digest
@@ -29,7 +29,7 @@ pub model CompilerRecordPin:
     pub directory: str = ""
 
     pub def to_json(self) -> JsonValue:
-        """Encode the two authoritative pin fields without exposing the converter's scratch transport."""
+        """Encode the sealed transport and its authenticated lookup root when available."""
         mut fields = {"root": JsonValue.string(self.root), "digest": JsonValue.string(self.digest)}
         if self.directory != "":
             fields["directory"] = JsonValue.string(self.directory)
@@ -55,7 +55,7 @@ pub def convert(driver: str, installed: Path, installation: Path) -> Result[Comp
     if required_text(index, "schema")? != EXPORT_SCHEMA:
         return Err("candidate compiler returned an unsupported record export")
     source = temporary.path().joinpath("source")
-    mut view = snapshot(source).map_err((error) => error.message())?
+    mut source_records = begin(snapshot(source).map_err((error) => error.message())?)
     mut records: list[Record] = []
     mut receipt: list[str] = []
     for item in required_items(index, "records")?:
@@ -65,11 +65,13 @@ pub def convert(driver: str, installed: Path, installation: Path) -> Result[Comp
         if object != f"objects/{revision}":
             return Err(f"compiler record `{key}` names a non-canonical object")
         path = converted.joinpath(object)
-        if file_digest(path)? != revision:
+        value = path.read_bytes().map_err((error) => f"cannot {error.message()}")?
+        if hexlify(sha256.digest(value)) != revision:
             return Err(f"compiler record `{key}` differs from revision {revision}")
-        view = write_value(view, key, path.read_bytes().map_err((error) => f"cannot {error.message()}")?)?
+        stage_put(source_records, key, value)
         records.append(Record(key=key, revision=revision, payloads=[], references=[]))
         receipt.append(f"{key}\t{revision}")
+    view = commit(source_records).map_err((error) => error.message())?
     profile = compiler_record_profile()
     spec = SetSpec(
         profile=profile,
@@ -176,11 +178,6 @@ pub def compiler_record_profile() -> Profile:
         schema=COMPILER_RECORD_PROFILE,
         codec="incan.compiler-record-value/1",
     )
-
-
-def write_value(view: Snapshot, key: str, value: bytes) -> Result[Snapshot, str]:
-    """Publish one converter value into the temporary source snapshot used only for sealed export."""
-    return commit(put(begin(view), key, value)).map_err((error) => error.message())
 
 
 def decoded(value: bytes) -> str:

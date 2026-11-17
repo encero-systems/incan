@@ -20,8 +20,11 @@ pub def directory_member_key(seal: str, key: str, revision: str) -> Result[str, 
     parts = key.split("/")
     if len(parts) != 6 or parts[0] != "loaf" or not valid_digest(parts[5]) or not valid_digest(revision):
         return Err("invalid compiler directory member identity")
-    if len(parts[4]) < 8 or not parts[4].isdigit():
+    if len(parts[4]) < 8:
         return Err("invalid compiler directory ordinal")
+    for character in parts[4]:
+        if character not in "0123456789":
+            return Err("invalid compiler directory ordinal")
     return Ok(seal + "\t" + "/".join(parts[:4] + [parts[5], parts[4], revision]))
 
 
