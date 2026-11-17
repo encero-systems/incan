@@ -6,54 +6,7 @@ body's position map, its nodes' owner-relative lines and columns, is a request-l
 moves lines inside a body changes the map, never the product.
 """
 
-from std.json import JsonValue, parse
-from pub::incan_mir_plan import SourceSpan
 from pub::incan_mir_plan import transform_product_positions, PositionChange, WirePositions
-from rust::incan_semantics_core import HirSourceSpan
-from checked_values import location
-
-
-pub def body_position_map(body: str, source: str, file: str, owner: SourceSpan) -> Result[list[tuple[int, int]], str]:
-    """Each Body IR node's owner-relative line and column, in the producer's serialization order."""
-    value = parse(body).map_err((error) => error.message())?
-    mut positions: list[tuple[int, int]] = []
-    collect_positions(value, source, file, owner, positions)?
-    return Ok(positions)
-
-
-def collect_positions(
-    value: JsonValue,
-    source: str,
-    file: str,
-    owner: SourceSpan,
-    mut positions: list[tuple[int, int]],
-) -> Result[None, str]:
-    """Read coordinate fields from the producer's native serialization; this visitor never interprets IR operations."""
-    if value.is_array():
-        for child in value.expect_array().map_err((error) => error.message())?:
-            collect_positions(child, source, file, owner, positions)?
-    elif value.is_object():
-        fields = value.expect_object().map_err((error) => error.message())?
-        for key in sorted([key for key in fields.keys()]):
-            child = fields[key]
-            if key == "span":
-                offset = child.require("start").and_then((value) => value.expect_int()).map_err(
-                    (error) => error.message(),
-                )?
-                native_offset = source_offset(offset)?
-                span = location(HirSourceSpan.new(native_offset, native_offset), source, file)
-                positions.append((span.line - owner.line, span.column))
-            elif key not in ["canonical", "named_type_identities"]:
-                collect_positions(child, source, file, owner, positions)?
-    return Ok(None)
-
-
-def source_offset(offset: int) -> Result[usize, str]:
-    """Convert one checked JSON coordinate to the native source index without truncation."""
-    converted: Option[usize] = offset.try_resize()
-    match converted:
-        Some(value) => return Ok(value)
-        None => return Err("invalid body position")
 
 
 pub def relocate_product(encoded: bytes, file: str, line: int) -> Result[bytes, str]:

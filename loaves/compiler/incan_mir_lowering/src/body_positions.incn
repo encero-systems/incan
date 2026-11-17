@@ -1,0 +1,99 @@
+"""Visit typed Body IR source spans in the stable traversal order of native plan input witnesses."""
+
+from rust::incan_semantics_core import HirSourceSpan
+from rust::incan_semantics_core::body_ir import Body, Callee, CallableParam, CallableParamDefault, Rvalue, Statement, StatementKind
+from pub::incan_mir_plan import SourceSpan
+from checked_values import indexed_location, line_starts
+from table_views import borrowed_at
+
+
+class BodyPositions:
+    """The line index is shared by every span in one body, including nested defaults and closure frames."""
+
+    starts: list[int]
+    file: str
+    owner_line: int
+    nodes: list[tuple[int, int]]
+
+    def add(mut self, span: HirSourceSpan) -> None:
+        current = indexed_location(self.starts, span, self.file)
+        self.nodes.append((current.line - self.owner_line, current.column))
+
+    def parameters(mut self, values: &list[CallableParam]) -> None:
+        for index in range(len(values)):
+            parameter = borrowed_at(values, index)
+            self.default(parameter.default)
+            self.add(parameter.span)
+
+    def default(mut self, value: &CallableParamDefault) -> None:
+        match value:
+            CallableParamDefault.Source(computation) =>
+                self.add(computation.span)
+                self.statements(computation.stmts)
+            CallableParamDefault.Unsupported(span=span, description=_description) => self.add(span)
+            _ => pass
+
+    def calls(mut self, callee: &Callee) -> None:
+        match callee:
+            Callee.Method(target) =>
+                if let Some(delegation) = target.native_trait_delegation:
+                    for index in range(len(delegation.parameter_defaults)):
+                        self.default(borrowed_at(delegation.parameter_defaults, index))
+            Callee.ProviderOperation(plan) =>
+                for index in range(len(plan.inputs)):
+                    self.add(borrowed_at(plan.inputs, index).span)
+            _ => pass
+
+    def assignment(mut self, value: &Rvalue) -> None:
+        match value:
+            Rvalue.IsInstance(payload) => self.add(payload.target.span)
+            Rvalue.Closure(params=parameters, captured_operands=_captured, body=body) =>
+                self.statements(body.stmts)
+                self.parameters(parameters)
+            Rvalue.Generator(source=_source, captured_operands=_captured, body=body) => self.statements(body.stmts)
+            Rvalue.Match(scrutinee=_scrutinee, arms=arms) =>
+                for index in range(len(arms)):
+                    arm = borrowed_at(arms, index)
+                    self.statements(arm.body_stmts)
+                    self.statements(arm.guard_stmts)
+            _ => pass
+
+    def statements(mut self, values: &list[Statement]) -> None:
+        for index in range(len(values)):
+            statement = borrowed_at(values, index)
+            match statement.kind:
+                StatementKind.UnsafeRegion(acknowledgment=acknowledgment, body=body) =>
+                    self.add(acknowledgment.span)
+                    self.statements(body.stmts)
+                StatementKind.Assign(place=_place, rvalue=value) => self.assignment(value)
+                StatementKind.Call(destination=_dest, callee=callee, args=_args, may_panic=_panic) => self.calls(callee)
+                StatementKind.If(cond=_cond, then_block=yes, else_block=no) =>
+                    if let Some(other) = no:
+                        self.statements(other.stmts)
+                    self.statements(yes.stmts)
+                StatementKind.Loop(body=body) => self.statements(body.stmts)
+                StatementKind.Race(destination=_dest, arms=arms) =>
+                    for arm in arms:
+                        self.statements(arm.body.stmts)
+                _ => pass
+            self.add(statement.span)
+
+
+    @staticmethod
+    pub def collect(body: &Body, source: str, file: str, owner: SourceSpan) -> list[tuple[int, int]]:
+        """Collect only native span-bearing fields; declarations and identity tables never supply diagnostic positions."""
+        mut map = BodyPositions(starts=line_starts(source), file=file, owner_line=owner.line, nodes=[])
+        map.statements(body.block.stmts)
+        for index in range(len(body.locals)):
+            map.add(borrowed_at(body.locals, index).span)
+        for index in range(len(body.panic_facts)):
+            map.add(borrowed_at(body.panic_facts, index).span)
+        map.parameters(body.params)
+        for index in range(len(body.scopes)):
+            map.add(borrowed_at(body.scopes, index).span)
+        map.add(body.span)
+        return map.nodes
+
+
+pub def body_position_map(body: &Body, source: str, file: str, owner: SourceSpan) -> list[tuple[int, int]]:
+    return BodyPositions.collect(body, source, file, owner)

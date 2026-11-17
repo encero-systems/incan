@@ -3,6 +3,7 @@ name = "incan_mir_lowering"
 version = "0.6.0-dev.9"
 
 [dependencies]
+postcard = { default-features = false, features = ["use-std"], loaf = "crates-io/postcard", version = "1.1" }
 serde = { features = ["derive"], loaf = "crates-io/serde", version = "1" }
 serde_json = { loaf = "crates-io/serde_json", version = "1" }
 incan_mir_plan = { path = "../incan_mir_plan" }

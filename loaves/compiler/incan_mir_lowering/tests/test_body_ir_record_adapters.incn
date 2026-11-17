@@ -1,5 +1,7 @@
 """Reversible Stage 3 adapter controls for Body IR facts, skipped dispositions and map ownership."""
 
+from body_positions import body_position_map
+from pub::incan_mir_plan import source_span
 from body_ir_record_adapters import (
     BodyIrRecordProvenance,
     authored_body,
@@ -43,6 +45,18 @@ from rust::incan_semantics_core::body_ir import (
     nominal_carrier_key,
 )
 from symbols import model_symbol
+
+
+pub def test_native_body_positions_keep_nested_order_and_utf8_offsets() -> Result[None, str]:
+    """Child statement spans precede their owners; identity metadata contributes no positional nodes."""
+    mut body = empty_body("walk")
+    file = "src/main.incn"
+    child = CompilerStatement(kind=CompilerStatementKind.Continue, span=HirSourceSpan(file=file, start=7, end=8))
+    block = CompilerBlock(scope=0, statements=[child])
+    body.block.statements = [CompilerStatement(kind=CompilerStatementKind.Loop(block), span=HirSourceSpan(file=file, start=3, end=9))]
+    owner = source_span(file=file, line=1, column=1)
+    assert body_position_map(native_body(body)?, "é\nabcdx\n", file, owner) == [(1, 5), (1, 1), (0, 1)]
+    return Ok(None)
 
 
 pub def test_body_record_round_trip_preserves_shared_identities_and_statements() -> Result[None, str]:
