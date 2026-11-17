@@ -1,0 +1,53 @@
+"""Admit compiler-provided field and variant identities as finite Crumb descriptions for typed rows."""
+
+from crate.primitives.crumb.descriptions import Description, DescriptionMode
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.values import Metadata, MetadataEntry
+from crate.primitives.reflection import FieldInfo, ShapeInfo
+from crate.primitives.text import copy_frozen_bytes
+
+
+def stored_fields(fields: FrozenList[FieldInfo]) -> Result[list[Metadata], CrumbError]:
+    """Keep declared storage spelling, identity and canonical participation, including private stored fields."""
+    mut result: list[Metadata] = []
+    for field in fields:
+        storage = match field.stored_type:
+            Some(value) => str(value)
+            None => return Err(CrumbError.invalid_input("field has no checked persistent representation: " + str(field.name)))
+        result.append(Metadata.Map([
+            MetadataEntry(key="id", value=Metadata.Binary(copy_frozen_bytes(field.identity))),
+            MetadataEntry(key="name", value=Metadata.Text(str(field.name))),
+            MetadataEntry(key="type", value=Metadata.Text(storage)),
+            MetadataEntry(key="canonical", value=Metadata.Boolean(field.canonical)),
+            MetadataEntry(key="absent", value=Metadata.Text("required")),
+            MetadataEntry(key="properties", value=Metadata.Map([])),
+        ]))
+    return Ok(result)
+
+
+pub def shape_description(shape: ShapeInfo) -> Result[Description, CrumbError]:
+    """Materialize only the closed declarations supplied by the compiler; recursive references remain selectors."""
+    key = copy_frozen_bytes(shape.identity)
+    spelling = str(shape.spelling)
+    mut metadata = [
+        MetadataEntry(key="nominal", value=Metadata.Binary(key)),
+        MetadataEntry(key="path", value=Metadata.Text(str(shape.name))),
+        MetadataEntry(key="properties", value=Metadata.Map([])),
+    ]
+    if spelling.startswith("record@"):
+        metadata.append(MetadataEntry(key="kind", value=Metadata.Text("Record")))
+        metadata.append(MetadataEntry(key="fields", value=Metadata.List(stored_fields(shape.fields)?)))
+    elif spelling.startswith("enum@"):
+        mut alternatives: list[Metadata] = []
+        for variant in shape.variants:
+            alternatives.append(Metadata.Map([
+                MetadataEntry(key="id", value=Metadata.Binary(copy_frozen_bytes(variant.identity))),
+                MetadataEntry(key="name", value=Metadata.Text(str(variant.name))),
+                MetadataEntry(key="fields", value=Metadata.List(stored_fields(variant.fields)?)),
+                MetadataEntry(key="properties", value=Metadata.Map([])),
+            ]))
+        metadata.append(MetadataEntry(key="kind", value=Metadata.Text("Enum")))
+        metadata.append(MetadataEntry(key="variants", value=Metadata.List(alternatives)))
+    else:
+        return Err(CrumbError.invalid_input("typed row root is not a stored nominal"))
+    return Ok(Description(metadata=Metadata.Map(metadata), mode=DescriptionMode.Reference))

@@ -1,0 +1,98 @@
+"""Direct typed rows for the native function and the finite dictionary of declarations reachable from its layout."""
+
+from std.primitives.crumb import Budget
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.registrations import KindRegistry
+from std.primitives.crumb.typed_rows import TypedRowReader, TypedRowWriter
+from std.primitives.crumb.typed_shapes import shape_description
+from std.primitives.views import MappedFile
+from _plan import (
+    AttributeArgument, AttributeValue, Function, GenericLoan, NativeAttribute,
+)
+from _body import (
+    BasicBlock, BinaryOp, Callee, CalleeKind, Constant, FieldLifecycle, FieldMetadata, FieldProjection, ForeignFunction, FrozenValue, Local, Operand, OperandKind, Parameter, Place, Projection, Rvalue, RvalueKind, Statement, StatementKind, Terminator, TerminatorKind, UnaryOp, Unwind,
+)
+from pub::internal_models.compiler_records import (
+    CanonicalSymbolId, DeclarationKind, HirSourceSpan, PackageIdentity, SymbolNamespace, SymbolOrigin,
+)
+from _types import (
+    ListLeaf, PlanType, SizedNumeric, SourceSpan, TupleElement,
+)
+
+
+def descriptions() -> Result[list[Description], str]:
+    """Reference the concrete nominal declarations once, including shapes that refer recursively to one another."""
+    shapes = [
+        AttributeArgument.__shape__(),
+        AttributeValue.__shape__(),
+        BasicBlock.__shape__(),
+        BinaryOp.__shape__(),
+        Callee.__shape__(),
+        CalleeKind.__shape__(),
+        CanonicalSymbolId.__shape__(),
+        Constant.__shape__(),
+        DeclarationKind.__shape__(),
+        FieldLifecycle.__shape__(),
+        FieldMetadata.__shape__(),
+        FieldProjection.__shape__(),
+        ForeignFunction.__shape__(),
+        FrozenValue.__shape__(),
+        Function.__shape__(),
+        GenericLoan.__shape__(),
+        HirSourceSpan.__shape__(),
+        ListLeaf.__shape__(),
+        Local.__shape__(),
+        NativeAttribute.__shape__(),
+        Operand.__shape__(),
+        OperandKind.__shape__(),
+        PackageIdentity.__shape__(),
+        Parameter.__shape__(),
+        Place.__shape__(),
+        PlanType.__shape__(),
+        Projection.__shape__(),
+        Rvalue.__shape__(),
+        RvalueKind.__shape__(),
+        SizedNumeric.__shape__(),
+        SourceSpan.__shape__(),
+        Statement.__shape__(),
+        StatementKind.__shape__(),
+        SymbolNamespace.__shape__(),
+        SymbolOrigin.__shape__(),
+        Terminator.__shape__(),
+        TerminatorKind.__shape__(),
+        TupleElement.__shape__(),
+        UnaryOp.__shape__(),
+        Unwind.__shape__(),
+    ]
+    mut result: list[Description] = []
+    for shape in shapes:
+        result.append(shape_description(shape).map_err((error) => error.message())?)
+    return Ok(result)
+
+
+pub def encode_native_function(function: &Function) -> Result[bytes, str]:
+    """Walk a native function's own stored shape into an unsealed typed Crumb row."""
+    mut budget = Budget.create(bytes=67108864, elements=4194304, depth=128).map_err((error) => error.message())?
+    registry = KindRegistry.create([], budget).map_err((error) => error.message())?
+    mut writer = TypedRowWriter.create(descriptions()?, registry, false, budget).map_err((error) => error.message())?
+    mut root = writer.root(Function.__shape__()).map_err((error) => error.message())?
+    function.__walk__(root).map_err((error) => error.message())?
+    writer.append(root).map_err((error) => error.message())?
+    return writer.finish().map_err((error) => error.message())
+
+
+pub def decode_native_function(encoded: bytes) -> Result[Function, str]:
+    """Refuse incomplete envelopes before reconstructing the one declared native function."""
+    if len(encoded) > 67108864:
+        return Err("native function envelope exceeds its byte limit")
+    mut budget = Budget.create(bytes=67108864, elements=4194304, depth=128).map_err((error) => error.message())?
+    registry = KindRegistry.create([], budget).map_err((error) => error.message())?
+    owner = MappedFile.owned(encoded)?
+    view = match owner.view(0, owner.len()):
+        Some(value) => value
+        None => return Err("native function envelope has no complete view")
+    rows = TypedRowReader.create(view, descriptions()?, registry, false, budget).map_err((error) => error.message())?
+    if rows.len() != 1:
+        return Err("native function envelope must contain exactly one function")
+    mut source = rows.source(0, Function.__shape__()).map_err((error) => error.message())?
+    return Function.__reconstruct__(source).map_err((error) => error.message())
