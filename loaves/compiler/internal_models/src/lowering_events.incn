@@ -1,0 +1,176 @@
+"""Request-local transport for named lowering products, explicit refusals and the complete native interface."""
+
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from crumb_rows import ModelField, model_description, required_value
+from graph_crumb_fields import decode_graph_row, encode_graph_row, integer, items, number, text, tuple_items
+
+const EVENT: bytes = b"lowevt\x00"
+const REFUSAL: bytes = b"lowref\x00"
+const INTERFACE: bytes = b"lowint\x00"
+pub const INTERFACE_REPORT: str = "native-interface.crumb"
+
+
+pub model EventReference:
+    """A named ordinal's position in the current model or enum table."""
+
+    pub kind: str
+    pub index: int
+    pub name: str
+
+
+pub model EventPosition:
+    """A Body IR node's current source coordinates."""
+
+    pub line: int
+    pub column: int
+
+
+pub model LoweringEvent:
+    """The exact published product and its use in this request."""
+
+    pub identity: str
+    pub key: str
+    pub function: str
+    pub product: bytes
+    pub reused: bool
+    pub admitted: bool = false
+    pub module: str = ""
+    pub role: str = ""
+    pub demand: str = ""
+    pub runtime_requirements: int = 0
+    pub references: list[EventReference] = []
+    pub positions: list[EventPosition] = []
+
+
+pub model LoweringRefusal:
+    """An explicit per-function reason lowering could not publish a reusable product."""
+
+    pub identity: str
+    pub function: str
+    pub refusal: str
+
+
+pub model NativeInterface:
+    """The standalone entry key and its complete loss-checked native plan."""
+
+    pub entry: str
+    pub plan: str
+
+
+def event_description() -> Description:
+    """The binary product field retains exactly the bytes admitted under the graph slot."""
+    return model_description(EVENT, "incan.lowering-event/3", [
+        ModelField(identity=b"admitt", name="admitted", storage="boolean"),
+        ModelField(identity=b"demand", name="demand", storage="string"),
+        ModelField(identity=b"funct_", name="function", storage="string"),
+        ModelField(identity=b"identi", name="identity", storage="string"),
+        ModelField(identity=b"key___", name="key", storage="string"),
+        ModelField(identity=b"module", name="module", storage="string"),
+        ModelField(identity=b"positi", name="positions", storage="list<tuple<i64,i64>>"),
+        ModelField(identity=b"produc", name="product", storage="binary"),
+        ModelField(identity=b"refere", name="references", storage="list<tuple<string,i64,string>>"),
+        ModelField(identity=b"reused", name="reused", storage="boolean"),
+        ModelField(identity=b"role__", name="role", storage="string"),
+        ModelField(identity=b"runtim", name="runtime_requirements", storage="i64"),
+    ])
+
+
+pub def encode_lowering_event(event: LoweringEvent) -> Result[bytes, str]:
+    """Transport the authenticated plan-function record without reconstructing or transcoding it."""
+    mut references: list[Value] = []
+    for reference in event.references:
+        references.append(Value.Tuple([Value.Text(reference.kind), integer(reference.index), Value.Text(reference.name)]))
+    positions = [Value.Tuple([integer(position.line), integer(position.column)]) for position in event.positions]
+    return encode_graph_row(EVENT, event_description(), [
+        required_value(b"admitt", Value.Boolean(event.admitted)),
+        required_value(b"demand", Value.Text(event.demand)),
+        required_value(b"funct_", Value.Text(event.function)),
+        required_value(b"identi", Value.Text(event.identity)),
+        required_value(b"key___", Value.Text(event.key)),
+        required_value(b"module", Value.Text(event.module)),
+        required_value(b"positi", Value.List(positions)),
+        required_value(b"produc", Value.Binary(event.product)),
+        required_value(b"refere", Value.List(references)),
+        required_value(b"reused", Value.Boolean(event.reused)),
+        required_value(b"role__", Value.Text(event.role)),
+        required_value(b"runtim", integer(event.runtime_requirements)),
+    ])
+
+
+pub def decode_lowering_event(encoded: bytes) -> Result[LoweringEvent, str]:
+    """Validate the complete event, including ordinal table, node positions and entry role."""
+    fields = decode_graph_row(encoded, EVENT, event_description(), 12)?
+    admitted = match fields[0].value:
+        Value.Boolean(value) => value
+        _ => return Err("lowering event has no admission flag")
+    mut references: list[EventReference] = []
+    for item in items(fields[8].value)?:
+        parts = tuple_items(item, 3)?
+        kind = text(parts[0])?
+        if kind not in ["model", "enum"]:
+            return Err("invalid lowering event nominal kind")
+        references.append(EventReference(kind=kind, index=number(parts[1])?, name=text(parts[2])?))
+    mut positions: list[EventPosition] = []
+    for item in items(fields[6].value)?:
+        pair = tuple_items(item, 2)?
+        positions.append(EventPosition(line=number(pair[0])?, column=number(pair[1])?))
+    product = match fields[7].value:
+        Value.Binary(value) => value
+        _ => return Err("lowering event has no binary product")
+    reused = match fields[9].value:
+        Value.Boolean(value) => value
+        _ => return Err("lowering event has no reuse flag")
+    role = text(fields[10].value)?
+    demand = text(fields[1].value)?
+    if role not in ["", "entry"] or (role == "entry") != (demand != ""):
+        return Err("invalid lowering event role or entry demand")
+    return Ok(LoweringEvent(admitted=admitted, demand=demand, function=text(fields[2].value)?, identity=text(fields[3].value)?,
+        key=text(fields[4].value)?, module=text(fields[5].value)?, positions=positions, product=product,
+        references=references, reused=reused, role=role, runtime_requirements=number(fields[11].value)?))
+
+
+def refusal_description() -> Description:
+    """The refusal identifies both its declaration and the exact lowering reason."""
+    return model_description(REFUSAL, "incan.lowering-refusal/3", [
+        ModelField(identity=b"funct_", name="function", storage="string"),
+        ModelField(identity=b"identi", name="identity", storage="string"),
+        ModelField(identity=b"reason", name="refusal", storage="string"),
+    ])
+
+
+pub def encode_lowering_refusal(value: LoweringRefusal) -> Result[bytes, str]:
+    """Encode one explicit skipped producer."""
+    return encode_graph_row(REFUSAL, refusal_description(), [
+        required_value(b"funct_", Value.Text(value.function)),
+        required_value(b"identi", Value.Text(value.identity)),
+        required_value(b"reason", Value.Text(value.refusal)),
+    ])
+
+
+pub def decode_lowering_refusal(encoded: bytes) -> Result[LoweringRefusal, str]:
+    """Authenticate all three fields before accepting an omitted native interface."""
+    fields = decode_graph_row(encoded, REFUSAL, refusal_description(), 3)?
+    return Ok(LoweringRefusal(function=text(fields[0].value)?, identity=text(fields[1].value)?, refusal=text(fields[2].value)?))
+
+
+def interface_description() -> Description:
+    """A complete unit interface has one selected entry."""
+    return model_description(INTERFACE, "incan.native-interface/2", [
+        ModelField(identity=b"entry_", name="entry", storage="string"),
+        ModelField(identity=b"plan__", name="plan", storage="string"),
+    ])
+
+
+pub def encode_native_interface(value: NativeInterface) -> Result[bytes, str]:
+    """Bind the keyed entry to the native plan verified by the producer."""
+    return encode_graph_row(INTERFACE, interface_description(), [
+        required_value(b"entry_", Value.Text(value.entry)),
+        required_value(b"plan__", Value.Text(value.plan)),
+    ])
+
+
+pub def decode_native_interface(encoded: bytes) -> Result[NativeInterface, str]:
+    """Read the complete producer report from its versioned Crumb row."""
+    fields = decode_graph_row(encoded, INTERFACE, interface_description(), 2)?
+    return Ok(NativeInterface(entry=text(fields[0].value)?, plan=text(fields[1].value)?))
