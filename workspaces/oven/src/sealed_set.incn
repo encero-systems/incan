@@ -99,18 +99,30 @@ pub def admit(root: Path, directory: Path, set_root: str, supported: Profile) ->
 pub def admit_with_spec(
     root: Path, directory: Path, set_root: str, supported: Profile,
 ) -> Result[tuple[Snapshot, SetSpec], StoreError]:
-    """
-    Admit missing immutable objects and one set receipt, without creating any plan or namespace selection.
-
-    1. Verify the transport completely and validate dependencies and immutable record identities.
-    2. Install shared payloads through the store API, only when missing.
-    3. Publish record envelopes and the set receipt together through one validated transaction.
-
-    Local bakes, dependency exports and toolchain bundles use this same entry point. Payload installation may leave
-    unreferenced objects after an I/O failure; a set becomes visible only at the transaction's atomic publication.
-    """
-    # 1. Verification is required even for a repeated root; damaged transport is never interpreted as absence.
+    """Admit a verified transport and return the exact authenticated specification used for the publication."""
     verified = verify_transport(directory, set_root, supported)?
+    return publish_verified(root, directory, set_root, verified)
+
+
+pub def admit_content_revisions(
+    root: Path, directory: Path, set_root: str, supported: Profile, origin: str, producer: str,
+) -> Result[tuple[Snapshot, SetSpec], StoreError]:
+    """Admit the exact producer's transport only when every revision names its own verified value bytes."""
+    verified = verify_transport(directory, set_root, supported)?
+    if verified.spec.origin != origin:
+        return Err(problem("integrity", set_root, "sealed record origin differs from the selected origin"))
+    if verified.spec.producer != producer:
+        return Err(problem("integrity", set_root, "sealed record producer differs from the selected producer"))
+    for entry in verified.entries:
+        if entry.record.revision != entry.value:
+            return Err(problem("integrity", entry.record.key, "sealed record revision differs from its value digest"))
+    return publish_verified(root, directory, set_root, verified)
+
+
+def publish_verified(
+    root: Path, directory: Path, set_root: str, verified: VerifiedSet,
+) -> Result[tuple[Snapshot, SetSpec], StoreError]:
+    """Install the verified payloads and publish all immutable envelopes and the receipt in one transaction."""
     view = snapshot(root)?
     check_dependencies(view, verified.spec.dependencies)?
     check_external(view, verified.spec.records)?

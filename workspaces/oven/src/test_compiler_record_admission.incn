@@ -5,8 +5,9 @@ from std.fs import Path
 from std.hash import file_digest, sha256
 from std.json import JsonValue
 from scratch import scratch_directory
-from compiler_record_admission import CompilerRecordPin, SHIPPED_RECORDS, convert, installed_records
+from compiler_record_admission import CompilerRecordPin, SHIPPED_RECORDS, compiler_record_profile, convert, installed_records
 from pub::incan_platform.store import begin, commit, stage_put
+from sealed_set import Record, SetSpec, export_set, verify
 from store_path_conversion import snapshot
 from pub::incan_worker_host.record_directory import directory_member_key, read_directory
 
@@ -80,6 +81,53 @@ pub def test_a_shipped_sealed_set_installs_without_converting_or_copying() -> Re
     extra = commit(changed).map_err((error) => error.message())?
     swapped = CompilerRecordPin(root=sealed.root, digest=sealed.digest, directory=extra.index)
     assert installed_records(driver.0, installed, Some(swapped)).is_err(), "even a valid root must have the complete sealed membership"
+    return Ok(None)
+
+
+pub def test_paged_compiler_admission_checks_origin_producer_and_content_revision_before_publication() -> Result[None, str]:
+    """A general transport can be sound while its origin, producer or value identity differs from the compiler contract."""
+    scratch = scratch_directory()?
+    installation = scratch.path().joinpath("installed")
+    driver = ship_one_record(installation)?
+    expected_producer = hexlify(file_digest(driver, "sha256").map_err((error) => error.message())?)
+    value = b"actual bytes"
+    actual = hexlify(sha256.digest(value))
+    other = hexlify(sha256.digest(b"wrong identity"))
+    key = "loaf/debug/probe/metadata/00000000/" + actual
+    mut staged = begin(snapshot(scratch.path().joinpath("source")).map_err((error) => error.message())?)
+    stage_put(staged, key, value)
+    source = commit(staged).map_err((error) => error.message())?
+    store = installation.joinpath("compiler-record-store")
+    before = snapshot(store).map_err((error) => error.message())?.generation
+    for field in ["origin", "producer", "revision"]:
+        mut origin = "installed-toolchain"
+        mut producer = expected_producer
+        mut revision = actual
+        mut reason = "sealed record revision differs from its value digest"
+        if field == "origin":
+            origin = "different origin"
+            reason = "sealed record origin differs from the selected origin"
+        elif field == "producer":
+            producer = other
+            reason = "sealed record producer differs from the selected producer"
+        else:
+            revision = other
+        spec = SetSpec(
+            profile=compiler_record_profile(), origin=origin, producer=producer, receipt="fixture",
+            records=[Record(key=key, revision=revision, payloads=[], references=[])], namespaces=[], dependencies=[],
+        )
+        transport = installation.joinpath(field)
+        seal = export_set(source, spec, transport).map_err((error) => error.message())?
+        _ = verify(transport, seal, spec.profile).map_err((error) => error.message())?
+        mut index = begin(snapshot(transport.joinpath("selection")).map_err((error) => error.message())?)
+        stage_put(index, "@" + seal, b"")
+        stage_put(index, directory_member_key(seal, key, revision)?, b"")
+        top = commit(index).map_err((error) => error.message())?.index
+        selected = CompilerRecordPin(root=field, digest=seal, directory=top)
+        match installed_records(driver.0, installation, Some(selected)):
+            Ok(_) => return Err("admitted a compiler transport with a different " + field)
+            Err(detail) => assert reason in detail, detail
+        assert snapshot(store).map_err((error) => error.message())?.generation == before
     return Ok(None)
 
 
