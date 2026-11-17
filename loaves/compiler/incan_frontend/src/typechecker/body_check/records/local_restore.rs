@@ -133,7 +133,24 @@ pub(super) fn restore_local(
         }
         "type-identity" if row.len() == 4 => {
             let path = read_type_identity_path(&row[2])?;
-            let identity = positions.canonical_type(next(&mut values)?)?;
+            let stable = next(&mut values)?;
+            let identity = positions.canonical_type(stable).or_else(|error| {
+                if !path.is_empty() {
+                    return Err(error);
+                }
+                // The checked native call at this exact expression carries its result's original Rust item.
+                let item = local
+                    .rust
+                    .checked_calls
+                    .get(&span)
+                    .and_then(|call| call.result_item_path.as_deref())
+                    .and_then(incan_semantics_core::body_ir::rust_item_identity)
+                    .filter(|canonical| {
+                        StableDeclarationId::from_canonical(canonical, None, None)
+                            .is_some_and(|candidate| candidate.render_compact() == stable)
+                    });
+                item.ok_or(error)
+            })?;
             if local
                 .expressions
                 .expression_type_identities
@@ -202,6 +219,9 @@ pub(super) fn restore_local(
         "builtin" if row[2] == "call" => {
             let builtin =
                 incan_lang::lang::builtins::from_str(next(&mut values)?).ok_or(NodeBindingError::MissingNode)?;
+            let canonical =
+                crate::symbols::canonical_builtin_function_identity(builtin).ok_or(NodeBindingError::MissingNode)?;
+            retain_registry_identity(record_identities, canonical)?;
             local.calls.resolved_builtin_calls.insert(span, builtin);
         }
         "builtin" if row[2] == "method" => {

@@ -1077,6 +1077,14 @@ fn retain_builtin_method_identity(
     builtin: incan_lang::lang::builtins::BuiltinMethodId,
 ) -> Result<(), NodeBindingError> {
     let canonical = crate::symbols::canonical_builtin_member_identity(builtin.owner(), builtin.member());
+    retain_registry_identity(record_identities, canonical)
+}
+
+/// A checked builtin call can name a registry target without a physical lexical symbol.
+fn retain_registry_identity(
+    record_identities: &mut BTreeMap<String, CanonicalSymbolId>,
+    canonical: CanonicalSymbolId,
+) -> Result<(), NodeBindingError> {
     let stable = StableDeclarationId::from_canonical(&canonical, None, None)
         .ok_or(NodeBindingError::MissingNode)?
         .render_compact();
