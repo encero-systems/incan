@@ -1175,7 +1175,23 @@ impl SourceAccesses<'_, '_> {
     /// iterable reads it through the loop's own shared loan, created over that exact place at the iterable.
     fn for_loop(&mut self, loop_: &ForStmt) -> Result<(), &'static str> {
         self.for_iterable(&loop_.iter)?;
-        let locals = self.fresh_loop_pattern_bindings(&loop_.pattern);
+        let locals = self.enter_fresh_loop_pattern(&loop_.pattern)?;
+        let result = self.block(&loop_.body);
+        for local in locals {
+            self.fresh_loop_locals.remove(&local);
+        }
+        result?;
+        Ok(())
+    }
+
+    /// Claim the producer-retained replacement that initializes each canonical loop-pattern local on every poll.
+    /// Statement loops and eager comprehensions share this exact boundary so neither can leave a valid access event
+    /// unclaimed or silently infer authority from the authored pattern alone.
+    fn enter_fresh_loop_pattern(
+        &mut self,
+        pattern: &Spanned<crate::ast::Pattern>,
+    ) -> Result<Vec<incan_semantics_core::CanonicalSymbolId>, &'static str> {
+        let locals = self.fresh_loop_pattern_bindings(pattern);
         self.fresh_loop_locals.extend(locals.iter().cloned());
         for local in &locals {
             let place = flow::Place {
@@ -1183,14 +1199,9 @@ impl SourceAccesses<'_, '_> {
                 projection: Vec::new(),
             };
             self.known.insert(place.root.clone());
-            self.access(loop_.pattern.span, &place, None, flow::Access::Replace)?;
+            self.access(pattern.span, &place, None, flow::Access::Replace)?;
         }
-        let result = self.block(&loop_.body);
-        for local in locals {
-            self.fresh_loop_locals.remove(&local);
-        }
-        result?;
-        Ok(())
+        Ok(locals)
     }
 
     fn fresh_loop_pattern_bindings(
@@ -1234,16 +1245,27 @@ impl SourceAccesses<'_, '_> {
         clauses: &[crate::ast::ComprehensionClause],
         output: &[&Spanned<Expr>],
     ) -> Result<(), &'static str> {
-        for clause in clauses {
-            match clause {
-                crate::ast::ComprehensionClause::For { iter, .. } => self.for_iterable(iter)?,
-                crate::ast::ComprehensionClause::If(condition) => self.expression(condition, false)?,
+        let Some((clause, remaining)) = clauses.split_first() else {
+            for value in output {
+                self.expression(value, false)?;
+            }
+            return Ok(());
+        };
+        match clause {
+            crate::ast::ComprehensionClause::For { pattern, iter } => {
+                self.for_iterable(iter)?;
+                let locals = self.enter_fresh_loop_pattern(pattern)?;
+                let result = self.comprehension(remaining, output);
+                for local in locals {
+                    self.fresh_loop_locals.remove(&local);
+                }
+                result
+            }
+            crate::ast::ComprehensionClause::If(condition) => {
+                self.expression(condition, false)?;
+                self.comprehension(remaining, output)
             }
         }
-        for value in output {
-            self.expression(value, false)?;
-        }
-        Ok(())
     }
 
     /// Validate one eager-loop iterable evaluation and its retained poll without inferring either access.

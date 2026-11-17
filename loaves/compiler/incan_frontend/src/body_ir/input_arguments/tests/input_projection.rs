@@ -332,21 +332,72 @@ fn constructed_nested_models_keep_direct_input_authority() -> Result<(), Box<dyn
     Ok(())
 }
 
-/// A model's omitted field computation and a non-Copy source field transfer need their own access/storage proof.
+/// A model's omitted field computation remains outside represented construction until its default is retained.
 #[test]
-fn construction_defaults_and_noncopy_place_fields_stay_refused() -> Result<(), Box<dyn std::error::Error>> {
-    for source in [
+fn construction_defaults_stay_refused() -> Result<(), Box<dyn std::error::Error>> {
+    let module = staged(
         "model Page:\n    title: str = \"default\"\ndef read(value: Borrowed[int]) -> int:\n    return value\ndef main() -> int:\n    page = Page()\n    return read(1)\n",
+        false,
+    )?;
+    let body = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("no caller")?;
+    assert!(body.first_representation_gap().is_some());
+    Ok(())
+}
+
+/// A complete constructor may consume one exact unaliased non-Copy local, and Body IR must retain that as a move.
+#[test]
+fn construction_noncopy_local_field_retains_move() -> Result<(), Box<dyn std::error::Error>> {
+    let module = staged(
         "model Page:\n    title: str\ndef read(value: Borrowed[int]) -> int:\n    return value\ndef main() -> int:\n    title = \"stored\"\n    page = Page(title=title)\n    return read(1)\n",
-    ] {
-        let module = staged(source, false)?;
-        let body = module
-            .bodies
-            .iter()
-            .find(|body| body.name == "main")
-            .ok_or("no caller")?;
-        assert!(body.first_representation_gap().is_some());
-    }
+        false,
+    )?;
+    let body = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("no caller")?;
+    assert!(
+        body.first_representation_gap().is_none(),
+        "{:?}",
+        body.first_representation_gap()
+    );
+    assert!(
+        body.block.stmts.iter().any(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
+                ..
+            } => {
+                read.fact == bir::OwnershipFact::Move
+                    && read
+                        .place
+                        .local_id()
+                        .and_then(|local| body.locals.get(local.index()))
+                        .is_some_and(|local| local.name.as_deref() == Some("title"))
+            }
+            _ => false,
+        }),
+        "{:#?}",
+        body.block
+    );
+    assert!(
+        body.block.stmts.iter().any(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::Constructor(_), arguments),
+                ..
+            } => arguments.iter().any(|argument| {
+                matches!(argument,
+                bir::ArgumentElement::One(bir::Operand::Place(read))
+                    if read.fact == bir::OwnershipFact::Move)
+            }),
+            _ => false,
+        }),
+        "{:#?}",
+        body.block
+    );
     Ok(())
 }
 
