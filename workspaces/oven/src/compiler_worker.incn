@@ -119,7 +119,7 @@ pub def captured_resident(toolchain: Toolchain, arguments: list[str]) -> Result[
                     return Err(reason)
 
 
-pub def activate_record(toolchain: Toolchain, request: RecordMessage) -> Result[RecordMessage, str]:
+pub def activate_record(toolchain: Toolchain, request: RecordMessage, snapshot_authority: Path) -> Result[RecordMessage, str]:
     """
     Run one compiler record activation through the selected generation's worker and require its closed reply set.
 
@@ -127,7 +127,7 @@ pub def activate_record(toolchain: Toolchain, request: RecordMessage) -> Result[
     protocol fault. Immutable roots in the message name the engine-owned staged values; no compiler heap crosses it.
     """
     connecting = begin()
-    found_connection = connection_for(toolchain)
+    found_connection = connection_for(toolchain, Some(snapshot_authority))
     record(Operation.WorkerConnect, toolchain.driver, connecting)
     connected_socket, generation, _slot = found_connection?
     mut connected = connected_socket
@@ -278,7 +278,7 @@ def rustc_from_handoff(toolchain: Toolchain, path: str) -> Result[i32, str]:
         None => return Ok(1)
 
 
-def connection_for(toolchain: Toolchain) -> Result[tuple[Connection, str, FileLock], str]:
+def connection_for(toolchain: Toolchain, snapshot_authority: Option[Path] = None) -> Result[tuple[Connection, str, FileLock], str]:
     """
     Take an idle slot of the worker pool and connect to its worker before any source request is submitted.
 
@@ -286,7 +286,9 @@ def connection_for(toolchain: Toolchain) -> Result[tuple[Connection, str, FileLo
     2. With every slot of the pool held, wait for this caller's own slot.
     3. Connect to the slot's worker, starting it when there is none.
     """
-    generation = generation_of(toolchain)?
+    mut generation = generation_of(toolchain)?
+    if let Some(authority) = snapshot_authority:
+        generation = fingerprint([generation, "compiler-snapshot-authority", authority.0])?
     directory = Path(toolchain.console).parent()
     prepare_directory(directory.0)?
     # 1. and 2. A slot nobody holds, or this caller's own slot once the pool is full.
@@ -294,7 +296,7 @@ def connection_for(toolchain: Toolchain) -> Result[tuple[Connection, str, FileLo
     endpoint = slot_endpoint(directory, generation, slot)?
     trace_boundary("worker_selected")
     # 3. The slot's lock also arbitrates startup: only its holder can start the slot's worker.
-    connected = slot_connection(toolchain, endpoint)?
+    connected = slot_connection(toolchain, endpoint, snapshot_authority)?
     trace_boundary("worker_connected")
     return Ok((connected, generation, held))
 
@@ -325,12 +327,12 @@ def try_slot(directory: Path, generation: str, slot: int) -> Result[Option[FileL
     return path.try_lock_exclusive().map_err((error) => f"cannot {error.message()}")
 
 
-def slot_connection(toolchain: Toolchain, endpoint: Endpoint) -> Result[Connection, str]:
+def slot_connection(toolchain: Toolchain, endpoint: Endpoint, snapshot_authority: Option[Path]) -> Result[Connection, str]:
     """Connect to the held slot's worker, or start it and connect after its readiness acknowledgment."""
     match attach(endpoint)?:
         Some(found) => return Ok(found)
         None => pass
-    launch(toolchain, endpoint)?
+    launch(toolchain, endpoint, snapshot_authority)?
     match attach(endpoint)?:
         Some(found) => return Ok(found)
         None => return Err("the compiler worker disappeared after readiness")
@@ -448,7 +450,7 @@ def unicode_environment(value: OsString) -> Result[str, str]:
     return value.into_string().map_err((_) => "a compiler environment entry is not Unicode")
 
 
-def launch(toolchain: Toolchain, endpoint: Endpoint) -> Result[None, str]:
+def launch(toolchain: Toolchain, endpoint: Endpoint, snapshot_authority: Option[Path]) -> Result[None, str]:
     """
     Start the exact driver detached from the owner, with protocol and console on separate streams. The worker decides
     its own retirement, after its idle period among others.
@@ -457,6 +459,8 @@ def launch(toolchain: Toolchain, endpoint: Endpoint) -> Result[None, str]:
     mut command = driver_command(toolchain)?
     command.arg("--resident").arg(f"{endpoint.socket}").arg(f"{endpoint.generation}")
     command.arg(f"{endpoint.ready}").arg(f"{endpoint.directory}")
+    if let Some(authority) = snapshot_authority:
+        command.arg(authority.0)
     command.stdin(Stdio.null()).stdout(Stdio.null()).stderr(Stdio.null())
     command.process_group(0)
     clock = begin()

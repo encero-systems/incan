@@ -62,6 +62,8 @@ pub model HostSettings:
     pub bounds: Bounds
     # The only user served; `None` serves the user that owns the socket, which is the worker's own.
     pub owner: Option[u32]
+    # The descriptor directory authorizing record reads; socket lifecycle continues to use home.
+    pub snapshot_authority: str = ""
 
 
 pub enum Phase:
@@ -359,11 +361,16 @@ pub def start(arguments: list[str]) -> Result[WorkerHost, str]:
     2. A worker can outlive the project that started it, so its own directory is the root.
     3. Listen and tell the starting process.
     """
-    if len(arguments) != 4:
-        return Err("usage: --resident SOCKET GENERATION READY HOME")
+    if len(arguments) not in [4, 5]:
+        return Err("usage: --resident SOCKET GENERATION READY SOCKET_DIRECTORY [SNAPSHOT_AUTHORITY]")
     # 1. Relative paths would resolve against a directory the worker leaves.
     if not arguments[0].startswith("/") or not arguments[2].startswith("/") or not arguments[3].startswith("/"):
         return Err("compiler worker endpoints and home must be absolute")
+    mut authority = arguments[3]
+    if len(arguments) == 5:
+        authority = arguments[4]
+        if not authority.startswith("/"):
+            return Err("compiler snapshot authority must be absolute")
     # 2. Each request installs its caller's directory only for its own activation.
     set_current_dir("/").map_err((error) => f"cannot leave the starting directory: {error}")?
     # 3. The worker serves its own user and keeps the standard bounds, its ceiling lowered only by the test setting.
@@ -373,6 +380,7 @@ pub def start(arguments: list[str]) -> Result[WorkerHost, str]:
             generation=arguments[1],
             ready=arguments[2],
             home=arguments[3],
+            snapshot_authority=authority,
             bounds=Bounds(idle_millis=IDLE_SECONDS * 1000, margin=FOOTPRINT_MARGIN, ceiling=footprint_ceiling()),
             owner=None,
         ),
@@ -394,9 +402,12 @@ pub def host_for(settings: HostSettings) -> Result[WorkerHost, str]:
     # 1. Only this exact file is withdrawn later, never a replacement at the same path.
     listener = listen(settings.socket, false)?
     bound = socket_file(settings.socket, settings.home)?
+    mut authority = settings.home
+    if settings.snapshot_authority != "":
+        authority = settings.snapshot_authority
     host = WorkerHost.serving(
         settings.generation,
-        settings.home,
+        authority,
         socket=bound,
         listener=listener,
         owner=served_owner(bound.uid, settings.owner),
