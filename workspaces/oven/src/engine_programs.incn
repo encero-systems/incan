@@ -6,7 +6,6 @@ from std.environ import get_or
 from std.primitives.locking import LockGuard
 from rust::std::rc import Rc
 from engine_capture import BuildEpoch, CapturedInput, InputRole, SelectedHome
-from std.json import JsonValue, parse
 from bakery import find, fact_file
 from bakery_records import Fact
 from bakery_roots import register_root
@@ -29,13 +28,13 @@ from compiler_plan_values import select_plan_inventory_except, plan_owners_readi
 from compiler_plan_modules import restored_modules
 from compiler_graph_records import supersede_outputs
 from graph_read_demands import GraphDemand, note_graph_demand
-from engine_epochs import record_text, load_epoch
+from engine_epochs import load_epoch
+pub from engine_program_records import NativeUnit
+from engine_program_records import SELECTION_KEY, decode_program, decode_selection, encode_selection, program_view
 from features import FeatureRequest
-from files import json_text
 from home import StandardPackage
 from incan_units import check_prepared, obtain_executable, program_binary, executable_view, view_executable
-from json_fields import required_text
-from pub::incan_platform.store import EXPECT_REPAIR, HOME_VIEW, Snapshot, Transaction, begin, commit, put
+from pub::incan_platform.store import EXPECT_REPAIR, HOME_VIEW, Snapshot, Transaction, begin, commit, get, put
 from engine_overlay import is_editor_view
 from store_path_conversion import snapshot
 from toolchain import Toolchain, load_toolchain, toolchain_directory
@@ -56,28 +55,6 @@ from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 from pub::internal_models.checker_records import CHECKER_PROFILE
 from compiler_ranked_build import RankedBuildInputs
-
-const SCHEMA: str = "incan.engine.native-unit/1"
-
-
-@derive(Eq)
-pub model NativeUnit:
-    """An exact unit record and executable payload; output location is selection provenance, never unit identity."""
-
-    pub identity: str
-    pub payload: str
-    pub binary: str
-
-    pub def encoded(self) -> Result[str, str]:
-        """The language-neutral native descriptor stored in a caller's virtual view."""
-        return json_text(
-            JsonValue.object(
-                {"schema": JsonValue.string(SCHEMA), "unit": JsonValue.string(self.identity), "payload": JsonValue.string(
-                    self.payload,
-                ), "binary": JsonValue.string(self.binary)},
-            ),
-        )
-
 
 pub model SealedProgram:
     """A baked executable's fact, the path of its view and whether it was linked against shared carriers."""
@@ -544,15 +521,20 @@ pub def prepare_selection(store: Path, view: str, unit: NativeUnit, handle: str)
     if program_view(handle)? != view:
         return Err("native descriptor belongs to a different project view")
     selected = snapshot(store, view).map_err((error) => error.message())?
-    if record_text(selected, "incan.engine.selected-native-unit/2")? == Some(handle):
-        match record_text(selected, program_key(handle))?:
-            None => return Err("selected native descriptor is missing")
-            Some(text) =>
-                if decoded_program(text)? == unit:
-                    return Ok(NativeSelection(snapshot=selected, encodings=0, commits=0))
+    mut current = false
+    if let Some(pointer) = get(selected, SELECTION_KEY).map_err((error) => error.message())?:
+        current = decode_selection(view, pointer)? == handle
+    key = program_key(handle)
+    prior = stored_program(selected, key)?
+    if current and prior is None:
+        return Err("selected native descriptor is missing")
+    if current and prior == Some(unit):
+        return Ok(NativeSelection(snapshot=selected, encodings=0, commits=0))
     mut transaction = begin(selected)
-    transaction = put(transaction, program_key(handle), unit.encoded()?.encode("utf-8"))
-    transaction = put(transaction, "incan.engine.selected-native-unit/2", handle.encode("utf-8"))
+    if prior != Some(unit):
+        transaction = put(transaction, key, unit.encoded(key)?)
+    if not current:
+        transaction = put(transaction, SELECTION_KEY, encode_selection(view, handle)?)
     return Ok(NativeSelection(snapshot=selected, transaction=Some(transaction)))
 
 
@@ -572,33 +554,14 @@ pub def selected_program(selected: Snapshot, handle: str) -> Result[Option[Nativ
     if selected.view != program_view(handle)?:
         return Err("native program handle belongs to another virtual view")
     note_graph_demand("program-handle", selected, program_key(handle))
-    match record_text(selected, program_key(handle))?:
+    return stored_program(selected, program_key(handle))
+
+
+def stored_program(selected: Snapshot, key: str) -> Result[Option[NativeUnit], str]:
+    """Open the exact descriptor visible at the supplied snapshot."""
+    match get(selected, key).map_err((error) => error.message())?:
         None => return Ok(None)
-        Some(text) => return Ok(Some(decoded_program(text)?))
-
-
-def program_view(handle: str) -> Result[str, str]:
-    """Decode only the bounded view locator of an opaque handle; it is never a compilation identity input."""
-    if len(handle) < 74 or not handle.startswith("program:") or handle[72:73] != ":":
-        return Err("invalid native program handle")
-    for character in handle[8:72]:
-        if character not in "0123456789abcdef":
-            return Err("invalid native program identity")
-    return Ok(handle[73:])
-
-
-def decoded_program(text: str) -> Result[NativeUnit, str]:
-    """Validate the single native descriptor schema for both immutable records and selected view bindings."""
-    value = parse(text).map_err((error) => error.message())?
-    if required_text(value, "schema")? != SCHEMA:
-        return Err("unsupported native unit descriptor")
-    return Ok(
-        NativeUnit(
-            identity=required_text(value, "unit")?,
-            payload=required_text(value, "payload")?,
-            binary=required_text(value, "binary")?,
-        ),
-    )
+        Some(data) => return Ok(Some(decode_program(key, data)?))
 
 
 pub def restore_program(store: Path, unit: NativeUnit) -> Result[bool, str]:
@@ -720,10 +683,9 @@ def indexed_program(store: Path, epoch: BuildEpoch, selector: Option[str]) -> Re
         Some(key) =>
             selected = snapshot(store).map_err((error) => error.message())?
             note_graph_demand("standalone-selector", selected, key)
-            match record_text(selected, key)?:
+            match stored_program(selected, key)?:
                 None => return Ok(None)
-                Some(encoded) =>
-                    unit = decoded_program(encoded)?
+                Some(unit) =>
                     if unit.binary in ["", ".", ".."] or Path(unit.binary).name() != unit.binary:
                         return Err("standalone native index contains an invalid executable name")
                     register_root(store, Path(epoch.roots[0]).parent().0, f"program\t{unit.binary}", [unit.identity])?
@@ -749,4 +711,4 @@ pub def index_program(
             if let Some(prepared) = native:
                 transaction = prepared
             descriptor = NativeUnit(identity=unit.identity, payload=unit.payload, binary=Path(unit.binary).name())
-            return Ok(Some(put(transaction, key, descriptor.encoded()?.encode("utf-8"), EXPECT_REPAIR)))
+            return Ok(Some(put(transaction, key, descriptor.encoded(key)?, EXPECT_REPAIR)))

@@ -18,9 +18,10 @@ from engine_programs import (
     selected_program,
     view_sealed,
 )
+from engine_program_records import SELECTION_KEY, decode_program, decode_selection, encode_selection
 from engine_epochs import prepare_submit
 from engine_client import service_generation, service_identity
-from pub::incan_platform.store import Transaction, durable_commits, begin, put, commit, commit_group
+from pub::incan_platform.store import Transaction, durable_commits, begin, get, put, commit, commit_group
 from store_path_conversion import compact, snapshot
 from engine_proofs import report
 from std.json import JsonValue, parse
@@ -215,6 +216,41 @@ pub def test_a_fresh_worker_hashes_no_native_input_an_earlier_worker_hashed() ->
     return Ok(None)
 
 
+def check_native_program_records(store: Path, unit: NativeUnit, handle: str, view: str) -> Result[None, str]:
+    """Reopen typed and legacy views, reject swapped rows, and preserve unchanged legacy descriptor bytes."""
+    key = f"incan.engine.native-unit\t{handle}"
+    selected = snapshot(store, view).map_err((error) => error.message())?
+    expected = unit.encoded(key)?
+    assert expected[:4] == b"CRMB"
+    assert get(selected, key).map_err((error) => error.message())? == Some(expected)
+    pointer = encode_selection(view, handle)?
+    assert get(selected, SELECTION_KEY).map_err((error) => error.message())? == Some(pointer)
+    assert read_program(store, handle)? == Some(unit)
+    assert decode_program(key + "other", expected).is_err()
+    assert decode_program(key, pointer).is_err()
+    assert decode_selection(view, expected).is_err()
+    assert decode_selection("other", pointer).is_err()
+    assert decode_selection(view, b"other").is_err()
+    assert decode_program(key, b'{"schema":"unrecognized","unit":"unit","binary":"program","payload":"payload"}').is_err()
+    legacy_view = "prior-native-selection"
+    legacy_handle = program_handle("epoch", "compiler", legacy_view)?
+    legacy_key = f"incan.engine.native-unit\t{legacy_handle}"
+    legacy = b'{"schema":"incan.engine.native-unit/1","unit":"unit","binary":"program","payload":"payload"}'
+    initial = snapshot(store, legacy_view).map_err((error) => error.message())?
+    mut transaction = put(begin(initial), legacy_key, legacy)
+    transaction = put(transaction, SELECTION_KEY, legacy_handle.encode("utf-8"))
+    prior = commit(transaction).map_err((error) => error.message())?
+    assert read_program(store, legacy_handle)? == Some(unit)
+    repeat = select_program(store, legacy_view, unit, legacy_handle)?
+    assert repeat.encodings == 0 and repeat.commits == 0 and repeat.snapshot.digest == prior.digest
+    next_handle = program_handle("second epoch", "compiler", legacy_view)?
+    select_program(store, legacy_view, unit, next_handle)?
+    restored = select_program(store, legacy_view, unit, legacy_handle)?
+    assert get(restored.snapshot, legacy_key).map_err((error) => error.message())? == Some(legacy)
+    assert get(restored.snapshot, SELECTION_KEY).map_err((error) => error.message())? == Some(encode_selection(legacy_view, legacy_handle)?)
+    return Ok(None)
+
+
 pub def test_service_handshake_drain_and_idle() -> Result[None, str]:
     """Full identities gate admission, drain settles existing work, and every live interest prevents idle exit."""
     admission = scratch_directory()?
@@ -241,6 +277,7 @@ pub def test_service_handshake_drain_and_idle() -> Result[None, str]:
     assert first_selection.encodings == 1 and first_selection.commits == 1
     assert repeat_selection.encodings == 0 and repeat_selection.commits == 0
     assert repeat_selection.snapshot.digest == first_selection.snapshot.digest
+    check_native_program_records(store, native, handle, first_selection.snapshot.view)?
     check_collection_before_selection()?
     check_collection_during_execution()?
     process_lifecycle()?
