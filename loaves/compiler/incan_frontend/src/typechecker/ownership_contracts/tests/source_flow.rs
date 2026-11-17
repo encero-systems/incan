@@ -1046,3 +1046,23 @@ def main() -> Result[None, str]:
     }
     Ok(())
 }
+
+
+#[test]
+fn classified_index_read_covers_the_loop_index_before_the_element() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"def emit(value: bytes) -> Result[None, str]:
+    return Ok(None)
+
+def supplied(value: Borrowed[str]) -> Result[list[bytes], str]:
+    return Ok([b"a", b"b"])
+
+def collect(item: str) -> Result[None, str]:
+    rows = supplied(item)?
+    for idx in range(len(rows)):
+        emit(rows[idx])?
+    return Ok(None)
+"#;
+    let checker = checked(source)?;
+    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+    Ok(())
+}

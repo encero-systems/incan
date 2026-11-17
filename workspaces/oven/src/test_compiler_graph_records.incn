@@ -351,7 +351,9 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
     assert original_owner.digest() == edited_docs_owner.digest()
     assert original_owner.encoded()?[:4] == b"CRMB"
     assert read_documentation(revised_docs.encoded_documentation()?)? == revised_docs.documentation
-    assert len(revised_docs.documentation) == 1 and revised_docs.documentation[0].0 == "first"
+    assert len(revised_docs.documentation) == 1
+    documented_owner, _ = revised_docs.documentation[0]
+    assert documented_owner == "first"
     assert len(before.owners) == 4 and len(after.owners) == 4, f"owner counts: {len(before.owners)}, {len(after.owners)}"
     mut changed = 0
     for index in range(len(before.owners)):

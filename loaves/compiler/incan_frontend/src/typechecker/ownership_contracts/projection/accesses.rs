@@ -471,6 +471,10 @@ impl SourceAccesses<'_, '_> {
         self.active_value_uses.insert(expression.span);
         let result = match value_use.kind {
             flow::ValueUseKind::Read | flow::ValueUseKind::Move => {
+                // An indexed place evaluates its subscript before the retained access to the element.
+                if matches!(expression.node, Expr::Index(..)) {
+                    self.place_evaluation(expression)?;
+                }
                 let expected = if value_use.kind == flow::ValueUseKind::Read {
                     flow::Access::Read
                 } else {
