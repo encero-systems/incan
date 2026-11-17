@@ -164,6 +164,7 @@ def build(bench: Bench, root: Path, target: Path, trace: Path, store: Path, labe
     trace.mkdir(true, true).map_err((error) => error.message())?
     mut command = Command.new(bench.oven.0)
     if label == "cold" and target.name() == "hello.incn":
+        save(root.joinpath("cold.source.sha256"), digest(target)? + "\n")?
         command.env("INCAN_NATIVE_PLAN_REPORT", root.joinpath("cold.native-plan.tsv").0)
     output = command
         .args(["build", target.0, "--profile", "release", "--engine-report"])

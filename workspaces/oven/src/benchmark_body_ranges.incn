@@ -56,11 +56,12 @@ pub def range_key(digest: str, identity: str, offset: int, absolute: int) -> str
     return f"{digest}\t{identity}\t{offset}\t{absolute}"
 
 
-pub def needed_ranges(roots: list[BodyDemand], surfaces: Dict[str, Surface]) -> Result[Dict[str, int], str]:
+pub def needed_ranges(roots: list[BodyDemand], surfaces: Dict[str, Surface]) -> Result[tuple[Dict[str, int], set[str]], str]:
     """Start with settled roots and follow published type-context, private, transitive and lazy-default edges."""
     mut pending = roots
     mut visited: set[str] = set()
     mut ranges: Dict[str, int] = {}
+    mut packages: set[str] = set()
     mut cursor = 0
     while cursor < len(pending):
         item = pending[cursor]
@@ -71,6 +72,7 @@ pub def needed_ranges(roots: list[BodyDemand], surfaces: Dict[str, Surface]) -> 
         package = package_name(identity)?
         if identity.kind == SemanticSourceTargetKind.Module:
             continue
+        packages.add(package)
         if package not in surfaces:
             return Err(f"missing independently authenticated surface for {package}")
         surface = surfaces[package]
@@ -106,7 +108,7 @@ pub def needed_ranges(roots: list[BodyDemand], surfaces: Dict[str, Surface]) -> 
                             if link.implementation == link.method:
                                 pending.append(BodyDemand(identity=encode_incan_symbol_identity(link.method)))
                     _ => pass
-    return Ok(ranges)
+    return Ok((ranges, packages))
 
 
 def package_name(identity: CanonicalSymbolId) -> Result[str, str]:
