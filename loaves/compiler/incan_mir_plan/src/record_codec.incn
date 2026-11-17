@@ -3,7 +3,7 @@
 from std.primitives.crumb.descriptions import Description
 from std.primitives.crumb.values import Value
 from pub::internal_models.crumb_rows import ModelField, model_description, required_value
-from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, integer, items, number, text, tuple_items
+from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, integer as crumb_integer, items, number, text, tuple_items
 from pub::internal_models.plan_function_records import encode_entry_record
 from _plan import Plan, ExternalFunction, Function
 from _types import source_span
@@ -165,7 +165,7 @@ def write_plan(plan: StoredPlan) -> Result[bytes, str]:
         mut members: list[Value] = []
         for reference in references:
             kind = "model" if reference.kind == NominalKind.Model else "enum"
-            members.append(Value.Tuple([Value.Text(kind), integer(reference.index), Value.Text(reference.name)]))
+            members.append(Value.Tuple([Value.Text(kind), crumb_integer(reference.index), Value.Text(reference.name)]))
         groups.append(Value.List(members))
     return encode_graph_row(b"mirpln\x00", plan_description(), [
         required_value(b"enums_", text_list(plan.enums)),
@@ -174,7 +174,7 @@ def write_plan(plan: StoredPlan) -> Result[bytes, str]:
         required_value(b"progra", text_list(plan.programs)),
         required_value(b"refers", Value.List(groups)),
         required_value(b"runtim", text_list(plan.runtime)),
-        required_value(b"span__", Value.Tuple([Value.Text(plan.file), integer(plan.line), integer(plan.column)])),
+        required_value(b"span__", Value.Tuple([Value.Text(plan.file), crumb_integer(plan.line), crumb_integer(plan.column)])),
         required_value(b"zipcar", text_list(plan.zip_carriers)),
     ])
 
