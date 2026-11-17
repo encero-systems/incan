@@ -420,7 +420,8 @@ pub class TypedCellWriter with Walker[CrumbError]:
             Some(description) => return Ok(description)
             None =>
                 if let Some(dictionary) = self.dictionary:
-                    return nominal_description(self.node, dictionary, self.budget)
+                    mut budget = self.budget.snapshot()
+                    return nominal_description(self.node, dictionary, budget)
                 return Err(CrumbError.invalid_input("typed nominal requires its dictionary"))
 
 
@@ -879,7 +880,9 @@ pub class TypedCellSource with Source[CrumbError]:
         """Return the admitted root description or reject a nested model without its own supplied description."""
         match self.description:
             Some(description) => return Ok(description)
-            None => return nominal_description(self.node, self.dictionary, self.budget)
+            None =>
+                mut budget = self.budget.snapshot()
+                return nominal_description(self.node, self.dictionary, budget)
 
 
 def as_crumb(error: BinaryError) -> CrumbError:
