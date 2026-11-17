@@ -4,6 +4,9 @@ from rust::std::fs import metadata, remove_dir_all, rename
 from rust::std::process import Command
 from rust::std::time import Instant
 from std.fs import Path
+from std.encoding.hex import hexlify
+from std.hash import sha256
+from home_paths import home
 from std.json import JsonValue, parse
 from std.environ import get_or
 from files import json_text, make_directory, read, read_json, remove
@@ -1070,6 +1073,22 @@ def verify_renamed_admission(scratch: Path, original: Path) -> Result[None, str]
     admit_fact(compiler)?
     admitted_payload = verified_payload(payload)?
     admitted_compiler = verified_fact(compiler)?
+    physical = compiler.resolve().map_err((error) => error.message())?
+    key = hexlify(sha256.digest(physical.0.encode("utf-8")))
+    records = home()?.joinpath("cache/compiler-facts")
+    current = records.joinpath(key + ".crumb")
+    encoded = current.read_bytes().map_err((error) => error.message())?
+    assert encoded[:4] == b"CRMB"
+    old = JsonValue.object({
+        "digest": JsonValue.string(admitted_compiler.digest),
+        "observation": JsonValue.string(admitted_compiler.observation),
+        "provenance": JsonValue.string(compiler.0),
+    })
+    write(records.joinpath(key + ".json"), json_text(old)?)?
+    current.unlink().map_err((error) => error.message())?
+    assert fact_identity(compiler)? == admitted_compiler.digest
+    admit_fact(compiler)?
+    assert current.is_file()
     target = scratch.joinpath("admission-published")
     rename(stage.0, target.0).map_err((error) => str(error))?
     installed_payload = target.joinpath("library.rlib")
