@@ -81,10 +81,12 @@ def measure(bench: Bench) -> Result[None, str]:
     if "hello" in times and "oven" in times:
         if times["oven"] > 2 * times["hello"]:
             failures.append(f"Oven {times['oven']} ns exceeds twice hello {times['hello']} ns")
-    verdict = "\n".join(failures)
-    save(bench.evidence.joinpath("verdict.txt"), verdict + "\n" if len(failures) > 0 else "passed\n")?
+    verdict_path = bench.evidence.joinpath("verdict.txt")
     if len(failures) > 0:
+        verdict = "\n".join(failures)
+        save(verdict_path, verdict + "\n")?
         return Err(verdict)
+    save(verdict_path, "passed\n")?
     return Ok(None)
 
 
