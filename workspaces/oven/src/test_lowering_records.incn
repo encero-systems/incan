@@ -52,6 +52,7 @@ pub def test_importer_rename_checks_only_its_direct_signature_reader() -> Result
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     cold = report_fixture_build(binary, project, store, Some(trace))?
     cold_checks = importer_statement_checks(trace)?
+    assert len(importer_ranked_completions(trace)?) == 0
     file = project.joinpath("src/importer.incn")
     original = file.read_text("utf-8", "strict").map_err((error) => error.message())?
     edited = original.replace("supported_schema(version: int)", "supported_schema(schema_version: int)").replace(
@@ -67,9 +68,31 @@ pub def test_importer_rename_checks_only_its_direct_signature_reader() -> Result
     assert proof_count(cold, "reusable_declarations")? == 6
     assert len(cold_checks) == 6
     assert sorted(all_checks) == sorted(cold_checks + ["importer::supported_schema", "importer::import_jsonl"]), diagnostic
+    stages = sorted(importer_ranked_completions(trace)?)
+    assert stages == ["declaration", "local"] or stages == ["declaration", "final", "local"], diagnostic
     assert proof_count(warm, "body_evaluations")? == 2, diagnostic
     assert proof_count(warm, "plan_function_reuses")? > 0, diagnostic
     return Ok(None)
+
+
+def importer_ranked_completions(trace: Path) -> Result[list[str], str]:
+    """Use compiler-side successful production events to distinguish a ranked run from a whole-unit recheck."""
+    mut stages: list[str] = []
+    for file in trace.iterdir().map_err((error) => error.message())?:
+        if not file.name().startswith("engine-compiler-"):
+            continue
+        records = file.read_text("utf-8", "strict").map_err((error) => error.message())?
+        for line in records.split("\n"):
+            if "completed ranked checking producer" not in line:
+                continue
+            fields = parse(line).and_then((record) => record.require("fields")).map_err((error) => error.message())?
+            identity = fields.require("owner").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+            if identity.startswith("function:importer::supported_schema|"):
+                root = fields.require("root").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+                if len(root) != 64:
+                    return Err("ranked importer producer did not emit a content root")
+                stages.append(fields.require("family").and_then((value) => value.expect_str()).map_err((error) => error.message())?)
+    return Ok(stages)
 
 
 def importer_statement_checks(trace: Path) -> Result[list[str], str]:
