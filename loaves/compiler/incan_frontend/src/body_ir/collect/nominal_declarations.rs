@@ -177,7 +177,7 @@ pub(in crate::body_ir) fn collect_local_nominal_declarations(
                 field_aliases: fields.iter().map(|field| field.node.metadata.alias.clone()).collect(),
                 comparison_equality: None,
                 reflection_metadata: if class_layout.is_none() {
-                    collect_field_metadata(name, fields, type_info)
+                    collect_field_metadata(fields, type_info)
                 } else {
                     None
                 },
@@ -373,7 +373,6 @@ pub(super) fn retain_class_reflection(retained: &mut bir::NominalDeclaration, fa
             .fields
             .iter()
             .enumerate()
-            .filter(|(_, field)| field.visibility == ast::Visibility::Public)
             .map(|(position, field)| bir::FieldMetadata {
                 position,
                 name: field.name.clone(),
@@ -515,19 +514,12 @@ pub(super) fn collect_plain_newtype(
 /// Retain the complete visible field records once, with the same checked visibility and presentation contract as
 /// legacy. Missing checked types make the entire metadata surface unavailable instead of silently omitting a field.
 pub(super) fn collect_field_metadata(
-    name: &str,
     fields: &[ast::Spanned<ast::FieldDecl>],
     facts: &TypeCheckInfo,
 ) -> Option<Vec<bir::FieldMetadata>> {
     fields
         .iter()
         .enumerate()
-        .filter(|(_, field)| {
-            !facts
-                .declarations
-                .model_type_private_fields
-                .contains(&(name.to_owned(), field.node.name.clone()))
-        })
         .map(|(position, field)| {
             let ty = facts.declarations.model_field_types.get(&field.span)?;
             Some(bir::FieldMetadata {

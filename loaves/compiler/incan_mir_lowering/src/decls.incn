@@ -499,11 +499,19 @@ def planned_field_metadata(
     module: &BodyIrModule, constructors: &ConstructorIndex, declaration: &NominalDeclaration,
 ) -> Option[list[FieldMetadata]]:
     """Retain checked visibility and defaults; derive stored selectors from each original typed field slot."""
+    mut visible: set[int] = set()
+    match declaration.reflection_fields:
+        Some(slots) =>
+            for slot in slots:
+                visible.add(int(slot))
+        None => return None
     match declaration.reflection_metadata:
         None => return None
         Some(fields) =>
             mut result: list[FieldMetadata] = []
             for field in fields:
+                if int(field.position) not in visible:
+                    continue
                 mut stored: Option[str] = None
                 if int(field.position) < len(declaration.field_types):
                     stored = stored_type(module, constructors, declaration.field_types[int(field.position)])

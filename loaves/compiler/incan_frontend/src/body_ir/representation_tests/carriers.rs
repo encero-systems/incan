@@ -435,12 +435,17 @@ pub model MetadataFacts:
                 include_inline_tests: false,
             };
             let seed = super::build_module_seed(&program, &module_path, &facts, &context);
-            let metadata = seed
+            let owner = seed
                 .nominal_declarations
                 .iter()
                 .find(|value| value.canonical.declaration_name == "MetadataFacts")
-                .and_then(|value| value.reflection_metadata.as_ref())
-                .ok_or("missing checked reflection facts")?;
+                .ok_or("missing checked reflection owner")?;
+            assert_eq!(owner.reflection_fields.as_deref(), Some(&[1_usize, 2][..]));
+            let stored = owner.reflection_metadata.as_ref().ok_or("missing stored field metadata")?;
+            assert_eq!(stored.len(), 3);
+            assert_eq!(stored[0].name, "hidden");
+            assert_eq!(stored[0].position, 0);
+            let metadata = &stored[1..];
             assert_eq!(metadata.len(), 2);
             assert_eq!(metadata[0].position, 1);
             assert!(metadata[0].default_is_empty);

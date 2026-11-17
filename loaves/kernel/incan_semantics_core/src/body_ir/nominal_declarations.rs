@@ -197,8 +197,8 @@ pub struct NominalDeclaration {
     /// private fields of a private model remain visible, while type-private fields are excluded.
     #[serde(default)]
     pub reflection_fields: Option<Vec<usize>>,
-    /// Complete immutable records of reflection-visible source fields. None grants no metadata hook; presentation
-    /// values do not change field types or access authority.
+    /// Stored fields in physical order. Earlier publications may contain only the slots selected by
+    /// `reflection_fields`. Public reflection always projects through those visibility slots.
     #[serde(default)]
     pub reflection_metadata: Option<Vec<FieldMetadata>>,
     /// Canonical source body selected for a model, class or newtype's standard Eq native equality slot. Carrier

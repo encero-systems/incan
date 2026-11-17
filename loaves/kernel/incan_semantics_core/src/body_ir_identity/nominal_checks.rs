@@ -188,14 +188,23 @@ impl BodyIrModule {
         let Some(slots) = &declaration.reflection_fields else {
             return false;
         };
-        slots.len() == metadata.len()
-            && slots.iter().zip(metadata).all(|(slot, record)| {
-                declaration.fields.get(*slot) == Some(&record.name)
-                    && record.position == *slot
-                    && (!record.default_is_empty || record.has_default)
-                    && (record.renamed_from_lifecycle.is_none() || !record.renamed_from.is_empty())
-                    && Self::reflection_record_identity_is_well_formed(record)
-            })
+        let complete = metadata.len() == declaration.fields.len();
+        if !complete && metadata.len() != slots.len() {
+            return false;
+        }
+        if slots.iter().any(|&slot| slot >= declaration.fields.len())
+            || slots.windows(2).any(|pair| pair[0] >= pair[1])
+        {
+            return false;
+        }
+        metadata.iter().enumerate().all(|(index, record)| {
+            let slot = if complete { index } else { slots[index] };
+            declaration.fields.get(slot) == Some(&record.name)
+                && record.position == slot
+                && (!record.default_is_empty || record.has_default)
+                && (record.renamed_from_lifecycle.is_none() || !record.renamed_from.is_empty())
+                && Self::reflection_record_identity_is_well_formed(record)
+        })
     }
 
     /// Require one retained field identity to match the earliest name carried beside it.
