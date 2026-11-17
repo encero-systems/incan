@@ -30,6 +30,7 @@ mod checked_program;
 mod declaration_validation;
 pub(crate) mod decoded_pages;
 mod graph_body_output;
+mod namespace_crumb;
 
 use checked_program::*;
 use declaration_validation::*;
@@ -412,9 +413,12 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
                 "graph namespace page disagrees with its requested source".into(),
             ));
         }
-        let checked = incan_frontend::typechecker::CheckedNamespaceInterface::from_bytes(&record.interface)
-            .and_then(|interface| interface.installable())
-            .map_err(incan_frontend::checker_records::RecordAdapterFault::InvalidField)?;
+        let checked = incan_frontend::typechecker::CheckedNamespaceInterface::from_bytes(
+            &record.interface,
+            &namespace_crumb::CheckedNamespaceCrumb,
+        )
+        .and_then(|interface| interface.installable())
+        .map_err(incan_frontend::checker_records::RecordAdapterFault::InvalidField)?;
         let body_ir =
             incan_semantics_core::executable_representation::decode_module(&record.body_ir).map_err(|error| {
                 incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(

@@ -1,0 +1,134 @@
+"""The native frontend's typed checked namespace projection, framed by the public Crumb row codec."""
+
+from rust::std::primitive import f64 as RustF64
+from std.primitives.crumb.values import IntegerValue, MapEntry, Value, ValueField
+from crumb_rows import required_value
+from namespace_schema import namespace_descriptions, namespace_root
+from plan_wire_rows import read_wire, write_wire
+
+
+pub model NamespaceField:
+    pub identity: u64
+    pub value: NamespaceAtom
+
+
+pub model NamespaceEntry:
+    pub key: NamespaceAtom
+    pub value: NamespaceAtom
+
+
+pub enum NamespaceAtom:
+    """Logical ABI between the Rust-owned checker declarations and their Incan storage contract."""
+
+    Text(str)
+    Binary(bytes)
+    Flag(bool)
+    Signed(i64)
+    Unsigned(u64)
+    Real(float)
+    Missing
+    Present(list[NamespaceAtom])
+    Items(list[NamespaceAtom])
+    TupleItems(list[NamespaceAtom])
+    Mapping(list[NamespaceEntry])
+    Fields(list[NamespaceField])
+    Alternative(u64, list[NamespaceField])
+
+
+def selector(number: u64) -> Result[bytes, str]:
+    if number > 281474976710655u64:
+        return Err("namespace member identity exceeds six bytes")
+    mut result: list[u8] = []
+    for shift in range(6):
+        result.append((number >> ((5 - shift) * 8)).wrapping_resize[u8]())
+    return Ok(result)
+
+
+def selector_number(value: bytes) -> Result[u64, str]:
+    if len(value) != 6:
+        return Err("namespace member identity must have six bytes")
+    mut result = 0u64
+    for byte in value:
+        result = (result << 8) | byte.saturating_resize[u64]()
+    return Ok(result)
+
+
+def fields(values: list[NamespaceField]) -> Result[list[ValueField], str]:
+    mut items: list[ValueField] = []
+    for field in values:
+        items.append(required_value(selector(field.identity)?, logical(field.value)?))
+    return Ok(items)
+
+
+def logical(cell: NamespaceAtom) -> Result[Value, str]:
+    match cell:
+        NamespaceAtom.Text(s) => return Ok(Value.Text(s))
+        NamespaceAtom.Binary(data) => return Ok(Value.Binary(data))
+        NamespaceAtom.Flag(flag) => return Ok(Value.Boolean(flag))
+        NamespaceAtom.Signed(number) => return Ok(Value.Integer(IntegerValue.Signed(number.saturating_resize[i128]())))
+        NamespaceAtom.Unsigned(number) => return Ok(Value.Integer(IntegerValue.Unsigned(number.saturating_resize[u128]())))
+        NamespaceAtom.Real(number) =>
+            bits = RustF64.to_bits(number)
+            mut data: list[u8] = []
+            for offset in range(8):
+                data.append((bits >> ((7 - offset) * 8)).wrapping_resize[u8]())
+            return Ok(Value.Float(64, data))
+        NamespaceAtom.Missing => return Ok(Value.NoneValue)
+        NamespaceAtom.Present(items) =>
+            if len(items) == 1:
+                return Ok(Value.Some([logical(items[0])?]))
+            return Err("namespace option needs one value")
+        NamespaceAtom.Items(items) => return Ok(Value.List([logical(item)? for item in items]))
+        NamespaceAtom.TupleItems(items) => return Ok(Value.Tuple([logical(item)? for item in items]))
+        NamespaceAtom.Mapping(pairs) =>
+            mut entries: list[MapEntry] = []
+            for entry in pairs:
+                entries.append(MapEntry(key=logical(entry.key)?, value=logical(entry.value)?))
+            return Ok(Value.Map(entries))
+        NamespaceAtom.Fields(items) => return Ok(Value.Record(fields(items)?))
+        NamespaceAtom.Alternative(identity, items) => return Ok(Value.Enum(selector(identity)?, fields(items)?))
+
+
+def read_fields(values: list[ValueField]) -> Result[list[NamespaceField], str]:
+    mut result: list[NamespaceField] = []
+    for field in values:
+        result.append(NamespaceField(identity=selector_number(field.identity)?, value=atom(field.value)?))
+    return Ok(result)
+
+
+def atom(value: Value) -> Result[NamespaceAtom, str]:
+    match value:
+        Value.Text(s) => return Ok(NamespaceAtom.Text(s))
+        Value.Binary(data) => return Ok(NamespaceAtom.Binary(data))
+        Value.Boolean(flag) => return Ok(NamespaceAtom.Flag(flag))
+        Value.Integer(IntegerValue.Signed(number)) =>
+            if number.try_resize[i64]().is_some():
+                return Ok(NamespaceAtom.Signed(number.saturating_resize[i64]()))
+        Value.Integer(IntegerValue.Unsigned(number)) =>
+            if number.try_resize[u64]().is_some():
+                return Ok(NamespaceAtom.Unsigned(number.saturating_resize[u64]()))
+        Value.Float(64, data) =>
+            if len(data) == 8:
+                mut bits: u64 = 0u64
+                for byte in data:
+                    bits = (bits << 8) | byte.saturating_resize[u64]()
+                return Ok(NamespaceAtom.Real(RustF64.from_bits(bits)))
+        Value.NoneValue => return Ok(NamespaceAtom.Missing)
+        Value.Some(items) =>
+            if len(items) == 1:
+                return Ok(NamespaceAtom.Present([atom(items[0])?]))
+        Value.List(items) => return Ok(NamespaceAtom.Items([atom(item)? for item in items]))
+        Value.Tuple(items) => return Ok(NamespaceAtom.TupleItems([atom(item)? for item in items]))
+        Value.Map(entries) => return Ok(NamespaceAtom.Mapping([NamespaceEntry(key=atom(entry.key)?, value=atom(entry.value)?) for entry in entries]))
+        Value.Record(items) => return Ok(NamespaceAtom.Fields(read_fields(items)?))
+        Value.Enum(identity, items) => return Ok(NamespaceAtom.Alternative(selector_number(identity)?, read_fields(items)?))
+        _ => pass
+    return Err("invalid logical cell in a checked namespace")
+
+
+pub def encode_namespace_interface(root: NamespaceAtom) -> Result[bytes, str]:
+    return write_wire(namespace_root(), namespace_descriptions(), logical(root)?)
+
+
+pub def decode_namespace_interface(encoded: bytes) -> Result[NamespaceAtom, str]:
+    return atom(read_wire(encoded, namespace_root(), namespace_descriptions())?)

@@ -5,7 +5,7 @@ from std.primitives.hash import sha256
 from pub::incan_platform.store import Snapshot
 from pub::internal_models import GraphBodyValue, ProducerRank, encode_graph_body_values, encode_graph_checking_pair
 from pub::internal_models.records import ReadReceipt, RecordKey
-from compiler_body_keys import IDENTITY_PROFILE
+from compiler_body_keys import IDENTITY_PROFILE, NAMESPACE_IDENTITY_PROFILE
 from compiler_graph_records import (
     OutputSlots,
     PublishedEvaluation,
@@ -57,7 +57,7 @@ pub def select_namespace_inventory_except(
 ) -> Result[list[SelectedBodyPage], str]:
     """Select this project origin's namespaces whose source and imported declaration witnesses remain current."""
     mut pages: list[SelectedBodyPage] = []
-    slots = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, excluded=invalid)
+    slots = OutputSlots(origin=origin, identity_profile=NAMESPACE_IDENTITY_PROFILE, excluded=invalid)
     for record in reusable_family_records(selected, "namespace", profile, Some(slots))?:
         key = "namespace-" + hexlify(sha256.digest(record.key.identity.encode("utf-8")))
         pages.append(SelectedBodyPage(key=key, value=record.value))
