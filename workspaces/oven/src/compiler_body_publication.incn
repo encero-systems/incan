@@ -300,9 +300,7 @@ def stage_compiled_body_values(
     """Stage each compiler-produced local, final and Body IR value with its exact source and dependency witnesses."""
     mut published = 0
     for value in values:
-        mut position = NamespaceOrder()
-        if value.module in order:
-            position = order[value.module]
+        position = order.get(value.module, NamespaceOrder())
         projection = projections[value.module]
         owner = compiled_owner_source(projection, value.module, value.name, value.identity)?
         declaration_key = body_key("declaration", origin, value.identity, value.name, root(value.declaration)?)
@@ -409,9 +407,8 @@ def stage_compiled_namespaces(
                 lowering_inputs=namespace.lowering_inputs,
             ),
         ).map_err((error) => f"compiled namespace output refused: {error:?}")?
-        mut position = NamespaceOrder()
-        if namespace.module in order:
-            position = order[namespace.module]
+        position = order.get(namespace.module, NamespaceOrder())
+        if len(position.certificate) > 0:
             stage_put(prepared, "incan.compiler.namespace-order\t" + position.evidence, position.certificate)
         receipt = source.receipt(scope, key, reads, position.evidence)?
         _ = prepare_evaluation(
