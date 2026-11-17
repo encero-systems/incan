@@ -6,7 +6,7 @@ from std.primitives.crumb.hashes import value_hash
 from std.primitives.crumb.values import Projection, Value
 from pub::internal_models.crumb_rows import ModelField, model_description, operation_budget, required_value
 from pub::internal_models.graph_crumb_fields import (
-    REQUEST_TYPE, decode_graph_field, decode_graph_row, encode_graph_row, integer, read_request, request_value, text,
+    REQUEST_TYPE, decode_graph_field, decode_graph_row, encode_graph_row, integer as integer_field, read_request, request_value, text,
 )
 from pub::internal_models import ProducerRank, stage_name
 from pub::internal_models.records import RecordKey, RecordRequest
@@ -59,9 +59,9 @@ pub def encode_evaluation(profile: str, output: str, claim: str, value_digest: s
     """Bind a produced output and receipt to their exact activation and rank."""
     return encode_graph_row(EVALUATION, evaluation_description(), [
         required_value(b"claim_", Value.Text(claim)),
-        required_value(b"dep___", integer(rank.dependency)),
+        required_value(b"dep___", integer_field(rank.dependency)),
         required_value(b"digest", Value.Text(value_digest)),
-        required_value(b"namesp", integer(rank.namespace)),
+        required_value(b"namesp", integer_field(rank.namespace)),
         required_value(b"output", Value.Text(output)),
         required_value(b"profil", Value.Text(profile)),
         required_value(b"receip", Value.Text(receipt_root)),
