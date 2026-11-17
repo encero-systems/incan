@@ -1,8 +1,11 @@
 """Verify release argument, baseline, receipt, and byte-comparison contracts without native production."""
 
+from rust::std::thread import sleep
+from rust::std::time import Duration
 from std.fs import Path
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
+from pub::incan_platform.probes import ProcessResource, process_table
 from driver_evidence import driver_qualification, retain_driver_evidence
 from native_build import (
     LOWERING_RESERVATION_BYTES,
@@ -20,9 +23,11 @@ from release_support import (
     BaselineReport,
     Counts,
     ReleaseTrace,
+    Step,
     append_bytes,
     append_timing_file,
     check_baseline,
+    cancel_background_step,
     digest,
     parse_release_options,
     parse_verification_options,
@@ -30,6 +35,7 @@ from release_support import (
     reference_cache_root,
     reference_census_jobs,
     reference_worker_arguments,
+    release_process_tree,
     reclaim_paths,
     record_tree_sample,
     reuse_reference_log,
@@ -40,6 +46,7 @@ from release_support import (
     same_bytes,
     seed_toolchain_directory,
     shared_relocated_sysroot,
+    start_background_step,
     store_reference_log,
     tree_bytes,
     tree_digest,
@@ -52,6 +59,7 @@ from verify_installation import (
     require_shipped_standard_sources,
 )
 from relink_driver import absolute_manifest
+from release import validate_seed_bridge
 from registry_checksums import REGISTRY_CHECKSUMS, checksummed_closure, is_sha256, write_checksummed_registry
 from check_support import repository_root
 
@@ -114,6 +122,42 @@ def test_release_census_shares_compilation_without_dropping_a_family() -> Result
     return Ok(None)
 
 
+def test_release_process_tree_follows_complete_parent_chains() -> Result[None, str]:
+    """Cancellation ownership includes grandchildren even when process-table order and group membership differ."""
+    rows = [
+        ProcessResource(pid=30, parent=20, footprint=0, lifetime_peak=0, resident=0, name="grandchild"),
+        ProcessResource(pid=40, parent=1, footprint=0, lifetime_peak=0, resident=0, name="foreign"),
+        ProcessResource(pid=10, parent=1, footprint=0, lifetime_peak=0, resident=0, name="root"),
+        ProcessResource(pid=20, parent=10, footprint=0, lifetime_peak=0, resident=0, name="child"),
+    ]
+    assert release_process_tree(rows, 10) == [10, 20, 30]
+    return Ok(None)
+
+
+def test_cancelled_release_step_reaps_its_spawned_descendant() -> Result[None, str]:
+    """An early release refusal leaves neither its retained command nor the command's child alive."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    step = Step(
+        name="nested-cancellation",
+        executable="/bin/sh",
+        arguments=["-c", "sleep 60 & wait"],
+        environment={},
+        remove_environment=[],
+        directory=Some(temporary.path()),
+        log=temporary.path().joinpath("nested.log"),
+        timeout_seconds=60,
+    )
+    running = start_background_step(step)?
+    root = int(running.child.borrow().id())
+    sleep(Duration.from_millis(100))
+    members = release_process_tree(process_table()?, root)
+    assert len(members) >= 2, f"nested cancellation fixture observed only {members}"
+    cancel_background_step(running)?
+    remaining = [row.pid for row in process_table()? if row.pid in members]
+    assert len(remaining) == 0, f"cancelled release step left {remaining}"
+    return Ok(None)
+
+
 def test_release_profiles_keep_seed_consumption_and_candidate_shipping_distinct() -> Result[None, str]:
     """The seed generation needs release providers; the candidate ships release and debug providers."""
     assert standard_profiles(StandardGeneration.SourceClosure) == [StandardProfile.Release]
@@ -159,14 +203,51 @@ def test_release_seed_source_names_the_full_commit_of_the_seed_generation() -> R
     options = parse_release_options([SHA, "out", "--seed-source", seed])?
     assert options.source_sha == SHA
     assert options.seed_source == seed
+    assert options.seed_bridge == ""
     assert refused_release([SHA, "out", "--seed-source"]) == "--seed-source needs a full lowercase source commit"
     assert refused_release([SHA, "out", "--seed-source", "deadbeef"]) == "--seed-source needs a full lowercase source commit"
     return Ok(None)
 
 
+def test_release_seed_bridge_is_explicit_and_requires_the_seed_generation() -> Result[None, str]:
+    """A full bridge commit is separate from both source identities and cannot exist without the seed generation."""
+    seed = "89abcdef0123456789abcdef0123456789abcdef"
+    bridge = "fedcba9876543210fedcba9876543210fedcba98"
+    options = parse_release_options([SHA, "out", "--seed-source", seed, "--seed-bridge", bridge])?
+    assert options.seed_source == seed
+    assert options.seed_bridge == bridge
+    assert refused_release([SHA, "out", "--seed-bridge"]) == "--seed-bridge needs a full lowercase source commit"
+    assert refused_release([SHA, "out", "--seed-bridge", "deadbeef"]) == "--seed-bridge needs a full lowercase source commit"
+    assert refused_release([SHA, "out", "--seed-bridge", bridge]) == "--seed-bridge requires --seed-source"
+    return Ok(None)
+
+
+def test_seed_bridge_is_one_direct_child_with_only_the_authenticated_sources() -> Result[None, str]:
+    """The temporary bridge cannot hide another commit or change anything outside the two internal-model signatures."""
+    bridge = "fedcba9876543210fedcba9876543210fedcba98"
+    paths = [
+        "loaves/compiler/internal_models/src/checker_records.incn",
+        "loaves/compiler/internal_models/src/compiled_body_rows.incn",
+    ]
+    validate_seed_bridge(SHA, bridge, [SHA], paths)?
+    match validate_seed_bridge(SHA, bridge, [bridge], paths):
+        Ok(_) => return Err("a bridge whose parent differs from the qualified source was accepted")
+        Err(message) =>
+            assert "as its only parent" in message
+    match validate_seed_bridge(SHA, bridge, [SHA, bridge], paths):
+        Ok(_) => return Err("a merge commit was accepted as a direct-child bridge")
+        Err(message) =>
+            assert "as its only parent" in message
+    match validate_seed_bridge(SHA, bridge, [SHA], paths + ["scripts/release.incn"]):
+        Ok(_) => return Err("an over-broad bridge was accepted")
+        Err(message) =>
+            assert "changes unsupported paths" in message
+    return Ok(None)
+
+
 def test_release_arguments_refuse_ambiguous_or_unbounded_invocations() -> Result[None, str]:
     """Missing operands, abbreviated SHAs, unknown options, and nonpositive budgets fail closed."""
-    assert refused_release([SHA]) == "usage: release.incn SHA OUT [--keep-trees] [--prove-fixed-point] [--seed-source SHA] [--jobs N] [--timeout SECONDS] [--stamp-signer | --verify-installed BUNDLE]"
+    assert refused_release([SHA]) == "usage: release.incn SHA OUT [--keep-trees] [--prove-fixed-point] [--seed-source SHA] [--seed-bridge SHA] [--jobs N] [--timeout SECONDS] [--stamp-signer | --verify-installed BUNDLE]"
     assert refused_release(["deadbeef", "out"]) == "SHA must be a full lowercase source commit"
     assert refused_release([SHA, "out", "--fast"]) == "unknown option `--fast`"
     assert refused_release([SHA, "out", "--jobs", "0"]) == "--jobs needs a positive integer"
@@ -564,17 +645,17 @@ def test_installed_verification_uses_only_the_clean_checkout() -> Result[None, s
         .write_text("{\"path\": \"/local/source.rs\"}\n", "utf-8", "strict", None)
         .map_err((error) => error.message())?
     audit_relocation(home, ["/builder"])?
-    manifest = JsonValue.parse(
-        "{\"driver\":\"bin/driver\",\"sysroot\":\"sysroot\",\"rust_abi\":[],\"search\":[],\"externs\":[],\"compiler_records\":{\"root\":\"compiler-records\",\"digest\":\"pin\"}}",
-    ).map_err((error) => error.message())?
+    manifest = JsonValue
+        .parse(
+            "{\"driver\":\"bin/driver\",\"sysroot\":\"sysroot\",\"rust_abi\":[],\"search\":[],\"externs\":[],\"compiler_records\":{\"root\":\"compiler-records\",\"digest\":\"pin\"}}",
+        )
+        .map_err((error) => error.message())?
     relocated = JsonValue.parse(absolute_manifest(manifest, verification.0)?).map_err((error) => error.message())?
     records = relocated.require("compiler_records").map_err((error) => error.message())?
-    assert records.require("root").and_then((value) => value.expect_str()).map_err(
-        (error) => error.message(),
-    )? == verification.joinpath("compiler-records").0
-    assert records.require("digest").and_then((value) => value.expect_str()).map_err(
-        (error) => error.message(),
-    )? == "pin"
+    assert records.require("root").and_then((value) => value.expect_str()).map_err((error) => error.message())? == verification.joinpath(
+        "compiler-records",
+    ).0
+    assert records.require("digest").and_then((value) => value.expect_str()).map_err((error) => error.message())? == "pin"
     return Ok(None)
 
 
@@ -669,9 +750,10 @@ def test_a_seed_of_an_earlier_version_is_read_by_its_own_toolchain_directory() -
     seed = temporary.path().joinpath("seed")
     # 1. The seed installed the line's previous version.
     seed.joinpath("toolchains/0.6.0-dev.8").mkdir(true, true).map_err((error) => error.message())?
-    seed.joinpath("toolchains/0.6.0-dev.8/toolchain.json").write_text("{}", "utf-8", "strict", None).map_err(
-        (error) => error.message(),
-    )?
+    seed
+        .joinpath("toolchains/0.6.0-dev.8/toolchain.json")
+        .write_text("{}", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
     assert seed_toolchain_directory(seed)? == "toolchains/0.6.0-dev.8"
     assert seed_toolchain_directory(seed)? != TOOLCHAIN_DIRECTORY
     # 2. Nothing installed, or more than one generation, names no seed.
@@ -679,14 +761,17 @@ def test_a_seed_of_an_earlier_version_is_read_by_its_own_toolchain_directory() -
     empty.joinpath("toolchains").mkdir(true, true).map_err((error) => error.message())?
     match seed_toolchain_directory(empty):
         Ok(found) => return Err(f"an empty seed home selected {found}")
-        Err(reason) => assert "no installed toolchain" in reason, reason
+        Err(reason) =>
+            assert "no installed toolchain" in reason, reason
     seed.joinpath("toolchains/0.6.0-dev.7").mkdir(true, true).map_err((error) => error.message())?
-    seed.joinpath("toolchains/0.6.0-dev.7/toolchain.json").write_text("{}", "utf-8", "strict", None).map_err(
-        (error) => error.message(),
-    )?
+    seed
+        .joinpath("toolchains/0.6.0-dev.7/toolchain.json")
+        .write_text("{}", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
     match seed_toolchain_directory(seed):
         Ok(found) => return Err(f"a seed home with two toolchains selected {found}")
-        Err(reason) => assert "0.6.0-dev.7, 0.6.0-dev.8" in reason, reason
+        Err(reason) =>
+            assert "0.6.0-dev.7, 0.6.0-dev.8" in reason, reason
     return Ok(None)
 
 
@@ -702,9 +787,10 @@ def test_the_release_s_registry_closure_records_each_unit_s_pinned_checksum() ->
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     seed = temporary.path().joinpath("seed/registry")
     seed.joinpath("entries/sha256-aa/artifacts").mkdir(true, true).map_err((error) => error.message())?
-    seed.joinpath("selected.json").write_text("{\"units\": []}\n", "utf-8", "strict", None).map_err(
-        (error) => error.message(),
-    )?
+    seed
+        .joinpath("selected.json")
+        .write_text("{\"units\": []}\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
     closure_text = """{"externs": {}, "schema": "incan.oven.closure/1", "units": [
 {"domain": "target", "entry": "sha256:aa", "loaf": "crates-io/serde", "version": "1.0.229"},
 {"domain": "host", "entry": "sha256:bb", "loaf": "crates-io/serde", "version": "1.0.229"},
@@ -713,26 +799,23 @@ def test_the_release_s_registry_closure_records_each_unit_s_pinned_checksum() ->
     seed.joinpath("closure.json").write_text(closure_text, "utf-8", "strict", None).map_err((error) => error.message())?
     serde = "sha256:4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"
     libc = "sha256:ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
-    pins_text = (
-        "{\"checksums\": {\"crates-io/serde\": {\"1.0.229\": \""
-        + serde
-        + "\"}, \"crates-io/libc\": {\"0.2.190\": \""
-        + libc
-        + "\"}}}\n"
-    )
+    pins_text = ("{\"checksums\": {\"crates-io/serde\": {\"1.0.229\": \"" + serde + "\"}, \"crates-io/libc\": {\"0.2.190\": \"" + libc + "\"}}}\n")
     pins = temporary.path().joinpath("registry-checksums.json")
     pins.write_text(pins_text, "utf-8", "strict", None).map_err((error) => error.message())?
     candidate = temporary.path().joinpath("candidate")
     candidate.mkdir(true, true).map_err((error) => error.message())?
     manifest = "{\"name\": \"0.6.0-dev.9\", \"registry_units\": \"" + seed.joinpath("closure.json").0 + "\"}\n"
-    candidate.joinpath("toolchain.json").write_text(manifest, "utf-8", "strict", None).map_err(
-        (error) => error.message(),
-    )?
+    candidate
+        .joinpath("toolchain.json")
+        .write_text(manifest, "utf-8", "strict", None)
+        .map_err((error) => error.message())?
     # 1. The candidate's closure carries each unit's pin; the seed's stays as it was.
     write_checksummed_registry(candidate, pins)?
-    written = JsonValue.parse(
-        candidate.joinpath("registry/closure.json").read_text("utf-8", "strict").map_err((error) => error.message())?,
-    ).map_err((error) => error.message())?
+    written = JsonValue
+        .parse(
+            candidate.joinpath("registry/closure.json").read_text("utf-8", "strict").map_err((error) => error.message())?,
+        )
+        .map_err((error) => error.message())?
     units: list[JsonValue] = written.require("units").map_err((error) => error.message())?.expect_array().map_err(
         (error) => error.message(),
     )?
@@ -742,22 +825,24 @@ def test_the_release_s_registry_closure_records_each_unit_s_pinned_checksum() ->
             Some(checksum) => recorded.append(checksum.expect_str().map_err((error) => error.message())?)
             None => recorded.append("")
     assert recorded == [serde, serde, libc], f"the candidate closure records {recorded}"
-    named = JsonValue.parse(
-        candidate.joinpath("toolchain.json").read_text("utf-8", "strict").map_err((error) => error.message())?,
-    ).map_err((error) => error.message())?
-    registry_units = named.require("registry_units").and_then((value) => value.expect_str()).map_err(
-        (error) => error.message(),
-    )?
+    named = JsonValue
+        .parse(candidate.joinpath("toolchain.json").read_text("utf-8", "strict").map_err((error) => error.message())?)
+        .map_err((error) => error.message())?
+    registry_units = named
+        .require("registry_units")
+        .and_then((value) => value.expect_str())
+        .map_err((error) => error.message())?
     assert registry_units == "registry/closure.json", f"the candidate manifest names {registry_units}"
     assert candidate.joinpath("registry/entries").is_symlink(), "the seed's entries were not linked"
     assert candidate.joinpath("registry/selected.json").is_symlink(), "the seed's selection was not linked"
     kept = seed.joinpath("closure.json").read_text("utf-8", "strict").map_err((error) => error.message())?
     assert kept == closure_text, "the seed's closure was written"
     # 2. An unpinned version, and a recorded checksum that is not the pin, are refused.
-    unpinned = JsonValue.parse(
-        "{\"units\": [{\"loaf\": \"crates-io/rand\", \"version\": \"0.9.2\"}, {\"loaf\": \"crates-io/libc\", "
-        + "\"version\": \"0.2.190\"}]}",
-    ).map_err((error) => error.message())?
+    unpinned = JsonValue
+        .parse(
+            "{\"units\": [{\"loaf\": \"crates-io/rand\", \"version\": \"0.9.2\"}, {\"loaf\": \"crates-io/libc\", " + "\"version\": \"0.2.190\"}]}",
+        )
+        .map_err((error) => error.message())?
     pinned = JsonValue.parse(pins_text).map_err((error) => error.message())?
     match checksummed_closure(unpinned, pinned):
         Ok(_) => return Err("a closure with an unpinned Loaf version was accepted")
@@ -765,27 +850,32 @@ def test_the_release_s_registry_closure_records_each_unit_s_pinned_checksum() ->
             assert "pins no checksum for: crates-io/rand 0.9.2" in reason, reason
             assert REGISTRY_CHECKSUMS in reason, reason
     other = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-    disagreeing = JsonValue.parse(
-        "{\"units\": [{\"loaf\": \"crates-io/libc\", \"version\": \"0.2.190\", \"checksum\": \"" + other + "\"}]}",
-    ).map_err((error) => error.message())?
+    disagreeing = JsonValue
+        .parse(
+            "{\"units\": [{\"loaf\": \"crates-io/libc\", \"version\": \"0.2.190\", \"checksum\": \"" + other + "\"}]}",
+        )
+        .map_err((error) => error.message())?
     match checksummed_closure(disagreeing, pinned):
         Ok(_) => return Err("a recorded checksum that differs from its pin was accepted")
         Err(reason) =>
             assert other in reason and libc in reason, reason
     # 3. The checked-in pins are `sha256:` digests.
-    released = JsonValue.parse(
-        repository_root()?.joinpath(REGISTRY_CHECKSUMS).read_text("utf-8", "strict").map_err(
-            (error) => error.message(),
-        )?,
-    ).map_err((error) => error.message())?
+    released = JsonValue
+        .parse(
+            repository_root()?.joinpath(REGISTRY_CHECKSUMS).read_text("utf-8", "strict").map_err(
+                (error) => error.message(),
+            )?,
+        )
+        .map_err((error) => error.message())?
     loaves = released.require("checksums").map_err((error) => error.message())?
     mut count = 0
     for loaf in loaves.keys():
         versions = loaves.require(loaf).map_err((error) => error.message())?
         for version in versions.keys():
-            value = versions.require(version).and_then((entry) => entry.expect_str()).map_err(
-                (error) => error.message(),
-            )?
+            value = versions
+                .require(version)
+                .and_then((entry) => entry.expect_str())
+                .map_err((error) => error.message())?
             assert is_sha256(value), f"{REGISTRY_CHECKSUMS} pins {loaf} {version} to `{value}`"
             count += 1
     assert count > 0, f"{REGISTRY_CHECKSUMS} pins nothing"

@@ -2,6 +2,7 @@
 
 from rust::std::cell import RefCell
 from rust::std::fs import File
+from rust::std::os::unix::process import CommandExt
 from rust::std::ops import DerefMut
 from rust::std::process import Child, Command, ExitStatus, Stdio, id
 from rust::std::rc import Rc
@@ -12,6 +13,7 @@ from std.fs import Path
 from std.hash import file_digest, sha256
 from std.json import JsonValue
 from std.regex import Regex
+from pub::incan_platform.probes import ProcessResource, process_table
 
 pub const TOOLCHAIN_VERSION: str = "0.6.0-dev.9"
 pub const TOOLCHAIN_DIRECTORY: str = "toolchains/0.6.0-dev.9"
@@ -45,9 +47,11 @@ pub model ReleaseOptions:
     Caller-selected release source, output, retention, fixed-point proof, worker count, and per-command timeout.
 
     `seed_source` names the commit the seed's installed native generation was built from; empty means the qualified
-    source still carries those sources unchanged. `stamp_signer` selects the release workflow's first invocation, which
-    stamps the signer into the shipped `incan`, packs, and leaves installed verification to the second; `signed_bundle`
-    selects that second invocation, on the bundle the workflow signed in between. A local qualification sets neither.
+    source still carries those sources unchanged. `seed_bridge` optionally names one direct child of the qualified
+    source used only while that seed builds release tools. `stamp_signer` selects the release workflow's first
+    invocation, which stamps the signer into the shipped `incan`, packs, and leaves installed verification to the
+    second; `signed_bundle` selects that second invocation, on the bundle the workflow signed in between. A local
+    qualification sets neither.
     """
 
     pub source_sha: str
@@ -57,6 +61,7 @@ pub model ReleaseOptions:
     pub jobs: int
     pub timeout_seconds: int
     pub seed_source: str = ""
+    pub seed_bridge: str = ""
     pub stamp_signer: bool = false
     pub signed_bundle: str = ""
 
@@ -279,6 +284,7 @@ pub def parse_release_options(arguments: list[str]) -> Result[ReleaseOptions, st
     mut jobs = 4
     mut timeout = 600
     mut seed_source = ""
+    mut seed_bridge = ""
     mut stamp_signer = false
     mut signed_bundle = ""
     mut index = 0
@@ -294,6 +300,11 @@ pub def parse_release_options(arguments: list[str]) -> Result[ReleaseOptions, st
             if index + 1 >= len(arguments) or not full_sha(arguments[index + 1]):
                 return Err("--seed-source needs a full lowercase source commit")
             seed_source = str(arguments[index + 1])
+            index += 2
+        elif argument == "--seed-bridge":
+            if index + 1 >= len(arguments) or not full_sha(arguments[index + 1]):
+                return Err("--seed-bridge needs a full lowercase source commit")
+            seed_bridge = str(arguments[index + 1])
             index += 2
         elif argument == "--stamp-signer":
             stamp_signer = true
@@ -319,13 +330,14 @@ pub def parse_release_options(arguments: list[str]) -> Result[ReleaseOptions, st
             index += 1
     if len(positional) != 2:
         return Err(
-            "usage: release.incn SHA OUT [--keep-trees] [--prove-fixed-point] [--seed-source SHA] [--jobs N] "
-            + "[--timeout SECONDS] [--stamp-signer | --verify-installed BUNDLE]",
+            "usage: release.incn SHA OUT [--keep-trees] [--prove-fixed-point] [--seed-source SHA] " + "[--seed-bridge SHA] [--jobs N] [--timeout SECONDS] [--stamp-signer | --verify-installed BUNDLE]",
         )
     if stamp_signer and signed_bundle != "":
         return Err("--stamp-signer packs a release to sign; --verify-installed verifies the signed one: pass one")
     if not full_sha(positional[0]):
         return Err("SHA must be a full lowercase source commit")
+    if seed_bridge != "" and seed_source == "":
+        return Err("--seed-bridge requires --seed-source")
     return Ok(
         ReleaseOptions(
             source_sha=positional[0],
@@ -335,6 +347,7 @@ pub def parse_release_options(arguments: list[str]) -> Result[ReleaseOptions, st
             jobs=jobs,
             timeout_seconds=timeout,
             seed_source=seed_source,
+            seed_bridge=seed_bridge,
             stamp_signer=stamp_signer,
             signed_bundle=signed_bundle,
         ),
@@ -700,7 +713,7 @@ pub def run_step(step: Step) -> Result[int, str]:
         command.env_remove(key)
     if let Some(directory) = step.directory:
         command.current_dir(directory.0)
-    command.stdin(Stdio.null()).stdout(log).stderr(errors)
+    command.stdin(Stdio.null()).stdout(log).stderr(errors).process_group(0)
     mut child = command.spawn().map_err((error) => f"cannot start {step.name}: {error}")?
     started = Instant.now()
     span = begin_step_trace(step.trace, step.name)?
@@ -711,8 +724,9 @@ pub def run_step(step: Step) -> Result[int, str]:
                 return Ok(status_code(status))
             None =>
                 if started.elapsed().as_secs() >= step.timeout_seconds:
-                    _ = child.kill()
+                    members = terminate_release_process_tree(int(child.id()))?
                     _ = child.wait()
+                    require_release_processes_stopped(members)?
                     finish_step_trace(step.trace, span)?
                     return Err(f"{step.name} timed out after {step.timeout_seconds}s; log: {step.log.0}")
                 sleep(Duration.from_millis(20))
@@ -745,17 +759,19 @@ pub def finish_background_step(step: BackgroundStep, timeout_seconds: int) -> Re
                 return Ok((status_code(status), step.started.elapsed().as_secs_f64()))
             None =>
                 if timeout_seconds > 0 and step.started.elapsed().as_secs() >= timeout_seconds:
-                    _ = step.child.borrow_mut().kill()
+                    members = terminate_release_process_tree(int(step.child.borrow().id()))?
                     _ = step.child.borrow_mut().wait()
+                    require_release_processes_stopped(members)?
                     finish_step_trace(step.trace, step.span)?
                     return Err(f"{step.name} timed out after {timeout_seconds}s; log: {step.log.0}")
                 sleep(Duration.from_millis(20))
 
 
 pub def cancel_background_step(step: BackgroundStep) -> Result[None, str]:
-    """Stop and reap a background step when an earlier release phase has already refused the run."""
-    _ = step.child.borrow_mut().kill()
+    """Stop and reap a background step and its complete observed descendant tree after an earlier refusal."""
+    members = terminate_release_process_tree(int(step.child.borrow().id()))?
     _ = step.child.borrow_mut().wait().map_err((error) => f"cannot reap {step.name}: {error}")?
+    require_release_processes_stopped(members)?
     finish_step_trace(step.trace, step.span)?
     return Ok(None)
 
@@ -805,8 +821,9 @@ pub def run_reserved_steps(
                         failed.append(item.position)
                 None =>
                     if item.timeout_seconds > 0 and item.started.elapsed().as_secs() >= item.timeout_seconds:
-                        _ = item.child.borrow_mut().kill()
+                        members = terminate_release_process_tree(int(item.child.borrow().id()))?
                         _ = item.child.borrow_mut().wait()
+                        require_release_processes_stopped(members)?
                         finish_step_trace(item.trace, item.span)?
                         append_timing(timings, item.name, item.started.elapsed().as_secs_f64())?
                         failed.append(item.position)
@@ -855,8 +872,63 @@ def start_step(step: Step) -> Result[Child, str]:
         command.env_remove(key)
     if let Some(directory) = step.directory:
         command.current_dir(directory.0)
-    command.stdin(Stdio.null()).stdout(log).stderr(errors)
+    command.stdin(Stdio.null()).stdout(log).stderr(errors).process_group(0)
     return command.spawn().map_err((error) => f"cannot start {step.name}: {error}")
+
+
+pub def release_process_tree(rows: list[ProcessResource], root: int) -> list[int]:
+    """Return one release root and every currently observed descendant, independent of process-group boundaries."""
+    mut members: set[int] = {root}
+    mut changed = true
+    while changed:
+        changed = false
+        for row in rows:
+            if row.parent in members and row.pid not in members:
+                members.add(row.pid)
+                changed = true
+    return sorted([pid for pid in members])
+
+
+def terminate_release_process_tree(root: int) -> Result[list[int], str]:
+    """Signal every observed owned process and process group, then force any survivor before the root is reaped."""
+    members = release_process_tree(process_table()?, root)
+    for pid in members:
+        signal_release_process(pid, "TERM")
+    sleep(Duration.from_millis(100))
+    for pid in members:
+        if release_process_alive(pid):
+            signal_release_process(pid, "KILL")
+    return Ok(members)
+
+
+def signal_release_process(pid: int, signal: str) -> None:
+    """Signal both a process-group spelling and the individual process; absent groups and exited members are harmless."""
+    mut group = Command.new("/bin/kill")
+    group.arg(f"-{signal}").arg("--").arg(f"-{pid}")
+    _ = group.status()
+    mut process = Command.new("/bin/kill")
+    process.arg(f"-{signal}").arg("--").arg(str(pid))
+    _ = process.status()
+
+
+def release_process_alive(pid: int) -> bool:
+    """Return whether the kernel still recognizes one captured process identity."""
+    mut probe = Command.new("/bin/kill")
+    probe.arg("-0").arg("--").arg(str(pid))
+    match probe.status():
+        Ok(status) => return status.success()
+        Err(_) => return false
+
+
+def require_release_processes_stopped(members: list[int]) -> Result[None, str]:
+    """Refuse completion while any captured release descendant remains after its root was reaped."""
+    for _attempt in range(50):
+        remaining = [pid for pid in members if release_process_alive(pid)]
+        if len(remaining) == 0:
+            return Ok(None)
+        sleep(Duration.from_millis(20))
+    remaining = [pid for pid in members if release_process_alive(pid)]
+    return Err(f"release cancellation left processes alive: {remaining}")
 
 
 pub def begin_step_trace(trace: Option[ReleaseTrace], name: str) -> Result[Option[ReleaseSpan], str]:

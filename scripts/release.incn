@@ -75,6 +75,10 @@ from verify_fixed_point import prove_fixed_point
 # Sources of the native crates the seed installs and its built tools reach by path. The seed links an installed crate
 # only into builds of the sources it was built from, so its tools take these from the seed's own commit.
 const SEED_GENERATION_SOURCES: FrozenList[str] = ["loaves/kernel/incan_lang"]
+const SEED_BRIDGE_SOURCES: FrozenList[str] = [
+    "loaves/compiler/internal_models/src/checker_records.incn",
+    "loaves/compiler/internal_models/src/compiled_body_rows.incn",
+]
 const SEED_TOOL_SOURCE: str = "seed-tool-source"
 
 
@@ -188,6 +192,7 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
         Err(message) =>
             _ = cancel_background_step(reference)
             return Err(message)
+
     if not run.options.prove_fixed_point and not signed:
         reclaim(run, "build-lane", [run.paths.lane])?
 
@@ -530,16 +535,48 @@ def seed_tool_source(run: ReleaseRun) -> Result[Path, str]:
     verify = ["-C", run.root.0, "rev-parse", "--verify", f"{run.options.seed_source}^{{commit}}"]
     if command_text("git", verify).unwrap_or("").strip() != run.options.seed_source:
         return Err(f"--seed-source does not identify a commit in this repository: {run.options.seed_source}")
+    mut selected_source = run.options.source_sha
+    if run.options.seed_bridge != "":
+        verify_bridge = ["-C", run.root.0, "rev-parse", "--verify", f"{run.options.seed_bridge}^{{commit}}"]
+        if command_text("git", verify_bridge)?.strip() != run.options.seed_bridge:
+            return Err(f"--seed-bridge does not identify a commit in this repository: {run.options.seed_bridge}")
+        parent_text = command_text("git", ["-C", run.root.0, "show", "-s", "--format=%P", run.options.seed_bridge])?.strip()
+        parents = [parent for parent in parent_text.split(" ") if parent != ""]
+        changed = command_text(
+            "git",
+            [
+                "-C",
+                run.root.0,
+                "diff-tree",
+                "--no-commit-id",
+                "--name-only",
+                "-r",
+                run.options.source_sha,
+                run.options.seed_bridge,
+            ],
+        )?
+        paths = [line for line in changed.split("\n") if line != ""]
+        validate_seed_bridge(run.options.source_sha, run.options.seed_bridge, parents, paths)?
+        selected_source = run.options.seed_bridge
     root = run.paths.output.joinpath(SEED_TOOL_SOURCE)
     clone = ["clone", "--shared", "--no-checkout", run.root.0, root.0]
     require_release_step(run, release_step(run, "seed-tool-clone", "git", clone, run.root, {}))?
-    checkout = ["-C", root.0, "checkout", "--detach", run.options.source_sha]
+    checkout = ["-C", root.0, "checkout", "--detach", selected_source]
     require_release_step(run, release_step(run, "seed-tool-checkout", "git", checkout, run.root, {}))?
     mut restore = ["-C", root.0, "restore", f"--source={run.options.seed_source}", "--staged", "--worktree", "--"]
     for path in SEED_GENERATION_SOURCES:
         restore.append(path)
     require_release_step(run, release_step(run, "seed-tool-generation", "git", restore, run.root, {}))?
     return Ok(root)
+
+
+pub def validate_seed_bridge(source: str, bridge: str, parents: list[str], paths: list[str]) -> Result[None, str]:
+    """Require one direct-child seed bridge whose complete diff is the authenticated compatibility surface."""
+    if parents != [source]:
+        return Err(f"--seed-bridge {bridge} must have qualified source {source} as its only parent")
+    if sorted(paths) != sorted([path for path in SEED_BRIDGE_SOURCES]):
+        return Err(f"--seed-bridge changes unsupported paths: {", ".join(sorted(paths))}")
+    return Ok(None)
 
 
 def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str]:
@@ -577,11 +614,7 @@ def build_candidate_providers(context: NativeContext, helper: Path) -> Result[No
     readmit_build_home(context, helper, "candidate-driver-readmit")?
     interfaces_started = Instant.now()
     interfaces = build_source_interfaces(context, helper, "candidate-")?
-    append_timing(
-        context.timings,
-        "candidate-source-interfaces",
-        interfaces_started.elapsed().as_secs_f64(),
-    )?
+    append_timing(context.timings, "candidate-source-interfaces", interfaces_started.elapsed().as_secs_f64())?
     _ = build_runtime(context, helper, Some(interfaces), true)?
     require_unique_runtime_root(context)?
     return Ok(None)
