@@ -969,10 +969,8 @@ impl LoafIndex {
             if !entry.summary.vocabulary {
                 continue;
             }
-            let Some(entry) = self.entry(key) else {
-                continue;
-            };
-            let Some(vocab) = &entry.artifact.manifest.vocab else {
+            tracing::trace!(target: "incan::invocation", phase = "dependency_family", loaf = %entry.summary.identity.name, family = "vocabulary");
+            let Some(vocab) = entry.parser_vocabulary().ok().flatten() else {
                 continue;
             };
             let registrations = vocab
@@ -994,10 +992,7 @@ impl LoafIndex {
             if !entry.summary.vocabulary {
                 continue;
             }
-            let Some(entry) = self.entry(key) else {
-                continue;
-            };
-            if let Some(vocab) = &entry.artifact.manifest.vocab
+            if let Ok(Some(vocab)) = entry.parser_vocabulary()
                 && !vocab.dsl_surfaces.is_empty()
             {
                 map.insert(key.clone(), vocab.dsl_surfaces.clone());

@@ -104,13 +104,13 @@ def compare(hello: Path, output: Path) -> Result[None, str]:
                 return Err("mixed dependency-root completions")
             declared = number(row, "roots")?
             continue
-        if phase not in ["dependency_root", "dependency_fact", "body_surface_open"]:
+        if phase not in ["dependency_root", "dependency_fact", "dependency_family", "body_surface_open"]:
             continue
         name = required_text(row, "loaf")?
         if name not in directories:
             return Err(f"dependency inspector referenced unprepared Loaf {name}")
         prefix = "loaf/" + directories[name].name() + "/" + name + "/"
-        if phase in ["dependency_root", "dependency_fact"]:
+        if phase in ["dependency_root", "dependency_fact", "dependency_family"]:
             reached.add(name)
         if phase == "body_surface_open":
             if name not in surfaces:
@@ -126,6 +126,15 @@ def compare(hello: Path, output: Path) -> Result[None, str]:
             census.rows.append(f"semantic-root\t1\tunknown\t{name}\t{identity}")
             if binding != "":
                 runtime.add(name + "/" + binding)
+        elif phase == "dependency_family":
+            family = required_text(row, "family")?
+            if family != "vocabulary":
+                return Err(f"unrecognized singleton dependency family: {family}")
+            keys = [key for key in selected.lengths.keys() if key.startswith(prefix + family + "/")]
+            if len(keys) != 1:
+                census.problems.append(f"missing or ambiguous {family} for {name}")
+            for key in keys:
+                expected[key] = selected.lengths[key]
         elif phase == "dependency_fact":
             family = required_text(row, "family")?
             member = required_text(row, "name")?
