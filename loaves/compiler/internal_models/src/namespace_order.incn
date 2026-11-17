@@ -6,8 +6,17 @@ from std.primitives.crumb.descriptions import Description
 from std.primitives.crumb.values import Value
 from crumb_rows import ModelField, model_description, required_value
 from graph_crumb_fields import decode_graph_row, encode_graph_row, items, text
+from record_scope import RecordKey
+from store_record_source import encode_record_key
 
 const ORDER_SELECTOR: bytes = b"nsrank\x00"
+
+
+pub def checking_basis_key(output: RecordKey) -> Result[str, str]:
+    """Name the last completed supplier evidence for the exact requested checking output."""
+    if output.family not in ["local", "final"]:
+        return Err("checking preparation requires a local or final output")
+    return Ok("incan.compiler.checking-basis\t" + hexlify(sha256.digest(encode_record_key(output)?.encode("utf-8"))))
 
 
 def order_description() -> Description:
