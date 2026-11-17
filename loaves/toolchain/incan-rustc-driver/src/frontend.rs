@@ -334,7 +334,7 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
         }
         // Oven writes each page as one owner's Crumb row (`encode_graph_body_values`); the shared codec decodes and
         // authenticates it, both checker records included.
-        let mut records = internal_models::decode_graph_body_values(&encoded).map_err(|error| {
+        let mut records = internal_models::decode_graph_checking_inputs(&encoded).map_err(|error| {
             incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
                 "graph body page refused: {error:?}"
             ))
@@ -347,22 +347,27 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
                 ));
             }
         };
-        let frame =
-            incan_semantics_core::executable_representation::decode_owner(&record.body_ir).map_err(|error| {
-                incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
-                    "graph Body IR owner frame refused: {error}"
-                ))
-            })?;
-        if frame.source.is_empty() || frame.identity != record.identity {
-            return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
-                "graph Body IR owner frame disagrees with its selected identity".into(),
-            ));
-        }
+        let frame = if record.body_ir.is_empty() {
+            None
+        } else {
+            let frame =
+                incan_semantics_core::executable_representation::decode_owner(&record.body_ir).map_err(|error| {
+                    incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
+                        "graph Body IR owner frame refused: {error}"
+                    ))
+                })?;
+            if frame.source.is_empty() || frame.identity != record.identity {
+                return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                    "graph Body IR owner frame disagrees with its selected identity".into(),
+                ));
+            }
+            Some(frame)
+        };
         let record = incan_frontend::checker_records::GraphBodyRecord {
             identity: record.identity,
             local: record.local,
             final_value: record.final_fields,
-            body_ir: Some(frame),
+            body_ir: frame,
         };
         decoded_pages::remember(digest, &record);
         Ok(Some(record))
