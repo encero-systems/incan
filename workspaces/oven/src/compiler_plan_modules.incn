@@ -115,7 +115,10 @@ pub def restored_modules(report: Path) -> Result[list[str], str]:
 pub def staged_plan(
     file: str,
     event: JsonValue,
-    function: PlanModuleFunction,
+    identity: str,
+    symbol: str,
+    function: str,
+    key: str,
     plan: RecordKey,
 ) -> Result[StagedPlan, str]:
     """
@@ -126,12 +129,15 @@ pub def staged_plan(
     mut module = ""
     if let Some(named) = event.get("module"):
         module = named.expect_str().map_err((error) => error.message())?
+    mut fields = event.expect_object().map_err((error) => error.message())?
+    fields["reused"] = JsonValue.bool(true)
+    event_bytes = JsonValue.object(fields).to_json().map_err((error) => error.message())?.encode("utf-8")
     recorded = PlanModuleFunction(
-        identity=function.identity,
-        symbol=function.symbol,
-        function=function.function,
-        key=function.key,
-        event=function.event.replace("\"reused\":false", "\"reused\":true"),
+        identity=identity,
+        symbol=symbol,
+        function=function,
+        key=key,
+        event=event_bytes,
     )
     return Ok(StagedPlan(file=file, module=module, function=recorded, plan=plan))
 

@@ -266,7 +266,7 @@ def append_admitted_events(mut events: list[JsonValue], products: str, report: P
             .read_bytes()
             .map_err((error) => f"cannot read admitted plan module {error.message()}")?
         page = decode_plan_module(encoded).map_err((error) => f"admitted plan module refused: {error:?}")?
-        mut stored: Dict[str, str] = {}
+        mut stored: Dict[str, bytes] = {}
         for function in page.functions:
             stored[function.function] = function.event
         for function in note.functions:
@@ -274,7 +274,8 @@ def append_admitted_events(mut events: list[JsonValue], products: str, report: P
                 continue
             if function.function not in stored:
                 return Err(f"admitted plan module {note.module} holds no event for {function.function}")
-            event = parse(stored[function.function]).map_err((error) => error.message())?
+            encoded_event = stored[function.function].decode().map_err((_) => "admitted lowering event is not UTF-8")?
+            event = parse(encoded_event).map_err((error) => error.message())?
             # The body may have moved in its file since the record was folded; its identity is this request's.
             event_key = text(event, "key")?
             record = parse(text(event, "product")?).map_err((error) => error.message())?

@@ -13,7 +13,7 @@ pub const PLAN_MODULE_PAGE: str = ".incnmodule"
 const PLAN_MODULE_SELECTOR: bytes = b"plnmod\x00"
 const MAX_PLAN_MODULE_BYTES: int = 67108864
 const MAX_PLAN_MODULE_FUNCTIONS: int = 65536
-const FUNCTION_FIELDS: int = 5
+const FUNCTION_FIELDS: int = 4
 
 
 pub model PlanModuleFunction:
@@ -26,7 +26,7 @@ pub model PlanModuleFunction:
     pub symbol: str
     pub function: str
     pub key: str
-    pub event: str
+    pub event: bytes
 
 
 pub model PlanModuleValue:
@@ -40,8 +40,9 @@ def plan_module_description() -> Description:
     """Describe one module's plan functions without interpreting their events."""
     return model_description(
         PLAN_MODULE_SELECTOR,
-        "incan.plan-module/1",
+        "incan.plan-module/2",
         [
+            ModelField(identity=b"events", name="events", storage="list<binary>"),
             ModelField(identity=b"funcs_", name="functions", storage="list<string>"),
             ModelField(identity=b"module", name="module", storage="string"),
         ],
@@ -53,10 +54,11 @@ pub def encode_plan_module(value: PlanModuleValue) -> Result[bytes, CodecFault]:
     if value.module == "" or len(value.functions) == 0 or len(value.functions) > MAX_PLAN_MODULE_FUNCTIONS:
         return Err(CodecFault.Malformed)
     mut flattened: list[Value] = []
+    mut events: list[Value] = []
     mut previous = ""
     for function in value.functions:
         order = function.identity + "\n" + function.function
-        if "" in [function.identity, function.symbol, function.function, function.key, function.event]:
+        if "" in [function.identity, function.symbol, function.function, function.key] or len(function.event) == 0:
             return Err(CodecFault.Malformed)
         if order <= previous:
             return Err(CodecFault.Malformed)
@@ -66,12 +68,16 @@ pub def encode_plan_module(value: PlanModuleValue) -> Result[bytes, CodecFault]:
             Value.Text(function.symbol),
             Value.Text(function.function),
             Value.Text(function.key),
-            Value.Text(function.event),
         ]
+        events.append(Value.Binary(function.event))
     record = RowRecord(
         key=PLAN_MODULE_SELECTOR,
         value=Value.Record(
-            [required_value(b"funcs_", Value.List(flattened)), required_value(b"module", Value.Text(value.module))],
+            [
+                required_value(b"events", Value.List(events)),
+                required_value(b"funcs_", Value.List(flattened)),
+                required_value(b"module", Value.Text(value.module)),
+            ],
         ),
     )
     return encode_rows(plan_module_description(), [record], MAX_PLAN_MODULE_BYTES).map_err((_) => CodecFault.Limit)
@@ -86,25 +92,33 @@ pub def decode_plan_module(encoded: bytes) -> Result[PlanModuleValue, CodecFault
         Value.Record(values) => values
         _ => return Err(CodecFault.Malformed)
 
-    if len(fields) != 2:
+    if len(fields) != 3:
         return Err(CodecFault.Malformed)
-    flattened = text_values(fields[0].value)?
-    module = text_value(fields[1].value)?
-    if module == "" or len(flattened) == 0 or len(flattened) % FUNCTION_FIELDS != 0:
+    events = match fields[0].value:
+        Value.List(items) => items
+        _ => return Err(CodecFault.Malformed)
+
+    flattened = text_values(fields[1].value)?
+    module = text_value(fields[2].value)?
+    if module == "" or len(events) == 0 or len(events) > MAX_PLAN_MODULE_FUNCTIONS or len(flattened) != len(events) * FUNCTION_FIELDS:
         return Err(CodecFault.Malformed)
     mut functions: list[PlanModuleFunction] = []
     mut previous = ""
     mut offset = 0
-    while offset < len(flattened):
+    for item in events:
+        event = match item:
+            Value.Binary(data) => data
+            _ => return Err(CodecFault.Malformed)
+
         function = PlanModuleFunction(
             identity=flattened[offset],
             symbol=flattened[offset + 1],
             function=flattened[offset + 2],
             key=flattened[offset + 3],
-            event=flattened[offset + 4],
+            event=event,
         )
         order = function.identity + "\n" + function.function
-        if "" in [function.identity, function.symbol, function.function, function.key, function.event]:
+        if "" in [function.identity, function.symbol, function.function, function.key] or len(event) == 0:
             return Err(CodecFault.Malformed)
         if order <= previous:
             return Err(CodecFault.Malformed)
