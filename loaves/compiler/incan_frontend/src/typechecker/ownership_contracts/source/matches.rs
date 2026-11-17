@@ -651,7 +651,7 @@ impl Builder<'_> {
                 }
                 Ok(incoming)
             }
-            _ => self.expression(scrutinee, incoming, !fresh_scrutinee(scrutinee)),
+            _ => self.carrier_expression(scrutinee, incoming, !fresh_scrutinee(scrutinee)),
         }
     }
 

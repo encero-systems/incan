@@ -144,8 +144,8 @@ struct Builder<'a> {
     /// Calls an `await` suspends on directly. A call to an async callable anywhere else would leave a future holding
     /// its loans, which is not modeled.
     awaited: BTreeSet<Span>,
-    /// Direct calls currently evaluated as the carrier of `?`; only their exact closed carrier may use that route.
-    try_calls: BTreeSet<Span>,
+    /// Direct calls whose closed carrier is consumed by `?` or selected by a match.
+    consumed_carrier_calls: BTreeSet<Span>,
     /// Canonical locals introduced by the active loop headers; every poll produces fresh owned storage.
     fresh_loop_locals: BTreeSet<CanonicalSymbolId>,
     /// Unannotated locals whose initializer was classified as an independent materialization.
@@ -323,7 +323,7 @@ fn build_graph(
         taken_carriers: BTreeSet::new(),
         closures: BTreeMap::new(),
         awaited: BTreeSet::new(),
-        try_calls: BTreeSet::new(),
+        consumed_carrier_calls: BTreeSet::new(),
         fresh_loop_locals: BTreeSet::new(),
         independent_locals: BTreeSet::new(),
         independent_call_results: BTreeSet::new(),
@@ -407,6 +407,22 @@ fn build_graph(
 }
 
 impl Builder<'_> {
+    /// Evaluate a consumed carrier without losing its ordinary argument accesses or any retained result dependencies.
+    fn carrier_expression(
+        &mut self,
+        value: &Spanned<Expr>,
+        incoming: Vec<usize>,
+        consume: bool,
+    ) -> Result<Vec<usize>, Unavailable> {
+        if !matches!(value.node, Expr::Call(..) | Expr::MethodCall(..)) {
+            return self.expression(value, incoming, consume);
+        }
+        self.consumed_carrier_calls.insert(value.span);
+        let evaluated = self.expression(value, incoming, consume);
+        self.consumed_carrier_calls.remove(&value.span);
+        evaluated
+    }
+
     /// Evaluate an expression in source order. A checked Copy read is not a transfer; ordinary unconstrained values
     /// retain their existing semantics until the separate ordinary-binding migration ships.
     fn expression(
@@ -596,15 +612,7 @@ impl Builder<'_> {
             // whose view is carried in the success payload, has that exit; an error that carries the view must be the
             // declared source's.
             Expr::Try(inner) if self.view.is_none() || self.view_carried == Some(0) => {
-                let direct_call = matches!(inner.node, Expr::Call(..) | Expr::MethodCall(..));
-                if direct_call {
-                    self.try_calls.insert(inner.span);
-                }
-                let result = self.expression(inner, incoming, true);
-                if direct_call {
-                    self.try_calls.remove(&inner.span);
-                }
-                result
+                self.carrier_expression(inner, incoming, true)
             }
             Expr::Try(_) if self.view_carried == Some(1) => Err(error_view_try(expression.span)),
             Expr::Binary(left, operation, right) => {

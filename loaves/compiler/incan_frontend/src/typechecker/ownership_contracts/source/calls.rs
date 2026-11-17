@@ -476,7 +476,7 @@ impl Builder<'_> {
             })
             && conditional_result(result))
         .then(|| result.clone());
-        let closed_try_carrier_result = self.try_calls.contains(&span)
+        let closed_carrier_result = self.consumed_carrier_calls.contains(&span)
             && call.kind == super::super::InputCallKind::Ordinary
             && view.is_none()
             && native_dependencies.is_none()
@@ -498,7 +498,7 @@ impl Builder<'_> {
             && !path_join_independent_result
             && !plain_result(result)
             && result_requirement.is_none()
-            && !closed_try_carrier_result
+            && !closed_carrier_result
             && !lends_nothing
             && !self.independent_call_results.contains(&span)
             && !selected_result_map_err
