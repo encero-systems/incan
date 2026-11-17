@@ -12,9 +12,7 @@ use crate::diagnostics::{
     CliDiagnostic, CliDiagnosticFailure, CliDiagnosticSource, parser_warning_diagnostics, render_module_warnings,
     typecheck_diagnostic_phase, typecheck_warning_diagnostics,
 };
-use crate::modules::{
-    import_cycle_peers, imported_module_dep_indexes_for, module_key_index, register_module_path_segments,
-};
+use crate::modules::{SourceModuleImports, register_module_path_segments};
 use crate::unit::UnitDescription;
 use incan_frontend::loaf_index::LoafIndex;
 use incan_frontend::module::{ExportedSymbol, exported_symbols};
@@ -66,7 +64,7 @@ pub fn typecheck_modules(
         .iter()
         .cloned()
         .collect::<std::collections::HashSet<_>>();
-    let module_idx_by_key = module_key_index(modules);
+    let imports = SourceModuleImports::new(modules, own_standard_package);
     let dependency_exports = modules
         .iter()
         .map(|module| Arc::<[ExportedSymbol]>::from(exported_symbols(&module.ast)))
@@ -77,7 +75,7 @@ pub fn typecheck_modules(
     let mut namespace_bodies = Vec::with_capacity(modules.len());
     let mut namespace_lowering_inputs = Vec::new();
     let mut dependency_interfaces = vec![None::<Arc<ModuleDependencyInterface>>; modules.len()];
-    let cycle_peers = import_cycle_peers(modules, own_standard_package);
+    let cycle_peers = imports.cycle_peers();
     let related_sources = modules
         .iter()
         .map(|module| {
@@ -172,7 +170,7 @@ pub fn typecheck_modules(
             namespace_lowering_inputs.extend(record.lowering_inputs);
             continue;
         }
-        let dep_indexes = imported_module_dep_indexes_for(modules, idx, &module_idx_by_key, own_standard_package);
+        let dep_indexes = imports.dependencies(idx);
         let deps_for_module = dep_indexes
             .iter()
             .map(|dep_idx| (modules[*dep_idx].name.as_str(), &modules[*dep_idx].ast))

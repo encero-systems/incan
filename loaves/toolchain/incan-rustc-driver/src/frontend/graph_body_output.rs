@@ -93,6 +93,11 @@ pub(super) struct GraphBodyOutput {
 }
 
 impl GraphBodyOutput {
+    /// Whether this invocation requested graph rows for freshly checked modules.
+    pub(super) fn enabled(&self) -> bool {
+        self.path.is_some()
+    }
+
     /// Prepare an inert collector unless Oven explicitly requested one output path.
     pub(super) fn prepare(path: Option<PathBuf>, project_root: PathBuf) -> Result<Self, String> {
         let project_root = if path.is_some() {

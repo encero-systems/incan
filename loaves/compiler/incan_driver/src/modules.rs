@@ -604,23 +604,49 @@ pub fn import_cycle_peers(
     modules: &[ParsedModule],
     own_standard_package: Option<&'static StandardPackageNamespacePolicy>,
 ) -> Vec<Vec<usize>> {
-    let module_idx_by_key = module_key_index(modules);
-    let dependencies: Vec<Vec<usize>> = (0..modules.len())
-        .map(|index| {
-            direct_local_dep_indexes(modules, index, &module_idx_by_key, own_standard_package)
-                .into_iter()
-                .collect()
-        })
-        .collect();
-    let mut peers = vec![Vec::new(); modules.len()];
-    for component in strongly_connected_components(&dependencies) {
-        for &member in &component {
-            let mut others: Vec<usize> = component.iter().copied().filter(|&peer| peer != member).collect();
-            others.sort_unstable();
-            peers[member] = others;
-        }
+    SourceModuleImports::new(modules, own_standard_package).cycle_peers()
+}
+
+/// Direct local imports in the exact order of a collected module graph. Resolve syntax once before walking more
+/// than one dependency closure; a consumer's transitive imports must not repeatedly revisit its providers' ASTs.
+pub struct SourceModuleImports {
+    direct: Vec<Vec<usize>>,
+}
+
+impl SourceModuleImports {
+    /// Resolve the collected modules' local import declarations under this package's namespace policy.
+    pub fn new(
+        modules: &[ParsedModule],
+        own_standard_package: Option<&'static StandardPackageNamespacePolicy>,
+    ) -> Self {
+        let keys = module_key_index(modules);
+        let direct = (0..modules.len())
+            .map(|index| {
+                direct_local_dep_indexes(modules, index, &keys, own_standard_package)
+                    .into_iter()
+                    .collect()
+            })
+            .collect();
+        Self { direct }
     }
-    peers
+
+    /// Every other member of each module's strongly connected component, in stable module order.
+    pub fn cycle_peers(&self) -> Vec<Vec<usize>> {
+        let mut peers = vec![Vec::new(); self.direct.len()];
+        for component in strongly_connected_components(&self.direct) {
+            for &member in &component {
+                let mut others: Vec<usize> = component.iter().copied().filter(|&peer| peer != member).collect();
+                others.sort_unstable();
+                peers[member] = others;
+            }
+        }
+        peers
+    }
+
+    /// Transitive local imports in collected order, excluding the requesting module on cycle back edges.
+    pub fn dependencies(&self, index: usize) -> Vec<usize> {
+        reachable_imports(self.direct.len(), index, |module| self.direct[module].iter().copied())
+    }
 }
 
 /// Build a lookup map from canonical module key (`a_b_c`) to module index in `collect_modules` output.
@@ -665,30 +691,34 @@ pub fn imported_module_dep_indexes_for(
     module_idx_by_key: &HashMap<String, usize>,
     own_standard_package: Option<&'static StandardPackageNamespacePolicy>,
 ) -> Vec<usize> {
-    // ---- Context: bounds and setup ----
-    if module_index >= modules.len() {
+    reachable_imports(modules.len(), module_index, |index| {
+        direct_local_dep_indexes(modules, index, module_idx_by_key, own_standard_package).into_iter()
+    })
+}
+
+fn reachable_imports<I: Iterator<Item = usize>>(
+    module_count: usize,
+    index: usize,
+    direct: impl Fn(usize) -> I,
+) -> Vec<usize> {
+    if index >= module_count {
         return Vec::new();
     }
-
-    // ---- Context: walk the transitive local source-module import closure ----
-    let mut dep_indexes: BTreeSet<usize> = BTreeSet::new();
-    let mut pending: Vec<usize> =
-        direct_local_dep_indexes(modules, module_index, module_idx_by_key, own_standard_package)
-            .into_iter()
-            .collect();
-    while let Some(dep_idx) = pending.pop() {
-        if dep_idx == module_index || !dep_indexes.insert(dep_idx) {
-            continue;
+    let mut visited = vec![false; module_count];
+    visited[index] = true;
+    let mut pending: Vec<_> = direct(index).collect();
+    while let Some(dependency) = pending.pop() {
+        if !visited[dependency] {
+            visited[dependency] = true;
+            pending.extend(direct(dependency));
         }
-        pending.extend(direct_local_dep_indexes(
-            modules,
-            dep_idx,
-            module_idx_by_key,
-            own_standard_package,
-        ));
     }
-
-    dep_indexes.into_iter().collect()
+    visited[index] = false;
+    visited
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, used)| used.then_some(index))
+        .collect()
 }
 
 /// Collect immediate local source dependencies for one collected module from bare and absolute `crate.*` imports.
