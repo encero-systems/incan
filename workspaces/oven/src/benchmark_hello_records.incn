@@ -8,7 +8,7 @@ from std.fs import Path
 from std.hash import sha256
 from std.json import JsonValue
 from benchmark_body_ranges import BodyDemand, Surface, indexed_surface, needed_ranges, range_key
-from benchmark_graph_frames import required_graph_frames
+from benchmark_graph_frames import GraphFrames, required_graph_frames
 from compiler_record_admission import compiler_record_profile
 from files import parse_json, read, read_json, write
 from json_fields import array_value, required_items, required_text, string_value
@@ -254,8 +254,13 @@ def observed(trace: Path, selected: Selection, surfaces: Dict[str, Surface], mut
 
 def reconcile(expected: Dict[str, int], mut census: Census) -> None:
     """Require one exact-length read per independently selected key or covered range and no unexplained reads."""
+    mut total_required = 0
+    mut total_observed = 0
+    mut read_count = 0
+    mut duplicates = 0
     for key in sorted([item for item in expected.keys()]):
         needed = expected[key]
+        total_required += needed
         actual = census.sizes.get(key, 0)
         reads = census.counts.get(key, 0)
         census.rows.append(f"required\t1\t{needed}\t{key}")
@@ -264,6 +269,9 @@ def reconcile(expected: Dict[str, int], mut census: Census) -> None:
     for key in sorted([item for item in census.counts.keys()]):
         actual = census.sizes[key]
         reads = census.counts[key]
+        total_observed += actual
+        read_count += reads
+        duplicates += reads - 1
         mut label = "observed"
         if key not in expected:
             label = "unexplained"
@@ -271,6 +279,10 @@ def reconcile(expected: Dict[str, int], mut census: Census) -> None:
                 label = "unresolved-group"
             census.problems.append(f"{label}: {reads} reads/{actual} bytes for {key}")
         census.rows.append(f"{label}\t{reads}\t{actual}\t{key}")
+    census.rows.append(f"known-required-total\t{len(expected)}\t{total_required}\tsealed-records-and-body-fragments")
+    census.rows.append(f"observed-total\t{read_count}\t{total_observed}\tsealed-records-and-body-fragments")
+    census.rows.append(f"observed-minus-known-required\t{read_count - len(expected)}\t{total_observed - total_required}\tsealed-records-and-body-fragments")
+    census.rows.append(f"repeated-reads\t{duplicates}\tunknown\tsealed-records-and-body-fragments")
     if len(expected) == 0:
         census.problems.append("empty required record inventory")
 
@@ -283,7 +295,10 @@ def frames(path: Path, store: Path, mut census: Census) -> Result[None, str]:
             continue
         report = parse_json(line)?
         reports += 1
-        selection = required_graph_frames(report, store)?
+        mut selection = GraphFrames()
+        match required_graph_frames(report, store):
+            Ok(verified) => selection = verified
+            Err(reason) => census.problems.append("graph selections unresolved: " + reason)
         for root in selection.roots:
             census.rows.append("semantic-graph-selection\t1\tunknown\t" + root)
         census.problems += selection.unknown
