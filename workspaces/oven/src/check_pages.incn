@@ -12,7 +12,10 @@ The directory's selection is recorded beside it, so every request finds it, whic
 
 from std.encoding.hex import hexlify
 from std.fs import Path
-from std.json import JsonValue, parse
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from pub::internal_models.crumb_rows import ModelField, model_description, required_value
+from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, items, text, tuple_items
 from std.primitives.hash import sha256
 from rust::std::fs import remove_dir_all
 from pub::incan_platform.store import Snapshot
@@ -22,7 +25,7 @@ from compiler_body_values import encode_body_inventory, select_body_inventory_ex
 from compiler_graph_records import family_listing, owner_evaluations
 from files import discard_file
 from observation import trace
-from publication import place, publish, publish_binary
+from publication import place, publish_binary
 from unit import UnitDescription
 from unit_compiler import write_selected_records
 
@@ -164,41 +167,59 @@ def read_selection(directory: Path) -> Result[KeptPages, str]:
     file = selection_file(directory)
     if not file.is_file():
         return Ok(KeptPages(source=""))
-    text = file.read_text("utf-8", "strict").map_err((error) => error.message())?
-    value = parse(text).map_err((error) => error.message())?
-    source = value.require("source").and_then((field) => field.expect_str()).map_err((error) => error.message())?
-    context = value.require("context").and_then((field) => field.expect_str()).map_err((error) => error.message())?
-    pages = text_fields(value, "pages")?
+    encoded = file.read_bytes().map_err((error) => error.message())?
+    fields = decode_graph_row(encoded, b"chksel\x00", selection_description(), 4)?
+    context = text(fields[0].value)?
+    owners = named_digests(fields[1].value)?
+    pages = named_digests(fields[2].value)?
+    source = text(fields[3].value)?
     mut parked: list[str] = []
     for identity in sorted([owner for owner in pages.keys()]):
         if parked_directory(directory).joinpath(pages[identity]).is_file():
             parked.append(identity)
-    owners = text_fields(value, "owners")?
     return Ok(KeptPages(source=source, context=context, pages=pages, owners=owners, parked=parked))
 
 
-def text_fields(value: JsonValue, name: str) -> Result[Dict[str, str], str]:
-    """One recorded object of text fields by name."""
-    keyed = value.require(name).map_err((error) => error.message())?
-    listed: Dict[str, JsonValue] = keyed.expect_object().map_err((error) => error.message())?
-    mut fields: Dict[str, str] = {}
-    for field in listed.keys():
-        fields[field] = listed[field].expect_str().map_err((error) => error.message())?
-    return Ok(fields)
+def selection_description() -> Description:
+    """The context and source revision authenticate sorted owner and page digest mappings."""
+    return model_description(b"chksel\x00", "incan.check-page-selection/2", [
+        ModelField(identity=b"contex", name="context", storage="string"),
+        ModelField(identity=b"owners", name="owners", storage="list<tuple<string,string>>"),
+        ModelField(identity=b"pages_", name="pages", storage="list<tuple<string,string>>"),
+        ModelField(identity=b"source", name="source", storage="string"),
+    ])
+
+
+def named_digests(value: Value) -> Result[Dict[str, str], str]:
+    """Read unique owner bindings and validate digests before any can become a filesystem name."""
+    mut named: Dict[str, str] = {}
+    for entry in items(value)?:
+        pair = tuple_items(entry, 2)?
+        owner = text(pair[0])?
+        digest = text(pair[1])?
+        if owner in named or len(digest) != 64:
+            return Err("invalid checked-page owner binding")
+        for digit in digest:
+            if digit not in "0123456789abcdef":
+                return Err("invalid checked-page digest")
+        named[owner] = digest
+    return Ok(named)
+
+
+def digest_bindings(named: Dict[str, str]) -> Value:
+    """Publish in stable owner order regardless of dictionary insertion history."""
+    return Value.List([Value.Tuple([Value.Text(owner), Value.Text(named[owner])]) for owner in sorted([key for key in named.keys()])])
 
 
 def record_selection(directory: Path, state: KeptPages) -> Result[None, str]:
-    """Record what the directory's pages were selected from and each owner's page key, replacing the earlier record."""
-    mut pages: Dict[str, JsonValue] = {}
-    for identity in state.pages.keys():
-        pages[identity] = JsonValue.string(state.pages[identity])
-    mut owners: Dict[str, JsonValue] = {}
-    for identity in state.owners.keys():
-        owners[identity] = JsonValue.string(state.owners[identity])
-    mut fields = {"source": JsonValue.string(state.source), "context": JsonValue.string(state.context)}
-    fields["pages"] = JsonValue.object(pages)
-    fields["owners"] = JsonValue.object(owners)
-    return publish(selection_file(directory), JsonValue.object(fields).to_json().map_err((error) => error.message())?)
+    """Atomically retain the selected context, revision and named page bindings."""
+    encoded = encode_graph_row(b"chksel\x00", selection_description(), [
+        required_value(b"contex", Value.Text(state.context)),
+        required_value(b"owners", digest_bindings(state.owners)),
+        required_value(b"pages_", digest_bindings(state.pages)),
+        required_value(b"source", Value.Text(state.source)),
+    ])?
+    return publish_binary(selection_file(directory), encoded)
 
 
 def checked_context(unit: UnitDescription) -> Result[str, str]:
@@ -252,4 +273,4 @@ def parked_directory(directory: Path) -> Path:
 
 def selection_file(directory: Path) -> Path:
     """Where the directory's selection is recorded, beside the directory the compiler reads."""
-    return Path(f"{directory.0}.selection")
+    return Path(f"{directory.0}.selection.crumb")
