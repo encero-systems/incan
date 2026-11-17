@@ -36,6 +36,8 @@ from pub::incan_platform.store import (
     put,
     fork,
     read_counts,
+    measure_frame_reads,
+    finish_frame_reads,
     lease,
     view_snapshot,
     durable_syncs,
@@ -432,7 +434,12 @@ pub def test_a_family_selection_reads_its_range_however_many_records_earlier_edi
         wanted = encode_record_key(target)?
         slots = OutputSlots(origin=target.origin, identity_profile=target.identity_profile, included=Some([target.identity]))
         prior = read_counts()
+        measure_frame_reads(true)
         assert family_outputs(with_neighbours, target.family, "p", Some(slots))? == [wanted]
+        measured = finish_frame_reads()
+        assert len(measured) == 1 and measured[0].reads == 1 and measured[0].key == output
+        assert measured[0].value_bytes == len(pointer)
+        assert measured[0].frame_bytes == 8 + len(output.encode()) + len(pointer)
         observed = read_counts()
         assert observed.records - prior.records == 1
         assert observed.decoded - prior.decoded == len(pointer)
