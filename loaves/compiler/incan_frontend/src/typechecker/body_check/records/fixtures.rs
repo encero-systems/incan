@@ -241,8 +241,13 @@ pub(crate) fn produce_closed_declaration(
             _ => false,
         }
     }
-    let tokens = crate::lexer::lex(source).map_err(|_| NodeBindingError::Unsupported("projected syntax"))?;
-    let program = crate::parser::parse(&tokens).map_err(|_| NodeBindingError::Unsupported("projected syntax"))?;
+    // The normal unit producer owns syntax diagnostics for an edit that changes the discovery shape.
+    let Ok(tokens) = crate::lexer::lex(source) else {
+        return Ok(None);
+    };
+    let Ok(program) = crate::parser::parse(&tokens) else {
+        return Ok(None);
+    };
     let Some((function, owner)) = program.declarations.iter().find_map(|item| match &item.node {
         Declaration::Function(function) if function.name == name => Some((function, item.span)),
         _ => None,
@@ -276,7 +281,7 @@ pub(crate) fn produce_closed_declaration(
     checker.record_program_header_facts();
     checker.record_source_declaration_identities(&program);
     // The complete prior identity must still designate the collected declaration under this revision's signature.
-    if decoded_owner(&checker, &program, &previous)? != owner {
+    if !matches!(decoded_owner(&checker, &program, &previous), Ok(bound) if bound == owner) {
         return Ok(None);
     }
     checker.record_type_param_declaration_spans(&program);

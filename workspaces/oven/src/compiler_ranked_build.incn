@@ -45,6 +45,8 @@ model BuildOwner:
     namespace: int
     name: str
     inputs: Dict[str, bytes]
+    prior_declaration_root: str
+    equal_declaration: bool = false
     predecessors: list[RecordKey] = []
     local: bytes = b""
     settled: bytes = b""
@@ -95,6 +97,7 @@ def changed_owner(graph: Snapshot, prior: RecordKey, captured: &Dict[str, bytes]
         return Err("ranked compiler basis has inconsistent namespace authority")
     mut inputs = {basis_key: pointer, receipt_key: encoded, certificate_key: certificate}
     mut name = ""
+    mut prior_declaration_root = ""
     mut families: set[str] = set()
     for witness in basis.witnesses:
         match witness:
@@ -110,6 +113,7 @@ def changed_owner(graph: Snapshot, prior: RecordKey, captured: &Dict[str, bytes]
                         return Ok(None)
                     key.family = "prior-declaration"
                     inputs[encode_record_key(key)?] = required(graph, encoded_key)?
+                    prior_declaration_root = previous.semantic_digest
                 else:
                     if encoded_key not in captured or key.identity != order.members[0]:
                         return Ok(None)
@@ -123,7 +127,7 @@ def changed_owner(graph: Snapshot, prior: RecordKey, captured: &Dict[str, bytes]
             _ => return Ok(None)
     if len(families) != 4 or name == "":
         return Ok(None)
-    return Ok(Some(BuildOwner(prior=prior, name=name, namespace=order.rank, inputs=inputs)))
+    return Ok(Some(BuildOwner(prior=prior, name=name, namespace=order.rank, inputs=inputs, prior_declaration_root=prior_declaration_root)))
 
 
 def submit(store: Path, view: str, toolchain: Toolchain, owner: &BuildOwner, family: str) -> Result[Submitted, str]:
@@ -202,7 +206,9 @@ def evaluate(store: Path, view: str, toolchain: Toolchain, mut owner: BuildOwner
     owner.inputs[encode_record_key(completed)?] = value
     owner.inputs[completed_checker_key(completed)?] = encode_checking_completion(produced.staged_root, encoded)?
     owner.predecessors.append(completed)
-    if output.family == "local":
+    if output.family == "declaration":
+        owner.equal_declaration = produced.staged_root == owner.prior_declaration_root
+    elif output.family == "local":
         owner.local = value
     elif output.family == "final":
         owner.settled = value
@@ -239,7 +245,7 @@ pub def ranked_build_pages(store: Path, inputs: &RankedBuildInputs, toolchain: T
             mut frontier: list[RankedActivation] = []
             for identity in sorted([identity for identity in owners.keys()]):
                 owner = owners[identity]
-                if owner.namespace == rank and not owner.refused:
+                if owner.namespace == rank and not owner.refused and len(owner.settled) == 0:
                     submitted = submit(store, view, toolchain, owner, family)?
                     jobs[identity] = submitted
                     frontier.append(submitted.activation)
@@ -250,12 +256,19 @@ pub def ranked_build_pages(store: Path, inputs: &RankedBuildInputs, toolchain: T
                     None => break
 
                 identity = activation.ready.output.identity
-                updated = evaluate(store, view, toolchain, owners[identity], jobs[identity])?
-                owners[identity] = updated
-                if family == "final":
+                mut updated = evaluate(store, view, toolchain, owners[identity], jobs[identity])?
+                if family == "local" and updated.equal_declaration:
+                    for old in select_body_inventory_of(graph, CHECKER_PROFILE, origin, [identity])?:
+                        if old.local == updated.local:
+                            # The earlier producer authenticated both of this closed owner's semantic inputs.
+                            # The compiler restores source locations when installing the existing final value.
+                            updated.settled = old.final
+                            result.append(old)
+                elif family == "final":
                     mut frame = b""
                     for old in select_body_inventory_of(graph, CHECKER_PROFILE, origin, [identity])?:
                         if old.final == updated.settled:
                             frame = old.body_ir
                     result.append(SelectedBodyRecord(identity=identity, local=updated.local, final=updated.settled, body_ir=frame))
+                owners[identity] = updated
     return encode_body_inventory(result)
