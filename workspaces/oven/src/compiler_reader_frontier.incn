@@ -31,6 +31,7 @@ pub model ReaderFrontier:
     """A build-owned worklist. Multiple changed inputs coalesce until their reader is taken."""
     pending: Dict[str, Reader] = {}
     evaluated: set[str] = set()
+    pub joint: bool = false
 
     pub def remaining(self) -> int:
         """Count work still demanded after the last reader's semantic outputs were compared."""
@@ -48,7 +49,8 @@ pub model ReaderFrontier:
             if key.family != "local" or key.identity == producer:
                 continue
             if key.identity in self.evaluated:
-                return Err("ranked reader requires joint evaluation after a previously settled dependency")
+                self.joint = true
+                return Ok(None)
             if key.identity in self.pending:
                 mut known = self.pending[key.identity]
                 if output not in known.triggers:
@@ -63,8 +65,11 @@ pub model ReaderFrontier:
                     match page:
                         Some(value) =>
                             order = decode_namespace_order(value, key.origin)?
-                            if order.evidence != certificate or len(order.members) != 1:
-                                return Err("ranked reader requires a joint or complete namespace")
+                            if order.evidence != certificate:
+                                return Err("ranked reader certificate differs from its content identity")
+                            if len(order.members) != 1:
+                                self.joint = true
+                                return Ok(None)
                             mut dependencies: list[str] = []
                             for witness in selected.receipt.witnesses:
                                 match witness:
@@ -102,7 +107,7 @@ pub model ReaderFrontier:
             chosen = identity
         if chosen == "":
             if self.remaining() > 0:
-                return Err("ranked readers require joint evaluation")
+                self.joint = true
             return Ok(None)
         result = self.pending[chosen]
         self.evaluated.add(chosen)
@@ -125,7 +130,7 @@ pub model ReaderFrontier:
 
 pub def evaluate_reader(
     unit: UnitDescription, toolchain: Toolchain, key: Key, reader: Reader, pages: list[SelectedBodyPage],
-) -> Result[SelectedBodyRecord, str]:
+) -> Result[Option[SelectedBodyRecord], str]:
     """Run the compiler's sole-owner statement entry without invoking lowering, code generation or the linker."""
     scratch = scratch_directory()?
     directory = scratch.path()
@@ -142,6 +147,11 @@ pub def evaluate_reader(
         "--graph-body-records", inputs.0])?
     if code != 0:
         return Err(f"ranked reader {demand.identity} refused with compiler status {code}")
+    status = directory.joinpath("unavailable")
+    if status.is_file():
+        if status.read_bytes().map_err((error) => error.message())? != b"missing-settled-peer":
+            return Err("invalid ranked reader admission disposition")
+        return Ok(None)
     local = directory.joinpath("local.crumb").read_bytes().map_err((error) => error.message())?
     final = directory.joinpath("final.crumb").read_bytes().map_err((error) => error.message())?
     checked_local = decode_owned_record(local, CHECKER_PROFILE, demand.identity).map_err((_) => "invalid ranked reader local record")?
@@ -151,4 +161,4 @@ pub def evaluate_reader(
     mut frame = b""
     if final == reader.prior.final:
         frame = reader.prior.body_ir
-    return Ok(SelectedBodyRecord(identity=demand.identity, local=local, final=final, body_ir=frame))
+    return Ok(Some(SelectedBodyRecord(identity=demand.identity, local=local, final=final, body_ir=frame)))

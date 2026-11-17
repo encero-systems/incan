@@ -209,12 +209,13 @@ impl TypeChecker {
 
     /// Check the exact current owner before a ranked activation enters this function's statements.
     pub(in crate::typechecker) fn permits_ranked_body(&self, program: Option<&Program>, owner: Span) -> bool {
-        let Some(expected) = self.graph_body_records.ranked_owner() else {
+        if self.graph_body_records.ranked_owner().is_none() {
             return true;
-        };
-        program
+        }
+        let identity = program
             .and_then(|program| Positions::new(self, program, owner, false).ok())
-            .is_some_and(|positions| positions.nodes.owner().render_compact() == expected)
+            .map(|positions| positions.nodes.owner().render_compact());
+        self.graph_body_records.enter_ranked_owner(identity.as_deref())
     }
 
     /// Restore one graph-selected final value against current compiler identities and syntax, then enqueue it for the
