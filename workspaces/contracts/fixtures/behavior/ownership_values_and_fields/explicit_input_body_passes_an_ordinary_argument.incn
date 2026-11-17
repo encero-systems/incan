@@ -1,5 +1,4 @@
 # behavior: An exclusive input body passes an ordinary parameter to an ordinary function and writes through its input (RFC 164).
-# pending: INCAN-T0123 refuses the body: "ordinary argument requires inferred access or mutable binding facts".
 # expect-stdout:
 #   2
 

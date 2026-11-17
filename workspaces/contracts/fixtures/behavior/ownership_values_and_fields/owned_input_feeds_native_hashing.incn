@@ -1,5 +1,4 @@
 # behavior: An owned input passed on to a shared input whose result feeds native hashing (RFC 164).
-# pending: INCAN-T0123 refuses both bodies: "call has no selected explicit input access facts" (shared input) and "ordinary argument requires inferred access or mutable binding facts" (owned input).
 # expect-stdout:
 #   64
 

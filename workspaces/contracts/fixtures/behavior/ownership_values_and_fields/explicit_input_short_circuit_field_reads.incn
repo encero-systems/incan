@@ -1,5 +1,4 @@
 # behavior: Short-circuit reads of four fields of one shared input (RFC 164).
-# pending: INCAN-T0123 refuses the body: "operation execution edges differ from the checked source paths".
 # expect-stdout:
 #   true
 
