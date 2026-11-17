@@ -83,10 +83,19 @@ pub def test_importer_rename_checks_only_its_direct_signature_reader() -> Result
     generated = [path for path in importer_output_paths(project)? if path not in cold_outputs]
     assert len(generated) == 1
     warm_values = importer_checked_values(Path(generated[0]))?
+    project.joinpath("target").move(root.joinpath("warm-target")).map_err((error) => error.message())?
     control = root.joinpath("cold-edited-store")
-    _ = report_fixture_build(binary, project, control, Some(trace))?
+    control_trace = root.joinpath("cold-edited-trace")
+    control_trace.mkdir(true, true).map_err((error) => error.message())?
+    control_proof = report_fixture_build(binary, project, control, Some(control_trace))?
     stop_example_engine(binary, control)?
-    assert importer_checked_values(Path(generated[0]))? == warm_values
+    assert proof_count(control_proof, "body_evaluations")? == 6
+    assert proof_count(control_proof, "reusable_declarations")? == 6
+    assert sorted(importer_statement_checks(control_trace)?) == sorted(cold_checks)
+    assert len(importer_ranked_completions(control_trace)?) == 0
+    control_outputs = importer_output_paths(project)?
+    assert len(control_outputs) == 1
+    assert importer_checked_values(Path(control_outputs[0]))? == warm_values
     return Ok(None)
 
 
