@@ -1,5 +1,7 @@
 """Lossless native layout-carrier encoding; canonical source-trait tokens explicitly refuse this bounded profile."""
 
+from pub::internal_models.plan_wire_schema import stored_layout_checked_type_descriptions, stored_instance_request_descriptions
+from plan_wire_rows import read_wire, write_wire
 from std.primitives.crumb.values import Value, IntegerValue
 from pub::internal_models.crumb_rows import required_value
 from pub::internal_models.graph_crumb_fields import items, integer as wire_integer, number, text
@@ -882,7 +884,56 @@ pub def restore_checked_type(value: StoredLayoutCheckedType) -> Result[CheckedTy
         StoredLayoutCheckedType.NativeCChar => return Ok(CheckedType.NativeCChar)
         _ => return Err("native-interface refuses an unsupported CheckedType alternative")
 
+pub model StoredInstanceRequest:
+    """Position-independent generic instantiation demand retained with a caller's function product."""
+
+    pub declaration: str
+    pub arguments: list[StoredLayoutCheckedType]
+    pub owned_callable_slots: list[int]
+    pub original_callable: bool
+
+
+pub def encode_checked_layout(value: CheckedType) -> Result[bytes, str]:
+    """Authenticate a whole checked carrier type with its real closed native-plan wire schema."""
+    stored = retain_checked_type(value)?
+    return write_wire(b"\xd3\x06\xf4\xa0\x6a\xec\x00", stored_layout_checked_type_descriptions(), wire_stored_layout_checked_type(stored))
+
+
+pub def encode_instance_request(declaration: str, arguments: list[CheckedType], slots: list[int], original: bool) -> Result[bytes, str]:
+    """Retain the declaration identity, closed argument structures, callable slots and role together."""
+    stored = StoredInstanceRequest(declaration=declaration, arguments=[retain_checked_type(ty)? for ty in arguments],
+        owned_callable_slots=slots, original_callable=original)
+    return write_wire(b"\x78\x18\xc1\xb2\x6b\x0b\x00", stored_instance_request_descriptions(), wire_stored_instance_request(stored))
+
+
+pub def decode_instance_request(encoded: bytes) -> Result[tuple[str, list[CheckedType], list[int], bool], str]:
+    """Restore only the compiler's exact stored generic request and checked argument types."""
+    row = read_wire(encoded, b"\x78\x18\xc1\xb2\x6b\x0b\x00", stored_instance_request_descriptions())?
+    stored = read_wire_stored_instance_request(row, WirePositions())?
+    return Ok((stored.declaration, [restore_checked_type(ty)? for ty in stored.arguments],
+        stored.owned_callable_slots, stored.original_callable))
+
+
 # Generated native-plan wire projections.
+
+
+pub def wire_stored_instance_request(value: StoredInstanceRequest) -> Value:
+    return Value.Record([
+        required_value(b"\xab\xcd\x0e\xe1\xfc,", Value.Text(value.declaration)),
+        required_value(b"\xb1\x92\x01}\xa4\x7f", Value.List([wire_stored_layout_checked_type(item0) for item0 in value.arguments])),
+        required_value(b"\xfc\x7f\x8co\xaf\xff", Value.List([wire_integer(item0) for item0 in value.owned_callable_slots])),
+        required_value(b"\x9b\xf1\x17\x8c4{", Value.Boolean(value.original_callable)),
+    ])
+
+
+pub def read_wire_stored_instance_request(value: Value, positions: &WirePositions) -> Result[StoredInstanceRequest, str]:
+    fields = wire_fields(value, 4)?
+    return Ok(StoredInstanceRequest(
+        declaration=text(fields[1].value)?,
+        arguments=[read_wire_stored_layout_checked_type(item0, positions)? for item0 in items(fields[2].value)?],
+        owned_callable_slots=[number(item0)? for item0 in items(fields[3].value)?],
+        original_callable=boolean_value(fields[0].value)?,
+    ))
 
 
 pub def wire_stored_layout_carrier(value: StoredLayoutCarrier) -> Value:
