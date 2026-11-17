@@ -978,6 +978,38 @@ mod tests {
         Ok(())
     }
 
+    /// After a provider edit shifts its variant, restoring the consumer must bind to the variant's current span.
+    #[test]
+    fn restored_enum_member_uses_the_current_provider_anchor() -> Result<(), Box<dyn std::error::Error>> {
+        let provider = "pub enum Failure:\n    Missing\n    Type\n";
+        let (original, _first) = provider_index(provider)?;
+        let source = "from pub::provider import Failure\n\ndef kind() -> Failure:\n    return Failure.Type\n";
+        let consumer = program(source)?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["main".into()]));
+        checker.set_loaves(original);
+        checker
+            .check_program(&consumer)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let outputs = checked_owner_record_outputs(&consumer, &checker, &["main".into()])?;
+        let [CheckedOwnerRecordOutput::Value(owner)] = outputs.as_slice() else {
+            return Err("expected one reusable consumer of the package variant".into());
+        };
+        assert!(
+            owner
+                .final_value
+                .iter()
+                .any(|row| row.first().is_some_and(|tag| tag == "identity-context")
+                    && row.last().is_some_and(|name| name == "Type"))
+        );
+        let (current, _second) = provider_index(&provider.replace("    Type", "    # a moved declaration\n    Type"))?;
+        assert!(
+            super::verify_fixture_with_loaves(source, "kind", owner.final_value.clone(), current, vec!["main".into()])?
+                .is_empty()
+        );
+        Ok(())
+    }
+
     /// A loan-free match scrutinee is retained as a reusable owner fact instead of forcing a source fallback.
     #[test]
     fn loan_free_match_owner_publishes_reusable_value() -> Result<(), Box<dyn std::error::Error>> {
