@@ -425,8 +425,34 @@ fn record_refusal(stage: &str, rows: &[Vec<String>], error: internal_models::Cod
         artifact_refusals.sort();
         artifact_refusals.dedup();
     }
+    let mut reason = format!("{stage} record output refused: {error:?}");
+    if matches!(error, internal_models::CodecFault::Malformed) {
+        // A bad field or an ordering violation invalidates every longer prefix. Ask the same schema to locate
+        // the first bad row, so the refusal identifies its structural key without publishing its payload.
+        let mut valid_end = 0;
+        let mut end = rows.len() + 1;
+        while end - valid_end > 1 {
+            let middle = valid_end + (end - valid_end) / 2;
+            let prefix = rows[..middle].to_vec();
+            let valid = match stage {
+                "declaration" => internal_models::from_native_fields(&prefix).is_ok(),
+                "local" => internal_models::from_native_local_fields(&prefix).is_ok(),
+                "final" => internal_models::from_native_final_fields(&prefix).is_ok(),
+                _ => false,
+            };
+            if valid {
+                valid_end = middle;
+            } else {
+                end = middle;
+            }
+        }
+        if let Some(row) = rows.get(valid_end) {
+            let key = row.iter().take(3).map(String::as_str).collect::<Vec<_>>().join(" ");
+            reason.push_str(&format!(" at row {valid_end} [{key}]"));
+        }
+    }
     BodyValueRefusal {
-        reason: format!("{stage} record output refused: {error:?}"),
+        reason,
         artifact_refusals,
     }
 }
