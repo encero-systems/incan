@@ -967,6 +967,24 @@ mod tests {
         Ok(())
     }
 
+    /// Frame raw producer headers the same way as the Incan codec's native-fields projection.
+    fn selected_graph_record(
+        mut owner: super::CheckedOwnerRecordFields,
+    ) -> Result<super::GraphBodyRecord, Box<dyn std::error::Error>> {
+        for (fields, family) in [(&mut owner.local, "local"), (&mut owner.final_value, "final")] {
+            fields
+                .first_mut()
+                .ok_or("missing checked record header")?
+                .insert(3, family.into());
+        }
+        Ok(super::GraphBodyRecord {
+            identity: owner.identity,
+            local: owner.local,
+            final_value: owner.final_value,
+            body_ir: None,
+        })
+    }
+
     /// A ranked check enters the demanded statements once and declines an absent peer before its statement producer.
     #[test]
     fn ranked_reader_counts_actual_statement_entries() -> Result<(), Box<dyn std::error::Error>> {
@@ -986,12 +1004,7 @@ mod tests {
             if owner.name == "left" {
                 target = Some(owner.identity.clone());
             }
-            prior.push(super::GraphBodyRecord {
-                identity: owner.identity,
-                local: owner.local,
-                final_value: owner.final_value,
-                body_ir: None,
-            });
+            prior.push(selected_graph_record(owner)?);
         }
         let target = target.ok_or("missing ranked fixture owner")?;
         for (records, missing) in [(prior, false), (Vec::new(), true)] {
@@ -999,7 +1012,8 @@ mod tests {
             let mut checker = TypeChecker::new();
             checker.set_current_module_path(Some(module.clone()));
             checker.set_graph_body_records(scope.clone());
-            assert_eq!(checker.check_program(&source).is_err(), missing);
+            let result = checker.check_program(&source);
+            assert_eq!(result.is_err(), missing, "{result:?}");
             assert_eq!(scope.ranked_admission(), Some((1, missing, false)));
         }
         Ok(())
@@ -1016,28 +1030,13 @@ mod tests {
             .map_err(|errors| format!("{errors:?}"))?;
         let mut records = Vec::new();
         for owner in checked_owner_record_outputs(&consumer, &checker, &["main".into()])? {
-            let CheckedOwnerRecordOutput::Value(mut owner) = owner else {
+            let CheckedOwnerRecordOutput::Value(owner) = owner else {
                 let CheckedOwnerRecordOutput::Fallback(fallback) = owner else {
                     return Err("missing checker output".into());
                 };
                 return Err(format!("ordinary owner {} fell back: {}", fallback.name, fallback.reason).into());
             };
-            owner
-                .local
-                .first_mut()
-                .ok_or("missing local header")?
-                .insert(3, "local".into());
-            owner
-                .final_value
-                .first_mut()
-                .ok_or("missing final header")?
-                .insert(3, "final".into());
-            records.push(super::GraphBodyRecord {
-                identity: owner.identity,
-                local: owner.local,
-                final_value: owner.final_value,
-                body_ir: None,
-            });
+            records.push(selected_graph_record(owner)?);
         }
         let moved = program(&format!("# shifted declaration\n{source}"))?;
         let mut selected = TypeChecker::new();
