@@ -408,7 +408,10 @@ pub def test_record_request_reply_sets_are_closed() -> Result[None, str]:
 pub def test_record_requests_cross_the_host_with_their_closed_replies() -> Result[None, str]:
     """The host serves both request kinds, returns their allowed replies, and closes on a cross-request reply."""
     socket = socket_path("records")
-    mut host = host_for(settings(socket, 10000, 16777216, None))?
+    mut selected = settings(socket, 10000, 16777216, None)
+    selected.snapshot_authority = selected.home + "/independent-snapshot-authority"
+    mut host = host_for(selected)?
+    assert host.selected_home() == selected.snapshot_authority
     prepare = RecordMessage.Prepare(Prepare(stage="local", snapshot="s", demand_root="d", producer_profile="p"))
     mut preparing = record_caller(socket, prepare)?
     match served_record(host)?:

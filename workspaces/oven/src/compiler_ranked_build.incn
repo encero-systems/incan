@@ -20,12 +20,12 @@ from compiler_body_keys import IDENTITY_PROFILE
 from compiler_body_values import SelectedBodyPage, SelectedBodyRecord, encode_body_inventory, select_body_inventory_of
 from compiler_graph_records import OutputSlots, decode_record_key, family_outputs
 from compiler_record_envelopes import RankedActivation, RankedCheckingSweep
-from compiler_snapshot import StagedSnapshot, stage_snapshot
+from compiler_snapshot import StagedSnapshot, stage_selected_snapshot
 from compiler_worker import activate_record
 from compiler_reader_frontier import ReaderFrontier, evaluate_reader
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
-from home_paths import home as compiler_home
+from home_paths import bakery_location, home as compiler_home
 from store_path_conversion import snapshot
 from toolchain import Toolchain
 from unit import UnitDescription
@@ -154,14 +154,14 @@ def submit(store: Path, view: str, toolchain: Toolchain, owner: &BuildOwner, fam
     exact = commit(staging).map_err((error) => error.message())?
     roots = [BASIS_FAMILY, CERTIFICATE_FAMILY, RECEIPT_FAMILY, COMPLETION_FAMILY, DEMAND_FAMILY, PREPARED_FAMILY,
         WORK_FAMILY, "module-header", "owner-source", "owner-census", "prior-declaration", "declaration", "local"]
-    lease = stage_snapshot(compiler_home()?, store, exact, roots, SNAPSHOT_FORMAT_PROFILE)?
+    lease = stage_selected_snapshot(compiler_home()?, Path(toolchain.console).parent(), bakery_location()?, store, exact, roots, SNAPSHOT_FORMAT_PROFILE)?
     mut stage = ProducerStage.CheckBody
     mut stage_name = "check-body"
     if family == "declaration":
         stage = ProducerStage.Signature
         stage_name = "signature"
     request = RecordMessage.Prepare(Prepare(stage=stage_name, snapshot=lease.digest, demand_root=demand_root, producer_profile=CHECKER_PROFILE))
-    prepared_root = match activate_record(toolchain, request)?:
+    prepared_root = match activate_record(toolchain, request, lease.authority)?:
         RecordMessage.Prepared(answer) => answer.prepared_root
         RecordMessage.CompilerFault(fault) => return Err("ranked compiler preparation: " + fault.fault_root)
         _ => return Err("ranked closed owner preparation returned an unexpected disposition")
@@ -194,7 +194,7 @@ def evaluate(store: Path, view: str, toolchain: Toolchain, pending: BuildOwner, 
     output = job.activation.ready.output
     request = RecordMessage.Evaluate(Evaluate(work_root=job.work_root, snapshot=job.selected.digest,
         prepared_root=job.prepared_root, reservation=job.prepared_root, cancellation_generation=0))
-    produced = match activate_record(toolchain, request)?:
+    produced = match activate_record(toolchain, request, job.selected.authority)?:
         RecordMessage.Produced(value) => value
         RecordMessage.CompilerFault(fault) =>
             if output.family == "declaration" and fault.fault_root == "unsupported-closed-checking-inputs":
