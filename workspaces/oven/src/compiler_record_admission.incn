@@ -11,7 +11,7 @@ from pub::incan_platform.store import begin, commit, stage_put
 from files import read_json
 from json_fields import required_items, required_text
 from observation import file_digest
-from sealed_set import Profile, Record, SetSpec, admit, admit_with_spec, export_set
+from sealed_set import Profile, Record, SetSpec, admit, admit_content_revisions, export_set
 from pub::incan_worker_host.record_directory import directory_member_key, read_directory
 from store_path_conversion import snapshot
 
@@ -137,9 +137,13 @@ pub def installed_records(
         transport = installation.joinpath(pin.root)
         if transport.joinpath("manifest.json").is_file():
             store = installation.joinpath("compiler-record-store")
-            _, spec = admit_with_spec(store, transport, pin.digest, compiler_record_profile()).map_err((error) => error.message())?
             if pin.directory != "":
+                _, spec = admit_content_revisions(
+                    store, transport, pin.digest, compiler_record_profile(), "installed-toolchain", file_digest(Path(driver))?,
+                ).map_err((error) => error.message())?
                 validate_directory(transport, pin, spec)?
+            else:
+                _ = admit(store, transport, pin.digest, compiler_record_profile()).map_err((error) => error.message())?
             return Ok(pin)
         if pin.directory != "":
             return Err("missing sealed manifest for the shipped compiler directory")
