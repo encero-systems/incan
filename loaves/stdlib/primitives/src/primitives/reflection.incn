@@ -65,6 +65,7 @@ pub model ShapeInfo:
     pub spelling: FrozenStr
     pub fields: FrozenList[FieldInfo]
     pub variants: FrozenList[VariantInfo]
+    pub declarations: FrozenList[ShapeInfo] = []
 
     @staticmethod
     pub def of[T with Walk]() -> ShapeInfo:

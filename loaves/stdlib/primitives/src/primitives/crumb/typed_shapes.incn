@@ -9,19 +9,24 @@ from crate.primitives.text import copy_frozen_bytes
 
 def stored_fields(fields: FrozenList[FieldInfo]) -> Result[list[Metadata], CrumbError]:
     """Keep declared storage spelling, identity and canonical participation, including private stored fields."""
-    mut result: list[Metadata] = []
+    mut declared: dict[int, Metadata] = {}
     for field in fields:
+        if field.position < 0 or field.position >= len(fields) or field.position in declared:
+            return Err(CrumbError.invalid_input("stored field declaration positions must be a permutation"))
         storage = match field.stored_type:
             Some(value) => str(value)
             None => return Err(CrumbError.invalid_input("field has no checked persistent representation: " + str(field.name)))
-        result.append(Metadata.Map([
+        declared[field.position] = Metadata.Map([
             MetadataEntry(key="id", value=Metadata.Binary(copy_frozen_bytes(field.identity))),
             MetadataEntry(key="name", value=Metadata.Text(str(field.name))),
             MetadataEntry(key="type", value=Metadata.Text(storage)),
             MetadataEntry(key="canonical", value=Metadata.Boolean(field.canonical)),
             MetadataEntry(key="absent", value=Metadata.Text("required")),
             MetadataEntry(key="properties", value=Metadata.Map([])),
-        ]))
+        ])
+    mut result: list[Metadata] = []
+    for position in range(len(fields)):
+        result.append(declared[position])
     return Ok(result)
 
 
@@ -51,3 +56,13 @@ pub def shape_description(shape: ShapeInfo) -> Result[Description, CrumbError]:
     else:
         return Err(CrumbError.invalid_input("typed row root is not a stored nominal"))
     return Ok(Description(metadata=Metadata.Map(metadata), mode=DescriptionMode.Reference))
+
+
+pub def shape_descriptions(root: ShapeInfo) -> Result[list[Description], CrumbError]:
+    """Read the finite declaration closure before admitting its nominal references as one dictionary."""
+    mut descriptions = [shape_description(root)?]
+    for reachable in root.declarations:
+        if len(reachable.declarations) != 0:
+            return Err(CrumbError.invalid_input("reached declarations must be flat"))
+        descriptions.append(shape_description(reachable)?)
+    return Ok(descriptions)

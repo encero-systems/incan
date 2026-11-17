@@ -3,7 +3,7 @@
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.description_dictionary import Dictionary, admit_dictionary, slot
 from crate.primitives.crumb.description_read import read_dictionary
-from crate.primitives.crumb.descriptions import Description, encode_entry
+from crate.primitives.crumb.descriptions import Description, DescriptionMode, encode_entry
 from crate.primitives.crumb.encoding_buffer import EncodingBuffer
 from crate.primitives.crumb.encoding_cursor import EncodingCursor, copied
 from crate.primitives.crumb.encoding_errors import BinaryError
@@ -98,6 +98,7 @@ pub class TypedRowReader:
         registry: KindRegistry,
         require_sealed: bool,
         budget: Budget,
+        require_references: bool = false,
     ) -> Result[Self, CrumbError]:
         """Admit framing, descriptions and every root range before exposing typed sources."""
         mut owned_budget = budget.snapshot()
@@ -115,6 +116,12 @@ pub class TypedRowReader:
         cursor.finished().map_err(binary_error)?
         mut body = EncodingCursor.create(payload, origin).map_err(binary_error)?
         dictionary = read_dictionary(body, supplied, registry, owned_budget).map_err(binary_error)?
+        if require_references:
+            if len(dictionary.entries) != len(supplied):
+                return Err(CrumbError.invalid_input("typed dictionary declaration count"))
+            for entry in dictionary.entries:
+                if entry.source.mode != DescriptionMode.Reference:
+                    return Err(CrumbError.invalid_input("typed dictionary requires referenced descriptions"))
         count = body.length(owned_budget).map_err(binary_error)?
         owned_budget.charge_elements(count)?
         mut rows: list[TypedStoredRow] = []
