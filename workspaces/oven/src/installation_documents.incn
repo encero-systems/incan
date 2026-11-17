@@ -7,7 +7,7 @@ from json_fields import required_text
 from observation import file_digest, observe
 from toolchain_types import Toolchain
 from payload_types import InstalledPayload, PayloadAdmission
-from unit_publication import recorded_facts, verified_payload
+from unit_publication import PUBLICATION_SCHEMA, recorded_facts, recorded_refusal, source_provenance, verified_payload
 
 
 pub model Captured:
@@ -115,16 +115,22 @@ def selected(name: str) -> bool:
 def legacy_payload(payload: Path, record: Path) -> Result[PayloadAdmission, str]:
     """Admit a legacy installed payload once from its portable producer record and exact current bytes."""
     document = read_json(record)?
+    if required_text(document, "schema")? != PUBLICATION_SCHEMA:
+        return Err(f"{record.0}: unsupported unit publication record")
     expected = required_text(document, "payload")?
     before = observe(payload)?.stamp
     if file_digest(payload)? != expected or observe(payload)?.stamp != before:
         return Err(f"{payload.0}: installed payload digest disagrees")
+    mut origins = source_provenance(document)?
+    if len(origins) == 0:
+        origins = [payload.0]
     return Ok(
         PayloadAdmission(
             identity=required_text(document, "unit")?,
             payload=expected,
             observation=before,
-            provenance=[payload.0],
+            provenance=origins,
             facts=recorded_facts(document)?,
+            refusal=recorded_refusal(document)?,
         ),
     )

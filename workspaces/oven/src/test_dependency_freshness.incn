@@ -27,7 +27,8 @@ from toolchain import (
 )
 from compiler_facts import admit_fact, verified_fact, relocate_fact, fact_identity
 from unit_rust import add_extern, compile_library_unit, prepare_linked
-from unit_publication import published_identity, record_path, record_payload, verified_payload, relocate_payload
+from unit_publication import admit_payload, import_publication, published_facts, published_identity, record_path, record_payload, verified_payload, relocate_payload
+from pub::internal_models.unit_admission import decode_unit_admission
 from unit_freshness import ArtifactIdentities, artifact_files, record, fingerprint
 from engine_client import service_generation, service_identity
 from engine_endpoint import connect_with
@@ -1095,6 +1096,7 @@ def verify_renamed_admission(scratch: Path, original: Path) -> Result[None, str]
     installed_payload = target.joinpath("library.rlib")
     installed_compiler = target.joinpath("driver")
     relocate_payload(installed_payload, admitted_payload)?
+    check_unit_admission(scratch)?
     relocate_fact(installed_compiler, admitted_compiler)?
     assert published_identity(installed_payload)? == "renamed producer"
     assert fact_identity(installed_compiler)? == admitted_compiler.digest
@@ -1145,4 +1147,58 @@ def verify_closure_readings(path: Path) -> Result[None, str]:
         Err(_) => pass
     write(path, "{\"search\":[\"first\"],\"externs\":[[\"serde\",\"libserde.rlib\"]],\"unused_receipt\":true}")?
     assert json_text(readings.read(path)?)? == json_text(first)?
+    return Ok(None)
+
+
+
+def check_unit_admission(scratch: Path) -> Result[None, str]:
+    """A refused, transported manifest keeps its proof through cache migration, import and a directory rename."""
+    stage = scratch.joinpath("unit-cache-stage")
+    manifest = stage.joinpath("fixture.incnlib")
+    write(manifest, "fixture manifest")?
+    digest = file_digest(manifest)?
+    write(stage.joinpath("fixture.incnfacts"), json_text(JsonValue.object({
+        "schema": JsonValue.string("incan.loaf-facts/1"), "manifest_digest": JsonValue.string(digest),
+        "semantic_facts": JsonValue.string("semantic proof"),
+    }))?)?
+    record_payload(manifest, "unit proof", ["source owner"], "producer refused")?
+    proof = verified_payload(manifest)?
+    assert proof.refusal == "producer refused" and proof.facts == "semantic proof"
+    # The portable record is intentionally JSON. Changing its observation forces byte verification on import.
+    portable = record_path(manifest)
+    mut fields = read_json(portable)?.expect_object().map_err((error) => error.message())?
+    fields["observation"] = JsonValue.string("")
+    write(portable, json_text(JsonValue.object(fields))?)?
+    stage.joinpath("fixture.incnfacts").unlink().map_err((error) => error.message())?
+    import_publication(manifest)?
+    key = hexlify(sha256.digest(manifest.0.encode("utf-8")))
+    directory = home()?.joinpath("cache/unit-admissions")
+    current = directory.joinpath(key + ".crumb")
+    raw = current.read_bytes().map_err((error) => error.message())?
+    assert raw[:4] == b"CRMB"
+    decoded = decode_unit_admission(raw, manifest.0)?
+    assert decoded.identity == "unit proof" and decoded.payload == digest
+    assert decoded.provenance == ["source owner"] and decoded.facts == "semantic proof"
+    assert decoded.refusal == "producer refused"
+    assert decode_unit_admission(raw, scratch.joinpath("different.incnlib").0).is_err()
+    # Earlier homes stored these exact fields as JSON. Admission rewrites the verified generation as Crumb.
+    mut legacy = read_json(portable)?.expect_object().map_err((error) => error.message())?
+    legacy["observation"] = JsonValue.string(proof.observation)
+    write(directory.joinpath(key + ".json"), json_text(JsonValue.object(legacy))?)?
+    current.unlink().map_err((error) => error.message())?
+    assert verified_payload(manifest)?.facts == "semantic proof"
+    import_publication(manifest)?
+    assert current.is_file()
+    admit_payload(manifest)?
+    assert verified_payload(manifest)?.refusal == "producer refused"
+    assert published_facts(manifest)? == Some("semantic proof")
+    target = scratch.joinpath("unit-cache-published")
+    rename(stage.0, target.0).map_err((error) => str(error))?
+    moved = target.joinpath("fixture.incnlib")
+    relocate_payload(moved, decoded)?
+    record_path(moved).unlink().map_err((error) => error.message())?
+    assert published_facts(moved)? == Some("semantic proof")
+    match published_identity(moved):
+        Err(reason) => assert reason == "producer refused"
+        Ok(_) => return Err("a relocated refused unit acquired a usable identity")
     return Ok(None)

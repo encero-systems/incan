@@ -76,6 +76,7 @@ model Selection:
                     observation=admission.observation,
                     provenance=admission.provenance,
                     facts=admission.facts,
+                    refusal=admission.refusal,
                 ),
             ),
         )
