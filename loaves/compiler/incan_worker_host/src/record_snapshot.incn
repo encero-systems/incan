@@ -345,7 +345,7 @@ def allowed(roots: list[str], key: str) -> bool:
     return false
 
 
-def valid_digest(value: str) -> bool:
+pub def valid_digest(value: str) -> bool:
     """Whether a descriptor identity is one lowercase SHA-256 digest."""
     if len(value) != 64:
         return false

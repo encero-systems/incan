@@ -81,9 +81,13 @@ pub def read_final_activation(activation: &ResolvedCheckingActivation) -> Result
             )?
             if record.family != CheckedFamily.Declaration:
                 return Err("final activation requires declaration-family environment values")
-            environment.append(native_fields(record).map_err((_) => "final declaration fields are invalid")?)
-            environment_names.append(request.key.facet)
-            environment_identities.append(request.key.identity)
+            if request.key.identity != ready.output.identity:
+                environment.append(native_fields(record).map_err((_) => "final declaration fields are invalid")?)
+                environment_names.append(request.key.facet)
+                environment_identities.append(request.key.identity)
+        elif request.key.family in ["owner-census", "declaration-slot", "declaration-signature"]:
+            # Preparation selected the typed declarations through these exact scalar inputs.
+            pass
         else:
             return Err("final activation prepared an unsupported input family")
     completed = reader.finish().map_err((_) => "final activation read receipt is incomplete")?
