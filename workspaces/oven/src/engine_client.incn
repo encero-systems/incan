@@ -544,7 +544,7 @@ pub def admitted_installation(store: Path, view: str, key: str, admission: str) 
     return admitted_compiler(snapshot(store, view).map_err((error) => error.message())?, key, admission)
 
 
-const INSTALLATION_ROW: bytes = b"enginst"
+const INSTALLATION_ROW: bytes = b"engins\x00"
 
 
 def compiler_admission_description() -> Description:

@@ -13,7 +13,7 @@ from json_fields import required_text
 from publication import publish_binary
 from unit_freshness import fingerprint
 
-const VIEW_ROW: bytes = b"bakview"
+const VIEW_ROW: bytes = b"bakvie\x00"
 pub const VIEW_RECORD: str = "fact.crumb"
 pub const LEGACY_VIEW: str = "fact.json"
 

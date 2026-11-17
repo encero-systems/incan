@@ -13,7 +13,7 @@ from files import json_text
 from json_fields import required_items, required_text, string_value
 from pub::incan_platform.store.files import StoreError
 
-const UNIT_ROW: bytes = b"bakunit"
+const UNIT_ROW: bytes = b"bakuni\x00"
 const UNIT_SCHEMA: str = "incan.bakery.unit/1"
 
 
