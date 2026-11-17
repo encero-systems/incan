@@ -18,7 +18,6 @@ from pub::incan_platform.store.codec import KIND_TOMBSTONE
 from pub::internal_models import (
     ProducerRank,
     ProducerStage,
-    RECEIPT_SCHEMA,
     StoreRecordSource,
     decode_read_receipt,
     encode_read_receipt,
@@ -188,11 +187,6 @@ pub def reusable_evaluation(
     receipt_bytes = required_value(selected, "incan.engine.receipt\t" + receipt_root)?
     if digest(receipt_bytes) != receipt_root:
         return Err("selected compiler receipt differs from its content root")
-    receipt_document = parse(receipt_bytes.decode().map_err((_) => "selected compiler receipt is not UTF-8")?).map_err(
-        (error) => error.message(),
-    )?
-    if required_text(receipt_document, "schema")? != RECEIPT_SCHEMA:
-        return Ok(None)
     receipt = decode_read_receipt(receipt_bytes)?
     if receipt.scope.profile != profile or encode_record_key(receipt.preparation.output)? != value_key:
         return Err("selected compiler receipt does not describe its evaluation")
@@ -433,7 +427,7 @@ def record_slot(key: str) -> Result[str, str]:
 
 pub def evaluation_record_key(profile: str, output: str) -> str:
     """Return the selected evaluation identity for one output under one exact producer profile."""
-    identity = digest((profile + "\n" + output).encode("utf-8"))
+    identity = digest(("crumb-evaluation/2\n" + profile + "\n" + output).encode("utf-8"))
     return "incan.engine.evaluation\t" + identity
 
 
