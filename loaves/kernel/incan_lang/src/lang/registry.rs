@@ -235,6 +235,9 @@ pub const RFC_150: RfcId = "RFC 150";
 /// RFC 171 — retire legacy Rust interop facades and declare testing markers through checked metadata.
 pub const RFC_171: RfcId = "RFC 171";
 
+/// RFC 173 — walking and reconstructing typed values.
+pub const RFC_173: RfcId = "RFC 173";
+
 /// Namespace-style access to RFC ids.
 ///
 /// This exists purely for ergonomics at call sites so individual registries don’t need to import dozens of `RFC_###`
@@ -385,6 +388,8 @@ impl RFC {
     pub const _150: RfcId = RFC_150;
     /// RFC 171 — retire legacy Rust interop facades and declare testing markers through checked metadata.
     pub const _171: RfcId = RFC_171;
+    /// RFC 173 — walking and reconstructing typed values.
+    pub const _173: RfcId = RFC_173;
 }
 
 /// Identify the language/compiler version a vocabulary item is available since.

@@ -172,6 +172,7 @@ impl TypeChecker {
                 id,
                 magic_methods::MagicMethodId::ClassName
                     | magic_methods::MagicMethodId::Fields
+                    | magic_methods::MagicMethodId::Shape
                     | magic_methods::MagicMethodId::FieldValue
                     | magic_methods::MagicMethodId::FieldItems
             )

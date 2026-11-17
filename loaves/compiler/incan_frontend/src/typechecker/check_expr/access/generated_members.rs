@@ -411,6 +411,7 @@ impl TypeChecker {
     ) -> Option<ResolvedType> {
         match magic_methods::from_str(method) {
             Some(magic_methods::MagicMethodId::ClassName) => Some(ResolvedType::Str),
+            Some(magic_methods::MagicMethodId::Shape) => self.checked_reflection_carrier("ShapeInfo"),
             Some(magic_methods::MagicMethodId::Fields) => Some(self.reflection_metadata_type()),
             Some(magic_methods::MagicMethodId::FieldValue) => {
                 self.field_overlay_value_type_for_nominal(receiver_ty).map(option_ty)
@@ -440,21 +441,27 @@ impl TypeChecker {
     /// spelling.
     pub(super) fn reflection_metadata_type(&mut self) -> ResolvedType {
         let name = surface_types::as_str(SurfaceTypeId::FieldInfo);
+        let carrier = self
+            .checked_reflection_carrier(name)
+            .unwrap_or_else(|| ResolvedType::Named(name.to_owned()));
+        ResolvedType::FrozenList(Box::new(carrier))
+    }
+
+    /// Bind a generated result to its declared standard-library carrier, including across local name shadowing.
+    fn checked_reflection_carrier(&mut self, name: &str) -> Option<ResolvedType> {
         let module = vec![stdlib::STDLIB_ROOT.to_owned(), stdlib::STDLIB_REFLECTION.to_owned()];
-        if let Some(identity) = self.loaf_member_identity(&module, name) {
-            let SymbolOrigin::Package { library, module_path } = &identity.origin else {
-                return ResolvedType::FrozenList(Box::new(ResolvedType::Named(name.to_owned())));
-            };
-            let mut path = module_path.clone();
-            path.push(identity.declaration_name.clone());
-            let carrier = crate::typechecker::canonical_public_library_type_name(library, &path.join("::"));
-            self.type_info
-                .declarations
-                .body_ir_native_type_identities
-                .insert(carrier.clone(), identity);
-            return ResolvedType::FrozenList(Box::new(ResolvedType::Named(carrier)));
-        }
-        ResolvedType::FrozenList(Box::new(ResolvedType::Named(name.to_owned())))
+        let identity = self.loaf_member_identity(&module, name)?;
+        let SymbolOrigin::Package { library, module_path } = &identity.origin else {
+            return None;
+        };
+        let mut path = module_path.clone();
+        path.push(identity.declaration_name.clone());
+        let carrier = crate::typechecker::canonical_public_library_type_name(library, &path.join("::"));
+        self.type_info
+            .declarations
+            .body_ir_native_type_identities
+            .insert(carrier.clone(), identity);
+        Some(ResolvedType::Named(carrier))
     }
 
     /// Validate a reflection magic-method call.
@@ -472,6 +479,7 @@ impl TypeChecker {
         let expected_arity = match magic_methods::from_str(method) {
             Some(magic_methods::MagicMethodId::ClassName)
             | Some(magic_methods::MagicMethodId::Fields)
+            | Some(magic_methods::MagicMethodId::Shape)
             | Some(magic_methods::MagicMethodId::FieldItems) => 0,
             Some(magic_methods::MagicMethodId::FieldValue) => 1,
             _ => return,
@@ -492,6 +500,10 @@ impl TypeChecker {
             _ => return false,
         };
         match magic_methods::from_str(method) {
+            Some(magic_methods::MagicMethodId::Shape) => matches!(
+                self.lookup_semantic_type_info(type_name),
+                Some(TypeInfo::Model(_) | TypeInfo::Enum(_) | TypeInfo::Newtype(_))
+            ),
             Some(magic_methods::MagicMethodId::ClassName) => {
                 matches!(
                     self.lookup_semantic_type_info(type_name),

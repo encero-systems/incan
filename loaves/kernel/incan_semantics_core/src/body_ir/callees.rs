@@ -129,6 +129,8 @@ pub enum TypeMetadataOperation {
     FieldCount,
     /// The immutable table of reflection-visible field metadata for the concrete nominal type.
     Fields,
+    /// The owner's checked stored shape and its finite declaration closure.
+    StoredShape,
 }
 
 impl Callee {
@@ -145,6 +147,7 @@ impl Callee {
                     TypeMetadataOperation::ClassName => "class_name",
                     TypeMetadataOperation::FieldCount => "field_count",
                     TypeMetadataOperation::Fields => "fields",
+                    TypeMetadataOperation::StoredShape => "stored_shape",
                 },
                 target.receiver_type
             ),

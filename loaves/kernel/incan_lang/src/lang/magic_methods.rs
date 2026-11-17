@@ -14,6 +14,7 @@ pub enum MagicMethodId {
     FieldValue,
     FieldItems,
     Slice,
+    Shape,
 }
 
 /// Metadata entry for a magic method.
@@ -93,6 +94,14 @@ pub const MAGIC_METHODS: &[MagicMethodInfo] = &[
         RFC::_000,
         Since(0, 1),
     ),
+    info(
+        MagicMethodId::Shape,
+        "__shape__",
+        &[],
+        "The complete checked stored shape, including private fields and reachable declarations.",
+        RFC::_173,
+        Since(0, 6),
+    ),
 ];
 
 /// Resolve a magic method name to its stable id.
@@ -129,6 +138,7 @@ pub fn info_for(id: MagicMethodId) -> MagicMethodInfo {
         MagicMethodId::FieldValue => MAGIC_METHODS[6],
         MagicMethodId::FieldItems => MAGIC_METHODS[7],
         MagicMethodId::Slice => MAGIC_METHODS[8],
+        MagicMethodId::Shape => MAGIC_METHODS[9],
     }
 }
 

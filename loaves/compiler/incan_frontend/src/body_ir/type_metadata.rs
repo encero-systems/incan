@@ -17,6 +17,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let receiver_type = self.metadata_receiver_type(receiver, span, owner)?;
         let expected = match operation {
             bir::TypeMetadataOperation::ClassName => "__class_name__",
+            bir::TypeMetadataOperation::StoredShape => "__shape__",
             bir::TypeMetadataOperation::FieldCount | bir::TypeMetadataOperation::Fields => "__fields__",
         };
         if member.declaration_name != expected {
@@ -64,6 +65,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         let operation = match self.type_info.resolved_identity(span)?.declaration_name.as_str() {
             "__class_name__" => bir::TypeMetadataOperation::ClassName,
+            "__shape__" => bir::TypeMetadataOperation::StoredShape,
             "__fields__" => bir::TypeMetadataOperation::Fields,
             _ => return None,
         };
