@@ -1,7 +1,7 @@
 """Shared Crumb field contracts for ranked compiler work and completed read witnesses."""
 
 from std.primitives.crumb import Budget
-from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.descriptions import Description, DescriptionMode
 from std.primitives.crumb.records import RowRecord
 from std.primitives.crumb.values import IntegerValue, Value, ValueField
 from crumb_rows import admit_rows, decode_rows, encode_rows
@@ -114,10 +114,14 @@ pub def read_request(value: Value) -> Result[RecordRequest, str]:
     return Err("invalid compiler record selection")
 
 
-pub def decode_graph_field(encoded: bytes, key: bytes, description: Description, field: bytes) -> Result[Value, str]:
+pub def decode_graph_field(encoded: bytes, description: Description, field: bytes) -> Result[Value, str]:
     """Read one projected field only after admission of the complete envelope and exact row type."""
     mut budget = Budget.create(bytes=MAX_GRAPH_RECORD_BYTES * 4, elements=4194304, depth=128).map_err((error) => error.message())?
     rows = admit_rows(encoded, [description], MAX_GRAPH_RECORD_BYTES, budget)?
-    if rows.len() != 1 or rows.record_key(0) != Some(key):
+    dictionary = rows.descriptions(budget).map_err((error) => error.message())?
+    if rows.len() != 1 or len(dictionary) != 1:
         return Err("unexpected compiler graph Crumb row")
-    return rows.read_field(0, field, budget).map_err((error) => error.message())
+    # The only referenced dictionary entry was resolved using our one supplied description.
+    match dictionary[0].mode:
+        DescriptionMode.Reference => return rows.read_field(0, field, budget).map_err((error) => error.message())
+        DescriptionMode.Inline => return Err("unexpected inline compiler graph description")

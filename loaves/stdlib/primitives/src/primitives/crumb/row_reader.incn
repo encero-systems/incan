@@ -29,12 +29,6 @@ pub class RowSet:
         """Return the admitted record count, which also matched the trailer for a sealed set."""
         return self.native.records
 
-    pub def record_key(self, index: int) -> Option[bytes]:
-        """Return the selected row's admitted type key without materializing its value."""
-        if index < 0 or index >= self.len():
-            return None
-        return Some(self.native.key(index))
-
     pub def is_sealed(self) -> bool:
         """True means the complete logical seal was verified, not merely that its header bit was set."""
         return self.native.sealed

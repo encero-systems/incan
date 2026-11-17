@@ -271,7 +271,7 @@ pub def family_outputs(
     selected: Snapshot, family: str, profile: str, slots: Option[OutputSlots] = None,
 ) -> Result[list[str], str]:
     """Read pointers only for selected slots; no evaluation or compiler value is read."""
-    base = family_range(family, profile)?
+    mut base = family_range(family, profile)?
     mut ranges = [base]
     mut included: Option[set[str]] = None
     mut excluded: set[str] = set()
