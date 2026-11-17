@@ -3,6 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use incan_semantics_core::stable_identity::{StableDeclarationContext, StableDeclarationId};
 
@@ -53,7 +54,16 @@ pub trait GraphBodyRecordSource: std::fmt::Debug + Send + Sync {
 pub struct GraphBodyRecords {
     eager: Arc<BTreeMap<String, GraphBodyRecord>>,
     source: Option<Arc<dyn GraphBodyRecordSource>>,
-    ranked_owner: Option<Arc<str>>,
+    ranked_owner: Option<Arc<RankedOwner>>,
+}
+
+/// One compiler activation shares its exact body-entry count across all of the unit's module checkers.
+#[derive(Debug)]
+struct RankedOwner {
+    identity: String,
+    attempts: AtomicUsize,
+    missing_peer: AtomicBool,
+    damaged_input: AtomicBool,
 }
 
 /// Canonical field primitives emitted for one checked top-level free function.
@@ -158,13 +168,46 @@ impl GraphBodyRecords {
 
     /// Require the ordinary compiler to evaluate one exact stable owner in its complete unit environment.
     pub fn for_ranked_owner(mut self, identity: &str) -> Self {
-        self.ranked_owner = Some(identity.into());
+        self.ranked_owner = Some(Arc::new(RankedOwner {
+            identity: identity.to_owned(),
+            attempts: AtomicUsize::new(0),
+            missing_peer: AtomicBool::new(false),
+            damaged_input: AtomicBool::new(false),
+        }));
         self
     }
 
     /// The sole callable whose statement producer may execute during this ranked reader activation.
     pub(crate) fn ranked_owner(&self) -> Option<&str> {
-        self.ranked_owner.as_deref()
+        self.ranked_owner.as_ref().map(|owner| owner.identity.as_str())
+    }
+
+    /// Permit one actual statement entry and identify a missing settled peer independently of source errors.
+    pub(crate) fn enter_ranked_owner(&self, identity: Option<&str>) -> bool {
+        let Some(owner) = &self.ranked_owner else { return true };
+        if identity != Some(owner.identity.as_str()) {
+            owner.missing_peer.store(true, Ordering::Relaxed);
+            return false;
+        }
+        owner.attempts.fetch_add(1, Ordering::Relaxed) == 0
+    }
+
+    /// The observed statement-entry attempts and whether another owner lacked a reusable value.
+    pub fn ranked_admission(&self) -> Option<(usize, bool, bool)> {
+        self.ranked_owner.as_ref().map(|owner| {
+            (
+                owner.attempts.load(Ordering::Relaxed),
+                owner.missing_peer.load(Ordering::Relaxed),
+                owner.damaged_input.load(Ordering::Relaxed),
+            )
+        })
+    }
+
+    /// An invalid graph record must not be reported as a peer for which there was simply no prior value.
+    pub(crate) fn refuse_ranked_input(&self) {
+        if let Some(owner) = &self.ranked_owner {
+            owner.damaged_input.store(true, Ordering::Relaxed);
+        }
     }
 
     /// Read one exact declaration's already codec-validated pair without scanning unrelated owner pages.
@@ -921,6 +964,44 @@ mod tests {
         assert_eq!(reads.get("leaf"), Some(&Vec::new()));
         assert_eq!(reads.get("middle"), Some(&vec!["leaf".into()]));
         assert_eq!(reads.get("main"), Some(&vec!["middle".into()]));
+        Ok(())
+    }
+
+    /// A ranked check enters the demanded statements once and declines an absent peer before its statement producer.
+    #[test]
+    fn ranked_reader_counts_actual_statement_entries() -> Result<(), Box<dyn std::error::Error>> {
+        let source = program(
+            "def left(value: int) -> int:\n    return value + 1\n\ndef right(value: int) -> int:\n    return value * 2\n",
+        )?;
+        let module = vec!["main".to_owned()];
+        let mut cold = TypeChecker::new();
+        cold.set_current_module_path(Some(module.clone()));
+        cold.check_program(&source).map_err(|errors| format!("{errors:?}"))?;
+        let mut prior = Vec::new();
+        let mut target = None;
+        for output in checked_owner_record_outputs(&source, &cold, &module)? {
+            let CheckedOwnerRecordOutput::Value(owner) = output else {
+                return Err("ranked fixture fell back".into());
+            };
+            if owner.name == "left" {
+                target = Some(owner.identity.clone());
+            }
+            prior.push(super::GraphBodyRecord {
+                identity: owner.identity,
+                local: owner.local,
+                final_value: owner.final_value,
+                body_ir: None,
+            });
+        }
+        let target = target.ok_or("missing ranked fixture owner")?;
+        for (records, missing) in [(prior, false), (Vec::new(), true)] {
+            let scope = super::GraphBodyRecords::new(records)?.for_ranked_owner(&target);
+            let mut checker = TypeChecker::new();
+            checker.set_current_module_path(Some(module.clone()));
+            checker.set_graph_body_records(scope.clone());
+            assert_eq!(checker.check_program(&source).is_err(), missing);
+            assert_eq!(scope.ranked_admission(), Some((1, missing, false)));
+        }
         Ok(())
     }
 

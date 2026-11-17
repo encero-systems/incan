@@ -497,10 +497,14 @@ pub(crate) fn check_ranked_reader(arguments: &[String]) -> Result<(), Box<dyn st
     let records = deps.graph_body_records();
     let module = owner.facet.clone();
     let identity = owner.identity.clone();
-    let fields = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
+    let Some(fields) = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
         incan_driver::check::ranked_reader(&unit, &rust, records, &module, &identity)
     })
-    .map_err(|error| error.message)?;
+    .map_err(|error| error.message)?
+    else {
+        std::fs::write(Path::new(output).join("unavailable"), b"missing-settled-peer")?;
+        return Ok(());
+    };
     let local = internal_models::from_native_local_fields(&fields.local)
         .and_then(|record| internal_models::encode_record(&record))
         .map_err(|error| format!("ranked reader local Crumb refused: {error:?}"))?;

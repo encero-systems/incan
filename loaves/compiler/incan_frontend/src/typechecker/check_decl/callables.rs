@@ -387,6 +387,7 @@ impl TypeChecker {
             Ok(reused) => reused,
             Err(error) => {
                 tracing::debug!(target: "incan::invocation", ?span, ?error, "graph body selection refused");
+                self.graph_body_records.refuse_ranked_input();
                 false
             }
         });

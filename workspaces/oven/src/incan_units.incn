@@ -260,9 +260,11 @@ pub def obtain_executable(
         mut pages: list[SelectedBodyPage] = []
         if let Some(retained) = selected_pages:
             pages = retained
-        ranked_pages = ranked_build_pages(store, inputs, toolchain, unit, key, pages)?
-        pages.extend(ranked_pages)
-        selected_pages = Some(pages)
+        match ranked_build_pages(store, inputs, toolchain, unit, key, pages)?:
+            Some(ranked_pages) =>
+                pages.extend(ranked_pages)
+                selected_pages = Some(pages)
+            None => selected_pages = Some([])
     staged = staging(store, identity, prior_size(store, unit_name(unit)))?
     code = compile_staged(
         unit,

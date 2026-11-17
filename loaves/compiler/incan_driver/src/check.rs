@@ -233,7 +233,7 @@ pub fn ranked_reader(
     records: GraphBodyRecords,
     module: &str,
     identity: &str,
-) -> CliResult<incan_frontend::checker_records::CheckedOwnerRecordFields> {
+) -> CliResult<Option<incan_frontend::checker_records::CheckedOwnerRecordFields>> {
     use incan_frontend::checker_records::{CheckedOwnerRecordOutput, checked_record_outputs};
     let name = identity
         .split_once('|')
@@ -243,21 +243,26 @@ pub fn ranked_reader(
         .ok_or_else(|| CliError::failure("ranked demand has no project function identity"))?;
     let source = unit.project_root.join(module);
     let mut selected = None;
-    let report = check_report_observed(
-        unit,
-        rust,
-        records.for_ranked_owner(identity),
-        &mut |current, checker| {
-            if current.file_path == source {
-                selected = Some(checked_record_outputs(
-                    &current.ast,
-                    checker,
-                    &current.path_segments,
-                    Some(name),
-                ));
-            }
-        },
-    )?;
+    let exact = records.for_ranked_owner(identity);
+    let report = check_report_observed(unit, rust, exact.clone(), &mut |current, checker| {
+        if current.file_path == source {
+            selected = Some(checked_record_outputs(
+                &current.ast,
+                checker,
+                &current.path_segments,
+                Some(name),
+            ));
+        }
+    })?;
+    match exact.ranked_admission() {
+        Some((0..=1, true, false)) => return Ok(None),
+        Some((1, false, false)) => {}
+        state => {
+            return Err(CliError::failure(format!(
+                "ranked reader has invalid statement-entry evidence: {state:?}"
+            )));
+        }
+    }
     if !report.ok {
         return Err(CliError::failure(report.human_message.unwrap_or_else(|| {
             format!("ranked checker refused: {:?}", report.diagnostics)
@@ -278,7 +283,7 @@ pub fn ranked_reader(
         .ok_or_else(|| CliError::failure("ranked checker did not visit the certified module"))?
         .map_err(CliError::failure)?;
     match outputs.into_iter().next() {
-        Some(CheckedOwnerRecordOutput::Value(fields)) if fields.identity == identity => Ok(fields),
+        Some(CheckedOwnerRecordOutput::Value(fields)) if fields.identity == identity => Ok(Some(fields)),
         Some(CheckedOwnerRecordOutput::Fallback(refusal)) => Err(CliError::failure(format!(
             "ranked owner is a full-source fallback: {}",
             refusal.reason
