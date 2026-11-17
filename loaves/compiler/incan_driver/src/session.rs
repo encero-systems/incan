@@ -88,6 +88,18 @@ pub struct RustFactsSetup {
     pub source: Option<Arc<dyn RustFactsSource>>,
 }
 
+/// Fallback scalar products for a module that enters ordinary checking after namespace selection.
+pub trait CallableBodySource: std::fmt::Debug + Send + Sync {
+    /// Select products against this module's current source and declaration identities.
+    fn select(&self, module: &ParsedModule) -> Option<incan_frontend::declaration_interface::ValidatedCallableBodies>;
+}
+
+impl CallableBodySource for BTreeMap<PathBuf, incan_frontend::declaration_interface::ValidatedCallableBodies> {
+    fn select(&self, module: &ParsedModule) -> Option<incan_frontend::declaration_interface::ValidatedCallableBodies> {
+        self.get(&module.file_path).cloned()
+    }
+}
+
 /// Shared source-analysis context for the pinned driver, the compiler's commands and the language server.
 ///
 /// The session owns the unit-level inputs that affect parsing and checking, so no stage re-derives the Loaves,
@@ -103,7 +115,7 @@ pub struct CompilationSession {
     /// The unit as Oven describes it.
     unit: UnitDescription,
     /// Native-only accepted scalar body products; checking and graph sessions leave this inventory empty.
-    callable_body_reuse: BTreeMap<PathBuf, incan_frontend::declaration_interface::ValidatedCallableBodies>,
+    callable_body_reuse: Arc<dyn CallableBodySource>,
     /// Graph-selected checker values remain a separate identity-keyed transport and never enter scalar callable-body
     /// products or the compilation-unit description.
     graph_body_records: incan_frontend::checker_records::GraphBodyRecords,
@@ -203,7 +215,7 @@ impl CompilationSession {
             declared_features: unit.declared_features.clone(),
             contract_model_bundles,
             unit: unit.clone(),
-            callable_body_reuse: BTreeMap::new(),
+            callable_body_reuse: Arc::new(BTreeMap::new()),
             graph_body_records: incan_frontend::checker_records::GraphBodyRecords::default(),
         })
     }
@@ -219,7 +231,12 @@ impl CompilationSession {
         &mut self,
         products: BTreeMap<PathBuf, incan_frontend::declaration_interface::ValidatedCallableBodies>,
     ) {
-        self.callable_body_reuse = products;
+        self.set_callable_body_source(Arc::new(products));
+    }
+
+    /// Select private scalar products on demand for modules whose complete graph namespaces were unavailable.
+    pub fn set_callable_body_source(&mut self, source: Arc<dyn CallableBodySource>) {
+        self.callable_body_reuse = source;
     }
 
     /// Install graph-admitted checker values for the record-scoped body boundary of this session's module checks.
@@ -338,7 +355,7 @@ impl CompilationSession {
             package,
             None,
             visit,
-            &self.callable_body_reuse,
+            self.callable_body_reuse.as_ref(),
             &self.graph_body_records,
         );
         let mut expansion_errors = self.expansion_failures(modules);

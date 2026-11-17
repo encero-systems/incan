@@ -320,7 +320,7 @@ pub(super) fn checked_modules(
     }
     let tests = collected.tests;
     let package_identity = unit.package.as_str();
-    let mut callable_products = callable_products::CallableProducts::prepare(unit, &modules, &mut session);
+    let mut callable_products = callable_products::CallableProducts::prepare(unit, &mut session);
     let mut graph_body_output =
         graph_body_output::GraphBodyOutput::prepare(graph_body_output, unit.project_root.clone())?;
     let mut publication = library.then(|| PublicationFacts::new(package_identity).for_inspection(inspection));

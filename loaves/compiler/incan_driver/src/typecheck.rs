@@ -57,10 +57,7 @@ pub fn typecheck_modules(
     package: Option<&str>,
     c_abi_plan: Option<&CAbiVerificationPlan>,
     visit: &mut dyn FnMut(&ParsedModule, &typechecker::TypeChecker),
-    body_reuse: &std::collections::BTreeMap<
-        std::path::PathBuf,
-        incan_frontend::declaration_interface::ValidatedCallableBodies,
-    >,
+    body_reuse: &dyn crate::session::CallableBodySource,
     graph_body_records: &incan_frontend::checker_records::GraphBodyRecords,
 ) -> Result<TypecheckedModules, CliDiagnosticFailure> {
     let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::typecheck_modules").entered();
@@ -124,9 +121,6 @@ pub fn typecheck_modules(
         checker.set_not_prepared_loaves(not_prepared.clone());
         if let Some(policy) = own_standard_package {
             checker.set_own_standard_package(policy);
-        }
-        if let Some(products) = body_reuse.get(&module.file_path) {
-            checker.set_callable_body_reuse(products.clone());
         }
         checker.set_graph_body_records(graph_body_records.clone());
         checker
@@ -212,6 +206,9 @@ pub fn typecheck_modules(
 
         let check_result = {
             let mut checker = configured_checker(module);
+            if let Some(products) = body_reuse.select(module) {
+                checker.set_callable_body_reuse(products);
+            }
             checker.select_dependency_interfaces(interfaces_for_module);
 
             // A standard package checks its complete source before publishing its public checked facade.
