@@ -1,0 +1,69 @@
+"""Checking order from the compiler's transitive project import closures."""
+
+from std.encoding.hex import hexlify
+from std.hash import sha256
+from std.json import JsonValue
+
+
+pub model NamespaceOrder:
+    """Strict predecessor count and rank evidence for one module or one mutually importing group."""
+
+    pub rank: int = 0
+    # Older and partial publications have no certificate for independent scheduling.
+    pub evidence: str = "compiled-check"
+    pub members: list[str] = []
+    pub certificate: bytes = b""
+
+
+pub def certified_namespace_order(
+    origin: str,
+    closures: Dict[str, list[str]],
+) -> Result[Dict[str, NamespaceOrder], str]:
+    """
+    The compiler supplies the full transitive import closure, excluding the module itself. Members of a cycle
+    reach one another and have identical closed sets once they include themselves. Every external predecessor
+    contributes to the shared rank. Incomplete closures cannot certify independent work.
+    """
+    mut result: Dict[str, NamespaceOrder] = {}
+    mut reachable: Dict[str, set[str]] = {}
+    for module in closures.keys():
+        mut members: set[str] = set()
+        for dependency in closures[module]:
+            if dependency == "" or dependency == module or dependency in members:
+                return Err("malformed compiler namespace closure: " + module)
+            members.add(dependency)
+        members.add(module)
+        reachable[module] = members
+    for module in sorted([name for name in closures.keys()]):
+        closure = reachable[module]
+        mut group = [module]
+        mut complete = true
+        for dependency in closures[module]:
+            if dependency not in reachable:
+                complete = false
+                break
+            supplier = reachable[dependency]
+            for predecessor in supplier:
+                if predecessor not in closure:
+                    return Err("inconsistent transitive compiler namespace closure: " + module)
+            if module in supplier:
+                if len(supplier) != len(closure):
+                    return Err("inconsistent joint compiler namespace closure: " + module)
+                group.append(dependency)
+        if complete:
+            members = sorted(group)
+            dependencies = sorted([name for name in closure])
+            proof = JsonValue.array([
+                JsonValue.string("incan.namespace-order/1"),
+                JsonValue.string(origin),
+                JsonValue.array([JsonValue.string(name) for name in members]),
+                JsonValue.array([JsonValue.string(name) for name in dependencies]),
+            ]).to_json().map_err((error) => error.message())?
+            certificate = proof.encode("utf-8")
+            result[module] = NamespaceOrder(
+                rank=len(closure) - len(members),
+                evidence="sha256:" + hexlify(sha256.digest(certificate)),
+                members=members,
+                certificate=certificate,
+            )
+    return Ok(result)

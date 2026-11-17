@@ -29,6 +29,7 @@ from pub::internal_models import (
     CompiledBodyOutputs,
     CompiledNamespaceValue,
     CompiledBodyValue,
+    certified_namespace_order,
     DemandPage,
     InputSnapshot,
     PreparedInputs,
@@ -131,6 +132,24 @@ pub def test_local_envelopes_persist_and_sweep_in_rank_order() -> Result[None, s
     assert selected_family(sweep.next()) == "final"
     assert selected_identity(sweep.next()) == ""
     assert sweep.evaluation_count() == 3
+    order = certified_namespace_order("project", {
+        "entry": ["consumer", "left", "right", "leaf"],
+        "consumer": ["left", "right", "leaf"],
+        "left": ["right", "leaf"],
+        "right": ["left", "leaf"],
+        "leaf": [],
+        "incomplete": ["absent"],
+    })?
+    assert order["leaf"].rank == 0
+    assert order["left"].members == ["left", "right"]
+    assert order["left"].rank == 1
+    assert order["left"].evidence == order["right"].evidence
+    assert order["consumer"].rank == 3
+    assert order["entry"].rank == 4
+    assert "incomplete" not in order
+    match certified_namespace_order("project", {"first": ["second"], "second": ["third"], "third": []}):
+        Ok(_) => return Err("accepted an incomplete transitive import closure")
+        Err(_) => pass
     return Ok(None)
 
 
