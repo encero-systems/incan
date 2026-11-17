@@ -1,0 +1,262 @@
+"""Compare warm checker and Body IR work for a matching one-line edit to hello and to Oven itself."""
+
+from rust::std::process import Command, exit
+from rust::std::string import String as RustString
+from std.encoding.hex import hexlify
+from std.environ import args, get_or
+from std.fs import Path
+from std.hash import file_digest
+from std.json import JsonValue, parse
+from pub::incan_platform.ipc import dial
+from engine_channel import Channel
+from engine_client import service_generation, service_identity
+from engine_endpoint import handshake
+from engine_messages import Message, Stop
+from engine_wire import zero_id
+
+
+model Bench:
+    """Use the same installed compiler, client, profile and source revision for both subjects."""
+
+    oven: Path
+    home: Path
+    repository: Path
+    revision: str
+    evidence: Path
+
+
+model Work:
+    """Parent phase times, actual checker module paths, and actual Body IR module entries in one trace."""
+
+    check_ns: int = 0
+    body_ir_ns: int = 0
+    checked: Dict[str, int] = {}
+    body_ir_modules: int = 0
+
+
+def main() -> None:
+    """Keep the raw traces and measurements even if an edit misses its target."""
+    arguments = args().unwrap_or([])[1:]
+    if len(arguments) != 3 or get_or("INCAN", "") == "" or get_or("INCAN_HOME", "") == "":
+        println("set INCAN and INCAN_HOME; supply SOURCE_REPOSITORY SOURCE_COMMIT NEW_EVIDENCE_DIRECTORY")
+        exit(2)
+    bench = Bench(
+        oven=Path(get_or("INCAN", "")), home=Path(get_or("INCAN_HOME", "")),
+        repository=Path(arguments[0]), revision=arguments[1], evidence=Path(arguments[2]),
+    )
+    match measure(bench):
+        Err(reason) =>
+            println(reason)
+            exit(1)
+        Ok(_) => exit(0)
+
+
+def measure(bench: Bench) -> Result[None, str]:
+    """Use a private archive checkout, preserve each subject's verdict and compare its warm phase durations."""
+    for path in [bench.oven, bench.home, bench.repository, bench.evidence]:
+        if path.absolute().map_err((error) => error.message())?.0 != path.0:
+            return Err(f"use an absolute path: {path.0}")
+    bench.evidence.mkdir(false, false).map_err((error) => error.message())?
+    archive = bench.evidence.joinpath("source.tar")
+    run_command("git", ["-C", bench.repository.0, "archive", "--format=tar", "-o", archive.0, bench.revision])?
+    selected = run_command("git", ["-C", bench.repository.0, "rev-parse", bench.revision + "^{commit}"])?
+    toolchain = bench.home.joinpath("toolchains/0.6.0-dev.9")
+    manifest = toolchain.joinpath("toolchain.json")
+    installed = parse(manifest.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err((error) => error.message())?
+    driver = toolchain.joinpath(text(installed, "driver")?)
+    save(bench.evidence.joinpath("identity.txt"), f"{selected.strip()}\n{bench.oven.0}\n{digest(bench.oven)?}\n{driver.0}\n{digest(driver)?}\n{digest(manifest)?}\n")?
+    mut failures: list[str] = []
+    mut times: Dict[str, int] = {}
+    for subject in ["hello", "oven"]:
+        match measure_subject(bench, subject, archive):
+            Ok((elapsed, problems)) =>
+                times[subject] = elapsed
+                failures += problems
+            Err(reason) => failures.append(f"{subject}: {reason}")
+        for store in ["store", "cold-store"]:
+            match stop_store(bench.oven, bench.evidence.joinpath(subject).joinpath(store)):
+                Ok(_) => pass
+                Err(reason) => failures.append(f"{subject} {store} shutdown: {reason}")
+    if "hello" in times and "oven" in times:
+        if times["oven"] > 2 * times["hello"]:
+            failures.append(f"Oven {times['oven']} ns exceeds twice hello {times['hello']} ns")
+    verdict = "\n".join(failures)
+    save(bench.evidence.joinpath("verdict.txt"), verdict + "\n" if len(failures) > 0 else "passed\n")?
+    if len(failures) > 0:
+        return Err(verdict)
+    return Ok(None)
+
+
+def measure_subject(bench: Bench, subject: str, archive: Path) -> Result[tuple[int, list[str]], str]:
+    """Condition once, edit in place, then repeat edited bytes cold at exactly the same physical source path."""
+    root = bench.evidence.joinpath(subject)
+    root.mkdir(true, false).map_err((error) => error.message())?
+    checkout = root.joinpath("src")
+    checkout.mkdir(true, false).map_err((error) => error.message())?
+    mut target = checkout.joinpath("hello.incn")
+    mut edited = target
+    mut binary = checkout.joinpath("target/incan/release/bin/hello")
+    mut before = "code == 0 or code == 1"
+    mut after = "code in [0, 1]"
+    if subject == "oven":
+        _ = run_command("tar", ["-xf", archive.0, "-C", checkout.0])?
+        target = checkout.joinpath("workspaces/oven")
+        edited = target.joinpath("src/compiler_refusals.incn")
+        binary = target.joinpath("target/incan/release/bin/oven")
+        before = "report.code == 0 or report.code == 1"
+        after = "report.code in [0, 1]"
+    else:
+        save(edited, "def reported(code: int) -> bool:\n    return code == 0 or code == 1\n\n\ndef main() -> None:\n    println(reported(1))\n")?
+    original = edited.read_text("utf-8", "strict").map_err((error) => error.message())?
+    if len(original.split(before)) != 2:
+        return Err(f"expected one occurrence of {before} in {edited.0}")
+    replacement = original.replace(before, after)
+    trace = root.joinpath("trace")
+    store = root.joinpath("store")
+    build(bench, root, target, trace, store, "base")?
+    base = work(trace)?
+    save(edited, replacement)?
+    build(bench, root, target, trace, store, "warm")?
+    warm_digest = digest(binary)?
+    warm = work(trace)?
+    mut checked: list[str] = []
+    for module in sorted([name for name in warm.checked.keys()]):
+        for _visit in range(warm.checked[module] - base.checked.get(module, 0)):
+            checked.append(module)
+    check_ns = warm.check_ns - base.check_ns
+    body_ns = warm.body_ir_ns - base.body_ir_ns
+    body_modules = warm.body_ir_modules - base.body_ir_modules
+    elapsed = check_ns + body_ns
+    save(root.joinpath("warm.tsv"), "check_ns\tbody_ir_ns\tbody_ir_modules\texecutable_sha256\tchecked_modules\n"
+        + f"{check_ns}\t{body_ns}\t{body_modules}\t{warm_digest}\t{', '.join(checked)}\n")?
+    mut failures: list[str] = []
+    if check_ns <= 0 or body_ns <= 0 or elapsed <= 0:
+        failures.append(f"{subject}: missing positive checking or Body IR samples")
+    if checked != [edited.0] or body_modules != 1:
+        failures.append(f"{subject}: expected only {edited.0}, found {checked}, {body_modules} Body IR module entries")
+    # Preserve every warm target and lock. A fresh checkout at the same path removes project-local caches from the oracle.
+    _ = checkout.rename(root.joinpath("warm-src")).map_err((error) => error.message())?
+    checkout.mkdir(true, false).map_err((error) => error.message())?
+    if subject == "oven":
+        _ = run_command("tar", ["-xf", archive.0, "-C", checkout.0])?
+    save(edited, replacement)?
+    build(bench, root, target, root.joinpath("cold-trace"), root.joinpath("cold-store"), "cold")?
+    cold_digest = digest(binary)?
+    save(root.joinpath("cold.sha256"), cold_digest + "\n")?
+    if warm_digest != cold_digest:
+        failures.append(f"{subject}: warm executable {warm_digest} differs from cold {cold_digest}")
+    return Ok((elapsed, failures))
+
+
+def build(bench: Bench, root: Path, target: Path, trace: Path, store: Path, label: str) -> Result[None, str]:
+    """Record the normal installed command and complete output for each build on its explicit bakery."""
+    trace.mkdir(true, true).map_err((error) => error.message())?
+    output = Command.new(bench.oven.0)
+        .args(["build", target.0, "--profile", "release", "--engine-report"])
+        .current_dir(root.0)
+        .env("INCAN_HOME", bench.home.0)
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .env("INCAN_ENGINE_TRACE", trace.0)
+        .env("OVEN_OWNER", "off")
+        .env("INCAN_JOBS", "2")
+        .env("INCAN_RUST_INCREMENTAL", "off")
+        .env_remove("INCAN_STDLIB")
+        .env_remove("INCAN_SOURCE_ROOT")
+        .output().map_err((error) => str(error))?
+    save(root.joinpath(label + ".stdout"), str(RustString.from_utf8_lossy(output.stdout)))?
+    save(root.joinpath(label + ".stderr"), str(RustString.from_utf8_lossy(output.stderr)))?
+    if not output.status.success():
+        return Err(f"{label} build refused; see {root.0}/{label}.stderr")
+    return Ok(None)
+
+
+def stop_store(oven: Path, store: Path) -> Result[None, str]:
+    """Stop an existing service that authenticates to this benchmark store, without starting another."""
+    endpoint = store.joinpath("engine/endpoint")
+    if not endpoint.is_file():
+        return Ok(None)
+    socket = endpoint.read_text("utf-8", "strict").map_err((error) => error.message())?.strip()
+    mut identity = service_identity(store)?
+    identity.service_generation = service_generation(oven.0)?
+    transport = dial(socket).map_err((error) => str(error))?
+    mut channel = handshake(Channel(transport=transport), identity).map_err((error) => error.detail)?
+    _ = channel.send(zero_id(), Message.Stop(Stop(reason="module edit benchmark completed"))).map_err((error) => error.detail)?
+    reply = channel.receive().map_err((error) => error.detail)?
+    match reply.message:
+        Message.Event(value) =>
+            if value.status != "Stopping":
+                return Err(f"engine refused stop: {value.status}")
+        _ => return Err("engine did not acknowledge stop")
+    _ = channel.transport.close()
+    return Ok(None)
+
+
+def work(trace: Path) -> Result[Work, str]:
+    """Pair stage boundaries in each compiler process, excluding nested per-body work from the elapsed sums."""
+    mut result = Work()
+    for path in sorted([file.0 for file in trace.iterdir().map_err((error) => error.message())?]):
+        file = Path(path)
+        if not file.name().startswith("engine-compiler-") or not file.name().endswith(".jsonl"):
+            continue
+        mut starts: Dict[str, tuple[str, int]] = {}
+        mut completed: set[str] = set()
+        for line in file.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
+            if "\"kind\":\"begin\"" in line and ("\"incan_driver::typecheck_modules\"" in line or "\"incan_rustc_driver::build_body_ir\"" in line):
+                row = parse(line).map_err((error) => error.message())?
+                id = text(row, "id")?
+                if id in starts:
+                    return Err(f"repeated compiler span {id} in {file.0}")
+                starts[id] = (text(row, "function")?, integer(row, "time_ns")?)
+            elif len(starts) > len(completed) and "\"kind\":\"end\"" in line:
+                row = parse(line).map_err((error) => error.message())?
+                id = text(row, "id")?
+                if id in starts:
+                    if id in completed:
+                        return Err(f"repeated compiler completion {id} in {file.0}")
+                    name, start = starts[id]
+                    elapsed = integer(row, "time_ns")? - start
+                    if elapsed <= 0:
+                        return Err(f"invalid {name} duration in {file.0}")
+                    if name == "incan_driver::typecheck_modules":
+                        result.check_ns += elapsed
+                    else:
+                        result.body_ir_ns += elapsed
+                    completed.add(id)
+            elif "\"kind\":\"begin\"" in line and "\"incan_driver::typecheck_module\"" in line:
+                row = parse(line).map_err((error) => error.message())?
+                module = text(row.require("fields").map_err((error) => error.message())?, "module")?
+                result.checked[module] = result.checked.get(module, 0) + 1
+            elif "\"kind\":\"begin\"" in line and "\"incan_driver::build_body_ir_module\"" in line:
+                result.body_ir_modules += 1
+        if len(starts) != len(completed):
+            return Err(f"incomplete compiler stage spans in {file.0}")
+    return Ok(result)
+
+
+def run_command(binary: str, arguments: list[str]) -> Result[str, str]:
+    """Run source preparation or provenance collection with literal arguments."""
+    output = Command.new(binary).args(arguments).output().map_err((error) => str(error))?
+    if not output.status.success():
+        return Err(f"{binary}: {RustString.from_utf8_lossy(output.stderr)}")
+    return Ok(str(RustString.from_utf8_lossy(output.stdout)))
+
+
+def digest(path: Path) -> Result[str, str]:
+    """Hash the selected file independently of its name and installation location."""
+    return Ok(hexlify(file_digest(path, "sha256").map_err((error) => error.message())?))
+
+
+def save(path: Path, content: str) -> Result[None, str]:
+    """Retain a UTF-8 evidence item at its final path."""
+    return path.write_text(content, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def text(row: JsonValue, key: str) -> Result[str, str]:
+    """Require a trace string field."""
+    return row.require(key).map_err((error) => error.message())?.expect_str().map_err((error) => error.message())
+
+
+def integer(row: JsonValue, key: str) -> Result[int, str]:
+    """Require a trace nanosecond field."""
+    return row.require(key).map_err((error) => error.message())?.expect_int().map_err((error) => error.message())
