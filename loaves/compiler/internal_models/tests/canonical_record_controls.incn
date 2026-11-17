@@ -33,6 +33,9 @@ from compiled_body_rows import (
     decode_compiled_body_row,
     encode_compiled_body_rows,
 )
+from crumb_rows import ModelField, decode_rows, encode_rows, model_description, required_value
+from std.primitives.crumb.records import RowRecord
+from std.primitives.crumb.values import Value
 from rust::incan_frontend::checker_records import (
     fixture_record,
     verify_fixture,
@@ -41,8 +44,30 @@ from rust::incan_frontend::checker_records import (
 )
 
 
+def scalar_wire_boundary() -> Result[None, str]:
+    """An exact wire limit admits repeated logical fields and refuses a one-byte overflow."""
+    selector = b"limits"
+    description = model_description(selector, "test/limits", [ModelField(identity=b"fields", name="fields", storage="list<string>")])
+    fields = [Value.Text("node/Function/body/statement/" + str(index)) for index in range(1000)]
+    value = Value.Record([required_value(b"fields", Value.List(fields))])
+    records = [RowRecord(key=selector, value=value)]
+    wire = encode_rows(description, records, 65536)?
+    assert encode_rows(description, records, len(wire))? == wire
+    restored = decode_rows(wire, [description], len(wire))?
+    assert len(restored) == 1
+    assert encode_rows(description, restored, len(wire))? == wire
+    match encode_rows(description, records, len(wire) - 1):
+        Ok(_) => return Err("encoded a row beyond its wire limit")
+        Err(reason) => assert "encoded Crumb rows need" in reason
+    match decode_rows(wire, [description], len(wire) - 1):
+        Ok(_) => return Err("decoded a row beyond its wire limit")
+        Err(reason) => assert "exceed their byte boundary" in reason
+    return Ok(None)
+
+
 pub def canonical_record_controls() -> Result[None, str]:
     """Keep the existing scoped-reader case responsible for canonical bytes, native teardown and stale bindings."""
+    scalar_wire_boundary()?
     source = "def main() -> None:\n    println(\"hello\")\n"
     moved = "# changed-length comment\n\ndef main() -> None:\n    # inside comment\n    println(\"hello\")\n"
     for declaration in [true, false]:
