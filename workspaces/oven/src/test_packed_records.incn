@@ -21,10 +21,10 @@ pub def test_a_pack_exports_records_for_the_manifests_it_ships_only() -> Result[
     stage = scratch.path().joinpath("stage")
     view = scratch.path().joinpath("view")
     # 1. Only the standard Loaf and the runtime the toolchain names are staged.
-    shipped = ["loaves/std/debug/std.incnlib", "native/kept/libruntime.incnlib"]
-    for relative in shipped + ["native/left/libruntime.incnlib"]:
+    shipped = ["loaves/std/debug/std.incnlib", "loaves/std/debug/std.incnbody", "native/kept/libruntime.incnlib", "native/kept/libruntime.incnbody"]
+    for relative in shipped + ["native/left/libruntime.incnlib", "native/left/libruntime.incnbody"]:
         make_directory(home.joinpath(relative).parent())?
-        write(home.joinpath(relative), f"manifest {relative}")?
+        write(home.joinpath(relative), f"artifact {relative}")?
     for relative in shipped:
         make_directory(stage.joinpath(relative).parent())?
         symlink(home.joinpath(relative).0, stage.joinpath(relative).0).map_err((error) => str(error))?
@@ -34,7 +34,7 @@ pub def test_a_pack_exports_records_for_the_manifests_it_ships_only() -> Result[
     assert manifests(view, view)? == shipped, "the export's manifests are not the shipped ones"
     for relative in shipped:
         assert not view.joinpath(relative).is_symlink(), "the compiler's export skips a linked manifest"
-        assert read(view.joinpath(relative))? == f"manifest {relative}"
+        assert read(view.joinpath(relative))? == f"artifact {relative}"
     return Ok(None)
 
 
