@@ -392,6 +392,12 @@ impl TypeChecker {
         });
         let local_index = if reused {
             None
+        } else if !self.permits_ranked_body(record_program, span) {
+            self.errors.push(crate::diagnostics::CompileError::new(
+                format!("ranked checking cannot restore the undemanded owner '{}'", func.name),
+                span,
+            ));
+            None
         } else {
             self.check_work.function_bodies += 1;
             tracing::debug!(

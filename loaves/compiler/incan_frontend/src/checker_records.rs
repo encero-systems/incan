@@ -53,6 +53,7 @@ pub trait GraphBodyRecordSource: std::fmt::Debug + Send + Sync {
 pub struct GraphBodyRecords {
     eager: Arc<BTreeMap<String, GraphBodyRecord>>,
     source: Option<Arc<dyn GraphBodyRecordSource>>,
+    ranked_owner: Option<Arc<str>>,
 }
 
 /// Canonical field primitives emitted for one checked top-level free function.
@@ -142,6 +143,7 @@ impl GraphBodyRecords {
         Ok(Self {
             eager: Arc::new(selected),
             source: None,
+            ranked_owner: None,
         })
     }
 
@@ -150,11 +152,26 @@ impl GraphBodyRecords {
         Self {
             eager: Arc::new(BTreeMap::new()),
             source: Some(source),
+            ranked_owner: None,
         }
+    }
+
+    /// Require the ordinary compiler to evaluate one exact stable owner in its complete unit environment.
+    pub fn for_ranked_owner(mut self, identity: &str) -> Self {
+        self.ranked_owner = Some(identity.into());
+        self
+    }
+
+    /// The sole callable whose statement producer may execute during this ranked reader activation.
+    pub(crate) fn ranked_owner(&self) -> Option<&str> {
+        self.ranked_owner.as_deref()
     }
 
     /// Read one exact declaration's already codec-validated pair without scanning unrelated owner pages.
     pub(crate) fn get(&self, identity: &str) -> Result<Option<GraphBodyRecord>, RecordAdapterFault> {
+        if self.ranked_owner() == Some(identity) {
+            return Ok(None);
+        }
         if let Some(record) = self.eager.get(identity) {
             return Ok(Some(record.clone()));
         }
@@ -249,6 +266,16 @@ pub fn checked_owner_record_outputs(
     checker: &crate::typechecker::TypeChecker,
     module_path: &[String],
 ) -> Result<Vec<CheckedOwnerRecordOutput>, String> {
+    checked_record_outputs(program, checker, module_path, None)
+}
+
+/// Read the completed checker products of the single function named by an ordinary ranked demand.
+pub fn checked_record_outputs(
+    program: &crate::ast::Program,
+    checker: &crate::typechecker::TypeChecker,
+    module_path: &[String],
+    name: Option<&str>,
+) -> Result<Vec<CheckedOwnerRecordOutput>, String> {
     let facts = checker.type_info().semantic_fact_store(module_path);
     let dependencies = incan_semantics_core::dependencies::CheckedDependencyGraph::from_fact_stores([&facts]);
     let stable_contexts = stable_dependency_contexts(&facts);
@@ -259,6 +286,9 @@ pub fn checked_owner_record_outputs(
             let crate::ast::Declaration::Function(function) = &declaration.node else {
                 return None;
             };
+            if name.is_some_and(|selected| selected != function.name) {
+                return None;
+            }
             let Some(binding) = checker
                 .type_info()
                 .declarations

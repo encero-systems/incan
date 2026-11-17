@@ -207,6 +207,16 @@ impl TypeChecker {
         self.callable_declaration_reuse.contains_key(&owner)
     }
 
+    /// Check the exact current owner before a ranked activation enters this function's statements.
+    pub(in crate::typechecker) fn permits_ranked_body(&self, program: Option<&Program>, owner: Span) -> bool {
+        let Some(expected) = self.graph_body_records.ranked_owner() else {
+            return true;
+        };
+        program
+            .and_then(|program| Positions::new(self, program, owner, false).ok())
+            .is_some_and(|positions| positions.nodes.owner().render_compact() == expected)
+    }
+
     /// Restore one graph-selected final value against current compiler identities and syntax, then enqueue it for the
     /// ordinary checked-body settlement join. A refusal leaves the caller on fresh body checking and publishes no
     /// selected value.

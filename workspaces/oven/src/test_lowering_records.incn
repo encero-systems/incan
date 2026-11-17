@@ -6,6 +6,7 @@ from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue, parse
 from compiler_plan_modules import restored_modules
+from compiler_body_rows import read_compiled_body_outputs
 from files import write
 from scratch import scratch_directory
 from engine_client import service_generation, service_identity
@@ -54,6 +55,10 @@ pub def test_importer_rename_checks_only_its_direct_signature_reader() -> Result
     cold = report_fixture_build(binary, project, store, Some(trace))?
     cold_checks = importer_statement_checks(trace)?
     assert len(importer_ranked_completions(trace)?) == 0
+    cold_outputs = importer_output_paths(project)?
+    stop_example_engine(binary, store)?
+    warm_trace = root.joinpath("warm-trace")
+    warm_trace.mkdir(true, true).map_err((error) => error.message())?
     file = project.joinpath("src/importer.incn")
     original = file.read_text("utf-8", "strict").map_err((error) => error.message())?
     edited = original.replace("supported_schema(version: int)", "supported_schema(schema_version: int)").replace(
@@ -61,19 +66,70 @@ pub def test_importer_rename_checks_only_its_direct_signature_reader() -> Result
     )
     assert edited != original
     write(file, edited)?
-    warm = report_fixture_build(binary, project, store, Some(trace))?
+    warm = report_fixture_build(binary, project, store, Some(warm_trace))?
     stop_example_engine(binary, store)?
-    all_checks = importer_statement_checks(trace)?
     diagnostic = warm.to_json().map_err((error) => error.message())?
     assert proof_count(cold, "all_declarations")? == 6
     assert proof_count(cold, "reusable_declarations")? == 6
     assert len(cold_checks) == 6
-    assert sorted(all_checks) == sorted(cold_checks + ["importer::supported_schema", "importer::import_jsonl"]), diagnostic
-    stages = sorted(importer_ranked_completions(trace)?)
-    assert stages == ["declaration", "local"] or stages == ["declaration", "final", "local"], diagnostic
+    assert sorted(importer_statement_checks(warm_trace)?) == ["importer::import_jsonl", "importer::supported_schema"], diagnostic
+    leaf = "function:importer::supported_schema"
+    reader = "function:importer::import_jsonl"
+    stages = [leaf + "\tdeclaration", leaf + "\tlocal", leaf + "\tfinal", reader + "\treader"]
+    assert sorted(importer_ranked_completions(warm_trace)?) == sorted(stages), diagnostic
+    assert importer_frontier_order(warm_trace)? == stages, diagnostic
     assert proof_count(warm, "body_evaluations")? == 2, diagnostic
     assert proof_count(warm, "plan_function_reuses")? > 0, diagnostic
+    generated = [path for path in importer_output_paths(project)? if path not in cold_outputs]
+    assert len(generated) == 1
+    warm_values = importer_checked_values(Path(generated[0]))?
+    control = root.joinpath("cold-edited-store")
+    _ = report_fixture_build(binary, project, control, Some(trace))?
+    stop_example_engine(binary, control)?
+    assert importer_checked_values(Path(generated[0]))? == warm_values
     return Ok(None)
+
+
+def importer_output_paths(project: Path) -> Result[list[str], str]:
+    """Name each compiler sidecar by its immutable unit description so two revisions cannot be confused."""
+    paths = project.joinpath("target/incan/units").iterdir().map_err((error) => error.message())?
+    return Ok([path.0 for path in paths if path.name().endswith(".unit.json.graph-body-output")])
+
+
+def importer_checked_values(output: Path) -> Result[Dict[str, list[bytes]], str]:
+    """Match each evaluated owner's checker values and actual Body IR with a fresh build of the edited sources."""
+    rows = read_compiled_body_outputs(output)?
+    assert len(rows.fallbacks) == 0
+    mut values: Dict[str, list[bytes]] = {}
+    for record in rows.values:
+        if record.name in ["supported_schema", "import_jsonl"]:
+            values[record.identity] = [record.declaration, record.local, record.final, record.body_ir]
+    assert len(values) == 2
+    return Ok(values)
+
+
+def importer_frontier_order(trace: Path) -> Result[list[str], str]:
+    """Read the claim owner's ordered completions, checking equality and the empty frontier at the reader."""
+    mut result: list[str] = []
+    for file in trace.iterdir().map_err((error) => error.message())?:
+        if not file.name().startswith("engine-oven-"):
+            continue
+        contents = file.read_text("utf-8", "strict").map_err((error) => error.message())?
+        for line in contents.split("\n"):
+            if "ranked-stage" not in line and "ranked-reader" not in line:
+                continue
+            key = parse(line).and_then((record) => record.require("key")).and_then((field) => field.expect_str()).map_err((error) => error.message())?
+            fields = key.split("\t")
+            if fields[0] == "ranked-stage":
+                assert len(fields) == 3
+                result.append(fields[1].split("|")[0] + "\t" + fields[2])
+            elif fields[0] == "ranked-reader":
+                assert len(fields) == 7
+                assert len(fields[2]) == 64 and fields[2] == fields[3]
+                assert len(fields[4]) == 64 and fields[4] == fields[5]
+                assert fields[6] == "0"
+                result.append(fields[1].split("|")[0] + "\treader")
+    return Ok(result)
 
 
 def importer_ranked_completions(trace: Path) -> Result[list[str], str]:
@@ -88,11 +144,11 @@ def importer_ranked_completions(trace: Path) -> Result[list[str], str]:
                 continue
             fields = parse(line).and_then((record) => record.require("fields")).map_err((error) => error.message())?
             identity = fields.require("owner").and_then((value) => value.expect_str()).map_err((error) => error.message())?
-            if identity.startswith("function:importer::supported_schema|"):
-                root = fields.require("root").and_then((value) => value.expect_str()).map_err((error) => error.message())?
-                if len(root) != 64:
-                    return Err("ranked importer producer did not emit a content root")
-                stages.append(fields.require("family").and_then((value) => value.expect_str()).map_err((error) => error.message())?)
+            root = fields.require("root").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+            if len(root) != 64:
+                return Err("ranked importer producer did not emit a content root")
+            family = fields.require("family").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+            stages.append(identity.split("|")[0] + "\t" + family)
     return Ok(stages)
 
 

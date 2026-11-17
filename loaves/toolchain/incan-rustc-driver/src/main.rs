@@ -138,6 +138,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
         Some("--dependencies") => frontend::dependency_report(&args[1..]),
         Some("--compiler-records") => compiler_records::export(&args[1..]),
         Some("--check") => exit_with(check(&args[1..])?),
+        Some("--check-ranked-reader") => frontend::check_ranked_reader(&args[1..]),
         Some("--explain") => exit_with(command_diagnostics::explain(&args[1..])?),
         Some("--fmt") => exit_with(format(&args[1..])?),
         Some("--source-files") => exit_with(source_files(&args[1..])?),

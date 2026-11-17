@@ -1,0 +1,151 @@
+"""Select ordinary direct readers from exact prior checking receipts and compare completed compiler values."""
+
+from std.encoding.hex import hexlify
+from std.primitives.hash import sha256
+from pub::incan_platform.store import Snapshot, get
+from pub::internal_models import DemandPage, decode_namespace_order, encode_demand_page
+from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily, decode_owned_record, record_root
+from pub::internal_models.records import ReadWitness, RecordKey
+from compiler_body_keys import body_key
+from compiler_body_values import SelectedBodyPage, SelectedBodyRecord, select_body_inventory_of
+from compiler_graph_records import readers_of, reusable_evaluation
+from publication import publish_binary
+from scratch import scratch_directory
+from toolchain import Toolchain
+from unit import UnitDescription
+from unit_compiler import crate_name, described_by, run_compiler, write_selected_records, write_unit
+from unit_freshness import Key
+
+
+pub model Reader:
+    """The exact prior checking pair, project module and authenticated project declaration prerequisites."""
+    pub prior: SelectedBodyRecord
+    pub module: str
+    pub rank: int
+    pub dependencies: list[str]
+    pub target: RecordKey
+    pub triggers: list[RecordKey]
+
+
+pub model ReaderFrontier:
+    """A build-owned worklist. Multiple changed inputs coalesce until their reader is taken."""
+    pending: Dict[str, Reader] = {}
+    evaluated: set[str] = set()
+
+    pub def remaining(self) -> int:
+        """Count work still demanded after the last reader's semantic outputs were compared."""
+        return len(self.pending) - len(self.evaluated)
+
+    pub def enqueue(mut self, graph: Snapshot, producer: str, outputs: list[RecordKey]) -> Result[None, str]:
+        """An equal producer supplies no outputs and therefore opens no incoming-edge index."""
+        if len(outputs) == 0:
+            return Ok(None)
+        for key in readers_of(graph, outputs, CHECKER_PROFILE)?:
+            if key.family != "local" or key.identity == producer:
+                continue
+            if key.identity in self.evaluated:
+                return Err("ranked reader requires joint evaluation after a previously settled dependency")
+            if key.identity in self.pending:
+                mut known = self.pending[key.identity]
+                for trigger in outputs:
+                    if trigger not in known.triggers:
+                        known.triggers.append(trigger)
+                self.pending[key.identity] = known
+                continue
+            admission = reusable_evaluation(graph, key, CHECKER_PROFILE)?
+            match admission:
+                Some(selected) =>
+                    certificate = selected.receipt.preparation.rank_certificate
+                    page = get(graph, "incan.compiler.namespace-order\t" + certificate).map_err((error) => error.message())?
+                    match page:
+                        Some(value) =>
+                            order = decode_namespace_order(value, key.origin)?
+                            if order.evidence != certificate or len(order.members) != 1:
+                                return Err("ranked reader requires a joint or complete namespace")
+                            mut dependencies: list[str] = []
+                            for witness in selected.receipt.witnesses:
+                                match witness:
+                                    ReadWitness.Found(prior, _) =>
+                                        supplier = prior.request.key
+                                        if supplier.family == "declaration" and supplier.identity != key.identity and supplier.identity not in dependencies:
+                                            dependencies.append(supplier.identity)
+                                    _ => return Err("ranked reader has unfinished supplier discovery")
+                            records = select_body_inventory_of(graph, CHECKER_PROFILE, key.origin, [key.identity])?
+                            if len(records) != 1 or records[0].local != selected.value:
+                                return Err("ranked reader lacks a complete authenticated checking pair")
+                            self.pending[key.identity] = Reader(prior=records[0], module=order.members[0], rank=order.rank,
+                                dependencies=dependencies, target=key, triggers=outputs)
+                        None => return Err("ranked reader is missing its namespace certificate")
+                None => return Err("ranked reader is missing its prior checked value")
+        return Ok(None)
+
+    pub def next(mut self) -> Result[Option[Reader], str]:
+        """Take the first ready reader at the lowest namespace rank in deterministic owner order."""
+        mut chosen = ""
+        mut minimum = 0
+        for identity in sorted([name for name in self.pending.keys()]):
+            if identity in self.evaluated:
+                continue
+            reader = self.pending[identity]
+            if chosen != "" and reader.rank >= minimum:
+                continue
+            mut ready = true
+            for supplier in reader.dependencies:
+                if self.pending.contains_key(supplier) and supplier not in self.evaluated:
+                    ready = false
+            if not ready:
+                continue
+            minimum = reader.rank
+            chosen = identity
+        if chosen == "":
+            if self.remaining() > 0:
+                return Err("ranked readers require joint evaluation")
+            return Ok(None)
+        result = self.pending[chosen]
+        self.evaluated.add(chosen)
+        return Ok(Some(result))
+
+    pub def settle(mut self, graph: Snapshot, origin: str, reader: Reader, current: SelectedBodyRecord) -> Result[None, str]:
+        """Propagate only changed local or final outputs under their exact previous reverse-edge keys."""
+        old = reader.prior
+        if current.identity != old.identity or old.identity not in self.evaluated:
+            return Err("ranked reader completed a different owner")
+        mut changed: list[RecordKey] = []
+        if current.local != old.local:
+            context = record_root(old.local).map_err((_) => "invalid prior local checker record")?
+            changed.append(body_key("local", origin, old.identity, "checked", context))
+        if current.final != old.final:
+            context = record_root(old.final).map_err((_) => "invalid prior final checker record")?
+            changed.append(body_key("final", origin, old.identity, "checked", context))
+        return self.enqueue(graph, old.identity, changed)
+
+
+pub def evaluate_reader(
+    unit: UnitDescription, toolchain: Toolchain, key: Key, reader: Reader, pages: list[SelectedBodyPage],
+) -> Result[SelectedBodyRecord, str]:
+    """Run the compiler's sole-owner statement entry without invoking lowering, code generation or the linker."""
+    scratch = scratch_directory()?
+    directory = scratch.path()
+    mut demand = reader.target
+    demand.family = "ranked-reader"
+    demand.facet = reader.module
+    work = directory.joinpath("work.crumb")
+    publish_binary(work, encode_demand_page(DemandPage(keys=[demand] + reader.triggers))?)?
+    inputs = directory.joinpath("inputs")
+    module_page = "namespace-" + hexlify(sha256.digest(reader.module.encode("utf-8")))
+    write_selected_records(inputs, unit, [page for page in pages if page.key != module_page])?
+    description = write_unit(unit, crate_name(unit), None, described_by(key), true)?
+    code = run_compiler(toolchain, ["--check-ranked-reader", description.0, toolchain.sysroot, work.0, directory.0,
+        "--graph-body-records", inputs.0])?
+    if code != 0:
+        return Err(f"ranked reader {demand.identity} refused with compiler status {code}")
+    local = directory.joinpath("local.crumb").read_bytes().map_err((error) => error.message())?
+    final = directory.joinpath("final.crumb").read_bytes().map_err((error) => error.message())?
+    checked_local = decode_owned_record(local, CHECKER_PROFILE, demand.identity).map_err((_) => "invalid ranked reader local record")?
+    checked_final = decode_owned_record(final, CHECKER_PROFILE, demand.identity).map_err((_) => "invalid ranked reader final record")?
+    if checked_local.family != CheckedFamily.Local or checked_final.family != CheckedFamily.Final:
+        return Err("ranked reader returned a different record family")
+    mut frame = b""
+    if final == reader.prior.final:
+        frame = reader.prior.body_ir
+    return Ok(SelectedBodyRecord(identity=demand.identity, local=local, final=final, body_ir=frame))

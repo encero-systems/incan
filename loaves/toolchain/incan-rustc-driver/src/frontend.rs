@@ -468,6 +468,53 @@ fn read_graph_body_records(path: &Path) -> Result<incan_frontend::checker_record
     ))
 }
 
+/// Run one ordinary signature reader in the real compiler environment and publish only that owner's two Crumb values.
+pub(crate) fn check_ranked_reader(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let [unit, sysroot, demand_path, output, options @ ..] = arguments else {
+        return Err("usage: --check-ranked-reader UNIT SYSROOT DEMAND DIRECTORY [compiler options]".into());
+    };
+    crate::identity::verify(Path::new(sysroot))?;
+    let path = Path::new(demand_path);
+    if !path.is_file() || path.metadata()?.len() > 65536 {
+        return Err("ranked reader requires a bounded work page".into());
+    }
+    let demand = internal_models::decode_demand_page(&std::fs::read(path)?).map_err(|error| error.to_string())?;
+    let [owner, triggers @ ..] = demand.keys.as_slice() else {
+        return Err("empty ranked reader work".into());
+    };
+    if owner.family != "ranked-reader" || triggers.is_empty() || triggers.iter().any(|key| key.origin != owner.origin) {
+        return Err("ranked reader demand has incomplete authority".into());
+    }
+    if Path::new(&owner.facet)
+        .components()
+        .any(|part| !matches!(part, std::path::Component::Normal(_)))
+    {
+        return Err("ranked reader module is not project-relative".into());
+    }
+    let unit = UnitDescription::read(Path::new(unit)).map_err(|error| error.message)?;
+    let deps = dependencies(&unit, options)?;
+    let rust = deps.rust_facts(&unit, Path::new(sysroot));
+    let records = deps.graph_body_records();
+    let module = owner.facet.clone();
+    let identity = owner.identity.clone();
+    let fields = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
+        incan_driver::check::ranked_reader(&unit, &rust, records, &module, &identity)
+    })
+    .map_err(|error| error.message)?;
+    let local = internal_models::from_native_local_fields(&fields.local)
+        .and_then(|record| internal_models::encode_record(&record))
+        .map_err(|error| format!("ranked reader local Crumb refused: {error:?}"))?;
+    let final_value = internal_models::from_native_final_fields(&fields.final_value)
+        .and_then(|record| internal_models::encode_record(&record))
+        .map_err(|error| format!("ranked reader final Crumb refused: {error:?}"))?;
+    std::fs::write(Path::new(output).join("local.crumb"), &local)?;
+    std::fs::write(Path::new(output).join("final.crumb"), &final_value)?;
+    tracing::debug!(target: "incan::invocation", owner = %owner.identity, family = "reader",
+        local = %hex::encode(Sha256::digest(&local)), root = %hex::encode(Sha256::digest(&final_value)),
+        "completed ranked checking producer");
+    Ok(())
+}
+
 /// Run source, frontend, canonical Body IR, Incan lowering, plan validation, adapter, and pinned native compilation.
 /// Adapter errors cross the executable boundary as their display text so named unsupported gaps retain the CLI's
 /// refusal classification instead of appearing as debug-form plan errors.
