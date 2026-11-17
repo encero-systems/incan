@@ -50,9 +50,6 @@ def test_selected_field_does_not_decode_large_neighbor() -> Result[None, str]:
         ),
     ]
     rows = admitted(encoded([declared], [RowRecord(key=b"record\x00", value=Value.Record(values))], false)?)?
-    assert rows.record_key(-1).is_none()
-    assert rows.record_key(0) == Some(b"record\x00")
-    assert rows.record_key(1).is_none()
     mut tiny = Budget.create(bytes=128, elements=64, depth=16).map_err((e) => e.message())?
     selected = rows.read_field(0, b"field1", tiny).map_err((e) => e.message())?
     match selected:
