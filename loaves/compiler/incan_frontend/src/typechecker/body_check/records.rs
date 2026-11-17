@@ -51,6 +51,15 @@ fn produce_local(
 ) -> Result<Fields, NodeBindingError> {
     let positions = Positions::for_local(checker, program, owner, local)?;
     let mut fields = local_fields(&positions, local)?;
+    for (kind, slots, writer) in [
+        ("error", &local.diagnostic_slots, &checker.errors),
+        ("warning", &local.warning_slots, &checker.warnings),
+    ] {
+        for (index, slot) in slots.iter().enumerate() {
+            let value = writer.get(*slot).ok_or(NodeBindingError::MissingNode)?;
+            fields.push(diagnostics::diagnostic_row(&positions, value, kind, index)?);
+        }
+    }
     fields.push(vec!["status".into(), String::new(), "pending".into(), "true".into()]);
     fields.sort();
     fields.insert(
@@ -710,9 +719,14 @@ fn restore(
     rebound.finish(&header[3])
 }
 
-/// Rebuild one pending local producer value for its settlement activation. The value carries no finalized status,
-/// diagnostics or types; those remain owned by the settlement operation entered after this function returns.
-fn restore_pending(positions: &Positions, owner: Span, fields: &Fields) -> Result<BodyLocal, NodeBindingError> {
+/// Rebuild one pending owner and rebind its recorded local diagnostic values to this settlement's writers.
+fn restore_pending(
+    checker: &mut TypeChecker,
+    program: &Program,
+    positions: &Positions,
+    owner: Span,
+    fields: &Fields,
+) -> Result<BodyLocal, NodeBindingError> {
     let header = fields
         .first()
         .filter(|header| header.len() == 5)
@@ -725,12 +739,9 @@ fn restore_pending(positions: &Positions, owner: Span, fields: &Fields) -> Resul
     {
         return Err(NodeBindingError::Unsupported("local record header"));
     }
-    let mut local = BodyLocal {
-        owner,
-        kind: LocalOwnerKind::Body,
-        ..BodyLocal::default()
-    };
-    let mut record_identities = BTreeMap::new();
+    let mut restored = Rebinding::default();
+    restored.local.owner = owner;
+    restored.local.kind = LocalOwnerKind::Body;
     let mut previous: Option<&[String]> = None;
     let mut pending = false;
     for row in &fields[1..] {
@@ -747,7 +758,11 @@ fn restore_pending(positions: &Positions, owner: Span, fields: &Fields) -> Resul
             pending = true;
             continue;
         }
-        restore_local(positions, &mut local, &mut record_identities, row).map_err(|error| {
+        if row[0] == "diagnostic" {
+            restored.diagnostic(program, positions, row)?;
+            continue;
+        }
+        restore_local(positions, &mut restored.local, &mut restored.record_identities, row).map_err(|error| {
             if error == NodeBindingError::MissingNode {
                 NodeBindingError::InvalidField(format!("family={} node={} selector={}", row[0], row[1], row[2]))
             } else {
@@ -757,6 +772,28 @@ fn restore_pending(positions: &Positions, owner: Span, fields: &Fields) -> Resul
     }
     if !pending {
         return Err(NodeBindingError::InvalidField("missing pending status".into()));
+    }
+    let mut local = restored.local;
+    let mut current = DiagnosticPositions::new(program, checker.symbols.declaration_origin());
+    for (kind, values, slots, writer) in [
+        (
+            "error",
+            restored.diagnostics,
+            &mut local.diagnostic_slots,
+            &mut checker.errors,
+        ),
+        (
+            "warning",
+            restored.warnings,
+            &mut local.warning_slots,
+            &mut checker.warnings,
+        ),
+    ] {
+        for value in ordered_diagnostics(values, kind)? {
+            let diagnostic = current.render(&value).map_err(|_| NodeBindingError::MissingNode)?;
+            slots.push(writer.len());
+            writer.push(diagnostic);
+        }
     }
     local.mutation.restore_flow_graphs(&mut local.protocols);
     function_calls::restore(positions, &mut local)?;

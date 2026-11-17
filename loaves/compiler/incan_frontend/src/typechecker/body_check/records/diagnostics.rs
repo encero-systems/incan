@@ -16,42 +16,50 @@ pub(super) fn project_diagnostics(
     for (family, values) in [("error", &view.diagnostics), ("warning", &view.warnings)] {
         for (index, value) in values.iter().enumerate() {
             let error = current.render(value).map_err(|_| NodeBindingError::MissingNode)?;
-            if !error.related_declarations().is_empty() {
-                return Err(NodeBindingError::Unsupported("related declaration diagnostic"));
-            }
-            let mut row = vec![
-                "diagnostic".into(),
-                positions.nodes.anchor(error.span)?.path,
-                format!("{family}:{index:08}"),
-                kind_name(error.kind).into(),
-                error.message.clone(),
-                error.stable_code().unwrap_or("").into(),
-            ];
-            row.push(error.notes().len().to_string());
-            row.extend(error.notes().iter().cloned());
-            row.push(error.hints().len().to_string());
-            row.extend(error.hints().iter().cloned());
-            match error.primary_label() {
-                Some(label) => row.extend(["primary-label".into(), label.into()]),
-                None => row.push("no-primary-label".into()),
-            }
-            match (error.expected(), error.actual()) {
-                (Some(expected), Some(actual)) => {
-                    row.extend(["expected-actual".into(), expected.into(), actual.into()])
-                }
-                (None, None) => row.push("no-expected-actual".into()),
-                _ => {
-                    return Err(NodeBindingError::Unsupported("partial expected/actual diagnostic"));
-                }
-            }
-            row.push(error.related_spans().len().to_string());
-            for related in error.related_spans() {
-                row.extend([positions.nodes.anchor(related.span)?.path, related.label.clone()]);
-            }
-            fields.push(row);
+            fields.push(diagnostic_row(positions, &error, family, index)?);
         }
     }
     Ok(())
+}
+
+/// Encode the same source-anchored recipe for a live body writer and a finalized checked view.
+pub(super) fn diagnostic_row(
+    positions: &Positions,
+    error: &CompileError,
+    family: &str,
+    index: usize,
+) -> Result<Vec<String>, NodeBindingError> {
+    if !error.related_declarations().is_empty() {
+        return Err(NodeBindingError::Unsupported("related declaration diagnostic"));
+    }
+    let mut row = vec![
+        "diagnostic".into(),
+        positions.nodes.anchor(error.span)?.path,
+        format!("{family}:{index:08}"),
+        kind_name(error.kind).into(),
+        error.message.clone(),
+        error.stable_code().unwrap_or("").into(),
+    ];
+    row.push(error.notes().len().to_string());
+    row.extend(error.notes().iter().cloned());
+    row.push(error.hints().len().to_string());
+    row.extend(error.hints().iter().cloned());
+    match error.primary_label() {
+        Some(label) => row.extend(["primary-label".into(), label.into()]),
+        None => row.push("no-primary-label".into()),
+    }
+    match (error.expected(), error.actual()) {
+        (Some(expected), Some(actual)) => row.extend(["expected-actual".into(), expected.into(), actual.into()]),
+        (None, None) => row.push("no-expected-actual".into()),
+        _ => {
+            return Err(NodeBindingError::Unsupported("partial expected/actual diagnostic"));
+        }
+    }
+    row.push(error.related_spans().len().to_string());
+    for related in error.related_spans() {
+        row.extend([positions.nodes.anchor(related.span)?.path, related.label.clone()]);
+    }
+    Ok(row)
 }
 
 /// Reconstruct the recipe from its own primitives, then capture it against this revision's verified node ranges.
