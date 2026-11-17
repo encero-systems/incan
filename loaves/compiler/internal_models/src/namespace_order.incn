@@ -10,6 +10,32 @@ from record_scope import RecordKey
 from store_record_source import encode_record_key
 
 const ORDER_SELECTOR: bytes = b"nsrank\x00"
+const COMPLETION_SELECTOR: bytes = b"chdone\x00"
+
+
+def completion_description() -> Description:
+    """One completed worker value and its exact source receipt before the next stage."""
+    return model_description(COMPLETION_SELECTOR, "incan.compiler.checking-completion/1", [
+        ModelField(identity=b"receip", name="receipt", storage="binary"),
+        ModelField(identity=b"result", name="value_root", storage="string"),
+    ])
+
+
+pub def encode_checking_completion(value_root: str, receipt: bytes) -> Result[bytes, str]:
+    """Preserve the worker's produced value root together with its authenticated input receipt."""
+    return encode_graph_row(COMPLETION_SELECTOR, completion_description(), [
+        required_value(b"receip", Value.Binary(receipt)), required_value(b"result", Value.Text(value_root)),
+    ])
+
+
+pub def checking_completion_receipt(encoded: bytes, value: bytes) -> Result[bytes, str]:
+    """Require the exact earlier producer output before admitting its read evidence."""
+    fields = decode_graph_row(encoded, COMPLETION_SELECTOR, completion_description(), 2)?
+    if text(fields[1].value)? != hexlify(sha256.digest(value)):
+        return Err("completed checking value differs from its producer root")
+    match fields[0].value:
+        Value.Binary(receipt) => return Ok(receipt)
+        _ => return Err("completed checking value has no receipt")
 
 
 pub def checking_basis_key(output: RecordKey) -> Result[str, str]:
