@@ -495,7 +495,15 @@ def matched(seed: Borrowed[int]) -> int:
                 let super::IncanType::Named(name) = argument else {
                     return Err("direct nominal requirement lost its Named leaves".into());
                 };
-                assert!(body.named_type_identities.contains_key(name));
+                let identity = body
+                    .named_type_identities
+                    .get(name)
+                    .ok_or("direct requirement lost its retained identity")?;
+                assert_eq!(
+                    bir::nominal_carrier_key(identity).as_deref(),
+                    Some(name.as_str()),
+                    "direct requirement retained a source alias instead of its canonical carrier"
+                );
             }
         }
     }

@@ -181,9 +181,8 @@ pub(super) fn assert_nominal_carrier_maps_stay_shared() -> Result<(), Box<dyn st
 
 /// A package-owned provider declaration authenticates its own carrier before a consumer retains a nested field.
 pub(super) fn assert_package_provider_declaration_retains_own_carrier() -> Result<(), Box<dyn std::error::Error>> {
-    let provider_source = "pub model CarrierValue:\n    pub number: int\n";
-    let consumer_source =
-        "from provider import CarrierValue\npub model Envelope:\n    pub values: Option[list[CarrierValue]]\n";
+    let provider_source = "pub model CarrierValue:\n    pub number: int\npub enum CarrierFault:\n    Bad\npub def carrier_value(seed: Borrowed[int]) -> Result[CarrierValue, CarrierFault]:\n    return Ok(CarrierValue(number=seed))\n";
+    let consumer_source = "from provider import CarrierValue, CarrierFault, carrier_value\npub model Envelope:\n    pub values: Option[list[CarrierValue]]\npub def consume(seed: Borrowed[int]) -> Result[CarrierValue, CarrierFault]:\n    value = carrier_value(seed)?\n    return Ok(value)\n";
     let provider_tokens = crate::lexer::lex(provider_source).map_err(|errors| format!("{errors:?}"))?;
     let provider_program = crate::parser::parse(&provider_tokens).map_err(|errors| format!("{errors:?}"))?;
     let provider_path = vec!["provider".to_owned()];
@@ -214,6 +213,16 @@ pub(super) fn assert_package_provider_declaration_retains_own_carrier() -> Resul
     let key = bir::nominal_carrier_key(&owner.canonical).ok_or("missing package carrier key")?;
     assert_eq!(owner.named_type_identities.get(&key), Some(&owner.canonical));
     assert_eq!(owner.carrier_name(), key);
+    let fault = provider
+        .enum_declarations
+        .iter()
+        .find(|declaration| declaration.canonical.declaration_name == "CarrierFault")
+        .ok_or("missing package fault declaration")?;
+    let fault_key = bir::nominal_carrier_key(&fault.canonical).ok_or("missing package fault carrier key")?;
+    let package_result_owners = std::collections::BTreeMap::from([
+        (key.clone(), owner.canonical.clone()),
+        (fault_key, fault.canonical.clone()),
+    ]);
 
     let consumer_tokens = crate::lexer::lex(consumer_source).map_err(|errors| format!("{errors:?}"))?;
     let consumer_program = crate::parser::parse(&consumer_tokens).map_err(|errors| format!("{errors:?}"))?;
@@ -249,6 +258,41 @@ pub(super) fn assert_package_provider_declaration_retains_own_carrier() -> Resul
                     if base == "List"
                         && matches!(args.as_slice(), [super::IncanType::Named(name)] if name == &key))
     ));
+    let consume = consumer
+        .bodies
+        .iter()
+        .find(|body| body.name == "consume")
+        .ok_or("missing package consumer body")?;
+    let requirement = consume
+        .checked_input_profile
+        .as_ref()
+        .and_then(|profile| profile.result_requirements.first())
+        .map(|(_, requirement)| requirement)
+        .ok_or("missing package result requirement")?;
+    let super::IncanType::Generic { base, args } = requirement else {
+        return Err("package result requirement is not generic".into());
+    };
+    assert_eq!(base, "Result");
+    assert_eq!(args.len(), 2);
+    for argument in args {
+        let super::IncanType::Named(name) = argument else {
+            return Err("package result requirement lost its nominal leaf".into());
+        };
+        let identity = consume
+            .named_type_identities
+            .get(name)
+            .ok_or("package result requirement lost its retained identity")?;
+        assert_eq!(
+            package_result_owners.get(name),
+            Some(identity),
+            "package result requirement selected a different provider owner"
+        );
+        assert_eq!(
+            bir::nominal_carrier_key(identity).as_deref(),
+            Some(name.as_str()),
+            "package result requirement retained a source alias instead of its canonical carrier"
+        );
+    }
 
     let mut conflict = super::build_module_seed(&provider_program, &provider_path, &provider_facts, &provider_context);
     let declaration = conflict
