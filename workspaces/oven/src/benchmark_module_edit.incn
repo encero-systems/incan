@@ -13,6 +13,7 @@ from engine_client import service_generation, service_identity
 from engine_endpoint import handshake
 from engine_messages import Message, Stop
 from engine_wire import zero_id
+from toolchain import located
 
 
 model Bench:
@@ -31,7 +32,7 @@ model Work:
     check_ns: int = 0
     body_ir_ns: int = 0
     checked: Dict[str, int] = {}
-    body_ir_modules: int = 0
+    body_ir: Dict[str, int] = {}
 
 
 def main() -> None:
@@ -63,7 +64,7 @@ def measure(bench: Bench) -> Result[None, str]:
     toolchain = bench.home.joinpath("toolchains/0.6.0-dev.9")
     manifest = toolchain.joinpath("toolchain.json")
     installed = parse(manifest.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err((error) => error.message())?
-    driver = toolchain.joinpath(text(installed, "driver")?)
+    driver = Path(located(toolchain, text(installed, "driver")?))
     save(bench.evidence.joinpath("identity.txt"), f"{selected.strip()}\n{bench.oven.0}\n{digest(bench.oven)?}\n{driver.0}\n{digest(driver)?}\n{digest(manifest)?}\n")?
     mut failures: list[str] = []
     mut times: Dict[str, int] = {}
@@ -119,21 +120,18 @@ def measure_subject(bench: Bench, subject: str, archive: Path) -> Result[tuple[i
     build(bench, root, target, trace, store, "warm")?
     warm_digest = digest(binary)?
     warm = work(trace)?
-    mut checked: list[str] = []
-    for module in sorted([name for name in warm.checked.keys()]):
-        for _visit in range(warm.checked[module] - base.checked.get(module, 0)):
-            checked.append(module)
+    checked = visits_since(warm.checked, base.checked)
+    built = visits_since(warm.body_ir, base.body_ir)
     check_ns = warm.check_ns - base.check_ns
     body_ns = warm.body_ir_ns - base.body_ir_ns
-    body_modules = warm.body_ir_modules - base.body_ir_modules
     elapsed = check_ns + body_ns
     save(root.joinpath("warm.tsv"), "check_ns\tbody_ir_ns\tbody_ir_modules\texecutable_sha256\tchecked_modules\n"
-        + f"{check_ns}\t{body_ns}\t{body_modules}\t{warm_digest}\t{', '.join(checked)}\n")?
+        + f"{check_ns}\t{body_ns}\t{', '.join(built)}\t{warm_digest}\t{', '.join(checked)}\n")?
     mut failures: list[str] = []
     if check_ns <= 0 or body_ns <= 0 or elapsed <= 0:
         failures.append(f"{subject}: missing positive checking or Body IR samples")
-    if checked != [edited.0] or body_modules != 1:
-        failures.append(f"{subject}: expected only {edited.0}, found {checked}, {body_modules} Body IR module entries")
+    if checked != [edited.0] or built != [edited.0]:
+        failures.append(f"{subject}: expected only {edited.0}, checked {checked} and built Body IR for {built}")
     # Preserve every warm target and lock. A fresh checkout at the same path removes project-local caches from the oracle.
     _ = checkout.rename(root.joinpath("warm-src")).map_err((error) => error.message())?
     checkout.mkdir(true, false).map_err((error) => error.message())?
@@ -164,8 +162,8 @@ def build(bench: Bench, root: Path, target: Path, trace: Path, store: Path, labe
         .env_remove("INCAN_STDLIB")
         .env_remove("INCAN_SOURCE_ROOT")
         .output().map_err((error) => str(error))?
-    save(root.joinpath(label + ".stdout"), str(RustString.from_utf8_lossy(output.stdout)))?
-    save(root.joinpath(label + ".stderr"), str(RustString.from_utf8_lossy(output.stderr)))?
+    save(root.joinpath(label + ".stdout"), str(RustString.from_utf8_lossy(output.stdout).into_owned()))?
+    save(root.joinpath(label + ".stderr"), str(RustString.from_utf8_lossy(output.stderr).into_owned()))?
     if not output.status.success():
         return Err(f"{label} build refused; see {root.0}/{label}.stderr")
     return Ok(None)
@@ -228,18 +226,29 @@ def work(trace: Path) -> Result[Work, str]:
                 module = text(row.require("fields").map_err((error) => error.message())?, "module")?
                 result.checked[module] = result.checked.get(module, 0) + 1
             elif "\"kind\":\"begin\"" in line and "\"incan_driver::build_body_ir_module\"" in line:
-                result.body_ir_modules += 1
+                row = parse(line).map_err((error) => error.message())?
+                module = text(row.require("fields").map_err((error) => error.message())?, "file")?
+                result.body_ir[module] = result.body_ir.get(module, 0) + 1
         if len(starts) != len(completed):
             return Err(f"incomplete compiler stage spans in {file.0}")
     return Ok(result)
+
+
+def visits_since(current: Dict[str, int], previous: Dict[str, int]) -> list[str]:
+    """List the path of each actual checker or Body IR entry added by the warm invocation."""
+    mut visited: list[str] = []
+    for module in sorted([name for name in current.keys()]):
+        for _visit in range(current[module] - previous.get(module, 0)):
+            visited.append(module)
+    return visited
 
 
 def run_command(binary: str, arguments: list[str]) -> Result[str, str]:
     """Run source preparation or provenance collection with literal arguments."""
     output = Command.new(binary).args(arguments).output().map_err((error) => str(error))?
     if not output.status.success():
-        return Err(f"{binary}: {RustString.from_utf8_lossy(output.stderr)}")
-    return Ok(str(RustString.from_utf8_lossy(output.stdout)))
+        return Err(f"{binary}: {RustString.from_utf8_lossy(output.stderr).into_owned()}")
+    return Ok(str(RustString.from_utf8_lossy(output.stdout).into_owned()))
 
 
 def digest(path: Path) -> Result[str, str]:
