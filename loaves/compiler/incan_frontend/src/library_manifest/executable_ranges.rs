@@ -18,6 +18,8 @@ pub(crate) struct RangeHead {
     pub version: String,
     pub manifest_digest: String,
     pub descriptor: ExecutableRepresentationExport,
+    #[serde(default)]
+    pub header_digest: String,
     pub file_bytes: u64,
     pub payload_offset: u64,
 }
@@ -66,6 +68,7 @@ pub fn export_ranges(
         version: manifest.version.clone(),
         manifest_digest: manifest_digest.to_owned(),
         descriptor: descriptor.clone(),
+        header_digest: format!("{:x}", Sha256::digest(&bytes[..bytes.len() - payload.len()])),
         file_bytes: u64::try_from(bytes.len())?,
         payload_offset: u64::try_from(bytes.len() - payload.len())?,
     };

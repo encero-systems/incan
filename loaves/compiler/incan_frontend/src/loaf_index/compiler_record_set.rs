@@ -1333,6 +1333,7 @@ mod tests {
         let (first_offset, first_len) = address(first)?;
         let (other_offset, _) = address(other)?;
         assert_eq!(accepted.payload_bytes_read, first_len);
+        assert_eq!(accepted.content_bytes_verified, first_len);
         let keys = thread_selection::read_keys();
         assert_eq!(keys.iter().filter(|key| key.contains("/executable-range/")).count(), 1);
         assert!(keys.iter().any(|key| key.ends_with(&first_key)));
