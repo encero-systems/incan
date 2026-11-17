@@ -5,10 +5,7 @@ from rust::serde_json import to_string, from_str, Error as JsonError
 from std.encoding.hex import hexlify
 from std.fs import Path
 from pub::incan_mir_plan import NominalKind, NominalReference
-from pub::internal_models.plan_module_records import PLAN_MODULE_PAGE, decode_plan_module
-
-# The extension of the note a worker leaves in the plan report for each module it restored functions of.
-pub const ADMITTED_NOTE: str = ".admitted"
+from pub::internal_models.plan_module_records import ADMITTED_MODULE_NOTE, PARTIAL_MODULE_NOTE, PLAN_MODULE_PAGE, decode_plan_module
 
 
 @derive(Serialize, Deserialize)
@@ -101,23 +98,28 @@ pub def admitted_reference(reference: NominalReference) -> AdmittedReference:
     return AdmittedReference(kind=reference.kind, index=reference.index, name=reference.name)
 
 
-pub def report_admitted(report: Option[str], module: str, functions: list[AdmittedFunction]) -> Result[None, str]:
-    """
-    Note, beside the request's events, the functions this request restored from `module`'s plan record. A module that
-    restored none leaves no note, and an earlier pass's note for it is removed.
-    """
-    if len(functions) == 0:
-        if let Some(root) = report:
-            stale = Path(root).joinpath(hexlify(module.encode("utf-8")) + ADMITTED_NOTE)
-            if stale.is_file():
-                stale.unlink().map_err((error) => error.message())?
-        return Ok(None)
+pub def report_admitted(
+    report: Option[str], module: str, functions: list[AdmittedFunction], ordinary: int,
+) -> Result[None, str]:
+    """Report each restored function; only a request that restored all ordinary bodies records a whole module."""
     if let Some(root) = report:
-        note = AdmittedModule(schema=1, module=module, functions=functions)
-        text = to_string(note).map_err((error) => str(error))?
-        path = Path(root).joinpath(hexlify(module.encode("utf-8")) + ADMITTED_NOTE)
-        path.parent().mkdir(true, true).map_err((error) => error.message())?
-        path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
+        basename = hexlify(module.encode("utf-8"))
+        selected = ADMITTED_MODULE_NOTE if len(functions) == ordinary else PARTIAL_MODULE_NOTE
+        for suffix in [ADMITTED_MODULE_NOTE, PARTIAL_MODULE_NOTE]:
+            path = Path(root).joinpath(basename + suffix)
+            if suffix == selected and len(functions) > 0:
+                write_admitted_note(path, module, functions)?
+            elif path.is_file():
+                path.unlink().map_err((error) => error.message())?
+    return Ok(None)
+
+
+def write_admitted_note(path: Path, module: str, functions: list[AdmittedFunction]) -> Result[None, str]:
+    """Publish the restored function positions used to assemble the current native plan."""
+    note = AdmittedModule(schema=1, module=module, functions=functions)
+    text = to_string(note).map_err((error) => str(error))?
+    path.parent().mkdir(true, true).map_err((error) => error.message())?
+    path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
     return Ok(None)
 
 
@@ -125,7 +127,7 @@ pub def read_admitted(report: Path) -> Result[list[AdmittedModule], str]:
     """Read every module note of a plan report, in name order."""
     mut notes: list[AdmittedModule] = []
     for path in sorted([str(path.0) for path in report.iterdir().map_err((error) => error.message())?]):
-        if path.endswith(ADMITTED_NOTE):
+        if path.endswith(ADMITTED_MODULE_NOTE) or path.endswith(PARTIAL_MODULE_NOTE):
             text = Path(path).read_text("utf-8", "strict").map_err((error) => error.message())?
             notes.append(decode_note(text).map_err((error) => str(error))?)
     return Ok(notes)

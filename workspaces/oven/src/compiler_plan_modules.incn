@@ -7,6 +7,8 @@ from pub::internal_models.lowering_events import LoweringEvent, encode_lowering_
 from pub::incan_platform.store import Snapshot, Transaction, get
 from pub::internal_models import ProducerRank, ProducerStage
 from pub::internal_models.plan_module_records import (
+    ADMITTED_MODULE_NOTE,
+    PARTIAL_MODULE_NOTE,
     PLAN_MODULE_FAMILY,
     PlanModuleFunction,
     PlanModuleValue,
@@ -17,10 +19,6 @@ from compiler_body_keys import IDENTITY_PROFILE, body_key
 from compiler_graph_records import OutputSlots, family_outputs, prepare_evaluation, retire_output
 from compiler_plan_values import AdmittedPlanModule, LOWERING_PROFILE
 from compiler_prepared_records import PreparedBodyRecordSource, prepared_product_request
-
-# The note a compiler worker leaves in the plan report for each module it restored functions of.
-const ADMITTED_NOTE: str = ".admitted"
-
 
 pub model StagedPlan:
     """One plan function a request staged: where its module's record is kept, and what the record says of it."""
@@ -98,16 +96,20 @@ pub def retire_unfolded(
     return Ok(None)
 
 
-pub def restored_modules(report: Path) -> Result[list[str], str]:
-    """The modules, as lowering names them, that the compiler restored functions of from their plan records."""
+pub def restored_modules(report: Path, whole_only: bool = false) -> Result[list[str], str]:
+    """List module pages read by lowering, optionally requiring every ordinary body to have been restored."""
     mut modules: list[str] = []
     if not report.is_dir():
         return Ok(modules)
     for entry in report.iterdir().map_err((error) => f"plan record report: cannot {error.message()}")?:
         name = entry.name()
-        if entry.is_file() and name.endswith(ADMITTED_NOTE):
-            encoded = name[:len(name) - len(ADMITTED_NOTE)]
-            octets = unhexlify(encoded).map_err((error) => error.message())?
+        if not entry.is_file():
+            continue
+        mut suffix = ADMITTED_MODULE_NOTE
+        if not whole_only and name.endswith(PARTIAL_MODULE_NOTE):
+            suffix = PARTIAL_MODULE_NOTE
+        if name.endswith(suffix):
+            octets = unhexlify(name[:len(name) - len(suffix)]).map_err((error) => error.message())?
             modules.append(octets.decode().map_err((_) => "plan module note has a malformed name")?)
     return Ok(sorted(modules))
 

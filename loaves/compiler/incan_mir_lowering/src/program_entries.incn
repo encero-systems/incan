@@ -298,10 +298,12 @@ def lower_selected_module(
     mut module = ""
     mut admitted = admitted_page(None, "")
     mut restored: list[AdmittedFunction] = []
+    mut ordinary = 0
     for position in positions:
         body = body_at(context.bodies, position)
         if not ordinary_body(context, body, emitted, kind):
             continue
+        ordinary += 1
         if module == "":
             module = body_module_identity(body)?
             admitted = admitted_page(scalar_products, module)
@@ -352,7 +354,7 @@ def lower_selected_module(
         append_generator_constructor(program.constructors.as_ref(), functions, context, body, source, file, intrinsics)?
         merge_indexed(externals, signatures, runtime)?
     if module != "":
-        report_admitted(record_report, module, restored)?
+        report_admitted(record_report, module, restored, ordinary)?
     return Ok(
         ModuleFrames(
             functions=functions,
@@ -410,10 +412,12 @@ pub def lower_ordinary_bodies_serial(
         module = str(checked_owner)
         admitted = admitted_page(scalar_products, module)
         mut restored: list[AdmittedFunction] = []
+        mut ordinary = 0
         for position in positions:
             body = body_at(context.bodies, position)
             if not ordinary_body(context, body, emitted_frames, kind):
                 continue
+            ordinary += 1
             diagnostic_owner = f" in {body.name} at {files[index]}"
             restored_before = len(restored)
             mut module_event: Option[bytes] = None
@@ -468,7 +472,7 @@ pub def lower_ordinary_bodies_serial(
                 intrinsics,
             )?
             merge_indexed(externals, signatures, runtime)?
-        report_admitted(record_report, module, restored)?
+        report_admitted(record_report, module, restored, ordinary)?
     return Ok(None)
 
 
