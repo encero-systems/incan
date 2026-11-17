@@ -212,11 +212,11 @@ class FrameReadMeasurement:
     active: bool = false
     frames: Dict[str, FrameRead] = {}
 
-    def start(mut self, enabled: bool) -> None:
+    pub def start(mut self, enabled: bool) -> None:
         self.frames = {}
         self.active = enabled
 
-    def record(mut self, key: str, location: Location, value_size: int) -> None:
+    pub def record(mut self, key: str, location: Location, value_size: int) -> None:
         if self.active:
             revision = hexlify(location.digest)
             if revision in self.frames:
@@ -227,7 +227,7 @@ class FrameReadMeasurement:
                 self.frames[revision] = FrameRead(key=key, revision=revision, reads=1,
                     frame_bytes=location.length, value_bytes=value_size)
 
-    def finish(mut self) -> list[FrameRead]:
+    pub def finish(mut self) -> list[FrameRead]:
         self.active = false
         result = [self.frames[revision] for revision in sorted([value for value in self.frames.keys()])]
         self.frames = {}
