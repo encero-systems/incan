@@ -22,7 +22,7 @@ the store has no size ceiling.
 from rust::std::fs import OpenOptions, Permissions, copy as copy_file, metadata, rename, set_permissions
 from rust::std::os::unix::fs import MetadataExt, PermissionsExt
 from rust::std::process import id
-from rust::std::string import String as RustString
+from store_selection_records import encode_binding, read_binding
 from std.encoding.hex import hexlify
 from std.environ import get_or
 from std.hash import file_digest
@@ -282,7 +282,8 @@ pub def prepare_seal(
     mut transaction = begin(snapshot(store).map_err(store_failure)?)
     transaction.payloads = digests
     transaction = put(transaction, record_key(identity), encode_fact(fact, provenance)?, EXPECT_REPAIR)
-    transaction = put(transaction, name_key(name), identity.encode("utf-8"))
+    selection = name_key(name)
+    transaction = put(transaction, selection, encode_binding(selection, identity)?)
     _ = staged.remove_tree()
     release(store, staged.name())
     return Ok(PreparedFact(fact=fact, transaction=transaction))
@@ -338,9 +339,10 @@ pub def lookup(store: Path, name: str) -> Result[Option[str], str]:
     match get(selected, key).map_err(store_failure)?:
         None => return Ok(None)
         Some(value) =>
-            match RustString.from_utf8(value):
-                Ok(text) => return Ok(Some(str(text)))
-                Err(_) => return Err(StoreError(kind="integrity", object=key, detail="invalid name binding").message())
+            identity = read_binding(key, value).map_err(
+                (detail) => StoreError(kind="integrity", object=key, detail=detail).message(),
+            )?
+            return Ok(Some(identity))
 
 
 # ---- Views ----

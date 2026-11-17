@@ -1,0 +1,33 @@
+"""Store a named selection and the identity it currently selects in the same authenticated row."""
+
+from rust::std::str import from_utf8
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from pub::internal_models.crumb_rows import ModelField, model_description, required_value
+from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, text
+
+const SELECTION: bytes = b"stores\x00"
+
+
+def description() -> Description:
+    return model_description(SELECTION, "incan.store.selection/1", [
+        ModelField(identity=b"key___", name="key", storage="string"),
+        ModelField(identity=b"target", name="target", storage="string"),
+    ])
+
+
+pub def encode_binding(key: str, target: str) -> Result[bytes, str]:
+    """Bind a target to this storage key. Unit identities may carry the sha256 scheme prefix."""
+    return encode_graph_row(SELECTION, description(), [
+        required_value(b"key___", Value.Text(key)), required_value(b"target", Value.Text(target)),
+    ])
+
+
+pub def read_binding(key: str, data: bytes) -> Result[str, str]:
+    """Open either a typed selection at its own key or the unadorned text used by previous installations."""
+    if data[:4] != b"CRMB":
+        return Ok(str(from_utf8(data).map_err((error) => str(error))?))
+    fields = decode_graph_row(data, SELECTION, description(), 2)?
+    if text(fields[0].value)? != key:
+        return Err("selection names another store key")
+    return text(fields[1].value)

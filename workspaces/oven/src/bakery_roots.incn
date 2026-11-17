@@ -1,7 +1,7 @@
 """Bakery retention roots and collection: project registrations, what they reach, and what `collect` reclaims."""
 
 from rust::std::fs import remove_dir_all
-from rust::std::string import String as RustString
+from store_selection_records import read_binding
 from std.encoding.hex import hexlify
 from std.fs import Path
 from bakery_records import Fact, claim_file, decode_fact, record_key, staging_root, store_failure
@@ -195,9 +195,9 @@ def expire_unregistered(store: Path) -> Result[Expired, str]:
             match get(current, key).map_err(store_failure)?:
                 None => pass
                 Some(value) =>
-                    match RustString.from_utf8(value):
-                        Ok(text) =>
-                            if str(text) in expired:
+                    match read_binding(key, value):
+                        Ok(identity) =>
+                            if identity in expired:
                                 transaction = delete(transaction, key)
                         Err(_) => pass
         _ = commit(transaction).map_err(store_failure)?

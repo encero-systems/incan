@@ -24,6 +24,7 @@ from bakery import (
 )
 from bakery_records import Fact, claim_file, decode_fact, layout_fact_text, record_key, staging_root
 from bakery_views import read_view
+from store_selection_records import read_binding
 from bakery_roots import collect, lease_unit, leased_units, register_root
 from pub::incan_platform.process_lease import ProcessLease
 from pub::incan_platform.store import Snapshot, begin, commit, delete, fork, get, keys, put, segments
@@ -376,6 +377,16 @@ pub def test_prefixed_unit_identities_register_and_expire() -> Result[None, str]
     recent = "sha256:" + digest_of("b7")
     assert bake(store, old, "old program", [], "app-old")?
     assert bake(store, recent, "new program", [], "app")?
+    before = snapshot(store).map_err((error) => error.message())?
+    old_key = "incan.bakery.name\tapp-old"
+    recent_key = "incan.bakery.name\tapp"
+    match get(before, recent_key).map_err((error) => error.message())?:
+        None => return Err("missing baked name")
+        Some(data) =>
+            assert data[:4] == b"CRMB" and read_binding(recent_key, data)? == recent
+            assert read_binding(old_key, data).is_err()
+    _ = commit(put(begin(before), old_key, old.encode("utf-8"))).map_err((error) => error.message())?
+    assert lookup(store, "app-old")? == Some(old)
     project = scratch.path().joinpath("project")
     make_directory(project)?
     register_root(store, project.0, "unit\tapp\tprogram", [old])?
@@ -385,6 +396,7 @@ pub def test_prefixed_unit_identities_register_and_expire() -> Result[None, str]
     collected = collect(store, -1)?
     assert collected.removed == 1 and not found(find(store, old)?), "a replaced program unit was kept"
     assert found(find(store, recent)?), "the current program unit expired"
+    assert lookup(store, "app-old")? is None and lookup(store, "app")? == Some(recent)
     return Ok(None)
 
 

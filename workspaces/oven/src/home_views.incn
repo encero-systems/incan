@@ -11,6 +11,7 @@ from std.fs import Path
 from std.json import JsonValue
 from home_paths import BAKERY_OVERRIDE, BakeryLocation, bakery_location, home
 from publication import publish
+from store_selection_records import encode_binding
 from pub::incan_platform.ipc import session_id
 from pub::incan_platform.store import begin, commit, put, read_store_identity, snapshot as placed_snapshot
 from pub::incan_platform.store import store_identity
@@ -63,7 +64,7 @@ pub def home_view(home: Path, store: Path, identity: str) -> Result[str, str]:
         return Ok(view)
     view = HOME_VIEW_PREFIX + hexlify(session_id()?)
     created = placed_snapshot(store_path(store), view).map_err((error) => error.message())?
-    _ = commit(put(begin(created), HOME_VIEW_RECORD, view.encode("utf-8"))).map_err((error) => error.message())?
+    _ = commit(put(begin(created), HOME_VIEW_RECORD, encode_binding(HOME_VIEW_RECORD, view)?)).map_err((error) => error.message())?
     publish(descriptor, encode_store_view(StoreView(store_id=identity, locator=store.0, home_view=view))? + "\n")?
     return Ok(view)
 

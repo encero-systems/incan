@@ -1,6 +1,6 @@
 """Completed registry closures are immutable typed pages in the home bakery, selected by observed input generation."""
 
-from rust::std::string import String as RustString
+from store_selection_records import encode_binding, read_binding
 from std.encoding.hex import hexlify
 from std.fs import Path
 from std.hash import sha256
@@ -47,7 +47,7 @@ pub def recall_catalog(key: str) -> Result[Option[Catalog], str]:
     match get(view, binding(key)).map_err((error) => error.message())?:
         None => return Ok(None)
         Some(value) =>
-            digest = RustString.from_utf8(value).map((value) => str(value)).map_err((_) => "invalid registry binding")?
+            digest = read_binding(binding(key), value)?
             # 2. The selected digest is both the exact page revision and its value identity.
             spec = specification(key, digest)
             mapped = mapped_value(view, spec, spec.records[0], digest).map_err((error) => error.message())?
@@ -104,7 +104,8 @@ pub def retain_catalog(
     root = export_set(staged, spec, transport).map_err((error) => error.message())?
     admitted = admit(store, transport, root, spec.profile).map_err((error) => error.message())?
     # 3. A changed generation never overwrites the immutable page that earlier readers selected.
-    commit(put(begin(admitted), binding(key), digest.encode("utf-8"))).map_err((error) => error.message())?
+    selection = binding(key)
+    commit(put(begin(admitted), selection, encode_binding(selection, digest)?)).map_err((error) => error.message())?
     return Ok(None)
 
 

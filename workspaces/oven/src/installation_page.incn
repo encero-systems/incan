@@ -1,7 +1,7 @@
 """Admit one installation's normalized frozen inputs once through sealed bakery pages."""
 
 from pub::incan_platform.trace import Operation
-from rust::std::string import String as RustString
+from store_selection_records import encode_binding, read_binding
 from rust::std::sync import Arc
 from rust::std::thread import sleep
 from rust::std::time import Duration
@@ -102,10 +102,7 @@ pub def admitted_identity(directory: Path) -> Result[Option[str], str]:
     match get(view, binding(question(directory))).map_err((error) => error.message())?:
         None => return Ok(None)
         Some(value) =>
-            digest = RustString
-                .from_utf8(value)
-                .map((value) => str(value))
-                .map_err((_) => "invalid installation page binding")?
+            digest = read_binding(binding(question(directory)), value)?
             return Ok(Some(digest))
 
 
@@ -130,10 +127,7 @@ pub def recall(directory: Path) -> Result[Option[Installation], str]:
             clear_documents()
             return Ok(None)
         Some(value) =>
-            digest = RustString
-                .from_utf8(value)
-                .map((value) => str(value))
-                .map_err((_) => "invalid installation page binding")?
+            digest = read_binding(binding(key), value)?
             # 2. A selected corrupt page must never become a miss and silently reproduce itself.
             spec = specification(key, digest)
             payload = selected_value(view, spec, spec.records[0], digest).map_err((error) => error.message())?
@@ -272,7 +266,8 @@ def admit_generation(
     # 3. An installation changed during admission cannot select facts from either partial generation.
     if not current(page):
         return Err(f"{directory.0}: installation changed during admission")
-    commit(put(begin(admitted), binding(key), digest.encode("utf-8"))).map_err((error) => error.message())?
+    selection = binding(key)
+    commit(put(begin(admitted), selection, encode_binding(selection, digest)?)).map_err((error) => error.message())?
     select_documents(
         page.documents,
         page.payloads,
