@@ -317,7 +317,12 @@ pub def entries(root: Path, top: str) -> Result[list[Entry], IndexError]:
     return Ok(result)
 
 
-pub def entries_with_prefix(root: Path, top: str, prefix: str, limit: int = 0) -> Result[list[Entry], IndexError]:
+pub def entries_with_prefix(root: Path, top: str, prefix: str) -> Result[list[Entry], IndexError]:
+    """Collect the complete prefix range, retaining the existing three-argument store interface."""
+    return limited_entries_with_prefix(root, top, prefix, 0)
+
+
+pub def limited_entries_with_prefix(root: Path, top: str, prefix: str, limit: int) -> Result[list[Entry], IndexError]:
     """
     The leaf entries whose keys start with `prefix`, sorted by key, reading only the pages whose range can hold one.
 
@@ -345,7 +350,7 @@ pub def entries_with_prefix(root: Path, top: str, prefix: str, limit: int = 0) -
         mut remaining = 0
         if limit > 0:
             remaining = limit - len(result)
-        result.extend(entries_with_prefix(root, entry.child, prefix, remaining)?)
+        result.extend(limited_entries_with_prefix(root, entry.child, prefix, remaining)?)
         if limit > 0 and len(result) == limit:
             break
     return Ok(result)
