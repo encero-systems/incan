@@ -168,10 +168,11 @@ pub def publish_prepared_graph(
     marker = read_view(directory)?
     release = directory.joinpath(".oven-inputs.sha256")
     mut current_native = false
-    if let Some(selection) = marker:
-        current_native = selection.identity == key.digest
-    elif release.is_file():
-        current_native = staleness(artifact_files(directory, ready.package)?, release, key)? == ""
+    match marker:
+        Some(selection) => current_native = selection.identity == key.digest
+        None =>
+            if release.is_file():
+                current_native = staleness(artifact_files(directory, ready.package)?, release, key)? == ""
     if not current_native:
         return Ok(false)
     graph = directory.joinpath(f"{artifact_stem(ready.package)}.incngraph")
