@@ -51,6 +51,7 @@ const PUBLIC_IDENTITIES: &str = "public-identities";
 const RUNTIME_BINDINGS: &str = "runtime-bindings";
 const ROOT_ENV: &str = "INCAN_COMPILER_RECORD_ROOT";
 const DIGEST_ENV: &str = "INCAN_COMPILER_RECORD_DIGEST";
+const DIRECTORY_ENV: &str = "INCAN_COMPILER_RECORD_DIRECTORY";
 const SET_FORMAT: &str = "incan.sealed-set/2";
 const RECORD_PROFILE: &str = "incan.compiler-records/2";
 const RECORD_CODEC: &str = "incan.compiler-record-value/1";
@@ -64,7 +65,9 @@ pub(super) fn configured() -> bool {
     if thread_selection::selected().is_some() {
         return true;
     }
-    std::env::var_os(ROOT_ENV).is_some() || std::env::var_os(DIGEST_ENV).is_some()
+    [ROOT_ENV, DIGEST_ENV, DIRECTORY_ENV]
+        .iter()
+        .any(|key| std::env::var_os(key).is_some())
 }
 
 /// One compiler-record membership from the pinned sealed-set manifest.
@@ -657,7 +660,7 @@ fn load_installed() -> Result<Option<RecordSet>, String> {
     )
     .entered();
     let (root, digest) = match (std::env::var_os(ROOT_ENV), std::env::var_os(DIGEST_ENV)) {
-        (None, None) => return Ok(None),
+        (None, None) if std::env::var_os(DIRECTORY_ENV).is_none() => return Ok(None),
         (Some(root), Some(digest)) => (root, digest),
         _ => return Err("compiler-record root and digest must be supplied together".to_owned()),
     };
@@ -666,7 +669,7 @@ fn load_installed() -> Result<Option<RecordSet>, String> {
         .into_string()
         .map_err(|_| "compiler-record digest is not UTF-8".to_owned())?;
     valid_digest(&digest)?;
-    if let Some(top) = std::env::var_os("INCAN_COMPILER_RECORD_DIRECTORY") {
+    if let Some(top) = std::env::var_os(DIRECTORY_ENV) {
         let top = top
             .into_string()
             .map_err(|_| "non-UTF-8 compiler directory root".to_owned())?;
