@@ -469,12 +469,20 @@ fn explicit_input_try_call_requires_closed_carrier_dependency_facts() -> Result<
 /// retains its selected header but still needs non-Copy argument or nominal returned-dependency facts.
 #[test]
 fn resource_probe_wrappers_retain_exact_source_boundary_refusals() -> Result<(), Box<dyn std::error::Error>> {
+    // A source-free label stays available after the conditional transfer of a different value.
+    let literal = checked(
+        "def observe(label: str) -> None:\n    print(label)\ndef consume(value: Owned[str]) -> None:\n    pass\ndef main(flag: bool) -> None:\n    value = \"initial\"\n    if flag:\n        consume(value)\n    observe(\"join\")\n",
+    )?;
+    assert!(literal.errors.is_empty(), "{:?}", literal.errors);
+    assert!(
+        literal
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .any(|(owner, state)| { owner.declaration_name == "main" && matches!(state, InputFlow::Checked { .. }) })
+    );
     for (source, call, reason) in [
-        (
-            "def observe(label: str) -> None:\n    print(label)\ndef consume(value: Owned[str]) -> None:\n    pass\ndef main(flag: bool) -> None:\n    value = \"initial\"\n    if flag:\n        consume(value)\n    observe(\"join\")\n",
-            "\"join\"",
-            "ordinary argument requires inferred access or mutable binding facts",
-        ),
         (
             "class Holder:\n    pub value: int\ndef make(value: int) -> Holder:\n    return Holder(value=value)\ndef consume(value: Owned[Holder]) -> None:\n    pass\ndef main(flag: bool) -> None:\n    value = make(1)\n    if flag:\n        consume(value)\n",
             "make(1)",

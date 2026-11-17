@@ -72,7 +72,7 @@ impl Builder<'_> {
                     result_map_err: None,
                 })),
             ValueUseContext::OrdinaryArgument(parameter) => {
-                let kind = if self.ordinary_read(value, &parameter.ty) {
+                let kind = if self.immutable_projection_read(value, &parameter.ty, true) {
                     Some(ValueUseKind::Read)
                 } else if self.closed_call_result(value, &parameter.ty) {
                     Some(ValueUseKind::CallResult)
@@ -424,8 +424,14 @@ impl Builder<'_> {
             && !self.constrained.contains(&source.place.root)
     }
 
-    /// Whether one immutable ordinary slot may read the exact checked stored projection.
-    fn ordinary_read(&mut self, value: &Spanned<Expr>, expected: &ResolvedType) -> bool {
+    /// Whether an immutable slot may read this checked projection. Observing a scalar argument does not give a
+    /// constructor authority to retain the same element in a new object.
+    fn immutable_projection_read(
+        &mut self,
+        value: &Spanned<Expr>,
+        expected: &ResolvedType,
+        observation_only: bool,
+    ) -> bool {
         if !self
             .checker
             .type_info
@@ -466,7 +472,8 @@ impl Builder<'_> {
                 let Expr::Index(base, _) = &value.node else {
                     return false;
                 };
-                identity.kind == SemanticSourceTargetKind::Local
+                observation_only
+                    && identity.kind == SemanticSourceTargetKind::Local
                     && !self.constrained.contains(&path.place.root)
                     && matches!(expected, ResolvedType::Bytes | ResolvedType::Str)
                     && self.checker.type_info.resolved_operator_call(value.span).is_none()
@@ -572,7 +579,7 @@ impl Builder<'_> {
 
     /// Whether one constructor field reads a scalar element from an authenticated independent local snapshot.
     fn constructor_read(&mut self, value: &Spanned<Expr>, expected: &ResolvedType) -> Result<bool, Unavailable> {
-        if !self.ordinary_read(value, expected) {
+        if !self.immutable_projection_read(value, expected, false) {
             return Ok(false);
         }
         Ok(matches!(value.node, Expr::Index(..)))
