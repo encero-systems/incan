@@ -665,6 +665,49 @@ fn digest_matches(bytes: &[u8], expected: &str) -> bool {
         })
 }
 
+/// The parser needs the complete vocabulary registration of an admitted contributor, independently of the
+/// contributor's type-checking contracts. Older or external stores still provide their complete validated manifest.
+pub(super) fn read_vocabulary(dir: &Path, name: &str) -> Result<Option<(VocabExports, String)>, LoafIndexError> {
+    let Some(set) = installed().map_err(|reason| unreadable(dir, name, reason))? else {
+        return Ok(None);
+    };
+    let profile = dir
+        .file_name()
+        .and_then(|part| part.to_str())
+        .ok_or_else(|| unreadable(dir, name, "Loaf profile directory is not UTF-8".to_owned()))?;
+    let prefix = format!("loaf/{profile}/{name}/vocabulary/");
+    let mut matching = set.entries.iter().filter(|entry| entry.key.starts_with(&prefix));
+    let Some(entry) = matching.next() else {
+        return Ok(None);
+    };
+    if matching.next().is_some() || entry.revision != entry.value {
+        return Err(unreadable(
+            dir,
+            name,
+            "vocabulary publication must select one content-named record".to_owned(),
+        ));
+    }
+    let Some(summary) = read_summary(set, dir, name)? else {
+        return Ok(None);
+    };
+    let bytes = read_value(&set.root, &entry.value)
+        .map_err(|reason| unreadable(dir, name, record_failure(&entry.key, reason)))?;
+    set.count_read(&entry.key, bytes.len());
+    let vocab =
+        VocabExports::decode_compiler_record_value(&bytes).map_err(|error| unreadable(dir, name, error.to_string()))?;
+    if !entry
+        .key
+        .ends_with(&format!("/{:x}", Sha256::digest(vocab.package_name.as_bytes())))
+    {
+        return Err(unreadable(
+            dir,
+            name,
+            "vocabulary registration disagrees with its record key".to_owned(),
+        ));
+    }
+    Ok(Some((vocab, summary.identity.digest)))
+}
+
 /// Read one immutable value after the installed set receipt named it; the value itself is authenticated on open.
 fn read_value(root: &Path, digest: &str) -> Result<Vec<u8>, String> {
     validate_payload_directory(root)?;

@@ -14,6 +14,7 @@ use sha2::{Digest, Sha256};
 use super::decoded_manifest::compiler_generation;
 use super::manifest_input::{self, Generation, generation};
 use super::{LoafArtifact, LoafEntry, LoafIdentity, LoafIndexError, LoafNamespace};
+use crate::library_manifest::VocabExports;
 use crate::library_manifest::compiler_records::RecordFamily;
 use crate::library_manifest::declaration_records::{DeclarationFacet, declaration_facts};
 use crate::library_manifest::executable_surface::{ExecutableSurface, runtime_bindings};
@@ -86,6 +87,7 @@ pub(super) struct IndexedLoaf {
     entry: Arc<OnceLock<Result<LoafEntry, LoafIndexError>>>,
     execution: Arc<OnceLock<Result<Arc<crate::library_manifest::LibraryManifest>, LoafIndexError>>>,
     surface: Arc<OnceLock<Result<Arc<ExecutableSurface>, LoafIndexError>>>,
+    vocabulary: Arc<OnceLock<Result<Option<Arc<VocabExports>>, LoafIndexError>>>,
     bindings: Arc<OnceLock<Result<Arc<Vec<RuntimeCallableBinding>>, LoafIndexError>>>,
     /// The shipped native ABI cache, read by the digest the summary names when the manifest is not demanded.
     rust_abi: Arc<OnceLock<Result<Option<Arc<RustAbiCache>>, LoafIndexError>>>,
@@ -109,6 +111,7 @@ impl IndexedLoaf {
             execution: Arc::default(),
             surface: Arc::default(),
             bindings: Arc::default(),
+            vocabulary: Arc::default(),
             rust_abi: Arc::default(),
             named: Arc::default(),
         };
@@ -137,6 +140,7 @@ impl IndexedLoaf {
             execution: Arc::default(),
             surface: Arc::default(),
             bindings: Arc::default(),
+            vocabulary: Arc::default(),
             rust_abi: Arc::default(),
             named: Arc::default(),
         }
@@ -163,6 +167,7 @@ impl IndexedLoaf {
                 execution: Arc::default(),
                 surface: Arc::default(),
                 bindings: Arc::default(),
+                vocabulary: Arc::default(),
                 rust_abi: Arc::default(),
                 named: Arc::default(),
             });
@@ -180,6 +185,7 @@ impl IndexedLoaf {
                 execution: Arc::default(),
                 surface: Arc::default(),
                 bindings: Arc::default(),
+                vocabulary: Arc::default(),
                 rust_abi: Arc::default(),
                 named: Arc::default(),
             });
@@ -466,9 +472,30 @@ impl IndexedLoaf {
             .join(format!("{}.incnbody", artifact_stem(&self.summary.identity.name)))
     }
 
+    /// Return only this parser vocabulary; a non-indexed producer retains normal manifest validation.
+    pub fn parser_vocabulary(&self) -> Result<Option<Arc<VocabExports>>, LoafIndexError> {
+        self.vocabulary
+            .get_or_init(|| {
+                if super::compiler_record_set::configured()
+                    && let Some((vocabulary, digest)) =
+                        super::compiler_record_set::read_vocabulary(&self.dir, &self.summary.identity.name)?
+                {
+                    if digest != self.summary.identity.digest {
+                        return Err(self.inventory_mismatch("vocabulary differs from its admitted inventory"));
+                    }
+                    return Ok(Some(Arc::new(vocabulary)));
+                }
+                Ok(self.demand()?.artifact.manifest.vocab.clone().map(Arc::new))
+            })
+            .clone()
+    }
+
     /// Report a failed demand without opening an untouched manifest.
     pub fn failure(&self) -> Option<&LoafIndexError> {
-        self.entry.get().and_then(|result| result.as_ref().err())
+        self.entry
+            .get()
+            .and_then(|result| result.as_ref().err())
+            .or_else(|| self.vocabulary.get().and_then(|result| result.as_ref().err()))
     }
 
     /// Resolve namespace ownership from the index's declared binding, before reading manifest contents.
