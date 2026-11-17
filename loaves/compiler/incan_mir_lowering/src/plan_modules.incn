@@ -1,41 +1,11 @@
 """A module's admitted plan record: the page a worker restores its functions from, and the note of what it restored."""
 
-from rust::serde import Serialize, Deserialize
-from rust::serde_json import to_string, from_str, Error as JsonError
+pub from pub::internal_models.lowering_events import AdmittedFunction, AdmittedModule, EventReference
+from pub::internal_models.lowering_events import decode_module_note, encode_module_note
 from std.encoding.hex import hexlify
 from std.fs import Path
 from pub::incan_mir_plan import NominalKind, NominalReference
 from pub::internal_models.plan_module_records import ADMITTED_MODULE_NOTE, PARTIAL_MODULE_NOTE, PLAN_MODULE_PAGE, decode_plan_module
-
-
-@derive(Serialize, Deserialize)
-pub model AdmittedReference:
-    """The unit position and native name one declaration of a restored product resolved to in this request."""
-
-    pub kind: NominalKind
-    pub index: int
-    pub name: str
-
-
-@derive(Serialize, Deserialize)
-pub model AdmittedFunction:
-    """
-    One function restored from its module's plan record: the canonical identity its body has in this request, which
-    moves with the body's place in its file, and where its declarations are in this unit.
-    """
-
-    pub function: str
-    pub identity: str
-    pub references: list[AdmittedReference]
-
-
-@derive(Serialize, Deserialize)
-pub model AdmittedModule:
-    """The functions of one module that this request restored from the module's plan record."""
-
-    pub schema: int
-    pub module: str
-    pub functions: list[AdmittedFunction]
 
 
 pub def module_page(products: str, module: str) -> Path:
@@ -93,9 +63,10 @@ pub def admitted_page(products: Option[str], module: str) -> AdmittedPage:
     return page
 
 
-pub def admitted_reference(reference: NominalReference) -> AdmittedReference:
+pub def admitted_reference(reference: NominalReference) -> EventReference:
     """Keep one resolved declaration position for the note."""
-    return AdmittedReference(kind=reference.kind, index=reference.index, name=reference.name)
+    kind = "enum" if reference.kind == NominalKind.Enum else "model"
+    return EventReference(kind=kind, index=reference.index, name=reference.name)
 
 
 pub def report_admitted(
@@ -108,18 +79,18 @@ pub def report_admitted(
         for suffix in [ADMITTED_MODULE_NOTE, PARTIAL_MODULE_NOTE]:
             path = Path(root).joinpath(basename + suffix)
             if suffix == selected and len(functions) > 0:
-                write_admitted_note(path, module, functions)?
+                write_admitted_note(path, module, functions, selected == ADMITTED_MODULE_NOTE)?
             elif path.is_file():
                 path.unlink().map_err((error) => error.message())?
     return Ok(None)
 
 
-def write_admitted_note(path: Path, module: str, functions: list[AdmittedFunction]) -> Result[None, str]:
+def write_admitted_note(path: Path, module: str, functions: list[AdmittedFunction], complete: bool) -> Result[None, str]:
     """Publish the restored function positions used to assemble the current native plan."""
-    note = AdmittedModule(schema=1, module=module, functions=functions)
-    text = to_string(note).map_err((error) => str(error))?
+    note = AdmittedModule(module=module, complete=complete, functions=functions)
+    encoded = encode_module_note(note)?
     path.parent().mkdir(true, true).map_err((error) => error.message())?
-    path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
+    path.write_bytes(encoded).map_err((error) => error.message())?
     return Ok(None)
 
 
@@ -128,11 +99,11 @@ pub def read_admitted(report: Path) -> Result[list[AdmittedModule], str]:
     mut notes: list[AdmittedModule] = []
     for path in sorted([str(path.0) for path in report.iterdir().map_err((error) => error.message())?]):
         if path.endswith(ADMITTED_MODULE_NOTE) or path.endswith(PARTIAL_MODULE_NOTE):
-            text = Path(path).read_text("utf-8", "strict").map_err((error) => error.message())?
-            notes.append(decode_note(text).map_err((error) => str(error))?)
+            encoded = Path(path).read_bytes().map_err((error) => error.message())?
+            note = decode_module_note(encoded)?
+            name = Path(path).name()
+            suffix = ADMITTED_MODULE_NOTE if note.complete else PARTIAL_MODULE_NOTE
+            if name != hexlify(note.module.encode("utf-8")) + suffix:
+                return Err("module admission note disagrees with its filename")
+            notes.append(note)
     return Ok(notes)
-
-
-def decode_note(text: str) -> Result[AdmittedModule, JsonError]:
-    """Pass the expected note type to the native generic decoder through its result contract."""
-    return from_str(text)
