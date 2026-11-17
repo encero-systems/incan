@@ -878,6 +878,21 @@ fn signature_block_retains_builtin_clone_invocation() -> Result<(), Box<dyn std:
     Ok(())
 }
 
+/// Matching a closed, nominal error from a direct call retains the evaluation of its argument and both arms.
+#[test]
+fn match_admits_a_closed_nominal_error_from_an_ordinary_call() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"model Fault:
+    detail: str
+def create(value: int) -> Result[None, Fault]:
+    return Err(Fault(detail="failed"))
+def inspect(seed: Borrowed[int]) -> bool:
+    match create(seed):
+        Ok(_) => return true
+        Err(_) => return false
+"#;
+    require_checked(&checked(source)?, "inspect")
+}
+
 /// A selected dependency-free `Result` call may provide an exact constructor field through `?`. Stored carriers,
 /// carrier constructors and returned views remain materialization refusals.
 #[test]
