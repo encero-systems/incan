@@ -66,7 +66,8 @@ pub def test_sealed_sets_are_canonical_shared_idempotent_and_checked() -> Result
     left_key = record_key(spec, spec.records[0]).map_err((error) => error.message())?
     right_key = record_key(other_spec, other_spec.records[0]).map_err((error) => error.message())?
     assert left_key != right_key
-    assert get(both, left_key).map_err((error) => error.message())? != None
+    assert get(both, left_key).map_err((error) => error.message())?.unwrap_or(b"")[:4] == b"CRMB"
+    assert get(both, "sealed/set/" + root).map_err((error) => error.message())?.unwrap_or(b"")[:4] == b"CRMB"
     assert get(both, right_key).map_err((error) => error.message())? != None
     prove_mapped_value(both, spec, payload)?
     assert inventory(home.joinpath("payloads"))? == payloads_before

@@ -27,71 +27,12 @@ from pub::incan_platform.store.codec import Write, encode_segment
 from pub::incan_platform.store.repair import quarantine_record
 from store_path_conversion import payload_path, pin_payload, put_payload, readmit_payload, snapshot
 
+pub from sealed_set_types import ExternalReference, Profile, Record, SetSpec
+from sealed_set_types import Entry, Object, VerifiedSet
+from sealed_local_records import local_envelope, local_envelope_objects, local_receipt, read_local_receipt
+
 const FORMAT: str = "incan.sealed-set/2"
 const SET_PREFIX: str = "sealed/set/"
-
-
-pub model Profile:
-    """Exact identity, family schema and codec contracts; the adapter supplies the supported profile."""
-
-    pub identity: str
-    pub schema: str
-    pub codec: str
-
-
-pub model ExternalReference:
-    """One full immutable revision key and value supplied by a declared dependency set, never by global latest lookup."""
-
-    pub set_root: str
-    pub key: str
-    pub revision: str
-    pub value: str
-
-
-pub model Record:
-    """One immutable revision; references name other keys in this set, and payloads name full SHA-256 digests."""
-
-    pub key: str
-    pub revision: str
-    pub payloads: list[str]
-    pub references: list[str]
-    pub external: list[ExternalReference] = []
-
-
-pub model SetSpec:
-    """An adapter's explicit export roots and immutable provenance, independent of a local store generation."""
-
-    pub profile: Profile
-    pub origin: str
-    pub producer: str
-    pub receipt: str
-    pub records: list[Record]
-    pub namespaces: list[str]
-    pub dependencies: list[str]
-
-
-model Entry:
-    """A record envelope refers to shared content rather than copying its value."""
-
-    pub record: Record
-    pub value: str
-
-
-model Object:
-    """One content-named file with an exact length, shared by every envelope that refers to it."""
-
-    pub digest: str
-    pub length: int
-
-
-model VerifiedSet:
-    """Private transport metadata; verification results supplied by callers never authorize admission."""
-
-    pub spec: SetSpec
-    pub entries: list[Entry]
-    pub objects: list[Object]
-    pub index: str
-    pub document: bytes
 
 
 pub def export_set(view: Snapshot, spec: SetSpec, directory: Path) -> Result[str, StoreError]:
@@ -184,13 +125,20 @@ pub def admit_with_spec(
             transaction = put(transaction, reference.key, required_value(view, reference.key)?, EXPECT_ABSENT)
     for entry in verified.entries:
         key = record_key(verified.spec, entry.record)?
-        value = envelope_bytes(verified.spec, entry)?
-        check_existing(view, key, value)?
-        if already:
-            required_value(view, key)?
+        value = selected_envelope(view, key, verified.spec, entry, already)?
         transaction = put(transaction, key, value, EXPECT_ABSENT)
-    check_existing(view, receipt_key, verified.document)?
-    transaction = put(transaction, receipt_key, verified.document, EXPECT_ABSENT)
+    stored = get(view, receipt_key)?
+    mut receipt = b""
+    match stored:
+        Some(previous) =>
+            if previous[:4] == b"CRMB":
+                receipt = local_receipt(set_root, verified).map_err((detail) => problem("format", receipt_key, detail))?
+            else:
+                receipt = verified.document
+            if previous != receipt:
+                return Err(problem("conflict", receipt_key, "immutable set receipt already names another value"))
+        None => receipt = local_receipt(set_root, verified).map_err((detail) => problem("format", receipt_key, detail))?
+    transaction = put(transaction, receipt_key, receipt, EXPECT_ABSENT)
     # 2. Content names are checked by both the transport verifier and the store's immutable installer.
     transaction.payloads = install_objects(root, directory, verified.objects, already)?
     if already:
@@ -227,9 +175,7 @@ pub def selected_value(view: Snapshot, spec: SetSpec, record: Record, digest: st
     """Check an exact admitted revision envelope and locate its value; callers must still verify value integrity."""
     check_digest(digest)?
     key = record_key(spec, record)?
-    expected = envelope_bytes(spec, Entry(record=record, value=digest))?
-    if required_value(view, key)? != expected:
-        return Err(problem("integrity", key, "admitted revision differs from the selected contract"))
+    _ = selected_envelope(view, key, spec, Entry(record=record, value=digest), true)?
     path = payload_path(view.root, digest)
     if path.is_symlink():
         return Err(problem("integrity", path.0, "a canonical value is a symbolic link"))
@@ -343,13 +289,10 @@ def check_dependencies(view: Snapshot, dependencies: list[str]) -> Result[None, 
     """Every external set must already have an admitted immutable receipt in this home."""
     for dependency in dependencies:
         document = required_value(view, SET_PREFIX + dependency)?
-        if content_digest(document) != dependency:
-            return Err(problem("integrity", dependency, "admitted dependency receipt differs from its root"))
-        admitted = decode_manifest(document)?
+        admitted = admitted_receipt(dependency, document)?
         for entry in admitted.entries:
             key = record_key(admitted.spec, entry.record)?
-            if required_value(view, key)? != envelope_bytes(admitted.spec, entry)?:
-                return Err(problem("integrity", key, "admitted dependency record differs from its receipt"))
+            _ = selected_envelope(view, key, admitted.spec, entry, true)?
         for object in admitted.objects:
             if checked_length(payload_path(view.root, object.digest), object.digest)? != object.length:
                 return Err(problem("integrity", dependency, "admitted dependency has an inconsistent payload"))
@@ -403,9 +346,11 @@ def install_objects(
 pub def payload_references(key: str, value: bytes) -> Result[list[str], StoreError]:
     """The exact objects named by each independent owner receipt or revision envelope."""
     if key.startswith(SET_PREFIX):
-        verified = decode_manifest(value)?
+        verified = admitted_receipt(key[len(SET_PREFIX):], value)?
         return Ok([object.digest for object in verified.objects])
     if key.startswith("sealed/record/"):
+        if value[:4] == b"CRMB":
+            return local_envelope_objects(value).map_err((detail) => problem("integrity", key, detail))
         text = RustString.from_utf8(value).map_err((error) => problem("integrity", key, str(error)))?
         parsed = JsonValue.parse(str(text)).map_err((error) => problem("integrity", key, error.message()))?
         envelope = array(parsed, 3)?
@@ -414,14 +359,37 @@ pub def payload_references(key: str, value: bytes) -> Result[list[str], StoreErr
     return Ok([])
 
 
-def check_existing(view: Snapshot, key: str, value: bytes) -> Result[None, StoreError]:
-    """Refuse unequal values under one immutable identity before installing any new payloads."""
+def selected_envelope(view: Snapshot, key: str, spec: SetSpec, entry: Entry, required: bool) -> Result[bytes, StoreError]:
+    """Compare the record in its original representation. New identities receive a typed local revision."""
     match get(view, key)?:
-        None => return Ok(None)
-        Some(found) =>
-            if found != value:
+        None =>
+            if required:
+                return Err(problem("integrity", key, "required record is absent"))
+            return local_envelope(spec, entry).map_err((detail) => problem("format", key, detail))
+        Some(previous) =>
+            mut expected = b""
+            if previous[:4] == b"CRMB":
+                expected = local_envelope(spec, entry).map_err((detail) => problem("format", key, detail))?
+            else:
+                expected = envelope_bytes(spec, entry)?
+            if previous != expected:
+                if required:
+                    return Err(problem("integrity", key, "admitted revision differs from the selected contract"))
                 return Err(problem("conflict", key, "immutable identity already names another value"))
-    return Ok(None)
+            return Ok(previous)
+
+
+def admitted_receipt(root: str, data: bytes) -> Result[VerifiedSet, StoreError]:
+    """Authenticate retained facts against the pinned portable root, including receipts from previous installations."""
+    if data[:4] == b"CRMB":
+        receipt = read_local_receipt(root, data).map_err((detail) => problem("integrity", root, detail))?
+        transport = manifest_bytes(receipt.spec, receipt.entries, receipt.objects, receipt.index)?
+        if content_digest(transport) != root:
+            return Err(problem("integrity", root, "admitted receipt differs from its transport root"))
+        return Ok(receipt)
+    if content_digest(data) != root:
+        return Err(problem("integrity", root, "admitted dependency receipt differs from its root"))
+    return decode_manifest(data)
 
 
 def required_value(view: Snapshot, key: str) -> Result[bytes, StoreError]:
@@ -675,7 +643,7 @@ def check_external(view: Snapshot, records: list[Record]) -> Result[None, StoreE
     """Require each exact target to belong to the named admitted set, never merely exist in this home."""
     for record in records:
         for reference in record.external:
-            dependency = decode_manifest(required_value(view, SET_PREFIX + reference.set_root)?)?
+            dependency = admitted_receipt(reference.set_root, required_value(view, SET_PREFIX + reference.set_root)?)?
             mut supplied = false
             for entry in dependency.entries:
                 if (
@@ -723,8 +691,11 @@ pub def readmit(root: Path, directory: Path, set_root: str, supported: Profile) 
     mut transaction = begin(view)
     for entry in verified.entries:
         key = record_key(verified.spec, entry.record)?
-        transaction = restored_frame(transaction, view, key, envelope_bytes(verified.spec, entry)?)?
-    transaction = restored_frame(transaction, view, SET_PREFIX + set_root, verified.document)?
+        encoded = local_envelope(verified.spec, entry).map_err((detail) => problem("format", key, detail))?
+        transaction = restored_frame(transaction, view, key, encoded, envelope_bytes(verified.spec, entry)?)?
+    receipt_key = SET_PREFIX + set_root
+    receipt = local_receipt(set_root, verified).map_err((detail) => problem("format", receipt_key, detail))?
+    transaction = restored_frame(transaction, view, receipt_key, receipt, verified.document)?
     # 3. Payload identities remain pinned while replacement frames become visible atomically.
     for object in verified.objects:
         prepared = readmit_payload(root, transport_file(directory, f"payloads/{object.digest}")?, object.digest)?
@@ -732,7 +703,7 @@ pub def readmit(root: Path, directory: Path, set_root: str, supported: Profile) 
     return commit(transaction)
 
 
-def restored_frame(transaction: Transaction, view: Snapshot, key: str, value: bytes) -> Result[Transaction, StoreError]:
+def restored_frame(transaction: Transaction, view: Snapshot, key: str, value: bytes, predecessor: bytes) -> Result[Transaction, StoreError]:
     """Guard equal frozen frames, quarantine physical damage, and refuse intact revision disagreement."""
     match lookup(view, key):
         Err(error) =>
@@ -743,7 +714,10 @@ def restored_frame(transaction: Transaction, view: Snapshot, key: str, value: by
         Ok(found) =>
             match found:
                 Lookup.Found(previous) =>
-                    if owned(previous) != value:
+                    current = owned(previous)
+                    if current == predecessor:
+                        return Ok(put(transaction, key, current, EXPECT_ABSENT))
+                    if current != value:
                         return Err(problem("conflict", key, "intact frozen revision differs from verified transport"))
                 Lookup.Deleted => pass
                 Lookup.Absent => pass
