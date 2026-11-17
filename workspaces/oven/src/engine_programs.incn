@@ -368,7 +368,7 @@ pub def obtain(
     if produced.evaluations > 0:
         reading_plan_sidecars = begin_work()
         plan_counts = plan_record_counts(ready, compiled_key)?
-        plan_module_reuses = len(restored_modules(plan_record_report_path(ready, compiled_key))?)
+        plan_module_reuses = len(restored_modules(plan_record_report_path(ready, compiled_key), whole_only=true)?)
         record_work(
             Operation.EngineSidecarAuthentication,
             plan_record_report_path(ready, compiled_key).0,
