@@ -41,7 +41,7 @@ pub enum CompiledBodyOutput:
     Fallback(CompiledBodyFallback)
 
 
-pub def encode_compiled_body_rows(outputs: Borrowed[CompiledBodyOutputs]) -> Result[list[bytes], CodecFault]:
+pub def encode_compiled_body_rows(outputs: &CompiledBodyOutputs) -> Result[list[bytes], CodecFault]:
     """
     Encode a successful compilation as independently bounded Crumb rows.
 
