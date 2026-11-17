@@ -1,18 +1,8 @@
-"""
-Describe the unit's model and enum tables by stable declaration identity for keyed plan products.
-
-A product names each model or enum it uses by the `StableDeclarationId` of its checked declaration and by a digest of
-the declaration's checked meaning. Native carrier names and checked type names encode their declaration's source
-span, so both the identity and the digest replace every carrier key the declaration binds by its identity without
-the span, and drop positional fields. A closed specialization keeps its normalized carrier name beside its template's
-identity. A standard carrier lowering admits as an intrinsic enum is named by the checked type it lays out.
-"""
+"""Bind keyed native products to source declarations and closed specializations through their checked versions."""
 
 from rust::incan_semantics_core::stable_identity import StableDeclarationId
-from rust::incan_semantics_core::semantic_digest import semantic_digest
+from rust::incan_semantics_core::semantic_digest import semantic_digest, model_layout_witness, enum_layout_witness
 from rust::incan_semantics_core import CanonicalSymbolId
-from rust::serde_json import to_string as native_json
-from std.json import JsonValue, parse
 from pub::incan_mir_plan import (
     EnumDeclaration,
     ExternalFunction,
@@ -59,8 +49,8 @@ pub def unit_product_nominals(program: &ProgramContext, intrinsics: &list[EnumDe
     mut model_names: list[str] = []
     for position in range(len(nominals)):
         declaration = borrowed_at(nominals, position)
-        encoded = native_json(declaration).map_err((error) => str(error))
-        models.append(source_nominal(NominalKind.Model, declaration.canonical, str(declaration.name), encoded))
+        witness = model_layout_witness(declaration).map_err((error) => str(error))
+        models.append(source_nominal(NominalKind.Model, declaration.canonical, witness))
         model_names.append(model_symbol(str(declaration.name)))
     enums = program.enums.as_ref()
     mut described: list[ProductNominal] = []
@@ -68,8 +58,8 @@ pub def unit_product_nominals(program: &ProgramContext, intrinsics: &list[EnumDe
     for position in range(len(enums)):
         declaration = borrowed_at(enums, position)
         carrier = str(declaration.carrier_name())
-        encoded = native_json(declaration).map_err((error) => str(error))
-        described.append(source_nominal(NominalKind.Enum, declaration.canonical, carrier, encoded))
+        witness = enum_layout_witness(declaration).map_err((error) => str(error))
+        described.append(source_nominal(NominalKind.Enum, declaration.canonical, witness))
         enum_names.append(model_symbol(carrier))
     mut unit = unit_nominals(models, described, model_names, enum_names)
     sync_carriers(unit, program, intrinsics)
@@ -103,23 +93,17 @@ pub def retain_named_scalar(
     return Ok(references)
 
 
-def source_nominal(kind: NominalKind, canonical: &CanonicalSymbolId, carrier: str, encoded: Result[str, str]) -> ProductNominal:
-    """Name one checked source declaration; an unprojectable identity or unreadable meaning stays unnamed."""
+def source_nominal(kind: NominalKind, canonical: &CanonicalSymbolId, witness: Result[tuple[str, str], str]) -> ProductNominal:
+    """Combine the existing stable declaration identity with its closed specialization and complete checked version."""
     unnamed = ProductNominal(kind=kind, identity="", digest="")
     match StableDeclarationId.from_canonical(canonical, None, None):
         None => return unnamed
         Some(stable) =>
-            match encoded:
+            match witness:
                 Err(_) => return unnamed
-                Ok(text) =>
-                    match declaration_meaning(text):
-                        Err(_) => return unnamed
-                        Ok(meaning) =>
-                            meaning_text, keys = meaning
-                            identity = f"{stable.render_compact()}#{bound_text(carrier, keys)}"
-                            match semantic_digest([meaning_text]):
-                                Ok(digest) => return ProductNominal(kind=kind, identity=identity, digest=digest)
-                                Err(_) => return unnamed
+                Ok(item) =>
+                    specialization, version = item
+                    return ProductNominal(kind=kind, identity=f"{stable.render_compact()}#{specialization}", digest=version)
 
 
 pub def carrier_nominal(declaration: &EnumDeclaration) -> ProductNominal:
@@ -149,69 +133,3 @@ def carrier_type_text(declaration: &EnumDeclaration) -> Result[str, str]:
         Some(key) =>
             stored = encode_checked_layout(key.clone())?
             return Ok("sha256:" + hexlify(sha256.digest(stored)))
-
-
-def declaration_meaning(text: str) -> Result[tuple[str, list[tuple[str, str]]], str]:
-    """
-    Serialize a declaration's checked meaning without source positions.
-
-    Returns the normalized text and the carrier keys the declaration binds, each with its span-free identity text.
-    """
-    value = parse(text).map_err((error) => error.message())?
-    mut keys: list[tuple[str, str]] = []
-    if value.is_object():
-        fields = value.expect_object().map_err((error) => error.message())?
-        if "named_type_identities" in fields and fields["named_type_identities"].is_object():
-            bindings = fields["named_type_identities"].expect_object().map_err((error) => error.message())?
-            # Only carrier keys encode a source span; a written type name stays as checked.
-            for key in sorted([key for key in bindings.keys() if key.startswith("__incan_carrier_")]):
-                bound = positionless(bindings[key])?.to_json().map_err((error) => error.message())?
-                keys.append((key, f"nominal({bound})"))
-    normalized = positionless(value)?.to_json().map_err((error) => error.message())?
-    return Ok((bound_text(normalized, keys), keys))
-
-
-def bound_text(text: str, keys: &list[tuple[str, str]]) -> str:
-    """Replace each bound carrier key, longest first, by its span-free identity text."""
-    mut bound = text
-    mut replaced: list[bool] = [false for _ in keys]
-    for _round in range(len(keys)):
-        mut longest = -1
-        for index in range(len(keys)):
-            if not replaced[index] and (longest < 0 or len(keys[index][0]) > len(keys[longest][0])):
-                longest = index
-        replaced[longest] = true
-        bound = bound.replace(keys[longest][0], keys[longest][1])
-    return bound
-
-
-def positionless(value: JsonValue) -> Result[JsonValue, str]:
-    """Drop positional fields; a span keeps only its expansion identity, as the semantic digest owner does."""
-    if value.is_array():
-        mut items: list[JsonValue] = []
-        for child in value.expect_array().map_err((error) => error.message())?:
-            items.append(positionless(child)?)
-        return Ok(JsonValue.array(items))
-    if not value.is_object():
-        return Ok(value)
-    fields = value.expect_object().map_err((error) => error.message())?
-    mut kept: Dict[str, JsonValue] = {}
-    for key in sorted([key for key in fields.keys()]):
-        if positional_field(key):
-            continue
-        child = fields[key]
-        if key == "span" or key.endswith("_span"):
-            mut expansion: Dict[str, JsonValue] = {}
-            if child.is_object():
-                span = child.expect_object().map_err((error) => error.message())?
-                if "expansion" in span:
-                    expansion["expansion"] = span["expansion"]
-            kept[key] = JsonValue.object(expansion)
-        else:
-            kept[key] = positionless(child)?
-    return Ok(JsonValue.object(kept))
-
-
-def positional_field(key: str) -> bool:
-    """Fields whose values are source positions or traversal-order identities, as the semantic digest owner excludes."""
-    return key in ["decl_id", "direct_call_id", "direct_declaration_id", "id", "module_id", "scope_discriminant"]
