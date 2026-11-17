@@ -29,6 +29,10 @@ pub def prepare_report(
         name: JsonValue.int(produced.artifact_refusals[name])
         for name in sorted([key for key in produced.artifact_refusals.keys()])
     }
+    frames = [JsonValue.object({
+        "key": JsonValue.string(row.key), "revision": JsonValue.string(row.revision), "reads": JsonValue.int(row.reads),
+        "frame_bytes": JsonValue.int(row.frame_bytes), "value_bytes": JsonValue.int(row.value_bytes),
+    }) for row in produced.frame_reads]
     document = JsonValue.object(
         {"schema": JsonValue.string("incan.engine.proofs/3"), "run": JsonValue.string(run), "granularity": JsonValue.string(
             "unit-record",
@@ -58,7 +62,9 @@ pub def prepare_report(
             produced.native_interface_evaluations,
         ), "index_pages": JsonValue.int(produced.index_pages), "keys_listed": JsonValue.int(
             produced.keys_listed,
-        ), "plan_module_reuses": JsonValue.int(produced.plan_module_reuses)},
+        ), "plan_module_reuses": JsonValue.int(produced.plan_module_reuses),
+        "store_frames_read": JsonValue.int(produced.store_frames_read), "store_frame_bytes": JsonValue.int(produced.store_frame_bytes),
+        "store_decoded_bytes": JsonValue.int(produced.store_decoded_bytes), "store_reads": JsonValue.array(frames)},
     )
     selected = snapshot(store).map_err((error) => error.message())?
     return Ok(put(begin(selected), report_key(run), json_text(document)?.encode("utf-8")))

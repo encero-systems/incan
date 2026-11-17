@@ -198,6 +198,56 @@ pub model ReadCounts:
 static counted: dict[str, int] = {}
 
 
+pub model FrameRead:
+    """A physical store frame authenticated during an explicitly measured operation."""
+    pub key: str
+    pub revision: str
+    pub reads: int
+    pub frame_bytes: int
+    pub value_bytes: int
+
+
+class FrameReadMeasurement:
+    """Measure repeated reads by frame revision only inside the active observation."""
+    active: bool = false
+    frames: Dict[str, FrameRead] = {}
+
+    def start(mut self, enabled: bool) -> None:
+        self.frames = {}
+        self.active = enabled
+
+    def record(mut self, key: str, location: Location, value_size: int) -> None:
+        if self.active:
+            revision = hexlify(location.digest)
+            if revision in self.frames:
+                previous = self.frames[revision]
+                self.frames[revision] = FrameRead(key=key, revision=revision, reads=previous.reads + 1,
+                    frame_bytes=location.length, value_bytes=value_size)
+            else:
+                self.frames[revision] = FrameRead(key=key, revision=revision, reads=1,
+                    frame_bytes=location.length, value_bytes=value_size)
+
+    def finish(mut self) -> list[FrameRead]:
+        self.active = false
+        result = [self.frames[revision] for revision in sorted([value for value in self.frames.keys()])]
+        self.frames = {}
+        return result
+
+
+static frame_measurement: FrameReadMeasurement = FrameReadMeasurement()
+
+
+pub def measure_frame_reads(enabled: bool) -> None:
+    """Begin a scoped observation of exact authenticated frames for a request that asked for proof."""
+    frame_measurement.start(enabled)
+
+
+pub def finish_frame_reads() -> list[FrameRead]:
+    """End observation, returning exact logical keys, physical revisions, counts and byte sizes."""
+    return frame_measurement.finish()
+
+
+
 pub def store_identity(root: Path) -> Result[str, StoreError]:
     """Return the physical store's persistent identity, provisioning it once under the store lifecycle lock."""
     ensure_directory(root)?
@@ -423,7 +473,6 @@ pub def lookup(view: Snapshot, key: str) -> Result[Lookup, StoreError]:
     match index_find(view.root, view.index, key).map_err(index_failure)?:
         None => return Ok(Lookup.Absent)
         Some(location) =>
-            counted["records"] = counted.get("records", 0) + 1
             return read_frame(view.root, key, location)
 
 
@@ -525,6 +574,7 @@ pub def read_frame(root: Path, key: str, location: Location) -> Result[Lookup, S
     path = root.joinpath("segments").joinpath(f"{location.segment}.seg")
     mapped = path.store_map_read().map_err((error) => failure("integrity", path.value, error.message()))?
     frame = part(path, mapped.view(location.offset, location.length), "frame runs past its segment")?
+    counted["records"] = counted.get("records", 0) + 1
     counted["bytes"] = counted.get("bytes", 0) + location.length
     if view_digest(frame) != location.digest:
         return Err(failure("integrity", path.value, "frame does not match its digest"))
@@ -540,8 +590,10 @@ pub def read_frame(root: Path, key: str, location: Location) -> Result[Lookup, S
             if found != key:
                 return Err(failure("integrity", path.value, "frame holds another key"))
     if location.tombstone:
+        frame_measurement.record(key, location, 0)
         return Ok(Lookup.Deleted)
     value = part(path, frame.slice(8 + size, frame.len() - 8 - size), "frame key runs past the frame")?
+    frame_measurement.record(key, location, value.len())
     return Ok(Lookup.Found(value))
 
 
@@ -882,7 +934,6 @@ def pending_writes(latest: Snapshot, writes: list[Write]) -> Result[list[Write],
     for write in writes:
         mut found: Result[Lookup, StoreError] = Ok(Lookup.Absent)
         if write.key in located:
-            counted["records"] = counted.get("records", 0) + 1
             found = read_frame(latest.root, write.key, located[write.key])
         if kept(write, found)?:
             remaining.append(write)

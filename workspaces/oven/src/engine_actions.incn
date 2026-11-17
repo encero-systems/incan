@@ -9,7 +9,7 @@ from request_directory import serve_from, served
 from engine_programs import ProgramOutcome, check_program, obtain, prepare_selection, view_sealed
 from engine_epochs import CapturedRequest, after_projection
 from engine_proofs import retain, prepare_report
-from pub::incan_platform.store import Transaction, begin as begin_selection, commit, commit_pinned, read_counts
+from pub::incan_platform.store import Transaction, begin as begin_selection, commit, commit_pinned, read_counts, measure_frame_reads, finish_frame_reads
 from observation import trace
 from jec import begin, record
 from pub::incan_platform.trace import Operation
@@ -81,6 +81,7 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
     standard = standard_library_dir()?.0 + "/"
     count_frozen_work([toolchain, standard])
     reading = read_counts()
+    measure_frame_reads(pending.proofs)
     produced_result = obtain(
         store,
         pending.capture.revision,
@@ -90,11 +91,16 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
         pending.producer,
         Some(pending.capture.selected),
     )
+    frame_reads = finish_frame_reads()
     frozen = finish_frozen_counting()
     read = read_counts()
     mut produced = produced_result?
     produced.index_pages = read.pages - reading.pages
     produced.keys_listed = read.listed - reading.listed
+    produced.store_frames_read = read.records - reading.records
+    produced.store_frame_bytes = read.bytes - reading.bytes
+    produced.store_decoded_bytes = read.decoded - reading.decoded
+    produced.frame_reads = frame_reads
     mut counters = pending.capture.counters
     counters.frozen.stats += frozen.stats
     counters.frozen.reads += frozen.reads
@@ -172,7 +178,9 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
 def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, str]:
     """Check the captured build reach, publish its capture, and return no native selection or execution lease."""
     checking = begin()
-    outcome = check_program(
+    reading = read_counts()
+    measure_frame_reads(pending.proofs)
+    result = check_program(
         store,
         pending.capture.revision,
         console,
@@ -180,7 +188,10 @@ def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, 
         Some(pending.capture.epoch),
         Some(pending.capture.selected),
         pending.view,
-    )?
+    )
+    frame_reads = finish_frame_reads()
+    read = read_counts()
+    outcome = result?
     record(Operation.EngineUnit, pending.capture.revision, checking)
     captured = after_projection(pending.capture)?
     mut snapshot = captured.snapshot.digest
@@ -194,6 +205,12 @@ def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, 
     if pending.proofs:
         checked = ProgramOutcome(
             code=outcome.code,
+            index_pages=read.pages - reading.pages,
+            keys_listed=read.listed - reading.listed,
+            store_frames_read=read.records - reading.records,
+            store_frame_bytes=read.bytes - reading.bytes,
+            store_decoded_bytes=read.decoded - reading.decoded,
+            frame_reads=frame_reads,
             body_evaluations=outcome.body_evaluations,
             body_reuses=outcome.body_reuses,
             body_page_writes=outcome.body_page_writes,
