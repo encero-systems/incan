@@ -224,6 +224,13 @@ pub(super) fn range_value<T: DeserializeOwned>(
     };
     let entry = &set.entries[i];
     let fail = |reason| unreadable(dir, name, record_failure(&key, reason));
+    if i.checked_sub(1)
+        .and_then(|n| set.entries.get(n))
+        .is_some_and(|item| item.key == key)
+        || set.entries.get(i + 1).is_some_and(|item| item.key == key)
+    {
+        return Err(fail("ambiguous installed executable member".into()));
+    }
     if entry.revision != entry.value {
         return Err(fail("distinct revision and content identities".into()));
     }
@@ -661,6 +668,7 @@ fn load_installed() -> Result<Option<RecordSet>, String> {
     if !digest_matches(&bytes, &digest) {
         return Err("compiler-record manifest differs from the installed toolchain pin".to_owned());
     }
+    tracing::trace!(target: "incan::invocation", phase = "record_directory_read", digest = %digest, bytes = bytes.len());
     let document: Value =
         serde_json::from_slice(&bytes).map_err(|error| format!("invalid compiler-record set: {error}"))?;
     let fields = array(&document, 10, "compiler-record set")?;
