@@ -11,6 +11,11 @@ const INTERFACE: bytes = b"lowint\x00"
 pub const INTERFACE_REPORT: str = "native-interface.crumb"
 
 
+pub def native_interface_filename() -> str:
+    """The filename shared by the lowering publisher and native reader."""
+    return INTERFACE_REPORT
+
+
 pub model EventReference:
     """A named ordinal's position in the current model or enum table."""
 
@@ -180,6 +185,11 @@ pub def decode_native_interface(encoded: bytes) -> Result[NativeInterface, str]:
 
 
 pub const ADMITTED_DEFINITIONS: str = "admitted-definitions.crumb"
+
+
+pub def admitted_definitions_filename() -> str:
+    """The filename for definitions already admitted by lowering."""
+    return ADMITTED_DEFINITIONS
 
 
 pub model AdmittedDefinition:

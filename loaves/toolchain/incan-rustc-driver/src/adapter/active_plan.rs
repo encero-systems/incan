@@ -50,7 +50,7 @@ impl PlanReader {
         let Some(report) = report else {
             return Ok(reader);
         };
-        let bytes = match std::fs::read(report.join(internal_models::INTERFACE_REPORT)) {
+        let bytes = match std::fs::read(report.join(internal_models::native_interface_filename())) {
             Ok(bytes) => bytes,
             // A build without record input stays an ordinary compilation, ineligible for native incremental reuse.
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(reader),
@@ -166,7 +166,7 @@ impl PlanReader {
         plan: &Plan,
         inputs: &mut HashMap<String, DefinitionInput>,
     ) -> Result<(), String> {
-        let path = report.join(internal_models::ADMITTED_DEFINITIONS);
+        let path = report.join(internal_models::admitted_definitions_filename());
         if !path.is_file() {
             return Ok(());
         }
