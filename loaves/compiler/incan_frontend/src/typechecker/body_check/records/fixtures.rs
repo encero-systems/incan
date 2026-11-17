@@ -287,8 +287,13 @@ pub(crate) fn produce_closed_declaration(
     checker.record_type_param_declaration_spans(&program);
     checker.visibility_point = super::super::VisibilityPoint::Collected;
     checker.prepare_program_body_facts();
+    // The ordinary declaration pass validates source annotations and records their resolved type references.
+    // Enter the same visibility point before the isolated declaration scope captures those facts.
+    checker.validate_source_type_names = true;
+    checker.visibility_point = super::super::VisibilityPoint::BeforeDeclaration(owner);
     let _frame =
         checker.check_declaration_owner(owner, |checker| checker.prepare_function_declaration(function, owner));
+    checker.visibility_point = super::super::VisibilityPoint::AfterDeclaration(owner);
     checker.settle_body_checks(&program);
     if checker.check_work().function_bodies != 0 || !checker.errors.is_empty() {
         return Ok(None);
