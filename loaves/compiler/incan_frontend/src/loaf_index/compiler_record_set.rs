@@ -860,6 +860,7 @@ mod tests {
 
     use super::declaration_records::read_declaration_in;
     use super::runtime_bindings::read_runtime_bindings_in;
+    use super::thread_selection;
     use super::{
         Metadata, Projection, RecordEntry, RecordReads, RecordSet, open_value, read_group, read_summary,
         read_surface_in,
