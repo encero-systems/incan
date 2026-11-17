@@ -52,7 +52,7 @@ pub def encode_rows(description: Description, records: list[RowRecord], maximum:
     registry = KindRegistry.create([], budget).map_err((error) => error.message())?
     encoded = write_rows([description], records, registry, false, budget).map_err((error) => error.message())?
     if len(encoded) > maximum:
-        return Err("encoded Crumb rows exceed their byte boundary")
+        return Err(f"encoded Crumb rows need {len(encoded)} bytes, limit {maximum}")
     return Ok(encoded)
 
 

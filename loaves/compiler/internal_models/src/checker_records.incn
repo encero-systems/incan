@@ -39,7 +39,7 @@ pub def encode_record(record: Borrowed[CheckedRecord]) -> Result[bytes, CodecFau
     """Encode one checked owner as one bounded Crumb row of the checker-record model."""
     logical = record_value(record)?
     return encode_rows(checker_description(), [RowRecord(key=CHECKER_SELECTOR, value=logical)], MAX_RECORD_BYTES).map_err(
-        (_) => CodecFault.Malformed,
+        (reason) => CodecFault.Encoding(reason),
     )
 
 

@@ -22,6 +22,7 @@ pub enum CodecFault:
     Unsupported(str)
     Limit
     LimitExceeded(str, int, int)
+    Encoding(str)
 
 
 @derive(Eq)
