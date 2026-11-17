@@ -11,6 +11,7 @@ mod admission;
 mod builtins;
 mod checked;
 mod copy;
+pub(super) mod defaults;
 mod dictionary;
 pub(super) mod flow;
 mod iteration;

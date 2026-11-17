@@ -587,6 +587,8 @@ pub struct TypeChecker {
     /// Local declarations whose explicit ownership bodies were refused before callers were checked. The marker
     /// suppresses dependent caller-graph diagnostics without becoming serialized type information.
     refused_ownership_authorities: HashSet<CanonicalSymbolId>,
+    /// Field default initializers resolved in each declaring source module.
+    constructor_defaults: ownership_contracts::defaults::ConstructorDefaults,
     /// Nested producer diagnostic intervals used only while capturing independently owned outputs.
     diagnostic_owner_ranges: Vec<(std::ops::Range<usize>, std::ops::Range<usize>)>,
     /// Symbol table populated during the first pass.

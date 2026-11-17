@@ -336,6 +336,7 @@ impl TypeChecker {
     /// signatures remain unavailable; their declaration-owned check reports the error at its normal source anchor.
     /// This uses the same canonical inventory as publication, including distinct overload declaration spans.
     pub(in crate::typechecker) fn collect_function_ownership_headers(&mut self, program: &Program) {
+        self.collect_constructor_defaults(program);
         self.collect_method_ownership_headers(program);
         self.inherit_trait_input_contracts(program);
         self.collect_free_function_ownership_headers(program, None);
@@ -407,6 +408,7 @@ impl TypeChecker {
             .declarations
             .ownership_contracts
             .retain(|identity, _| identity.origin != origin);
+        self.collect_constructor_defaults(program);
         self.collect_method_ownership_headers(program);
         self.inherit_trait_input_contracts(program);
         self.collect_free_function_ownership_headers(program, Some(&origin));

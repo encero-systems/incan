@@ -362,8 +362,8 @@ impl Builder<'_> {
     }
 
     /// A complete model or class field binding, declared in this project or by a provider, constructs fresh storage
-    /// after evaluating supplied values in written order. Deferred defaults, native constructors and non-Copy place
-    /// transfer require separate proofs.
+    /// after evaluating supplied values in written order. Only proven closed defaults can omit caller accesses. Native
+    /// constructors and non-Copy place transfer require separate proofs.
     pub(super) fn model_construction(
         &mut self,
         callee: &Spanned<Expr>,
@@ -396,17 +396,29 @@ impl Builder<'_> {
                 reason: "construction has no checked field binding".into(),
             })?;
         let mut selected = BTreeSet::new();
-        if !binding.defaulted_slots.is_empty()
-            || binding.field_count != arguments.len()
+        if binding.field_count != arguments.len() + binding.defaulted_slots.len()
             || binding.argument_slots.len() != arguments.len()
             || binding
                 .argument_slots
                 .iter()
+                .chain(&binding.defaulted_slots)
                 .any(|slot| *slot >= binding.field_count || !selected.insert(*slot))
         {
             return Err(Unavailable {
                 span,
-                reason: "construction needs complete distinct fields without deferred defaults".into(),
+                reason: "construction needs complete distinct field slots".into(),
+            });
+        }
+        if !binding.defaulted_slots.is_empty()
+            && !owner.is_some_and(|owner| {
+                self.checker
+                    .constructor_defaults
+                    .proves(owner, binding.field_count, &binding.defaulted_slots)
+            })
+        {
+            return Err(Unavailable {
+                span,
+                reason: "construction needs declaration-owned fresh defaults for all omitted fields".into(),
             });
         }
         let view_arguments = self.constructor_view_fields(span);

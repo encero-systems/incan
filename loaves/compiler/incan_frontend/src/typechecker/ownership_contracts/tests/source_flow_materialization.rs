@@ -442,3 +442,44 @@ fn constructor_field_slice_requires_fresh_transferable_loop_row() -> Result<(), 
     }
     Ok(())
 }
+
+/// A nested dependency is resolved in the declaring module even if the consumer shadows its private owner.
+/// A caller's borrowed argument can supply its Copy field while every omitted field allocates fresh storage.
+#[test]
+fn omitted_fields_follow_the_declaring_constructor_across_modules() -> Result<(), Box<dyn std::error::Error>> {
+    fn parse(source: &str) -> Result<crate::ast::Program, Box<dyn std::error::Error>> {
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        Ok(crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?)
+    }
+    let provider = parse(
+        "model Detail:\n    labels: list[str] = []\npub model Row:\n    pub value: int\n    detail: Detail = Detail()\n    label: str = \"new\"\n    tag: Option[str] = None\n",
+    )?;
+    let consumer = parse(
+        "from provider import Row\nmodel Detail:\n    required: int\ndef make(value: Borrowed[int]) -> Row:\n    return Row(value=value)\n",
+    )?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_with_imports(&consumer, &[("provider", &provider)])
+        .map_err(|errors| format!("{errors:?}"))?;
+    assert!(
+        checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .any(|(id, flow)| id.declaration_name == "make" && matches!(flow, InputFlow::Checked { .. })),
+        "{:?}",
+        flow_summary(&checker)
+    );
+    Ok(())
+}
+
+/// A user callable in a dependency's default cannot receive the proof for a literal or a closed constructor.
+#[test]
+fn omitted_fields_refuse_effectful_nested_defaults() -> Result<(), Box<dyn std::error::Error>> {
+    let checker = checked(
+        "def make_labels() -> list[str]:\n    return [\"user\"]\nmodel Detail:\n    labels: list[str] = make_labels()\nmodel Row:\n    value: int\n    detail: Detail = Detail()\ndef make(value: Borrowed[int]) -> Row:\n    return Row(value=value)\n",
+    )?;
+    assert!(checker.type_info.protocols.explicit_input_flow.iter().any(|(id, flow)| id.declaration_name == "make" && matches!(flow, InputFlow::Unavailable(stop) if stop.reason == "construction needs declaration-owned fresh defaults for all omitted fields")), "{:?}", flow_summary(&checker));
+    Ok(())
+}
