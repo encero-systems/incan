@@ -269,7 +269,7 @@ def select_bodies(
             record.identity
             for record in select_body_inventory_except(reading.graph, CHECKER_PROFILE, origin, [])?
         ]
-    retained = select_body_inventory_except(reading.graph, CHECKER_PROFILE, origin, invalid)?
+    retained = select_body_inventory_except(reading.graph, CHECKER_PROFILE, origin, invalid, mint_body_ir=true)?
     return Ok(BodySelection(graph=reading.graph, projected=reading.projected, invalid=invalid, retained=retained))
 
 
