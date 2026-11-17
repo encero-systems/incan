@@ -62,7 +62,7 @@ pub def read_local_activation(activation: &ResolvedCheckingActivation) -> Result
                 return Err("local activation requires one named owner source")
             owner_source = Some(found.decode().map_err((_) => "local owner source is not UTF-8")?)
             owner = request.key.facet
-        elif request.key.family == "declaration" and request.key.context != "":
+        elif (request.key.family == "declaration" or (ready.output.family == "declaration" and request.key.family == "prior-declaration")) and request.key.context != "":
             record = decode_record(found, CHECKER_PROFILE, request.key.identity, request.key.context).map_err(
                 (_) => "local declaration record is invalid",
             )?
@@ -85,9 +85,12 @@ pub def read_local_activation(activation: &ResolvedCheckingActivation) -> Result
     completed = reader.finish().map_err((_) => "local activation read receipt is incomplete")?
     match (module_header, owner_source, declaration):
         (Some(header_value), Some(source_value), Some(declaration_value)) =>
+            mut projected = header_value + source_value
+            if ready.output.family == "declaration":
+                projected = source_value
             return Ok(
                 LocalActivationInputs(
-                    source=header_value + source_value,
+                    source=projected,
                     owner=owner,
                     declaration=declaration_value,
                     environment=environment,

@@ -5,11 +5,11 @@ from std.primitives.hash import sha256
 from pub::incan_platform.store import Lookup, owned
 from pub::internal_models import (
     DEMAND_FAMILY, InputSnapshot, PreparedInputs, ProducerProfile, ProducerRank, ProducerStage, RankCertificate,
-    ReadyWork, RecordRoot, checking_basis_key, decode_demand_page, decode_namespace_order, decode_read_receipt, encode_prepared_inputs,
+    ReadyWork, RecordRoot, checking_basis_key, checking_completion_receipt, decode_demand_page, decode_namespace_order, decode_read_receipt, encode_prepared_inputs,
     encode_ready_work, envelope_key,
 )
 from pub::internal_models.checker_records import CHECKER_PROFILE
-from pub::internal_models.records import ReadScope, ReadWitness, RecordRead, RecordRequest, RecordSelection, RecordSource
+from pub::internal_models.records import ReadScope, ReadWitness, RecordKey, RecordRead, RecordRequest, RecordSelection, RecordSource, encode_record_key
 from record_protocol import Prepare, Prepared
 from record_snapshot import ResolvedSnapshot, resolve_snapshot, valid_digest
 
@@ -30,6 +30,8 @@ pub def prepare_checking(home: str, request: &Prepare) -> Result[Prepared, str]:
     if hexlify(sha256.digest(demand_bytes)) != request.demand_root:
         return Err("checking demand differs from its content root")
     demand = decode_demand_page(demand_bytes)?
+    if len(demand.keys) > 1:
+        return prepare_closed_owner(resolved, request, demand.keys)
     if len(demand.keys) != 1 or demand.keys[0].family not in ["local", "final"]:
         return Err("checking preparation requires one local or final output")
     output = demand.keys[0]
@@ -118,4 +120,109 @@ pub def prepare_checking(home: str, request: &Prepare) -> Result[Prepared, str]:
     root = resolved.stage_checking_envelopes(encode_prepared_inputs(prepared)?, encode_ready_work(ready)?).map_err(
         (error) => error.message(),
     )?
+    return Ok(Prepared(prepared_root=root))
+
+
+pub def completed_checker_key(key: RecordKey) -> Result[str, str]:
+    """Bind a staged predecessor value to the completed worker receipt that actually produced it."""
+    return Ok("incan.compiler.completed-checking\t" + hexlify(sha256.digest(encode_record_key(key)?.encode("utf-8"))))
+
+
+def current_predecessor(
+    resolved: &ResolvedSnapshot, scope: ReadScope, key: RecordKey, basis: str, certificate: str,
+) -> Result[RecordRequest, str]:
+    """Verify a completed earlier stage under the same source, rank evidence and authenticated content."""
+    value = required_record(resolved, encode_record_key(key)?)?
+    receipt = decode_read_receipt(checking_completion_receipt(required_record(resolved, completed_checker_key(key)?)?, value)?)?
+    produced = receipt.preparation.output
+    if produced.family != key.family or produced.identity != key.identity or produced.origin != key.origin or produced.identity_profile != key.identity_profile or produced.context != "current":
+        return Err("closed owner selected a predecessor belonging to another work item")
+    if receipt.scope.profile != scope.profile or receipt.preparation.selector_witnesses != basis or receipt.preparation.rank_certificate != certificate:
+        return Err("closed owner selected a predecessor belonging to another compiler preparation")
+    source = resolved.record_source(scope)
+    for witness in receipt.witnesses:
+        match witness:
+            ReadWitness.Found(prior, _) =>
+                match source.read(scope, prior.request):
+                    RecordRead.Found(current) =>
+                        if prior.semantic_digest != current.evidence.semantic_digest:
+                            return Err("closed owner predecessor belongs to an earlier input revision")
+                    _ => return Err("closed owner predecessor lost a required input")
+            _ => return Err("closed owner predecessor has unsupported supplier discovery")
+    return Ok(RecordRequest(key=key, selection=RecordSelection.Field("value")))
+
+
+def prepare_closed_owner(resolved: &ResolvedSnapshot, request: &Prepare, keys: list[RecordKey]) -> Result[Prepared, str]:
+    """Certify the finite signature, local and settlement stages of an independently closed project function."""
+    output = keys[0]
+    prior = keys[1]
+    if output.context != "current" or prior.family != "local" or prior.origin != output.origin or prior.identity != output.identity or prior.identity_profile != output.identity_profile:
+        return Err("closed owner demand has inconsistent stable identity")
+    mut stage = ProducerStage.CheckBody
+    mut dependency = 0
+    if output.family == "declaration" and request.stage == "signature" and len(keys) == 2:
+        stage = ProducerStage.Signature
+    elif output.family == "local" and request.stage == "check-body" and len(keys) == 3:
+        pass
+    elif output.family == "final" and request.stage == "check-body" and len(keys) == 4:
+        dependency = 1
+    else:
+        return Err("invalid closed owner stage or prerequisite arity")
+    basis_root = required_record(resolved, checking_basis_key(prior)?)?.decode().map_err((_) => "invalid closed owner basis")?
+    if not valid_digest(basis_root):
+        return Err("invalid closed owner basis")
+    basis_bytes = required_record(resolved, "incan.engine.receipt\t" + basis_root)?
+    if hexlify(sha256.digest(basis_bytes)) != basis_root:
+        return Err("closed owner basis differs from its root")
+    basis = decode_read_receipt(basis_bytes)?
+    evidence = basis.preparation.rank_certificate
+    if basis.preparation.output != prior or basis.scope.profile != request.producer_profile:
+        return Err("closed owner basis belongs to another activation")
+    certificate = decode_namespace_order(required_record(resolved, "incan.compiler.namespace-order\t" + evidence)?, output.origin)?
+    if certificate.evidence != evidence or len(certificate.members) != 1:
+        return Err("closed owner requires an independent namespace rank")
+    scope = ReadScope(snapshot=request.snapshot, profile=request.producer_profile)
+    source = resolved.record_source(scope)
+    mut inputs: list[RecordRequest] = []
+    mut families: set[str] = set()
+    for witness in basis.witnesses:
+        match witness:
+            ReadWitness.Found(previous, _) =>
+                mut supplier = previous.request
+                family = supplier.key.family
+                if family in families or family not in ["owner-source", "module-header", "owner-census", "declaration"]:
+                    return Err("unsupported-closed-checking-inputs")
+                families.add(family)
+                if supplier.selection != RecordSelection.Field("value") or supplier.key.origin != output.origin:
+                    return Err("closed owner requires an exact project scalar")
+                if family == "declaration":
+                    if supplier.key.identity != output.identity or supplier.key.facet != output.facet:
+                        return Err("closed owner declaration belongs to another function")
+                    if output.family != "declaration":
+                        continue
+                    supplier.key.family = "prior-declaration"
+                elif supplier.key.identity != certificate.members[0] or (family == "owner-source" and supplier.key.facet != output.facet):
+                    return Err("closed owner source belongs to a different function or module")
+                match source.read(scope, supplier):
+                    RecordRead.Found(current) =>
+                        if family != "owner-source" and current.evidence.semantic_digest != previous.semantic_digest:
+                            return Err("unsupported-closed-checking-inputs")
+                    _ => return Err("closed owner lost its selected input")
+                inputs.append(supplier)
+            _ => return Err("unsupported-closed-checking-inputs")
+    if len(families) != 4:
+        return Err("unsupported-closed-checking-inputs")
+    for index in range(2, len(keys)):
+        key = keys[index]
+        if key.family != ["declaration", "local"][index - 2] or key.origin != output.origin or key.identity != output.identity or key.identity_profile != output.identity_profile or key.facet != output.facet:
+            return Err("closed owner received a crossed predecessor")
+        inputs.append(current_predecessor(resolved, scope, key, basis_root, evidence)?)
+    profile = ProducerProfile(identity=RecordRoot(digest=request.producer_profile))
+    ready = ReadyWork(output=output, stage=stage, profile=profile)
+    prepared = PreparedInputs(
+        output=output, snapshot=InputSnapshot(root=RecordRoot(digest=request.snapshot)), profile=profile,
+        required_reads=inputs, selector_witnesses=RecordRoot(digest=basis_root),
+        rank_certificate=RankCertificate(rank=ProducerRank(namespace=certificate.rank, stage=stage, dependency=dependency), evidence=RecordRoot(digest=evidence)),
+    )
+    root = resolved.stage_checking_envelopes(encode_prepared_inputs(prepared)?, encode_ready_work(ready)?).map_err((error) => error.message())?
     return Ok(Prepared(prepared_root=root))

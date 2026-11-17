@@ -19,7 +19,9 @@ pub(crate) fn activate(request: RecordMessage, home: &str) -> RecordMessage {
             Ok(produced) => produced,
             Err(error) => fault(error),
         },
-        RecordMessage::Prepare(value) if matches!(value.stage.as_str(), "check-body" | "local" | "final") => {
+        RecordMessage::Prepare(value)
+            if matches!(value.stage.as_str(), "signature" | "check-body" | "local" | "final") =>
+        {
             match incan_worker_host::prepare_checking(home.to_owned(), &value) {
                 Ok(prepared) => RecordMessage::Prepared(prepared),
                 Err(error) => fault(error.to_string()),
@@ -37,10 +39,35 @@ fn evaluate(value: incan_worker_host::Evaluate, home: &str) -> Result<RecordMess
     let activation =
         incan_worker_host::resolve_checking_activation(home.to_owned(), &value).map_err(|error| error.to_string())?;
     match activation.ready.output.family.as_str() {
+        "declaration" => evaluate_closed_declaration(activation, snapshot, home),
         "local" => evaluate_local(activation, snapshot, home),
         "final" => evaluate_final(activation, snapshot, home),
         family => Err(format!("unsupported-producer:{family}:{}", value.work_root)),
     }
+}
+
+/// Execute the earlier namespace signature stage without admitting a body check or an undiscovered supplier.
+fn evaluate_closed_declaration(
+    activation: incan_worker_host::ResolvedCheckingActivation,
+    snapshot: String,
+    home: &str,
+) -> Result<RecordMessage, String> {
+    let inputs = incan_worker_host::read_local_activation(&activation).map_err(|error| error.to_string())?;
+    let Some(rows) =
+        incan_frontend::checker_records::produce_closed_declaration(&inputs.source, &inputs.owner, inputs.declaration)
+            .map_err(|error| format!("closed declaration producer refused: {error:?}"))?
+    else {
+        return Err("unsupported-closed-checking-inputs".into());
+    };
+    let record =
+        internal_models::from_native_fields(&rows).map_err(|error| format!("declaration record refused: {error:?}"))?;
+    let encoded =
+        internal_models::encode_record(&record).map_err(|error| format!("declaration encoding refused: {error:?}"))?;
+    let semantic = format!("sha256:{}", digest(&encoded));
+    let produced =
+        incan_worker_host::stage_checking_result(home.to_owned(), snapshot, &encoded, &inputs.receipt, &semantic)
+            .map_err(|error| error.to_string())?;
+    Ok(RecordMessage::Produced(produced))
 }
 
 /// Resolve one prepared local activation, enter the frontend's single-owner scope and return content roots.
