@@ -380,6 +380,15 @@ def schema_layout_records_span() -> Description:
     ])
 
 
+def schema_stored_instance_request() -> Description:
+    return model_description(b"x\x18\xc1\xb2k\x0b\x00", "incan.native-plan/5.layout_type_records.StoredInstanceRequest", [
+        ModelField(identity=b"\xab\xcd\x0e\xe1\xfc,", name="declaration", storage="string"),
+        ModelField(identity=b"\xb1\x92\x01}\xa4\x7f", name="arguments", storage="list<enum@d306f4a06aec>"),
+        ModelField(identity=b"\xfc\x7f\x8co\xaf\xff", name="owned_callable_slots", storage="list<i64>"),
+        ModelField(identity=b"\x9b\xf1\x17\x8c4{", name="original_callable", storage="boolean"),
+    ])
+
+
 def schema_stored_layout_carrier() -> Description:
     return enum_schema(b".\x04\x85d\xff\xe2\x00", "incan.native-plan/5.layout_type_records.StoredLayoutCarrier", [
         variant_schema(b"\xdcV\xdd&\x87\xa3", "Declared", []),
@@ -788,4 +797,29 @@ pub def stored_layout_zip_carrier_descriptions() -> list[Description]:
         schema_stored_layout_plan_type(),
         schema_stored_layout_sized_numeric(),
         schema_stored_layout_tuple_element(),
+    ]
+
+
+pub def stored_layout_checked_type_descriptions() -> list[Description]:
+    return [
+        schema_stored_layout_checked_callable_param(),
+        schema_stored_layout_checked_callable_param_kind(),
+        schema_stored_layout_checked_input_access(),
+        schema_stored_layout_checked_numeric_type(),
+        schema_stored_layout_checked_primitive_type(),
+        schema_stored_layout_checked_runtime_builtin(),
+        schema_stored_layout_checked_type(),
+    ]
+
+
+pub def stored_instance_request_descriptions() -> list[Description]:
+    return [
+        schema_stored_instance_request(),
+        schema_stored_layout_checked_callable_param(),
+        schema_stored_layout_checked_callable_param_kind(),
+        schema_stored_layout_checked_input_access(),
+        schema_stored_layout_checked_numeric_type(),
+        schema_stored_layout_checked_primitive_type(),
+        schema_stored_layout_checked_runtime_builtin(),
+        schema_stored_layout_checked_type(),
     ]

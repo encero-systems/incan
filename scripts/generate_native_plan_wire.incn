@@ -33,7 +33,8 @@ def roots() -> list[str]:
     return [
         "function_records.StoredProduct", "function_records.StoredFunction", "function_records.StoredExternal",
         "layout_records.StoredLayoutModelDeclaration", "layout_records.StoredLayoutEnumDeclaration",
-        "layout_records.StoredLayoutZipCarrier",
+        "layout_records.StoredLayoutZipCarrier", "layout_type_records.StoredLayoutCheckedType",
+        "layout_type_records.StoredInstanceRequest",
     ]
 
 

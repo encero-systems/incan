@@ -7,13 +7,15 @@ reused caller still schedules its instances. A closed instance is its own produc
 witness and that request identity.
 """
 
-from rust::serde import Serialize, Deserialize
-from rust::serde_json import to_string as native_json, from_str, Error as JsonError
+from std.encoding.hex import hexlify
+from std.hash import sha256
+from pub::internal_models.checked_types import CheckedType
+from compiler_record_adapters import checked_type, native_checked_type, checked_type_matches_native
 from rust::incan_semantics_core import CompilerNodeId, IncanType as RustType, SymbolOrigin, encode_incan_symbol_identity
 from rust::incan_semantics_core::stable_identity import StableDeclarationId
 from rust::incan_semantics_core::body_ir import Body as RustBody
 from rust::std::collections import BTreeMap
-from pub::incan_mir_plan import ExternalFunction, Function, UnitNominals
+from pub::incan_mir_plan import ExternalFunction, Function, UnitNominals, encode_instance_request, decode_instance_request
 from pub::internal_models.compiler_records import RUNTIME_INSTANCE_IDENTITY
 from lowering import BodyIrModule
 from table_views import borrowed_at
@@ -24,21 +26,11 @@ from checked_values import location
 from plan_product_inputs import graph_owner, ordinary_product_inputs
 
 # Separates a closed instance's request identity from its generic body's checked witness in the product key.
-const INSTANCE_FUNCTION: str = "incan.instance-function/1"
+const INSTANCE_FUNCTION: str = "incan.instance-function/2"
 # The toolchain Loaf whose generics lowering instantiates for list and copy operations.
 const RUNTIME_LIBRARY: str = "incan_native_runtime"
 # Stands in for a checker witness in a runtime generic's instance key; its checked meaning is keyed beside it.
 const RUNTIME_BODY: str = "runtime-body:incan_native_runtime"
-
-
-@derive(Serialize, Deserialize)
-pub model InstanceRequest:
-    """One request's position-free identity: the generic's declaration, closed arguments, callable slots and role."""
-
-    pub declaration: str
-    pub arguments: str
-    pub owned_callable_slots: list[int]
-    pub original_callable: bool
 
 
 pub model InstanceProducts:
@@ -59,7 +51,7 @@ pub model InstanceProduct:
     pub requests: list[Instance]
 
 
-pub def request_identity(request: &Instance) -> Result[InstanceRequest, str]:
+pub def request_identity(request: &Instance) -> Result[bytes, str]:
     """
     Name one request without source positions; a generic or argument only a position names is refused.
 
@@ -76,48 +68,42 @@ pub def request_identity(request: &Instance) -> Result[InstanceRequest, str]:
             match StableDeclarationId.from_canonical(canonical, None, None):
                 None => return Err("generic instance has no stable declaration identity")
                 Some(stable) => declaration = stable.render_compact()
-    arguments = native_json(request.arguments).map_err((error) => str(error))?
-    if "declaration_span" in arguments:
-        return Err("generic instance arguments name a source declaration by position")
-    return Ok(
-        InstanceRequest(
-            declaration=declaration,
-            arguments=arguments,
-            owned_callable_slots=list(request.owned_callable_slots),
-            original_callable=request.original_callable,
-        ),
-    )
+    mut arguments: list[CheckedType] = []
+    for index in range(len(request.arguments)):
+        native = borrowed_at(request.arguments, index)
+        argument = checked_type(native, "", "")
+        if not checked_type_matches_native(argument, native)?:
+            return Err("generic instance argument differs from its native checked type")
+        arguments.append(argument)
+    return encode_instance_request(declaration, arguments, list(request.owned_callable_slots), request.original_callable)
 
 
-pub def encode_requests(requests: &list[Instance]) -> Result[list[str], str]:
+
+pub def encode_requests(requests: &list[Instance]) -> Result[list[bytes], str]:
     """Encode the requests a lowering made, in request order, for the product that carries them."""
-    mut encoded: list[str] = []
+    mut encoded: list[bytes] = []
     for position in range(len(requests)):
-        identity = request_identity(borrowed_at(requests, position))?
-        encoded.append(native_json(identity).map_err((error) => str(error))?)
+        encoded.append(request_identity(borrowed_at(requests, position))?)
     return Ok(encoded)
 
 
-pub def restore_requests(encoded: &list[str], context: &BodyIrModule) -> Option[list[Instance]]:
+pub def restore_requests(encoded: &list[bytes], context: &BodyIrModule) -> Option[list[Instance]]:
     """Rebuild a product's requests against this unit's generic templates; a generic no longer present is a miss."""
     mut restored: list[Instance] = []
-    for text in encoded:
-        request = match decode_request(text):
+    for row in encoded:
+        current = match decode_instance_request(row):
             Ok(value) => value
             Err(_) => return None
-        arguments = match decode_arguments(request.arguments):
-            Ok(value) => value
-            Err(_) => return None
-        match template_position(context, request.declaration):
+        declaration, authored, slots, original = current
+        mut arguments: list[RustType] = []
+        for ty in authored:
+            match native_checked_type(ty):
+                Ok(native) => arguments.append(native)
+                Err(_) => return None
+        match template_position(context, declaration):
             None => return None
             Some(position) =>
-                request_instance(
-                    restored,
-                    borrowed_at(context.bodies, position),
-                    arguments,
-                    request.owned_callable_slots,
-                    request.original_callable,
-                )
+                request_instance(restored, borrowed_at(context.bodies, position), arguments, slots, original)
     return Some(restored)
 
 
@@ -269,10 +255,7 @@ def instance_key(
                 Ok(named) =>
                     mut inputs = witness
                     inputs.append(INSTANCE_FUNCTION)
-                    inputs.append(named.declaration)
-                    inputs.append(named.arguments)
-                    inputs.append(native_json(named.owned_callable_slots).map_err((error) => str(error))?)
-                    inputs.append(str(named.original_callable))
+                    inputs.append("sha256:" + hexlify(sha256.digest(named)))
                     return Ok(Some((inputs, positions, identity)))
 
 
@@ -296,16 +279,6 @@ def template_position(context: &BodyIrModule, declaration: str) -> Option[int]:
                         if stable.render_compact() == declaration:
                             return Some(position)
     return None
-
-
-def decode_request(text: str) -> Result[InstanceRequest, JsonError]:
-    """Pass the expected request type to the native generic decoder through its result contract."""
-    return from_str(text)
-
-
-def decode_arguments(text: str) -> Result[list[RustType], JsonError]:
-    """Pass the closed type arguments' type to the native generic decoder through its result contract."""
-    return from_str(text)
 
 
 pub def product_directory(products: &Option[InstanceProducts]) -> Option[str]:

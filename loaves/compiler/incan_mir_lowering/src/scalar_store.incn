@@ -30,13 +30,13 @@ from record_positions import index_positions, place_positions, relocate_product
 
 
 # A record whose key is its checked meaning; its spans name Body IR nodes by ordinal through a request-local position map.
-const RECORD_FUNCTION: str = "incan.record-function/4"
+const RECORD_FUNCTION: str = "incan.record-function/5"
 
 
 pub def scalar_inputs(body: str, name: str, span: SourceSpan, overflow_checks: bool, reads: str) -> list[str]:
     """Bind a native product to its checked body, consumed signatures, physical frame and diagnostic provenance."""
     return [
-        "incan.scalar-function/6",
+        "incan.scalar-function/7",
         body,
         name,
         str(span.file),
@@ -63,7 +63,7 @@ pub def retained_scalar(
     unit: &UnitNominals,
     span: Option[SourceSpan] = None,
     positions: list[tuple[int, int]] = [],
-) -> Option[tuple[Function, list[ExternalFunction], list[NominalReference], list[Function], list[str]]]:
+) -> Option[tuple[Function, list[ExternalFunction], list[NominalReference], list[Function], list[bytes]]]:
     """
     Read a complete native function whose full producer inputs and named declarations still match.
 
@@ -112,7 +112,7 @@ pub def retain_scalar(
     nominals: list[ProductNominal] = [],
     positions: list[tuple[int, int]] = [],
     frames: list[Function] = [],
-    requests: list[str] = [],
+    requests: list[bytes] = [],
 ) -> Result[None, str]:
     """
     Publish a loss-checked native function without changing compilation's verdict.
@@ -264,7 +264,7 @@ def encoded_record(
     nominals: list[ProductNominal],
     positions: list[tuple[int, int]] = [],
     frames: list[Function] = [],
-    requests: list[str] = [],
+    requests: list[bytes] = [],
 ) -> Result[bytes, str]:
     """
     Authenticate the entire native payload after the codec proves an exact structural round trip.
@@ -389,7 +389,7 @@ pub def admitted_payload(
     overflow: bool,
     reads: str,
     generation: str,
-) -> Option[tuple[bytes, list[ProductNominal], list[str]]]:
+) -> Option[tuple[bytes, list[ProductNominal], list[bytes]]]:
     """
     Read the product of a body from the final event of its module's admitted plan record.
 

@@ -18,7 +18,7 @@ pub model PlanFunctionRecord:
 
     pub inputs: list[str]
     pub function: bytes
-    pub requests: list[str]
+    pub requests: list[bytes]
     pub digest: str
 
 
@@ -29,7 +29,7 @@ pub def encode_plan_function_record(record: PlanFunctionRecord) -> Result[bytes,
         required_value(b"digest", Value.Text(record.digest)),
         required_value(b"funct_", Value.Binary(record.function)),
         required_value(b"inputs", Value.List(text_items(record.inputs))),
-        required_value(b"reques", Value.List(text_items(record.requests))),
+        required_value(b"reques", Value.List([Value.Binary(row) for row in record.requests])),
     ])
 
 
@@ -40,16 +40,17 @@ pub def decode_plan_function_record(encoded: bytes) -> Result[PlanFunctionRecord
         digest=text_value(fields[0].value)?,
         function=binary_value(fields[1].value)?,
         inputs=text_values(fields[2].value)?,
-        requests=text_values(fields[3].value)?,
+        requests=[binary_value(row)? for row in items(fields[3].value)?],
     )
     validate_record(record)?
     return Ok(record)
 
 
-pub def plan_function_digest(function: bytes, requests: list[str]) -> Result[str, str]:
+pub def plan_function_digest(function: bytes, requests: list[bytes]) -> Result[str, str]:
     """Authenticate the exact Crumb product and ordered instance requests with the compiler's framed digest."""
     row_digest = "sha256:" + hexlify(sha256.digest(function))
-    return semantic_digest(["incan.plan-function-product/2", row_digest] + requests).map_err((error) => str(error))
+    ordered = ["sha256:" + hexlify(sha256.digest(request)) for request in requests]
+    return semantic_digest(["incan.plan-function-product/3", row_digest] + ordered).map_err((error) => str(error))
 
 
 def binary_value(value: Value) -> Result[bytes, str]:
@@ -97,12 +98,12 @@ def plan_function_description() -> Description:
     """Describe the retained product independently of its filesystem projection."""
     return model_description(
         PLAN_FUNCTION_SELECTOR,
-        "incan.plan-function-product/2",
+        "incan.plan-function-product/3",
         [
             ModelField(identity=b"digest", name="digest", storage="string"),
             ModelField(identity=b"funct_", name="function", storage="binary"),
             ModelField(identity=b"inputs", name="inputs", storage="list<string>"),
-            ModelField(identity=b"reques", name="requests", storage="list<string>"),
+            ModelField(identity=b"reques", name="requests", storage="list<binary>"),
         ],
     )
 

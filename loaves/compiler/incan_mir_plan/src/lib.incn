@@ -110,3 +110,5 @@ pub from record_codec import (
 
 pub from plan_wire_rows import WirePositions, PositionChange
 pub from function_records import transform_product_positions
+
+pub from layout_type_records import encode_checked_layout, encode_instance_request, decode_instance_request
