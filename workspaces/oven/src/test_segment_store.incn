@@ -49,6 +49,7 @@ from pub::incan_platform.store import snapshot as placed_snapshot
 from pub::incan_platform.store.memory import root as memory_root
 from pub::incan_platform.store.path import StorePath
 from store_path_conversion import compact, payload_intact, payload_path, put_payload, snapshot
+from compiler_graph_rows import encode_pointer
 from compiler_graph_records import (
     OutputSlots,
     family_outputs,
@@ -392,8 +393,8 @@ pub def test_a_family_selection_reads_its_range_however_many_records_earlier_edi
     exactly the keys a whole listing would.
     """
     scratch = scratch_directory()?
-    output = "incan.engine.output\tp\tbody-ir\tprofile\torigin\tfunction:main\tfacet"
-    edge = "incan.engine.edge-in\tbody-ir\tprofile\torigin\tfunction:main\tfacet\t"
+    output = "incan.engine.output/2\tp\tbody-ir\tprofile\torigin\tfunction:main\tfacet"
+    edge = "incan.engine.edge-in/3\tbody-ir\tprofile\torigin\tfunction:main\tfacet\t"
     target = RecordKey(
         family="body-ir",
         identity="function:main",
@@ -405,14 +406,16 @@ pub def test_a_family_selection_reads_its_range_however_many_records_earlier_edi
     mut pages: list[int] = []
     for scale in [1, 100]:
         root = scratch.path().joinpath(f"store-{scale}")
-        _ = write_one(root, output, encode_record_key(target)?).map_err((error) => error.message())?
+        pointer = encode_pointer(encode_record_key(target)?)?
+        seeded = put(begin(snapshot(root).map_err((error) => error.message())?), output, pointer)
+        _ = commit(seeded).map_err((error) => error.message())?
         for batch in range(scale):
             mut transaction = begin(snapshot(root).map_err((error) => error.message())?)
             for item in range(10):
                 transaction = put(transaction, f"incan.engine.receipt\t{batch}-{item}", b"earlier edit")
                 transaction = put(
                     transaction,
-                    f"incan.engine.output\tp\tlocal\tprofile\torigin\tfunction:{batch}-{item}\tfacet\tchecked",
+                    f"incan.engine.output/2\tp\tlocal\tprofile\torigin\tfunction:{batch}-{item}\tfacet\tchecked",
                     b"other family",
                 )
             commit(transaction).map_err((error) => error.message())?
@@ -423,8 +426,8 @@ pub def test_a_family_selection_reads_its_range_however_many_records_earlier_edi
         pages.append(read_counts().pages - before.pages)
         # The project asks for one owner. Unrelated index entries must never be materialized.
         mut neighbours = begin(latest)
-        neighbours = put(neighbours, "incan.engine.output\tp\tbody-ir\tprofile\torigin\tother\tfacet", b"unrelated pointer")
-        neighbours = put(neighbours, "incan.engine.output\tp\tbody-ir\tprofile\tanother\tfunction:main\tfacet", b"foreign pointer")
+        neighbours = put(neighbours, "incan.engine.output/2\tp\tbody-ir\tprofile\torigin\tother\tfacet", b"unrelated pointer")
+        neighbours = put(neighbours, "incan.engine.output/2\tp\tbody-ir\tprofile\tanother\tfunction:main\tfacet", b"foreign pointer")
         with_neighbours = commit(neighbours).map_err((error) => error.message())?
         wanted = encode_record_key(target)?
         slots = OutputSlots(origin=target.origin, identity_profile=target.identity_profile, included=Some([target.identity]))
@@ -432,9 +435,9 @@ pub def test_a_family_selection_reads_its_range_however_many_records_earlier_edi
         assert family_outputs(with_neighbours, target.family, "p", Some(slots))? == [wanted]
         observed = read_counts()
         assert observed.records - prior.records == 1
-        assert observed.decoded - prior.decoded == len(wanted.encode())
+        assert observed.decoded - prior.decoded == len(pointer)
         every = keys(latest).map_err((error) => error.message())?
-        for prefix in ["incan.engine.output\tp\tbody-ir\t", "incan.engine.output\tp\t", "incan.engine.receipt\t5", edge]:
+        for prefix in ["incan.engine.output/2\tp\tbody-ir\t", "incan.engine.output/2\tp\t", "incan.engine.receipt\t5", edge]:
             assert keys_with_prefix(latest, prefix).map_err((error) => error.message())? == [
                 key for key in every if key.startswith(prefix)
             ], prefix
@@ -563,7 +566,7 @@ pub def test_an_edited_declaration_s_output_index_entry_is_written_in_place() ->
         output = graph_key("body-ir", "function:main", f"edit {edit}")
         publish_reader(snapshot(root).map_err((error) => error.message())?, output, [read])?
     latest = snapshot(root).map_err((error) => error.message())?
-    indexed = indexed_keys(root, latest, "incan.engine.output\t")?
+    indexed = indexed_keys(root, latest, "incan.engine.output/2\t")?
     assert len(indexed) == 1, f"after 12 edits of one declaration the output index holds {len(indexed)} entries"
     records = reusable_family_records(latest, "body-ir", "profile")?
     assert len(records) == 1 and records[0].key == output
@@ -640,7 +643,7 @@ def incoming_segments(root: Path) -> Result[list[str], str]:
     latest = snapshot(root).map_err((error) => error.message())?
     mut found: list[str] = []
     for entry in index_entries(store_path(root), latest.index).map_err((error) => error.detail)?:
-        if entry.key.startswith("incan.engine.edge-in\t"):
+        if entry.key.startswith("incan.engine.edge-in/3\t"):
             if let Some(location) = entry.location:
                 found.append(location.segment)
     return Ok(found)

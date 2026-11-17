@@ -252,7 +252,7 @@ pub def test_body_edits_keep_one_indexed_output_per_slot() -> Result[None, str]:
         _ = lowering_example_run(binary, source, store, f"edit {edit}")?
     latest = store_snapshot(store).map_err((error) => error.message())?
     mut slots: Dict[str, int] = {}
-    for key in keys_with_prefix(latest, "incan.engine.output\t").map_err((error) => error.message())?:
+    for key in keys_with_prefix(latest, "incan.engine.output/2\t").map_err((error) => error.message())?:
         slot = "\t".join(key.split("\t")[:7])
         slots[slot] = slots.get(slot, 0) + 1
     assert len(slots) > 0, "five edits indexed no outputs"
@@ -306,7 +306,7 @@ def most_outputs_in_one_slot(store: Path) -> Result[int, str]:
     """The most outputs the store's output index holds for one slot: profile, family, identity and facet."""
     latest = store_snapshot(store).map_err((error) => error.message())?
     mut slots: Dict[str, int] = {}
-    for key in keys_with_prefix(latest, "incan.engine.output\t").map_err((error) => error.message())?:
+    for key in keys_with_prefix(latest, "incan.engine.output/2\t").map_err((error) => error.message())?:
         slot = "\t".join(key.split("\t")[:7])
         slots[slot] = slots.get(slot, 0) + 1
     mut most = 0

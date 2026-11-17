@@ -1,9 +1,10 @@
 """Shared Crumb field contracts for ranked compiler work and completed read witnesses."""
 
+from std.primitives.crumb import Budget
 from std.primitives.crumb.descriptions import Description
 from std.primitives.crumb.records import RowRecord
 from std.primitives.crumb.values import IntegerValue, Value, ValueField
-from crumb_rows import decode_rows, encode_rows
+from crumb_rows import admit_rows, decode_rows, encode_rows
 from record_scope import MemberSelection, PayloadSelection, RecordKey, RecordRequest, RecordSelection, valid_key
 
 pub const KEY_TYPE: str = "tuple<string,string,string,string,string,string>"
@@ -111,3 +112,12 @@ pub def read_request(value: Value) -> Result[RecordRequest, str]:
         members = MemberSelection(selector=text(strings[0])?, order=text(strings[1])?, lower=text(strings[2])?, upper=text(strings[3])?, continuation=text(strings[4])?)
         return Ok(RecordRequest(key=key, selection=RecordSelection.Members(members), byte_limit=limit))
     return Err("invalid compiler record selection")
+
+
+pub def decode_graph_field(encoded: bytes, key: bytes, description: Description, field: bytes) -> Result[Value, str]:
+    """Read one projected field only after admission of the complete envelope and exact row type."""
+    mut budget = Budget.create(bytes=MAX_GRAPH_RECORD_BYTES * 4, elements=4194304, depth=128).map_err((error) => error.message())?
+    rows = admit_rows(encoded, [description], MAX_GRAPH_RECORD_BYTES, budget)?
+    if rows.len() != 1 or rows.record_key(0) != Some(key):
+        return Err("unexpected compiler graph Crumb row")
+    return rows.read_field(0, field, budget).map_err((error) => error.message())
