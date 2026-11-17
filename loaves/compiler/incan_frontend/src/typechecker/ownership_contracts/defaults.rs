@@ -2,11 +2,15 @@
 
 use std::collections::{HashMap, HashSet};
 
+use incan_lang::lang::decorators::DecoratorId;
+use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
 use super::TypeChecker;
-use crate::ast::{CallArg, Declaration, Expr, FieldDecl, Literal, Program, Span, Spanned, Type};
+use crate::ast::{
+    CallArg, Declaration, Decorator, DecoratorArg, Expr, FieldDecl, Literal, Program, Span, Spanned, Type,
+};
 use crate::symbols::{ResolvedType, SymbolKind, resolve_type};
 
 /// A zero-argument nominal can be admitted only after proving all the defaults in its declaring module. Holding
@@ -73,13 +77,29 @@ impl ConstructorDefaults {
 
 /// Keep source defaults with their actual declaring model/class. Inheritance, validation and decorated construction
 /// require their own effect proof. Their caller cannot acquire one from a matching field count or source spelling.
-fn fields(declaration: &Declaration) -> Option<(&str, SemanticSourceTargetKind, &[Spanned<FieldDecl>])> {
+fn fields<'a>(
+    checker: &TypeChecker,
+    declaration: &'a Declaration,
+) -> Option<(&'a str, SemanticSourceTargetKind, &'a [Spanned<FieldDecl>])> {
+    // Built-in equality derivation adds comparison operations. It never replaces the constructor or evaluates fields.
+    let transparent = |decorators: &[Spanned<Decorator>]| {
+        decorators.iter().all(|decorator| {
+            let decorator = &decorator.node;
+            checker.decorator_id(decorator) == Some(DecoratorId::Derive)
+                && decorator.type_args.is_empty()
+                && !decorator.args.is_empty()
+                && decorator.args.iter().all(|arg| {
+                    matches!(arg, DecoratorArg::Positional(expr) if matches!(&expr.node,
+                        Expr::Ident(name) if matches!(derives::from_str(name), Some(DeriveId::Eq | DeriveId::PartialEq))))
+                })
+        })
+    };
     match declaration {
-        Declaration::Model(model) if model.decorators.is_empty() && model.traits.is_empty() => {
+        Declaration::Model(model) if transparent(&model.decorators) && model.traits.is_empty() => {
             Some((&model.name, SemanticSourceTargetKind::Model, &model.fields))
         }
         Declaration::Class(class)
-            if class.extends.is_none() && class.decorators.is_empty() && class.traits.is_empty() =>
+            if class.extends.is_none() && transparent(&class.decorators) && class.traits.is_empty() =>
         {
             Some((&class.name, SemanticSourceTargetKind::Class, &class.fields))
         }
@@ -96,7 +116,7 @@ impl TypeChecker {
         self.constructor_defaults.0.retain(|id, _| id.origin != origin);
         let mut owners = HashMap::new();
         for declaration in &program.declarations {
-            if let Some((name, kind, _)) = fields(&declaration.node) {
+            if let Some((name, kind, _)) = fields(self, &declaration.node) {
                 owners.insert(
                     name,
                     self.symbols.module_declaration_identity(name, kind, declaration.span),
@@ -104,7 +124,7 @@ impl TypeChecker {
             }
         }
         for declaration in &program.declarations {
-            let Some((name, _, fields)) = fields(&declaration.node) else {
+            let Some((name, _, fields)) = fields(self, &declaration.node) else {
                 continue;
             };
             let values: Vec<_> = fields
