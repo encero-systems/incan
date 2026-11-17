@@ -418,6 +418,29 @@ impl IndexedLoaf {
         Ok(values)
     }
 
+    /// Validate every record selected under this path, including aliases, before exposing its canonical identity.
+    pub fn runtime_binding(&self, path: &str) -> Result<Option<RuntimeCallableBinding>, LoafIndexError> {
+        let Some(values) = self.named_records("runtime-binding", path)? else {
+            return Ok(None);
+        };
+        let mut selected = None;
+        for value in values.iter() {
+            let binding: RuntimeCallableBinding = serde_json::from_value(value.clone())
+                .map_err(|_| self.inventory_mismatch("invalid runtime-binding value"))?;
+            if binding.path != path
+                || binding.canonical.kind != incan_semantics_core::SemanticSourceTargetKind::Function
+                || !matches!(&binding.canonical.origin, incan_semantics_core::SymbolOrigin::Package { library, .. } if library == &self.summary.identity.name)
+                || selected.as_ref().is_some_and(|previous| previous != &binding)
+            {
+                return Err(
+                    self.inventory_mismatch("runtime binding path, identity, or owner differs from its selection")
+                );
+            }
+            selected = Some(binding);
+        }
+        Ok(selected)
+    }
+
     /// The refusal of a record that does not belong to the inventory the index admitted this Loaf by.
     fn inventory_mismatch(&self, reason: &str) -> LoafIndexError {
         LoafIndexError::Unreadable {

@@ -510,6 +510,28 @@ impl LoafIndex {
         Ok(Some(indexed.runtime_bindings()?))
     }
 
+    /// Exact path-name digests the installed set can resolve individually, from its sealed index alone.
+    pub fn runtime_binding_selectors(&self, key: &str) -> Result<Vec<String>, LoafIndexError> {
+        let Some(indexed) = self.entries.get(key) else {
+            return Ok(Vec::new());
+        };
+        compiler_record_set::runtime_binding_selectors(&indexed.dir, &indexed.summary.identity.name)
+    }
+
+    /// Resolve the one public runtime path requested by lowering and authenticate the stored binding's ownership.
+    pub fn runtime_binding(
+        &self,
+        key: &str,
+        path: &str,
+    ) -> Result<Option<incan_semantics_core::body_ir::RuntimeCallableBinding>, LoafIndexError> {
+        let Some(indexed) = self.entries.get(key) else {
+            return Ok(None);
+        };
+        tracing::trace!(target: "incan::invocation", phase = "dependency_fact", loaf = %indexed.summary.identity.name,
+            family = "runtime-binding", name = path);
+        indexed.runtime_binding(path)
+    }
+
     /// Read one declaration's signature, layout or defaults in one Loaf by its module-qualified name, without the rest
     /// of its checked API.
     pub fn declaration_facts(

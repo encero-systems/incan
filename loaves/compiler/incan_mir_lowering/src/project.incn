@@ -57,6 +57,7 @@ def selected_context(modules: &list[BodyIrModule], entry: int) -> BodyIrModule:
     # Unit selection belongs only to the entry module. Copy those compact facts explicitly instead of cloning its
     # complete checked body and declaration graph before replacing every joined table.
     context.runtime_callable_bindings = list(entry_module.runtime_callable_bindings)
+    context.runtime_binding_selectors = list(entry_module.runtime_binding_selectors)
     context.entrypoint_effects = list(entry_module.entrypoint_effects)
     context.program_entrypoints = list(entry_module.program_entrypoints)
     context.string_conversion_contract = entry_module.string_conversion_contract.clone()

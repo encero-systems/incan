@@ -7,7 +7,8 @@ from pub::incan_mir_plan import SourceSpan, StaticCell
 pub model RuntimeRequirement:
     """An authenticated runtime declaration needed at an existing source operation's location."""
 
-    pub canonical: CanonicalSymbolId
+    # None requests the independently addressed facade before its canonical declaration can be selected.
+    pub canonical: Option[CanonicalSymbolId]
     pub path: str
     pub span: SourceSpan
 

@@ -37,7 +37,7 @@ use declaration_records::NAMED_FAMILIES;
 pub(super) use declaration_records::{names_record, read_declaration};
 pub(super) use inventory::summary;
 use inventory::{Metadata, read_summary};
-pub(super) use runtime_bindings::read_runtime_bindings;
+pub(super) use runtime_bindings::{read_runtime_bindings, runtime_binding_selectors};
 
 /// The record family holding a Loaf's checked API documentation, which compiles never open (RFC 179).
 const DOCUMENTATION: &str = "documentation";
@@ -1095,6 +1095,10 @@ mod tests {
     /// a descriptor, and a checked API repeated until the contract metadata is well over the bound.
     fn surfaced_library() -> Result<LibraryManifest, Box<dyn std::error::Error>> {
         let source = "pub def price() -> int:\n    return 1999\n\npub model Money:\n    cents: int\n\n    pub def doubled(self) -> int:\n        return self.cents * 2\n";
+        surfaced_library_for("prices", source)
+    }
+
+    fn surfaced_library_for(name: &str, source: &str) -> Result<LibraryManifest, Box<dyn std::error::Error>> {
         let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
         let mut checker = crate::typechecker::TypeChecker::new();
@@ -1102,8 +1106,8 @@ mod tests {
             .check_program(&program)
             .map_err(|errors| format!("{errors:?}"))?;
         let exports = crate::library_exports::collect_checked_public_exports(&program, &checker);
-        let mut manifest = LibraryManifest::from_checked_exports("prices", "0.1.0", &exports);
-        let module = collect_checked_api_metadata(&program, &checker, vec!["prices".to_owned()]);
+        let mut manifest = LibraryManifest::from_checked_exports(name, "0.1.0", &exports);
+        let module = collect_checked_api_metadata(&program, &checker, vec![name.to_owned()]);
         manifest.contract_metadata.api = Some(CheckedApiMetadataPackage {
             schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
             package: None,
@@ -1172,6 +1176,42 @@ mod tests {
         assert_eq!(
             records, 1,
             "native lowering read {records} records, {bytes} bytes; it needs the runtime bindings record alone"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn runtime_planning_reads_only_the_individually_requested_facade() -> Result<(), Box<dyn std::error::Error>> {
+        let name = "incan_native_runtime";
+        let root = tempfile::tempdir()?;
+        let manifest = surfaced_library_for(
+            name,
+            "pub def used() -> int:\n    return 1\n\npub def unused() -> int:\n    return 2\n",
+        )?;
+        let selected = thread_selection::select(installed_library(root.path(), &manifest)?);
+        let dir = root.path().join("debug");
+        let index = crate::loaf_index::LoafIndex::deferred([(name.to_owned(), name.to_owned(), dir, false)])?;
+        let baseline = selected.0.reads();
+        let names = index.runtime_binding_selectors(name)?;
+        let used = format!("{name}::used");
+        let unused = format!("{name}::unused");
+        assert!(names.contains(&content_name(used.as_bytes())));
+        assert!(names.contains(&content_name(unused.as_bytes())));
+        assert_eq!(selected.0.reads(), baseline);
+        let binding = index.runtime_binding(name, &used)?.ok_or("expected the named facade")?;
+        assert_eq!(binding.path, used);
+        assert_eq!(index.runtime_binding(name, &used)?, Some(binding.clone()));
+        assert!(index.runtime_binding(name, "incan_native_runtime::missing")?.is_none());
+        let read = selected.0.reads();
+        assert_eq!(read.records - baseline.records, 1);
+        assert_eq!(
+            read.bytes - baseline.bytes,
+            LibraryManifest::encode_compiler_record_value(&binding)?.len()
+        );
+        assert!(
+            !thread_selection::read_keys()
+                .iter()
+                .any(|key| key.contains("/runtime-bindings/") || key.ends_with(&content_name(unused.as_bytes())))
         );
         Ok(())
     }

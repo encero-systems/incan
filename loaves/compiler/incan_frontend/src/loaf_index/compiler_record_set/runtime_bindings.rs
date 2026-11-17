@@ -99,3 +99,28 @@ pub(super) fn read_runtime_bindings_in(
         .insert(prefix, found.clone());
     Ok(Some(found))
 }
+
+/// Path-name digests from the authenticated directory, without opening a binding value.
+/// An older set with only the aggregate group continues to use that group.
+pub(in crate::loaf_index) fn runtime_binding_selectors(dir: &Path, name: &str) -> Result<Vec<String>, LoafIndexError> {
+    let Some(set) = installed().map_err(|reason| unreadable(dir, name, reason))? else {
+        return Ok(Vec::new());
+    };
+    let profile = dir
+        .file_name()
+        .and_then(|v| v.to_str())
+        .ok_or_else(|| unreadable(dir, name, "Loaf profile directory is not UTF-8".to_owned()))?;
+    let prefix = format!("loaf/{profile}/{name}/runtime-binding/");
+    let mut selectors = Vec::new();
+    for entry in set.entries.iter().filter(|entry| entry.key.starts_with(&prefix)) {
+        let (_, digest) = entry
+            .key
+            .rsplit_once('/')
+            .ok_or_else(|| unreadable(dir, name, "invalid runtime binding key".into()))?;
+        super::valid_digest(digest).map_err(|reason| unreadable(dir, name, reason))?;
+        selectors.push(digest.to_owned());
+    }
+    selectors.sort();
+    selectors.dedup();
+    Ok(selectors)
+}

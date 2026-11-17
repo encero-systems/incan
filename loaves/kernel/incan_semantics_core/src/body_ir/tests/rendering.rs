@@ -647,6 +647,7 @@ fn receiver_origin_renders_mutability_in_the_snapshot() {
 fn body_ir_module_snapshot_wraps_bodies() {
     let module = BodyIrModule {
         runtime_callable_bindings: Vec::new(),
+        runtime_binding_selectors: Vec::new(),
         decorated_bindings: Vec::new(),
         entrypoint_effects: Vec::new(),
         program_entrypoints: Vec::new(),

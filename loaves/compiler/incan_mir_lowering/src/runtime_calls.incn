@@ -1,5 +1,7 @@
 """Bind runtime operations to authenticated compiled frames or ordinary governed body instances."""
 
+from std.encoding.hex import hexlify
+from std.hash import sha256
 from pub::incan_mir_plan import carrier_position
 from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import (
@@ -111,12 +113,22 @@ pub def layout_runtime_requirements(modules: &list[BodyIrModule], file: str) -> 
                 return []
             return [
                 RuntimeRequirement(
-                    canonical=binding.canonical.clone(),
+                    canonical=Some(binding.canonical.clone()),
                     path=binding.path,
                     span=source_span(file=file, line=1, column=1),
                 ),
             ]
+        path = "incan_native_runtime::initialize_binding"
+        if sealed_runtime_path(module, path):
+            return [RuntimeRequirement(canonical=None, path=path, span=source_span(file=file, line=1, column=1))]
     return []
+
+
+def sealed_runtime_path(module: &BodyIrModule, path: str) -> bool:
+    """A known facade may be resolved by exact path without loading unrelated bindings into Body IR."""
+    if len(module.runtime_binding_selectors) == 0 or not (path.startswith("incan_native_runtime::") or path.startswith("incan_stdlib_primitives::")):
+        return false
+    return hexlify(sha256.digest(path.encode("utf-8"))) in module.runtime_binding_selectors
 
 
 def retains_decorated_binding(modules: &list[BodyIrModule]) -> bool:
@@ -348,7 +360,11 @@ def retain_runtime_requirement(
     if deferred_runtime(redirects, path):
         return Ok(None)
     match runtime_canonical(module, path)?:
-        None => return Ok(None)
+        None =>
+            if sealed_runtime_path(module, path):
+                redirects.deferred.insert(path, true)
+                redirects.missing.append(RuntimeRequirement(canonical=None, path=path, span=span))
+            return Ok(None)
         Some(identity) =>
             for position in range(len(module.bodies)):
                 body = borrowed_at(module.bodies, position)
@@ -360,9 +376,9 @@ def retain_runtime_requirement(
                     return Ok(None)
             redirects.deferred.insert(path, true)
             for request in redirects.missing:
-                if request.canonical == identity:
+                if request.canonical == Some(identity.clone()):
                     return Ok(None)
-            redirects.missing.append(RuntimeRequirement(canonical=identity.clone(), path=path, span=span))
+            redirects.missing.append(RuntimeRequirement(canonical=Some(identity.clone()), path=path, span=span))
     return Ok(None)
 
 

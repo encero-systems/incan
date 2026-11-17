@@ -89,6 +89,9 @@ pub struct BodyIrModule {
     /// canonical declarations independently of private same-named dependencies; publication never serializes them.
     #[serde(skip)]
     pub runtime_callable_bindings: Vec<RuntimeCallableBinding>,
+    /// SHA-256 names of runtime facade records this invocation can demand from its selected sealed index.
+    #[serde(skip)]
+    pub runtime_binding_selectors: Vec<String>,
     /// RFC 036 originals retained separately from the initialized, module-visible callable bindings.
     #[serde(default)]
     pub decorated_bindings: Vec<DecoratedBinding>,
@@ -174,6 +177,7 @@ impl BodyIrModule {
     pub fn declarations_only(owner: String) -> Self {
         Self {
             runtime_callable_bindings: Vec::new(),
+            runtime_binding_selectors: Vec::new(),
             string_conversion_contract: StringConversionContract::Unselected,
             decorated_bindings: Vec::new(),
             entrypoint_effects: Vec::new(),

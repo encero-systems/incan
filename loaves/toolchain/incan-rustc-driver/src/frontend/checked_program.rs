@@ -188,13 +188,22 @@ fn extend_shared_identities<'a>(
 pub(super) fn runtime_declarations(
     session: &CompilationSession,
     local: Option<&LibraryManifest>,
-) -> Result<Vec<incan_semantics_core::body_ir::RuntimeCallableBinding>, String> {
+) -> Result<(Vec<incan_semantics_core::body_ir::RuntimeCallableBinding>, Vec<String>), String> {
     let mut bindings = Vec::new();
+    let mut selectors = Vec::new();
     for package in ["incan_native_runtime", "incan_stdlib_primitives"] {
         if let Some(local) = local.filter(|manifest| manifest.name == package) {
             bindings.extend(incan_frontend::library_manifest::executable_surface::runtime_bindings(
                 local,
             ));
+            continue;
+        }
+        let names = session
+            .loaves()
+            .runtime_binding_selectors(package)
+            .map_err(|error| error.to_string())?;
+        if !names.is_empty() {
+            selectors.extend(names);
             continue;
         }
         let published = session
@@ -205,7 +214,7 @@ pub(super) fn runtime_declarations(
             bindings.extend(published.iter().cloned());
         }
     }
-    Ok(bindings)
+    Ok((bindings, selectors))
 }
 
 /// Collect a test unit's modules again with each checked file read from `sources`: the test file with its conftests
@@ -380,7 +389,7 @@ pub(super) fn checked_modules(
     };
     let mut requested = required_loaf_identities(&modules, &analysis, package_identity)?;
     let checked_local = checked_local_identities(manifest.as_ref());
-    let runtime_callable_bindings = runtime_declarations(&session, manifest.as_ref())?;
+    let (runtime_callable_bindings, runtime_binding_selectors) = runtime_declarations(&session, manifest.as_ref())?;
     let resolved = load_loaf_modules(session.loaves(), &requested, &checked_local)?;
     drop(body_ir_inputs_invocation);
 
@@ -468,6 +477,7 @@ pub(super) fn checked_modules(
     entry_module.program_entrypoints = program_entrypoints;
     entry_module.string_conversion_contract = string_conversion_contract;
     entry_module.runtime_callable_bindings = runtime_callable_bindings;
+    entry_module.runtime_binding_selectors = runtime_binding_selectors;
     let program = complete_dependency_context(
         CheckedProgram {
             cacheable_bodies,
@@ -651,6 +661,35 @@ pub(super) fn complete_dependency_context_in_place(
     Ok(())
 }
 
+/// Complete only a selected path whose canonical declaration does not yet exist in the planning context.
+fn bind_runtime_requirement(
+    program: &mut CheckedProgram,
+    requirement: &RuntimeRequirement,
+) -> Result<CanonicalSymbolId, String> {
+    if let Some(identity) = &requirement.canonical {
+        return Ok(identity.clone());
+    }
+    let (package, _) = requirement
+        .path
+        .split_once("::")
+        .ok_or("runtime requirement does not name its package")?;
+    let binding = program
+        .dependencies
+        .loaves
+        .runtime_binding(package, &requirement.path)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| format!("selected runtime binding is absent: {}", requirement.path))?;
+    let entry = program
+        .modules
+        .get_mut(program.entry)
+        .ok_or("selected Body IR entry is missing")?;
+    let identity = binding.canonical.clone();
+    if !entry.runtime_callable_bindings.contains(&binding) {
+        entry.runtime_callable_bindings.push(binding);
+    }
+    Ok(identity)
+}
+
 /// Resolve a nonempty set selected by lowering, then reconstruct layout context from the active authored suffix.
 /// The canonical root set must grow on every retry; a repeated missing body is an invalid producer contract.
 pub(super) fn satisfy_runtime_requirements(
@@ -659,16 +698,23 @@ pub(super) fn satisfy_runtime_requirements(
 ) -> Result<Vec<usize>, String> {
     let previous = runtime_module_generations(&program.modules)?;
     let mut next = program.dependencies.requested.clone();
+    let mut resolved_requirements = Vec::new();
     for requirement in &requirements {
-        if !next.insert(requirement.canonical.clone()) {
+        let identity = bind_runtime_requirement(program, requirement)?;
+        if program.dependencies.requested.contains(&identity) && requirement.canonical.is_some() {
             return Err(format!(
                 "runtime declaration `{}` remained unavailable after resolution at {}:{}:{}",
                 requirement.path, requirement.span.file, requirement.span.line, requirement.span.column,
             ));
         }
+        next.insert(identity.clone());
+        resolved_requirements.push(identity);
     }
     if requirements.is_empty() {
         return Err("runtime planning requested an empty dependency set".to_owned());
+    }
+    if next == program.dependencies.requested {
+        return changed_runtime_module_indices(program, &previous);
     }
     let resolved = load_loaf_modules(&program.dependencies.loaves, &next, &program.dependencies.checked_local)
         .map_err(|error| {
@@ -686,16 +732,13 @@ pub(super) fn satisfy_runtime_requirements(
         })?;
     install_dependency_modules(program, resolved);
     let context = &mut program.dependencies;
-    for requirement in &requirements {
-        context.origins.insert(
-            requirement.canonical.clone(),
-            RootOrigin::Runtime {
-                path: requirement.path.clone(),
-                file: requirement.span.file.to_string(),
-                line: requirement.span.line,
-                column: requirement.span.column,
-            },
-        );
+    for (requirement, identity) in requirements.iter().zip(resolved_requirements) {
+        context.origins.entry(identity).or_insert_with(|| RootOrigin::Runtime {
+            path: requirement.path.clone(),
+            file: requirement.span.file.to_string(),
+            line: requirement.span.line,
+            column: requirement.span.column,
+        });
     }
     context.requested = next;
     prepare_dependency_context(program)?;
@@ -756,10 +799,10 @@ pub(super) fn prepare_runtime_layouts(
     program: &mut CheckedProgram,
     requirements: Vec<RuntimeRequirement>,
 ) -> Result<(), String> {
-    let requested = requirements
-        .into_iter()
-        .map(|requirement| requirement.canonical)
-        .collect::<BTreeSet<_>>();
+    let mut requested = BTreeSet::new();
+    for requirement in &requirements {
+        requested.insert(bind_runtime_requirement(program, requirement)?);
+    }
     // A program without layout requirements reads no layout module, but still installs the dependencies it reached.
     let mut layouts = Vec::new();
     if !requested.is_empty() {
