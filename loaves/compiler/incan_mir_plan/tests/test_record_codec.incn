@@ -3,6 +3,7 @@
 from _plan import Plan, Function, ExternalFunction, ModelDeclaration, EnumDeclaration, EnumVariant, Carrier
 from _types import PlanType, ListLeaf, SourceSpan, source_span
 from _body import Local, BasicBlock, Terminator, TerminatorKind, Parameter
+from native_function_rows import decode_native_function, encode_native_function
 from record_codec import encode_record_plan, encode_record_plan_products, decode_record_plan, record_plan_products
 from function_records import encode_product
 from pub::internal_models.checked_types import CheckedType, CheckedPrimitiveType
@@ -69,3 +70,15 @@ def empty_function(name: str, span: SourceSpan) -> Function:
         )],
         span=span,
     )
+
+
+pub def test_real_function_round_trips_recursive_layout_and_terminator() -> Result[None, str]:
+    """The native function itself crosses Crumb with its nested block, enum, recursive type and source coordinates."""
+    span = source_span(file="nested-plan.incn", line=17, column=9)
+    mut function = empty_function("nested", span)
+    function.locals.append(Local(ty=PlanType.ScalarRef([PlanType.ScalarRef([PlanType.I32])]), span=span))
+    encoded = encode_native_function(function)?
+    assert encoded[:4] == b"CRMB"
+    assert decode_native_function(encoded)? == function
+    assert decode_native_function(encoded[:len(encoded) - 1]).is_err()
+    return Ok(None)
