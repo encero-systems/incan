@@ -1225,6 +1225,52 @@ mod tests {
     }
 
     #[test]
+    fn both_parser_vocabularies_share_one_validated_registration_without_reading_the_contract()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let mut manifest = surfaced_library()?;
+        let registration = super::VocabExports {
+            metadata_version: incan_vocab::VOCAB_METADATA_VERSION,
+            unit_identity: content_name(b"checked registration"),
+            crate_path: "src/lib.incn".to_string(),
+            package_name: manifest.name.clone(),
+            keyword_registrations: Vec::new(),
+            dsl_surfaces: Vec::new(),
+            provider_manifest: Default::default(),
+            desugarer_artifact: None,
+        };
+        manifest.vocab = Some(registration.clone());
+        let selected = thread_selection::select(installed_library(root.path(), &manifest)?);
+        let index = crate::loaf_index::LoafIndex::deferred([(
+            manifest.name.clone(),
+            manifest.name.clone(),
+            root.path().join("debug"),
+            false,
+        )])?;
+        let before = selected.0.reads();
+        let _ = index.imported_vocab();
+        let _ = index.imported_dsl_surfaces();
+        index.validate_demands()?;
+        let after = selected.0.reads();
+        assert_eq!(after.records - before.records, 1);
+        assert_eq!(
+            after.bytes - before.bytes,
+            registration.encode_compiler_record_value()?.len()
+        );
+        assert!(
+            !thread_selection::read_keys()
+                .iter()
+                .any(|key| key.contains("/contract-metadata/"))
+        );
+        let mut unsupported = registration;
+        unsupported.metadata_version += 1;
+        assert!(
+            super::VocabExports::decode_compiler_record_value(&unsupported.encode_compiler_record_value()?).is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
     fn runtime_planning_reads_only_the_individually_requested_facade() -> Result<(), Box<dyn std::error::Error>> {
         let name = "incan_native_runtime";
         let root = tempfile::tempdir()?;
