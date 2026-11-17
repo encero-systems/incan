@@ -163,18 +163,19 @@ pub fn typecheck_modules(
             )
         })?;
 
-    for (idx, module) in modules.iter().enumerate() {
+    let complete_namespaces = namespace_records.iter().map(Option::is_some).collect::<Vec<_>>();
+    for ((idx, module), namespace) in modules.iter().enumerate().zip(namespace_records) {
         // A cycle shares its declaration environment. Restore it only if every member has an authenticated
         // interface and Body IR for the current logical module. Any missing member takes the entire component
         // through the ordinary component interface builder below.
-        if let Some(record) = &namespace_records[idx]
-            && cycle_peers[idx].iter().all(|&peer| namespace_records[peer].is_some())
+        if let Some(record) = namespace
+            && cycle_peers[idx].iter().all(|&peer| complete_namespaces[peer])
         {
             warnings_out.extend(parser_warning_diagnostics(module));
-            dependency_interfaces[idx] = Some(Arc::clone(&record.interface));
+            dependency_interfaces[idx] = Some(record.interface);
             type_infos.push(TypeCheckInfo::default());
-            namespace_bodies.push(Some(record.body_ir.clone()));
-            namespace_lowering_inputs.extend(record.lowering_inputs.iter().cloned());
+            namespace_bodies.push(Some(record.body_ir));
+            namespace_lowering_inputs.extend(record.lowering_inputs);
             continue;
         }
         let dep_indexes = imported_module_dep_indexes_for(modules, idx, &module_idx_by_key, own_standard_package);
