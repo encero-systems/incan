@@ -4,6 +4,7 @@ from std.primitives.crumb.descriptions import Description
 from std.primitives.crumb.records import RowRecord
 from std.primitives.crumb.values import Value, ValueField
 from std.primitives.text import copy_frozen_bytes
+from graph_crumb_fields import encode_graph_row
 from crumb_rows import ModelField, decode_rows, encode_rows, model_description, required_value
 
 const MAX_PLAN_FUNCTION_BYTES: int = 67108864
@@ -106,3 +107,29 @@ def plan_function_description() -> Description:
             ModelField(identity=b"reques", name="requests", storage="list<string>"),
         ],
     )
+
+
+pub def encode_entry_record(entry: str, inputs: list[str]) -> Result[bytes, str]:
+    """Retain the standalone entry and its ordered, complete producer inputs."""
+    selector: bytes = b"plnent\x00"
+    description = model_description(selector, "incan.plan-entry/2", [
+        ModelField(identity=b"entry_", name="entry", storage="string"),
+        ModelField(identity=b"inputs", name="inputs", storage="list<string>"),
+    ])
+    return encode_graph_row(selector, description, [
+        required_value(b"entry_", Value.Text(entry)),
+        required_value(b"inputs", Value.List(text_items(inputs))),
+    ])
+
+
+pub def encode_lowering_demand(inputs: list[str], runtime: list[str]) -> Result[bytes, str]:
+    """Preserve the ordered producer inputs and each separately bounded native dependency signature."""
+    selector: bytes = b"lowdem\x00"
+    description = model_description(selector, "incan.lowering-demand/3", [
+        ModelField(identity=b"inputs", name="inputs", storage="list<string>"),
+        ModelField(identity=b"runtim", name="runtime", storage="list<string>"),
+    ])
+    return encode_graph_row(selector, description, [
+        required_value(b"inputs", Value.List(text_items(inputs))),
+        required_value(b"runtim", Value.List(text_items(runtime))),
+    ])

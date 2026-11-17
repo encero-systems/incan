@@ -2,7 +2,9 @@
 
 from std.fs import Path
 from std.environ import get_or
-from std.json import JsonValue, parse
+from std.json import parse
+from pub::internal_models.lowering_events import INTERFACE_REPORT, LoweringEvent, decode_lowering_event, decode_lowering_refusal, decode_native_interface
+from pub::internal_models.plan_function_records import decode_plan_function_record, encode_lowering_demand
 from rust::std::fs import remove_dir_all
 from rust::incan_semantics_core import encode_incan_symbol_identity
 from rust::incan_semantics_core::executable_representation import decode_owner
@@ -838,23 +840,20 @@ def prepare_lowering_records(
         if value.symbol in bodies:
             return Err("multiple graph-eligible Body IR owners have the same canonical identity")
         bodies[value.symbol] = value
-    mut events: list[JsonValue] = []
+    mut events: list[LoweringEvent] = []
     for path in sorted([path.0 for path in report.iterdir().map_err((error) => error.message())?]):
         entry = Path(path)
         if not entry.is_file() or not path.endswith(".event"):
             continue
-        text = entry.read_text("utf-8", "strict").map_err((error) => error.message())?
-        event = parse(text).map_err((error) => f"lowering output refused: {error.message()}")?
-        if event.require("schema").map_err((error) => error.message())?.expect_int().map_err((error) => error.message())? != 2:
-            return Err("lowering output has an unsupported schema")
+        event = decode_lowering_event(entry.read_bytes().map_err((error) => error.message())?)?
         events.append(event)
     mut plan_keys: list[RecordKey] = []
     mut staged: list[StagedPlan] = []
     # Scalar demand and plan suppliers settle before the entry-binding contribution reads main's demand.
     for event in events:
-        if is_entry_event(event)?:
+        if event.role == "entry":
             continue
-        event_identity = required_event_text(event, "identity")?
+        event_identity = event.identity
         # A toolchain runtime instance reads no authored record: lowering keys it by the runtime body's checked meaning.
         runtime = event_identity.startswith(RUNTIME_INSTANCE_IDENTITY)
         if not runtime and fallback_lowering_event(unit, fallbacks, event_identity)?:
@@ -864,9 +863,9 @@ def prepare_lowering_records(
         mut member = false
         if not runtime and event_identity not in bodies and member_event(event_identity)?:
             member = true
-        key = required_event_text(event, "key")?
-        function = required_event_text(event, "function")?
-        product = required_event_text(event, "product")?.encode("utf-8")
+        key = event.key
+        function = event.function
+        product = event.product
         mut identity = event_identity
         mut signature_reads: list[RecordRequest] = []
         mut body_reads: list[RecordRequest] = []
@@ -912,17 +911,17 @@ def prepare_lowering_records(
         plan_keys.append(plan_key)
         staged.append(staged_plan(module_file, event, identity, event_identity, function, key, plan_key)?)
     for event in events:
-        if not is_entry_event(event)?:
+        if event.role != "entry":
             continue
-        event_identity = required_event_text(event, "identity")?
+        event_identity = event.identity
         if fallback_lowering_event(unit, fallbacks, event_identity)?:
             continue
         if event_identity not in bodies and retained_namespace_event(unit, rechecked, event_identity)?:
             continue
         body = body_value(bodies, fallbacks, event_identity)?
-        demand_key = body_key("lowering-demand", origin, body.identity, "main", required_event_text(event, "demand")?)
-        key = body_key("plan-function", origin, body.identity, "entry", required_event_text(event, "key")?)
-        product = required_event_text(event, "product")?.encode("utf-8")
+        demand_key = body_key("lowering-demand", origin, body.identity, "main", event.demand)
+        key = body_key("plan-function", origin, body.identity, "entry", event.key)
+        product = event.product
         check_reused_output(selected, event, key, product)?
         # A request that restored main's module from its plan record staged no demand for main; the graph holds it.
         carry_selected(staged_source, selected, demand_key)?
@@ -938,7 +937,7 @@ def prepare_lowering_records(
         plan_keys.append(key)
     # Each module's plan functions fold into its module record; a restored module's record joins the interface's reads.
     carried = stage_plan_modules(prepared, staged_source, scope, selected, origin, rechecked, staged, report, admitted)?
-    if not report.joinpath("native-interface.json").is_file():
+    if not report.joinpath(INTERFACE_REPORT).is_file():
         require_plan_refusal(report)?
         return Ok(prepared)
     prepare_native_interface(prepared, staged_source, scope, unit, origin, values, report, plan_keys + carried)?
@@ -949,50 +948,30 @@ def require_plan_refusal(report: Path) -> Result[None, str]:
     """Accept an incomplete native interface only when lowering retained an explicit per-function refusal."""
     for entry in report.iterdir().map_err((error) => error.message())?:
         if entry.is_file() and entry.name().endswith(".refusal"):
-            document = parse(entry.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err(
-                (error) => error.message(),
-            )?
-            if document.require("schema").and_then((field) => field.expect_int()).map_err((error) => error.message())? != 2:
-                return Err("lowering refusal has an unsupported schema")
-            _ = required_event_text(document, "function")?
-            _ = required_event_text(document, "refusal")?
+            _ = decode_lowering_refusal(entry.read_bytes().map_err((error) => error.message())?)?
             return Ok(None)
     return Err("successful records compile omitted its native interface without a lowering refusal")
 
 
-def is_entry_event(event: JsonValue) -> Result[bool, str]:
-    """Distinguish the compiler-owned entry role from an authored function whose name happens to be entry."""
-    match event.get("role"):
-        None => return Ok(false)
-        Some(role) =>
-            if role.expect_str().map_err((error) => error.message())? != "entry":
-                return Err("unsupported plan-function role")
-            return Ok(true)
-
-
 def lowering_demand(product: bytes) -> Result[bytes, str]:
-    """Retain the actual checked inputs and exact runtime signatures discovered by existing scalar lowering."""
-    record = parse(product.decode().map_err((_) => "invalid scalar record UTF-8")?).map_err((error) => error.message())?
-    native = parse(required_event_text(record, "function")?).map_err((error) => error.message())?
-    value = JsonValue.object(
-        {"schema": JsonValue.string("incan.lowering-demand/2"), "inputs": record
-            .require("inputs")
-            .map_err((error) => error.message())?, "runtime": native
-            .require("runtime")
-            .map_err((error) => error.message())?},
-    )
-    return Ok(value.to_json().map_err((error) => error.message())?.encode("utf-8"))
+    """Select the witnessed lowering inputs and the native runtime declarations they require."""
+    record = decode_plan_function_record(product)?
+    native = parse(record.function).map_err((error) => error.message())?
+    runtime = native.require("runtime").and_then((field) => field.expect_array()).map_err((error) => error.message())?
+    mut signatures: list[str] = []
+    for external in runtime:
+        signatures.append(external.to_json().map_err((error) => error.message())?)
+    return encode_lowering_demand(record.inputs, signatures)
 
 
 def check_reused_output(
     selected: Option[Snapshot],
-    event: JsonValue,
+    event: LoweringEvent,
     key: RecordKey,
     value: bytes,
 ) -> Result[None, str]:
     """A compiler reuse event must reproduce the exact value previously selected from the graph."""
-    reused = event.require("reused").and_then((value) => value.expect_bool()).map_err((error) => error.message())?
-    if reused:
+    if event.reused:
         prior = match selected:
             Some(value) => value
             None => return Err("a reused lowering record has no selected graph snapshot")
@@ -1013,12 +992,9 @@ def prepare_native_interface(
     plans: list[RecordKey],
 ) -> Result[None, str]:
     """Witness the complete loss-checked native plan against its exact function members and current source positions."""
-    path = report.joinpath("native-interface.json")
-    document = parse(path.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err(
-        (error) => error.message(),
-    )?
-    if required_event_text(document, "schema")? != "incan.native-interface/1":
-        return Err("native-interface has an unsupported schema")
+    path = report.joinpath(INTERFACE_REPORT)
+    encoded = path.read_bytes().map_err((error) => error.message())?
+    _ = decode_native_interface(encoded)?
     key = body_key("native-interface", origin, origin, unit.profile, unit.checked_context.unwrap_or(""))
     mut reads = [prepared_product_request(plan) for plan in plans]
     mut modules: list[str] = []
@@ -1036,15 +1012,10 @@ def prepare_native_interface(
         transaction,
         "native-interface-" + origin,
         ProducerRank(namespace=0, stage=ProducerStage.NativeInterface, dependency=0),
-        required_event_text(document, "plan")?.encode("utf-8"),
+        encoded,
         receipt,
     )?
     return Ok(None)
-
-
-def required_event_text(event: JsonValue, key: str) -> Result[str, str]:
-    """Read one required lowering-event text field without accepting coercion."""
-    return event.require(key).map_err((error) => error.message())?.expect_str().map_err((error) => error.message())
 
 
 def body_value(
