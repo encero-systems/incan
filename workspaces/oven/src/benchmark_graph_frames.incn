@@ -83,11 +83,14 @@ def evaluation_closure(selected: Snapshot, key: str, mut result: GraphFrames) ->
     for witness in receipt.witnesses:
         match witness:
             ReadWitness.Members(_, request, membership, continuation) =>
-                # A member selector authenticates just its bounded live keys. Keep an invalidated page unknown.
+                # Recompute the page membership and continuation solely from the snapshot's authenticated index.
                 match request.selection:
                     RecordSelection.Members(page) =>
                         prefix = encode_record_key(request.key)? + "\t"
-                        mut count = 0
+                        if page.order != "canonical" or request.byte_limit <= 0:
+                            return Err("invalid membership request in certified receipt")
+                        mut names: list[str] = []
+                        mut next = "end"
                         for entry in entries_with_prefix(selected.root, selected.index, prefix).map_err((error) => str(error))?:
                             if (page.lower != "" and entry.key < page.lower) or (page.upper != "" and entry.key >= page.upper):
                                 continue
@@ -95,12 +98,17 @@ def evaluation_closure(selected: Snapshot, key: str, mut result: GraphFrames) ->
                                 continue
                             if let Some(found) = entry.location:
                                 if not found.tombstone:
-                                    if count >= request.byte_limit:
+                                    if len(names) == request.byte_limit:
+                                        next = entry.key
                                         break
                                     add_frame(result, entry.key, found)
-                                    count += 1
-                        result.unknown.append(f"member validation continuation requires comparison: {membership} {continuation}")
-                        return Ok(None)
+                                    names.append(entry.key[len(prefix):])
+                        values = "\n".join(names).encode("utf-8")
+                        if len(values) > request.byte_limit:
+                            return Err("membership result exceeds the certified request's byte limit")
+                        witness_text = "\n".join([page.selector, page.order, page.lower, page.upper, next, hexlify(sha256.digest(values))])
+                        if next != continuation or hexlify(sha256.digest(witness_text.encode("utf-8"))) != membership:
+                            return Ok(None)
                     _ => return Err("membership witness has a nonmember request")
             ReadWitness.Found(previous, _) =>
                 record = encode_record_key(previous.request.key)?

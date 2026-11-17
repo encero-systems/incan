@@ -1,0 +1,38 @@
+"""An immutable semantic demand names only its selected revision even when later or unrelated values exist."""
+
+from std.encoding.hex import hexlify
+from std.json import JsonValue
+from pub::incan_platform.store import begin, commit, put
+from pub::incan_platform.store.index import find
+from benchmark_graph_frames import required_graph_frames
+from graph_read_demands import begin_graph_demands, finish_graph_demands, note_graph_demand
+from scratch import scratch_directory
+from store_path_conversion import snapshot
+
+
+pub def test_graph_oracle_selects_a_past_revision_without_read_counters() -> Result[None, str]:
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("bakery")
+    empty = snapshot(store).map_err((error) => error.message())?
+    mut transaction = begin(empty)
+    transaction = put(transaction, "wanted", b"a")
+    transaction = put(transaction, "other", b"b")
+    selected = commit(transaction).map_err((error) => error.message())?
+    old = match find(selected.root, selected.index, "wanted").map_err((error) => str(error))?:
+        Some(found) => found
+        None => return Err("missing selected test frame")
+
+    begin_graph_demands(true)
+    note_graph_demand("capture-mode", selected, "a" * 64)
+    note_graph_demand("baked-unit", selected, "wanted")
+    note_graph_demand("baked-unit", selected, "wanted")
+    note_graph_demand("baked-unit", selected, "missing")
+    requests = finish_graph_demands()
+    later = commit(put(begin(selected), "wanted", b"much longer")).map_err((error) => error.message())?
+    assert later.digest != selected.digest
+    # Deliberately give the oracle just the semantic selectors. There are no observed rows to repeat.
+    result = required_graph_frames(JsonValue.object({"graph_demands": JsonValue.array([item.to_json() for item in requests])}), store)?
+    assert len(result.unknown) == 0
+    assert len(result.lengths) == 1
+    assert result.lengths[hexlify(old.digest) + "\twanted"] == 8 + len("wanted") + 1
+    return Ok(None)
