@@ -3,6 +3,7 @@
 from std.encoding.hex import hexlify
 from std.fs import Path
 from std.hash import file_digest, sha256
+from std.json import JsonValue
 from std.io import BytesIO, Endian, IoError
 from scratch import scratch_directory
 from pub::incan_platform.store import EXPECT_ABSENT, Snapshot, begin, commit, get, put, read_counts, segments
@@ -15,6 +16,7 @@ from sealed_set import (
     admit,
     export_set,
     mapped_value,
+    payload_references,
     record_key,
     readmit,
     verify,
@@ -70,6 +72,7 @@ pub def test_sealed_sets_are_canonical_shared_idempotent_and_checked() -> Result
     assert get(both, "sealed/set/" + root).map_err((error) => error.message())?.unwrap_or(b"")[:4] == b"CRMB"
     assert get(both, right_key).map_err((error) => error.message())? != None
     prove_mapped_value(both, spec, payload)?
+    prove_previous_local_frames(base.joinpath("previous-home"), left, root, spec, payload)?
     assert inventory(home.joinpath("payloads"))? == payloads_before
     bundle_spec = specification(profile, "toolchain-bundle", [payload])
     bundle = base.joinpath("bundle")
@@ -98,6 +101,29 @@ pub def test_sealed_sets_are_canonical_shared_idempotent_and_checked() -> Result
     # 4. Damage and invalid identities are errors before any publication.
     prove_refusals(base, source, first, spec, left, home, root, payload)?
     assert inventory(home)? == before
+    return Ok(None)
+
+
+def prove_previous_local_frames(home: Path, directory: Path, root: str, spec: SetSpec, payload: str) -> Result[None, str]:
+    """An earlier installation kept the portable manifest and its member envelope directly in the bakery."""
+    view = admit(home, directory, root, spec.profile).map_err((error) => error.message())?
+    key = record_key(spec, spec.records[0]).map_err((error) => error.message())?
+    manifest_path = directory.joinpath("manifest.json")
+    manifest = manifest_path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    table = JsonValue.parse(manifest).and_then((value) => value.expect_array()).map_err((error) => error.message())?
+    members = table[5].expect_array().map_err((error) => error.message())?
+    envelope = JsonValue.array([table[1], table[2], members[0]]).to_json().map_err((error) => error.message())?.encode("utf-8")
+    receipt = "sealed/set/" + root
+    earlier = commit(put(put(begin(view), key, envelope), receipt, manifest.encode("utf-8"))).map_err((error) => error.message())?
+    value = hexlify(sha256.digest(b"shared value"))
+    assert payload_references(key, envelope).map_err((error) => error.message())? == [value, payload]
+    assert payload in payload_references(receipt, manifest.encode("utf-8")).map_err((error) => error.message())?
+    reopened = admit(home, directory, root, spec.profile).map_err((error) => error.message())?
+    assert reopened.generation == earlier.generation
+    assert mapped_value(reopened, spec, spec.records[0], value).map_err((error) => error.message())?.to_bytes() == b"shared value"
+    repaired = readmit(home, directory, root, spec.profile).map_err((error) => error.message())?
+    assert get(repaired, key).map_err((error) => error.message())? == Some(envelope)
+    assert get(repaired, receipt).map_err((error) => error.message())? == Some(manifest.encode("utf-8"))
     return Ok(None)
 
 

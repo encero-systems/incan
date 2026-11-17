@@ -115,7 +115,8 @@ pub def admit_with_spec(
     check_dependencies(view, verified.spec.dependencies)?
     check_external(view, verified.spec.records)?
     receipt_key = SET_PREFIX + set_root
-    already = get(view, receipt_key)? != None
+    stored = get(view, receipt_key)?
+    already = stored != None
     mut transaction = begin(view)
     for dependency in verified.spec.dependencies:
         key = SET_PREFIX + dependency
@@ -127,7 +128,6 @@ pub def admit_with_spec(
         key = record_key(verified.spec, entry.record)?
         value = selected_envelope(view, key, verified.spec, entry, already)?
         transaction = put(transaction, key, value, EXPECT_ABSENT)
-    stored = get(view, receipt_key)?
     mut receipt = b""
     match stored:
         Some(previous) =>
