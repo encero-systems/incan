@@ -8,7 +8,7 @@ from scratch import scratch_directory
 from compiler_record_admission import CompilerRecordPin, SHIPPED_RECORDS, convert, installed_records
 from pub::incan_platform.store import begin, commit, stage_put
 from store_path_conversion import snapshot
-from pub::incan_worker_host.record_directory import read_directory
+from pub::incan_worker_host.record_directory import directory_member_key, read_directory
 
 
 pub def test_shipped_compiler_records_are_admitted_without_running_a_compiler() -> Result[None, str]:
@@ -75,6 +75,31 @@ pub def test_a_shipped_sealed_set_installs_without_converting_or_copying() -> Re
     extra = commit(changed).map_err((error) => error.message())?
     swapped = CompilerRecordPin(root=sealed.root, digest=sealed.digest, directory=extra.index)
     assert installed_records(driver.0, installed, Some(swapped)).is_err(), "even a valid root must have the complete sealed membership"
+    return Ok(None)
+
+
+pub def test_one_directory_proof_checks_only_the_pages_selected_by_the_facet() -> Result[None, str]:
+    """A real multi-page index proves one named record while leaving unrelated pages unopened."""
+    scratch = scratch_directory()?
+    directory = scratch.path().joinpath("directory")
+    seal = hexlify(sha256.digest(directory.0.encode("utf-8")))
+    mut staged = begin(snapshot(directory).map_err((error) => error.message())?)
+    stage_put(staged, "@" + seal, b"")
+    group = "loaf/debug/probe/metadata/"
+    mut chosen = ""
+    for ordinal in range(320):
+        digest = hexlify(sha256.digest(str(ordinal).encode("utf-8")))
+        key = group + "00000000/" + digest
+        stage_put(staged, directory_member_key(seal, key, digest)?, b"")
+        if ordinal == 100:
+            chosen = digest
+    root = commit(staged).map_err((error) => error.message())?.index
+    one = read_directory(directory.0, root, seal, group + chosen + "/", 1)?
+    assert len(one.members) == 1 and one.members[0].revision == chosen
+    assert one.checked_bytes > 0, "a fresh root must authenticate the pages on its first selection"
+    rest = read_directory(directory.0, root, seal, group, 0)?
+    assert len(rest.members) == 320
+    assert rest.checked_bytes > one.checked_bytes, "the unrelated remaining pages carry more bytes than the selected path"
     return Ok(None)
 
 

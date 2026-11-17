@@ -1,7 +1,7 @@
 """Serve installed compiler membership and absence proofs from an independently pinned store index."""
 
 from pub::incan_platform.store.disk import root as disk_root
-from pub::incan_platform.store.index import entries_with_prefix, find, page_checked_bytes
+from pub::incan_platform.store.index import find, limited_entries_with_prefix, page_checked_bytes
 from record_snapshot import valid_digest
 
 
@@ -40,7 +40,7 @@ pub def read_directory(directory: str, top: str, seal: str, prefix: str, maximum
                 return Err("installed compiler directory seal anchor is deleted")
         None => return Err("installed compiler directory belongs to another sealed set")
     mut members: list[DirectoryMember] = []
-    for row in entries_with_prefix(path, top, seal + "\t" + prefix, maximum).map_err((error) => error.detail)?:
+    for row in limited_entries_with_prefix(path, top, seal + "\t" + prefix, maximum).map_err((error) => error.detail)?:
         match row.location:
             Some(location) =>
                 if location.tombstone:
