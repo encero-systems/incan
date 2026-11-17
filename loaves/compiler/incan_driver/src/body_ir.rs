@@ -9,6 +9,7 @@ use incan_frontend::typechecker::TypeCheckInfo;
 use incan_semantics_core::body_ir::BodyIrModule;
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 use std::collections::{BTreeSet, HashSet};
+use std::sync::Arc;
 use std::thread;
 
 /// Maximum source components lowered at once inside one compiler invocation.
@@ -36,6 +37,39 @@ pub fn lower_authored_modules(
     session: &CompilationSession,
     bodies: &mut Vec<BodyIrModule>,
 ) -> Result<(), String> {
+    let namespaces = modules
+        .iter()
+        .map(|module| analysis.namespace_body_by_path.get(&module.file_path).cloned())
+        .collect();
+    lower_with_namespaces(modules, analysis, session, bodies, namespaces)
+}
+
+/// Lower the active compilation, transferring its admitted namespace bodies into the output.
+/// Other consumers may still inspect the checked facts and lowering witnesses in `analysis`.
+pub fn lower_compilation_modules(
+    modules: &[ParsedModule],
+    analysis: &mut CompilationAnalysis,
+    session: &CompilationSession,
+    bodies: &mut Vec<BodyIrModule>,
+) -> Result<(), String> {
+    let retained = std::mem::take(&mut analysis.namespace_body_by_path);
+    let namespaces = modules
+        .iter()
+        .map(|module| retained.get(&module.file_path).cloned())
+        .collect();
+    // A test unit may deliberately name one source twice. Each module keeps a handle, while the ordinary
+    // one-source/one-module case transfers the sole owner into its worker.
+    drop(retained);
+    lower_with_namespaces(modules, analysis, session, bodies, namespaces)
+}
+
+fn lower_with_namespaces(
+    modules: &[ParsedModule],
+    analysis: &CompilationAnalysis,
+    session: &CompilationSession,
+    bodies: &mut Vec<BodyIrModule>,
+    mut namespace_bodies: Vec<Option<Arc<BodyIrModule>>>,
+) -> Result<(), String> {
     let authored_start = bodies.len();
     let provider_operations = ProviderOperationCatalog::from_loaves(session.loaves())?;
     let unit = session.unit();
@@ -49,10 +83,6 @@ pub fn lower_authored_modules(
                 .ok_or("module analysis is missing")
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let namespace_bodies = modules
-        .iter()
-        .map(|module| analysis.namespace_body_for_path(&module.file_path))
-        .collect::<Vec<_>>();
     let components = authored_components(modules, session.own_standard_package(), &cycle_peers);
     let waves = component_waves(&components, modules.len())?;
     let mut authored = (0..modules.len()).map(|_| None).collect::<Vec<Option<BodyIrModule>>>();
@@ -62,7 +92,7 @@ pub fn lower_authored_modules(
             &components,
             modules,
             &type_infos,
-            &namespace_bodies,
+            &mut namespace_bodies,
             &cycle_peers,
             bodies,
             &authored,
@@ -227,7 +257,7 @@ fn lower_component_wave(
     components: &[AuthoredComponent],
     modules: &[ParsedModule],
     type_infos: &[&TypeCheckInfo],
-    namespace_bodies: &[Option<&BodyIrModule>],
+    namespace_bodies: &mut [Option<Arc<BodyIrModule>>],
     cycle_peers: &[Vec<usize>],
     dependency_bodies: &[BodyIrModule],
     authored: &[Option<BodyIrModule>],
@@ -240,21 +270,33 @@ fn lower_component_wave(
         .map(std::num::NonZeroUsize::get)
         .unwrap_or(1);
     let workers = available.clamp(1, MAX_BODY_IR_WORKERS);
-    let mut lowered = Vec::new();
-    for batch in wave.chunks(workers) {
-        let mut completed = thread::scope(|scope| -> Result<Vec<Vec<(usize, BodyIrModule)>>, String> {
-            let mut handles = Vec::with_capacity(batch.len());
-            for &component_index in batch {
-                let builder = thread::Builder::new()
-                    .name(format!("incan-body-ir-{component_index}"))
-                    .stack_size(incan_frontend::compiler_stack::compiler_stack_bytes());
-                let handle = builder
-                    .spawn_scoped(scope, move || {
-                        lower_component(
-                            &components[component_index],
+    let batch_size = wave.len().div_ceil(workers).max(1);
+    thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for batch in wave.chunks(batch_size) {
+            let jobs = batch
+                .iter()
+                .map(|&index| {
+                    let component = &components[index];
+                    let retained = component
+                        .members
+                        .iter()
+                        .map(|&member| namespace_bodies[member].take())
+                        .collect();
+                    (component, retained)
+                })
+                .collect::<Vec<_>>();
+            let handle = thread::Builder::new()
+                .name(format!("incan-body-ir-{}", batch[0]))
+                .stack_size(incan_frontend::compiler_stack::compiler_stack_bytes())
+                .spawn_scoped(scope, move || -> Result<Vec<(usize, BodyIrModule)>, String> {
+                    let mut result = Vec::new();
+                    for (component, retained) in jobs {
+                        result.extend(lower_component(
+                            component,
                             modules,
                             type_infos,
-                            namespace_bodies,
+                            retained,
                             cycle_peers,
                             dependency_bodies,
                             authored,
@@ -262,25 +304,22 @@ fn lower_component_wave(
                             registry_package,
                             library_package,
                             include_inline_tests,
-                        )
-                    })
-                    .map_err(|error| format!("cannot start Body IR worker: {error}"))?;
-                handles.push(handle);
-            }
-            let mut results = Vec::with_capacity(handles.len());
-            for handle in handles {
-                match handle.join() {
-                    Ok(result) => results.push(result?),
-                    Err(payload) => std::panic::resume_unwind(payload),
-                }
-            }
-            Ok(results)
-        })?;
-        for result in &mut completed {
-            lowered.append(result);
+                        )?);
+                    }
+                    Ok(result)
+                })
+                .map_err(|error| format!("cannot start Body IR worker: {error}"))?;
+            handles.push(handle);
         }
-    }
-    Ok(lowered)
+        let mut lowered = Vec::new();
+        for handle in handles {
+            match handle.join() {
+                Ok(result) => lowered.extend(result?),
+                Err(payload) => std::panic::resume_unwind(payload),
+            }
+        }
+        Ok(lowered)
+    })
 }
 
 /// Lower one source component serially against immutable external dependencies, preserving cycle peer declarations.
@@ -292,7 +331,7 @@ fn lower_component(
     component: &AuthoredComponent,
     modules: &[ParsedModule],
     type_infos: &[&TypeCheckInfo],
-    namespace_bodies: &[Option<&BodyIrModule>],
+    retained: Vec<Option<Arc<BodyIrModule>>>,
     cycle_peers: &[Vec<usize>],
     dependency_bodies: &[BodyIrModule],
     authored: &[Option<BodyIrModule>],
@@ -305,10 +344,10 @@ fn lower_component(
     // completed members and, while a cycle member is lowered, the declarations of the peers that follow it.
     let imported = imported_modules(component, authored)?;
     let mut completed: Vec<BodyIrModule> = Vec::with_capacity(component.members.len());
-    for &index in &component.members {
+    for (&index, restored) in component.members.iter().zip(retained) {
         let module = &modules[index];
-        if let Some(restored) = namespace_bodies[index] {
-            let mut restored = restored.clone();
+        if let Some(restored) = restored {
+            let mut restored = Arc::unwrap_or_clone(restored);
             let borrowed = imported.iter().copied().chain(&completed).collect::<Vec<_>>();
             incan_frontend::body_ir::refresh_dependency_call_targets(
                 &mut restored,

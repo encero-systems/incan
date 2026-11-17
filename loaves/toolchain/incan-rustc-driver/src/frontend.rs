@@ -982,10 +982,10 @@ fn lowering_retry_inputs(program: &CheckedProgram, selected: &[usize]) -> Result
 }
 
 /// Lower authored modules from their checked facts and the canonical provider catalog. Dependency bodies already
-/// present in `bodies` supply context; every source body is built anew and remains outside immutable worker caches.
+/// present in `bodies` supply context for admitted namespaces and freshly checked sources.
 fn lower_authored_modules(
     modules: &[ParsedModule],
-    analysis: &CompilationAnalysis,
+    analysis: &mut CompilationAnalysis,
     session: &CompilationSession,
     bodies: &mut Vec<BodyIrModule>,
     files: &mut Vec<String>,
@@ -994,7 +994,7 @@ fn lower_authored_modules(
         tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::build_body_ir", modules = modules.len())
             .entered();
     let own = bodies.len();
-    incan_driver::body_ir::lower_authored_modules(modules, analysis, session, bodies)?;
+    incan_driver::body_ir::lower_compilation_modules(modules, analysis, session, bodies)?;
     for (module, body_ir) in modules.iter().zip(&bodies[own..]) {
         validate_retained_storage(&module.ast, &body_ir)
             .map_err(|error| format!("{}: {error}", module.file_path.display()))?;

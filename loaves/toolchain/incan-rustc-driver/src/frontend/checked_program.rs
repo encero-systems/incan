@@ -349,7 +349,7 @@ pub(super) fn checked_modules(
             (module.file_path.clone(), dependencies)
         })
         .collect::<std::collections::BTreeMap<_, _>>();
-    let analysis = {
+    let mut analysis = {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::analyze_modules", modules = modules.len()).entered();
         session
             .analyze_unit(&modules, library.then_some(package_identity), &mut |module, checker| {
@@ -408,7 +408,7 @@ pub(super) fn checked_modules(
     let mut entry = entry + loaf_modules;
 
     // ---- The program's own modules ----
-    lower_authored_modules(&modules, &analysis, &session, &mut bodies, &mut files)?;
+    lower_authored_modules(&modules, &mut analysis, &session, &mut bodies, &mut files)?;
     let retained_generated_member_owners = retained_generated_member_owners(&modules, &analysis)?;
     let retained_requirements = retained_body_call_requirements(
         &bodies[loaf_modules..],
