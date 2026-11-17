@@ -39,7 +39,7 @@ model EventPosition:
     column: int
 
 
-@derive(Serialize)
+@derive(Serialize, Deserialize)
 model EventProductRecord:
     """Project a private product into the existing request-local JSON event contract."""
 
@@ -420,6 +420,11 @@ def publish_record(directory: str, inputs: list[str], encoded: bytes) -> Result[
     return Ok(None)
 
 
+def decode_event_product(text: str) -> Result[EventProductRecord, JsonError]:
+    """Read the request-local representation used by the current event producer."""
+    return from_str(text)
+
+
 def event_product(record: PlanFunctionRecord) -> Result[str, str]:
     """Keep the request-local event schema stable while its private retained product becomes Crumb."""
     product = EventProductRecord(
@@ -478,7 +483,7 @@ pub def admitted_payload(
         Ok(value) => value
         Err(_) => return None
 
-    record = match decode_record(decoded.product):
+    record = match decode_event_product(decoded.product):
         Ok(value) => value
         Err(_) => return None
 
