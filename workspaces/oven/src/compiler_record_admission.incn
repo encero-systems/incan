@@ -141,6 +141,8 @@ pub def installed_records(
             if pin.directory != "":
                 validate_directory(transport, pin, spec)?
             return Ok(pin)
+        if pin.directory != "":
+            return Err("missing sealed manifest for the shipped compiler directory")
     return convert(driver, installation, installation)
 
 

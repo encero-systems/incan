@@ -30,7 +30,10 @@ pub def directory_member_key(seal: str, key: str, revision: str) -> Result[str, 
 
 pub def read_directory(directory: str, top: str, seal: str, prefix: str, maximum: int) -> Result[DirectoryAnswer, str]:
     """Read just the index pages containing this key range, checking the seal anchor and each traversed page."""
-    if top == "" or not valid_digest(seal) or maximum < 0:
+    # A root is a single content-named page or a bounded page in a content-named pack.
+    fields = top.split(":")
+    packed = len(fields) == 4 and valid_digest(fields[0]) and valid_digest(fields[3])
+    if not (valid_digest(top) or packed) or not valid_digest(seal) or maximum < 0:
         return Err("invalid installed compiler directory pin")
     path = disk_root(directory)
     before = page_checked_bytes()
