@@ -11,7 +11,7 @@ use crate::symbols::{ResolvedType, SymbolKind, resolve_type};
 
 /// A zero-argument nominal can be admitted only after proving all the defaults in its declaring module. Holding
 /// its canonical identity until use allows forward references without importing private names into the consumer.
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub(in crate::typechecker) enum DefaultValue {
     Literal,
     Constructor(CanonicalSymbolId),
@@ -107,12 +107,14 @@ impl TypeChecker {
             let Some((name, _, fields)) = fields(&declaration.node) else {
                 continue;
             };
-            let values = fields
+            let values: Vec<_> = fields
                 .iter()
                 .filter(|field| self.member_binding_is_active(field.span))
                 .map(|field| self.closed_default_value(field.node.default.as_ref()?, &field.node.ty.node, &owners))
                 .collect();
-            self.constructor_defaults.0.insert(owners[name].clone(), values);
+            if values.is_empty() || values.iter().any(Option::is_some) {
+                self.constructor_defaults.0.insert(owners[name].clone(), values);
+            }
         }
     }
 

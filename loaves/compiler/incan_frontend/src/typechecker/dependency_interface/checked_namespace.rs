@@ -19,6 +19,11 @@ pub struct CheckedNamespaceInterface {
     /// Member identities by declaration name. API metadata carries a member's identity only for a package origin, so
     /// an editable module's variants, fields, properties and methods keep theirs here (#3154).
     members: std::collections::BTreeMap<String, NamespaceMemberIdentities>,
+    /// Source-owned default proofs in canonical declaration order, including private nested targets.
+    constructor_defaults: Vec<(
+        CanonicalSymbolId,
+        Vec<Option<ownership_contracts::defaults::DefaultValue>>,
+    )>,
     nominal_scope: std::collections::BTreeMap<String, CanonicalSymbolId>,
 }
 
@@ -36,7 +41,7 @@ struct NamespaceMemberIdentities {
 }
 
 impl CheckedNamespaceInterface {
-    const SCHEMA: u32 = 5;
+    const SCHEMA: u32 = 6;
 
     /// Capture one complete installable public namespace from an accepted editable module.
     ///
@@ -110,8 +115,17 @@ impl CheckedNamespaceInterface {
                 nominal_scope.entry(key).or_insert_with(|| identity.clone());
             }
         }
+        let mut constructor_defaults: Vec<_> = checker
+            .constructor_defaults
+            .0
+            .iter()
+            .filter(|(owner, _)| identity_owned_by(owner, module_path))
+            .map(|(owner, fields)| (owner.clone(), fields.clone()))
+            .collect();
+        constructor_defaults.sort_by(|(left, _), (right, _)| left.cmp(right));
         Ok(Some(Self {
             schema: Self::SCHEMA,
+            constructor_defaults,
             module_name: module_name.to_owned(),
             module_path: module_path.to_vec(),
             api,
@@ -232,6 +246,7 @@ impl CheckedNamespaceInterface {
             retained_nominal_carriers: Arc::new(converter.retained_nominal_carriers.clone()),
             declaration_callables: Arc::new(converter.declaration_callables.clone()),
             input_contracts: Arc::default(),
+            constructor_defaults: Arc::new(self.constructor_defaults.iter().cloned().collect()),
             member_reexports: Arc::new(reexports),
             body_ir_pub_reexports: Arc::default(),
             direct_member_partial_projections: Arc::default(),
@@ -267,6 +282,16 @@ impl CheckedNamespaceInterface {
             || self.api.declarations.len() != self.identities.len()
         {
             return Err("checked namespace interface has mismatched authority".into());
+        }
+        if self.constructor_defaults.windows(2).any(|pair| pair[0].0 >= pair[1].0)
+            || self.constructor_defaults.iter().any(|(owner, _)| {
+                !matches!(
+                    owner.kind,
+                    SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class
+                ) || !identity_owned_by(owner, &self.module_path)
+            })
+        {
+            return Err("checked namespace constructor defaults disagree with their declaration owner".into());
         }
         if self.members.keys().any(|name| !self.identities.contains_key(name)) {
             return Err("checked namespace interface has members of an undeclared name".into());
