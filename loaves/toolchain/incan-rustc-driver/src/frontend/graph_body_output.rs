@@ -149,7 +149,7 @@ impl GraphBodyOutput {
         )? {
             self.namespaces.push(PendingNamespaceValue {
                 module: module_path.clone(),
-                interface: interface.to_bytes()?,
+                interface: interface.to_bytes(&super::namespace_crumb::CheckedNamespaceCrumb)?,
                 body_ir: Vec::new(),
                 dependencies: dependencies.to_vec(),
                 lowering_inputs: Vec::new(),

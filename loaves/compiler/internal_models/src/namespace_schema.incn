@@ -1,0 +1,948 @@
+"""Crumb descriptions of the compiler-owned editable namespace declaration closure."""
+
+from std.primitives.crumb.descriptions import Description
+from crumb_rows import ModelField, model_description
+from plan_wire_rows import enum_schema, variant_schema
+
+
+def shape_access_mode() -> Description:
+    return model_description(b"\x62\x2f\x44\x95\x5c\x42\x00", "checked_namespace.AccessMode", [
+        ModelField(identity=b"\xe6\x42\xb1\x29\x01\xa6", name="mode", storage="enum@f3f860857e6c"),
+        ModelField(identity=b"\x69\x85\xca\x1f\x4d\xaa", name="component", storage="record@fb497dd98dfa"),
+        ModelField(identity=b"\x34\x2c\x8c\x61\xe6\x79", name="underlying", storage="enum@20bf1c617420"),
+    ])
+
+def shape_api_alias() -> Description:
+    return model_description(b"\x38\x96\xed\xb4\x16\x0b\x00", "checked_namespace.ApiAlias", [
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
+        ModelField(identity=b"\x79\xbf\xb0\xe2\xba\x76", name="anchor", storage="record@f4a092c4acca"),
+        ModelField(identity=b"\xab\x80\x1b\xe6\x56\xe0", name="target_path", storage="list<string>"),
+        ModelField(identity=b"\x2a\x56\xe0\x44\x58\x75", name="is_public", storage="boolean"),
+        ModelField(identity=b"\x99\x5c\x29\x0c\xb5\x9e", name="projected_function", storage="option<record@7b0db3092499>"),
+        ModelField(identity=b"\xf7\xea\x57\x60\x4f\x28", name="projected_type", storage="option<enum@20bf1c617420>"),
+    ])
+
+def shape_api_callable_metadata() -> Description:
+    return model_description(b"\x51\xa0\x86\xd2\x00\x6d\x00", "checked_namespace.ApiCallableMetadata", [
+        ModelField(identity=b"\x01\xb8\x01\x6f\xdc\xe4", name="ownership", storage="option<enum@b8dfa1e04174>"),
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
+        ModelField(identity=b"\x79\xbf\xb0\xe2\xba\x76", name="anchor", storage="record@f4a092c4acca"),
+        ModelField(identity=b"\x75\xe7\xe9\xde\xad\x7e", name="type_params", storage="list<record@80549e0eb490>"),
+        ModelField(identity=b"\x81\xba\xe8\x76\xb7\x05", name="receiver", storage="option<enum@01e4c4811dd1>"),
+        ModelField(identity=b"\xa2\x0b\x52\xfa\xe5\x7c", name="params", storage="list<record@5e91aed5a32f>"),
+        ModelField(identity=b"\x40\x7d\xdf\x95\xec\x74", name="return_type", storage="enum@20bf1c617420"),
+        ModelField(identity=b"\x4e\x13\xcb\x86\xec\x33", name="is_async", storage="boolean"),
+    ])
+
+def shape_api_class() -> Description:
+    return model_description(b"\x1c\x0f\x94\x55\x99\xfd\x00", "checked_namespace.ApiClass", [
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
+        ModelField(identity=b"\x79\xbf\xb0\xe2\xba\x76", name="anchor", storage="record@f4a092c4acca"),
+        ModelField(identity=b"\x24\x74\x99\x20\x9a\xb0", name="docstring", storage="option<string>"),
+        ModelField(identity=b"\xc9\x2e\xf4\xd8\xe4\x5b", name="docstring_sections", storage="option<record@fefefb4a64ba>"),
+        ModelField(identity=b"\x4c\xc3\x59\x9f\x82\x5d", name="decorators", storage="list<record@3681cf30afc4>"),
+        ModelField(identity=b"\x75\xe7\xe9\xde\xad\x7e", name="type_params", storage="list<record@80549e0eb490>"),
+        ModelField(identity=b"\x8e\x7c\xe7\x6b\x88\xcc", name="extends", storage="option<string>"),
+        ModelField(identity=b"\x9e\x27\x94\x08\x61\xd7", name="traits", storage="list<string>"),
+        ModelField(identity=b"\x81\x2f\xff\x9c\x3c\xf4", name="trait_adoptions", storage="list<record@520b906148ca>"),
+        ModelField(identity=b"\xa8\x8f\xe6\xec\x61\x15", name="derives", storage="list<string>"),
+        ModelField(identity=b"\xbf\xe5\xd6\x97\x16\x2d", name="fields", storage="list<record@54738c6fe61a>"),
+        ModelField(identity=b"\x96\xad\xb9\x24\x52\x86", name="properties", storage="list<record@65a8153729b5>"),
+        ModelField(identity=b"\x3f\x38\x67\x31\x3a\x9d", name="methods", storage="list<record@24cedfeea4a7>"),
+    ])
+
+def shape_api_const() -> Description:
+    return model_description(b"\x53\xb6\xe9\x9d\x46\x9b\x00", "checked_namespace.ApiConst", [
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
+        ModelField(identity=b"\x79\xbf\xb0\xe2\xba\x76", name="anchor", storage="record@f4a092c4acca"),
+        ModelField(identity=b"\x4f\x9d\xb7\xf8\xe5\x06", name="ty", storage="enum@20bf1c617420"),
+        ModelField(identity=b"\xcd\x42\x40\x4d\x52\xad", name="value", storage="option<enum@609cc189aa5a>"),
+    ])
+
+def shape_api_declaration() -> Description:
+    return enum_schema(b"\x97\x08\x42\x8a\x03\xcc\x00", "checked_namespace.ApiDeclaration", [
+        variant_schema(b"\xc8\x03\x71\x03\x02\xd5", "Function", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="record@e1b4063da2e5")]),
+        variant_schema(b"\x5e\x2c\x61\x4c\x23\xf0", "Model", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="record@c9f3a34ad89f")]),
+        variant_schema(b"\x4f\x3a\x9b\xd0\x03\x97", "Class", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="record@1c0f945599fd")]),
+        variant_schema(b"\x28\xe3\xe4\x79\xe0\x87", "Trait", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="record@e632e45386a4")]),
+        variant_schema(b"\x54\x10\x8d\xaf\xaa\xc5", "Enum", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="record@66ae2f01311c")]),
+        variant_schema(b"\x2e\x7e\x82\x4e\x59\x50", "Newtype", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="record@a58be0c98603")]),
+        variant_schema(b"\x6b\x9d\x65\x54\x6f\xf3", "TypeAlias", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="record@899dc20868a6")]),
+        variant_schema(b"\x10\x71\xe7\xae\x66\xc8", "Const", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="record@53b6e99d469b")]),
+        variant_schema(b"\x1d\x2c\x73\xdc\x01\xf2", "Static", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="record@f30e61c46bc4")]),
+        variant_schema(b"\xb1\x9e\x02\xe9\x50\x2b", "Alias", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="record@3896edb4160b")]),
+        variant_schema(b"\xa4\xd5\x0f\xb8\x54\x03", "Partial", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="record@ef97293775f5")]),
+    ])
+
+def shape_api_docstring() -> Description:
+    return model_description(b"\xfe\xfe\xfb\x4a\x64\xba\x00", "checked_namespace.ApiDocstring", [
+        ModelField(identity=b"\x76\x1b\x7a\xd8\xad\x43", name="summary", storage="option<string>"),
+        ModelField(identity=b"\xa2\x0b\x52\xfa\xe5\x7c", name="params", storage="list<record@ea6acaa3e08b>"),
+        ModelField(identity=b"\x15\x3b\x2a\x38\xcb\x4a", name="returns", storage="option<record@2d7f97f31682>"),
+        ModelField(identity=b"\xbf\xe5\xd6\x97\x16\x2d", name="fields", storage="list<record@ea6acaa3e08b>"),
+        ModelField(identity=b"\x19\x45\x9a\x61\xf7\xd5", name="aliases", storage="list<record@ea6acaa3e08b>"),
+        ModelField(identity=b"\x4c\xc3\x59\x9f\x82\x5d", name="decorators", storage="list<record@ea6acaa3e08b>"),
+    ])
+
+def shape_api_docstring_entry() -> Description:
+    return model_description(b"\xea\x6a\xca\xa3\xe0\x8b\x00", "checked_namespace.ApiDocstringEntry", [
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
+        ModelField(identity=b"\xc9\x04\x6f\x7a\x37\xad", name="description", storage="string"),
+    ])
+
+def shape_api_docstring_return() -> Description:
+    return model_description(b"\x2d\x7f\x97\xf3\x16\x82\x00", "checked_namespace.ApiDocstringReturn", [
+        ModelField(identity=b"\x4f\x9d\xb7\xf8\xe5\x06", name="ty", storage="option<string>"),
+        ModelField(identity=b"\xc9\x04\x6f\x7a\x37\xad", name="description", storage="string"),
+    ])
+
+def shape_api_enum() -> Description:
+    return model_description(b"\x66\xae\x2f\x01\x31\x1c\x00", "checked_namespace.ApiEnum", [
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
+        ModelField(identity=b"\x79\xbf\xb0\xe2\xba\x76", name="anchor", storage="record@f4a092c4acca"),
+        ModelField(identity=b"\x24\x74\x99\x20\x9a\xb0", name="docstring", storage="option<string>"),
+        ModelField(identity=b"\xc9\x2e\xf4\xd8\xe4\x5b", name="docstring_sections", storage="option<record@fefefb4a64ba>"),
+        ModelField(identity=b"\x4c\xc3\x59\x9f\x82\x5d", name="decorators", storage="list<record@3681cf30afc4>"),
+        ModelField(identity=b"\x75\xe7\xe9\xde\xad\x7e", name="type_params", storage="list<record@80549e0eb490>"),
+        ModelField(identity=b"\x9e\x27\x94\x08\x61\xd7", name="traits", storage="list<string>"),
+        ModelField(identity=b"\x81\x2f\xff\x9c\x3c\xf4", name="trait_adoptions", storage="list<record@520b906148ca>"),
+        ModelField(identity=b"\x21\xf5\x02\x67\xa8\xad", name="value_type", storage="option<enum@e7ec50d67734>"),
+        ModelField(identity=b"\xda\xd5\x69\xe1\x01\xad", name="variants", storage="list<record@e6d8ddf01bb1>"),
+        ModelField(identity=b"\x39\xce\x61\x5d\xb6\x80", name="variant_aliases", storage="list<record@1676180aeebd>"),
+        ModelField(identity=b"\x3f\x38\x67\x31\x3a\x9d", name="methods", storage="list<record@24cedfeea4a7>"),
+        ModelField(identity=b"\xa8\x8f\xe6\xec\x61\x15", name="derives", storage="list<string>"),
+    ])
+
+def shape_api_enum_variant() -> Description:
+    return model_description(b"\xe6\xd8\xdd\xf0\x1b\xb1\x00", "checked_namespace.ApiEnumVariant", [
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
+        ModelField(identity=b"\x0d\xee\xb8\xfa\x1d\xbb", name="canonical", storage="option<record@f1bb070a87e5>"),
+        ModelField(identity=b"\xbf\xe5\xd6\x97\x16\x2d", name="fields", storage="list<enum@20bf1c617420>"),
+        ModelField(identity=b"\xcd\x42\x40\x4d\x52\xad", name="value", storage="option<enum@1b2f920fa3ca>"),
+    ])
+
+def shape_api_enum_variant_alias() -> Description:
+    return model_description(b"\x16\x76\x18\x0a\xee\xbd\x00", "checked_namespace.ApiEnumVariantAlias", [
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
+        ModelField(identity=b"\x34\xa0\x40\x05\xbc\xaf", name="target", storage="string"),
+    ])
+
+def shape_api_function() -> Description:
+    return model_description(b"\xe1\xb4\x06\x3d\xa2\xe5\x00", "checked_namespace.ApiFunction", [
+        ModelField(identity=b"\x01\xb8\x01\x6f\xdc\xe4", name="ownership", storage="option<enum@b8dfa1e04174>"),
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
+        ModelField(identity=b"\x79\xbf\xb0\xe2\xba\x76", name="anchor", storage="record@f4a092c4acca"),
+        ModelField(identity=b"\x24\x74\x99\x20\x9a\xb0", name="docstring", storage="option<string>"),
+        ModelField(identity=b"\xc9\x2e\xf4\xd8\xe4\x5b", name="docstring_sections", storage="option<record@fefefb4a64ba>"),
+        ModelField(identity=b"\x4c\xc3\x59\x9f\x82\x5d", name="decorators", storage="list<record@3681cf30afc4>"),
+        ModelField(identity=b"\x75\xe7\xe9\xde\xad\x7e", name="type_params", storage="list<record@80549e0eb490>"),
+        ModelField(identity=b"\xa2\x0b\x52\xfa\xe5\x7c", name="params", storage="list<record@5e91aed5a32f>"),
+        ModelField(identity=b"\x40\x7d\xdf\x95\xec\x74", name="return_type", storage="enum@20bf1c617420"),
+        ModelField(identity=b"\x4e\x13\xcb\x86\xec\x33", name="is_async", storage="boolean"),
+    ])
+
+def shape_api_method() -> Description:
+    return model_description(b"\x24\xce\xdf\xee\xa4\xa7\x00", "checked_namespace.ApiMethod", [
+        ModelField(identity=b"\x01\xb8\x01\x6f\xdc\xe4", name="ownership", storage="option<enum@b8dfa1e04174>"),
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
+        ModelField(identity=b"\x0d\xee\xb8\xfa\x1d\xbb", name="canonical", storage="option<record@f1bb070a87e5>"),
+        ModelField(identity=b"\x7d\x2f\xb3\xda\x93\xa0", name="visibility", storage="enum@5d5609e25e89"),
+        ModelField(identity=b"\x2a\x7e\x64\x03\x5b\x19", name="alias_of", storage="option<string>"),
+        ModelField(identity=b"\x79\xbf\xb0\xe2\xba\x76", name="anchor", storage="record@f4a092c4acca"),
+        ModelField(identity=b"\x24\x74\x99\x20\x9a\xb0", name="docstring", storage="option<string>"),
+        ModelField(identity=b"\xc9\x2e\xf4\xd8\xe4\x5b", name="docstring_sections", storage="option<record@fefefb4a64ba>"),
+        ModelField(identity=b"\x4c\xc3\x59\x9f\x82\x5d", name="decorators", storage="list<record@3681cf30afc4>"),
+        ModelField(identity=b"\x75\xe7\xe9\xde\xad\x7e", name="type_params", storage="list<record@80549e0eb490>"),
+        ModelField(identity=b"\x81\xba\xe8\x76\xb7\x05", name="receiver", storage="option<enum@01e4c4811dd1>"),
+        ModelField(identity=b"\xa2\x0b\x52\xfa\xe5\x7c", name="params", storage="list<record@5e91aed5a32f>"),
+        ModelField(identity=b"\x40\x7d\xdf\x95\xec\x74", name="return_type", storage="enum@20bf1c617420"),
+        ModelField(identity=b"\x4e\x13\xcb\x86\xec\x33", name="is_async", storage="boolean"),
+        ModelField(identity=b"\x44\xaa\x6c\xc3\x56\x75", name="has_body", storage="boolean"),
+        ModelField(identity=b"\x74\x5f\x56\x2a\xc4\x0d", name="made_private", storage="option<record@aeee71bb1d3f>"),
+    ])
+
+def shape_api_model() -> Description:
+    return model_description(b"\xc9\xf3\xa3\x4a\xd8\x9f\x00", "checked_namespace.ApiModel", [
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
+        ModelField(identity=b"\x79\xbf\xb0\xe2\xba\x76", name="anchor", storage="record@f4a092c4acca"),
+        ModelField(identity=b"\x24\x74\x99\x20\x9a\xb0", name="docstring", storage="option<string>"),
+        ModelField(identity=b"\xc9\x2e\xf4\xd8\xe4\x5b", name="docstring_sections", storage="option<record@fefefb4a64ba>"),
+        ModelField(identity=b"\x4c\xc3\x59\x9f\x82\x5d", name="decorators", storage="list<record@3681cf30afc4>"),
+        ModelField(identity=b"\x75\xe7\xe9\xde\xad\x7e", name="type_params", storage="list<record@80549e0eb490>"),
+        ModelField(identity=b"\x9e\x27\x94\x08\x61\xd7", name="traits", storage="list<string>"),
+        ModelField(identity=b"\x81\x2f\xff\x9c\x3c\xf4", name="trait_adoptions", storage="list<record@520b906148ca>"),
+        ModelField(identity=b"\xa8\x8f\xe6\xec\x61\x15", name="derives", storage="list<string>"),
+        ModelField(identity=b"\xbf\xe5\xd6\x97\x16\x2d", name="fields", storage="list<record@54738c6fe61a>"),
+        ModelField(identity=b"\x96\xad\xb9\x24\x52\x86", name="properties", storage="list<record@65a8153729b5>"),
+        ModelField(identity=b"\x3f\x38\x67\x31\x3a\x9d", name="methods", storage="list<record@24cedfeea4a7>"),
+    ])
+
+def shape_api_newtype() -> Description:
+    return model_description(b"\xa5\x8b\xe0\xc9\x86\x03\x00", "checked_namespace.ApiNewtype", [
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
+        ModelField(identity=b"\x79\xbf\xb0\xe2\xba\x76", name="anchor", storage="record@f4a092c4acca"),
+        ModelField(identity=b"\x24\x74\x99\x20\x9a\xb0", name="docstring", storage="option<string>"),
+        ModelField(identity=b"\xc9\x2e\xf4\xd8\xe4\x5b", name="docstring_sections", storage="option<record@fefefb4a64ba>"),
+        ModelField(identity=b"\x4c\xc3\x59\x9f\x82\x5d", name="decorators", storage="list<record@3681cf30afc4>"),
+        ModelField(identity=b"\x75\xe7\xe9\xde\xad\x7e", name="type_params", storage="list<record@80549e0eb490>"),
+        ModelField(identity=b"\x9e\x27\x94\x08\x61\xd7", name="traits", storage="list<string>"),
+        ModelField(identity=b"\x81\x2f\xff\x9c\x3c\xf4", name="trait_adoptions", storage="list<record@520b906148ca>"),
+        ModelField(identity=b"\xa8\x8f\xe6\xec\x61\x15", name="derives", storage="list<string>"),
+        ModelField(identity=b"\x46\xc9\x03\x9d\x0e\x71", name="is_rusttype", storage="boolean"),
+        ModelField(identity=b"\x34\x2c\x8c\x61\xe6\x79", name="underlying", storage="enum@20bf1c617420"),
+        ModelField(identity=b"\x98\x43\xd5\x51\x67\xfc", name="checked_constructor", storage="option<string>"),
+        ModelField(identity=b"\xe2\x25\x06\x3b\x94\x4e", name="constraints", storage="list<record@546b40d95499>"),
+        ModelField(identity=b"\x49\xb1\x73\x28\x06\x31", name="implicit_coercion_enabled", storage="boolean"),
+        ModelField(identity=b"\x3f\x38\x67\x31\x3a\x9d", name="methods", storage="list<record@24cedfeea4a7>"),
+    ])
+
+def shape_api_partial() -> Description:
+    return model_description(b"\xef\x97\x29\x37\x75\xf5\x00", "checked_namespace.ApiPartial", [
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
+        ModelField(identity=b"\x79\xbf\xb0\xe2\xba\x76", name="anchor", storage="record@f4a092c4acca"),
+        ModelField(identity=b"\xab\x80\x1b\xe6\x56\xe0", name="target_path", storage="list<string>"),
+        ModelField(identity=b"\xc6\x63\xf7\xf6\x0c\x47", name="target_kind", storage="enum@73f5c6309ed9"),
+        ModelField(identity=b"\x47\x00\x15\x3d\x9b\xe6", name="presets", storage="list<record@29479cd61f71>"),
+        ModelField(identity=b"\x75\xe7\xe9\xde\xad\x7e", name="type_params", storage="list<record@80549e0eb490>"),
+        ModelField(identity=b"\xa2\x0b\x52\xfa\xe5\x7c", name="params", storage="list<record@5e91aed5a32f>"),
+        ModelField(identity=b"\x40\x7d\xdf\x95\xec\x74", name="return_type", storage="enum@20bf1c617420"),
+        ModelField(identity=b"\x4e\x13\xcb\x86\xec\x33", name="is_async", storage="boolean"),
+    ])
+
+def shape_api_projected_function() -> Description:
+    return model_description(b"\x7b\x0d\xb3\x09\x24\x99\x00", "checked_namespace.ApiProjectedFunction", [
+        ModelField(identity=b"\x85\x7d\xc6\xeb\xc7\xd2", name="source_path", storage="list<string>"),
+        ModelField(identity=b"\xc1\x58\x49\xab\x11\xdd", name="callable", storage="record@51a086d2006d"),
+        ModelField(identity=b"\x4c\xc3\x59\x9f\x82\x5d", name="decorators", storage="list<record@3681cf30afc4>"),
+    ])
+
+def shape_api_property() -> Description:
+    return model_description(b"\x65\xa8\x15\x37\x29\xb5\x00", "checked_namespace.ApiProperty", [
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
+        ModelField(identity=b"\x0d\xee\xb8\xfa\x1d\xbb", name="canonical", storage="option<record@f1bb070a87e5>"),
+        ModelField(identity=b"\x40\x7d\xdf\x95\xec\x74", name="return_type", storage="enum@20bf1c617420"),
+    ])
+
+def shape_api_static() -> Description:
+    return model_description(b"\xf3\x0e\x61\xc4\x6b\xc4\x00", "checked_namespace.ApiStatic", [
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
+        ModelField(identity=b"\x79\xbf\xb0\xe2\xba\x76", name="anchor", storage="record@f4a092c4acca"),
+        ModelField(identity=b"\x4f\x9d\xb7\xf8\xe5\x06", name="ty", storage="enum@20bf1c617420"),
+    ])
+
+def shape_api_trait() -> Description:
+    return model_description(b"\xe6\x32\xe4\x53\x86\xa4\x00", "checked_namespace.ApiTrait", [
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
+        ModelField(identity=b"\x79\xbf\xb0\xe2\xba\x76", name="anchor", storage="record@f4a092c4acca"),
+        ModelField(identity=b"\x24\x74\x99\x20\x9a\xb0", name="docstring", storage="option<string>"),
+        ModelField(identity=b"\xc9\x2e\xf4\xd8\xe4\x5b", name="docstring_sections", storage="option<record@fefefb4a64ba>"),
+        ModelField(identity=b"\x4c\xc3\x59\x9f\x82\x5d", name="decorators", storage="list<record@3681cf30afc4>"),
+        ModelField(identity=b"\x75\xe7\xe9\xde\xad\x7e", name="type_params", storage="list<record@80549e0eb490>"),
+        ModelField(identity=b"\x4b\x4a\x86\x41\x6d\x45", name="supertraits", storage="list<record@520b906148ca>"),
+        ModelField(identity=b"\xb9\x01\x4e\xaa\xb6\x26", name="requires", storage="list<record@54738c6fe61a>"),
+        ModelField(identity=b"\x3f\x38\x67\x31\x3a\x9d", name="methods", storage="list<record@24cedfeea4a7>"),
+    ])
+
+def shape_api_type_alias() -> Description:
+    return model_description(b"\x89\x9d\xc2\x08\x68\xa6\x00", "checked_namespace.ApiTypeAlias", [
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
+        ModelField(identity=b"\x79\xbf\xb0\xe2\xba\x76", name="anchor", storage="record@f4a092c4acca"),
+        ModelField(identity=b"\x28\xfc\xea\x90\x7b\x58", name="type_alias", storage="record@2fa968c701a3"),
+    ])
+
+def shape_canonical_identity_export() -> Description:
+    return model_description(b"\xf1\xbb\x07\x0a\x87\xe5\x00", "checked_namespace.CanonicalIdentityExport", [
+        ModelField(identity=b"\x93\x59\xf3\xbb\x2e\xfa", name="namespace", storage="enum@2fcac8fdb6a9"),
+        ModelField(identity=b"\x18\x1f\xdd\x46\xfc\x4a", name="origin", storage="enum@25182230ed42"),
+        ModelField(identity=b"\xd6\x3b\xda\xbe\x07\xa6", name="declaration_name", storage="string"),
+        ModelField(identity=b"\x0b\x27\xc1\x58\xfe\xb3", name="kind", storage="string"),
+        ModelField(identity=b"\xbb\xf0\x73\xbf\x62\xdc", name="declaration_span", storage="record@1880e9670151"),
+    ])
+
+def shape_canonical_identity_namespace_export() -> Description:
+    return enum_schema(b"\x2f\xca\xc8\xfd\xb6\xa9\x00", "checked_namespace.CanonicalIdentityNamespaceExport", [
+        variant_schema(b"\x2f\x9f\xca\x1f\xf4\xf3", "OrdinaryLexical", []),
+        variant_schema(b"\x7c\x96\x8f\xb7\x1f\x50", "Member", []),
+        variant_schema(b"\xa8\xfc\x20\xe8\xc8\x26", "ModulePath", []),
+    ])
+
+def shape_canonical_identity_origin_export() -> Description:
+    return enum_schema(b"\x25\x18\x22\x30\xed\x42\x00", "checked_namespace.CanonicalIdentityOriginExport", [
+        variant_schema(b"\x59\xde\x12\x1d\xb1\xb8", "Package", [ModelField(identity=b"\xb7\x18\xf1\x35\x4f\x72", name="library", storage="string"), ModelField(identity=b"\x81\x51\x94\x99\x5b\xb8", name="module_path", storage="list<string>")]),
+        variant_schema(b"\x6e\xa0\x66\x89\xdd\x52", "RustCrate", [ModelField(identity=b"\xa0\xaf\x9f\x86\x5b\xf6", name="path", storage="list<string>")]),
+        variant_schema(b"\xa6\xa5\x60\x71\xa4\x2b", "Builtin", []),
+    ])
+
+def shape_canonical_identity_span_export() -> Description:
+    return model_description(b"\x18\x80\xe9\x67\x01\x51\x00", "checked_namespace.CanonicalIdentitySpanExport", [
+        ModelField(identity=b"\x16\x7f\x44\x8f\x11\xf3", name="expansion", storage="option<binary>"),
+        ModelField(identity=b"\xcc\xed\x28\xc6\xdc\x3f", name="start", storage="u64"),
+        ModelField(identity=b"\x36\x1e\x48\xd0\x30\x8f", name="end", storage="u64"),
+    ])
+
+def shape_canonical_symbol_id() -> Description:
+    return model_description(b"\x28\xcd\xd4\x29\xf7\xec\x00", "checked_namespace.CanonicalSymbolId", [
+        ModelField(identity=b"\x93\x59\xf3\xbb\x2e\xfa", name="namespace", storage="enum@b3ba1ed741db"),
+        ModelField(identity=b"\x18\x1f\xdd\x46\xfc\x4a", name="origin", storage="enum@ca6e161f17e2"),
+        ModelField(identity=b"\xd6\x3b\xda\xbe\x07\xa6", name="declaration_name", storage="string"),
+        ModelField(identity=b"\x0b\x27\xc1\x58\xfe\xb3", name="kind", storage="enum@a9554703fa2e"),
+        ModelField(identity=b"\xe4\x71\xce\x42\x54\x5e", name="scope_discriminant", storage="option<record@8e43e8a12056>"),
+        ModelField(identity=b"\xbb\xf0\x73\xbf\x62\xdc", name="declaration_span", storage="record@74a6fa8e9339"),
+    ])
+
+def shape_checked_api_metadata() -> Description:
+    return model_description(b"\x3b\xa3\x24\x83\x9c\x88\x00", "checked_namespace.CheckedApiMetadata", [
+        ModelField(identity=b"\x8c\x08\xb3\xc1\xc9\x90", name="schema_version", storage="u32"),
+        ModelField(identity=b"\xaf\x91\x10\x67\x29\x7c", name="derivable_traits", storage="list<string>"),
+        ModelField(identity=b"\x81\x51\x94\x99\x5b\xb8", name="module_path", storage="list<string>"),
+        ModelField(identity=b"\x35\xe2\xc3\xde\x69\x80", name="declarations", storage="list<enum@9708428a03cc>"),
+    ])
+
+def shape_checked_namespace_interface() -> Description:
+    return model_description(b"\x78\xd2\xc9\xd3\x8a\xe9\x00", "checked_namespace.CheckedNamespaceInterface", [
+        ModelField(identity=b"\xdf\x0a\xd6\xe4\x38\x80", name="schema", storage="u32"),
+        ModelField(identity=b"\x2c\x96\x84\xb9\x61\xb6", name="module_name", storage="string"),
+        ModelField(identity=b"\x81\x51\x94\x99\x5b\xb8", name="module_path", storage="list<string>"),
+        ModelField(identity=b"\x14\xc2\x52\x9e\xb4\x49", name="api", storage="record@3ba324839c88"),
+        ModelField(identity=b"\x13\xc7\x35\x13\x60\xf0", name="identities", storage="map<string,record@28cdd429f7ec>"),
+        ModelField(identity=b"\x17\x37\x3c\xa1\xc7\x63", name="members", storage="map<string,record@6a5290805847>"),
+        ModelField(identity=b"\x6d\x7c\x78\x90\xae\xf6", name="constructor_defaults", storage="list<tuple<record@28cdd429f7ec,list<option<enum@154e90b7aa31>>>>"),
+        ModelField(identity=b"\x04\x3a\x98\x79\x96\x75", name="nominal_scope", storage="map<string,record@28cdd429f7ec>"),
+    ])
+
+def shape_decorator_arg_metadata() -> Description:
+    return enum_schema(b"\x1c\xe4\x23\x0b\x70\xb4\x00", "checked_namespace.DecoratorArgMetadata", [
+        variant_schema(b"\x8a\x26\xb9\x66\x1a\xb4", "Positional", [ModelField(identity=b"\xcd\x42\x40\x4d\x52\xad", name="value", storage="enum@dc407c002e08")]),
+        variant_schema(b"\x86\x05\x60\x5a\xe0\x26", "Named", [ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"), ModelField(identity=b"\xcd\x42\x40\x4d\x52\xad", name="value", storage="enum@dc407c002e08")]),
+    ])
+
+def shape_decorator_call_arg_metadata() -> Description:
+    return enum_schema(b"\x27\x26\x60\x14\xd2\x7b\x00", "checked_namespace.DecoratorCallArgMetadata", [
+        variant_schema(b"\x8a\x26\xb9\x66\x1a\xb4", "Positional", [ModelField(identity=b"\xcd\x42\x40\x4d\x52\xad", name="value", storage="enum@dc407c002e08")]),
+        variant_schema(b"\x86\x05\x60\x5a\xe0\x26", "Named", [ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"), ModelField(identity=b"\xcd\x42\x40\x4d\x52\xad", name="value", storage="enum@dc407c002e08")]),
+        variant_schema(b"\xd0\xa1\x64\xad\xad\x9a", "PositionalUnpack", [ModelField(identity=b"\xcd\x42\x40\x4d\x52\xad", name="value", storage="enum@dc407c002e08")]),
+        variant_schema(b"\x9f\x92\x91\x0a\x5e\xce", "KeywordUnpack", [ModelField(identity=b"\xcd\x42\x40\x4d\x52\xad", name="value", storage="enum@dc407c002e08")]),
+    ])
+
+def shape_decorator_dict_entry() -> Description:
+    return model_description(b"\x28\x6b\xa6\x8b\x36\x27\x00", "checked_namespace.DecoratorDictEntry", [
+        ModelField(identity=b"\x2c\x70\xe1\x2b\x7a\x06", name="key", storage="enum@dc407c002e08"),
+        ModelField(identity=b"\xcd\x42\x40\x4d\x52\xad", name="value", storage="enum@dc407c002e08"),
+    ])
+
+def shape_decorator_metadata() -> Description:
+    return model_description(b"\x36\x81\xcf\x30\xaf\xc4\x00", "checked_namespace.DecoratorMetadata", [
+        ModelField(identity=b"\xa0\xaf\x9f\x86\x5b\xf6", name="path", storage="list<string>"),
+        ModelField(identity=b"\x2a\x12\xf5\x01\x68\xc9", name="source_name", storage="string"),
+        ModelField(identity=b"\x79\xbf\xb0\xe2\xba\x76", name="anchor", storage="record@74a6fa8e9339"),
+        ModelField(identity=b"\xb0\x6b\xd0\xa0\xbb\xa8", name="type_args", storage="list<enum@20bf1c617420>"),
+        ModelField(identity=b"\x09\x07\x72\xcf\x40\x68", name="args", storage="list<enum@1ce4230b70b4>"),
+        ModelField(identity=b"\x80\xb1\x8c\x02\x9f\xb2", name="decorated_callable", storage="option<record@51a086d2006d>"),
+    ])
+
+def shape_decorator_value() -> Description:
+    return enum_schema(b"\xdc\x40\x7c\x00\x2e\x08\x00", "checked_namespace.DecoratorValue", [
+        variant_schema(b"\xa6\x23\x0c\x2a\x81\xab", "Literal", [ModelField(identity=b"\xcd\x42\x40\x4d\x52\xad", name="value", storage="enum@609cc189aa5a")]),
+        variant_schema(b"\x4f\x04\x11\xeb\xaa\xd2", "ConstRef", [ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"), ModelField(identity=b"\xcd\x42\x40\x4d\x52\xad", name="value", storage="option<enum@609cc189aa5a>")]),
+        variant_schema(b"\xbf\x49\x48\xa3\xdf\x1f", "SymbolRef", [ModelField(identity=b"\xa0\xaf\x9f\x86\x5b\xf6", name="path", storage="list<string>")]),
+        variant_schema(b"\x6f\x20\x2f\x54\xa7\xb2", "List", [ModelField(identity=b"\x5f\x3c\x4f\x85\x80\xd3", name="items", storage="list<enum@dc407c002e08>")]),
+        variant_schema(b"\x96\x11\xd3\xd8\x00\xfc", "Dict", [ModelField(identity=b"\x87\xd0\x5c\xd0\x88\x17", name="entries", storage="list<record@286ba68b3627>")]),
+        variant_schema(b"\xd6\xe6\x45\xb7\xd2\xb2", "Call", [ModelField(identity=b"\x92\xca\x4c\x0c\xed\x62", name="callee", storage="list<string>"), ModelField(identity=b"\xb0\x6b\xd0\xa0\xbb\xa8", name="type_args", storage="list<enum@20bf1c617420>"), ModelField(identity=b"\x09\x07\x72\xcf\x40\x68", name="args", storage="list<enum@27266014d27b>")]),
+        variant_schema(b"\xba\xad\xdf\x70\xfb\x5d", "Type", [ModelField(identity=b"\x4f\x9d\xb7\xf8\xe5\x06", name="ty", storage="enum@20bf1c617420")]),
+        variant_schema(b"\x54\x32\x46\x58\xe2\xeb", "Unsupported", [ModelField(identity=b"\x8f\xcf\xcc\xf6\x75\xb1", name="reason", storage="string")]),
+    ])
+
+def shape_default_value() -> Description:
+    return enum_schema(b"\x15\x4e\x90\xb7\xaa\x31\x00", "checked_namespace.DefaultValue", [
+        variant_schema(b"\xa6\x23\x0c\x2a\x81\xab", "Literal", []),
+        variant_schema(b"\x7a\x39\x33\xdf\x8d\x02", "Constructor", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="record@28cdd429f7ec")]),
+    ])
+
+def shape_enum_value_export() -> Description:
+    return enum_schema(b"\x1b\x2f\x92\x0f\xa3\xca\x00", "checked_namespace.EnumValueExport", [
+        variant_schema(b"\x80\x84\xa5\x1b\x3c\x64", "Str", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="string")]),
+        variant_schema(b"\x0b\x5f\x60\x80\x70\xc6", "Int", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="i64")]),
+    ])
+
+def shape_enum_value_type_export() -> Description:
+    return enum_schema(b"\xe7\xec\x50\xd6\x77\x34\x00", "checked_namespace.EnumValueTypeExport", [
+        variant_schema(b"\x80\x84\xa5\x1b\x3c\x64", "Str", []),
+        variant_schema(b"\x0b\x5f\x60\x80\x70\xc6", "Int", []),
+    ])
+
+def shape_field_export() -> Description:
+    return model_description(b"\x54\x73\x8c\x6f\xe6\x1a\x00", "checked_namespace.FieldExport", [
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
+        ModelField(identity=b"\x0d\xee\xb8\xfa\x1d\xbb", name="canonical", storage="option<record@f1bb070a87e5>"),
+        ModelField(identity=b"\x45\xb0\x66\xb7\x9a\x4d", name="record_identity", storage="string"),
+        ModelField(identity=b"\xbd\xeb\x90\xf5\x50\x61", name="record_canonical", storage="boolean"),
+        ModelField(identity=b"\xcd\x45\x7f\x2e\x58\x1d", name="renamed_from", storage="list<string>"),
+        ModelField(identity=b"\xcf\x5a\x34\xb4\x37\x09", name="renamed_from_lifecycle", storage="option<record@7f6dccb134b0>"),
+        ModelField(identity=b"\xda\xd0\x8f\x79\x38\xe2", name="default_is_empty", storage="boolean"),
+        ModelField(identity=b"\x4f\x9d\xb7\xf8\xe5\x06", name="ty", storage="enum@20bf1c617420"),
+        ModelField(identity=b"\xb0\x68\x00\x7f\x7f\x6b", name="surface_type_name", storage="option<string>"),
+        ModelField(identity=b"\x7d\x2f\xb3\xda\x93\xa0", name="visibility", storage="enum@5d5609e25e89"),
+        ModelField(identity=b"\x68\x2a\x77\x7c\x23\x28", name="has_default", storage="boolean"),
+        ModelField(identity=b"\x37\xa8\xee\xc1\xce\x19", name="default", storage="option<enum@002cab1e9f8c>"),
+        ModelField(identity=b"\x1a\x0a\x6a\x36\xca\x0a", name="alias", storage="option<string>"),
+        ModelField(identity=b"\xc9\x04\x6f\x7a\x37\xad", name="description", storage="option<string>"),
+        ModelField(identity=b"\x74\x5f\x56\x2a\xc4\x0d", name="made_private", storage="option<record@aeee71bb1d3f>"),
+    ])
+
+def shape_hir_source_span() -> Description:
+    return model_description(b"\x74\xa6\xfa\x8e\x93\x39\x00", "checked_namespace.HirSourceSpan", [
+        ModelField(identity=b"\xcc\xed\x28\xc6\xdc\x3f", name="start", storage="u64"),
+        ModelField(identity=b"\x36\x1e\x48\xd0\x30\x8f", name="end", storage="u64"),
+        ModelField(identity=b"\x16\x7f\x44\x8f\x11\xf3", name="expansion", storage="option<binary>"),
+    ])
+
+def shape_implementation_associated_type_export() -> Description:
+    return model_description(b"\x94\x24\x68\xd9\x78\xce\x00", "checked_namespace.ImplementationAssociatedTypeExport", [
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
+        ModelField(identity=b"\x4f\x9d\xb7\xf8\xe5\x06", name="ty", storage="enum@20bf1c617420"),
+    ])
+
+def shape_implementation_trait_bound_export() -> Description:
+    return model_description(b"\xd7\x4a\x78\x83\x4f\xde\x00", "checked_namespace.ImplementationTraitBoundExport", [
+        ModelField(identity=b"\xaf\x70\xee\xf6\x56\x07", name="trait_path", storage="string"),
+        ModelField(identity=b"\xb0\x6b\xd0\xa0\xbb\xa8", name="type_args", storage="list<enum@20bf1c617420>"),
+        ModelField(identity=b"\xee\xaa\x8f\x65\x6b\x2b", name="associated_types", storage="list<record@942468d978ce>"),
+        ModelField(identity=b"\x18\x1f\xdd\x46\xfc\x4a", name="origin", storage="enum@67c4e649ba25"),
+    ])
+
+def shape_implementation_trait_bound_origin_export() -> Description:
+    return enum_schema(b"\x67\xc4\xe6\x49\xba\x25\x00", "checked_namespace.ImplementationTraitBoundOriginExport", [
+        variant_schema(b"\xef\x66\x91\x54\x5d\x2c", "Standard", []),
+        variant_schema(b"\xed\x98\x49\x10\x39\x30", "RustCapability", []),
+        variant_schema(b"\xee\x5b\xff\x56\x22\x6d", "SourceCallable", []),
+    ])
+
+def shape_implementation_type_param_export() -> Description:
+    return model_description(b"\x6c\xc5\x0e\x51\x0d\xce\x00", "checked_namespace.ImplementationTypeParamExport", [
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
+        ModelField(identity=b"\x6b\xa9\x23\x48\x98\xef", name="bounds", storage="list<record@d74a78834fde>"),
+    ])
+
+def shape_incan_callable_param() -> Description:
+    return model_description(b"\x1a\x38\x6a\xe7\x38\xbb\x00", "checked_namespace.IncanCallableParam", [
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="option<string>"),
+        ModelField(identity=b"\x4f\x9d\xb7\xf8\xe5\x06", name="ty", storage="enum@b0e0f36c4c22"),
+        ModelField(identity=b"\x0b\x27\xc1\x58\xfe\xb3", name="kind", storage="enum@adaec880f697"),
+        ModelField(identity=b"\x68\x2a\x77\x7c\x23\x28", name="has_default", storage="boolean"),
+        ModelField(identity=b"\xc2\xea\x35\x38\x56\xa6", name="is_partial_preset", storage="boolean"),
+        ModelField(identity=b"\xc5\x7d\x21\xc0\xf9\x5b", name="is_mut", storage="boolean"),
+        ModelField(identity=b"\xa6\xcb\xca\x31\x7c\x1a", name="native_owned", storage="boolean"),
+        ModelField(identity=b"\x2b\x23\x7b\x58\xd0\x72", name="input_access", storage="enum@e1e24db15d4d"),
+    ])
+
+def shape_incan_callable_param_kind() -> Description:
+    return enum_schema(b"\xad\xae\xc8\x80\xf6\x97\x00", "checked_namespace.IncanCallableParamKind", [
+        variant_schema(b"\xa7\x24\x8e\xeb\x45\xeb", "Normal", []),
+        variant_schema(b"\xed\xe4\x21\xe1\x68\xfb", "RestPositional", []),
+        variant_schema(b"\xff\xad\x05\x37\x44\x21", "RestKeyword", []),
+    ])
+
+def shape_incan_input_access() -> Description:
+    return enum_schema(b"\xe1\xe2\x4d\xb1\x5d\x4d\x00", "checked_namespace.IncanInputAccess", [
+        variant_schema(b"\xd4\x61\xcb\xb4\x90\x66", "Inferred", []),
+        variant_schema(b"\xe3\xc4\xb3\x9d\x6d\x50", "Shared", []),
+        variant_schema(b"\x48\x83\xb7\xdf\xff\xb0", "Exclusive", []),
+        variant_schema(b"\x17\xb7\x60\xc4\x1c\xd2", "Owned", []),
+        variant_schema(b"\x31\xca\xf1\x64\xbb\x26", "InferredShared", []),
+    ])
+
+def shape_incan_primitive_type() -> Description:
+    return enum_schema(b"\x64\xe3\xbf\x3b\x13\x3a\x00", "checked_namespace.IncanPrimitiveType", [
+        variant_schema(b"\x0b\x5f\x60\x80\x70\xc6", "Int", []),
+        variant_schema(b"\x1a\x69\x3c\x00\xc4\x0c", "Float", []),
+        variant_schema(b"\x36\x75\x2d\x6c\xd1\x47", "Numeric", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="enum@6c502ac236f1")]),
+        variant_schema(b"\x49\xf4\x11\xf0\xa1\xa7", "Bool", []),
+        variant_schema(b"\x80\x84\xa5\x1b\x3c\x64", "Str", []),
+        variant_schema(b"\x4d\x80\x00\x30\x1f\xcc", "Bytes", []),
+        variant_schema(b"\x4f\xab\xe1\x57\xe8\xf9", "FrozenStr", []),
+        variant_schema(b"\xa5\x1a\x55\xd1\x3b\xee", "FrozenBytes", []),
+        variant_schema(b"\x4e\x54\x59\x60\xf1\xbf", "Unit", []),
+    ])
+
+def shape_incan_type() -> Description:
+    return enum_schema(b"\xb0\xe0\xf3\x6c\x4c\x22\x00", "checked_namespace.IncanType", [
+        variant_schema(b"\x63\x00\xef\x80\x0b\xb8", "Never", []),
+        variant_schema(b"\x09\x56\x17\x3c\xa4\x15", "Primitive", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="enum@64e3bf3b133a")]),
+        variant_schema(b"\x86\x05\x60\x5a\xe0\x26", "Named", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="string")]),
+        variant_schema(b"\x02\x28\xc6\xd4\x8e\xcf", "Generic", [ModelField(identity=b"\xca\xe6\x62\x17\x2f\xd4", name="base", storage="string"), ModelField(identity=b"\x09\x07\x72\xcf\x40\x68", name="args", storage="list<enum@b0e0f36c4c22>")]),
+        variant_schema(b"\x18\x51\x7d\x33\x2d\x1b", "Decimal", [ModelField(identity=b"\x68\xc2\xf9\xee\x31\x47", name="precision", storage="u8"), ModelField(identity=b"\xf4\x69\x80\x2a\x31\x44", name="scale", storage="u8")]),
+        variant_schema(b"\xc8\x03\x71\x03\x02\xd5", "Function", [ModelField(identity=b"\xa2\x0b\x52\xfa\xe5\x7c", name="params", storage="list<record@1a386ae738bb>"), ModelField(identity=b"\x40\x7d\xdf\x95\xec\x74", name="return_type", storage="enum@b0e0f36c4c22")]),
+        variant_schema(b"\xeb\x90\x0d\x77\x64\xd0", "TypeToken", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="enum@b0e0f36c4c22")]),
+        variant_schema(b"\xf1\x36\xee\x78\xc3\x3b", "Tuple", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="list<enum@b0e0f36c4c22>")]),
+        variant_schema(b"\xc7\xa4\xa1\x41\x4b\xe4", "TypeVar", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="string")]),
+        variant_schema(b"\x80\x30\x24\x93\xf2\xd4", "SelfType", []),
+        variant_schema(b"\x9b\x6e\x88\xe8\x94\x3a", "Ref", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="enum@b0e0f36c4c22")]),
+        variant_schema(b"\xff\xc4\x90\xa6\xa7\xb3", "RefMut", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="enum@b0e0f36c4c22")]),
+        variant_schema(b"\xe7\x75\x7f\x0d\xdf\x56", "RustInteropPath", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="string")]),
+        variant_schema(b"\x6f\xc7\x42\xf9\xdc\xbd", "NativeBuiltin", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="enum@474e41b7ad42")]),
+        variant_schema(b"\x54\x32\x46\x58\xe2\xeb", "Unsupported", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="string")]),
+        variant_schema(b"\x27\x40\x0f\xf4\xb8\x09", "Infer", []),
+        variant_schema(b"\xb7\x64\xcd\xc0\xea\xb7", "Unknown", []),
+        variant_schema(b"\x30\x3f\xb1\x29\xac\xe5", "NativeArray", [ModelField(identity=b"\x44\x59\x29\x26\x72\x09", name="element", storage="enum@b0e0f36c4c22"), ModelField(identity=b"\x0f\x82\xac\xa6\x6a\xf9", name="length", storage="u64")]),
+        variant_schema(b"\x5c\x7a\x25\xe2\x9c\x52", "NativeTraitObject", [ModelField(identity=b"\xa0\xaf\x9f\x86\x5b\xf6", name="path", storage="string"), ModelField(identity=b"\x27\xce\x1d\x1b\xf4\x27", name="send", storage="boolean"), ModelField(identity=b"\x75\xc7\x5e\xfe\x32\x7a", name="sync", storage="boolean")]),
+        variant_schema(b"\xa6\x9d\x40\x08\x35\xc9", "NativePointer", [ModelField(identity=b"\x1d\xa8\x05\xf3\xd0\x3b", name="mutable", storage="boolean"), ModelField(identity=b"\x8a\xb1\xb3\x81\x08\x88", name="pointee", storage="enum@b0e0f36c4c22")]),
+        variant_schema(b"\xed\x5c\x31\x43\x46\x46", "NativeCChar", []),
+        variant_schema(b"\x28\xe3\xe4\x79\xe0\x87", "Trait", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="record@28cdd429f7ec")]),
+    ])
+
+def shape_lifecycle_metadata() -> Description:
+    return model_description(b"\x7f\x6d\xcc\xb1\x34\xb0\x00", "checked_namespace.LifecycleMetadata", [
+        ModelField(identity=b"\x6b\x5a\x3d\xed\x01\x6a", name="since", storage="option<string>"),
+        ModelField(identity=b"\xf3\x43\x3e\xc5\x56\xe6", name="retire_in", storage="option<string>"),
+        ModelField(identity=b"\xab\x53\x0a\x13\xe4\x59", name="message", storage="option<string>"),
+        ModelField(identity=b"\xa7\xe2\xd2\x6e\x8d\x15", name="by", storage="option<string>"),
+        ModelField(identity=b"\x4a\x50\x28\x46\xd0\x70", name="issue", storage="option<string>"),
+    ])
+
+def shape_loaf_identity() -> Description:
+    return model_description(b"\x97\x79\xa0\x56\xd0\x87\x00", "checked_namespace.LoafIdentity", [
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
+        ModelField(identity=b"\x5c\xa4\xf3\x85\x0c\xcc", name="version", storage="string"),
+        ModelField(identity=b"\x0b\xf4\x74\x89\x63\x63", name="digest", storage="string"),
+        ModelField(identity=b"\x54\x8c\xa5\x89\x7f\x6a", name="feature_projection", storage="list<string>"),
+    ])
+
+def shape_made_private_export() -> Description:
+    return model_description(b"\xae\xee\x71\xbb\x1d\x3f\x00", "checked_namespace.MadePrivateExport", [
+        ModelField(identity=b"\x6b\x5a\x3d\xed\x01\x6a", name="since", storage="option<string>"),
+        ModelField(identity=b"\xf3\x43\x3e\xc5\x56\xe6", name="retire_in", storage="option<string>"),
+        ModelField(identity=b"\xab\x53\x0a\x13\xe4\x59", name="message", storage="option<string>"),
+        ModelField(identity=b"\xa7\xe2\xd2\x6e\x8d\x15", name="by", storage="option<string>"),
+        ModelField(identity=b"\x4a\x50\x28\x46\xd0\x70", name="issue", storage="option<string>"),
+        ModelField(identity=b"\x95\x71\x3e\x9c\xbd\xd1", name="replacement", storage="option<string>"),
+    ])
+
+def shape_member_visibility_export() -> Description:
+    return enum_schema(b"\x5d\x56\x09\xe2\x5e\x89\x00", "checked_namespace.MemberVisibilityExport", [
+        variant_schema(b"\xc6\x3e\xb6\x72\x0c\x6e", "Private", []),
+        variant_schema(b"\x59\x19\x35\xb1\x5b\x1c", "Public", []),
+    ])
+
+def shape_namespace_member_identities() -> Description:
+    return model_description(b"\x6a\x52\x90\x80\x58\x47\x00", "checked_namespace.NamespaceMemberIdentities", [
+        ModelField(identity=b"\xda\xd5\x69\xe1\x01\xad", name="variants", storage="map<string,record@28cdd429f7ec>"),
+        ModelField(identity=b"\xbf\xe5\xd6\x97\x16\x2d", name="fields", storage="map<string,record@28cdd429f7ec>"),
+        ModelField(identity=b"\x96\xad\xb9\x24\x52\x86", name="properties", storage="map<string,record@28cdd429f7ec>"),
+        ModelField(identity=b"\x3f\x38\x67\x31\x3a\x9d", name="methods", storage="map<string,record@28cdd429f7ec>"),
+    ])
+
+def shape_native_union_export() -> Description:
+    return model_description(b"\x5a\xab\x40\xc5\xd8\x37\x00", "checked_namespace.NativeUnionExport", [
+        ModelField(identity=b"\x4c\x10\x29\x69\x7e\xe3", name="owner", storage="enum@7a23bd1d95e4"),
+        ModelField(identity=b"\x8b\xc1\x77\xc0\x83\x61", name="rust_name", storage="string"),
+        ModelField(identity=b"\x17\x37\x3c\xa1\xc7\x63", name="members", storage="list<enum@20bf1c617420>"),
+        ModelField(identity=b"\xdd\xf4\xb4\xb7\xf4\x7f", name="closure_members", storage="list<enum@b0e0f36c4c22>"),
+        ModelField(identity=b"\xb5\x1b\x90\x65\x9a\x78", name="closure_items", storage="list<string>"),
+        ModelField(identity=b"\x79\x12\x97\xbd\x1a\x04", name="semantic_type", storage="option<enum@b0e0f36c4c22>"),
+        ModelField(identity=b"\x2e\x2e\x4f\xe5\x0a\x59", name="local_nominals", storage="map<string,record@f1bb070a87e5>"),
+        ModelField(identity=b"\x7b\xc5\xae\xc2\x71\xa4", name="checked_projection", storage="option<record@aec2fcd976fb>"),
+    ])
+
+def shape_native_union_owner_export() -> Description:
+    return enum_schema(b"\x7a\x23\xbd\x1d\x95\xe4\x00", "checked_namespace.NativeUnionOwnerExport", [
+        variant_schema(b"\xfc\x09\x1e\x4a\x29\x7a", "ContainingArtifact", []),
+        variant_schema(b"\xdb\x38\x68\xc3\xed\x48", "SelectedArtifact", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="record@9779a056d087")]),
+    ])
+
+def shape_native_union_projection() -> Description:
+    return model_description(b"\xae\xc2\xfc\xd9\x76\xfb\x00", "checked_namespace.NativeUnionProjection", [
+        ModelField(identity=b"\x61\x59\x6f\xfb\xf7\xea", name="dependency_root", storage="string"),
+        ModelField(identity=b"\xf9\x21\xf8\x06\xf9\xfb", name="rust_owner", storage="string"),
+        ModelField(identity=b"\x17\x37\x3c\xa1\xc7\x63", name="members", storage="list<enum@20bf1c617420>"),
+        ModelField(identity=b"\xc5\x43\xb3\x37\xe4\x62", name="nominal_origins", storage="map<string,record@4b2b68504951>"),
+    ])
+
+def shape_newtype_constraint_export() -> Description:
+    return model_description(b"\x54\x6b\x40\xd9\x54\x99\x00", "checked_namespace.NewtypeConstraintExport", [
+        ModelField(identity=b"\x2c\x70\xe1\x2b\x7a\x06", name="key", storage="enum@900c4712553d"),
+        ModelField(identity=b"\xcd\x42\x40\x4d\x52\xad", name="value", storage="i64"),
+        ModelField(identity=b"\xa5\xfd\xb3\x0d\x22\xd6", name="repr", storage="string"),
+    ])
+
+def shape_newtype_constraint_key_export() -> Description:
+    return enum_schema(b"\x90\x0c\x47\x12\x55\x3d\x00", "checked_namespace.NewtypeConstraintKeyExport", [
+        variant_schema(b"\x95\x4e\xdb\xbc\x5f\x5c", "Ge", []),
+        variant_schema(b"\x12\xb5\xd5\x58\xbc\xfd", "Gt", []),
+        variant_schema(b"\xa2\xfb\xc7\x54\xb9\xee", "Le", []),
+        variant_schema(b"\xc2\x8e\x01\xd0\x9a\xdf", "Lt", []),
+    ])
+
+def shape_nominal_type_origin_export() -> Description:
+    return model_description(b"\x4b\x2b\x68\x50\x49\x51\x00", "checked_namespace.NominalTypeOriginExport", [
+        ModelField(identity=b"\x5c\x4c\x19\x64\x34\x0a", name="provider", storage="record@9779a056d087"),
+        ModelField(identity=b"\x0d\xee\xb8\xfa\x1d\xbb", name="canonical", storage="record@f1bb070a87e5"),
+    ])
+
+def shape_numeric_type_id() -> Description:
+    return enum_schema(b"\x6c\x50\x2a\xc2\x36\xf1\x00", "checked_namespace.NumericTypeId", [
+        variant_schema(b"\x31\x46\x62\x8c\x11\x8c", "I8", []),
+        variant_schema(b"\xb9\xff\x3f\x6e\x71\xda", "I16", []),
+        variant_schema(b"\xbe\x2d\x2c\xd0\x31\x7d", "I32", []),
+        variant_schema(b"\xc1\xc7\xe0\x2d\xd6\xcb", "I64", []),
+        variant_schema(b"\x47\xec\x6b\xda\x4d\xa3", "I128", []),
+        variant_schema(b"\x34\x73\xd3\x8a\x12\x41", "U8", []),
+        variant_schema(b"\xef\x09\xbc\x80\xcd\x62", "U16", []),
+        variant_schema(b"\x80\x07\x24\x86\xf2\xea", "U32", []),
+        variant_schema(b"\x84\xb8\x9e\x22\x45\x54", "U64", []),
+        variant_schema(b"\x0c\x80\x0d\xc4\xf9\x49", "U128", []),
+        variant_schema(b"\x82\x25\x5a\xee\x6c\xcc", "F32", []),
+        variant_schema(b"\xa4\x4d\x7f\x74\xc8\x29", "F64", []),
+        variant_schema(b"\xec\x7c\x44\x91\xf6\x86", "ISize", []),
+        variant_schema(b"\xba\x4c\xad\x75\xa6\x5a", "USize", []),
+        variant_schema(b"\x49\xf4\x11\xf0\xa1\xa7", "Bool", []),
+    ])
+
+def shape_ownership_contract() -> Description:
+    return model_description(b"\x42\xf2\xe7\x99\x85\xb2\x00", "checked_namespace.OwnershipContract", [
+        ModelField(identity=b"\x8c\x08\xb3\xc1\xc9\x90", name="schema_version", storage="u32"),
+        ModelField(identity=b"\x00\xc2\x5d\x63\x01\xa7", name="modes", storage="list<record@622f44955c42>"),
+        ModelField(identity=b"\x30\xaf\xfa\x51\x78\x4a", name="result_source", storage="option<record@31922dd77001>"),
+    ])
+
+def shape_ownership_export() -> Description:
+    return enum_schema(b"\xb8\xdf\xa1\xe0\x41\x74\x00", "checked_namespace.OwnershipExport", [
+        variant_schema(b"\x0e\xfd\x92\xa3\x35\x90", "Checked", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="record@42f2e79985b2")]),
+        variant_schema(b"\x54\x32\x46\x58\xe2\xeb", "Unsupported", []),
+    ])
+
+def shape_ownership_mode() -> Description:
+    return enum_schema(b"\xf3\xf8\x60\x85\x7e\x6c\x00", "checked_namespace.OwnershipMode", [
+        variant_schema(b"\xc8\x8d\x22\x41\x30\x95", "Borrowed", []),
+        variant_schema(b"\xce\x70\x4e\xe8\x66\x0e", "BorrowedMut", []),
+        variant_schema(b"\x17\xb7\x60\xc4\x1c\xd2", "Owned", []),
+        variant_schema(b"\x71\xbf\x90\x93\x5f\xc2", "Reference", []),
+    ])
+
+def shape_param_default_call_arg_export() -> Description:
+    return model_description(b"\x37\x4d\x05\x46\x8e\x14\x00", "checked_namespace.ParamDefaultCallArgExport", [
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="option<string>"),
+        ModelField(identity=b"\xcd\x42\x40\x4d\x52\xad", name="value", storage="enum@002cab1e9f8c"),
+    ])
+
+def shape_param_default_call_signature_export() -> Description:
+    return model_description(b"\xbc\x6d\xac\x92\x63\xb8\x00", "checked_namespace.ParamDefaultCallSignatureExport", [
+        ModelField(identity=b"\xa2\x0b\x52\xfa\xe5\x7c", name="params", storage="list<record@5e91aed5a32f>"),
+        ModelField(identity=b"\x40\x7d\xdf\x95\xec\x74", name="return_type", storage="enum@20bf1c617420"),
+    ])
+
+def shape_param_default_dict_entry_export() -> Description:
+    return model_description(b"\x30\x1e\x27\x35\x04\x05\x00", "checked_namespace.ParamDefaultDictEntryExport", [
+        ModelField(identity=b"\x2c\x70\xe1\x2b\x7a\x06", name="key", storage="enum@002cab1e9f8c"),
+        ModelField(identity=b"\xcd\x42\x40\x4d\x52\xad", name="value", storage="enum@002cab1e9f8c"),
+    ])
+
+def shape_param_default_export() -> Description:
+    return enum_schema(b"\x00\x2c\xab\x1e\x9f\x8c\x00", "checked_namespace.ParamDefaultExport", [
+        variant_schema(b"\x0b\x5f\x60\x80\x70\xc6", "Int", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="i64")]),
+        variant_schema(b"\x1a\x69\x3c\x00\xc4\x0c", "Float", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="string")]),
+        variant_schema(b"\x49\xf4\x11\xf0\xa1\xa7", "Bool", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="boolean")]),
+        variant_schema(b"\xb2\xef\x23\x0e\x7f\x4f", "String", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="string")]),
+        variant_schema(b"\x4d\x80\x00\x30\x1f\xcc", "Bytes", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="binary")]),
+        variant_schema(b"\xdc\x93\x7b\x59\x89\x26", "None", []),
+        variant_schema(b"\x6f\x20\x2f\x54\xa7\xb2", "List", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="list<enum@002cab1e9f8c>")]),
+        variant_schema(b"\x96\x11\xd3\xd8\x00\xfc", "Dict", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="list<record@301e27350405>")]),
+        variant_schema(b"\x4f\x04\x11\xeb\xaa\xd2", "ConstRef", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="list<string>")]),
+        variant_schema(b"\xd6\xe6\x45\xb7\xd2\xb2", "Call", [ModelField(identity=b"\xa0\xaf\x9f\x86\x5b\xf6", name="path", storage="list<string>"), ModelField(identity=b"\x09\x07\x72\xcf\x40\x68", name="args", storage="list<record@374d05468e14>"), ModelField(identity=b"\x1a\x2f\xc2\x6d\xc7\xea", name="signature", storage="option<record@bc6dac9263b8>")]),
+        variant_schema(b"\x5b\x36\x60\xd0\x20\x9a", "MethodCall", [ModelField(identity=b"\xee\x88\x23\xd9\xd4\xb2", name="receiver_path", storage="list<string>"), ModelField(identity=b"\x5b\x7e\x6b\xf2\xdc\x4a", name="method", storage="string"), ModelField(identity=b"\x09\x07\x72\xcf\x40\x68", name="args", storage="list<record@374d05468e14>")]),
+        variant_schema(b"\x54\x32\x46\x58\xe2\xeb", "Unsupported", []),
+    ])
+
+def shape_param_export() -> Description:
+    return model_description(b"\x5e\x91\xae\xd5\xa3\x2f\x00", "checked_namespace.ParamExport", [
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
+        ModelField(identity=b"\x4f\x9d\xb7\xf8\xe5\x06", name="ty", storage="enum@20bf1c617420"),
+        ModelField(identity=b"\xb0\x68\x00\x7f\x7f\x6b", name="surface_type_name", storage="option<string>"),
+        ModelField(identity=b"\x0b\x27\xc1\x58\xfe\xb3", name="kind", storage="enum@98ca241812a0"),
+        ModelField(identity=b"\x68\x2a\x77\x7c\x23\x28", name="has_default", storage="boolean"),
+        ModelField(identity=b"\xc5\x7d\x21\xc0\xf9\x5b", name="is_mut", storage="boolean"),
+        ModelField(identity=b"\x37\xa8\xee\xc1\xce\x19", name="default", storage="option<enum@002cab1e9f8c>"),
+    ])
+
+def shape_param_kind_export() -> Description:
+    return enum_schema(b"\x98\xca\x24\x18\x12\xa0\x00", "checked_namespace.ParamKindExport", [
+        variant_schema(b"\xa7\x24\x8e\xeb\x45\xeb", "Normal", []),
+        variant_schema(b"\xed\xe4\x21\xe1\x68\xfb", "RestPositional", []),
+        variant_schema(b"\xff\xad\x05\x37\x44\x21", "RestKeyword", []),
+    ])
+
+def shape_partial_preset_export() -> Description:
+    return model_description(b"\x29\x47\x9c\xd6\x1f\x71\x00", "checked_namespace.PartialPresetExport", [
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
+        ModelField(identity=b"\x4f\x9d\xb7\xf8\xe5\x06", name="ty", storage="enum@20bf1c617420"),
+        ModelField(identity=b"\xcd\x42\x40\x4d\x52\xad", name="value", storage="enum@72296e3e41d6"),
+    ])
+
+def shape_partial_target_kind_export() -> Description:
+    return enum_schema(b"\x73\xf5\xc6\x30\x9e\xd9\x00", "checked_namespace.PartialTargetKindExport", [
+        variant_schema(b"\xc8\x03\x71\x03\x02\xd5", "Function", []),
+        variant_schema(b"\x7d\x5e\x92\x8d\x2e\xe0", "ModelConstructor", []),
+        variant_schema(b"\xfd\x19\x84\xcc\x16\xfb", "ClassConstructor", []),
+        variant_schema(b"\x72\x4d\xfd\x19\xe1\x0b", "NewtypeConstructor", []),
+        variant_schema(b"\xa4\xd5\x0f\xb8\x54\x03", "Partial", []),
+        variant_schema(b"\xb7\x64\xcd\xc0\xea\xb7", "Unknown", []),
+    ])
+
+def shape_preset_dict_entry_export() -> Description:
+    return model_description(b"\x03\xf9\x61\x50\x0b\x9a\x00", "checked_namespace.PresetDictEntryExport", [
+        ModelField(identity=b"\x2c\x70\xe1\x2b\x7a\x06", name="key", storage="enum@72296e3e41d6"),
+        ModelField(identity=b"\xcd\x42\x40\x4d\x52\xad", name="value", storage="enum@72296e3e41d6"),
+    ])
+
+def shape_preset_model_field_export() -> Description:
+    return model_description(b"\x14\xd7\x34\x18\x52\x7c\x00", "checked_namespace.PresetModelFieldExport", [
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
+        ModelField(identity=b"\xcd\x42\x40\x4d\x52\xad", name="value", storage="enum@72296e3e41d6"),
+    ])
+
+def shape_preset_value_export() -> Description:
+    return enum_schema(b"\x72\x29\x6e\x3e\x41\xd6\x00", "checked_namespace.PresetValueExport", [
+        variant_schema(b"\x0b\x5f\x60\x80\x70\xc6", "Int", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="i64")]),
+        variant_schema(b"\x1a\x69\x3c\x00\xc4\x0c", "Float", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="string")]),
+        variant_schema(b"\x49\xf4\x11\xf0\xa1\xa7", "Bool", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="boolean")]),
+        variant_schema(b"\xb2\xef\x23\x0e\x7f\x4f", "String", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="string")]),
+        variant_schema(b"\x4d\x80\x00\x30\x1f\xcc", "Bytes", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="binary")]),
+        variant_schema(b"\xdc\x93\x7b\x59\x89\x26", "None", []),
+        variant_schema(b"\x6f\x20\x2f\x54\xa7\xb2", "List", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="list<enum@72296e3e41d6>")]),
+        variant_schema(b"\xb6\xf6\xf3\xad\x07\xb3", "Set", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="list<enum@72296e3e41d6>")]),
+        variant_schema(b"\xf1\x36\xee\x78\xc3\x3b", "Tuple", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="list<enum@72296e3e41d6>")]),
+        variant_schema(b"\x96\x11\xd3\xd8\x00\xfc", "Dict", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="list<record@03f961500b9a>")]),
+        variant_schema(b"\x4f\x04\x11\xeb\xaa\xd2", "ConstRef", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="list<string>")]),
+        variant_schema(b"\xa5\xd9\x17\x8b\xbe\x92", "ModelLiteral", [ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"), ModelField(identity=b"\xbf\xe5\xd6\x97\x16\x2d", name="fields", storage="list<record@14d73418527c>")]),
+        variant_schema(b"\x54\x32\x46\x58\xe2\xeb", "Unsupported", []),
+    ])
+
+def shape_receiver_export() -> Description:
+    return enum_schema(b"\x01\xe4\xc4\x81\x1d\xd1\x00", "checked_namespace.ReceiverExport", [
+        variant_schema(b"\x1e\x40\x8d\xc2\x74\x22", "Immutable", []),
+        variant_schema(b"\xa0\xba\x6d\x8a\x37\x4a", "Mutable", []),
+    ])
+
+def shape_result_dependency() -> Description:
+    return model_description(b"\x31\x92\x2d\xd7\x70\x01\x00", "checked_namespace.ResultDependency", [
+        ModelField(identity=b"\x65\x58\x83\x83\x31\xb7", name="slot", storage="enum@c1d24d183cca"),
+        ModelField(identity=b"\xbf\xe5\xd6\x97\x16\x2d", name="fields", storage="list<record@f1bb070a87e5>"),
+        ModelField(identity=b"\xee\x3c\x65\xb5\xc7\xf4", name="aggregate", storage="boolean"),
+    ])
+
+def shape_runtime_builtin_type() -> Description:
+    return enum_schema(b"\x47\x4e\x41\xb7\xad\x42\x00", "checked_namespace.RuntimeBuiltinType", [
+        variant_schema(b"\xbd\xfa\xef\x14\xbe\x91", "ValidationError", []),
+    ])
+
+def shape_safe_metadata_value() -> Description:
+    return enum_schema(b"\x60\x9c\xc1\x89\xaa\x5a\x00", "checked_namespace.SafeMetadataValue", [
+        variant_schema(b"\x0b\x5f\x60\x80\x70\xc6", "Int", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="i64")]),
+        variant_schema(b"\x1a\x69\x3c\x00\xc4\x0c", "Float", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="fp64")]),
+        variant_schema(b"\x49\xf4\x11\xf0\xa1\xa7", "Bool", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="boolean")]),
+        variant_schema(b"\xb2\xef\x23\x0e\x7f\x4f", "String", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="string")]),
+        variant_schema(b"\x4d\x80\x00\x30\x1f\xcc", "Bytes", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="binary")]),
+        variant_schema(b"\xdc\x93\x7b\x59\x89\x26", "None", []),
+    ])
+
+def shape_scope_discriminant() -> Description:
+    return model_description(b"\x8e\x43\xe8\xa1\x20\x56\x00", "checked_namespace.ScopeDiscriminant", [
+        ModelField(identity=b"\xcd\x42\x40\x4d\x52\xad", name="value", storage="u64"),
+    ])
+
+def shape_semantic_source_target_kind() -> Description:
+    return enum_schema(b"\xa9\x55\x47\x03\xfa\x2e\x00", "checked_namespace.SemanticSourceTargetKind", [
+        variant_schema(b"\xc8\x03\x71\x03\x02\xd5", "Function", []),
+        variant_schema(b"\x5e\x2c\x61\x4c\x23\xf0", "Model", []),
+        variant_schema(b"\x4f\x3a\x9b\xd0\x03\x97", "Class", []),
+        variant_schema(b"\x2e\x7e\x82\x4e\x59\x50", "Newtype", []),
+        variant_schema(b"\x92\xe4\x38\x49\x9e\x72", "Rusttype", []),
+        variant_schema(b"\x54\x10\x8d\xaf\xaa\xc5", "Enum", []),
+        variant_schema(b"\x6b\x9d\x65\x54\x6f\xf3", "TypeAlias", []),
+        variant_schema(b"\xa4\xd5\x0f\xb8\x54\x03", "Partial", []),
+        variant_schema(b"\x3f\x19\xfe\x84\xa2\xde", "Variant", []),
+        variant_schema(b"\x28\xe3\xe4\x79\xe0\x87", "Trait", []),
+        variant_schema(b"\x5f\xaf\x58\xa6\x9d\xb5", "Capability", []),
+        variant_schema(b"\xf4\x5f\xc1\xdf\xdc\x96", "Field", []),
+        variant_schema(b"\x52\xa0\xf9\xb6\x5b\x27", "Method", []),
+        variant_schema(b"\x40\x04\x0c\xb1\x81\xf7", "Property", []),
+        variant_schema(b"\x10\x71\xe7\xae\x66\xc8", "Const", []),
+        variant_schema(b"\x1d\x2c\x73\xdc\x01\xf2", "Static", []),
+        variant_schema(b"\x8c\x31\xe6\xe7\x22\x30", "Local", []),
+        variant_schema(b"\xdd\x06\x6e\xc1\xbf\x1d", "Parameter", []),
+        variant_schema(b"\x86\xce\xc0\x81\xa5\x28", "Receiver", []),
+        variant_schema(b"\xd6\x69\x9c\x8e\x0e\x17", "GenericBinder", []),
+        variant_schema(b"\xf1\x48\x22\x4a\xe4\x4f", "Module", []),
+        variant_schema(b"\xd2\xe4\x75\xb0\x0b\xf0", "RustItem", []),
+        variant_schema(b"\xa6\xa5\x60\x71\xa4\x2b", "Builtin", []),
+        variant_schema(b"\xf9\x7e\x9d\xa0\xe3\xb8", "Other", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="string")]),
+    ])
+
+def shape_source_anchor() -> Description:
+    return model_description(b"\xf4\xa0\x92\xc4\xac\xca\x00", "checked_namespace.SourceAnchor", [
+        ModelField(identity=b"\xa5\x61\x45\x27\x0c\xe6", name="id", storage="string"),
+        ModelField(identity=b"\x37\xa0\x02\x5a\xa1\xf2", name="span", storage="record@74a6fa8e9339"),
+    ])
+
+def shape_source_slot() -> Description:
+    return enum_schema(b"\xc1\xd2\x4d\x18\x3c\xca\x00", "checked_namespace.SourceSlot", [
+        variant_schema(b"\xdd\x06\x6e\xc1\xbf\x1d", "Parameter", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="u64")]),
+        variant_schema(b"\x86\xce\xc0\x81\xa5\x28", "Receiver", []),
+    ])
+
+def shape_symbol_namespace() -> Description:
+    return enum_schema(b"\xb3\xba\x1e\xd7\x41\xdb\x00", "checked_namespace.SymbolNamespace", [
+        variant_schema(b"\x2f\x9f\xca\x1f\xf4\xf3", "OrdinaryLexical", []),
+        variant_schema(b"\x7c\x96\x8f\xb7\x1f\x50", "Member", []),
+        variant_schema(b"\xa8\xfc\x20\xe8\xc8\x26", "ModulePath", []),
+    ])
+
+def shape_symbol_origin() -> Description:
+    return enum_schema(b"\xca\x6e\x16\x1f\x17\xe2\x00", "checked_namespace.SymbolOrigin", [
+        variant_schema(b"\xf1\x48\x22\x4a\xe4\x4f", "Module", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="list<string>")]),
+        variant_schema(b"\x59\xde\x12\x1d\xb1\xb8", "Package", [ModelField(identity=b"\xb7\x18\xf1\x35\x4f\x72", name="library", storage="string"), ModelField(identity=b"\x81\x51\x94\x99\x5b\xb8", name="module_path", storage="list<string>")]),
+        variant_schema(b"\x6e\xa0\x66\x89\xdd\x52", "RustCrate", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="list<string>")]),
+        variant_schema(b"\xa6\xa5\x60\x71\xa4\x2b", "Builtin", []),
+    ])
+
+def shape_type_alias_export() -> Description:
+    return model_description(b"\x2f\xa9\x68\xc7\x01\xa3\x00", "checked_namespace.TypeAliasExport", [
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
+        ModelField(identity=b"\x75\xe7\xe9\xde\xad\x7e", name="type_params", storage="list<record@80549e0eb490>"),
+        ModelField(identity=b"\x34\xa0\x40\x05\xbc\xaf", name="target", storage="enum@20bf1c617420"),
+    ])
+
+def shape_type_bound_export() -> Description:
+    return model_description(b"\x52\x0b\x90\x61\x48\xca\x00", "checked_namespace.TypeBoundExport", [
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
+        ModelField(identity=b"\x2a\x12\xf5\x01\x68\xc9", name="source_name", storage="option<string>"),
+        ModelField(identity=b"\x81\x51\x94\x99\x5b\xb8", name="module_path", storage="option<list<string>>"),
+        ModelField(identity=b"\xb0\x6b\xd0\xa0\xbb\xa8", name="type_args", storage="list<enum@20bf1c617420>"),
+        ModelField(identity=b"\xb5\x5b\x6a\x25\xc2\xa7", name="implementation_type_params", storage="list<record@6cc50e510dce>"),
+        ModelField(identity=b"\x20\x4e\xd5\x5e\x1a\xf9", name="inferred", storage="boolean"),
+    ])
+
+def shape_type_component() -> Description:
+    return model_description(b"\xfb\x49\x7d\xd9\x8d\xfa\x00", "checked_namespace.TypeComponent", [
+        ModelField(identity=b"\x63\x90\x36\x1d\xfd\xff", name="parameter", storage="option<u64>"),
+        ModelField(identity=b"\x10\x91\x00\x87\xde\x24", name="children", storage="list<u64>"),
+    ])
+
+def shape_type_param_export() -> Description:
+    return model_description(b"\x80\x54\x9e\x0e\xb4\x90\x00", "checked_namespace.TypeParamExport", [
+        ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
+        ModelField(identity=b"\x6b\xa9\x23\x48\x98\xef", name="bounds", storage="list<record@520b906148ca>"),
+    ])
+
+def shape_type_ref() -> Description:
+    return enum_schema(b"\x20\xbf\x1c\x61\x74\x20\x00", "checked_namespace.TypeRef", [
+        variant_schema(b"\x86\x05\x60\x5a\xe0\x26", "Named", [ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"), ModelField(identity=b"\x18\x1f\xdd\x46\xfc\x4a", name="origin", storage="option<record@4b2b68504951>")]),
+        variant_schema(b"\x0c\x79\xa9\xc2\x22\x84", "Applied", [ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"), ModelField(identity=b"\x09\x07\x72\xcf\x40\x68", name="args", storage="list<enum@20bf1c617420>"), ModelField(identity=b"\x18\x1f\xdd\x46\xfc\x4a", name="origin", storage="option<record@4b2b68504951>")]),
+        variant_schema(b"\xc8\x03\x71\x03\x02\xd5", "Function", [ModelField(identity=b"\xa2\x0b\x52\xfa\xe5\x7c", name="params", storage="list<enum@20bf1c617420>"), ModelField(identity=b"\x40\x7d\xdf\x95\xec\x74", name="return_type", storage="enum@20bf1c617420")]),
+        variant_schema(b"\xeb\x90\x0d\x77\x64\xd0", "TypeToken", [ModelField(identity=b"\x33\xbf\x6f\xbd\x7c\xd8", name="inner", storage="enum@20bf1c617420")]),
+        variant_schema(b"\xf1\x36\xee\x78\xc3\x3b", "Tuple", [ModelField(identity=b"\xb0\xb1\x78\x93\xa5\x13", name="elements", storage="list<enum@20bf1c617420>")]),
+        variant_schema(b"\x80\x75\x61\xa2\x90\x4e", "TypeParam", [ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string")]),
+        variant_schema(b"\x80\x30\x24\x93\xf2\xd4", "SelfType", []),
+        variant_schema(b"\x9b\x6e\x88\xe8\x94\x3a", "Ref", [ModelField(identity=b"\x33\xbf\x6f\xbd\x7c\xd8", name="inner", storage="enum@20bf1c617420")]),
+        variant_schema(b"\x44\x2d\xe1\x4c\xd6\x78", "RustPath", [ModelField(identity=b"\xa0\xaf\x9f\x86\x5b\xf6", name="path", storage="string")]),
+        variant_schema(b"\xb7\x64\xcd\xc0\xea\xb7", "Unknown", []),
+        variant_schema(b"\xda\x42\x6b\x7c\xa6\x34", "NativeUnion", [ModelField(identity=b"\xcc\x1d\x0d\xe5\xa7\x73", name="arg0", storage="record@5aab40c5d837")]),
+        variant_schema(b"\x43\x19\xf9\x30\x2d\x74", "MutParam", [ModelField(identity=b"\x33\xbf\x6f\xbd\x7c\xd8", name="inner", storage="enum@20bf1c617420")]),
+        variant_schema(b"\xc7\xd3\xac\xc8\x26\xa8", "Ownership", [ModelField(identity=b"\xe6\x42\xb1\x29\x01\xa6", name="mode", storage="enum@f3f860857e6c"), ModelField(identity=b"\x33\xbf\x6f\xbd\x7c\xd8", name="inner", storage="enum@20bf1c617420")]),
+        variant_schema(b"\x28\xe3\xe4\x79\xe0\x87", "Trait", [ModelField(identity=b"\x68\x9f\x6a\x62\x73\x84", name="identity", storage="record@28cdd429f7ec")]),
+    ])
+
+pub def namespace_root() -> bytes:
+    return b"\x78\xd2\xc9\xd3\x8a\xe9\x00"
+
+pub def namespace_descriptions() -> list[Description]:
+    return [
+        shape_access_mode(),
+        shape_api_alias(),
+        shape_api_callable_metadata(),
+        shape_api_class(),
+        shape_api_const(),
+        shape_api_declaration(),
+        shape_api_docstring(),
+        shape_api_docstring_entry(),
+        shape_api_docstring_return(),
+        shape_api_enum(),
+        shape_api_enum_variant(),
+        shape_api_enum_variant_alias(),
+        shape_api_function(),
+        shape_api_method(),
+        shape_api_model(),
+        shape_api_newtype(),
+        shape_api_partial(),
+        shape_api_projected_function(),
+        shape_api_property(),
+        shape_api_static(),
+        shape_api_trait(),
+        shape_api_type_alias(),
+        shape_canonical_identity_export(),
+        shape_canonical_identity_namespace_export(),
+        shape_canonical_identity_origin_export(),
+        shape_canonical_identity_span_export(),
+        shape_canonical_symbol_id(),
+        shape_checked_api_metadata(),
+        shape_checked_namespace_interface(),
+        shape_decorator_arg_metadata(),
+        shape_decorator_call_arg_metadata(),
+        shape_decorator_dict_entry(),
+        shape_decorator_metadata(),
+        shape_decorator_value(),
+        shape_default_value(),
+        shape_enum_value_export(),
+        shape_enum_value_type_export(),
+        shape_field_export(),
+        shape_hir_source_span(),
+        shape_implementation_associated_type_export(),
+        shape_implementation_trait_bound_export(),
+        shape_implementation_trait_bound_origin_export(),
+        shape_implementation_type_param_export(),
+        shape_incan_callable_param(),
+        shape_incan_callable_param_kind(),
+        shape_incan_input_access(),
+        shape_incan_primitive_type(),
+        shape_incan_type(),
+        shape_lifecycle_metadata(),
+        shape_loaf_identity(),
+        shape_made_private_export(),
+        shape_member_visibility_export(),
+        shape_namespace_member_identities(),
+        shape_native_union_export(),
+        shape_native_union_owner_export(),
+        shape_native_union_projection(),
+        shape_newtype_constraint_export(),
+        shape_newtype_constraint_key_export(),
+        shape_nominal_type_origin_export(),
+        shape_numeric_type_id(),
+        shape_ownership_contract(),
+        shape_ownership_export(),
+        shape_ownership_mode(),
+        shape_param_default_call_arg_export(),
+        shape_param_default_call_signature_export(),
+        shape_param_default_dict_entry_export(),
+        shape_param_default_export(),
+        shape_param_export(),
+        shape_param_kind_export(),
+        shape_partial_preset_export(),
+        shape_partial_target_kind_export(),
+        shape_preset_dict_entry_export(),
+        shape_preset_model_field_export(),
+        shape_preset_value_export(),
+        shape_receiver_export(),
+        shape_result_dependency(),
+        shape_runtime_builtin_type(),
+        shape_safe_metadata_value(),
+        shape_scope_discriminant(),
+        shape_semantic_source_target_kind(),
+        shape_source_anchor(),
+        shape_source_slot(),
+        shape_symbol_namespace(),
+        shape_symbol_origin(),
+        shape_type_alias_export(),
+        shape_type_bound_export(),
+        shape_type_component(),
+        shape_type_param_export(),
+        shape_type_ref(),
+    ]

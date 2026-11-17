@@ -2,14 +2,16 @@
 
 use super::*;
 
+mod wire;
+pub use wire::{NamespaceCell, NamespaceCrumb};
+
 /// Durable checked surface of one editable source namespace.
 ///
 /// Frozen Loaves carry this same [`crate::api_metadata::CheckedApiMetadata`] projection inside their manifest. The
 /// editable-namespace record adds the source module key, canonical declaration identities and final published nominal
 /// scope needed to install that projection through [`ModuleDependencyInterface`], without serializing transient
 /// [`TypeCheckInfo`].
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug)]
 pub struct CheckedNamespaceInterface {
     schema: u32,
     module_name: String,
@@ -31,8 +33,7 @@ pub struct CheckedNamespaceInterface {
 ///
 /// A consumer checked against the installed namespace records the same member identities a cold check of both
 /// modules records, so its Body IR selects an imported enum variant, field or method by identity in a warm build too.
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Default)]
 struct NamespaceMemberIdentities {
     variants: std::collections::BTreeMap<String, CanonicalSymbolId>,
     fields: std::collections::BTreeMap<String, CanonicalSymbolId>,
@@ -41,7 +42,7 @@ struct NamespaceMemberIdentities {
 }
 
 impl CheckedNamespaceInterface {
-    const SCHEMA: u32 = 6;
+    const SCHEMA: u32 = 7;
 
     /// Capture one complete installable public namespace from an accepted editable module.
     ///
@@ -135,18 +136,17 @@ impl CheckedNamespaceInterface {
         }))
     }
 
-    /// Encode one checked namespace using the manifest's existing JSON-ready semantic model.
-    pub fn to_bytes(&self) -> Result<Vec<u8>, String> {
+    /// Project the checked declarations into their compiler-owned Crumb schemas.
+    pub fn to_bytes(&self, codec: &impl NamespaceCrumb) -> Result<Vec<u8>, String> {
         self.validate()?;
-        serde_json::to_vec(self).map_err(|error| format!("cannot encode checked namespace interface: {error}"))
+        codec.write(wire::project(self))
     }
 
-    /// Decode and validate one complete checked namespace before it reaches checker installation.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
-        let interface: Self = serde_json::from_slice(bytes)
-            .map_err(|error| format!("cannot decode checked namespace interface: {error}"))?;
-        interface.validate()?;
-        Ok(interface)
+    /// Admit the bounded typed Crumb before installing any identities or checked tables in a consumer.
+    pub fn from_bytes(bytes: &[u8], codec: &impl NamespaceCrumb) -> Result<Self, String> {
+        let value = wire::restore(codec.read(bytes)?)?;
+        value.validate()?;
+        Ok(value)
     }
 
     /// Return the source module key this interface installs.

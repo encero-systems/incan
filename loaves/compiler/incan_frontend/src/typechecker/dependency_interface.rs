@@ -8,7 +8,7 @@ use super::*;
 mod checked_namespace;
 mod stable_encoding;
 
-pub use checked_namespace::CheckedNamespaceInterface;
+pub use checked_namespace::{CheckedNamespaceInterface, NamespaceCell, NamespaceCrumb};
 use serde::Serialize;
 use stable_encoding::stable_encode;
 

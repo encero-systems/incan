@@ -180,7 +180,7 @@ use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTarge
 
 pub use dependency_interface::{
     CheckedNamespaceInterface, DependencyInterfacePreparationCache, ModuleDependencyInterface,
-    ModuleDependencyInterfaceSnapshot,
+    ModuleDependencyInterfaceSnapshot, NamespaceCell, NamespaceCrumb,
 };
 
 /// Immutable public-export projections for source dependencies, keyed by the same canonical module names as the
