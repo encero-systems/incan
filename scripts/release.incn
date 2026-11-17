@@ -79,6 +79,7 @@ const SEED_BRIDGE_SOURCES: FrozenList[str] = [
     "loaves/compiler/internal_models/src/checker_records.incn",
     "loaves/compiler/internal_models/src/compiled_body_rows.incn",
 ]
+const SEED_BRIDGE_SOURCE: str = "seed-bridge-source"
 const SEED_TOOL_SOURCE: str = "seed-tool-source"
 
 
@@ -219,7 +220,13 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
         reclaim(
             run,
             "fixed-point-work",
-            [run.paths.lane, run.paths.home, run.paths.source, run.paths.output.joinpath(SEED_TOOL_SOURCE)],
+            [
+                run.paths.lane,
+                run.paths.home,
+                run.paths.source,
+                run.paths.output.joinpath(SEED_BRIDGE_SOURCE),
+                run.paths.output.joinpath(SEED_TOOL_SOURCE),
+            ],
         )?
     else:
         reclaim(run, "qualified-build-inputs", [run.paths.home, run.paths.source])?
@@ -575,6 +582,16 @@ def seed_tool_source(run: ReleaseRun) -> Result[Path, str]:
     return Ok(root)
 
 
+def exact_seed_bridge_source(run: ReleaseRun) -> Result[Path, str]:
+    """Materialize the authenticated bridge without seed-generation source restoration for its intermediate compiler."""
+    root = run.paths.output.joinpath(SEED_BRIDGE_SOURCE)
+    clone = ["clone", "--shared", "--no-checkout", run.root.0, root.0]
+    require_release_step(run, release_step(run, "bridge-source-clone", "git", clone, run.root, {}))?
+    checkout = ["-C", root.0, "checkout", "--detach", run.options.seed_bridge]
+    require_release_step(run, release_step(run, "bridge-source-checkout", "git", checkout, run.root, {}))?
+    return Ok(root)
+
+
 pub def validate_seed_bridge(source: str, bridge: str, parents: list[str], paths: list[str]) -> Result[None, str]:
     """Require one direct-child seed bridge whose complete diff is the authenticated compatibility surface."""
     if parents != [source]:
@@ -585,7 +602,9 @@ pub def validate_seed_bridge(source: str, bridge: str, parents: list[str], paths
 
 
 def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str]:
-    """Build the source compiler, then rebuild checking interfaces and shipped providers through it."""
+    """Bootstrap through an authenticated bridge when needed, then build and select only the qualified compiler."""
+    if run.options.seed_bridge != "":
+        build_bridge_compiler(run, candidate)?
     driver_started = Instant.now()
     driver_span = run.trace.begin("driver-build")?
     driver_result = relink(
@@ -612,6 +631,30 @@ def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Ca
     pending_lsp = start_candidate_lsp(context)?
     lsp, pending = build_candidate_standard_with_lsp(context, helper, "candidate-", pending_lsp)?
     return Ok(Candidate(context=context, oven=candidate.oven, lsp=lsp, pending_lsp=pending))
+
+
+def build_bridge_compiler(run: ReleaseRun, candidate: Candidate) -> Result[None, str]:
+    """Relink and readmit one exact bridge compiler so it can compile the byte-exact qualified source generation."""
+    bridge = exact_seed_bridge_source(run)?
+    started = Instant.now()
+    span = run.trace.begin("bridge-driver-build")?
+    result = relink(
+        Relink(
+            repo=bridge,
+            bootstrap=run.paths.lane.joinpath("bridge-bootstrap"),
+            toolchain_home=run.paths.home,
+            builder=candidate.oven.0,
+            stdlib=bridge.joinpath("loaves/stdlib").0,
+            profile="release",
+            refresh=false,
+            log=run.paths.output.joinpath("bridge-driver-build.log"),
+            readmit=true,
+        ),
+    )
+    run.trace.finish(span)?
+    result?
+    append_timing(run.paths.output.joinpath("timings.tsv"), "bridge-driver-build", started.elapsed().as_secs_f64())?
+    return Ok(None)
 
 
 def build_candidate_providers(context: NativeContext, helper: Path) -> Result[None, str]:
@@ -1112,6 +1155,7 @@ def phase(run: ReleaseRun, name: str) -> Result[None, str]:
 def generated_source_targets(run: ReleaseRun) -> list[Path]:
     """Name release-produced source and target roots whose binaries have already moved to the lane, home, or bundle."""
     return [
+        run.paths.output.joinpath(SEED_BRIDGE_SOURCE),
         run.paths.output.joinpath(SEED_TOOL_SOURCE),
         run.paths.source.joinpath("workspaces/oven/target"),
         run.paths.source.joinpath("workspaces/contracts/target"),
