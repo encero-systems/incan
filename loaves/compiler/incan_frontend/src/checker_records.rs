@@ -216,6 +216,16 @@ pub fn produce_local_record(
     crate::typechecker::body_check::records::produce_local_record(source, name, declaration, environment)
 }
 
+/// Obtain a new declaration for a closed scalar owner using only its current source and previous stable identity.
+/// `None` requests ordinary compiler discovery for syntax or bindings outside this independently checked family.
+pub fn produce_closed_declaration(
+    source: &str,
+    name: &str,
+    previous: Vec<Vec<String>>,
+) -> Result<Option<Vec<Vec<String>>>, RecordAdapterFault> {
+    crate::typechecker::body_check::records::produce_closed_declaration(source, name, previous)
+}
+
 /// Enter one final producer from decoded local fields, settle that owner, and discard its private checker.
 ///
 /// This adapter accepts no ambient [`crate::typechecker::TypeChecker`] and performs no body checking. It collects
@@ -1005,6 +1015,31 @@ mod tests {
             .insert(3, "local".into());
         let settled = super::produce_final_record(source, "supported_schema", local, vec![])?;
         assert_eq!(settled, owner.final_value);
+        let before = "def supported_schema(version: int) -> bool:\n    return version >= 1 and version <= 9\n";
+        let after = before.replace("version", "schema_version");
+        let checked = |source: &str| -> Result<super::CheckedOwnerRecordFields, Box<dyn std::error::Error>> {
+            let parsed = program(source)?;
+            let mut checker = TypeChecker::new();
+            checker.set_current_module_path(Some(module.clone()));
+            checker.check_program(&parsed).map_err(|errors| format!("{errors:?}"))?;
+            let outputs = checked_owner_record_outputs(&parsed, &checker, &module)?;
+            let [CheckedOwnerRecordOutput::Value(output)] = outputs.as_slice() else {
+                return Err("missing closed owner".into());
+            };
+            Ok(output.clone())
+        };
+        let previous = checked(before)?;
+        let changed = checked(&after)?;
+        assert_eq!(previous.identity, changed.identity);
+        let fresh = super::produce_closed_declaration(&after, "supported_schema", previous.declaration.clone())?
+            .ok_or("missing independently checked declaration")?;
+        assert_eq!(fresh, changed.declaration);
+        assert_eq!(
+            super::produce_local_record(&after, "supported_schema", fresh, vec![])?,
+            changed.local
+        );
+        let nonlocal = after.replace("schema_version >= 1 and schema_version <= 9", "check(schema_version)");
+        assert!(super::produce_closed_declaration(&nonlocal, "supported_schema", previous.declaration)?.is_none());
         Ok(())
     }
 
