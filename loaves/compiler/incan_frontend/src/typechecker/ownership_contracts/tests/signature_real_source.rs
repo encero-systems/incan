@@ -275,7 +275,7 @@ fn constructor_records_single_transfer_of_plain_text_parameter() -> Result<(), B
             source: "text",
             root: "text",
         }],
-        true,
+        false,
     )?;
     let borrowed = accepted.replace("text: str", "text: Borrowed[str]");
     require_module_diagnostic_at(&borrowed, "INCAN-T0123", "text")?;
