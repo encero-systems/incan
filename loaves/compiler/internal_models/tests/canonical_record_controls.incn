@@ -89,22 +89,32 @@ def checked_row_capacity() -> Result[None, str]:
     return Ok(None)
 
 
+def scope_fixture(layout: list[str]) -> Result[CheckedRecord, CodecFault]:
+    """Place the supplied lexical layout into a real native Local producer record."""
+    return from_native_local_fields([
+        ["header", "function:scope::read", "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", CHECKER_PROFILE],
+        ["binding", "node/name_span", "declaration", "local:scope::value", "2"],
+        [field for field in layout],
+        ["status", "", "pending", "true"],
+    ])
+
+
+def invalid_scope_fixture(layout: list[str]) -> bool:
+    """Return the checked decoder's refusal for this layout."""
+    match scope_fixture(layout):
+        Ok(_) => return false
+        Err(_) => return true
+
+
 def lexical_scope_rows() -> Result[None, str]:
     """Scope parents precede their children and a retained binding must refer to an allocated scope."""
-    root = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    header = ["header", "function:scope::read", root, CHECKER_PROFILE]
-    binding = ["binding", "node/name_span", "declaration", "local:scope::value", "2"]
-    pending = ["status", "", "pending", "true"]
-    layout = ["scope", "", "allocation", "2", "0", "block", "1", "function"]
-    record = from_native_local_fields([header, binding, layout, pending]).map_err((_) => "valid scope tree")?
-    _ = encode_record(record).map_err((_) => "scope tree encoding")?
-    for invalid in [
-        ["scope", "", "allocation", "1", "1", "block"],
-        ["scope", "", "allocation", "2", "0", "block"],
-        ["scope", "", "allocation", "1", "0", "module"],
-        ["scope", "", "allocation", "1", "0", "block"],
-    ]:
-        assert from_native_local_fields([header, binding, invalid, pending]).is_err()
+    record = scope_fixture(["scope", "", "allocation", "2", "0", "block", "1", "function"]).map_err((_) => "valid scope tree")?
+    wire = encode_record(record).map_err((_) => "scope tree encoding")?
+    assert len(wire) > 0
+    assert invalid_scope_fixture(["scope", "", "allocation", "1", "1", "block"])
+    assert invalid_scope_fixture(["scope", "", "allocation", "2", "0", "block"])
+    assert invalid_scope_fixture(["scope", "", "allocation", "1", "0", "module"])
+    assert invalid_scope_fixture(["scope", "", "allocation", "1", "0", "block"])
     return Ok(None)
 
 
