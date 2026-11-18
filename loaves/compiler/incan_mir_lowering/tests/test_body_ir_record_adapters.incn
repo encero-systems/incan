@@ -104,8 +104,8 @@ pub def test_foreign_loop_items_borrow_on_reads_and_own_an_escaping_body() -> Re
     module.bodies = items
     field_baseline = Arc.strong_count(witness)
     assert has_async_body(module, witness, field_baseline)
-    escaped = owned_async_body(module)
-    assert Arc.strong_count(witness) == field_baseline + 1usize
+    escaped = owned_async_body(module, witness, field_baseline)
+    assert Arc.strong_count(witness) == field_baseline + 1usize, "returned body must add exactly one strong owner"
     assert len(module.bodies) == 2 and module.bodies[1].is_async
     match escaped:
         Some(body) => assert body.is_async
@@ -143,10 +143,16 @@ def has_async_body(
     return false
 
 
-def owned_async_body(module: &RustBodyIrModule) -> Option[RustBody]:
-    """Keep the selected body alive independently of the borrowed module."""
+def owned_async_body(
+    module: &RustBodyIrModule,
+    witness: &Arc[BTreeMap[str, RustCanonicalSymbolId]],
+    baseline: usize,
+) -> Option[RustBody]:
+    """Borrow each body through the predicate and transfer ownership when the selected body escapes."""
     for item in module.bodies:
+        assert Arc.strong_count(witness) == baseline, "loop cloned a body before reading is_async"
         if item.is_async:
+            assert Arc.strong_count(witness) == baseline, "selected body was cloned before the owned return"
             return Some(item)
     return None
 

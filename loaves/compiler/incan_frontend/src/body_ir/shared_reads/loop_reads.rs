@@ -66,11 +66,17 @@ pub(super) fn retain_borrowed_loop_items(
             cursor: false,
             derived: false,
         };
+        let reads = |local, owned_return| {
+            if native {
+                native_loop_reads(rest, &context(local), owned_return)
+            } else {
+                readonly(rest, &context(local))
+            }
+        };
         if lendable
-            && readonly(rest, &context(item))
-            && readonly(rest, &context(*root))
+            && reads(item, body.returned_view.is_none().then_some(&body.return_type))
+            && reads(*root, None)
             && !formats_reference(rest, item, &body.locals)
-            && (!native || (native_observations(rest, &context(item)) && native_observations(rest, &context(*root))))
         {
             lent.push(item);
         }
@@ -92,8 +98,15 @@ fn registered_item(ty: &IncanType, body: &bir::Body, fields: &FieldTypes) -> boo
 }
 
 /// A shared Rust receiver can have interior effects. Copying an independent scalar or comparing fields observes the
-/// item. Forwarding it to an opaque callable, rebinding its loan or capturing it requires stronger effect evidence.
-fn native_observations(statements: &[bir::Statement], context: &ReadContext<'_>) -> bool {
+/// item. Only the item may also reach an exactly typed owned destination. Its list root must stay read-only.
+fn native_loop_reads(
+    statements: &[bir::Statement],
+    context: &ReadContext<'_>,
+    owned_return: Option<&IncanType>,
+) -> bool {
+    if !derived_temporaries_are_read_only(statements, context) {
+        return false;
+    }
     let local = context.local;
     let independent = |value: &bir::Operand| {
         scalar_projection(value, local)
@@ -103,8 +116,12 @@ fn native_observations(statements: &[bir::Statement], context: &ReadContext<'_>)
             )
     };
     let mut accepted = true;
-    walk(statements, &mut |statement| {
+    walk_neighbors(statements, &mut |statement, next| {
         use bir::StatementKind as S;
+        if owned_return.is_some_and(|ty| materializes_item(statement, context, ty)) {
+            return;
+        }
+        accepted &= closure_reads::shared_statement(statement, next, context);
         accepted &= match &statement.kind {
             S::Assign {
                 rvalue: bir::Rvalue::Use(value),
@@ -145,6 +162,51 @@ fn native_observations(statements: &[bir::Statement], context: &ReadContext<'_>)
         };
     });
     accepted
+}
+
+/// A typed destination that owns the whole checked nominal clones it from the shared item at the use site.
+/// Borrowed results, field projections and writes keep the normal observation proof.
+fn materializes_item(statement: &bir::Statement, context: &ReadContext<'_>, return_type: &IncanType) -> bool {
+    let (operand, expected) = match &statement.kind {
+        bir::StatementKind::Return { value: Some(value) } => (value, return_type),
+        bir::StatementKind::Assign { place, rvalue } => {
+            let Some(destination) = place.local_id().and_then(|id| context.locals.get(id.index())) else {
+                return false;
+            };
+            if !place.projection.is_empty() || destination.origin != bir::LocalOrigin::Temporary {
+                return false;
+            }
+            match rvalue {
+                bir::Rvalue::Aggregate(bir::AggregateKind::OptionSome, elements) => {
+                    let (Some([ty]), [payload]) = (
+                        destination.ty.collection_arguments(CollectionTypeId::Option),
+                        elements.as_slice(),
+                    ) else {
+                        return false;
+                    };
+                    let Some(value) = payload.as_one() else { return false };
+                    (value, ty)
+                }
+                bir::Rvalue::ResultVariant(variant) => {
+                    let Some([ok, err]) = destination.ty.collection_arguments(CollectionTypeId::Result) else {
+                        return false;
+                    };
+                    let expected = match variant.kind {
+                        bir::ResultVariantKind::Ok => ok,
+                        bir::ResultVariantKind::Err => err,
+                    };
+                    (&variant.payload, expected)
+                }
+                _ => return false,
+            }
+        }
+        _ => return false,
+    };
+    matches!(operand, bir::Operand::Place(read)
+        if read.place.local_id() == Some(context.local)
+            && read.place.projection.is_empty()
+            && matches!(read.fact, bir::OwnershipFact::Move | bir::OwnershipFact::Clone)
+            && context.locals[context.local.index()].ty == *expected)
 }
 
 /// The temporaries initialized by lending a list, each with the list's root local and element type. A builtin loop's
