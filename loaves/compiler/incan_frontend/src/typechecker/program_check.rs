@@ -181,6 +181,9 @@ impl TypeChecker {
             self.finish_program_check(program)
         };
         self.visibility_point = VisibilityPoint::Finished;
+        if result.is_ok() {
+            self.finish_graph_body_frames(program);
+        }
         result
     }
 
@@ -203,6 +206,7 @@ impl TypeChecker {
         self.local_record_refusals.clear();
         self.selected_local_records.clear();
         self.selected_final_records.clear();
+        self.pending_graph_frames.clear();
         self.produced_final_records.clear();
         self.final_record_refusals.clear();
         self.callable_declaration_reuse.clear();

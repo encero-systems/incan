@@ -46,6 +46,9 @@ pub(super) fn lower_owner_method_bodies(
             if documented_trait_value_placeholder(method, &receiver_ty, lowering_facts.type_info) {
                 return None;
             }
+            if let Some(body) = lowering_facts.type_info.selected_callable_body(method.span) {
+                return Some(body.clone());
+            }
             lower_method_body(&method.node, method.span, owner_name, &receiver_ty, lowering_facts)
         })
         .collect()

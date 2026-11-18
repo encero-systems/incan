@@ -82,6 +82,10 @@ def required(graph: Snapshot, key: str) -> Result[bytes, str]:
 
 def changed_owner(graph: Snapshot, prior: RecordKey, captured: &Dict[str, bytes]) -> Result[Option[BuildOwner], str]:
     """Select only a changed complete source whose earlier checker discovered a closed local environment."""
+    # The standalone ranked producer currently selects a free declaration. Concrete method records are
+    # restored at their ordinary nominal preparation site, where the enclosing type is available.
+    if not prior.identity.startswith("function:"):
+        return Ok(None)
     basis_key = checking_basis_key(prior)?
     pointer = match get(graph, basis_key).map_err((error) => error.message())?:
         Some(value) => value
@@ -324,6 +328,9 @@ pub def ranked_build_pages(store: Path, inputs: &RankedBuildInputs, toolchain: T
                 break
 
         clock = begin_work()
+        if not reader.prior.identity.startswith("function:"):
+            record_work(Operation.EnginePrepare, "ranked-declined\tnominal-reader\t" + reader.prior.identity, clock)
+            return Ok(None)
         products = match evaluate_reader(unit, toolchain, key, reader, retained + refreshed)?:
             Some(value) => value
             None =>

@@ -13,7 +13,7 @@ use super::diagnostic_values::OwnerSyntax;
 use crate::ast::{Declaration, Program, Span};
 
 /// The typed declaration owns these method nodes and their lexical relation to a nominal source owner.
-fn nominal_methods(declaration: &Declaration) -> &[crate::ast::Spanned<crate::ast::MethodDecl>] {
+pub(crate) fn nominal_methods(declaration: &Declaration) -> &[crate::ast::Spanned<crate::ast::MethodDecl>] {
     match declaration {
         Declaration::Class(value) => &value.methods,
         Declaration::Model(value) => &value.methods,

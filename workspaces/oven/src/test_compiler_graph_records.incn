@@ -421,6 +421,17 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
         "other",
         "field:package::src::default::RecordKey::other|signature",
     )?.key == field_owner.key
+    method_projection = project_source(
+        "package", "src/default.incn", default_source + "\ndef rendered() -> int:\n    return 5\n",
+    )?
+    method = compiler_source_projection.compiled_owner_source(
+        method_projection, "src/default.incn", "rendered", "member/method:default::rendered#in(model:default::RecordKey)[0]",
+    )?
+    assert method.key.facet == "model:RecordKey"
+    wrong_owner = compiler_source_projection.compiled_owner_source(
+        method_projection, "src/default.incn", "rendered", "member/method:default::rendered#in(class:default::RecordKey)[0]",
+    )
+    assert wrong_owner.is_err()
     repeated_field_source = "pub model Snapshot:\n    pub pin: int = 1\n\npub model Publication:\n    pub pin: int = 2\n\npub model PreparedPayload:\n    pub pin: int\n"
     repeated_field_projection = project_source("package", "src/store.incn", repeated_field_source)?
     snapshot_pin = projected_owner(repeated_field_projection, "default:model:Snapshot:pin")?

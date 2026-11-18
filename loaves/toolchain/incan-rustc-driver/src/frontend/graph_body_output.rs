@@ -165,7 +165,7 @@ impl GraphBodyOutput {
             });
         }
         for output in
-            incan_frontend::checker_records::checked_owner_record_outputs(&module.ast, checker, &module.path_segments)?
+            incan_frontend::checker_records::checked_graph_record_outputs(&module.ast, checker, &module.path_segments)?
         {
             match output {
                 incan_frontend::checker_records::CheckedOwnerRecordOutput::Value(fields) => {
