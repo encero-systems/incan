@@ -226,8 +226,8 @@ impl TypeChecker {
             return true;
         }
         let identity = program
-            .and_then(|program| Positions::new(self, program, owner, false).ok())
-            .map(|positions| positions.nodes.owner().render_compact());
+            .and_then(|program| SemanticNodeBindings::new(self, program, owner).ok())
+            .map(|nodes| nodes.owner().render_compact());
         self.graph_body_records.enter_ranked_owner(identity.as_deref())
     }
 
@@ -239,10 +239,8 @@ impl TypeChecker {
         program: &Program,
         owner: Span,
     ) -> Result<bool, NodeBindingError> {
-        let identity = Positions::new(self, program, owner, false)?
-            .nodes
-            .owner()
-            .render_compact();
+        let nodes = SemanticNodeBindings::new(self, program, owner)?;
+        let identity = nodes.owner().render_compact();
         let Some(selected) = self.graph_body_records.get(&identity)? else {
             return Ok(false);
         };
@@ -250,7 +248,7 @@ impl TypeChecker {
         // transport. This is the one deliberate copy from immutable transport into checker-owned selected output.
         let local_fields = selected.local.clone();
         let final_fields = selected.final_value.clone();
-        let positions = Positions::for_decoded_local(self, program, owner, &local_fields, true)?;
+        let positions = Positions::for_decoded_local(self, program, owner, nodes, &local_fields, true)?;
         if !final_fields
             .iter()
             .any(|row| row.first().is_some_and(|tag| tag == "scope"))
@@ -383,6 +381,17 @@ impl Positions {
         } else {
             SemanticNodeBindings::new(checker, program, owner)?
         };
+        Self::from_nodes(checker, program, owner, declaration, nodes)
+    }
+
+    /// Bind the compiler's current declaration and type identities only after an owner page is selected.
+    fn from_nodes(
+        checker: &TypeChecker,
+        program: &Program,
+        owner: Span,
+        declaration: bool,
+        nodes: SemanticNodeBindings,
+    ) -> Result<Self, NodeBindingError> {
         let mut identities = checker
             .type_info
             .declarations
@@ -516,10 +525,11 @@ impl Positions {
         checker: &TypeChecker,
         program: &Program,
         owner: Span,
+        nodes: SemanticNodeBindings,
         fields: &Fields,
         active: bool,
     ) -> Result<Self, NodeBindingError> {
-        let mut positions = Self::new(checker, program, owner, false)?;
+        let mut positions = Self::from_nodes(checker, program, owner, false, nodes)?;
         imported_members::bind_transitive(checker, &mut positions, fields)?;
         let layout = CallableScopeLayout::decode(&checker.symbols, fields, active)?
             .ok_or_else(|| NodeBindingError::InvalidField("callable scope allocation is missing".into()))?;

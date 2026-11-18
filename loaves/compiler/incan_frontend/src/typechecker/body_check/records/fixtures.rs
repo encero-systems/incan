@@ -458,7 +458,8 @@ pub(crate) fn produce_final_record(
     checker.record_type_param_declaration_spans(&program);
     checker.visibility_point = super::super::VisibilityPoint::Collected;
     checker.prepare_program_body_facts();
-    let positions = Positions::for_decoded_local(&checker, &program, owner, &local, false)?;
+    let nodes = SemanticNodeBindings::new(&checker, &program, owner)?;
+    let positions = Positions::for_decoded_local(&checker, &program, owner, nodes, &local, false)?;
     let restored = restore_pending(&mut checker, &program, &positions, owner, &local)?;
     checker.body_checks.push(BodyCheckInput::Local(restored));
     checker.settle_body_checks(&program);
