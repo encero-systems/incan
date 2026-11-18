@@ -169,3 +169,5 @@ pub from unit_admission import PayloadAdmission, decode_unit_admission, encode_u
 pub from source_value_records import SOURCE_PROFILE, encode_source_text, source_value
 
 pub from namespace_rows import NamespaceAtom, NamespaceEntry, NamespaceField, NamespacePublication, decode_namespace_interface, encode_namespace_interface, publish_namespace_interface
+
+pub from checker_publication import CheckerRecordCounts, checker_report_suffix, encode_checker_counts, decode_checker_counts
