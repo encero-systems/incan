@@ -512,6 +512,9 @@ pub def transform_product_positions(encoded: bytes, positions: WirePositions) ->
         PositionChange.Relocate(_, _, file, line) =>
             root = read_wire_stored_product(value, WirePositions())?.function.span
             mapping.change = PositionChange.Relocate(root.file, root.line, file, line)
+        PositionChange.PlaceAt(nodes, _, _, file, line) =>
+            root = read_wire_stored_product(value, WirePositions(change=PositionChange.Place(nodes)))?.function.span
+            mapping.change = PositionChange.PlaceAt(nodes, root.file, root.line, file, line)
         _ => pass
     stored = read_wire_stored_product(value, mapping)?
     return write_wire(b"G\xc7\x7f$\xca!\x00", schema, wire_stored_product(stored))

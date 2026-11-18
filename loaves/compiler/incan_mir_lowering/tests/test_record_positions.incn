@@ -2,6 +2,8 @@
 
 from std.fs import Path
 from std.tempfile import TemporaryDirectory
+from pub::internal_models.plan_function_records import decode_plan_function_record
+from record_positions import place_positions, positioned_product, relocate_product
 from pub::incan_mir_plan import (
     BasicBlock,
     ExternalFunction,
@@ -38,6 +40,11 @@ pub def test_moved_body_lines_keep_the_plan_product() -> Result[None, str]:
     retain_scalar(products.0, inputs, before, empty_runtime, empty_nominals, before_nodes)?
     stored = only_product(products)?
     after_nodes = [(0, 1), (1, 5), (3, 5)]
+    record = decode_plan_function_record(stored)?
+    placed = place_positions(record.function, after_nodes)?
+    assert positioned_product(record.function, after_nodes, "moved.incn", 20)? == relocate_product(placed, "moved.incn", 20)?
+    missing_nodes: list[tuple[int, int]] = []
+    assert positioned_product(record.function, missing_nodes, "moved.incn", 20).is_err()
     after = positioned("relay", owner, 11, 13)
     assert record_scalar_inputs("checked-meaning", after.name, owner, false, "reads", len(after_nodes)) == inputs
     no_models: list[ProductNominal] = []

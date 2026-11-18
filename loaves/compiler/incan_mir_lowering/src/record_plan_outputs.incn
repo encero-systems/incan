@@ -18,8 +18,8 @@ from pub::incan_mir_plan import (
 )
 from rust::incan_semantics_core::semantic_digest import semantic_digest
 from record_plan_codec import encode_record_plan_products
-from record_positions import place_positions, relocate_product
-from scalar_store import event_positions, event_references, finalize_scalar, report_scalar_refusal
+from record_positions import positioned_product
+from scalar_store import event_positions, event_references, finalized_plan_product, report_scalar_refusal
 from plan_modules import module_page, read_admitted
 from pub::internal_models.plan_module_records import decode_plan_module
 
@@ -125,16 +125,19 @@ def keyed_plan_products(
         resolved = plan_positions(plan, event_references(event)?)?
         nodes = event_positions(event)
         frames = carried_frames(plan, event.product, carried)?
-        mut positions = resolved
-        if not event.admitted:
-            final_record, final_positions = finalize_scalar(products, event.key, function, event.reused, resolved, nodes, frames, event.product)?
-            if final_record != event.product:
-                event.product = final_record
-                write(report.joinpath(event.key + ".event"), encode_lowering_event(event)?)?
-            positions = final_positions
-        product = decode_plan_function_record(event.product)?.function
-        keyed.append(relocate_product(place_positions(product, nodes)?, str(function.span.file), function.span.line)?)
-        references.append(positions)
+        if event.admitted:
+            product = decode_plan_function_record(event.product)?.function
+            keyed.append(positioned_product(product, nodes, str(function.span.file), function.span.line)?)
+            references.append(resolved)
+            continue
+        final_record, final_positions, positioned = finalized_plan_product(
+            products, event.key, function, event.reused, resolved, nodes, frames, event.product,
+        )?
+        if final_record != event.product:
+            event.product = final_record
+            write(report.joinpath(event.key + ".event"), encode_lowering_event(event)?)?
+        keyed.append(positioned)
+        references.append(final_positions)
     return Ok(keyed)
 
 
