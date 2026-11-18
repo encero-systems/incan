@@ -1,0 +1,63 @@
+"""Expose existing standard and platform items by stable Rust names for compiler record models."""
+
+pub from rust::incan_std_primitives::collections import list_get
+pub from rust::incan_std_primitives::crumb import RowAdmission, RowRead, RowRequest, RowWriteRequest
+pub from rust::incan_std_primitives::errors import json_decode_error_string
+pub from rust::incan_std_data::json import JsonValue as NativeJsonValue
+pub from pub::incan_platform.store import BindingLookup, Snapshot, lookup_binding, lookup_members
+pub from std.primitives.crumb import Budget
+pub from std.primitives.crumb.descriptions import Description, DescriptionMode
+pub from std.primitives.crumb.records import RowRecord
+pub from std.primitives.crumb.registrations import KindRegistry
+pub from std.primitives.crumb.row_reader import read_rows
+pub from std.primitives.crumb.row_writer import write_rows
+pub from std.primitives.crumb.types import AbsentPolicy
+pub from std.primitives.crumb.values import Metadata, MetadataEntry, Value, ValueField
+pub from std.primitives.views import MappedFile
+pub from std.primitives.crumb.hashes import description_hash, value_hash
+pub from std.primitives.crumb.metadata_values import encode as encode_metadata
+pub from std.primitives.crumb.values import Projection
+from std.primitives.crumb.encoding_errors import BinaryError
+from std.primitives.crumb.errors import CrumbError
+from std.primitives.crumb.row_reader import RowSet
+from std.primitives.views import MappedView
+
+
+pub def create_budget(octets: int, elements: int, depth: int) -> Result[Budget, CrumbError]:
+    """Call the public Crumb budget constructor from the Rust compiler facet."""
+    return Budget.create(octets, elements, depth)
+
+
+pub def empty_registry(mut budget: Budget) -> Result[KindRegistry, CrumbError]:
+    """Create the empty kind registry used by compiler records."""
+    return KindRegistry.create([], budget)
+
+
+pub def mapped_bytes(data: bytes) -> Result[MappedFile, str]:
+    """Pass owned bytes to the standard immutable mapping constructor."""
+    return MappedFile.owned(data)
+
+
+pub def complete_view(owner: MappedFile) -> Option[MappedView]:
+    """Retain the complete mapped value without making a second byte buffer."""
+    return owner.view(0, owner.len())
+
+
+pub def row_count(rows: RowSet) -> int:
+    """Return the number of rows the reader already admitted."""
+    return rows.len()
+
+
+pub def read_record_at(rows: RowSet, index: int, mut budget: Budget) -> Result[RowRecord, BinaryError]:
+    """Materialize the selected original Crumb row under its shared budget."""
+    return rows.read_record(index, budget)
+
+
+pub def crumb_message(error: CrumbError) -> str:
+    """Return the standard Crumb diagnostic verbatim."""
+    return error.message()
+
+
+pub def binary_message(error: BinaryError) -> str:
+    """Return the standard binary diagnostic verbatim."""
+    return error.message()
