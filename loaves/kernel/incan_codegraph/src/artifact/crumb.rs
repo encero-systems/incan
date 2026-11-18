@@ -61,7 +61,7 @@ fn encode_payload_row_native(
         },
     ]);
     row_write::write_rows(&Rows {
-        dictionary: vec![description],
+        dictionary: vec![description].into(),
         records: vec![Record {
             slot: 0,
             value,
@@ -81,6 +81,7 @@ fn decode_payload_row_native(data: &[u8]) -> Option<(Vec<u8>, String, String, St
     let rows = read_rows(
         data,
         &ReadInputs {
+            encoded_descriptions: None,
             supplied: &[],
             kinds: &[],
             require_sealed: false,
