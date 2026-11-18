@@ -17,6 +17,8 @@ pub(super) fn lower_getter_body(
     facts: &BodyIrLoweringFacts<'_, '_>,
 ) -> Option<bir::Body> {
     let source = property.node.body.as_ref()?;
+    tracing::trace!(target: "incan::invocation", phase = "body-ir", action = "lower", kind = "property",
+        module = facts.module_identity, nominal = owner, owner = %property.node.name, input = ?property.span, "compiler work");
     let checked_receiver = facts.type_info.qualify_semantic_type(receiver_ty.clone());
     let receiver_ty = &checked_receiver;
 
