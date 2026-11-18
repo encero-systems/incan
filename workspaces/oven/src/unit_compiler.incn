@@ -133,8 +133,8 @@ pub def write_selected_records(
 
 pub def checked_body_counts(report: Path) -> Result[CheckedBodyCounts, str]:
     """
-    Read a check's `incan.checked-bodies/1` sidecar: how many top-level function bodies it checked and how many it
-    restored from selected records. A replayed check runs no compiler, writes none, and checked nothing.
+    Read a check's typed counts or its historical public JSON report. A certified report replay runs no compiler,
+    writes no sidecar, and contributes zero physical work.
     """
     if not report.is_file():
         return Ok(CheckedBodyCounts())
