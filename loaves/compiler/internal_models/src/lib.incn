@@ -169,6 +169,7 @@ pub from lowering_events import ADMITTED_DEFINITIONS, admitted_definitions_filen
 
 pub from unit_admission import PayloadAdmission, decode_unit_admission, encode_unit_admission
 
+pub from selection_bindings import encode_binding, read_binding
 pub from source_value_records import SOURCE_PROFILE, encode_source_text, source_value
 
 pub from namespace_rows import NamespaceAtom, NamespaceEntry, NamespaceField, NamespaceIdentity, NamespacePublication, namespace_identity, decode_namespace_interface, encode_namespace_interface, publish_namespace_interface

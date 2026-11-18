@@ -8,6 +8,7 @@ from pub::internal_models import (
     ReadyWork, RecordRoot, checking_basis_key, checking_completion_receipt, decode_demand_page, decode_namespace_order, decode_read_receipt, encode_prepared_inputs,
     encode_ready_work, envelope_key,
 )
+from pub::internal_models.selection_bindings import read_binding
 from pub::internal_models.namespace_order import read_checking_basis
 from pub::internal_models.checker_records import CHECKER_PROFILE
 from pub::internal_models.record_scope import checked_row_request
@@ -99,7 +100,7 @@ pub def prepare_checking(home: str, request: &Prepare) -> Result[Prepared, str]:
                         if current.evidence.semantic_digest != prior.semantic_digest:
                             return Err("checking supplier discovery is stale for " + supplier.key.family)
                         if supplier.key.family == "declaration-slot":
-                            declaration_slots.add(current.value.decode().map_err((_) => "checking declaration slot has no stable identity")?)
+                            declaration_slots.add(read_binding(encode_record_key(supplier.key)?, current.value)?)
                     _ => return Err("checking supplier is unfinished or outside its preparation")
                 reads.append(supplier)
             _ => return Err("checking preparation requires a new compiler selector for exclusion or member evidence")
