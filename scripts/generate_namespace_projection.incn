@@ -1,0 +1,144 @@
+"""Reproduce the native checked-namespace projection from the declared Incan Crumb schema."""
+
+from std.encoding.hex import hexlify
+from std.environ import args
+from std.fs import Path
+from std.hash import sha256
+from check_support import read, repository_root
+
+const HEADER: str = "// Generated from internal_models/namespace_schema.incn by scripts/generate_namespace_projection.incn."
+const PREFIX: str = "incan.compiler.checked-namespace/7/"
+
+
+def label_id(name: str) -> str:
+    return hexlify(sha256.digest(name.encode()))[:12]
+
+
+def hex_literal(source: str, width: int) -> Result[str, str]:
+    if len(source) != width * 4:
+        return Err("unexpected namespace selector width: " + source)
+    mut result = ""
+    for i in range(width):
+        offset = i * 4
+        pair = source[offset + 2:offset + 4]
+        if source[offset:offset + 2] != "\\x" or pair[0] not in "0123456789abcdef" or pair[1] not in "0123456789abcdef":
+            return Err("invalid namespace selector: " + source)
+        result += pair
+    return Ok(result)
+
+
+def scoped_type(name: str) -> str:
+    if name == "AccessMode":
+        return "AccessMode<TypeRef>"
+    if name == "OwnershipContract":
+        return "OwnershipContract<TypeRef, CanonicalIdentityExport>"
+    if name == "ResultDependency":
+        return "ResultDependency<CanonicalIdentityExport>"
+    return name
+
+
+def fields(line: str) -> Result[list[str], str]:
+    mut output: list[str] = []
+    mut selected: set[str] = set()
+    for part in line.split("ModelField(identity=b\"")[1:]:
+        pieces = part.split("\"")
+        if len(pieces) < 6 or pieces[1] != ", name=" or pieces[3] != ", storage=":
+            return Err("unrecognized namespace field: " + part)
+        name = pieces[2].clone()
+        mut label = name.clone()
+        if pieces[5].startswith(", canonical=false)"):
+            label = "checked_namespace.presentation." + name
+        identity = hex_literal(pieces[0], 6)?
+        if identity != label_id(label) or identity in selected:
+            return Err("invalid or repeated namespace field: " + name)
+        selected.add(identity)
+        output.append(name + ": 0x" + identity)
+    return Ok(output)
+
+
+pub def generate(source: str) -> Result[str, str]:
+    mut output = [str(HEADER), ""]
+    mut selected: set[str] = set()
+    mut members: set[str] = set()
+    mut owner = ""
+    mut is_record = false
+    mut tuple_id = ""
+    for raw in source.split("\n"):
+        line = raw.strip()
+        if line.startswith("return model_description(") or line.startswith("return enum_schema("):
+            pieces = line.split("\"")
+            if owner != "" or len(pieces) != 5 or not pieces[3].startswith("checked_namespace."):
+                return Err("unrecognized namespace declaration: " + line)
+            owner = pieces[3][18:]
+            key = hex_literal(pieces[1], 7)?
+            if key != label_id(str(PREFIX) + owner) + "00" or key in selected:
+                return Err("invalid or repeated namespace type selector: " + owner)
+            selected.add(key)
+            members = set()
+            tuple_id = ""
+            is_record = line.startswith("return model_description(")
+            if owner != "ScopeDiscriminant":
+                mut prefix = "sum! { "
+                if is_record:
+                    prefix = "model! { "
+                output.append(prefix + scoped_type(owner) + " {")
+        elif owner != "":
+            if line == "])":
+                if owner == "ScopeDiscriminant":
+                    if tuple_id == "":
+                        return Err("namespace scope requires exactly its positional value")
+                    output.append("tuple_model!(ScopeDiscriminant, " + tuple_id + ");")
+                else:
+                    output.append("} }")
+                output.append("")
+                owner = ""
+            elif is_record:
+                values = fields(line)?
+                if len(values) != 1 or values[0] in members:
+                    return Err("unrecognized or repeated model field in " + owner)
+                members.add(values[0])
+                if owner == "ScopeDiscriminant":
+                    if not values[0].startswith("value: ") or tuple_id != "":
+                        return Err("unexpected namespace scope field")
+                    tuple_id = values[0][7:]
+                else:
+                    output.append("    " + values[0] + ",")
+            else:
+                pieces = line.split("\"")
+                if not line.startswith("variant_schema(b\"") or len(pieces) < 5:
+                    return Err("unrecognized namespace alternative in " + owner)
+                label = pieces[3].clone()
+                tag = hex_literal(pieces[1], 6)?
+                if tag != label_id(label) or tag in members:
+                    return Err("invalid or repeated namespace alternative in " + owner)
+                members.add(tag)
+                payload = fields(line)?
+                mut suffix = ""
+                if len(payload) > 0:
+                    if payload[0].startswith("arg0: "):
+                        for index in range(len(payload)):
+                            if not payload[index].startswith("arg" + str(index) + ": "):
+                                return Err("namespace tuple payload skips a slot in " + owner)
+                        suffix = " (" + ", ".join(payload) + ")"
+                    else:
+                        suffix = " { " + ", ".join(payload) + " }"
+                output.append("    " + label + " = 0x" + tag + suffix + ",")
+    if owner != "" or len(selected) == 0:
+        return Err("incomplete namespace schema")
+    return Ok("\n".join(output))
+
+
+pub def run(root: Path, check: bool) -> Result[None, str]:
+    schema = root.joinpath("loaves/compiler/internal_models/src/namespace_schema.incn")
+    target = root.joinpath("loaves/compiler/incan_frontend/src/typechecker/dependency_interface/checked_namespace/wire/projection.rs")
+    result = generate(read(schema)?)?
+    if target.is_file() and read(target)? == result:
+        return Ok(None)
+    if check:
+        return Err("native checked-namespace declaration projection is stale")
+    return target.write_text(result, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def main() -> Result[None, str]:
+    options = args().map_err((error) => error.message())?
+    return run(repository_root()?, "--check" in options)
