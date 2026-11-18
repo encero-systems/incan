@@ -352,6 +352,32 @@ pub def test_one_module_edit_lowers_only_that_module() -> Result[None, str]:
     return stop_example_engine(binary, store)
 
 
+pub def test_caller_rebuilds_when_its_callee_starts_consuming_a_model() -> Result[None, str]:
+    """A body-only edit changes the callee's native argument from borrowed to owned."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    source = root.joinpath("main.incn")
+    helper = root.joinpath("fs_reader.incn")
+    initial = "pub model Request:\n    pub value: int\n\npub def echo(request: Request) -> Request:\n    return Request(value=request.value)\n"
+    write(helper, initial)?
+    write(source, "from fs_reader import Request, echo\nfrom flag import enabled\n\ndef invoke(value: int) -> int:\n    return echo(Request(value=value)).value\n\ndef main() -> None:\n    if enabled(1):\n        println(invoke(4))\n")?
+    write(root.joinpath("flag.incn"), "pub def enabled(code: int) -> bool:\n    return code == 0 or code == 1\n")?
+    store = root.joinpath("store")
+    _ = lowering_example_run(binary, source, store, "4")?
+    write(helper, initial.replace("return Request(value=request.value)", "return request"))?
+    _ = lowering_example_run(binary, source, store, "4")?
+    executable = root.joinpath("target/incan/release/bin/main")
+    warm = executable.read_bytes().map_err((error) => error.message())?
+    stop_example_engine(binary, store)?
+    root.joinpath("target").remove_tree().map_err((error) => error.message())?
+    cold_store = root.joinpath("cold-store")
+    _ = lowering_example_run(binary, source, cold_store, "4")?
+    cold = executable.read_bytes().map_err((error) => error.message())?
+    assert warm == cold
+    return stop_example_engine(binary, cold_store)
+
+
 pub def test_admitted_module_keeps_its_external_result_payload_layout() -> Result[None, str]:
     """An unchanged file.stat() call still needs the standard PathStat layout after a different module is edited."""
     scratch = scratch_directory()?
