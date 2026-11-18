@@ -572,7 +572,7 @@ def rust_crate(scratch: Path) -> Result[RustCrate, str]:
     dependency = scratch.joinpath("libcore.rlib")
     write(dependency, "core one")?
     record_payload(dependency, fingerprint(["core one"])?)?
-    return Ok(RustCrate(facet=facet, dependency=dependency, ledger=scratch.joinpath("ledger.json")))
+    return Ok(RustCrate(facet=facet, dependency=dependency, ledger=scratch.joinpath("ledger.crumb")))
 
 
 def rust_pass(setup: RustCrate, compiler: str, feature: str) -> Result[Pass, str]:

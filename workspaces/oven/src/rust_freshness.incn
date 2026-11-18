@@ -59,7 +59,7 @@ def observed_library_key(
     text = read(dependencies)?
     paths, variables = dependency_inputs(text)?
     selected = source_paths(project, dependencies, arguments, paths)?
-    mut ledger = load_ledger(directory.joinpath("observations.json"), SETTLE_SECONDS)
+    mut ledger = load_ledger(directory.joinpath("observations.crumb"), SETTLE_SECONDS)
     mut selected_compiler = compiler
     if selected_compiler == "":
         selected_compiler = compiler_fingerprint(toolchain)?

@@ -643,6 +643,12 @@ def test_installed_verification_uses_only_the_clean_checkout() -> Result[None, s
         Err(message) =>
             assert message.contains("path-keyed observations"), message
     observations.unlink().map_err((error) => error.message())?
+    typed = native.joinpath("portable-observations.crumb")
+    typed.write_bytes(b"CRMB").map_err((error) => error.message())?
+    match require_pristine_relocation_inputs(home):
+        Ok(_) => return Err("a shipped Crumb observation cache passed relocation intake")
+        Err(message) => assert message.contains("path-keyed observations"), message
+    typed.unlink().map_err((error) => error.message())?
     match audit_relocation(home, ["/builder"]):
         Ok(_) => return Err("a portable release document retained a builder path")
         Err(message) =>

@@ -20,13 +20,15 @@ from rust::std::fs import Metadata, metadata
 from rust::std::io import ErrorKind
 from rust::std::os::unix::fs import MetadataExt
 from rust::std::time import SystemTime, UNIX_EPOCH
-from std.encoding.hex import hexlify
+from std.encoding.hex import hexlify, unhexlify
 from std.environ import get_optional, get_or
 from std.fs import Path
 from std.hash import sha256
-from std.json import JsonValue, parse
-from json_fields import array, strings, text_field
-from publication import publish
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from pub::internal_models.crumb_rows import ModelField, model_description, required_value
+from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, items, text, tuple_items
+from publication import publish_binary
 from semantic_text import positioned_code
 from pub::incan_platform.trace import Operation
 from jec import begin, record
@@ -34,7 +36,7 @@ from trace_adapter import reason, relay as relay_observations
 
 # How old a file's last change must be before its metadata can vouch for its bytes.
 pub const SETTLE_SECONDS: int = 2
-const LEDGER_SCHEMA: str = "incan.oven.observations/1"
+const OBSERVATION_LEDGER: bytes = b"obsled\x00"
 const NANOSECONDS: int = 1000000000
 # The file type bits of a mode (`S_IFMT`), and the types of a regular file and a directory.
 const FILE_TYPE: int = 61440
@@ -219,25 +221,27 @@ pub model Ledger:
         2. Each file row and each directory row is read in full.
         """
         # 1. Only a ledger of this version, for the same kind of files, can vouch for the files it names.
-        text = self.location.read_text("utf-8", "strict").map_err((error) => f"cannot {error.message()}")?
-        document = parse(text).map_err((error) => error.message())?
-        if text_of(document, "schema")? != LEDGER_SCHEMA:
-            return Err("not a ledger of this version")
-        if text_of(document, "extension")? != self.extension:
-            return Err("a ledger of other files")
-        # 2. Every row is read in full, so a ledger with one malformed row retains nothing.
-        for row in rows(document, "files")?:
-            self.files[text_of(row, "path")?] = FileEntry(
-                stamp=text_of(row, "stamp")?,
-                digest=text_of(row, "digest")?,
-                code=text_of(row, "code").unwrap_or(""),
-            )
-        for row in rows(document, "directories")?:
-            self.directories[text_of(row, "path")?] = DirectoryEntry(
-                stamp=text_of(row, "stamp")?,
-                files=names(row, "files")?,
-                directories=names(row, "directories")?,
-            )
+        encoded = self.location.read_bytes().map_err((error) => error.message())?
+        fields = decode_graph_row(encoded, OBSERVATION_LEDGER, ledger_description(), 3)?
+        if text(fields[1].value)? != self.extension:
+            return Err("observation ledger selects a different source extension")
+        # Stage both inventories before replacing any part of the old state.
+        mut directories: Dict[str, DirectoryEntry] = {}
+        mut files: Dict[str, FileEntry] = {}
+        for row in items(fields[0].value)?:
+            parts = tuple_items(row, 4)?
+            path = text(parts[0])?
+            if path in directories:
+                return Err("duplicate observed directory")
+            directories[path] = DirectoryEntry(stamp=text(parts[1])?, files=read_names(parts[2])?, directories=read_names(parts[3])?)
+        for row in items(fields[2].value)?:
+            parts = tuple_items(row, 4)?
+            path = text(parts[0])?
+            if path in files or path in directories:
+                return Err("duplicate observed file")
+            files[path] = FileEntry(stamp=text(parts[1])?, digest=read_digest(parts[2], false)?, code=read_digest(parts[3], true)?)
+        self.directories = directories
+        self.files = files
         return Ok(None)
 
     pub def save(mut self) -> Result[None, str]:
@@ -252,29 +256,33 @@ pub model Ledger:
         if not self.changed:
             return Ok(None)
         # 2. The ledger forgets files and directories that no longer exist.
-        document = self.document()
+        encoded = self.encode()?
         # 3. A reader sees the old ledger or the new one, never half of either.
         parent = self.location.parent()
         parent.mkdir(true, true).map_err((error) => f"{parent.0}: {error.message()}")?
-        publish(self.location, document.to_json().map_err((error) => error.message())?)?
+        publish_binary(self.location, encoded)?
         self.changed = false
         return Ok(None)
 
-    def document(self) -> JsonValue:
-        """The ledger as the document it is saved as: the rows of the files and directories that still exist."""
-        mut files: list[JsonValue] = []
+    def encode(self) -> Result[bytes, str]:
+        """Encode observations in path order, excluding removed entries. An empty code digest means unrequested."""
+        mut files: list[Value] = []
         for path in sorted([key for key in self.files.keys()]):
             if Path(path).is_file():
-                files.append(file_row(path, self.files[path]))
-        mut directories: list[JsonValue] = []
+                file = self.files[path]
+                raw = unhexlify(file.digest).map_err((error) => error.message())?
+                code = unhexlify(file.code).map_err((error) => error.message())?
+                files.append(Value.Tuple([Value.Text(path), Value.Text(file.stamp), Value.Binary(raw), Value.Binary(code)]))
+        mut directories: list[Value] = []
         for path in sorted([key for key in self.directories.keys()]):
             if Path(path).is_dir():
-                directories.append(directory_row(path, self.directories[path]))
-        return JsonValue.object(
-            {"schema": JsonValue.string(LEDGER_SCHEMA), "files": JsonValue.array(files), "directories": JsonValue.array(
-                directories,
-            ), "extension": JsonValue.string(self.extension)},
-        )
+                directory = self.directories[path]
+                directories.append(Value.Tuple([Value.Text(path), Value.Text(directory.stamp),
+                    Value.List([Value.Text(name) for name in directory.files]), Value.List([Value.Text(name) for name in directory.directories])]))
+        return encode_graph_row(OBSERVATION_LEDGER, ledger_description(), [
+            required_value(b"dirs__", Value.List(directories)), required_value(b"extend", Value.Text(self.extension)),
+            required_value(b"files_", Value.List(files)),
+        ])
 
 
 pub def entered(directory: Path) -> bool:
@@ -313,27 +321,29 @@ pub def children(directory: Path, extension: str) -> Result[Children, str]:
     return Ok(Children(files=sorted(files), directories=sorted(directories), checked=checked))
 
 
-def file_row(path: str, entry: FileEntry) -> JsonValue:
-    """One file of the saved document."""
-    return JsonValue.object(
-        {"path": JsonValue.string(path), "stamp": JsonValue.string(entry.stamp), "digest": JsonValue.string(entry.digest), "code": JsonValue.string(
-            entry.code,
-        )},
-    )
+def ledger_description() -> Description:
+    """One local observation cache. Files bind both content digests, and directories retain their immediate children."""
+    return model_description(OBSERVATION_LEDGER, "incan.oven.observations/2", [
+        ModelField(identity=b"dirs__", name="directories", storage="list<tuple<string,string,list<string>,list<string>>>"),
+        ModelField(identity=b"extend", name="extension", storage="string"),
+        ModelField(identity=b"files_", name="files", storage="list<tuple<string,string,binary,binary>>"),
+    ])
 
 
-def directory_row(path: str, entry: DirectoryEntry) -> JsonValue:
-    """One directory of the saved document."""
-    return JsonValue.object(
-        {"path": JsonValue.string(path), "stamp": JsonValue.string(entry.stamp), "files": texts(entry.files), "directories": texts(
-            entry.directories,
-        )},
-    )
+def read_names(value: Value) -> Result[list[str], str]:
+    mut names: list[str] = []
+    for item in items(value)?:
+        names.append(text(item)?)
+    return Ok(names)
 
 
-def texts(items: list[str]) -> JsonValue:
-    """A JSON array of strings."""
-    return JsonValue.array([JsonValue.string(item) for item in items])
+def read_digest(value: Value, optional: bool) -> Result[str, str]:
+    match value:
+        Value.Binary(raw) =>
+            if len(raw) == 32 or (optional and len(raw) == 0):
+                return Ok(hexlify(raw))
+        _ => pass
+    return Err("invalid digest in observation ledger")
 
 
 pub def file_digest(path: Path) -> Result[str, str]:
@@ -496,30 +506,6 @@ pub def load_ledger(location: Path, settle: int, extension: str = ".incn") -> Le
     match loaded.read():
         Ok(_) => return loaded
         Err(_) => return empty
-
-
-def rows(document: JsonValue, name: str) -> Result[list[JsonValue], str]:
-    """The rows of one table of a ledger document."""
-    match document.get(name):
-        Some(table) => return array(table, [name]).map_err(refusal)
-        None => return Err(f"no `{name}`")
-
-
-def names(row: JsonValue, name: str) -> Result[list[str], str]:
-    """The names listed under one key of a ledger row."""
-    match row.get(name):
-        Some(listed) => return strings(listed, [name]).map_err(refusal)
-        None => return Err(f"no `{name}`")
-
-
-def text_of(row: JsonValue, name: str) -> Result[str, str]:
-    """A string field of a ledger document or row."""
-    return text_field(row, name, []).map_err(refusal)
-
-
-def refusal(failed: list[str]) -> str:
-    """The field path that failed, as text."""
-    return ".".join(failed)
 
 
 pub def trace_boundary(boundary: str) -> None:
