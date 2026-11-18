@@ -1,7 +1,7 @@
 """A nested editable declaration keeps its typed result, anchors and identities across the graph boundary."""
 
 from std.hash import sha256
-from pub::internal_models.namespace_rows import NamespaceAtom, NamespaceField, NamespaceEntry, decode_namespace_interface, encode_namespace_interface, publish_namespace_interface
+from pub::internal_models.namespace_rows import NamespaceAtom, NamespaceField, NamespaceEntry, prepare_namespace_reader, decode_prepared_namespace, identify_prepared_namespace, decode_namespace_interface, encode_namespace_interface, publish_namespace_interface
 
 
 def identity(name: str) -> u64:
@@ -62,6 +62,14 @@ pub def test_checked_namespace_reads_typed_function_and_rejects_old_json() -> Re
     assert changed.semantic_interface != first.semantic_interface
     decoded = decode_namespace_interface(encoded)?
     assert encode_namespace_interface(decoded)? == encoded
+    reader = prepare_namespace_reader()?
+    rebound = decode_prepared_namespace(reader, encoded)?
+    assert encode_namespace_interface(rebound)? == encoded
+    selected = identify_prepared_namespace(reader, encoded, 7u32)?
+    assert selected.name == "provider" and selected.path == ["provider"]
+    assert identify_prepared_namespace(reader, encoded, 6u32).is_err()
+    assert identify_prepared_namespace(reader, encoded[:len(encoded) - 1], 7u32).is_err()
+    assert decode_prepared_namespace(reader, b'{"schema":6}').is_err()
     assert decode_namespace_interface(b'{"schema":6,"module_name":"provider"}').is_err()
     assert decode_namespace_interface(encoded[:len(encoded) - 1]).is_err()
     assert encode_namespace_interface(namespace(NamespaceAtom.Text("List[str]"))).is_err()

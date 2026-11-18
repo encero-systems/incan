@@ -9,6 +9,14 @@ use sha2::{Digest, Sha256};
 
 pub(super) struct CheckedNamespaceCrumb;
 
+/// The schema is compiler-owned and immutable for this binary. Each record read still has a fresh codec budget.
+static NAMESPACE_READER: LazyLock<Result<internal_models::PreparedNamespaceReader, String>> =
+    LazyLock::new(internal_models::prepare_namespace_reader);
+
+fn namespace_reader() -> Result<&'static internal_models::PreparedNamespaceReader, String> {
+    NAMESPACE_READER.as_ref().map_err(Clone::clone)
+}
+
 pub(super) fn publish(
     interface: &incan_frontend::typechecker::CheckedNamespaceInterface,
 ) -> Result<internal_models::NamespacePublication, String> {
@@ -85,7 +93,7 @@ pub(super) fn admit(
     if let Some(hit) = published(&digest) {
         return Ok(hit);
     }
-    let root = internal_models::namespace_identity(&bytes, CheckedNamespaceInterface::SCHEMA)?;
+    let root = internal_models::identify_prepared_namespace(namespace_reader()?, &bytes, CheckedNamespaceInterface::SCHEMA)?;
     Ok(Arc::new(EncodedInterface {
         name: root.name,
         path: root.path,
@@ -112,7 +120,7 @@ impl NamespaceCrumb for CheckedNamespaceCrumb {
         if encoded.len() > 64 * 1024 * 1024 {
             return Err("checked namespace exceeds its byte limit".into());
         }
-        to_cell(internal_models::decode_namespace_interface(&encoded.to_vec())?)
+        to_cell(internal_models::decode_prepared_namespace(namespace_reader()?, &encoded.to_vec())?)
     }
 }
 

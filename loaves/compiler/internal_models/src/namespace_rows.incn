@@ -1,6 +1,10 @@
 """The native frontend's typed checked namespace projection, framed by the public Crumb row codec."""
 
+from rust::incan_std_primitives::crumb import RowAdmission, RowRequest
 from rust::std::primitive import f64 as RustF64
+from std.primitives.crumb.budget import Budget
+from std.primitives.crumb.metadata_values import encode
+from std.primitives.crumb.row_values import build_value, refusal, settle
 from std.primitives.text import copy_frozen_bytes
 from std.primitives.crumb.hashes import value_hash
 from std.primitives.crumb.values import Projection, IntegerValue, MapEntry, Value, ValueField
@@ -129,6 +133,88 @@ def atom(value: Value) -> Result[NamespaceAtom, str]:
         Value.Enum(identity, items) => return Ok(NamespaceAtom.Alternative(selector_number(identity)?, read_fields(items)?))
         _ => pass
     return Err("invalid logical cell in a checked namespace")
+
+
+pub model PreparedNamespaceReader:
+    """The immutable D-encoded compiler descriptions shared by namespace reads in one driver process."""
+
+    dictionary: list[bytes]
+
+    def admit(self, encoded: bytes, mut budget: Budget) -> Result[RowAdmission, str]:
+        """Authenticate the complete bounded envelope against the compiler's closed reference dictionary."""
+        if len(encoded) > 67108864:
+            return Err("checked namespace exceeds its byte limit")
+        mut request = RowRequest.new(encoded, false, true)
+        for entry in self.dictionary:
+            request.supply(entry)
+        remaining_bytes, remaining_elements = budget.codec_allowance()
+        request.allow(remaining_bytes, remaining_elements, budget.depth_allowance())
+        row = request.admit()
+        budget.charge_bytes(row.bytes_charged).map_err((error) => error.message())?
+        budget.charge_elements(row.elements_charged).map_err((error) => error.message())?
+        if not row.admitted():
+            return Err(refusal(row.category, row.offset, row.field, row.variant, row.cause).message())
+        if row.records != 1 or row.key(0) != namespace_root() or row.description_count() != len(self.dictionary):
+            return Err("checked namespace requires one root and its complete declaration dictionary")
+        for index in range(row.description_count()):
+            descriptor_bytes, descriptor_elements = budget.codec_allowance()
+            descriptor = row.description(index, descriptor_bytes, descriptor_elements, budget.depth_allowance())
+            settle(descriptor, budget).map_err((error) => error.message())?
+            if descriptor.inline or descriptor.supplied < 0:
+                return Err("checked namespace requires referenced compiler descriptions")
+        return Ok(row)
+
+    @staticmethod
+    pub def create() -> Result[Self, str]:
+        mut boundary = operation_budget()?
+        mut dictionary: list[bytes] = []
+        for description in namespace_descriptions():
+            dictionary.append(encode(description.metadata, boundary).map_err((error) => error.message())?)
+        return Ok(PreparedNamespaceReader(dictionary=dictionary))
+
+
+    pub def decode(self, encoded: bytes) -> Result[NamespaceAtom, str]:
+        mut budget = graph_read_budget()?
+        row = self.admit(encoded, budget)?
+        remaining_bytes, remaining_elements = budget.codec_allowance()
+        decoded = row.read_record(0, remaining_bytes, remaining_elements, budget.depth_allowance())
+        settle(decoded, budget).map_err((error) => error.message())?
+        return atom(build_value(decoded).map_err((error) => error.message())?)
+
+    pub def identity(self, encoded: bytes, schema: u32) -> Result[NamespaceIdentity, str]:
+        mut budget = graph_read_budget()?
+        row = self.admit(encoded, budget)?
+        name = text(namespace_field(row, copy_frozen_bytes(NAMESPACE_MODULE_NAME), budget)?)?
+        version = namespace_field(row, copy_frozen_bytes(NAMESPACE_SCHEMA), budget)?
+        match version:
+            Value.Integer(IntegerValue.Unsigned(number)) =>
+                if number != schema.saturating_resize[u128]():
+                    return Err("unsupported checked namespace schema")
+            _ => return Err("invalid checked namespace schema")
+        segments = items(namespace_field(row, copy_frozen_bytes(NAMESPACE_MODULE_PATH), budget)?)?
+        mut path: list[str] = []
+        for segment in segments:
+            path.append(text(segment)?)
+        return Ok(NamespaceIdentity(name=name, path=path))
+
+
+pub def prepare_namespace_reader() -> Result[PreparedNamespaceReader, str]:
+    return PreparedNamespaceReader.create()
+
+
+pub def decode_prepared_namespace(reader: &PreparedNamespaceReader, encoded: bytes) -> Result[NamespaceAtom, str]:
+    return reader.decode(encoded)
+
+
+pub def identify_prepared_namespace(reader: &PreparedNamespaceReader, encoded: bytes, schema: u32) -> Result[NamespaceIdentity, str]:
+    return reader.identity(encoded, schema)
+
+
+def namespace_field(row: &RowAdmission, selector: bytes, mut budget: Budget) -> Result[Value, str]:
+    remaining_bytes, remaining_elements = budget.codec_allowance()
+    field = row.read_field(0, selector, remaining_bytes, remaining_elements, budget.depth_allowance())
+    settle(field, budget).map_err((error) => error.message())?
+    return build_value(field).map_err((error) => error.message())
 
 
 pub def encode_namespace_interface(root: NamespaceAtom) -> Result[bytes, str]:
