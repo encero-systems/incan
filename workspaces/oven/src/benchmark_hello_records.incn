@@ -106,7 +106,8 @@ def compare(hello: Path, output: Path) -> Result[None, str]:
     mut expected: Dict[str, int] = {}
     mut census = Census()
     mut runtime: set[str] = set()
-    for profile, names in profiles.items():
+    for profile in sorted([key for key in profiles.keys()]):
+        names = profiles[profile]
         roster = "\n".join(sorted([name for name in names]))
         selector = f"loaf/{profile}/@compiler/capabilities/" + name_hash(roster)
         records = selected.facets.get(selector, [])
