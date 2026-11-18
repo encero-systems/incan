@@ -596,8 +596,11 @@ pub def validate_seed_bridge(source: str, bridge: str, parents: list[str], paths
     """Require one direct-child seed bridge whose complete diff is the authenticated compatibility surface."""
     if parents != [source]:
         return Err(f"--seed-bridge {bridge} must have qualified source {source} as its only parent")
-    if sorted(paths) != sorted([path for path in SEED_BRIDGE_SOURCES]):
-        return Err(f"--seed-bridge changes unsupported paths: {", ".join(sorted(paths))}")
+    signatures = [path for path in SEED_BRIDGE_SOURCES]
+    reader = "loaves/compiler/internal_models/src/namespace_rows.incn"
+    changed = sorted(paths)
+    if changed != sorted(signatures) and changed != sorted(signatures + [reader]):
+        return Err(f"--seed-bridge changes unsupported paths: {", ".join(changed)}")
     return Ok(None)
 
 

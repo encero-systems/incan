@@ -239,6 +239,16 @@ def test_seed_bridge_is_one_direct_child_with_only_the_authenticated_sources() -
         "loaves/compiler/internal_models/src/compiled_body_rows.incn",
     ]
     validate_seed_bridge(SHA, bridge, [SHA], paths)?
+    reader = "loaves/compiler/internal_models/src/namespace_rows.incn"
+    validate_seed_bridge(SHA, bridge, [SHA], paths + [reader])?
+    match validate_seed_bridge(SHA, bridge, [SHA], [reader]):
+        Ok(_) => return Err("a namespace bridge without the required checker inputs was accepted")
+        Err(message) =>
+            assert "changes unsupported paths" in message
+    match validate_seed_bridge(SHA, bridge, [SHA], paths + [reader, "scripts/release.incn"]):
+        Ok(_) => return Err("a namespace bridge with an unrelated change was accepted")
+        Err(message) =>
+            assert "changes unsupported paths" in message
     match validate_seed_bridge(SHA, bridge, [bridge], paths):
         Ok(_) => return Err("a bridge whose parent differs from the qualified source was accepted")
         Err(message) =>
