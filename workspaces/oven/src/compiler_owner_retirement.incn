@@ -1,0 +1,95 @@
+"""Withdraw current output slots for free functions whose source was removed or whose checked signature was replaced."""
+
+from pub::incan_platform.store import Snapshot, Transaction, get
+from pub::internal_models import CompiledBodyOutputs
+from pub::internal_models.checker_records import CHECKER_PROFILE
+from pub::internal_models.records import ReadWitness, RecordKey, encode_record_key
+from pub::internal_models.source_value_records import source_value
+from compiler_body_keys import IDENTITY_PROFILE
+from compiler_graph_records import OutputSlots, decode_record_key, family_outputs, readers_of, retire_output, reusable_evaluation
+from compiler_plan_values import LOWERING_PROFILE
+from compiler_source_projection import SourceProjection, owner_source_key
+
+
+pub def retire_missing_functions(
+    selected: Snapshot, mut transaction: Transaction, origin: str,
+    changes: &list[RecordKey], projections: &Dict[str, SourceProjection], outputs: &CompiledBodyOutputs,
+) -> Result[None, str]:
+    """Use changed source slots and the compiler's checked free-function census in the same source module."""
+    mut changed: Dict[str, list[RecordKey]] = {}
+    for key in changes:
+        if key.origin == origin and key.family in ["owner-census", "declaration-signature"]:
+            if key.identity not in changed:
+                changed[key.identity] = []
+            changed[key.identity].append(key)
+    if len(changed) == 0:
+        return Ok(None)
+    mut retired: set[str] = set()
+    for namespace in outputs.namespaces:
+        module = namespace.module
+        if module not in changed:
+            continue
+        changes_here = changed[module]
+        projection = projections[module]
+        census = projection.census.key
+        previous = match get(selected, encode_record_key(census)?).map_err((error) => error.message())?:
+            Some(value) => source_value(census, value)?.decode().map_err((_) => "invalid previous owner census")?
+            None => continue
+        prior_names = set(previous.split("\n"))
+        current: Dict[str, int] = name_counts([owner.key.facet for owner in projection.owners])
+        mut touched = set([key.facet for key in changes_here if key.family == "declaration-signature"])
+        if census in changes_here:
+            old_counts = name_counts(previous.split("\n"))
+            for name in old_counts.keys():
+                if old_counts[name] > current.get(name, 0):
+                    touched.add(name)
+        mut rows = [value.name for value in outputs.values if value.module == module and value.identity.startswith("function:")]
+        mut known = set([value.identity for value in outputs.values if value.module == module])
+        mut ambiguous: set[str] = set()
+        for fallback in outputs.fallbacks:
+            if fallback.module == module:
+                match fallback.identity:
+                    Some(identity) =>
+                        known.add(identity)
+                        if identity.startswith("function:"):
+                            rows.append(fallback.name)
+                    None => ambiguous.add(fallback.name)
+        reported = name_counts(rows)
+        for name in sorted([facet for facet in touched]):
+            # A present spelling needs every overload accounted for. A partial report or unidentified fallback
+            # cannot certify that a prior identity disappeared. Kind-qualified facets belong to other producers.
+            if name == "" or ":" in name or name not in prior_names or name in ambiguous:
+                continue
+            if current.get(name, 0) != reported.get(name, 0):
+                continue
+            source = owner_source_key(origin, module, name)
+            for reader in readers_of(selected, [source], CHECKER_PROFILE)?:
+                if reader.family != "local" or reader.origin != origin or reader.identity_profile != IDENTITY_PROFILE:
+                    continue
+                if not reader.identity.startswith("function:") or reader.identity in known:
+                    continue
+                # Earlier receipt profiles could also read another owner's source. Retire only an owner whose
+                # admitted local receipt names this source as its sole owner-source input.
+                if let Some(prior) = reusable_evaluation(selected, reader, CHECKER_PROFILE)?:
+                    mut owners: list[RecordKey] = []
+                    for witness in prior.receipt.witnesses:
+                        if let ReadWitness.Found(read, _) = witness:
+                            if read.request.key.family == "owner-source":
+                                owners.append(read.request.key)
+                    if owners == [source]:
+                        retired.add(reader.identity)
+    if len(retired) == 0:
+        return Ok(None)
+    slots = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, included=Some(sorted([owner for owner in retired])))
+    for family, profile in [("local", CHECKER_PROFILE), ("final", CHECKER_PROFILE), ("body-ir", CHECKER_PROFILE),
+                            ("lowering-demand", LOWERING_PROFILE), ("plan-function", LOWERING_PROFILE)]:
+        for output in family_outputs(selected, family, profile, Some(slots))?:
+            retire_output(transaction, profile, decode_record_key(output)?)?
+    return Ok(None)
+
+
+def name_counts(names: list[str]) -> Dict[str, int]:
+    mut counts: Dict[str, int] = {}
+    for name in names:
+        counts[name] = counts.get(name, 0) + 1
+    return counts

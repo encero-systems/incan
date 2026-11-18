@@ -391,17 +391,16 @@ pub def supersede_outputs(selected: Snapshot, mut transaction: Transaction) -> R
     if selected.index == "":
         return Ok(None)
     mut writing: Dict[str, int] = {}
-    mut slots: list[str] = []
+    mut slots: set[str] = set()
     mut position = -1
     for write in transaction.writes:
         position += 1
-        if write.kind == KIND_TOMBSTONE:
-            continue
         key = write.key
-        if key.startswith("incan.engine.output/2\t") and key not in writing and len(key.split("\t")) == 7:
-            slots.append(key)
-        writing[key] = position
-    for slot in sorted(slots):
+        if key.startswith("incan.engine.output/2\t") and len(key.split("\t")) == 7:
+            slots.add(key)
+        if write.kind != KIND_TOMBSTONE:
+            writing[key] = position
+    for slot in sorted([key for key in slots]):
         # An earlier Oven keyed a slot's outputs by their context as well; the slot's own entry replaces them.
         for old in keys_with_prefix(selected, slot + "\t").map_err((error) => error.message())?:
             stage_delete(transaction, old)

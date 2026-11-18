@@ -420,6 +420,7 @@ pub def obtain(
             plan_modules.records,
             checker_counts.restored_body_ir,
             covered,
+            projected.keys,
         )?
         request_transaction = bodies.transaction
         body_evaluations = bodies.checking_evaluations

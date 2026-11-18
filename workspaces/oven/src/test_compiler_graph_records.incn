@@ -53,7 +53,8 @@ from pub::internal_models import (
 )
 from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily
 from compiler_namespace_products import interface_key, member_key, member_plan_inputs, prepare_namespace_products
-from compiler_graph_records import PublishedEvaluation, publish_evaluation, reusable_evaluation
+from compiler_graph_records import OutputSlots, PublishedEvaluation, family_outputs, publish_evaluation, readers_of, reusable_evaluation, supersede_outputs
+from compiler_owner_retirement import retire_missing_functions
 from compiler_prepared_records import PreparedBodyRecordSource
 from compiler_record_envelopes import RankedActivation, RankedCheckingSweep, persist_activation
 from compiler_body_keys import body_key, namespace_key
@@ -1595,4 +1596,49 @@ def verify_documentation_changes_no_record(
         before_owner = projected_owner(project_source("package", "src/value.incn", pair[0])?, "name")?
         after_owner = projected_owner(project_source("package", "src/value.incn", pair[1])?, "name")?
         assert before_owner.digest() != after_owner.digest(), before_owner.text
+    return Ok(None)
+
+
+pub def test_removed_and_replaced_functions_leave_only_their_historical_graph_slots() -> Result[None, str]:
+    origin = "app"
+    module = "main.incn"
+    before = project_source(origin, module, "def gone():\n    pass\ndef same():\n    pass\ndef unknown():\n    pass\n")?
+    after = project_source(origin, module, "def same(value: int):\n    pass\ndef unknown(value: int):\n    pass\n")?
+    empty = store_snapshot(memory_root()).map_err((error) => error.message())?
+    mut graph = publish_source_projection(empty, before)?.snapshot
+    rank = ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=0)
+    products = [("local", CHECKER_PROFILE), ("final", CHECKER_PROFILE), ("body-ir", CHECKER_PROFILE),
+                ("lowering-demand", LOWERING_PROFILE), ("plan-function", LOWERING_PROFILE)]
+    for row in before.owners:
+        owner = "function:main::" + row.key.facet + "|old"
+        for family, profile in products:
+            scope = ReadScope(snapshot=graph.digest, profile=profile)
+            mut source = PreparedBodyRecordSource.open(scope)
+            source.add(encode_record_key(row.key)?, row.encoded()?)
+            output = body_key(family, origin, owner, "owned", "prior")
+            receipt = source.receipt(scope, output, [prepared_product_request(row.key)])?
+            graph = publish_evaluation(graph, owner + family, rank, b"prior-value", receipt)?.snapshot
+    current = CompiledBodyOutputs(
+        namespaces=[CompiledNamespaceValue(module=module, interface=b"iface", body_ir=b"ir", dependencies=[], lowering_inputs=[])],
+        values=[CompiledBodyValue(module=module, name="same", identity="function:main::same|new",
+            declaration=b"d", local=b"l", final=b"f", body_ir=b"ir")],
+        fallbacks=[CompiledBodyFallback(module=module, name="unknown", identity=None, reason="no stable identity")],
+    )
+    changes = [after.census.key, signature_record(after.owners[0]).key, signature_record(after.owners[1]).key]
+    mut next = begin(graph)
+    retire_missing_functions(graph, next, origin, changes, {module: after}, current)?
+    supersede_outputs(graph, next)?
+    edited = commit(next).map_err((error) => error.message())?
+    for row in before.owners:
+        owner = "function:main::" + row.key.facet + "|old"
+        scope = Some(OutputSlots(origin=origin, identity_profile="incan.stable-declaration/1", included=Some([owner])))
+        for family, profile in products:
+            assert len(family_outputs(graph, family, profile, scope)?) == 1
+            selected = family_outputs(edited, family, profile, scope)?
+            if row.key.facet == "unknown":
+                assert len(selected) == 1
+            else:
+                assert len(selected) == 0
+                assert len(readers_of(edited, [row.key], profile)?) == 0
+                assert get(edited, encode_record_key(body_key(family, origin, owner, "owned", "prior"))?).map_err((error) => error.message())? == Some(b"prior-value")
     return Ok(None)
