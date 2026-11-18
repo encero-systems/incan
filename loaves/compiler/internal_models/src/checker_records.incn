@@ -38,7 +38,7 @@ const CALLS_GRAPH_NAMESPACE_SELECTOR: bytes = b"grnam3\x00"
 const GRAPH_NAMESPACE_SELECTOR: bytes = b"grnam4\x00"
 
 
-pub def encode_record(record: Borrowed[CheckedRecord]) -> Result[bytes, CodecFault]:
+pub def encode_record(record: &CheckedRecord) -> Result[bytes, CodecFault]:
     """Encode one checked owner as one bounded Crumb row of the checker-record model."""
     logical = record_value(record)?
     return encode_rows(checker_description(), [RowRecord(key=CHECKER_SELECTOR, value=logical)], MAX_CHECKER_ROW_BYTES).map_err(
@@ -78,7 +78,7 @@ pub def semantic_digest(record: CheckedRecord) -> Result[str, CodecFault]:
     return Ok("sha256:" + hexlify(sha256.digest(preimage)))
 
 
-def record_value(record: Borrowed[CheckedRecord]) -> Result[Value, CodecFault]:
+def record_value(record: &CheckedRecord) -> Result[Value, CodecFault]:
     """Project one validated checker record into its exact Crumb logical model."""
     validate(record)?
     mut flattened: list[Value] = []
@@ -239,7 +239,7 @@ def graph_namespace_description(version: int = 4) -> Description:
     return model_description(GRAPH_NAMESPACE_SELECTOR, "incan.checker-graph-namespace/4", fields)
 
 
-def validate(record: Borrowed[CheckedRecord]) -> Result[None, CodecFault]:
+def validate(record: &CheckedRecord) -> Result[None, CodecFault]:
     """Reject unknown capabilities and duplicate/unsorted fields; an empty supported family remains explicit."""
     if record.profile != CHECKER_PROFILE:
         return Err(CodecFault.ProfileMismatch)
