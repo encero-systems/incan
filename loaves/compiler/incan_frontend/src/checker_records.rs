@@ -10,7 +10,7 @@ use incan_semantics_core::stable_identity::{StableDeclarationContext, StableDecl
 pub use crate::typechecker::canonical_nodes::NodeBindingError as RecordAdapterFault;
 
 /// Exact canonical checker profile carried by graph body values and any cache capable of supplying their owners.
-pub const GRAPH_BODY_RECORD_PROFILE: &str = "incan.checker-free-functions/17";
+pub const GRAPH_BODY_RECORD_PROFILE: &str = "incan.checker-free-functions/18";
 
 /// One graph-admitted body pair keyed by the compiler-owned stable declaration identity encoded in both records.
 #[derive(Debug, Clone)]
@@ -1345,6 +1345,70 @@ mod tests {
                 fresh.type_info().references.resolved_identities
             );
         }
+        Ok(())
+    }
+
+    /// A graph peer restores all body-internal scopes in source order, including empty branches, before a later owner.
+    #[test]
+    fn restored_nested_scopes_match_fresh_bindings_in_later_owners() -> Result<(), Box<dyn std::error::Error>> {
+        let source = program(concat!(
+            "def count(items: list[int]) -> int:\n",
+            "    mut total = 0\n",
+            "    for item in items:\n",
+            "        if item > 0:\n",
+            "            kept = item\n",
+            "            total += kept\n",
+            "        else:\n",
+            "            pass\n",
+            "    return total\n\n",
+            "def next_value(number: int) -> int:\n    return number + 1\n",
+        ))?;
+        let module = vec!["main".to_owned()];
+        let mut cold = TypeChecker::new();
+        cold.set_current_module_path(Some(module.clone()));
+        cold.check_program(&source).map_err(|errors| format!("{errors:?}"))?;
+        let checked = checked_owner_record_outputs(&source, &cold, &module)?;
+        let mut warm = TypeChecker::new();
+        warm.set_current_module_path(Some(module));
+        let Some(CheckedOwnerRecordOutput::Value(owner)) = checked
+            .iter()
+            .find(|v| matches!(v,CheckedOwnerRecordOutput::Value(o) if o.name=="count"))
+        else {
+            return Err(format!("scope owner produced no checked rows: {checked:?}").into());
+        };
+        let selected = selected_graph_record(owner.clone())?;
+        let allocation = selected
+            .local
+            .iter()
+            .find(|row| row[0] == "scope")
+            .ok_or("no lexical scope tree")?;
+        assert!(allocation[3].parse::<usize>()? >= 3);
+        warm.set_graph_body_records(super::GraphBodyRecords::new(vec![selected.clone()])?);
+        warm.check_program(&source).map_err(|errors| format!("{errors:?}"))?;
+        assert_eq!(warm.check_work().function_bodies, 1);
+        assert_eq!(warm.symbols.next_scope_index(), cold.symbols.next_scope_index());
+        assert_eq!(
+            warm.type_info().references.resolved_identities,
+            cold.type_info().references.resolved_identities
+        );
+        assert_eq!(
+            warm.type_info().references.resolved_write_identities,
+            cold.type_info().references.resolved_write_identities
+        );
+
+        let mut bad = selected;
+        let layout = bad
+            .local
+            .iter_mut()
+            .find(|row| row[0] == "scope")
+            .ok_or("missing scope tree")?;
+        layout[4] = "99".into();
+        let mut refused = TypeChecker::new();
+        refused.set_current_module_path(Some(vec!["main".into()]));
+        refused.set_graph_body_records(super::GraphBodyRecords::new(vec![bad])?);
+        refused.check_program(&source).map_err(|errors| format!("{errors:?}"))?;
+        assert_eq!(refused.check_work().function_bodies, 2);
+        assert_eq!(refused.symbols.next_scope_index(), cold.symbols.next_scope_index());
         Ok(())
     }
 

@@ -25,6 +25,7 @@ impl TypeChecker {
             declaration_record_refusals: std::collections::BTreeMap::new(),
             selected_declaration_records: std::collections::BTreeMap::new(),
             produced_local_records: std::collections::BTreeMap::new(),
+            callable_scope_layouts: std::collections::BTreeMap::new(),
             local_record_refusals: std::collections::BTreeMap::new(),
             selected_local_records: std::collections::BTreeMap::new(),
             selected_final_records: std::collections::BTreeMap::new(),

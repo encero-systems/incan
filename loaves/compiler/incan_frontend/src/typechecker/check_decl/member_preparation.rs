@@ -284,7 +284,7 @@ impl TypeChecker {
         if let Some(body) = &method.body
             && self.graph_body_records.ranked_owner().is_none()
         {
-            let reused = program.is_some_and(|program| match self.reuse_graph_body_record(program, span, body) {
+            let reused = program.is_some_and(|program| match self.reuse_graph_body_record(program, span) {
                 Ok(reused) => reused,
                 Err(error) => {
                     tracing::debug!(target: "incan::invocation", ?span, ?error, "graph method selection refused");

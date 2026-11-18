@@ -8,7 +8,7 @@ from std.primitives.crumb.records import RowRecord
 from std.primitives.crumb.values import Projection, Value
 from std.primitives.text import copy_frozen_bytes
 pub from checker_field_grammar import CanonicalField, CodecFault
-from checker_field_grammar import decimal, full_digest, validate_field
+from checker_field_grammar import allocated_scope_index, decimal, full_digest, validate_field
 pub from checker_record_models import (
     CheckedFamily,
     CheckedRecord,
@@ -25,8 +25,8 @@ from crumb_rows import ModelField, decode_rows, encode_rows, model_description, 
 from graph_crumb_fields import decode_graph_row, encode_graph_row
 from record_scope import MAX_CHECKER_ROW_BYTES
 
-pub const CHECKER_SCHEMA: str = "incan.checker-fields/10"
-pub const CHECKER_PROFILE: str = "incan.checker-free-functions/17"
+pub const CHECKER_SCHEMA: str = "incan.checker-fields/11"
+pub const CHECKER_PROFILE: str = "incan.checker-free-functions/18"
 const MAX_FIELDS: int = 4096
 const CHECKER_SELECTOR: bytes = b"checkr\x00"
 const GRAPH_BODY_SELECTOR: bytes = b"grbody\x00"
@@ -238,6 +238,8 @@ def validate(record: Borrowed[CheckedRecord]) -> Result[None, CodecFault]:
         return Err(CodecFault.Malformed)
     if len(record.fields) > MAX_FIELDS:
         return Err(CodecFault.Limit)
+    mut allocation_count = -1
+    mut largest_binding_scope = -1
     mut previous_family = ""
     mut previous_node = ""
     mut previous_selector = ""
@@ -248,6 +250,7 @@ def validate(record: Borrowed[CheckedRecord]) -> Result[None, CodecFault]:
             "type-identity",
             "identity-context",
             "binding",
+            "scope",
             "binding-type",
             "reference",
             "write",
@@ -284,9 +287,19 @@ def validate(record: Borrowed[CheckedRecord]) -> Result[None, CodecFault]:
         ):
             return Err(CodecFault.Malformed)
         validate_field(field)?
+        if field.family == "scope":
+            if record.family == CheckedFamily.Declaration:
+                return Err(CodecFault.Malformed)
+            allocation_count = allocated_scope_index(field)?
+        elif field.family == "binding" and len(field.values) == 2:
+            ordinal = allocated_scope_index(field)?
+            if ordinal > largest_binding_scope:
+                largest_binding_scope = ordinal
         previous_family = field.family
         previous_node = field.node
         previous_selector = field.selector
+    if largest_binding_scope > allocation_count:
+        return Err(CodecFault.Malformed)
     return Ok(None)
 
 

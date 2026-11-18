@@ -458,7 +458,7 @@ pub(crate) fn produce_final_record(
     checker.record_type_param_declaration_spans(&program);
     checker.visibility_point = super::super::VisibilityPoint::Collected;
     checker.prepare_program_body_facts();
-    let positions = Positions::for_decoded_local(&checker, &program, owner, &local, None)?;
+    let positions = Positions::for_decoded_local(&checker, &program, owner, &local, false)?;
     let restored = restore_pending(&mut checker, &program, &positions, owner, &local)?;
     checker.body_checks.push(BodyCheckInput::Local(restored));
     checker.settle_body_checks(&program);
@@ -547,13 +547,21 @@ pub(super) fn local_fields(positions: &Positions, local: &BodyLocal) -> Result<F
         fields.push(row);
     }
     inputs::project(positions, local, &mut fields)?;
+    if let Some(layout) = &positions.scopes {
+        fields.push(layout.row());
+    }
     for canonical in local.nested.values() {
-        fields.push(vec![
+        let mut binding = vec![
             "binding".into(),
             positions.nodes.anchor(span_of(canonical))?.path,
             "declaration".into(),
             positions.identity(canonical)?,
-        ]);
+        ];
+        if let Some(layout) = &positions.scopes {
+            let scope = canonical.scope_discriminant.ok_or(NodeBindingError::MissingOwner)?;
+            binding.push(layout.binding_ordinal(scope.0)?);
+        }
+        fields.push(binding);
     }
     mutation::project(positions, &local.mutation, &mut fields)?;
     Ok(fields)
