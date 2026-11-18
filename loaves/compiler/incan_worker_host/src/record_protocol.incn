@@ -3,6 +3,14 @@
 from rust::std::string import String as RustString
 from std.json import JsonValue, parse
 
+from std.primitives.crumb.values import Value
+from pub::internal_models.crumb_rows import required_value
+from pub::internal_models.graph_crumb_fields import integer as signed_value, number, text
+from worker_packets import (
+    PREFIX, COMPILE, READY, COMPLETE, PREPARE, PREPARED, NEED, EVALUATE, PRODUCED, REFUSAL, FAULT,
+    Packet, is_key, read_packet, write_packet, value_of,
+)
+
 pub const RECORD_SCHEMA: str = "incan.compiler-worker/2"
 const MAX_RANK: int = 4294967295
 
@@ -105,6 +113,18 @@ pub enum RecordAdmission:
 
 pub def admit_record(payload: bytes, generation: str) -> RecordAdmission:
     """Admit only Prepare or Evaluate for this generation; replies sent as requests are protocol faults."""
+    if generation.startswith(PREFIX):
+        match read_packet(payload):
+            Err(_) => return RecordAdmission.NotRecordProtocol
+            Ok(packet) =>
+                if is_key(packet.key, COMPILE) or is_key(packet.key, READY) or is_key(packet.key, COMPLETE):
+                    return RecordAdmission.NotRecordProtocol
+                if packet.generation != generation:
+                    return RecordAdmission.Incompatible
+                match from_packet(packet):
+                    Ok(RecordMessage.Prepare(value)) => return RecordAdmission.Admitted(RecordMessage.Prepare(value))
+                    Ok(RecordMessage.Evaluate(value)) => return RecordAdmission.Admitted(RecordMessage.Evaluate(value))
+                    _ => return RecordAdmission.ProtocolFault
     text = RustString.from_utf8(payload)
     match text:
         Err(_) => return RecordAdmission.NotRecordProtocol
@@ -184,6 +204,11 @@ pub def encode_record_message(message: RecordMessage, generation: str) -> bytes:
 
 pub def decode_record_message(payload: bytes, generation: str) -> Result[RecordMessage, str]:
     """Decode only an exact version-two record message for this worker generation."""
+    if generation.startswith(PREFIX):
+        packet = read_packet(payload)?
+        if packet.generation != generation:
+            return Err("compiler worker generation or record protocol mismatch")
+        return from_packet(packet)
     text = RustString.from_utf8(payload).map_err((_) => "the record frame is not UTF-8")?
     document = parse(str(text)).map_err((error) => error.message())?
     if required_text(document, "schema")? != RECORD_SCHEMA or required_text(document, "generation")? != generation:
@@ -300,3 +325,101 @@ def bounded_integer(document: JsonValue, name: str) -> Result[int, str]:
                     return Err(f"`{name}` exceeds u32")
                 None => return Err(f"`{name}` must be an integer")
         None => return Err(f"missing `{name}`")
+
+
+pub def record_frame(message: RecordMessage, generation: str) -> Result[bytes, str]:
+    """Write a typed record activation, or the scheme established by an older installed peer."""
+    if not generation.startswith(PREFIX):
+        return Ok(encode_record_message(message, generation))
+    match message:
+        RecordMessage.Prepare(val) =>
+            return write_packet(PREPARE, generation, [
+                required_value(b"demand", Value.Text(val.demand_root)),
+                required_value(b"profil", Value.Text(val.producer_profile)),
+                required_value(b"snap__", Value.Text(val.snapshot)),
+                required_value(b"stage_", Value.Text(val.stage)),
+            ])
+        RecordMessage.Prepared(val) =>
+            return write_packet(PREPARED, generation, [
+                required_value(b"prepar", Value.Text(val.prepared_root)),
+            ])
+        RecordMessage.NeedPrerequisite(val) =>
+            return write_packet(NEED, generation, [
+                required_value(b"keys__", Value.Text(val.keys_root)),
+                required_value(b"rank__", signed_value(val.earlier_rank)),
+            ])
+        RecordMessage.Evaluate(val) =>
+            return write_packet(EVALUATE, generation, [
+                required_value(b"cancel", signed_value(val.cancellation_generation)),
+                required_value(b"prepar", Value.Text(val.prepared_root)),
+                required_value(b"reserv", Value.Text(val.reservation)),
+                required_value(b"snap__", Value.Text(val.snapshot)),
+                required_value(b"work__", Value.Text(val.work_root)),
+            ])
+        RecordMessage.Produced(val) =>
+            return write_packet(PRODUCED, generation, [
+                required_value(b"counts", Value.Text(val.counter_root)),
+                required_value(b"diag__", Value.Text(val.diagnostic_root)),
+                required_value(b"staged", Value.Text(val.staged_root)),
+                required_value(b"witnes", Value.Text(val.witness_root)),
+            ])
+        RecordMessage.SemanticRefusal(val) =>
+            return write_packet(REFUSAL, generation, [
+                required_value(b"diag__", Value.Text(val.diagnostic_root)),
+                required_value(b"witnes", Value.Text(val.witness_root)),
+            ])
+        RecordMessage.CompilerFault(val) =>
+            return write_packet(FAULT, generation, [
+                required_value(b"fault_", Value.Text(val.fault_root)),
+            ])
+
+
+def rank(value: Value) -> Result[int, str]:
+    selected = number(value)?
+    if selected < 0 or selected > MAX_RANK:
+        return Err("compiler worker integer exceeds u32")
+    return Ok(selected)
+
+
+def from_packet(packet: Packet) -> Result[RecordMessage, str]:
+    if is_key(packet.key, PREPARE):
+        return Ok(RecordMessage.Prepare(Prepare(
+            demand_root=text(value_of(packet, b"demand")?)?,
+            producer_profile=text(value_of(packet, b"profil")?)?,
+            snapshot=text(value_of(packet, b"snap__")?)?,
+            stage=text(value_of(packet, b"stage_")?)?,
+        )))
+    if is_key(packet.key, PREPARED):
+        return Ok(RecordMessage.Prepared(Prepared(
+            prepared_root=text(value_of(packet, b"prepar")?)?,
+        )))
+    if is_key(packet.key, NEED):
+        return Ok(RecordMessage.NeedPrerequisite(NeedPrerequisite(
+            keys_root=text(value_of(packet, b"keys__")?)?,
+            earlier_rank=rank(value_of(packet, b"rank__")?)?,
+        )))
+    if is_key(packet.key, EVALUATE):
+        return Ok(RecordMessage.Evaluate(Evaluate(
+            cancellation_generation=rank(value_of(packet, b"cancel")?)?,
+            prepared_root=text(value_of(packet, b"prepar")?)?,
+            reservation=text(value_of(packet, b"reserv")?)?,
+            snapshot=text(value_of(packet, b"snap__")?)?,
+            work_root=text(value_of(packet, b"work__")?)?,
+        )))
+    if is_key(packet.key, PRODUCED):
+        return Ok(RecordMessage.Produced(Produced(
+            counter_root=text(value_of(packet, b"counts")?)?,
+            diagnostic_root=text(value_of(packet, b"diag__")?)?,
+            staged_root=text(value_of(packet, b"staged")?)?,
+            witness_root=text(value_of(packet, b"witnes")?)?,
+        )))
+    if is_key(packet.key, REFUSAL):
+        return Ok(RecordMessage.SemanticRefusal(SemanticRefusal(
+            diagnostic_root=text(value_of(packet, b"diag__")?)?,
+            witness_root=text(value_of(packet, b"witnes")?)?,
+        )))
+    if is_key(packet.key, FAULT):
+        return Ok(RecordMessage.CompilerFault(CompilerFault(
+            fault_root=text(value_of(packet, b"fault_")?)?,
+        )))
+    return Err("unexpected compiler worker record packet")

@@ -34,6 +34,10 @@ from protocol import (
     Reply,
     WorkerCommand,
     completion,
+    compile_frame,
+    read_completion,
+    ready_frame,
+    read_ready,
     encode_ready,
     encode_reply,
     handoff,
@@ -54,6 +58,7 @@ from record_protocol import (
     accept_record_reply,
     decode_record_message,
     encode_record_message,
+    record_frame,
 )
 
 const GENERATION: str = "0123456789abcdef"
@@ -313,22 +318,27 @@ pub def test_projected_owner_source_preserves_the_module_boundary() -> Result[No
 
 
 pub def test_record_activations_use_the_worker_version_two_protocol() -> Result[None, str]:
-    """Every request and reply body round-trips only under the record worker schema."""
+    """Both the existing JSON generation and its typed successor preserve all seven record variants."""
+    record_variants(GENERATION)?
+    return record_variants("cw3-0123456789abcdef")
+
+
+def record_variants(generation: str) -> Result[None, str]:
     prepare = RecordMessage.Prepare(Prepare(stage="declaration", snapshot="s", demand_root="d", producer_profile="p"))
-    prepared = decode_record_message(encode_record_message(prepare, GENERATION), GENERATION)?
+    prepared = decode_record_message(record_frame(prepare, generation)?, generation)?
     match prepared:
         RecordMessage.Prepare(value) =>
             assert value.stage == "declaration" and value.snapshot == "s"
         _ => return Err("worker record Prepare changed family")
 
     prerequisite = RecordMessage.NeedPrerequisite(NeedPrerequisite(keys_root="keys", earlier_rank=7))
-    match decode_record_message(encode_record_message(prerequisite, GENERATION), GENERATION)?:
+    match decode_record_message(record_frame(prerequisite, generation)?, generation)?:
         RecordMessage.NeedPrerequisite(value) =>
             assert value.keys_root == "keys" and value.earlier_rank == 7
         _ => return Err("worker record NeedPrerequisite changed family")
 
     prepared_reply = RecordMessage.Prepared(Prepared(prepared_root="prepared"))
-    match decode_record_message(encode_record_message(prepared_reply, GENERATION), GENERATION)?:
+    match decode_record_message(record_frame(prepared_reply, generation)?, generation)?:
         RecordMessage.Prepared(value) => assert value.prepared_root == "prepared"
         _ => return Err("worker record Prepared changed family")
 
@@ -341,7 +351,7 @@ pub def test_record_activations_use_the_worker_version_two_protocol() -> Result[
             cancellation_generation=9,
         ),
     )
-    match decode_record_message(encode_record_message(evaluate, GENERATION), GENERATION)?:
+    match decode_record_message(record_frame(evaluate, generation)?, generation)?:
         RecordMessage.Evaluate(value) =>
             assert value.work_root == "work" and value.cancellation_generation == 9
         _ => return Err("worker record Evaluate changed family")
@@ -349,7 +359,7 @@ pub def test_record_activations_use_the_worker_version_two_protocol() -> Result[
     produced = RecordMessage.Produced(
         Produced(staged_root="staged", witness_root="w", diagnostic_root="d", counter_root="c"),
     )
-    match decode_record_message(encode_record_message(produced, GENERATION), GENERATION)?:
+    match decode_record_message(record_frame(produced, generation)?, generation)?:
         RecordMessage.Produced(value) =>
             assert value.staged_root == "staged" and value.witness_root == "w"
         _ => return Err("worker record Produced changed family")
@@ -357,18 +367,18 @@ pub def test_record_activations_use_the_worker_version_two_protocol() -> Result[
     refusal = RecordMessage.SemanticRefusal(
         SemanticRefusal(diagnostic_root="diagnostics", witness_root="witnesses"),
     )
-    match decode_record_message(encode_record_message(refusal, GENERATION), GENERATION)?:
+    match decode_record_message(record_frame(refusal, generation)?, generation)?:
         RecordMessage.SemanticRefusal(value) =>
             assert value.diagnostic_root == "diagnostics" and value.witness_root == "witnesses"
         _ => return Err("worker record SemanticRefusal changed family")
 
     fault = RecordMessage.CompilerFault(CompilerFault(fault_root="fault"))
-    match decode_record_message(encode_record_message(fault, GENERATION), GENERATION)?:
+    match decode_record_message(record_frame(fault, generation)?, generation)?:
         RecordMessage.CompilerFault(value) => assert value.fault_root == "fault"
         _ => return Err("worker record CompilerFault changed family")
 
-    wrong = f"{{\"generation\":\"{GENERATION}\",\"kind\":\"prepare\",\"schema\":\"incan.engine/1\"}}"
-    match decode_record_message(wrong.encode("utf-8"), GENERATION):
+    wrong = f"{{\"generation\":\"{generation}\",\"kind\":\"prepare\",\"schema\":\"incan.engine/1\"}}"
+    match decode_record_message(wrong.encode("utf-8"), generation):
         Err(_) => pass
         Ok(_) => return Err("the worker admitted an engine protocol record body")
     assert RECORD_SCHEMA == "incan.compiler-worker/2"
@@ -859,4 +869,48 @@ pub def test_an_unrestored_process_serves_nothing_more() -> Result[None, str]:
     assert is_format(served(second_host)?)
     assert ended(second_host)
     assert retired(reply(open)?)
+    return Ok(None)
+
+
+pub def test_current_compiler_and_record_activations_share_typed_socket_frames() -> Result[None, str]:
+    generation = "cw3-0123456789abcdef"
+    socket = socket_path("typed")
+    mut configured = settings(socket, 200, 128, None)
+    configured.generation = generation
+    mut host = host_for(configured)?
+    mut compiling = dial(socket)?
+    compiling.wait_at_most(5)
+    compile_request = compile_frame(generation, ["--check", "/p/unit.json", "/p/sysroot"], "/p", "/p/out", "/p/err", false)?
+    assert compile_request[:4] == b"CRMB"
+    compiling.send(compile_request)?
+    command = served(host)?
+    assert command.cwd == "/p" and command.stdout == "/p/out" and command.arguments == ["/p/unit.json", "/p/sysroot"]
+    complete(host, ActivationOutcome.Exited(3), -1)
+    result = compiling.receive()?
+    assert result[:4] == b"CRMB" and read_completion(result, generation)?.status == 3
+    assert read_completion(result, "cw3-another").is_err()
+
+    mut preparing = dial(socket)?
+    preparing.wait_at_most(5)
+    request = RecordMessage.Prepare(Prepare(stage="final", snapshot="s", demand_root="d", producer_profile="p"))
+    packet = record_frame(request, generation)?
+    assert packet[:4] == b"CRMB"
+    preparing.send(packet)?
+    match served_record(host)?:
+        RecordMessage.Prepare(prepared) => assert prepared.stage == "final" and prepared.snapshot == "s"
+        _ => return Err("typed preparation was not selected")
+    complete_record(host, RecordMessage.Prepared(Prepared(prepared_root="prepared")), -1)
+    reply = preparing.receive()?
+    match decode_record_message(reply, generation)?:
+        RecordMessage.Prepared(value) => assert value.prepared_root == "prepared"
+        _ => return Err("unexpected typed record reply")
+    assert decode_record_message(reply, "cw3-another").is_err()
+    assert decode_record_message(reply[:12], generation).is_err()
+    startup = ready_frame(generation, 42)?
+    assert startup[:4] == b"CRMB"
+    read_ready(startup, generation, 42)?
+    assert read_ready(startup, generation, 43).is_err()
+    invalid_rank = RecordMessage.NeedPrerequisite(NeedPrerequisite(keys_root="keys", earlier_rank=-1))
+    assert decode_record_message(record_frame(invalid_rank, generation)?, generation).is_err()
+    discard(socket)
     return Ok(None)

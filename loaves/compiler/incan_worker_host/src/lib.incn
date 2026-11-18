@@ -1,6 +1,6 @@
 """
-The compiler worker host: compile commands over `incan.compiler-worker/1`, record activations over version 2, and the
-lifecycle of one worker process.
+The compiler worker host serves compilation and record activations over version-three Crumb packets. Older clients
+select the version-one compile and version-two record protocols for their worker generation.
 
 The compiler's executable entry asks the host for one request at a time, runs it, and gives the host the outcome:
 

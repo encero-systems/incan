@@ -17,19 +17,19 @@ from std.fs.locking import FileLock
 from pub::incan_platform.ipc import Connection, Listener, listen
 from files import discard_file, open_stream
 from home import owners_dir
-from pub::incan_worker_host.protocol import SCHEMA, completion, handoff, ready, request_document, retired
+from pub::incan_worker_host.protocol import SCHEMA, compile_frame, read_completion, read_ready
+from pub::incan_worker_host.worker_packets import PREFIX
 from pub::incan_worker_host.record_protocol import (
     RECORD_SCHEMA,
     RecordMessage,
     accept_record_reply,
     decode_record_message,
-    encode_record_message,
+    record_frame,
 )
 from observation import trace, trace_boundary
 from owner_client import status_code
 from owner_endpoint import Endpoint, attach, bindable, prepare_directory, socket_prefix
 from decimal_text import digits_only
-from owner_protocol import receive_document, send_document
 from toolchain import Toolchain
 from request_directory import working_directory
 from unit_freshness import compiler_fingerprint, fingerprint
@@ -132,7 +132,7 @@ pub def activate_record(toolchain: Toolchain, request: RecordMessage, snapshot_a
     connected_socket, generation, _slot = found_connection?
     mut connected = connected_socket
     clock = begin()
-    connected.send(encode_record_message(request, generation))?
+    connected.send(record_frame(request, generation)?)?
     payload = connected.receive()?
     reply = decode_record_message(payload, generation)?
     accepted = accept_record_reply(request, reply)?
@@ -233,7 +233,7 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
             # 2. Once submission begins, failure cannot silently run the same compilation twice.
             clock = begin()
             directory = working_directory()?
-            document = request_document(
+            frame = compile_frame(
                 generation,
                 arguments,
                 directory,
@@ -241,20 +241,22 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
                 f"{toolchain.console}.err",
                 toolchain.retire_worker,
             )
-            send_document(connected, document)?
+            connected.send(frame?)?
             # 3. A completed request grants only its actual exit code, never a retained checking result.
-            reply = receive_document(connected)?
+            reply = read_completion(connected.receive()?, generation)?
             record(Operation.DriverRequest, invocation_key(arguments), clock)
             # 4. Retirement is an ordinary completion: the worker withdrew its endpoint before it replied.
-            if retired(reply):
+            if reply.retired:
                 trace("compiler worker: retired after its request")
             elif toolchain.retire_worker:
                 return Err("compiler worker did not honor the requested activation lifetime")
             # 5. The handoff is this request's native compilation, so it runs exactly once, after the worker's heap is gone.
-            if let Some(path) = handoff(reply):
+            if reply.reason != "":
+                return Err(reply.reason)
+            if reply.handoff != "":
                 trace("compiler worker: rustc handed to a fresh process")
-                return Ok(Some(rustc_from_handoff(toolchain, path)?))
-            return Ok(Some(status_code(completion(reply)?)))
+                return Ok(Some(rustc_from_handoff(toolchain, reply.handoff)?))
+            return Ok(Some(status_code(reply.status)))
 
 
 def rustc_from_handoff(toolchain: Toolchain, path: str) -> Result[i32, str]:
@@ -421,7 +423,10 @@ pub def generation_for(toolchain: Toolchain, compiler: str) -> Result[str, str]:
         selected.append(f"compiler-records {pin.digest}")
         if pin.directory != "":
             selected.append(f"compiler-directory {pin.directory}")
-    return Ok(fingerprint(selected + environment()?)?[0:16])
+    identity = fingerprint(selected + environment()?)?[0:16]
+    if toolchain.worker_protocol_crumb:
+        return Ok(PREFIX + identity)
+    return Ok(identity)
 
 
 def environment() -> Result[list[str], str]:
@@ -482,8 +487,7 @@ def await_ready(mut listener: Listener, mut child: Child, endpoint: Endpoint) ->
             Some(waiting) =>
                 mut connected = waiting
                 connected.wait_at_most(5)
-                document = receive_document(connected)?
-                ready(document, endpoint.generation, int(child.id()))?
+                read_ready(connected.receive()?, endpoint.generation, int(child.id()))?
                 trace(f"compiler worker: started pid {child.id()}")
                 return Ok(None)
             None => pass
