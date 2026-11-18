@@ -352,6 +352,36 @@ pub def test_one_module_edit_lowers_only_that_module() -> Result[None, str]:
     return stop_example_engine(binary, store)
 
 
+pub def test_admitted_module_keeps_its_external_result_payload_layout() -> Result[None, str]:
+    """An unchanged file.stat() call still needs the standard PathStat layout after a different module is edited."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    source = root.joinpath("main.incn")
+    sample = root.joinpath("example.txt")
+    write(sample, "four")?
+    path_literal = JsonValue.string(sample.0).to_json().map_err((error) => error.message())?
+    write(root.joinpath("fs_reader.incn"), "from std.fs import Path\n\npub def byte_count(path: str) -> Result[int, str]:\n    return Path(path).stat().map_err((error) => error.message())?.size().map_err((error) => error.message())\n")?
+    leaf = root.joinpath("flag.incn")
+    initial = "pub def enabled(code: int) -> bool:\n    return code == 0 or code == 1\n"
+    write(leaf, initial)?
+    write(source, "from fs_reader import byte_count\nfrom flag import enabled\n\ndef main() -> None:\n    if enabled(1):\n        println(byte_count(" + path_literal + ").unwrap_or(-1))\n")?
+    warm_store = root.joinpath("store")
+    _ = lowering_example_run(binary, source, warm_store, "4")?
+    write(leaf, initial.replace("code == 0 or code == 1", "code in [0, 1]"))?
+    edited = lowering_example_run(binary, source, warm_store, "4")?
+    assert proof_count(edited, "body_evaluations")? == 1
+    executable = root.joinpath("target/incan/release/bin/main")
+    warm = executable.read_bytes().map_err((error) => error.message())?
+    stop_example_engine(binary, warm_store)?
+    root.joinpath("target").remove_tree().map_err((error) => error.message())?
+    cold_store = root.joinpath("cold-store")
+    cold = lowering_example_run(binary, source, cold_store, "4")?
+    assert proof_count(cold, "body_evaluations")? == 3
+    assert executable.read_bytes().map_err((error) => error.message())? == warm
+    return stop_example_engine(binary, cold_store)
+
+
 pub def test_unchanged_import_cycle_is_admitted_as_one_component() -> Result[None, str]:
     """An unrelated edit restores both peers. An exposed change makes both peers run through the checker again."""
     scratch = scratch_directory()?
