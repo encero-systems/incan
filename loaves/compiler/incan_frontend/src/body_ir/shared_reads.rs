@@ -439,10 +439,11 @@ fn retain_function_item_adapter(
     };
     let adapts_inferred_shared = args.iter().enumerate().any(|(index, _)| {
         call_parameter(callee, index, signatures, candidates).is_some_and(|parameter| {
-            parameter.access(candidates) == incan_semantics_core::IncanInputAccess::InferredShared
+            let settled_access = parameter.access(candidates);
+            settled_access == incan_semantics_core::IncanInputAccess::InferredShared
                 && params
                     .get(index)
-                    .is_some_and(|adapter| adapter.input_access != parameter.access)
+                    .is_some_and(|adapter| adapter.input_access != settled_access)
         })
     });
     if adapts_inferred_shared {
