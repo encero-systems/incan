@@ -11,7 +11,7 @@ from frozen_inputs import Document
 from page_values import read_value, write_value
 from payload_types import InstalledPayload, PayloadAdmission
 
-pub const PROFILE: str = "incan.installation-page/24"
+pub const PROFILE: str = "incan.installation-page/25"
 
 
 pub model StandardManifest:
@@ -62,7 +62,7 @@ pub def decode(view: MappedView) -> Result[Installation, str]:
     """Refuse unknown versions, truncated or duplicate rows, malformed identities and trailing bytes."""
     mut reader = Reader(view=view)
     profile = reader.text()?
-    if profile not in [PROFILE, "incan.installation-page/23", "incan.installation-page/22"]:
+    if profile not in [PROFILE, "incan.installation-page/24", "incan.installation-page/23", "incan.installation-page/22"]:
         return Err("unsupported installation page version")
     toolchain = read_toolchain(reader, profile)?
     mut manifests: list[StandardManifest] = []
@@ -168,11 +168,11 @@ def read_toolchain(mut reader: Reader, profile: str) -> Result[InstalledCompiler
         default_sdk_identity=reader.text()?,
         rustc_observation=reader.text()?,
         default_trusted_publishers=reader.texts()?,
-        compiler_records=read_compiler_record_pin(reader)?,
+        compiler_records=read_compiler_record_pin(reader, profile)?,
         compiler_facts=reader.texts()?,
         driver_observation=reader.text()?,
     )
-    if profile == PROFILE:
+    if profile in [PROFILE, "incan.installation-page/24"]:
         toolchain.search_index_crumb = reader.count(1)? == 1
     return Ok(toolchain)
 
@@ -212,6 +212,7 @@ def write_toolchain(buffer: _BytesIO, toolchain: InstalledCompiler) -> Result[No
             put_number(buffer, 1)?
             put_text(buffer, pin.root)?
             put_text(buffer, pin.digest)?
+            put_text(buffer, pin.directory)?
     put_texts(buffer, toolchain.compiler_facts)?
     put_text(buffer, toolchain.driver_observation)?
     if toolchain.search_index_crumb:
@@ -219,13 +220,18 @@ def write_toolchain(buffer: _BytesIO, toolchain: InstalledCompiler) -> Result[No
     return put_number(buffer, 0)
 
 
-def read_compiler_record_pin(mut reader: Reader) -> Result[Option[CompilerRecordPin], str]:
+def read_compiler_record_pin(mut reader: Reader, profile: str) -> Result[Option[CompilerRecordPin], str]:
     """Read the optional installed record authority; any non-Boolean discriminator is malformed."""
     present = reader.count(1)?
     if present == 0:
         return Ok(None)
+    if present != 1:
+        return Err("installation page has an invalid compiler-record discriminator")
     root = reader.text()?
     digest = reader.text()?
     if root == "" or len(digest) != 64:
         return Err("installation page has an invalid compiler-record pin")
-    return Ok(Some(CompilerRecordPin(root=root, digest=digest)))
+    mut directory = ""
+    if profile == PROFILE:
+        directory = reader.text()?
+    return Ok(Some(CompilerRecordPin(root=root, digest=digest, directory=directory)))
