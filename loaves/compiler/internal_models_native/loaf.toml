@@ -1,0 +1,10 @@
+[project]
+name = "internal_models_native"
+version = "0.6.0-dev.9"
+description = "Side-by-side Rust implementation of the compiler record contracts"
+private = true
+
+[rust]
+name = "internal_models_native"
+type = "lib"
+edition = "2024"
