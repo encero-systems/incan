@@ -56,12 +56,16 @@ from compiler_namespace_products import interface_key, member_key, member_plan_i
 from compiler_graph_records import PublishedEvaluation, publish_evaluation, reusable_evaluation
 from compiler_prepared_records import PreparedBodyRecordSource
 from compiler_record_envelopes import RankedActivation, RankedCheckingSweep, persist_activation
-from compiler_body_keys import namespace_key
+from compiler_body_keys import body_key, namespace_key
+from compiler_plan_values import LOWERING_PROFILE, select_plan_modules
+from compiler_plan_modules import plan_module_key
+from pub::internal_models.plan_module_records import PlanModuleFunction, PlanModuleValue, encode_plan_module
 from compiler_owner_records import encode_body_frame, read_body_frame, read_eligibility
 from compiler_body_values import (
     invalid_namespace_modules,
     encode_body_inventory,
     select_body_inventory_except,
+    select_namespace_inventory_except,
     invalid_body_owners,
     publish_body_values,
     select_body_inventory,
@@ -87,7 +91,6 @@ from pub::internal_models.graph_crumb_fields import KEY_TYPE, encode_graph_row
 from std.fs import Path
 from std.io import BytesIO
 from compiler_body_fallbacks import fallback_reasons
-from compiler_plan_values import LOWERING_PROFILE
 from compiler_source_projection import project_source, publish_source_projection, signature_record
 from compiler_projection_cache import cached_editable_dependency_signature_record, editable_dependency_projection_key
 from publication import publish_binary
@@ -99,6 +102,79 @@ from rust::incan_semantics_core import (
     SemanticSourceTargetKind as RustDeclarationKind,
     encode_incan_symbol_identity,
 )
+
+
+pub def test_certified_module_owner_overlap_and_partial_cycle() -> Result[None, str]:
+    """An exact plan witness and a complete namespace cycle are both required to omit individual checker pages."""
+    origin = "coverage"
+    left = "src/left.incn"
+    right = "src/right.incn"
+    order = certified_namespace_order(origin, {left: [right], right: [left]})?
+    selected = store_snapshot(memory_root()).map_err((error) => error.message())?
+    mut graph = commit(put(begin(selected), "incan.compiler.namespace-order\t" + order[left].evidence, order[left].certificate)).map_err((error) => error.message())?
+    rank = ProducerRank(namespace=0, stage=ProducerStage.Signature, dependency=0)
+    for file in [left, right]:
+        scope = ReadScope(snapshot=graph.digest, profile=CHECKER_PROFILE)
+        source = PreparedBodyRecordSource.open(scope)
+        receipt = source.receipt(scope, namespace_key(origin, file), [], order[file].evidence)?
+        graph = publish_evaluation(graph, file, rank, b"selected namespace page", receipt)?.snapshot
+    namespaces = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, [])?
+    assert len(namespaces.pages) == 2 and namespaces.complete == set([left, right])
+    incomplete = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, [right])?
+    assert len(incomplete.pages) == 1 and len(incomplete.complete) == 0
+    owner = "function:left::read|signature"
+    token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    function = PlanModuleFunction(identity=owner, symbol="native-left-read", function="read", key=token, event=b"event")
+    member = PlanModuleFunction(identity="native-method", symbol="native-method", function="method", key=token, event=b"event")
+    extra = PlanModuleFunction(identity="unwitnessed", symbol="native-unwitnessed", function="other", key=token, event=b"event")
+    value = encode_plan_module(PlanModuleValue(module="left", functions=[function, member, extra])).map_err((_) => "plan")?
+    scope = ReadScope(snapshot=graph.digest, profile=LOWERING_PROFILE)
+    mut staged_source = PreparedBodyRecordSource.open(scope)
+    mut reads: list[RecordRequest] = []
+    for product in [function, member]:
+        key = body_key("plan-function", origin, product.identity, "body:" + product.function, token)
+        encoded = encode_record_key(key)?
+        graph = commit(put(begin(graph), encoded, b"product")).map_err((error) => error.message())?
+        staged_source.add(encoded, b"product")
+        reads.append(prepared_product_request(key))
+    receipt = staged_source.receipt(scope, plan_module_key(origin, left, value), reads)?
+    graph = publish_evaluation(graph, "plan", rank, value, receipt)?.snapshot
+    selection = select_plan_modules(graph, origin, [], [], namespaces.complete)?
+    assert selection.covered.module_owners[left] == [owner]
+    assert selection.covered.symbols["native-left-read"] == owner
+    assert len(selection.covered.owners) == 1
+    assert len(select_plan_modules(graph, origin, [], [owner], namespaces.complete)?.covered.owners) == 0
+    assert len(select_plan_modules(graph, origin, [], [], incomplete.complete)?.covered.owners) == 0
+    event = LoweringEvent(identity="native-left-read", key=token, function="read", product=b"product", module="left", reused=true)
+    assert selection.covered.lowering_demands([event], set(), set(["left"])) == []
+    assert selection.covered.lowering_demands([event], set(), set()) == [owner]
+    mut fresh_event = event
+    fresh_event.reused = false
+    assert selection.covered.lowering_demands([fresh_event], set(), set(["left"])) == [owner]
+    assert selection.covered.lowering_demands([fresh_event], set([owner]), set()) == []
+    mut entry = event
+    entry.role = "entry"
+    assert selection.covered.lowering_demands([entry], set(), set(["left"])) == [owner]
+    checking = ReadScope(snapshot=graph.digest, profile=CHECKER_PROFILE)
+    checked = PreparedBodyRecordSource.open(checking)
+    for declaration in [owner, "function:other::read|signature"]:
+        for family in ["local", "final", "body-ir"]:
+            key = body_key(family, origin, declaration, "checked", token)
+            mut payload = b"checked value"
+            if family == "body-ir":
+                payload = encode_body_frame(key, CHECKER_PROFILE, b"native body")?
+            body_receipt = checked.receipt(checking, key, [])?
+            graph = publish_evaluation(graph, declaration + family, rank, payload, body_receipt)?.snapshot
+    measure_frame_reads(true)
+    baseline = select_body_inventory_except(graph, CHECKER_PROFILE, origin, [])?
+    prior = [read.key for read in finish_frame_reads() if read.key.startswith("body-ir\t")]
+    measure_frame_reads(true)
+    after = select_body_inventory_except(graph, CHECKER_PROFILE, origin, [key for key in selection.covered.owners.keys()])?
+    opened = [read.key for read in finish_frame_reads() if read.key.startswith("body-ir\t")]
+    assert len(baseline) == 2 and len(prior) == 2
+    assert len(after) == 1 and after[0].identity == "function:other::read|signature"
+    assert opened == [encode_record_key(body_key("body-ir", origin, after[0].identity, "checked", token))?]
+    return Ok(None)
 
 
 pub def test_value_evaluation_and_edges_publish_in_one_generation() -> Result[None, str]:

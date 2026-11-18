@@ -18,7 +18,7 @@ from pub::internal_models.namespace_order import CHECKING_BASIS, read_checking_b
 from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily, decode_owned_record
 from pub::internal_models.records import ReadWitness, RecordKey, encode_record_key
 from compiler_body_keys import IDENTITY_PROFILE
-from compiler_body_values import SelectedBodyPage, SelectedBodyRecord, encode_body_inventory, select_body_inventory_of
+from compiler_body_values import CoveredBodyOwners, SelectedBodyPage, SelectedBodyRecord, encode_body_inventory, select_body_inventory_of
 from compiler_graph_records import OutputSlots, decode_record_key, family_outputs
 from compiler_record_envelopes import RankedActivation, RankedCheckingSweep
 from compiler_snapshot import StagedSnapshot, stage_selected_snapshot
@@ -44,6 +44,7 @@ pub model RankedBuildInputs:
     pub projected: Transaction
     pub origin: str
     pub invalid: list[str]
+    pub covered: CoveredBodyOwners = CoveredBodyOwners()
 
 
 model BuildOwner:
@@ -330,7 +331,14 @@ pub def ranked_build_pages(store: Path, inputs: &RankedBuildInputs, toolchain: T
         if not reader.prior.identity.startswith("function:"):
             record_work(Operation.EnginePrepare, "ranked-declined\tnominal-reader\t" + reader.prior.identity, clock)
             return Ok(None)
-        products = match evaluate_reader(unit, toolchain, key, reader, retained + refreshed)?:
+        mut peers: list[SelectedBodyPage] = []
+        if reader.module in inputs.covered.module_owners:
+            # This one-off activation discards its own namespace to evaluate the reader. Supply the exact peers
+            # omitted from its normal worker pages, so the compiler can still refuse additional statement entries.
+            peer_owners = [owner for owner in inputs.covered.module_owners[reader.module] if owner != reader.prior.identity]
+            restored = select_body_inventory_of(graph, CHECKER_PROFILE, origin, peer_owners, mint_body_ir=true)?
+            peers = encode_body_inventory(restored)?
+        products = match evaluate_reader(unit, toolchain, key, reader, retained + peers + refreshed)?:
             Some(value) => value
             None =>
                 record_work(Operation.EnginePrepare, "ranked-declined\tmissing-settled-peer\t" + reader.prior.identity, clock)

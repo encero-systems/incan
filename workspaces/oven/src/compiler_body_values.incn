@@ -2,9 +2,11 @@
 
 from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
-from pub::incan_platform.store import Snapshot
+from pub::incan_platform.store import Snapshot, get
 from pub::internal_models import GraphBodyValue, ProducerRank, encode_graph_body_values, encode_graph_checking_pair
 from pub::internal_models.records import ReadReceipt, RecordKey
+from pub::internal_models.lowering_events import LoweringEvent
+from pub::internal_models.namespace_order import NamespaceOrder, decode_namespace_order
 from compiler_body_keys import IDENTITY_PROFILE, NAMESPACE_IDENTITY_PROFILE
 from compiler_owner_records import read_body_frame
 from compiler_graph_records import (
@@ -50,19 +52,83 @@ pub model SelectedBodyPage:
     pub value: bytes
 
 
+pub model NamespaceInventory:
+    """An exact namespace page and the modules for which every peer in its certified cycle was selected."""
+
+    pub pages: list[SelectedBodyPage] = []
+    pub complete: set[str] = set()
+
+
 pub def select_namespace_inventory_except(
     selected: Snapshot,
     profile: str,
     origin: str,
     invalid: list[str],
-) -> Result[list[SelectedBodyPage], str]:
-    """Select this project origin's namespaces whose source and imported declaration witnesses remain current."""
-    mut pages: list[SelectedBodyPage] = []
+) -> Result[NamespaceInventory, str]:
+    """Select namespace pages and certify which scoped checker peers may travel exclusively in a whole module."""
+    mut inventory = NamespaceInventory()
     slots = OutputSlots(origin=origin, identity_profile=NAMESPACE_IDENTITY_PROFILE, excluded=invalid)
+    mut orders: Dict[str, NamespaceOrder] = {}
+    mut modules: Dict[str, str] = {}
     for record in reusable_family_records(selected, "namespace", profile, Some(slots))?:
-        key = "namespace-" + hexlify(sha256.digest(record.key.identity.encode("utf-8")))
-        pages.append(SelectedBodyPage(key=key, value=record.value))
-    return Ok(pages)
+        module = record.key.identity
+        key = "namespace-" + hexlify(sha256.digest(module.encode("utf-8")))
+        inventory.pages.append(SelectedBodyPage(key=key, value=record.value))
+        certificate = record.receipt.preparation.rank_certificate
+        if certificate == "compiled-check":
+            continue
+        if certificate not in orders:
+            page = get(selected, "incan.compiler.namespace-order\t" + certificate).map_err((error) => error.message())?
+            match page:
+                None => continue
+                Some(value) =>
+                    order = decode_namespace_order(value, origin)?
+                    if order.evidence != certificate:
+                        return Err("namespace selection certificate differs from its content identity")
+                    orders[certificate] = order
+        if module not in orders[certificate].members:
+            return Err("namespace selection is outside its certified cycle")
+        modules[module] = certificate
+    for module in modules.keys():
+        certificate = modules[module]
+        mut complete = true
+        for peer in orders[certificate].members:
+            if modules.get(peer, "") != certificate:
+                complete = false
+        if complete:
+            inventory.complete.add(module)
+    return Ok(inventory)
+
+
+pub model CoveredBodyOwners:
+    """Exact checker owners carried by both an admitted namespace and its witnessed plan module."""
+
+    pub owners: Dict[str, str] = {}
+    pub module_owners: Dict[str, list[str]] = {}
+    pub symbols: Dict[str, str] = {}
+
+    pub def include(mut self, module: str, owner: str, symbol: str) -> Result[None, str]:
+        if symbol in self.symbols and self.symbols[symbol] != owner:
+            return Err("overlapping plan modules disagree on the owner of a native symbol")
+        self.symbols[symbol] = owner
+        if owner in self.owners and self.owners[owner] != module:
+            return Err("overlapping plan modules name one checker owner in different source files")
+        if owner not in self.owners:
+            self.owners[owner] = module
+            if module not in self.module_owners:
+                self.module_owners[module] = []
+            self.module_owners[module].append(owner)
+        return Ok(None)
+
+    pub def lowering_demands(self, events: &list[LoweringEvent], published: set[str], complete: set[str]) -> list[str]:
+        """A fresh plan or entry binding still needs its own checked witness when the module travels whole."""
+        mut demanded: set[str] = set()
+        for event in events:
+            if event.identity in self.symbols:
+                owner = self.symbols[event.identity]
+                if owner not in published and (event.role == "entry" or not event.reused or event.module not in complete):
+                    demanded.add(owner)
+        return sorted([owner for owner in demanded])
 
 
 pub def invalid_namespace_modules(selected: Snapshot, changed: list[RecordKey], profile: str) -> Result[list[str], str]:
@@ -122,12 +188,13 @@ pub def select_body_inventory_of(
     profile: str,
     origin: str,
     owners: list[str],
+    mint_body_ir: bool = false,
 ) -> Result[list[SelectedBodyRecord], str]:
     """Select the complete owners of this project origin that `owners` names, validating no other owner's records."""
     locals = reusable_owner_records(selected, "local", profile, origin, owners, IDENTITY_PROFILE)?
     finals = reusable_owner_records(selected, "final", profile, origin, owners, IDENTITY_PROFILE)?
     bodies = reusable_owner_records(selected, "body-ir", profile, origin, owners, IDENTITY_PROFILE)?
-    return paired_records(locals, finals, bodies, profile)
+    return paired_records(locals, finals, bodies, profile, mint_body_ir)
 
 
 def paired_records(
