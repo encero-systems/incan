@@ -463,6 +463,9 @@ def codec_fault_controls(encoded: bytes, record: CheckedRecord) -> None:
             _ => assert false
     for field in [
         CanonicalField(family="native-value", node="root", selector="type", values=["identity", "int"]),
+        CanonicalField(family="artifact-rust", node="root", selector="arg_coercions", values=["&T", "borrow", "int"]),
+        CanonicalField(family="artifact-rust", node="root", selector="value_item_paths", values=["identity", "m::T"]),
+        CanonicalField(family="artifact-rust", node="root", selector="field_values", values=["int", "some", "m::T"]),
         CanonicalField(family="requirement", node="root", selector="constructor-field", values=["field", "owner"]),
     ]:
         retained = CheckedRecord(
@@ -474,6 +477,19 @@ def codec_fault_controls(encoded: bytes, record: CheckedRecord) -> None:
         )
         match encode_record(retained):
             Ok(_) => pass
+            _ => assert false
+
+    for field in [
+        CanonicalField(family="artifact-rust", node="root", selector="arg_coercions", values=["&T", "future", "int"]),
+        CanonicalField(family="artifact-rust", node="root", selector="value_item_paths", values=["", "m::T"]),
+        CanonicalField(family="artifact-rust", node="root", selector="field_values", values=["int", "some"]),
+        CanonicalField(family="artifact-rust", node="root", selector="field_values", values=["bool", "none", "extra"]),
+    ]:
+        invalid = CheckedRecord(
+            profile=record.profile, owner=record.owner, root=record.root, family=record.family, fields=[field],
+        )
+        match encode_record(invalid):
+            Err(_) => pass
             _ => assert false
 
 
