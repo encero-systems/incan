@@ -1055,6 +1055,16 @@ mod tests {
         Ok(())
     }
 
+    /// Same-name closure parameters bind to distinct structural ordinals when restoring a selected body.
+    #[test]
+    fn restores_each_closure_parameter_in_its_current_source_position() -> Result<(), Box<dyn std::error::Error>> {
+        reusable_ordinary_calls(concat!(
+            "def normalize(value: Result[int, str]) -> Result[int, str]:\n",
+            "    number = value.map_err((error) => error)?\n",
+            "    return value.map_err((error) => error)\n",
+        ))
+    }
+
     /// A generic function, its neighbor and the caller that instantiates it at two types all publish reusable values,
     /// so a shifted program re-checks none of their bodies.
     #[test]
