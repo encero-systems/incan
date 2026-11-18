@@ -1457,7 +1457,7 @@ mod tests {
         let _ = index.imported_dsl_surfaces();
         index.validate_demands()?;
         // The resident worker opens independent parse and compile sessions against the same immutable set.
-        let second = LoafIndex::deferred([(
+        let second = crate::loaf_index::LoafIndex::deferred([(
             manifest.name.clone(),
             manifest.name.clone(),
             root.path().join("debug"),
