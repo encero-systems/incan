@@ -324,14 +324,15 @@ pub def ranked_build_pages(store: Path, inputs: &RankedBuildInputs, toolchain: T
                 break
 
         clock = begin_work()
-        current = match evaluate_reader(unit, toolchain, key, reader, retained + refreshed)?:
+        products = match evaluate_reader(unit, toolchain, key, reader, retained + refreshed)?:
             Some(value) => value
             None =>
                 record_work(Operation.EnginePrepare, "ranked-declined\tmissing-settled-peer\t" + reader.prior.identity, clock)
                 return Ok(None)
-        readers.settle(graph, origin, reader, current)?
+        readers.settle(graph, origin, reader, products)?
+        current = products.body
         record_work(Operation.EnginePrepare, "ranked-reader\t" + current.identity + "\t" + digest(reader.prior.local)
             + "\t" + digest(current.local) + "\t" + digest(reader.prior.final) + "\t" + digest(current.final)
-            + "\t" + str(readers.remaining()), clock)
+            + "\t" + reader.declaration_digest + "\t" + products.declaration_digest + "\t" + str(readers.remaining()), clock)
         refreshed.extend(encode_body_inventory([current])?)
     return Ok(Some(refreshed))

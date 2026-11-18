@@ -125,7 +125,7 @@ def importer_checked_values(store: Path) -> Result[Dict[str, list[bytes]], str]:
 
 
 def importer_frontier_order(trace: Path) -> Result[list[str], str]:
-    """Read the claim owner's ordered completions, checking equality and the empty frontier at the reader."""
+    """Read the claim owner's ordered completions, checking the equal caller signature and empty frontier."""
     mut result: list[str] = []
     for file in trace.iterdir().map_err((error) => error.message())?:
         if not file.name().startswith("engine-oven-"):
@@ -140,10 +140,13 @@ def importer_frontier_order(trace: Path) -> Result[list[str], str]:
                 assert len(fields) == 3
                 result.append(fields[1].split("|")[0] + "\t" + fields[2])
             elif fields[0] == "ranked-reader":
-                assert len(fields) == 7
-                assert len(fields[2]) == 64 and fields[2] == fields[3]
-                assert len(fields[4]) == 64 and fields[4] == fields[5]
-                assert fields[6] == "0"
+                assert len(fields) == 9
+                # The resolved call stores its parameter label in both body records.
+                assert len(fields[2]) == 64 and len(fields[3]) == 64 and fields[2] != fields[3]
+                assert len(fields[4]) == 64 and len(fields[5]) == 64 and fields[4] != fields[5]
+                # Downstream callers read import_jsonl's own declaration, whose signature stays equal.
+                assert len(fields[6]) == 64 and fields[6] == fields[7]
+                assert fields[8] == "0"
                 result.append(fields[1].split("|")[0] + "\treader")
     return Ok(result)
 

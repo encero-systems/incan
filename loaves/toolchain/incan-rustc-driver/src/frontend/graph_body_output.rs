@@ -13,14 +13,14 @@ use incan_frontend::typechecker::TypeChecker;
 use incan_semantics_core::body_ir::BodyIrModule;
 
 /// One output awaiting canonical ordering and Incan-owned encoding.
-struct PendingBodyValue {
+pub(super) struct PendingBodyValue {
     module: String,
     name: String,
     span: incan_frontend::ast::Span,
     identity: String,
-    declaration: Vec<u8>,
-    local: Vec<u8>,
-    final_value: Vec<u8>,
+    pub(super) declaration: Vec<u8>,
+    pub(super) local: Vec<u8>,
+    pub(super) final_value: Vec<u8>,
     body_ir: Vec<u8>,
     dependency_reads: Vec<internal_models::CompiledBodyDependencyRead>,
     /// Whether the checker restored this body from a selected record instead of checking its statements.
@@ -49,8 +49,8 @@ struct PendingBodyFallback {
 }
 
 /// Why one compiler-produced owner could not be encoded, with the artifact fields whose rows the codec refused.
-struct BodyValueRefusal {
-    reason: String,
+pub(super) struct BodyValueRefusal {
+    pub(super) reason: String,
     artifact_refusals: Vec<String>,
 }
 
@@ -384,7 +384,7 @@ impl GraphBodyOutput {
 }
 
 /// Convert one compiler-produced owner independently so a codec limitation cannot refuse its successful build.
-fn encoded_body_value(
+pub(super) fn encoded_body_value(
     module: &str,
     fields: &incan_frontend::checker_records::CheckedOwnerRecordFields,
 ) -> Result<PendingBodyValue, BodyValueRefusal> {
