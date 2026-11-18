@@ -1265,7 +1265,7 @@ mod tests {
         let mut warm = TypeChecker::new();
         warm.set_current_module_path(Some(vec!["main".into()]));
         warm.set_loaves(current);
-        warm.set_graph_body_records(super::GraphBodyRecords::new(vec![selected_graph_record(owner)?])?);
+        warm.set_graph_body_records(super::GraphBodyRecords::new(vec![selected_graph_record(owner.clone())?])?);
         warm.check_program(&consumer).map_err(|errors| format!("{errors:?}"))?;
         assert_eq!(warm.check_work().function_bodies, 0);
         assert_eq!(
