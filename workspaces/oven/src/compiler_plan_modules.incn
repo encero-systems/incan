@@ -4,7 +4,7 @@ from std.fs import Path
 from std.primitives.hash import sha256
 from std.encoding.hex import hexlify, unhexlify
 from pub::internal_models.lowering_events import LoweringEvent, decode_module_note, encode_lowering_event
-from pub::incan_platform.store import Snapshot, Transaction, get
+from pub::incan_platform.store import Snapshot, Transaction
 from pub::internal_models import ProducerRank, ProducerStage
 from pub::internal_models.plan_module_records import (
     ADMITTED_MODULE_NOTE,
@@ -16,6 +16,7 @@ from pub::internal_models.plan_module_records import (
 )
 from pub::internal_models.records import ReadScope, RecordKey, encode_record_key
 from compiler_body_keys import IDENTITY_PROFILE, body_key
+from compiler_lowering_order import LoweringOrder
 from compiler_graph_records import OutputSlots, family_outputs, prepare_evaluation, retire_output
 from compiler_plan_values import AdmittedPlanModule, LOWERING_PROFILE
 from compiler_prepared_records import PreparedBodyRecordSource, prepared_product_request
@@ -28,6 +29,7 @@ pub model StagedPlan:
     pub module: str
     pub function: PlanModuleFunction
     pub plan: RecordKey
+    pub order: LoweringOrder
 
 
 pub def plan_module_key(origin: str, file: str, value: bytes) -> RecordKey:
@@ -126,6 +128,7 @@ pub def staged_plan(
     function: str,
     key: str,
     plan: RecordKey,
+    order: LoweringOrder,
 ) -> Result[StagedPlan, str]:
     """
     Describe one staged plan function for its module's record. The event names its module as lowering does; a closed
@@ -141,26 +144,7 @@ pub def staged_plan(
         key=key,
         event=encode_lowering_event(retained)?,
     )
-    return Ok(StagedPlan(file=file, module=event.module, function=recorded, plan=plan))
-
-
-pub def carry_selected(
-    mut source: PreparedBodyRecordSource,
-    selected: Option[Snapshot],
-    key: RecordKey,
-) -> Result[None, str]:
-    """Make a record this request did not stage readable from the selected graph, where an earlier request left it."""
-    encoded = encode_record_key(key)?
-    if source.holds(encoded):
-        return Ok(None)
-    prior = match selected:
-        Some(value) => value
-        None => return Err("a carried lowering record has no selected graph snapshot")
-
-    match get(prior, encoded).map_err((error) => error.message())?:
-        Some(value) => source.add(encoded, value)
-        None => return Err("a carried lowering record is absent from its selected graph")
-    return Ok(None)
+    return Ok(StagedPlan(file=file, module=event.module, function=recorded, plan=plan, order=order))
 
 
 pub def stage_plan_modules(
@@ -173,7 +157,7 @@ pub def stage_plan_modules(
     staged: list[StagedPlan],
     report: Path,
     admitted: list[AdmittedPlanModule],
-) -> Result[list[RecordKey], str]:
+) -> Result[tuple[list[RecordKey], int], str]:
     """
     Keep one plan record per module current, and return the records of the modules the compiler restored.
 
@@ -189,22 +173,31 @@ pub def stage_plan_modules(
         plans = modules[file]
         value = module_value(plans)?
         key = plan_module_key(origin, file, value)
-        receipt = source.receipt(scope, key, [prepared_product_request(plan.plan) for plan in plans])?
+        # A folded module can publish independent order only when every function supplies the same proof.
+        namespace = max([plan.order.rank for plan in plans])
+        certificate = plans[0].order.evidence
+        for plan in plans:
+            if plan.order.evidence != certificate:
+                certificate = LoweringOrder().evidence
+                break
+        receipt = source.receipt(scope, key, [prepared_product_request(plan.plan) for plan in plans], certificate)?
         _ = prepare_evaluation(
             prepared,
             "plan-module-" + file,
-            ProducerRank(namespace=0, stage=ProducerStage.PlanFunction, dependency=1),
+            ProducerRank(namespace=namespace, stage=ProducerStage.PlanFunction, dependency=1),
             value,
             receipt,
         )?
         folded.append(file)
     # 3. Only a record the compiler actually restored from is carried; the others were not read.
     mut carried: list[RecordKey] = []
+    mut carried_namespace = 0
     for module in admitted:
         if module.module in restored:
             source.add(encode_record_key(module.key)?, module.value)
             carried.append(module.key)
+            carried_namespace = max([carried_namespace, module.namespace])
             folded.append(module.key.identity)
     # 2. Every other rechecked module's earlier record describes bodies that no longer have those products.
     retire_unfolded(prepared, selected, origin, rechecked, folded)?
-    return Ok(carried)
+    return Ok((carried, carried_namespace))

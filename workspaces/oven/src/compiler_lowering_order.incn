@@ -1,0 +1,49 @@
+"""Bind lowering to the certified namespace of the checked value it reads."""
+
+from pub::incan_platform.store import Snapshot, get
+from pub::internal_models.namespace_order import NamespaceOrder, decode_namespace_order
+from compiler_graph_records import ReusableEvaluation
+
+
+pub model LoweringOrder:
+    """The namespace bound of an input and its certificate, when that input supports independent scheduling."""
+
+    pub rank: int = 0
+    pub evidence: str = "compiled-check"
+
+
+pub class LoweringOrders:
+    """Fresh compiler import closures and the prior certificates decoded during this publication."""
+
+    origin: str
+    current: Dict[str, NamespaceOrder]
+    certificates: Dict[str, NamespaceOrder] = {}
+
+    pub def fresh(self, module: str) -> LoweringOrder:
+        if module in self.current:
+            order = self.current[module]
+            return LoweringOrder(rank=order.rank, evidence=order.evidence)
+        return LoweringOrder()
+
+    pub def retained(mut self, graph: Snapshot, module: str, result: &ReusableEvaluation) -> Result[LoweringOrder, str]:
+        """Require the selected producer's origin, owning module, numeric rank and content-addressed namespace page."""
+        evidence = result.receipt.preparation.rank_certificate
+        if result.receipt.preparation.output.origin != self.origin:
+            return Err("selected lowering input belongs to another origin")
+        conservative = LoweringOrder(rank=result.namespace)
+        if evidence == conservative.evidence:
+            return Ok(conservative)
+        if evidence not in self.certificates:
+            match get(graph, "incan.compiler.namespace-order\t" + evidence).map_err((error) => error.message())?:
+                None => return Ok(conservative)
+                Some(value) =>
+                    order = decode_namespace_order(value, self.origin)?
+                    if order.evidence != evidence:
+                        return Err("lowering namespace certificate differs from its content identity")
+                    self.certificates[evidence] = order
+        order = self.certificates[evidence]
+        if module not in order.members or result.namespace != order.rank:
+            return Err("selected lowering input differs from its certified namespace")
+        if module in self.current and self.current[module].evidence != evidence:
+            return Ok(conservative)
+        return Ok(LoweringOrder(rank=order.rank, evidence=evidence))

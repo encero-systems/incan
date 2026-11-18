@@ -67,6 +67,7 @@ pub model ReusableEvaluation:
 
     pub value: bytes
     pub receipt: ReadReceipt
+    pub namespace: int
 
 
 pub model ReusableRecord:
@@ -75,6 +76,7 @@ pub model ReusableRecord:
     pub key: RecordKey
     pub value: bytes
     pub receipt: ReadReceipt
+    pub namespace: int
 
 
 model EdgeFact:
@@ -204,7 +206,7 @@ def select_evaluation(
         return Err("selected compiler value differs from its evaluation digest")
     if not witnesses_validate(selected, receipt, selected_witnesses)?:
         return Ok(None)
-    return Ok(Some(ReusableEvaluation(value=value, receipt=receipt)))
+    return Ok(Some(ReusableEvaluation(value=value, receipt=receipt, namespace=evaluation.namespace)))
 
 
 pub model OutputSlots:
@@ -234,7 +236,7 @@ pub def reusable_family_records(
             continue
         key = decode_record_key(output)?
         match select_evaluation(selected, key, profile, selected_witnesses)?:
-            Some(reused) => records.append(ReusableRecord(key=key, value=reused.value, receipt=reused.receipt))
+            Some(reused) => records.append(ReusableRecord(key=key, value=reused.value, receipt=reused.receipt, namespace=reused.namespace))
             None => pass
     return Ok(records)
 
