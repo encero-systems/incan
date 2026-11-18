@@ -13,6 +13,7 @@ from rust::std::thread import sleep
 from rust::std::time import Duration, Instant
 from std.json import JsonValue, parse
 from pub::incan_platform.ipc import Connection, dial, listen
+from checked_activation import projected_owner_source
 from host import (
     HostSettings,
     WorkerActivation,
@@ -298,6 +299,16 @@ pub def test_replies_keep_the_protocol_bytes() -> Result[None, str]:
     )
     retiring_text = expected.replace(",\"schema\"", ",\"retire_after\":true,\"schema\"")
     assert retiring.to_json().map_err((error) => error.message())? == retiring_text
+    return Ok(None)
+
+
+pub def test_projected_owner_source_preserves_the_module_boundary() -> Result[None, str]:
+    header = "from std.json import JsonError, JsonErrorKind, parse_jsonl\nfrom std.serde.json import Serialize"
+    owner = "def supported_schema(schema_version: int) -> bool:\n    return schema_version >= 1 and schema_version <= 9"
+    expected = header + "\n" + owner
+    assert projected_owner_source(header, owner) == expected
+    assert projected_owner_source(header + "\n", owner) == expected
+    assert projected_owner_source("", owner) == owner
     return Ok(None)
 
 

@@ -3,7 +3,7 @@
 from pub::internal_models import prepared_reader
 from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily, decode_record, native_fields
 from pub::internal_models.records import ReadReceipt, ReadScope, RecordRead
-from checked_activation import ResolvedCheckingActivation, resolve_checking_activation, stage_checking_result
+from checked_activation import projected_owner_source, ResolvedCheckingActivation, resolve_checking_activation, stage_checking_result
 from record_protocol import Evaluate, Produced
 
 
@@ -85,7 +85,7 @@ pub def read_local_activation(activation: &ResolvedCheckingActivation) -> Result
     completed = reader.finish().map_err((_) => "local activation read receipt is incomplete")?
     match (module_header, owner_source, declaration):
         (Some(header_value), Some(source_value), Some(declaration_value)) =>
-            mut projected = header_value + source_value
+            mut projected = projected_owner_source(header_value, source_value)
             if ready.output.family == "declaration":
                 projected = source_value
             return Ok(
