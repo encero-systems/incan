@@ -42,6 +42,11 @@ pub def read_compiled_body_outputs(path: Path) -> Result[CompiledBodyOutputs, st
                     return Err("compiled namespace rows are not in canonical order")
                 previous_namespace = value.module
                 namespaces.append(value)
+            CompiledBodyOutput.LegacyNamespace(module) =>
+                # Older compilers emitted no package-root set. Their callable rows still stand independently.
+                if len(values) > 0 or len(fallbacks) > 0 or module <= previous_namespace:
+                    return Err("compiled namespace rows are not in canonical order")
+                previous_namespace = module
             CompiledBodyOutput.Value(value) =>
                 if len(fallbacks) > 0:
                     return Err("compiled body value follows a fallback row")

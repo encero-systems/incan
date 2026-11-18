@@ -193,6 +193,7 @@ def compiled_output_controls(source: str) -> Result[None, str]:
         lowering_inputs=[["main#decl.0..10", "witness"]],
         semantic_interface=b"0123456789abcdef0123456789abcdef",
         member_witnesses=[["event", "stable", "witness"]],
+        package_roots=["alpha", "provider"],
     )
     encoded = encode_compiled_body_rows(
         CompiledBodyOutputs(namespaces=[namespace], values=[value], fallbacks=[fallback, identityless]),
@@ -204,6 +205,7 @@ def compiled_output_controls(source: str) -> Result[None, str]:
         CompiledBodyOutput.Namespace(decoded) =>
             assert decoded.module == namespace.module and decoded.interface == namespace.interface
             assert decoded.body_ir == namespace.body_ir and decoded.dependencies == namespace.dependencies
+            assert decoded.package_roots == namespace.package_roots
             assert decoded.lowering_inputs == namespace.lowering_inputs
             assert decoded.semantic_interface == namespace.semantic_interface and decoded.member_witnesses == namespace.member_witnesses
         _ => return Err("compiled namespace decoded as another output kind")
@@ -525,19 +527,22 @@ def graph_transport_controls(local: CheckedRecord, final: CheckedRecord) -> Resu
 
 def graph_namespace_controls() -> Result[None, str]:
     """The composite checked namespace is one Crumb row while interface and Body IR bytes remain opaque."""
-    value = GraphNamespaceValue(
+    mut value = GraphNamespaceValue(
         module="src/main.incn",
         interface=b"checked-interface",
         body_ir=b"module-body-ir",
         lowering_inputs=[["main#decl.0..10", "witness"]],
-        semantic_interface=b"0123456789abcdef0123456789abcdef",
-        member_witnesses=[["event", "stable", "witness"]],
+        package_roots=["alpha", "provider"],
     )
     encoded = encode_graph_namespace_value(value).map_err((_) => "graph namespace encode")?
     assert encoded[:4] == b"CRMB"
     decoded = decode_graph_namespace_value(encoded).map_err((_) => "graph namespace decode")?
     assert decoded.module == value.module and decoded.interface == value.interface
     assert decoded.body_ir == value.body_ir and decoded.lowering_inputs == value.lowering_inputs
+    assert decoded.package_roots == ["alpha", "provider"]
+    for roots in [["provider", "alpha"], ["alpha", "alpha"], [""]]:
+        value.package_roots = roots
+        assert encode_graph_namespace_value(value).is_err()
     return Ok(None)
 
 

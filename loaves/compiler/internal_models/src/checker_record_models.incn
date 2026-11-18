@@ -70,6 +70,7 @@ pub model GraphNamespaceValue:
     pub interface: bytes
     pub body_ir: bytes
     pub lowering_inputs: list[list[str]] = []
+    pub package_roots: list[str] = []
 
 
 pub model CompiledBodyValue:
@@ -114,6 +115,7 @@ pub model CompiledNamespaceValue:
     pub body_ir: bytes
     pub dependencies: list[str]
     pub lowering_inputs: list[list[str]] = []
+    pub package_roots: list[str] = []
     pub semantic_interface: bytes = b""
     pub member_witnesses: list[list[str]] = []
 
