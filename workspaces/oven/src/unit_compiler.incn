@@ -4,6 +4,8 @@ from rust::incan_loaf_names import native_crate_name
 from rust::std::process import Command, Stdio
 from rust::std::fs import remove_dir_all
 from pub::internal_models.lowering_events import INTERFACE_REPORT, decode_lowering_event, decode_native_interface
+pub from pub::internal_models.checked_body_counts import CheckedBodyCounts
+from pub::internal_models.checked_body_counts import decode_checked_body_counts
 pub from pub::internal_models.checker_publication import CheckerRecordCounts
 from pub::internal_models.checker_publication import checker_report_suffix, decode_checker_counts
 from std.fs import Path
@@ -39,15 +41,6 @@ pub model PlanRecordCounts:
 
 # The schema of the sidecar a check writes with `--checked-bodies`.
 const CHECKED_BODIES_SCHEMA: str = "incan.checked-bodies/1"
-
-
-pub model CheckedBodyCounts:
-    """One check's top-level function bodies: checked afresh, and restored from the engine's selected records."""
-
-    pub checked: int = 0
-    pub reused: int = 0
-    # Restored bodies whose pages the compiler decoded itself, rather than found decoded by an earlier check.
-    pub decoded: int = 0
 
 
 pub def compile_prepared_unit(
@@ -145,6 +138,10 @@ pub def checked_body_counts(report: Path) -> Result[CheckedBodyCounts, str]:
     """
     if not report.is_file():
         return Ok(CheckedBodyCounts())
+    if report.0.endswith(".crumb"):
+        counts = decode_checked_body_counts(report.read_bytes().map_err((error) => error.message())?)?
+        discard_file(report)
+        return Ok(counts)
     value = parse(report.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err(
         (error) => f"cannot decode checked bodies report {report.0}: {error.message()}",
     )?

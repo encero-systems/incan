@@ -182,6 +182,8 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
         description = replaced(description, "closure_anchors", JsonValue.bool(true))?
     if toolchain.search_index_crumb:
         description = replaced(description, "search_index_crumb", JsonValue.bool(true))?
+    if toolchain.checked_body_counts_crumb:
+        description = replaced(description, "checked_body_counts_crumb", JsonValue.bool(true))?
     write_json(stage.joinpath("toolchain.json"), description)?
     # The release signer the installation carries travels inside the archive (DD-0016).
     _ = ship(directory, stage)?

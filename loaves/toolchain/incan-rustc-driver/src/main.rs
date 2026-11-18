@@ -26,6 +26,7 @@ mod checked_json;
 mod cloneable_closures;
 mod closures;
 mod codegraph;
+mod checked_body_counts;
 mod command_diagnostics;
 mod command_format;
 mod comparison_bridges;
@@ -99,7 +100,7 @@ const CHECK_CERTIFICATE: &str = "incan.compiler-check/1\n";
 
 const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [OPTIONS] | --rustc-handoff PATH | \
                      --source-interface UNIT SYSROOT DIRECTORY [OPTIONS] | --dependencies UNIT SYSROOT [OPTIONS] | --compiler-records INSTALLED OUTPUT | \
-                     --check UNIT SYSROOT [--format text|json] [--certify PATH] [--checked-bodies PATH] [OPTIONS] | --explain CODE | --fmt UNIT PATH [--check] | --source-files PATH | --rust-imports UNIT [--source-graph] | --emit-model PATH MODEL incan|json [LABEL] | --codegraph UNIT SYSROOT OUTPUT [INTERFACE] | --read-codegraph GRAPH ROOT GROUP [FIELDS_JSON] | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-compile-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --resident SOCKET GENERATION READY HOME | --identity SYSROOT\n\
+                     --check UNIT SYSROOT [--format text|json] [--certify PATH] [--checked-bodies PATH | --checked-body-counts PATH] [OPTIONS] | --explain CODE | --fmt UNIT PATH [--check] | --source-files PATH | --rust-imports UNIT [--source-graph] | --emit-model PATH MODEL incan|json [LABEL] | --codegraph UNIT SYSROOT OUTPUT [INTERFACE] | --read-codegraph GRAPH ROOT GROUP [FIELDS_JSON] | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-compile-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --resident SOCKET GENERATION READY HOME | --identity SYSROOT\n\
                      OPTIONS: --rustc-arg ARG, --library, --no-codegraph, --inspection, --shared-native DIR, --toolchain-root DIR, --bakery-root DIR, --graph-body-records PATH, --graph-body-output PATH (native artifacts and ABI caches come from UNIT)";
 
 /// Compile an Incan unit (`--unit`, or serially from a `--resident` worker, with rustc in a fresh driver process that
@@ -311,7 +312,9 @@ pub(crate) fn check(arguments: &[String]) -> Result<i32, Box<dyn std::error::Err
     };
     let (certificate, options) = certified_options(rest);
     let (bodies_report, options) = match options {
-        [flag, report, options @ ..] if flag == "--checked-bodies" => (Some(Path::new(report)), options),
+        [flag, report, options @ ..] if flag == "--checked-bodies" || flag == "--checked-body-counts" => {
+            (Some((Path::new(report), flag == "--checked-body-counts")), options)
+        }
         options => (None, options),
     };
     let unit = UnitDescription::read(Path::new(path)).map_err(|error| error.message)?;
@@ -321,8 +324,13 @@ pub(crate) fn check(arguments: &[String]) -> Result<i32, Box<dyn std::error::Err
     let checked = incan_driver::check::check_unit(&unit, &rust, dependencies.graph_body_records());
     let decoded = frontend::decoded_pages::decodes() - decoded_before;
     let checked = checked.and_then(|(output, bodies)| {
-        if let Some(report) = bodies_report {
-            std::fs::write(report, checked_bodies_report(&bodies, decoded)?).map_err(|error| {
+        if let Some((report, counts_only)) = bodies_report {
+            let bytes = if counts_only {
+                checked_body_counts::encode(&bodies, decoded)?
+            } else {
+                checked_bodies_report(&bodies, decoded)?.into_bytes()
+            };
+            std::fs::write(report, bytes).map_err(|error| {
                 incan_driver::error::CliError::failure(format!("cannot write {}: {error}", report.display()))
             })?;
         }
