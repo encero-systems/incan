@@ -1,14 +1,16 @@
 """Checking order from the compiler's transitive project import closures."""
 
-from std.encoding.hex import hexlify
+from std.encoding.hex import hexlify, unhexlify
 from std.hash import sha256
 from std.primitives.crumb.descriptions import Description
 from std.primitives.crumb.values import Value
 from crumb_rows import ModelField, model_description, required_value
-from graph_crumb_fields import decode_graph_row, encode_graph_row, items, text
+from graph_crumb_fields import KEY_TYPE, decode_graph_row, encode_graph_row, items, key_value, read_key, text
 from record_scope import RecordKey
 from store_record_source import encode_record_key
 
+pub const CHECKING_BASIS: str = "incan.compiler.checking-basis/2"
+const BASIS_SELECTOR: bytes = b"chbase\x00"
 const ORDER_SELECTOR: bytes = b"nsrank\x00"
 const COMPLETION_SELECTOR: bytes = b"chdone\x00"
 
@@ -42,7 +44,36 @@ pub def checking_basis_key(output: RecordKey) -> Result[str, str]:
     """Name the last completed supplier evidence for the exact requested checking output."""
     if output.family not in ["local", "final"]:
         return Err("checking preparation requires a local or final output")
-    return Ok("incan.compiler.checking-basis\t" + hexlify(sha256.digest(encode_record_key(output)?.encode("utf-8"))))
+    return Ok(CHECKING_BASIS + "\t" + hexlify(sha256.digest(encode_record_key(output)?.encode("utf-8"))))
+
+
+def basis_description() -> Description:
+    return model_description(BASIS_SELECTOR, "incan.compiler.checking-basis/2", [
+        ModelField(identity=b"key___", name="output", storage=KEY_TYPE),
+        ModelField(identity=b"receip", name="receipt_sha256", storage="binary"),
+    ])
+
+
+pub def encode_checking_basis(output: RecordKey, root: str) -> Result[bytes, str]:
+    """Authenticate a local or final producer's exact completed receipt under its own key."""
+    digest = unhexlify(root).map_err((error) => error.message())?
+    if output.family not in ["local", "final"] or len(digest) != 32 or hexlify(digest) != root:
+        return Err("invalid checking basis")
+    return encode_graph_row(BASIS_SELECTOR, basis_description(), [
+        required_value(b"key___", key_value(output)), required_value(b"receip", Value.Binary(digest)),
+    ])
+
+
+pub def read_checking_basis(output: RecordKey, encoded: bytes) -> Result[str, str]:
+    fields = decode_graph_row(encoded, BASIS_SELECTOR, basis_description(), 2)?
+    if read_key(fields[0].value)? != output:
+        return Err("checking basis belongs to another output")
+    match fields[1].value:
+        Value.Binary(digest) =>
+            if len(digest) == 32:
+                return Ok(hexlify(digest))
+        _ => pass
+    return Err("invalid checking basis receipt")
 
 
 def order_description() -> Description:

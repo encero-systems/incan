@@ -8,11 +8,12 @@ from pub::internal_models import (
     ReadyWork, RecordRoot, checking_basis_key, checking_completion_receipt, decode_demand_page, decode_namespace_order, decode_read_receipt, encode_prepared_inputs,
     encode_ready_work, envelope_key,
 )
+from pub::internal_models.namespace_order import read_checking_basis
 from pub::internal_models.checker_records import CHECKER_PROFILE
 from pub::internal_models.record_scope import checked_row_request
 from pub::internal_models.records import ReadScope, ReadWitness, RecordKey, RecordRead, RecordRequest, RecordSelection, RecordSource, encode_record_key
 from record_protocol import Prepare, Prepared
-from record_snapshot import ResolvedSnapshot, resolve_snapshot, valid_digest
+from record_snapshot import ResolvedSnapshot, resolve_snapshot
 
 
 def required_record(snapshot: &ResolvedSnapshot, key: str) -> Result[bytes, str]:
@@ -39,9 +40,7 @@ pub def prepare_checking(home: str, request: &Prepare) -> Result[Prepared, str]:
     if request.stage not in ["check-body", output.family]:
         return Err("checking demand does not belong to the requested stage")
     pointer = required_record(resolved, checking_basis_key(output)?)?
-    basis_root = pointer.decode().map_err((_) => "invalid checking receipt root")?
-    if not valid_digest(basis_root):
-        return Err("invalid checking receipt root")
+    basis_root = read_checking_basis(output, pointer)?
     basis_bytes = required_record(resolved, "incan.engine.receipt\t" + basis_root)?
     if hexlify(sha256.digest(basis_bytes)) != basis_root:
         return Err("checking supplier evidence differs from its receipt root")
@@ -173,9 +172,7 @@ def prepare_closed_owner(resolved: &ResolvedSnapshot, request: &Prepare, keys: l
         dependency = 1
     else:
         return Err("invalid closed owner stage or prerequisite arity")
-    basis_root = required_record(resolved, checking_basis_key(prior)?)?.decode().map_err((_) => "invalid closed owner basis")?
-    if not valid_digest(basis_root):
-        return Err("invalid closed owner basis")
+    basis_root = read_checking_basis(prior, required_record(resolved, checking_basis_key(prior)?)?)?
     basis_bytes = required_record(resolved, "incan.engine.receipt\t" + basis_root)?
     if hexlify(sha256.digest(basis_bytes)) != basis_root:
         return Err("closed owner basis differs from its root")
