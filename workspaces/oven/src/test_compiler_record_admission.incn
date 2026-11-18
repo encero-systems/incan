@@ -4,6 +4,7 @@ from std.encoding.hex import hexlify
 from std.fs import Path
 from std.hash import file_digest, sha256
 from std.json import JsonValue
+from pub::internal_models.compiler_contributors import CompilerContributors, decode_compiler_contributors, encode_compiler_contributors
 from scratch import scratch_directory
 from compiler_record_admission import CompilerRecordPin, SHIPPED_RECORDS, compiler_record_profile, convert, installed_records
 from pub::incan_platform.store import begin, commit, stage_put
@@ -20,6 +21,7 @@ pub def test_shipped_compiler_records_are_admitted_without_running_a_compiler() 
     2. Convert with a driver file that is not executable: only admission may happen.
     3. The sealed set and its pin exist.
     """
+    verify_contributor_crumb()?
     scratch = scratch_directory()?
     installed = scratch.path().joinpath("toolchain")
     # 1. and 2. One content-named object, the index that names it, and a driver that would fail to run.
@@ -199,3 +201,17 @@ def inventory(directory: Path, prefix: str) -> Result[list[str], str]:
             digest = hexlify(file_digest(entry, "sha256").map_err((error) => error.message())?)
             entries.append(f"{name} {digest}")
     return Ok(sorted(entries))
+
+
+def verify_contributor_crumb() -> Result[None, str]:
+    """Restore the exact selected vocabulary and negative operations fact, and refuse malformed contributor sets."""
+    facts = CompilerContributors(profile="release", scope=hexlify(sha256.digest(b"one\ntwo")), vocabulary=["one"])
+    encoded = encode_compiler_contributors(facts)?
+    selected = decode_compiler_contributors(encoded)?
+    assert selected.profile == facts.profile and selected.scope == facts.scope
+    assert selected.vocabulary == facts.vocabulary and selected.operations == facts.operations
+    assert decode_compiler_contributors(b"altered").is_err()
+    mut duplicate = facts
+    duplicate.operations = ["two", "two"]
+    assert encode_compiler_contributors(duplicate).is_err()
+    return Ok(None)

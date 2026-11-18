@@ -1,0 +1,62 @@
+"""Global compiler contributors for the exact installation profile and package roster admitted to a source unit."""
+
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from crumb_rows import ModelField, model_description, required_value
+from graph_crumb_fields import decode_graph_row, encode_graph_row, items, text
+
+const ROW: bytes = b"locaps\x00"
+
+
+pub model CompilerContributors:
+    """Only packages contributing parser vocabulary or provider operations."""
+
+    pub profile: str
+    pub scope: str
+    pub vocabulary: list[str] = []
+    pub operations: list[str] = []
+
+
+def description() -> Description:
+    return model_description(ROW, "incan.compiler-contributors/1", [
+        ModelField(identity=b"ops___", name="operations", storage="list<string>"),
+        ModelField(identity=b"prfile", name="profile", storage="string"),
+        ModelField(identity=b"scope_", name="scope", storage="string"),
+        ModelField(identity=b"vocabs", name="vocabulary", storage="list<string>"),
+    ])
+
+
+def valid(value: CompilerContributors) -> bool:
+    if value.profile not in ["release", "debug"] or len(value.scope) != 64:
+        return false
+    for names in [value.vocabulary, value.operations]:
+        if "" in names or sorted(names) != names or len(names) != len(set(names)):
+            return false
+    return true
+
+
+pub def encode_compiler_contributors(value: CompilerContributors) -> Result[bytes, str]:
+    if not valid(value):
+        return Err("invalid compiler contributors")
+    return encode_graph_row(ROW, description(), [
+        required_value(b"ops___", Value.List([Value.Text(name) for name in value.operations])),
+        required_value(b"prfile", Value.Text(value.profile)),
+        required_value(b"scope_", Value.Text(value.scope)),
+        required_value(b"vocabs", Value.List([Value.Text(name) for name in value.vocabulary])),
+    ])
+
+
+def names(value: Value) -> Result[list[str], str]:
+    mut result: list[str] = []
+    for item in items(value)?:
+        result.append(text(item)?)
+    return Ok(result)
+
+
+pub def decode_compiler_contributors(encoded: bytes) -> Result[CompilerContributors, str]:
+    fields = decode_graph_row(encoded, ROW, description(), 4)?
+    value = CompilerContributors(profile=text(fields[1].value)?, scope=text(fields[2].value)?,
+        vocabulary=names(fields[3].value)?, operations=names(fields[0].value)?)
+    if not valid(value):
+        return Err("invalid compiler contributors")
+    return Ok(value)

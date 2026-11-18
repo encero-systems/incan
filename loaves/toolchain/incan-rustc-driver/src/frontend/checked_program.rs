@@ -465,6 +465,7 @@ pub(super) fn checked_modules(
             &analysis,
             &mut bodies[loaf_modules..],
         );
+        session.loaves().validate_demands().map_err(|error| error.to_string())?;
         Some(incan_codegraph::artifact::encode_graph(&records, &unit.project_root).map_err(|error| error.to_string())?)
     } else {
         None

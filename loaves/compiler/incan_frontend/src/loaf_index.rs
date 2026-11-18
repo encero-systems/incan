@@ -443,6 +443,7 @@ impl LoafIndex {
         locations: impl IntoIterator<Item = (String, String, PathBuf, bool)>,
     ) -> Result<Self, LoafIndexError> {
         let locations: Vec<_> = locations.into_iter().collect();
+        let mut contributors = BTreeMap::new();
         if compiler_record_set::configured() {
             let mut profiles = BTreeMap::<&str, (&Path, BTreeSet<String>)>::new();
             for (_, name, dir, standard) in &locations {
@@ -454,8 +455,10 @@ impl LoafIndex {
                         .insert(name.clone());
                 }
             }
-            for (dir, names) in profiles.into_values() {
-                compiler_record_set::admit_capabilities(dir, &names)?;
+            for (profile, (dir, names)) in profiles {
+                for (name, flags) in compiler_record_set::admit_capabilities(dir, &names)? {
+                    contributors.insert((profile.to_owned(), name), flags);
+                }
             }
         }
         let mut index = Self::default();
@@ -469,7 +472,17 @@ impl LoafIndex {
             } else {
                 LoafNamespace::Dependency { key: key.clone() }
             };
-            let entry = IndexedLoaf::open(key.clone(), namespace, dir, &name)?;
+            let flags = standard
+                .then(|| {
+                    dir.file_name()
+                        .and_then(|v| v.to_str())
+                        .and_then(|profile| contributors.get(&(profile.to_owned(), name.clone())).copied())
+                })
+                .flatten();
+            let entry = match flags {
+                Some(flags) => IndexedLoaf::contributor(key.clone(), namespace, dir, name, flags),
+                None => IndexedLoaf::open(key.clone(), namespace, dir, &name)?,
+            };
             if index.entries.insert(key.clone(), entry).is_some() {
                 return Err(LoafIndexError::DuplicateKey { key });
             }
@@ -507,7 +520,7 @@ impl LoafIndex {
         let Some(indexed) = self.entries.get(key) else {
             return Ok(None);
         };
-        let identity = &indexed.summary.identity;
+        let identity = &indexed.summary()?.identity;
         if compiler_record_set::configured()
             && let Some(head) =
                 compiler_record_set::range_value::<RangeHead>(&indexed.dir, &identity.name, HEAD, &identity.name)?
@@ -548,7 +561,7 @@ impl LoafIndex {
         };
         compiler_record_set::range_value(
             &indexed.dir,
-            &indexed.summary.identity.name,
+            &indexed.name,
             RANGE,
             &incan_semantics_core::encode_incan_symbol_identity(identity),
         )
@@ -578,7 +591,7 @@ impl LoafIndex {
         let Some(indexed) = self.entries.get(key) else {
             return Ok(Vec::new());
         };
-        compiler_record_set::runtime_binding_selectors(&indexed.dir, &indexed.summary.identity.name)
+        compiler_record_set::runtime_binding_selectors(&indexed.dir, &indexed.name)
     }
 
     /// Resolve the one public runtime path requested by lowering and authenticate the stored binding's ownership.
@@ -590,7 +603,7 @@ impl LoafIndex {
         let Some(indexed) = self.entries.get(key) else {
             return Ok(None);
         };
-        tracing::trace!(target: "incan::invocation", phase = "dependency_fact", loaf = %indexed.summary.identity.name,
+        tracing::trace!(target: "incan::invocation", phase = "dependency_fact", loaf = %indexed.name,
             family = "runtime-binding", name = path);
         indexed.runtime_binding(path)
     }
@@ -607,7 +620,7 @@ impl LoafIndex {
             return Ok(None);
         };
         tracing::trace!(
-            target: "incan::invocation", phase = "dependency_fact", loaf = %indexed.summary.identity.name,
+            target: "incan::invocation", phase = "dependency_fact", loaf = %indexed.name,
             family = crate::library_manifest::compiler_records::RecordFamily::of_declaration(facet).as_str(),
             name = declaration,
         );
@@ -621,7 +634,7 @@ impl LoafIndex {
             return Ok(None);
         };
         tracing::trace!(
-            target: "incan::invocation", phase = "dependency_fact", loaf = %indexed.summary.identity.name,
+            target: "incan::invocation", phase = "dependency_fact", loaf = %indexed.name,
             family = "public-namespace", name = %path.join("::"),
         );
         indexed.public_namespace(path)
@@ -638,7 +651,7 @@ impl LoafIndex {
             return Ok(None);
         };
         tracing::trace!(
-            target: "incan::invocation", phase = "dependency_fact", loaf = %indexed.summary.identity.name,
+            target: "incan::invocation", phase = "dependency_fact", loaf = %indexed.name,
             family = "type-scope", name = %module.join("::"),
         );
         indexed.type_scope(module)
@@ -683,7 +696,7 @@ impl LoafIndex {
         Some(AdmittedLoaf {
             key: indexed.key.clone(),
             binding_root: binding_root(&indexed.namespace),
-            name: indexed.summary.identity.name.clone(),
+            name: indexed.name.clone(),
         })
     }
 
@@ -712,26 +725,42 @@ impl LoafIndex {
         self.entries.keys().map(String::as_str)
     }
 
+    /// Package names come from the unit. Only duplicate names require identity materialization for disambiguation.
+    pub fn package_names(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.entries
+            .iter()
+            .map(|(key, entry)| (key.as_str(), entry.name.as_str()))
+    }
+    pub(crate) fn package_identity(&self, key: &str) -> Result<Option<&LoafIdentity>, LoafIndexError> {
+        self.entries
+            .get(key)
+            .map(|entry| entry.summary().map(|s| &s.identity))
+            .transpose()
+    }
+
     /// Admitted identities without decoding complete manifests; package ambiguity is checked before loading bodies.
     pub fn identities(&self) -> impl Iterator<Item = (&str, &LoafIdentity)> {
         self.entries
             .iter()
-            .map(|(key, entry)| (key.as_str(), &entry.summary.identity))
+            .filter_map(|(key, entry)| entry.summary().ok().map(|s| (key.as_str(), &s.identity)))
     }
 
     /// Admitted identities and their namespace ownership without decoding complete manifests. Consumers that need
     /// only graph or report headers must use this inventory view instead of demanding semantic declarations.
     pub fn admitted_identities(&self) -> impl Iterator<Item = (&str, &LoafIdentity, &LoafNamespace)> {
-        self.entries
-            .iter()
-            .map(|(key, entry)| (key.as_str(), &entry.summary.identity, &entry.namespace))
+        self.entries.iter().filter_map(|(key, entry)| {
+            entry
+                .summary()
+                .ok()
+                .map(|s| (key.as_str(), &s.identity, &entry.namespace))
+        })
     }
 
     /// Whether a compiler-pinned standard package owns a canonical package identity.
     pub fn is_standard_package(&self, package: &str) -> bool {
-        self.entries.values().any(|entry| {
-            matches!(entry.namespace, LoafNamespace::Standard { .. }) && entry.summary.identity.name == package
-        })
+        self.entries
+            .values()
+            .any(|entry| matches!(entry.namespace, LoafNamespace::Standard { .. }) && entry.name == package)
     }
 
     /// Add the ABI cache of linked Rust crates; it answers after the Loaves' own shipped ABI.
@@ -744,8 +773,7 @@ impl LoafIndex {
     pub fn stale_shipped_rust_paths(&self) -> BTreeSet<String> {
         self.entries
             .values()
-            .filter(|entry| entry.summary.rust_abi_cache_declared && !entry.summary.rust_abi_cache)
-            .flat_map(|entry| entry.summary.rust_paths.iter().cloned())
+            .flat_map(|entry| entry.stale_rust_paths().cloned())
             .collect()
     }
 
@@ -820,7 +848,7 @@ impl LoafIndex {
     pub fn provider_operation_entries(&self) -> impl Iterator<Item = &LoafEntry> {
         self.entries
             .values()
-            .filter(|entry| entry.summary.provider_operations)
+            .filter(|entry| entry.globals.provider_operations)
             .filter_map(|entry| entry.demand().ok())
     }
 
@@ -829,7 +857,7 @@ impl LoafIndex {
     pub fn native_union_entries(&self) -> impl Iterator<Item = &LoafEntry> {
         self.entries
             .values()
-            .filter(|entry| entry.summary.native_unions)
+            .filter(|entry| entry.summary().is_ok_and(|summary| summary.native_unions))
             .filter_map(|entry| entry.demand().ok())
     }
 
@@ -855,7 +883,7 @@ impl LoafIndex {
         let entry = self
             .entries
             .values()
-            .filter(|entry| &entry.summary.identity.name == library)
+            .filter(|entry| &entry.name == library)
             .filter_map(|entry| entry.demand().ok())
             .find(|entry| {
                 &entry.artifact.manifest.name == library
@@ -962,7 +990,7 @@ impl LoafIndex {
                 .filter(move |entry| !(declared && matches!(entry.namespace, LoafNamespace::Standard { .. })))
         };
         // A Loaf whose demand fails is skipped here; `validate_demands` reports its retained failure.
-        for entry in shipping().filter(|entry| entry.summary.rust_paths.contains(canonical_path)) {
+        for entry in shipping().filter(|entry| entry.summary().is_ok_and(|s| s.rust_paths.contains(canonical_path))) {
             let Ok(entry) = entry.demand() else {
                 continue;
             };
@@ -978,7 +1006,7 @@ impl LoafIndex {
         }
         // A path no summary names may still be in any shipped cache; each is read by its summary's digest, so the
         // lookup demands no manifest. An unreadable cache is retained like an unreadable fact.
-        for entry in shipping().filter(|entry| !declared && entry.summary.rust_abi_cache) {
+        for entry in shipping().filter(|entry| !declared && entry.summary().is_ok_and(|s| s.rust_abi_cache)) {
             let cache = match entry.rust_abi_cache() {
                 Ok(Some(cache)) => cache,
                 Ok(None) => continue,
@@ -1029,10 +1057,10 @@ impl LoafIndex {
     pub fn imported_vocab(&self) -> crate::parser::ImportedLibraryVocab {
         let mut map = std::collections::HashMap::new();
         for (key, entry) in &self.entries {
-            if !entry.summary.vocabulary {
+            if !entry.globals.vocabulary {
                 continue;
             }
-            tracing::trace!(target: "incan::invocation", phase = "dependency_family", loaf = %entry.summary.identity.name, family = "vocabulary");
+            tracing::trace!(target: "incan::invocation", phase = "dependency_family", loaf = %entry.name, family = "vocabulary");
             let Some(vocab) = entry.parser_vocabulary().ok().flatten() else {
                 continue;
             };
@@ -1052,7 +1080,7 @@ impl LoafIndex {
     pub fn imported_dsl_surfaces(&self) -> crate::parser::ImportedLibraryDslSurfaces {
         let mut map = std::collections::HashMap::new();
         for (key, entry) in &self.entries {
-            if !entry.summary.vocabulary {
+            if !entry.globals.vocabulary {
                 continue;
             }
             if let Ok(Some(vocab)) = entry.parser_vocabulary()
@@ -1218,11 +1246,12 @@ mod resolved_item_tests {
         let mut indexed = IndexedLoaf::summary_only("catalog".to_owned(), namespace, identity);
         // The directory holds the cache alone: a demanded manifest cannot be read, so it cannot answer either.
         indexed.dir = directory.path().to_path_buf();
-        let mut summary = serde_json::to_value(&indexed.summary)?;
+        let mut summary = serde_json::to_value(indexed.summary()?)?;
         summary["rust_abi_cache_declared"] = true.into();
         summary["rust_abi_cache"] = true.into();
         summary["rust_abi_cache_digest"] = digest.into();
-        indexed.summary = serde_json::from_value(summary)?;
+        let updated = serde_json::from_value(summary)?;
+        indexed = IndexedLoaf::known(indexed.key, indexed.namespace, indexed.dir, updated);
         let observation = indexed.clone();
         let mut index = LoafIndex::default();
         index.entries.insert("catalog".to_owned(), indexed);

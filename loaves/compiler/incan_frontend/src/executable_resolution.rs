@@ -161,19 +161,20 @@ pub fn resolve_loaf_declarations(
 /// One artifact per package name across the index; two instances of one package refuse rather than replacing each
 /// other.
 fn catalog(loaves: &LoafIndex) -> Result<BTreeMap<String, String>, ExecutableResolutionError> {
-    let mut catalog = BTreeMap::new();
-    let mut identities = BTreeMap::new();
-    for (key, identity) in loaves.identities() {
-        let stable = identity.stable_key();
-        if let Some(previous) = identities.insert(&identity.name, stable.clone())
-            && previous != stable
-        {
-            return Err(ExecutableResolutionError::AmbiguousPackage {
-                library: identity.name.clone(),
-                versions: format!("{previous}, {stable}"),
-            });
+    let mut catalog = BTreeMap::<String, String>::new();
+    for (key, name) in loaves.package_names() {
+        if let Some(previous_key) = catalog.get(name) {
+            let previous = loaves.package_identity(previous_key)?.map(|id| id.stable_key());
+            let current = loaves.package_identity(key)?.map(|id| id.stable_key());
+            if previous != current {
+                return Err(ExecutableResolutionError::AmbiguousPackage {
+                    library: name.to_owned(),
+                    versions: format!("{previous:?}, {current:?}"),
+                });
+            }
+        } else {
+            catalog.insert(name.to_owned(), key.to_owned());
         }
-        catalog.entry(identity.name.clone()).or_insert_with(|| key.to_owned());
     }
     Ok(catalog)
 }

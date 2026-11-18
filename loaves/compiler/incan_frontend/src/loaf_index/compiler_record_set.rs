@@ -38,8 +38,8 @@ mod runtime_bindings;
 mod thread_selection;
 use declaration_records::NAMED_FAMILIES;
 pub(super) use declaration_records::{names_record, read_declaration};
-pub(super) use inventory::{admit_capabilities, summary};
 use inventory::{Metadata, read_summary};
+pub(super) use inventory::{admit_capabilities, summary};
 pub(super) use runtime_bindings::{read_runtime_bindings, runtime_binding_selectors};
 
 /// The record family holding a Loaf's checked API documentation, which compiles never open (RFC 179).
@@ -94,7 +94,8 @@ struct RecordSet {
     /// Inventory summaries this process already read and authenticated, by metadata key prefix.
     summaries: Mutex<BTreeMap<String, Summary>>,
     /// Profiles whose global contributor inventory was checked, including older installations without one.
-    capability_profiles: Mutex<BTreeSet<String>>,
+    capability_profiles:
+        Mutex<BTreeMap<String, BTreeMap<String, crate::library_manifest::capabilities::Contributions>>>,
     /// Parser registrations already authenticated under this installed set and Loaf profile.
     vocabularies: Mutex<BTreeMap<String, (Arc<VocabExports>, String)>>,
     /// Executable surfaces this process already read and authenticated, by package prefix.
