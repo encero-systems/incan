@@ -29,6 +29,8 @@ pub def test_product_carries_lifted_closure_frames() -> Result[None, str]:
     span = source_span(file="closures.incn", line=3, column=1)
     signature = [PlanType.Int, PlanType.Int]
     closure_type = PlanType.Closure(signature)
+    item_span = source_span(file="closures.incn", line=5, column=9)
+    item = Callee(kind=CalleeKind.Planned("__incan_closure_apply_0"), span=item_span)
     caller = Function(
         name="apply",
         parameters=[],
@@ -38,10 +40,11 @@ pub def test_product_carries_lifted_closure_frames() -> Result[None, str]:
             Local(ty=closure_type, span=span),
             Local(ty=PlanType.ClosureRef(signature), span=span),
             Local(ty=PlanType.Int, span=span),
+            Local(ty=PlanType.FunctionItem("__incan_closure_apply_0", signature), span=span),
         ],
         blocks=[
             block(
-                [assign(2, RvalueKind.ClosureObject(place(1, span)), span)],
+                [assign(4, RvalueKind.FunctionItem(item), span), assign(2, RvalueKind.ClosureObject(place(1, span)), span)],
                 call(CalleeKind.CallClosure(signature), [copy(2, span), literal(20, span)], 3, 1, span),
                 span,
             ),

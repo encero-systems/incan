@@ -20,6 +20,8 @@ from _types import PlanType, SourceSpan, source_span
 from layout_type_records import StoredLayoutPlanType, retain_plan_type, restore_plan_type
 from nominal_identities import NominalKind, NominalRemap, remap_type
 from _body import (
+    Callee,
+    CalleeKind,
     BinaryOp,
     Constant,
     FieldProjection,
@@ -158,6 +160,7 @@ pub enum StoredRvalue:
     ReifyFunction(StoredOperand)
     FunctionAddress(StoredOperand)
     ClosureObject(StoredPlace)
+    PlannedFunctionItem(str, StoredSpan)
 
 
 pub enum StoredStatementKind:
@@ -477,6 +480,10 @@ def store_nominal_rvalue(value: RvalueKind, mut remap: NominalRemap) -> Result[S
         RvalueKind.ReifyFunction(operand) => return Ok(StoredRvalue.ReifyFunction(store_operand(operand, remap)?))
         RvalueKind.FunctionAddress(operand) => return Ok(StoredRvalue.FunctionAddress(store_operand(operand, remap)?))
         RvalueKind.ClosureObject(place) => return Ok(StoredRvalue.ClosureObject(store_place(place, remap)?))
+        RvalueKind.FunctionItem(callee) =>
+            match callee.kind:
+                CalleeKind.Planned(name) => return Ok(StoredRvalue.PlannedFunctionItem(name, store_span(callee.span)))
+                _ => return Err("scalar function product requires a planned function item")
         _ => return Err("scalar function products refuse this native operation")
 
 
@@ -529,6 +536,8 @@ def restore_nominal_rvalue(value: StoredRvalue, mut remap: NominalRemap) -> Resu
         StoredRvalue.ReifyFunction(operand) => return Ok(RvalueKind.ReifyFunction(restore_operand(operand, remap)?))
         StoredRvalue.FunctionAddress(operand) => return Ok(RvalueKind.FunctionAddress(restore_operand(operand, remap)?))
         StoredRvalue.ClosureObject(place) => return Ok(RvalueKind.ClosureObject(restore_place(place, remap)?))
+        StoredRvalue.PlannedFunctionItem(name, span) =>
+            return Ok(RvalueKind.FunctionItem(Callee(kind=CalleeKind.Planned(name), span=restore_span(span))))
         _ => return Err("unknown stored native operation")
 
 
@@ -722,6 +731,7 @@ pub def wire_stored_rvalue(value: StoredRvalue) -> Value:
         StoredRvalue.ReifyFunction(field0) => return Value.Enum(b"S\xe4\x16\xfd%\xcf", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_operand(field0))])
         StoredRvalue.FunctionAddress(field0) => return Value.Enum(b"\xc4\xe4\xd4\xc6~\xe2", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_operand(field0))])
         StoredRvalue.ClosureObject(field0) => return Value.Enum(b"s!\xe9q\x11\xd7", [required_value(b"_\xec\xebf\xff\xc8", wire_stored_place(field0))])
+        StoredRvalue.PlannedFunctionItem(field0, field1) => return Value.Enum(b"^H\x983G\x01", [required_value(b"_\xec\xebf\xff\xc8", Value.Text(field0)), required_value(b"k\x86\xb2s\xff4", wire_stored_span(field1))])
 
 
 pub def read_wire_stored_rvalue(value: Value, positions: &WirePositions) -> Result[StoredRvalue, str]:
@@ -774,6 +784,8 @@ pub def read_wire_stored_rvalue(value: Value, positions: &WirePositions) -> Resu
         return Ok(StoredRvalue.FunctionAddress(read_wire_stored_operand(fields[0].value, positions)?))
     if identity == b"s!\xe9q\x11\xd7" and len(fields) == 1:
         return Ok(StoredRvalue.ClosureObject(read_wire_stored_place(fields[0].value, positions)?))
+    if identity == b"^H\x983G\x01" and len(fields) == 2:
+        return Ok(StoredRvalue.PlannedFunctionItem(text(fields[0].value)?, read_wire_stored_span(fields[1].value, positions)?))
     return Err("unknown or incomplete StoredRvalue alternative")
 
 

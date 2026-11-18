@@ -90,6 +90,7 @@ def schema_stored_rvalue() -> Description:
         variant_schema(b"S\xe4\x16\xfd%\xcf", "ReifyFunction", [ModelField(identity=b"_\xec\xebf\xff\xc8", name="0", storage="record@5993b825e223")]),
         variant_schema(b"\xc4\xe4\xd4\xc6~\xe2", "FunctionAddress", [ModelField(identity=b"_\xec\xebf\xff\xc8", name="0", storage="record@5993b825e223")]),
         variant_schema(b"s!\xe9q\x11\xd7", "ClosureObject", [ModelField(identity=b"_\xec\xebf\xff\xc8", name="0", storage="record@11e5b2efd53f")]),
+        variant_schema(b"^H\x983G\x01", "PlannedFunctionItem", [ModelField(identity=b"_\xec\xebf\xff\xc8", name="0", storage="string"), ModelField(identity=b"k\x86\xb2s\xff4", name="1", storage="record@533bfbed0457")]),
     ])
 
 
