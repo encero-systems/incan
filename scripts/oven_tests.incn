@@ -103,6 +103,20 @@ pub model Summary:
     pub expected_ids: list[str]
 
 
+pub model PlannedOutcome:
+    """Invocations actually started, in their declared log order, and whether every planned invocation passed."""
+
+    pub started: list[Invocation]
+    pub succeeded: bool
+
+
+model PoolOutcome:
+    """Positions admitted and failed in a single bounded pool."""
+
+    started: list[int]
+    failed: list[int]
+
+
 model Running:
     """One started invocation, its planned position and the memory it reserved."""
 
@@ -218,13 +232,13 @@ def run(options: Options) -> Result[str, str]:
     logs.mkdir(true, true).map_err((error) => error.message())?
     bakery = selected_builder_bakery(get_or("INCAN_BUILDER_HOME", ""))
     planned = invocations(root, options.evidence, logs, options.jobs, bakery)?
-    succeeded = run_planned(options.oven, planned, options.jobs, options.memory)?
+    outcome = planned_outcome(options.oven, planned, options.jobs, options.memory)?
     remove_worker_projects(planned)?
     log = options.evidence.joinpath("oven-tests.log")
-    joined = join_logs(planned, log)?
+    joined = join_logs(outcome.started, log)?
     expected = read(root.joinpath("workspaces/contracts/oven-tests.txt"))?
     summary = summarize(joined, expected)?
-    return report(options.evidence, summary, succeeded)
+    return report(options.evidence, summary, outcome.succeeded)
 
 
 pub def invocations(
@@ -280,6 +294,11 @@ pub def selected_builder_bakery(builder_home: str) -> str:
 
 
 pub def run_planned(oven: str, planned: list[Invocation], jobs: int, memory: int) -> Result[bool, str]:
+    """Whether every planned invocation passed."""
+    return Ok(planned_outcome(oven, planned, jobs, memory)?.succeeded)
+
+
+pub def planned_outcome(oven: str, planned: list[Invocation], jobs: int, memory: int) -> Result[PlannedOutcome, str]:
     """
     Run the pooled invocations beside each settled source's compile-ahead, then each settled source alone.
 
@@ -289,13 +308,17 @@ pub def run_planned(oven: str, planned: list[Invocation], jobs: int, memory: int
     """
     # 1. The compile-ahead invocations lead the pool, so their failed positions are the lowest ones.
     early = compile_ahead(planned)
-    failed = run_all_failures(oven, early + [item for item in planned if not item.alone], jobs, memory, len(early))?
-    if len([index for index in failed if index >= len(early)]) > 0:
-        return Ok(false)
-    # 2. A settled source requires an installation that no other invocation changes any more.
-    ran_alone = run_all(oven, [item for item in planned if item.alone], 1, memory)?
-    # 3. The settled runs decide again what a compile-ahead failure showed.
-    return Ok(len([index for index in failed if index >= len(early)]) == 0 and ran_alone)
+    pooled = early + [item for item in planned if not item.alone]
+    first = run_pool(oven, pooled, jobs, memory, len(early))?
+    mut logs = [pooled[index].log.0 for index in first.started if index >= len(early)]
+    mut succeeded = len([index for index in first.failed if index >= len(early)]) == 0
+    if succeeded:
+        settled = [item for item in planned if item.alone]
+        second = run_pool(oven, settled, 1, memory, 0)?
+        for index in second.started:
+            logs.append(settled[index].log.0)
+        succeeded = len(second.failed) == 0
+    return Ok(PlannedOutcome(started=[item for item in planned if item.log.0 in logs], succeeded=succeeded))
 
 
 pub def compile_ahead(planned: list[Invocation]) -> list[Invocation]:
@@ -453,6 +476,11 @@ pub def run_all_failures(
     ignored_prefix: int = 0,
 ) -> Result[list[int], str]:
     """Run within the count and memory budgets, stopping after the first failure outside `ignored_prefix`."""
+    return Ok(run_pool(oven, planned, jobs, memory, ignored_prefix)?.failed)
+
+
+def run_pool(oven: str, planned: list[Invocation], jobs: int, memory: int, ignored_prefix: int) -> Result[PoolOutcome, str]:
+    """Keep the positions this run admitted so earlier logs cannot stand in for unscheduled work."""
     reservations = [item.reservation for item in planned]
     mut waiting = [index for index in range(len(planned))]
     mut active: list[Running] = []
@@ -464,7 +492,7 @@ pub def run_all_failures(
         if len(settled.errors) > 0:
             return Err("; ".join(settled.errors))
         if settled.stopped:
-            return Ok(sorted(failed))
+            break
 
         admission = start_waiting(oven, planned, reservations, waiting, settled.running, jobs, memory)
         if len(admission.errors) > 0:
@@ -473,7 +501,7 @@ pub def run_all_failures(
         active = admission.active
         if len(active) > 0:
             sleep(Duration.from_millis(20))
-    return Ok(sorted(failed))
+    return Ok(PoolOutcome(started=[index for index in range(len(planned)) if index not in waiting], failed=sorted(failed)))
 
 
 def settle_active(active: list[Running], ignored_prefix: int) -> ActiveSettlement:

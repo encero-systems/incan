@@ -16,6 +16,7 @@ from oven_tests import (
     free_worker,
     invocations,
     join_logs,
+    planned_outcome,
     log_name,
     parse_options,
     remove_worker_projects,
@@ -441,6 +442,13 @@ def test_first_failure_stops_later_admission_and_cancels_a_running_child_tree() 
     )
     assert run_all_failures("/bin/sh", [failure, running, queued], 2, 0)? == [0]
     assert not root.joinpath("queued").exists()
+    # Evidence directories can be reused. A queued invocation's older file must never enter this run's report.
+    queued.log.write_text("stale output", "utf-8", "strict", None).map_err((error) => error.message())?
+    first = Invocation(arguments=["-c", "echo failure-message; exit 1"], directory=root.0, reservation=GIB, log=failure.log)
+    outcome = planned_outcome("/bin/sh", [first, queued], 1, 0)?
+    assert not outcome.succeeded
+    assert [item.log.0 for item in outcome.started] == [first.log.0]
+    assert join_logs(outcome.started, root.joinpath("joined.log"))? == "failure-message\n"
     pids = [read_pid(root.joinpath("root.pid"))?, read_pid(root.joinpath("child.pid"))?]
     assert live_pids(pids)? == [], f"fail-fast cancellation left processes alive: {pids}"
     return Ok(None)
