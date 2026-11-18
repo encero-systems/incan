@@ -4,31 +4,28 @@
 //! nothing for it, even when it keeps its value. A published callable follows the same rule, and also keeps each input
 //! the base's read-only rule lends (`published_reads`), so no published input that was shared before becomes owned.
 
-use crate::body_ir::ContextModules;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::{
-    Candidate, FieldTypes, ReadContext, Signatures, bir, closure_reads, collect_signatures, pattern_is_read_only, walk,
-    walk_neighbors,
+    Candidate, FieldTypes, ReadContext, Signatures, bir, closure_reads, pattern_is_read_only, walk, walk_neighbors,
 };
 
 /// Refuse shared input to every candidate its body consumes on any path, to a decreasing fixed point. A callee that
 /// loses shared input turns its callers' forwarding moves into consumptions, so those callers are proved again.
 pub(super) fn refuse_consumed_parameters(
     modules: &[bir::BodyIrModule],
-    context: ContextModules<'_>,
+    signatures: &Signatures,
     field_types: &FieldTypes,
     kept: &HashSet<Candidate>,
     candidates: &mut HashSet<Candidate>,
 ) {
-    let signatures = collect_signatures(modules, context, candidates);
     let mut dependents: HashMap<Candidate, HashSet<Candidate>> = HashMap::new();
     let mut refused = VecDeque::new();
     for &candidate in candidates.iter() {
-        if consumed(modules, candidate, &signatures, field_types, kept, candidates) {
+        if consumed(modules, candidate, signatures, field_types, kept, candidates) {
             refused.push_back(candidate);
         }
-        for dependency in forwarded_inputs(modules, candidate, &signatures, field_types, candidates) {
+        for dependency in forwarded_inputs(modules, candidate, signatures, field_types, candidates) {
             dependents.entry(dependency).or_default().insert(candidate);
         }
     }
@@ -42,7 +39,7 @@ pub(super) fn refuse_consumed_parameters(
         for &candidate in affected {
             if candidates.contains(&candidate)
                 && !refused.contains(&candidate)
-                && consumed(modules, candidate, &signatures, field_types, kept, candidates)
+                && consumed(modules, candidate, signatures, field_types, kept, candidates)
             {
                 refused.push_back(candidate);
             }

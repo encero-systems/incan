@@ -162,28 +162,27 @@ pub(super) fn retain_modules_with_selected(
 ) {
     let no_candidates = HashSet::new();
     let field_types = FieldTypes::collect(modules, context);
-    let cursor_signatures = collect_signatures(modules, context, &no_candidates);
+    let signatures = collect_signatures(modules, context);
     for module in modules.iter_mut() {
         for body in &mut module.bodies {
             if super::body_is_selected(body, selected) {
                 continue;
             }
-            cursor_reads::retain_cursors(body, &cursor_signatures, &field_types, &no_candidates);
+            cursor_reads::retain_cursors(body, &signatures, &field_types, &no_candidates);
         }
     }
 
     // Every callable follows the never-consumed rule; a published one also keeps each input the base's read-only rule
     // lends under the base's own hypothesis, so no published input that was shared before becomes owned.
     let base = candidate_parameters(modules, selected, InputRule::Base);
-    let published = published_reads::read_only_parameters(modules, context, &field_types, base)
+    let published = published_reads::read_only_parameters(modules, &signatures, &field_types, base)
         .into_iter()
         .filter(|&(module_index, body_index, _)| published_body(modules, module_index, body_index))
         .collect::<HashSet<_>>();
     let mut candidates = candidate_parameters(modules, selected, InputRule::NeverConsumed);
     candidates.extend(published.iter().copied());
-    consumed_reads::refuse_consumed_parameters(modules, context, &field_types, &published, &mut candidates);
+    consumed_reads::refuse_consumed_parameters(modules, &signatures, &field_types, &published, &mut candidates);
 
-    let signatures = collect_signatures(modules, context, &candidates);
     for (module_index, body_index, parameter_index) in &candidates {
         if let Some(body) = modules
             .get_mut(*module_index)
@@ -192,15 +191,14 @@ pub(super) fn retain_modules_with_selected(
             retain_shared_parameter(body, *parameter_index, &signatures, &field_types, &candidates);
         }
     }
-    let final_signatures = collect_signatures(modules, context, &no_candidates);
     for module in modules {
         for body in &mut module.bodies {
             if super::body_is_selected(body, selected) {
                 continue;
             }
-            match_reads::retain_borrowed_payload_bindings(body, &final_signatures, &field_types, &no_candidates);
-            loop_reads::retain_borrowed_loop_items(body, &final_signatures, &field_types, &no_candidates);
-            retain_body_calls(body, &final_signatures, &field_types, &no_candidates);
+            match_reads::retain_borrowed_payload_bindings(body, &signatures, &field_types, &candidates);
+            loop_reads::retain_borrowed_loop_items(body, &signatures, &field_types, &candidates);
+            retain_body_calls(body, &signatures, &field_types, &candidates);
         }
     }
 }
@@ -457,11 +455,7 @@ fn retain_function_item_adapter(
 }
 
 /// Combine linked, previously settled module and current-body signatures without deriving a callable from its name.
-fn collect_signatures(
-    modules: &[bir::BodyIrModule],
-    context: ContextModules<'_>,
-    candidates: &HashSet<Candidate>,
-) -> Signatures {
+fn collect_signatures(modules: &[bir::BodyIrModule], context: ContextModules<'_>) -> Signatures {
     context
         .iter()
         .flat_map(module_signatures)
@@ -471,7 +465,7 @@ fn collect_signatures(
                     .bodies
                     .iter()
                     .enumerate()
-                    .filter_map(move |(body_index, body)| body_signature(body, module_index, body_index, candidates)),
+                    .filter_map(move |(body_index, body)| body_signature(body, Some((module_index, body_index)))),
             )
         }))
         .collect()
@@ -479,13 +473,11 @@ fn collect_signatures(
 
 /// Read already settled signatures from a dependency module.
 fn module_signatures(module: &bir::BodyIrModule) -> impl Iterator<Item = Signature> + '_ {
-    module.loaf_callables.iter().map(loaf_signature).chain(
-        module
-            .bodies
-            .iter()
-            .enumerate()
-            .filter_map(|(body_index, body)| body_signature(body, usize::MAX, body_index, &HashSet::new())),
-    )
+    module
+        .loaf_callables
+        .iter()
+        .map(loaf_signature)
+        .chain(module.bodies.iter().filter_map(|body| body_signature(body, None)))
 }
 
 /// Prefer an authenticated declaration frame's access facts; a native callable without one retains its reference
@@ -531,13 +523,9 @@ fn loaf_signature(callable: &bir::LoafCallable) -> Signature {
 
 /// Project one body's parameter access independently from its executable statements. Receivers retain the same
 /// shared/exclusive representation as `LoafCallable::from_body`; anonymous frames supply no named signature.
-/// Candidate inputs are shared only for this fixed-point hypothesis.
-fn body_signature(
-    body: &bir::Body,
-    module_index: usize,
-    body_index: usize,
-    candidates: &HashSet<Candidate>,
-) -> Option<Signature> {
+/// Authored slots carry their stable position. The current hypothesis selects access at lookup, so all
+/// stages can share these signatures. An imported slot keeps its published access throughout.
+fn body_signature(body: &bir::Body, owner: Option<(usize, usize)>) -> Option<Signature> {
     Some(Signature {
         identity: body.canonical.clone()?,
         generic: !body.type_parameters.is_empty(),
@@ -557,9 +545,7 @@ fn body_signature(
                     _ => parameter.ty.clone(),
                 },
                 access: parameter.input_access,
-                candidate: candidates
-                    .contains(&(module_index, body_index, parameter_index))
-                    .then_some((module_index, body_index, parameter_index)),
+                candidate: owner.map(|(module, body)| (module, body, parameter_index)),
                 callback_does_not_escape: only_called_parameter(body, parameter),
                 result_holds_loan: result_holds_loan(body, parameter_index),
             })
