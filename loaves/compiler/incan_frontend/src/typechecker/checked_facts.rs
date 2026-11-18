@@ -6,6 +6,7 @@ impl TypeChecker {
     /// Record an expression's resolved type and the identities of its completed native storage. Native defaults
     /// must contribute payload identities at the same structural positions that storage publication retains.
     pub fn record_expr_type(&mut self, span: Span, ty: ResolvedType) {
+        self.retain_task_join_carrier(&ty);
         let mut identities = std::collections::BTreeMap::new();
         let storage = self.rust_storage_resolved(&ty, &self.native_call_type_parameters());
         self.collect_expression_type_identities(&storage, &mut Vec::new(), &mut identities);
