@@ -370,6 +370,10 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
     assert before.owners[3].text.startswith("def second"), before.owners[3].text
     assert before.owners[0].start < before.owners[0].end
 
+    branches = "def result(first: bool, second: bool) -> int:\n    if first:\n        pass\n    else:\n        pass\n    if second:\n        return 1\n    else:\n        return 2\n"
+    branch_projection = project_source("package", "src/branches.incn", branches)?
+    assert [owner.key.facet for owner in branch_projection.owners] == ["result"]
+
     projected_bindings = project_source(
         "package",
         "src/bindings.incn",

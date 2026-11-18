@@ -159,10 +159,11 @@ class SourceProjector:
                             end=end,
                         ),
                     )
-                    for field in field_records(boundary.owner, text, boundary.start, self.origin, self.path):
-                        owners.append(semantic_record(field, documentation_free(field.text)))
-                    for default in field_default_records(boundary.owner, text, boundary.start, self.origin, self.path):
-                        owners.append(semantic_record(default, comment_free(default.text)))
+                    if boundary.owner.startswith("model:") or boundary.owner.startswith("class:"):
+                        for field in field_records(boundary.owner, text, boundary.start, self.origin, self.path):
+                            owners.append(semantic_record(field, documentation_free(field.text)))
+                        for default in field_default_records(boundary.owner, text, boundary.start, self.origin, self.path):
+                            owners.append(semantic_record(default, comment_free(default.text)))
         header_semantic, module_docs = split_documentation(header)
         if module_docs != "":
             docs.append(("", module_docs))
@@ -416,8 +417,6 @@ def field_default_records(
     path: str,
 ) -> list[SourceProjectionRecord]:
     """Project each direct model or class field default as its own expression-only source facet."""
-    if not declaration.startswith("model:") and not declaration.startswith("class:"):
-        return []
     starts = direct_member_starts(source)
     mut records: list[SourceProjectionRecord] = []
     for index in range(len(starts)):
