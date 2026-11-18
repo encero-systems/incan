@@ -23,6 +23,8 @@ from pub::incan_mir_plan import (
     product_identities,
     product_nominals,
     decode_frames,
+    decode_product_parts,
+    matches_product,
     resolve_nominals,
 )
 from scalar_products import encode_product, decode_product
@@ -134,6 +136,7 @@ pub def finalize_scalar(
     references: list[NominalReference],
     positions: list[tuple[int, int]],
     frames: list[Function] = [],
+    reported: bytes = b"",
 ) -> Result[tuple[bytes, list[NominalReference]], str]:
     """
     Retain the whole-program plan's final function under a keyed product's unchanged inputs and lowering demand.
@@ -151,9 +154,14 @@ pub def finalize_scalar(
     record = decode_record(encoded)?
     placed = place_positions(record.function, positions)?
     current = relocate_product(placed, str(function.span.file), function.span.line)?
-    identities = product_identities(current)?
-    _captured, demand = decode_product(current, references)?
+    _captured, demand, _captured_frames, identities = decode_product_parts(current, references)?
     # 2. The same inputs now name the exact native function compiled for this declaration.
+    # A freshly captured product already passed the producer's position and schema round trips. Compare the
+    # canonical whole-plan bytes, including floating-point bits and helper frames, before reusing that proof.
+    if not reused and reported == encoded and matches_product(current, function, demand, identities, frames, references)?:
+        if record.digest != plan_function_digest(record.function, record.requests)?:
+            return Err("plan-function product digest disagrees with its capture")
+        return Ok((encoded, references))
     whole = product_nominals(function, demand, frames)?
     mut nominals: list[ProductNominal] = []
     for reference in whole:

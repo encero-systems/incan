@@ -80,6 +80,8 @@ pub from _plan import (
 pub from function_records import (
     encode_product,
     decode_product,
+    decode_product_parts,
+    matches_product,
     encode_scalar,
     decode_scalar,
     product_identities,

@@ -15,7 +15,7 @@ from pub::incan_mir_plan import (
     source_span,
     unit_nominals,
 )
-from scalar_store import record_scalar_inputs, retain_scalar, retained_scalar
+from scalar_store import finalize_scalar, record_scalar_inputs, retain_scalar, retained_scalar
 
 
 pub def test_moved_body_lines_keep_the_plan_product() -> Result[None, str]:
@@ -65,6 +65,30 @@ pub def test_unlocated_body_span_refuses_a_position_free_product() -> Result[Non
         Ok(_) => assert false, "a span no node locates was retained with its line"
         Err(message) => assert "locates no Body IR node" in message, message
     return Ok(None)
+
+
+pub def test_finalization_matches_every_carried_frame_before_reusing_capture() -> Result[None, str]:
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    directory = scratch.path()
+    owner = source_span(file="positions.incn", line=10, column=1)
+    function = positioned("work", owner, 11, 12)
+    frame = positioned("helper", owner, 11, 12)
+    nodes = [(0, 1), (1, 5), (2, 5)]
+    inputs = record_scalar_inputs("meaning", function.name, owner, false, "reads", len(nodes))
+    retain_scalar(directory.0, inputs, function, [], [], nodes, [frame])?
+    for path in directory.iterdir().map_err((error) => error.message())?:
+        if path.name().endswith(".incnfunction"):
+            captured = path.read_bytes().map_err((error) => error.message())?
+            key = path.stem()
+            exact, _positions = finalize_scalar(directory.0, key, function, false, [], nodes, [frame], captured)?
+            assert exact == captured
+            changed = positioned("helper", owner, 12, 11)
+            assert finalize_scalar(directory.0, key, function, true, [], nodes, [changed], captured).is_err()
+            replaced, _positions = finalize_scalar(directory.0, key, function, false, [], nodes, [changed], captured)?
+            assert replaced != captured
+            assert path.read_bytes().map_err((error) => error.message())? == replaced
+            return Ok(None)
+    return Err("missing captured test product")
 
 
 def positioned(name: str, owner: SourceSpan, statement_line: int, exit_line: int) -> Function:
