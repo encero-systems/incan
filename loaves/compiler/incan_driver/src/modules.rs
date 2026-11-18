@@ -643,6 +643,27 @@ impl SourceModuleImports {
         peers
     }
 
+    /// Resolve each checked module's full import closure once. Only providers reachable from one of those
+    /// modules need checker lookup tables when their authenticated namespace supplies the compiled body.
+    pub(crate) fn checker_dependencies(&self, restored: &[bool]) -> (Vec<Vec<usize>>, Vec<bool>) {
+        let mut needed = vec![false; self.direct.len()];
+        let closures = restored
+            .iter()
+            .enumerate()
+            .map(|(index, &restore)| {
+                if restore {
+                    return Vec::new();
+                }
+                let dependencies = self.dependencies(index);
+                for &provider in &dependencies {
+                    needed[provider] = true;
+                }
+                dependencies
+            })
+            .collect();
+        (closures, needed)
+    }
+
     /// Transitive local imports in collected order, excluding the requesting module on cycle back edges.
     pub fn dependencies(&self, index: usize) -> Vec<usize> {
         reachable_imports(self.direct.len(), index, |module| self.direct[module].iter().copied())
@@ -841,5 +862,27 @@ fn resolve_local_dep_index(
 pub fn register_module_path_segments(checker: &mut typechecker::TypeChecker, modules: &[ParsedModule]) {
     for module in modules {
         checker.register_dependency_module_path_segments(&module.name, module.path_segments.clone());
+    }
+}
+
+#[cfg(test)]
+mod retained_namespace_tests {
+    use super::SourceModuleImports;
+
+    #[test]
+    fn source_checker_demands_transitive_providers_and_partial_cycles_only() {
+        // 0 and 1 import one another, 2 imports 1, and 3 is an unrelated source module.
+        let imports = SourceModuleImports {
+            direct: vec![vec![1], vec![0], vec![1], vec![]],
+        };
+        let (closures, needed) = imports.checker_dependencies(&[true, true, false, true]);
+        assert_eq!(closures, [vec![], vec![], vec![0, 1], vec![]]);
+        assert_eq!(needed, [true, true, false, false]);
+        let (closures, needed) = imports.checker_dependencies(&[false, false, true, true]);
+        assert_eq!(closures, [vec![1], vec![0], vec![], vec![]]);
+        assert_eq!(needed, [true, true, false, false]);
+        let (closures, needed) = imports.checker_dependencies(&[true; 4]);
+        assert!(closures.iter().all(Vec::is_empty));
+        assert_eq!(needed, [false; 4]);
     }
 }

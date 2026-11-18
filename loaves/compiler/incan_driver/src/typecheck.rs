@@ -137,8 +137,8 @@ pub fn typecheck_modules(
                     .namespace(&source)
                     .map(|record| {
                         record.filter(|record| {
-                            record.interface.module_name == module.name
-                                && record.interface.module_path == module.path_segments
+                            record.interface.module_name() == module.name
+                                && record.interface.module_path() == module.path_segments
                         })
                     })
                     .map_err(|error| format!("graph namespace `{source}` refused: {error:?}")),
@@ -156,21 +156,41 @@ pub fn typecheck_modules(
         })?;
 
     let complete_namespaces = namespace_records.iter().map(Option::is_some).collect::<Vec<_>>();
-    for ((idx, module), namespace) in modules.iter().enumerate().zip(namespace_records) {
+    let restored = complete_namespaces
+        .iter()
+        .enumerate()
+        .map(|(index, &complete)| complete && cycle_peers[index].iter().all(|&peer| complete_namespaces[peer]))
+        .collect::<Vec<_>>();
+    let (checked_dependencies, needed_interfaces) = imports.checker_dependencies(&restored);
+    for (((idx, module), namespace), dep_indexes) in modules
+        .iter()
+        .enumerate()
+        .zip(namespace_records)
+        .zip(checked_dependencies)
+    {
         // A cycle shares its declaration environment. Restore it only if every member has an authenticated
         // interface and Body IR for the current logical module. Any missing member takes the entire component
         // through the ordinary component interface builder below.
         if let Some(record) = namespace
-            && cycle_peers[idx].iter().all(|&peer| complete_namespaces[peer])
+            && restored[idx]
         {
             warnings_out.extend(parser_warning_diagnostics(module));
-            dependency_interfaces[idx] = Some(record.interface);
+            if needed_interfaces[idx] {
+                let _install = tracing::trace_span!(target: "incan::invocation", "incan_driver::restore_dependency_interface", module = %module.file_path.display()).entered();
+                dependency_interfaces[idx] = Some(record.interface.installable().map_err(|message| {
+                    CliDiagnosticFailure::single(
+                        "",
+                        "",
+                        diagnostics::CompileError::new(message, Default::default()),
+                        diagnostics::DiagnosticPhase::Typecheck,
+                    )
+                })?);
+            }
             type_infos.push(TypeCheckInfo::default());
             namespace_bodies.push(Some(record.body_ir));
             namespace_lowering_inputs.extend(record.lowering_inputs);
             continue;
         }
-        let dep_indexes = imports.dependencies(idx);
         let deps_for_module = dep_indexes
             .iter()
             .map(|dep_idx| (modules[*dep_idx].name.as_str(), &modules[*dep_idx].ast))

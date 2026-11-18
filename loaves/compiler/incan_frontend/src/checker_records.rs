@@ -31,8 +31,8 @@ pub struct GraphBodyRecord {
 pub struct GraphNamespaceRecord {
     /// Project-relative logical source path used by the source-projection record.
     pub source: String,
-    /// Immutable public checker tables installed for downstream editable namespaces.
-    pub interface: Arc<crate::typechecker::ModuleDependencyInterface>,
+    /// Authenticated declaration surface. A downstream source check materializes its lookup tables on demand.
+    pub interface: crate::typechecker::CheckedNamespaceInterface,
     /// Complete checked Body IR contribution used instead of this module's transient
     /// [`crate::typechecker::TypeCheckInfo`].
     pub body_ir: incan_semantics_core::body_ir::BodyIrModule,

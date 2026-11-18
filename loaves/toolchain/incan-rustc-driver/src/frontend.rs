@@ -418,7 +418,6 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
             &record.interface,
             &namespace_crumb::CheckedNamespaceCrumb,
         )
-        .and_then(|interface| interface.installable())
         .map_err(incan_frontend::checker_records::RecordAdapterFault::InvalidField)?;
         let body_ir =
             incan_semantics_core::executable_representation::decode_module(&record.body_ir).map_err(|error| {
@@ -426,28 +425,37 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
                     "graph namespace Body IR refused: {error}"
                 ))
             })?;
+        // Join witnesses by exact kernel owner path once per namespace. Duplicate declarations stay ambiguous.
+        let mut owners = std::collections::HashMap::new();
+        if !record.lowering_inputs.is_empty() {
+            for body in &body_ir.bodies {
+                owners
+                    .entry(body.direct_call_id.path())
+                    .and_modify(|found| *found = None)
+                    .or_insert(Some(&body.direct_call_id));
+            }
+        }
         let mut lowering_inputs = Vec::with_capacity(record.lowering_inputs.len());
         for input in record.lowering_inputs {
-            if input.len() != 2 {
-                return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+            let [owner, witness]: [String; 2] = input.try_into().map_err(|_| {
+                incan_frontend::checker_records::RecordAdapterFault::InvalidField(
                     "graph namespace lowering witness has the wrong field count".into(),
-                ));
-            }
-            let mut matches = body_ir
-                .bodies
-                .iter()
-                .filter(|body| body.direct_call_id.path() == input[0]);
-            let Some(body) = matches.next() else {
-                return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
-                    "graph namespace lowering witness names no Body IR owner".into(),
-                ));
+                )
+            })?;
+            let id = match owners.get(owner.as_str()) {
+                Some(Some(id)) => *id,
+                Some(None) => {
+                    return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                        "graph namespace lowering witness names multiple Body IR owners".into(),
+                    ));
+                }
+                None => {
+                    return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                        "graph namespace lowering witness names no Body IR owner".into(),
+                    ));
+                }
             };
-            if matches.next().is_some() {
-                return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
-                    "graph namespace lowering witness names multiple Body IR owners".into(),
-                ));
-            }
-            lowering_inputs.push((body.direct_call_id.clone(), input[1].clone()));
+            lowering_inputs.push((id.clone(), witness));
         }
         Ok(Some(incan_frontend::checker_records::GraphNamespaceRecord {
             source: record.module,

@@ -362,6 +362,14 @@ impl CheckedNamespaceInterface {
             let Some(identity) = self.identities.get(name) else {
                 return Err("checked namespace interface is missing a declaration identity".into());
             };
+            if let crate::api_metadata::ApiDeclaration::Alias(alias) = declaration
+                && alias.target_path.is_empty()
+                && TypeChecker::new()
+                    .symbol_kind_from_api_declaration(None, declaration)
+                    .is_none()
+            {
+                return Err(format!("checked namespace alias `{name}` has no target"));
+            }
             if !matches!(declaration, crate::api_metadata::ApiDeclaration::Alias(_))
                 && (identity.declaration_name != name
                     || identity.origin != SymbolOrigin::Module(self.module_path.clone()))
