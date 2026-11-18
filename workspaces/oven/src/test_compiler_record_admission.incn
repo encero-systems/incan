@@ -169,19 +169,19 @@ pub def test_typed_and_predecessor_compiler_indexes_seal_the_identical_membershi
     revision = hexlify(sha256.digest(b"shipped record"))
     member = CompilerExportMember(key=f"loaf/debug/probe/metadata/00000000/{revision}", revision=revision)
     frame = encode_compiler_export([member])?
-    assert frame[:4] == b"CRMB" and decode_compiler_export(frame)? == [member]
-    assert encode_compiler_export([member, member]).is_err()
+    assert frame[:4] == b"CRMB" and decode_compiler_export(frame)? == [member], "typed member round trip"
+    assert encode_compiler_export([member, member]).is_err(), "duplicate key accepted"
     bad = CompilerExportMember(key="key", revision="not sha256")
-    assert encode_compiler_export([bad]).is_err()
+    assert encode_compiler_export([bad]).is_err(), "bad revision accepted"
     index = current.joinpath(SHIPPED_RECORDS).joinpath("index.crumb")
     index.write_bytes(frame[:16]).map_err((error) => error.message())?
-    assert convert(driver.0, current, current, true).is_err()
+    assert convert(driver.0, current, current, true).is_err(), "corrupt typed index fell back to legacy"
     index.write_bytes(frame).map_err((error) => error.message())?
     pin = convert(driver.0, current, current, true)?
-    assert old_pin.digest == pin.digest
+    assert old_pin.digest == pin.digest, f"sealed roots differ: {old_pin.digest} and {pin.digest}"
     directory = current.joinpath(pin.root).joinpath("selection").0
-    found = read_directory(directory, pin.directory, pin.digest, member.key, 1)?
-    assert len(found.members) == 1 and found.members[0].key == member.key and found.members[0].revision == revision
+    found = read_directory(directory, pin.directory, pin.digest, f"loaf/debug/probe/metadata/{revision}/", 1)?
+    assert len(found.members) == 1 and found.members[0].key == member.key and found.members[0].revision == revision, f"directory read {len(found.members)} members"
     return Ok(None)
 
 
