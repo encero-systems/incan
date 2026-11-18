@@ -373,15 +373,18 @@ pub def supersede_outputs(selected: Snapshot, mut transaction: Transaction) -> R
     then meet one output per slot and one edge per current read instead of one per earlier edit, and neither index
     grows with edits. The superseded values, evaluations and receipts stay, content named.
     """
+    if selected.index == "":
+        return Ok(None)
     mut writing: set[str] = set()
+    mut slots: list[str] = []
     for write in transaction.writes:
-        if write.kind != KIND_TOMBSTONE:
-            writing.add(write.key)
-    mut slots: set[str] = set()
-    for key in writing:
-        if key.startswith("incan.engine.output/2\t") and len(key.split("\t")) == 7:
-            slots.add(key)
-    for slot in sorted([item for item in slots]):
+        if write.kind == KIND_TOMBSTONE:
+            continue
+        key = write.key
+        if key.startswith("incan.engine.output/2\t") and key not in writing and len(key.split("\t")) == 7:
+            slots.append(key)
+        writing.add(key)
+    for slot in sorted(slots):
         # An earlier Oven keyed a slot's outputs by their context as well; the slot's own entry replaces them.
         for old in keys_with_prefix(selected, slot + "\t").map_err((error) => error.message())?:
             stage_delete(transaction, old)
