@@ -22,6 +22,13 @@ pub model ResolvedCheckingActivation:
     pub prepared: PreparedInputs
 
 
+pub def projected_owner_source(header: str, owner: str) -> str:
+    """Keep the owner on its own line when source projection trims the module header."""
+    if header == "" or header.endswith("\n"):
+        return header + owner
+    return header + "\n" + owner
+
+
 pub def resolve_checking_activation(home: str, evaluation: Evaluate) -> Result[ResolvedCheckingActivation, str]:
     """Resolve and decode one Evaluate message's work and preparation roots exactly once."""
     if evaluation.reservation == "" or evaluation.cancellation_generation < 0:

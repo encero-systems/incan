@@ -9,7 +9,7 @@ from pub::internal_models.checker_records import (
     native_fields,
 )
 from pub::internal_models.records import ReadReceipt, ReadScope, RecordRead
-from checked_activation import ResolvedCheckingActivation
+from checked_activation import projected_owner_source, ResolvedCheckingActivation
 
 
 pub model FinalActivationInputs:
@@ -95,7 +95,7 @@ pub def read_final_activation(activation: &ResolvedCheckingActivation) -> Result
         (Some(header_value), Some(source_value), Some(local_value)) =>
             return Ok(
                 FinalActivationInputs(
-                    source=header_value + source_value,
+                    source=projected_owner_source(header_value, source_value),
                     owner=owner,
                     local=local_value,
                     environment=environment,
