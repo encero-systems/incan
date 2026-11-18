@@ -383,6 +383,7 @@ struct Positions {
     nodes: SemanticNodeBindings,
     owner: Span,
     identities: BTreeMap<String, CanonicalSymbolId>,
+    rust_reads: BTreeMap<String, Option<CanonicalSymbolId>>,
     caller: Option<super::super::type_info::CBindingRawCallOwner>,
     type_identities: BTreeMap<String, CanonicalSymbolId>,
 }
@@ -418,12 +419,30 @@ impl Positions {
         {
             identities.insert(nodes.owner().render_compact(), canonical.clone());
         }
+        let mut rust_reads: BTreeMap<String, Option<CanonicalSymbolId>> = BTreeMap::new();
         // Imported package and sibling-module bindings are authenticated by their declaration records. Retain those
         // exact canonical identities alongside builtins so a body record can name the dependency declaration it read.
         for index in 0..checker.symbols.all_symbols().len() {
             let Some(canonical) = checker.symbols.identity_of(index) else {
                 continue;
             };
+            if matches!(canonical.origin, incan_semantics_core::SymbolOrigin::RustCrate(_)) {
+                // The checked import owns this lexical read. Equal leaf spellings from different crates retain
+                // different full paths. A stable key with conflicting physical handles cannot be rebound.
+                if canonical.kind == SemanticSourceTargetKind::RustItem
+                    && let Some(stable) = StableDeclarationId::from_canonical(canonical, None, None)
+                {
+                    rust_reads
+                        .entry(stable.render_compact())
+                        .and_modify(|value| {
+                            if value.as_ref() != Some(canonical) {
+                                *value = None;
+                            }
+                        })
+                        .or_insert_with(|| Some(canonical.clone()));
+                }
+                continue;
+            }
             if !matches!(
                 canonical.origin,
                 incan_semantics_core::SymbolOrigin::Builtin
@@ -501,6 +520,7 @@ impl Positions {
             nodes,
             owner,
             identities,
+            rust_reads,
             caller,
             type_identities,
         })
@@ -670,6 +690,19 @@ impl Positions {
                 .ok_or(NodeBindingError::MissingOwner);
         }
         Err(NodeBindingError::Unsupported("unadmitted declaration reference"))
+    }
+
+    /// A source expression can read a registered Rust item. Only that reference row may use its import authority.
+    fn read_identity(&self, canonical: &CanonicalSymbolId) -> Result<String, NodeBindingError> {
+        if matches!(canonical.origin, incan_semantics_core::SymbolOrigin::RustCrate(_))
+            && let Some(stable) = StableDeclarationId::from_canonical(canonical, None, None)
+        {
+            let key = stable.render_compact();
+            if self.rust_reads.get(&key).and_then(Option::as_ref) == Some(canonical) {
+                return Ok(key);
+            }
+        }
+        self.identity(canonical)
     }
 
     /// Resolve a checked expression-type leaf through an admitted source/package identity or one imported Rust type.
@@ -1222,9 +1255,13 @@ fn restored_identity(
     record_identities: &BTreeMap<String, CanonicalSymbolId>,
     identity: &str,
 ) -> Result<CanonicalSymbolId, NodeBindingError> {
-    positions
-        .canonical(identity)
-        .or_else(|error| record_identities.get(identity).cloned().ok_or(error))
+    positions.canonical(identity).or_else(|error| {
+        record_identities
+            .get(identity)
+            .or_else(|| positions.rust_reads.get(identity).and_then(Option::as_ref))
+            .cloned()
+            .ok_or(error)
+    })
 }
 
 /// Admit a registry-validated builtin method identity for reference fields that follow it in canonical order.

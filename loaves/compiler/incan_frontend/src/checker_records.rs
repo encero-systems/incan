@@ -1272,6 +1272,48 @@ mod tests {
         ))
     }
 
+    /// An aliased Rust item is bound to its registered source import. A different module's item with the
+    /// same leaf and local spelling must cause a new check before its reference is published.
+    #[test]
+    fn registered_rust_item_reads_require_the_current_import() -> Result<(), Box<dyn std::error::Error>> {
+        let source =
+            "from rust::std::fmt import Error as NativeError\n\ndef read_item() -> None:\n    _ = NativeError\n";
+        let module = vec!["main".to_owned()];
+        let check = |program: &crate::ast::Program, records| -> Result<TypeChecker, String> {
+            let mut checker = TypeChecker::new();
+            checker.set_current_module_path(Some(module.clone()));
+            checker.set_graph_body_records(super::GraphBodyRecords::new(records).map_err(|error| error.to_string())?);
+            checker.check_program(program).map_err(|errors| format!("{errors:?}"))?;
+            Ok(checker)
+        };
+        let original = program(source)?;
+        let prior = check(&original, Vec::new())?;
+        let outputs = checked_owner_record_outputs(&original, &prior, &module)?;
+        let [CheckedOwnerRecordOutput::Value(fields)] = outputs.as_slice() else {
+            return Err("missing checked record for a registered Rust item read".into());
+        };
+        let record = selected_graph_record(fields.clone())?;
+        let reused = check(&original, vec![record.clone()])?;
+        assert_eq!(reused.check_work().function_bodies, 0);
+        assert_eq!(
+            reused.type_info().references.resolved_identities,
+            prior.type_info().references.resolved_identities
+        );
+        let changed = program(&source.replace("std::fmt", "std::io"))?;
+        let checked = check(&changed, vec![record])?;
+        let fresh = check(&changed, Vec::new())?;
+        assert_eq!(checked.check_work().function_bodies, 1);
+        assert_eq!(
+            checked.type_info().references.resolved_identities,
+            fresh.type_info().references.resolved_identities
+        );
+        assert_ne!(
+            checked.type_info().references.resolved_identities,
+            prior.type_info().references.resolved_identities
+        );
+        Ok(())
+    }
+
     /// The interpolation's outer range includes its braces while the callee's range starts at its identifier.
     #[test]
     fn preserves_nested_call_provenance_inside_an_interpolation() -> Result<(), Box<dyn std::error::Error>> {
