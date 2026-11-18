@@ -485,6 +485,7 @@ impl Positions {
         fields: &Fields,
     ) -> Result<Self, NodeBindingError> {
         let mut positions = Self::new(checker, program, owner, false)?;
+        imported_members::bind_transitive(checker, &mut positions, fields)?;
         let mut nested = Vec::new();
         for row in fields {
             if row.len() != 4 || row[0] != "binding" || row[2] != "declaration" {
@@ -1049,7 +1050,9 @@ fn restore_identity_context(
     if canonical.declaration_name != name
         || canonical.kind != kind
         || stable_member_identity(&canonical, &owner, binding_ordinal)? != identity
-        || record_identities.insert(identity, canonical).is_some()
+        || record_identities
+            .get(&identity)
+            .is_some_and(|previous| previous != &canonical)
         || local
             .references
             .stable_declaration_contexts
@@ -1061,6 +1064,7 @@ fn restore_identity_context(
     {
         return Err(NodeBindingError::MissingNode);
     }
+    record_identities.insert(identity, canonical);
     Ok(())
 }
 
