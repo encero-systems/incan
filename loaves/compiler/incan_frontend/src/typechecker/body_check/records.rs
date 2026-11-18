@@ -376,7 +376,7 @@ impl Positions {
                 identities.insert(stable.render_compact(), canonical.clone());
             }
         }
-        // A constructor of an imported model or class names the checked field each of its arguments initializes.
+        // Restore imported member references against the current physical declaration in the checked nominal table.
         identities.extend(imported_members::identities(checker));
         let type_identities = admitted_type_identities(checker);
         let nested = checker
