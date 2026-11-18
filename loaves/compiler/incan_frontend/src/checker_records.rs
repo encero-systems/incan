@@ -1240,6 +1240,41 @@ mod tests {
         Ok(())
     }
 
+    /// Repeated references to an indirectly returned nominal retain each call site and one current provider method.
+    #[test]
+    fn restored_repeated_method_on_an_imported_return_type_skips_statements() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let provider = "pub model Failure:\n    code: int\n\n    pub def message(self) -> int:\n        return self.code\n\npub def failure() -> Failure:\n    return Failure(code=3)\n";
+        let source = "from pub::provider import failure\n\ndef result() -> int:\n    error = failure()\n    return error.message() + error.message()\n";
+        let consumer = program(source)?;
+        let (original, _original_files) = provider_index(provider)?;
+        let mut prior = TypeChecker::new();
+        prior.set_current_module_path(Some(vec!["main".into()]));
+        prior.set_loaves(original);
+        prior.check_program(&consumer).map_err(|errors| format!("{errors:?}"))?;
+        let outputs = checked_owner_record_outputs(&consumer, &prior, &["main".into()])?;
+        let [CheckedOwnerRecordOutput::Value(owner)] = outputs.as_slice() else {
+            return Err("expected the indirect package method caller to publish records".into());
+        };
+        let (current, _current_files) =
+            provider_index(&provider.replace("    pub def message", "    # new coordinates\n    pub def message"))?;
+        let mut fresh = TypeChecker::new();
+        fresh.set_current_module_path(Some(vec!["main".into()]));
+        fresh.set_loaves(current.clone());
+        fresh.check_program(&consumer).map_err(|errors| format!("{errors:?}"))?;
+        let mut warm = TypeChecker::new();
+        warm.set_current_module_path(Some(vec!["main".into()]));
+        warm.set_loaves(current);
+        warm.set_graph_body_records(super::GraphBodyRecords::new(vec![selected_graph_record(owner)?])?);
+        warm.check_program(&consumer).map_err(|errors| format!("{errors:?}"))?;
+        assert_eq!(warm.check_work().function_bodies, 0);
+        assert_eq!(
+            warm.type_info().references.resolved_identities,
+            fresh.type_info().references.resolved_identities
+        );
+        Ok(())
+    }
+
     /// A loan-free match scrutinee is retained as a reusable owner fact instead of forcing a source fallback.
     #[test]
     fn loan_free_match_owner_publishes_reusable_value() -> Result<(), Box<dyn std::error::Error>> {
