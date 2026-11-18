@@ -809,6 +809,21 @@ pub def test_prepared_opaque_products_use_their_bounded_selection() -> Result[No
             _ => return Err("prepared opaque read did not return the staged value")
         receipt = reads.finish().map_err((fault) => f"prepared opaque receipt failed: {fault:?}")?
         assert receipt.response_bytes == 0 and len(receipt.witnesses) == 1
+    # A function with many native signatures can publish a lowering demand larger than a scalar field answer.
+    # The plan observes every demand byte through its semantic witness even when no payload bytes are returned.
+    demand_key = encode_record_key(output)?
+    request = prepared_product_request(output)
+    source.add(demand_key, oversized)
+    first = source.for_profile(LOWERING_PROFILE).receipt(lowering_scope, plan, [request])?
+    source.add(demand_key, oversized + b"!")
+    changed = source.for_profile(LOWERING_PROFILE).receipt(lowering_scope, plan, [request])?
+    assert first.response_bytes == 0 and changed.response_bytes == 0
+    match first.witnesses[0]:
+        ReadWitness.Found(previous, _) =>
+            match changed.witnesses[0]:
+                ReadWitness.Found(current, _) => assert previous.semantic_digest != current.semantic_digest
+                _ => return Err("changed lowering demand has no value witness")
+        _ => return Err("lowering demand has no value witness")
     return Ok(None)
 
 

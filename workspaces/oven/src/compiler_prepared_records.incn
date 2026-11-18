@@ -103,8 +103,8 @@ pub class PreparedBodyRecordSource with RecordSource:
 
 
 pub def prepared_product_request(key: RecordKey) -> RecordRequest:
-    """Read scalar facts while binding opaque Body IR and plans through a bounded semantic witness."""
-    if key.family in ["body-ir", "plan-function", "namespace", "plan-module"]:
+    """Read scalar facts and bind opaque compiler products through their complete semantic digest."""
+    if key.family in ["body-ir", "lowering-demand", "plan-function", "namespace", "plan-module"]:
         selected = PayloadSelection(reference=key.context, offset=0, length=0)
         return RecordRequest(key=key, selection=RecordSelection.Payload(selected))
     if checked_row_family(key.family):
