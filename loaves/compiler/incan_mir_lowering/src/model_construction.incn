@@ -154,6 +154,9 @@ pub def checked_aggregate(
                                 boundary_operand(builder, value, tuple_element_type(element_types[slot]), span)?,
                             )
                             continue
+                        if slot < len(element_types) and element_types[slot] == TupleElement.FrozenStr:
+                            operands.append(frozen_operand(builder, value, span)?)
+                            continue
                         owns_text = (
                             slot < len(element_types)
                             and tuple_element_type(element_types[slot]) == PlanType.String
