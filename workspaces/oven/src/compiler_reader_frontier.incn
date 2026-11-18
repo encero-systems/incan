@@ -25,6 +25,14 @@ pub model Reader:
     pub dependencies: list[str]
     pub target: RecordKey
     pub triggers: list[RecordKey]
+    pub declaration: RecordKey
+    pub declaration_digest: str
+
+
+pub model ReaderProducts:
+    """The same ordinary compiler's checked declaration and selected body products."""
+    pub declaration_digest: str
+    pub body: SelectedBodyRecord
 
 
 pub model ReaderFrontier:
@@ -71,18 +79,28 @@ pub model ReaderFrontier:
                                 self.joint = true
                                 return Ok(None)
                             mut dependencies: list[str] = []
+                            mut declaration = key
+                            mut declaration_digest = ""
                             for witness in selected.receipt.witnesses:
                                 match witness:
                                     ReadWitness.Found(prior, _) =>
                                         supplier = prior.request.key
-                                        if supplier.family == "declaration" and supplier.identity != key.identity and supplier.identity not in dependencies:
-                                            dependencies.append(supplier.identity)
+                                        if supplier.family == "declaration":
+                                            if supplier.identity == key.identity:
+                                                if declaration_digest != "" or supplier.origin != key.origin:
+                                                    return Err("ranked reader has ambiguous declaration authority")
+                                                declaration = supplier
+                                                declaration_digest = prior.semantic_digest
+                                            elif supplier.identity not in dependencies:
+                                                dependencies.append(supplier.identity)
                                     _ => return Err("ranked reader has unfinished supplier discovery")
+                            if declaration_digest == "":
+                                return Err("ranked reader lacks its checked declaration witness")
                             records = select_body_inventory_of(graph, CHECKER_PROFILE, key.origin, [key.identity])?
                             if len(records) != 1 or records[0].local != selected.value:
                                 return Err("ranked reader lacks a complete authenticated checking pair")
                             self.pending[key.identity] = Reader(prior=records[0], module=order.members[0], rank=order.rank,
-                                dependencies=dependencies, target=key, triggers=[output])
+                                dependencies=dependencies, target=key, triggers=[output], declaration=declaration, declaration_digest=declaration_digest)
                         None => return Err("ranked reader is missing its namespace certificate")
                 None => return Err("ranked reader is missing its prior checked value")
         return Ok(None)
@@ -113,12 +131,15 @@ pub model ReaderFrontier:
         self.evaluated.add(chosen)
         return Ok(Some(result))
 
-    pub def settle(mut self, graph: Snapshot, origin: str, reader: Reader, current: SelectedBodyRecord) -> Result[None, str]:
-        """Propagate only changed local or final outputs under their exact previous reverse-edge keys."""
+    pub def settle(mut self, graph: Snapshot, origin: str, reader: Reader, products: ReaderProducts) -> Result[None, str]:
+        """Wake readers of each changed checked product through its own previous reverse-edge key."""
+        current = products.body
         old = reader.prior
         if current.identity != old.identity or old.identity not in self.evaluated:
             return Err("ranked reader completed a different owner")
         mut changed: list[RecordKey] = []
+        if products.declaration_digest != reader.declaration_digest:
+            changed.append(reader.declaration)
         if current.local != old.local:
             context = record_root(old.local).map_err((_) => "invalid prior local checker record")?
             changed.append(body_key("local", origin, old.identity, "checked", context))
@@ -130,7 +151,7 @@ pub model ReaderFrontier:
 
 pub def evaluate_reader(
     unit: UnitDescription, toolchain: Toolchain, key: Key, reader: Reader, pages: list[SelectedBodyPage],
-) -> Result[Option[SelectedBodyRecord], str]:
+) -> Result[Option[ReaderProducts], str]:
     """Run the compiler's sole-owner statement entry without invoking lowering, code generation or the linker."""
     scratch = scratch_directory()?
     directory = scratch.path()
@@ -152,13 +173,16 @@ pub def evaluate_reader(
         if status.read_bytes().map_err((error) => error.message())? != b"missing-settled-peer":
             return Err("invalid ranked reader admission disposition")
         return Ok(None)
+    declaration = directory.joinpath("declaration.crumb").read_bytes().map_err((error) => error.message())?
     local = directory.joinpath("local.crumb").read_bytes().map_err((error) => error.message())?
     final = directory.joinpath("final.crumb").read_bytes().map_err((error) => error.message())?
+    checked_declaration = decode_owned_record(declaration, CHECKER_PROFILE, demand.identity).map_err((_) => "invalid ranked reader declaration")?
     checked_local = decode_owned_record(local, CHECKER_PROFILE, demand.identity).map_err((_) => "invalid ranked reader local record")?
     checked_final = decode_owned_record(final, CHECKER_PROFILE, demand.identity).map_err((_) => "invalid ranked reader final record")?
-    if checked_local.family != CheckedFamily.Local or checked_final.family != CheckedFamily.Final:
+    if checked_declaration.family != CheckedFamily.Declaration or checked_local.family != CheckedFamily.Local or checked_final.family != CheckedFamily.Final:
         return Err("ranked reader returned a different record family")
     mut frame = b""
     if final == reader.prior.final:
         frame = reader.prior.body_ir
-    return Ok(Some(SelectedBodyRecord(identity=demand.identity, local=local, final=final, body_ir=frame)))
+    body = SelectedBodyRecord(identity=demand.identity, local=local, final=final, body_ir=frame)
+    return Ok(Some(ReaderProducts(declaration_digest=hexlify(sha256.digest(declaration)), body=body)))

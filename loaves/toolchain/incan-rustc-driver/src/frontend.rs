@@ -509,16 +509,14 @@ pub(crate) fn check_ranked_reader(arguments: &[String]) -> Result<(), Box<dyn st
         std::fs::write(Path::new(output).join("unavailable"), b"missing-settled-peer")?;
         return Ok(());
     };
-    let local = internal_models::from_native_local_fields(&fields.local)
-        .and_then(|record| internal_models::encode_record(&record))
-        .map_err(|error| format!("ranked reader local Crumb refused: {error:?}"))?;
-    let final_value = internal_models::from_native_final_fields(&fields.final_value)
-        .and_then(|record| internal_models::encode_record(&record))
-        .map_err(|error| format!("ranked reader final Crumb refused: {error:?}"))?;
-    std::fs::write(Path::new(output).join("local.crumb"), &local)?;
-    std::fs::write(Path::new(output).join("final.crumb"), &final_value)?;
+    let records = graph_body_output::encoded_body_value(&owner.facet, &fields).map_err(|refusal| refusal.reason)?;
+    let output = Path::new(output);
+    std::fs::write(output.join("declaration.crumb"), &records.declaration)?;
+    std::fs::write(output.join("local.crumb"), &records.local)?;
+    std::fs::write(output.join("final.crumb"), &records.final_value)?;
     tracing::debug!(target: "incan::invocation", owner = %owner.identity, family = "reader",
-        local = %hex::encode(Sha256::digest(&local)), root = %hex::encode(Sha256::digest(&final_value)),
+        declaration = %hex::encode(Sha256::digest(&records.declaration)),
+        local = %hex::encode(Sha256::digest(&records.local)), root = %hex::encode(Sha256::digest(&records.final_value)),
         "completed ranked checking producer");
     Ok(())
 }
