@@ -153,6 +153,7 @@ def authenticate_compiled_bodies(
     output: Path,
     retained: list[SelectedBodyRecord],
     restored: list[str],
+    restored_body_ir: list[str],
 ) -> Result[AuthenticatedCompiledBodies, str]:
     """Authenticate one compiler row directory, consume it and count the owners checked or restored this activation."""
     authenticating = begin_work()
@@ -161,13 +162,16 @@ def authenticate_compiled_bodies(
     outputs = read_compiled_body_outputs(output)?
     remove_dir_all(output.0).map_err((error) => f"cannot consume compiled body output {output.0}: {error}")?
     chosen = set([record.identity for record in retained])
-    with_frame = set([record.identity for record in retained if len(record.body_ir) > 0])
+    installed_frames = set(restored_body_ir)
+    published = set([value.identity for value in outputs.values])
+    if any([owner not in published for owner in installed_frames]):
+        return Err("compiler reported a restored Body IR frame outside its published owners")
     restored_identities = set([owner for owner in restored if owner in chosen])
     mut owner_evaluations = len(outputs.fallbacks)
     mut owner_reuses = 0
     mut body_ir_evaluations = len(outputs.fallbacks)
     for value in outputs.values:
-        if value.identity not in restored_identities or value.identity not in with_frame:
+        if value.identity not in installed_frames:
             body_ir_evaluations += 1
         if value.identity in restored_identities:
             owner_reuses += 1
@@ -222,6 +226,7 @@ pub def prepare_compiled_bodies(
     retained: list[SelectedBodyRecord] = [],
     restored: list[str] = [],
     plan_modules: list[AdmittedPlanModule] = [],
+    restored_body_ir: list[str] = [],
 ) -> Result[PreparedCompiledBodies, str]:
     """
     Stage one successful compiler sidecar through source projections and witnessed checker evaluations.
@@ -235,7 +240,7 @@ pub def prepare_compiled_bodies(
     3. Stage local, final and Body IR evaluations in the caller's request transaction.
     """
     # 1. The sidecar is invocation output, not an authority until this graph publication succeeds.
-    authenticated = authenticate_compiled_bodies(unit, output, retained, restored)?
+    authenticated = authenticate_compiled_bodies(unit, output, retained, restored, restored_body_ir)?
     outputs = authenticated.outputs
     origin = authenticated.origin
     owner_evaluations = authenticated.owner_evaluations

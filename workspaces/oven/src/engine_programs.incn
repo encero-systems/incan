@@ -414,6 +414,7 @@ pub def obtain(
             retained_bodies,
             checker_counts.restored,
             plan_modules.records,
+            checker_counts.restored_body_ir,
         )?
         request_transaction = bodies.transaction
         body_evaluations = bodies.checking_evaluations
