@@ -49,7 +49,7 @@ from release_trust import CARRIED_TRUST, admit_release, anchor, record as record
 # The file extensions of the native libraries an archive keeps in a Loaf's profile directory.
 const NATIVE_LIBRARY_SUFFIXES: FrozenList[str] = [".rlib", ".dylib", ".so", ".a", ".lib"]
 # The caches of file observations, keyed by the builder's paths; an installation observes its files afresh.
-const OBSERVATION_CACHES: FrozenList[str] = ["observations.json", "portable-observations.json"]
+const OBSERVATION_CACHES: FrozenList[str] = ["observations.crumb", "portable-observations.crumb", "observations.json", "portable-observations.json"]
 # The profile directories of a standard Loaf an archive keeps.
 const PACKED_PROFILES: FrozenList[str] = ["debug", "release"]
 # What a packed Loaf's native document is relative to: its profile directory, three levels below the archive root.

@@ -376,9 +376,10 @@ pub def require_pristine_relocation_inputs(home: Path) -> Result[None, str]:
         directory = toolchain.joinpath(name)
         if not directory.is_dir():
             continue
-        caches = directory.rglob("*observations.json").map_err((error) => error.message())?
-        if len(caches) > 0:
-            return Err(f"installed archive retained path-keyed observations: {caches[0].0}")
+        for pattern in ["*observations.crumb", "*observations.json"]:
+            caches = directory.rglob(pattern).map_err((error) => error.message())?
+            if len(caches) > 0:
+                return Err(f"installed archive retained path-keyed observations: {caches[0].0}")
     return Ok(None)
 
 
@@ -400,7 +401,7 @@ def release_json_documents(toolchain: Path) -> Result[list[Path], str]:
 
 def is_relocation_observation_cache(path: Path) -> bool:
     """Recognize the path-keyed caches archive packing excludes and installed use recreates locally."""
-    return path.name().ends_with("observations.json")
+    return path.name().ends_with("observations.crumb") or path.name().ends_with("observations.json")
 
 
 def prepare(output: Path, jobs: int, timeout_seconds: int) -> Result[Installation, str]:
