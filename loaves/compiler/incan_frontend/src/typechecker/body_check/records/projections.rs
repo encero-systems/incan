@@ -368,7 +368,7 @@ pub(super) fn project_signature(
 ) -> Result<(), NodeBindingError> {
     let binding = checker
         .declaration_view()
-        .function(owner)
+        .callable(owner)
         .ok_or(NodeBindingError::MissingOwner)?;
     let mut row = vec![
         "signature".into(),
@@ -379,27 +379,20 @@ pub(super) fn project_signature(
     parameter_fields(&binding.params, &mut row)?;
     type_fields(&binding.return_type, &mut row)?;
     fields.push(row);
-    let declaration = program
-        .declarations
-        .iter()
-        .find(|declaration| declaration.span == owner)
-        .ok_or(NodeBindingError::MissingOwner)?;
-    if let crate::ast::Declaration::Function(function) = &declaration.node {
-        for parameter in &function.params {
-            if let Some(default) = &parameter.node.default {
-                let selected = checker
-                    .checked_declaration(owner)
-                    .ok_or(NodeBindingError::MissingOwner)?;
-                if !selected.expressions().expr_types.contains_key(&default.span) {
-                    return Err(NodeBindingError::Unsupported("default writer"));
-                }
-                fields.push(vec![
-                    "default".into(),
-                    positions.nodes.anchor(default.span)?.path,
-                    parameter.node.name.clone(),
-                    positions.nodes.owner().render_compact(),
-                ]);
+    for parameter in callable_params(program, owner)? {
+        if let Some(default) = &parameter.node.default {
+            let selected = checker
+                .checked_declaration(owner)
+                .ok_or(NodeBindingError::MissingOwner)?;
+            if !selected.expressions().expr_types.contains_key(&default.span) {
+                return Err(NodeBindingError::Unsupported("default writer"));
             }
+            fields.push(vec![
+                "default".into(),
+                positions.nodes.anchor(default.span)?.path,
+                parameter.node.name.clone(),
+                positions.nodes.owner().render_compact(),
+            ]);
         }
     }
     Ok(())

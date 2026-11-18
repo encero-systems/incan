@@ -5,7 +5,7 @@ use super::*;
 impl TypeChecker {
     /// Validate a `newtype` or `rusttype` declaration: its parameters, derives, underlying type, adopted traits,
     /// checked construction hooks, and member bodies.
-    pub(super) fn check_newtype(&mut self, nt: &NewtypeDecl) {
+    pub(super) fn check_newtype(&mut self, nt: &NewtypeDecl, program: Option<&Program>) {
         self.symbols.enter_scope(ScopeKind::Block);
         self.refuse_unbounded_newtype_members(nt);
 
@@ -93,7 +93,7 @@ impl TypeChecker {
             .collect::<Vec<_>>();
         for method in active_newtype_methods {
             if method.node.body.is_some() {
-                self.check_method_with_owner_type_params(&method.node, method.span, &nt.name, &nt.type_params);
+                self.check_method_with_owner_type_params(&method.node, method.span, &nt.name, &nt.type_params, program);
             }
         }
         self.check_method_partials(&nt.name, &nt.method_partials);
