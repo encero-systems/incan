@@ -490,7 +490,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let receiver_ty = self.resolve_ty(receiver.span);
         if let Some(constant) = self.checked_constant(&place, &receiver_ty) {
             let span = hir_span(receiver.span);
-            let local = self.new_temp(receiver_ty, scope, span);
+            let local = self.new_temp(receiver_ty.clone(), scope, span);
             place = bir::Place::from_local(local);
             out.push(bir::Statement {
                 kind: bir::StatementKind::Assign {
@@ -499,6 +499,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 },
                 span,
             });
+        }
+        // A list constructed by a call or literal has no enclosing binding to keep it alive.
+        // Transfer that whole temporary to its lazy iterator as an ordinary for-loop does.
+        if self.type_info.resolved_builtin_method_call(call_span) == Some(BuiltinMethodId::ListIter)
+            && self.temporary_list_iterable(&place, &receiver_ty)
+        {
+            return bir::Operand::place(place, bir::OwnershipFact::Move, true);
         }
         let key = call_span;
         let mutable = self
