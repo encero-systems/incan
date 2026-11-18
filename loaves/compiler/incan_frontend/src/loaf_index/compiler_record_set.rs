@@ -1557,6 +1557,38 @@ mod tests {
     }
 
     #[test]
+    fn an_aggregate_only_runtime_refuses_disagreeing_facade_owners() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let name = "incan_native_runtime";
+        let manifest = surfaced_library_for(name, "pub def used() -> int:\n    return 1\n")?;
+        let mut set = installed_library(root.path(), &manifest)?;
+        set.entries.retain(|entry| !entry.key.contains("/runtime-binding/"));
+        let mut bindings = runtime_bindings(&manifest);
+        let original = bindings
+            .iter()
+            .find(|row| row.path == "incan_native_runtime::used")
+            .ok_or("missing facade")?;
+        let mut other = original.clone();
+        other.canonical.declaration_name = "distinct_declaration".to_owned();
+        bindings.push(other);
+        let bytes = LibraryManifest::encode_compiler_record_value(&bindings)?;
+        let digest = content_name(&bytes);
+        fs::write(root.path().join("payloads").join(&digest), bytes)?;
+        let aggregate = set
+            .entries
+            .iter_mut()
+            .find(|entry| entry.key.contains("/runtime-bindings/"))
+            .ok_or("missing aggregate")?;
+        aggregate.value = digest.clone();
+        aggregate.revision = digest;
+        let _selected = thread_selection::select(set);
+        let dir = root.path().join("debug");
+        let index = crate::loaf_index::LoafIndex::deferred([(name.to_owned(), name.to_owned(), dir, false)])?;
+        assert!(index.runtime_binding(name, "incan_native_runtime::used").is_err());
+        Ok(())
+    }
+
+    #[test]
     fn a_consumer_reads_one_declarations_signature_record_alone() -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
         // One copy of the checked API module, so `prices::price` names one declaration.

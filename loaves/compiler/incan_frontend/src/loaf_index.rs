@@ -603,18 +603,7 @@ impl LoafIndex {
         };
         tracing::trace!(target: "incan::invocation", phase = "dependency_fact", loaf = %indexed.name,
             family = "runtime-binding", name = path);
-        if let Some(binding) = indexed.runtime_binding(path)? {
-            return Ok(Some(binding));
-        }
-        if indexed.names_record(&["runtime-binding"], None)? == Some(true) {
-            return Ok(None);
-        }
-        // The older package format only has a combined inventory. Its values still own the facade's identity.
-        Ok(indexed
-            .runtime_bindings()?
-            .iter()
-            .find(|binding| binding.path == path)
-            .cloned())
+        indexed.runtime_binding(path)
     }
 
     /// Read one declaration's signature, layout or defaults in one Loaf by its module-qualified name, without the rest
