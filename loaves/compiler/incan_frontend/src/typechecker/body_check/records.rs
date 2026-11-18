@@ -168,6 +168,11 @@ impl TypeChecker {
         refusals
     }
 
+    /// A staged graph owner needs its current bound locals to authenticate and republish its executable frame.
+    pub(crate) fn graph_selects_body(&self, identity: &StableDeclarationId) -> bool {
+        self.graph_body_records.selects_owner(identity)
+    }
+
     /// Retain one selected local value for republishing without treating selection as producer execution.
     pub(crate) fn retain_local_record(&mut self, owner: Span, fields: Fields) {
         self.selected_local_records.insert(owner, fields);

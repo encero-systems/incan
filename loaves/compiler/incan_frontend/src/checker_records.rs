@@ -67,6 +67,11 @@ pub struct GraphNamespaceRecord {
 
 /// Keyed source of independently bounded graph body pages.
 pub trait GraphBodyRecordSource: std::fmt::Debug + Send + Sync {
+    /// Recognize a staged owner without admitting its contents. An unreadable page still needs ordinary validation.
+    fn has_owner(&self, identity: &str) -> bool {
+        !matches!(self.read(identity), Ok(None))
+    }
+
     /// Read and authenticate the page for one exact stable owner identity, returning absence without scanning peers.
     fn read(&self, identity: &str) -> Result<Option<GraphBodyRecord>, RecordAdapterFault>;
 
@@ -237,6 +242,18 @@ impl GraphBodyRecords {
         if let Some(owner) = &self.ranked_owner {
             owner.damaged_input.store(true, Ordering::Relaxed);
         }
+    }
+
+    /// Give the active graph the first opportunity to check its demanded owner or authenticate a staged peer.
+    pub(crate) fn selects_owner(&self, owner: &StableDeclarationId) -> bool {
+        if self.ranked_owner.is_none() && self.current.is_empty() && self.is_empty() {
+            return false;
+        }
+        let identity = owner.render_compact();
+        self.ranked_owner() == Some(identity.as_str())
+            || self.current.contains_key(&identity)
+            || self.eager.contains_key(&identity)
+            || self.source.as_ref().is_some_and(|source| source.has_owner(&identity))
     }
 
     /// Read one exact declaration's already codec-validated pair without scanning unrelated owner pages.
@@ -1876,6 +1893,111 @@ mod tests {
                 lower_graph_test_module(&parsed, &warm).bodies,
                 lower_graph_test_module(&parsed, &fresh).bodies
             );
+        }
+        Ok(())
+    }
+
+    /// Scalar products and graph pages can select the same untouched callable during an ordinary edit.
+    /// Only its current checker bindings can authenticate the graph frame that will be published again.
+    #[test]
+    fn graph_body_republication_with_a_competing_scalar_product() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::declaration_interface::{CallableBodyInputs, ValidatedCallableBodies};
+        use incan_semantics_core::executable_representation::{decode_owner, encode_graph_owner};
+
+        let source =
+            "def greeting() -> int:\n    return 1\n\ndef twice(value: int) -> int:\n    return  value + value\n";
+        let module = vec!["main".to_owned()];
+        let check = |parsed: &crate::ast::Program, records, scalar: Option<ValidatedCallableBodies>| {
+            let mut checker = TypeChecker::new();
+            checker.set_current_module_path(Some(module.clone()));
+            checker.set_graph_body_records(super::GraphBodyRecords::new(records).map_err(|error| error.to_string())?);
+            if let Some(scalar) = scalar {
+                checker.set_callable_body_reuse(scalar);
+            }
+            checker.check_program(parsed).map_err(|errors| format!("{errors:?}"))?;
+            Ok::<_, String>(checker)
+        };
+        let original = program(source)?;
+        let baseline = check(&original, vec![], None)?;
+        let lowered = lower_graph_test_module(&original, &baseline);
+        let products =
+            CallableBodyInputs::from_checked_for_unit(&original, source, &baseline, "fixture")?.finish(&lowered)?;
+        let owner = checked_owner_record_outputs(&original, &baseline, &module)?
+            .into_iter()
+            .find_map(|output| match output {
+                CheckedOwnerRecordOutput::Value(owner) if owner.name == "twice" => Some(owner),
+                _ => None,
+            })
+            .ok_or("missing checked peer")?;
+        let publish =
+            |parsed: &crate::ast::Program, checker: &TypeChecker| -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+                let lowered = lower_graph_test_module(parsed, checker);
+                let body = lowered
+                    .bodies
+                    .iter()
+                    .find(|body| body.name == "twice")
+                    .ok_or("missing lowered peer")?;
+                let physical = checker
+                    .graph_body_physical_inputs(parsed, body.span)
+                    .ok_or("missing current physical inputs")?;
+                Ok(encode_graph_owner(
+                    &lowered.module_id,
+                    "main.incn",
+                    &owner.identity,
+                    body,
+                    Some(physical),
+                )?)
+            };
+        let frame = decode_owner(&publish(&original, &baseline)?)?;
+        let valid = frame.physical_inputs.ok_or("missing baseline proof")?;
+        let mut corrupt = valid;
+        corrupt[0] ^= 1;
+        let edited = source.replace("return 1", "return 2");
+        let scalar_only_program = program(&edited)?;
+        let scalar_only = check(
+            &scalar_only_program,
+            vec![],
+            Some(products.select(&scalar_only_program, &edited, "fixture", &module)?),
+        )?;
+        let peer = scalar_only_program.declarations[1].span;
+        assert!(scalar_only.type_info().selected_callable_body(peer).is_some());
+        assert_eq!(scalar_only.check_work().function_bodies, 1);
+
+        for (input, proof, corrupt_rows, expected_scalar, expected_frame) in [
+            (edited.clone(), Some(valid), false, 1, true),
+            (edited.clone(), None, false, 1, false),
+            (edited.clone(), Some(corrupt), false, 1, false),
+            (edited.clone(), Some(valid), true, 1, false),
+            (
+                edited.replace("return  value + value", "return value  + value"),
+                Some(valid),
+                false,
+                0,
+                false,
+            ),
+        ] {
+            let parsed = program(&input)?;
+            let selection = products.select(&parsed, &input, "fixture", &module)?;
+            assert_eq!(selection.len(), expected_scalar);
+            let mut record = selected_graph_record(owner.clone())?;
+            let mut candidate = frame.clone();
+            candidate.physical_inputs = proof;
+            record.body_ir = Some(candidate);
+            if corrupt_rows {
+                record
+                    .final_value
+                    .retain(|row| !row.first().is_some_and(|field| field == "scope"));
+            }
+            let warm = check(&parsed, vec![record], Some(selection))?;
+            let fresh = check(&parsed, vec![], None)?;
+            assert_eq!(warm.check_work().function_bodies, if corrupt_rows { 2 } else { 1 });
+            assert_eq!(
+                warm.type_info()
+                    .selected_callable_body(parsed.declarations[1].span)
+                    .is_some(),
+                expected_frame
+            );
+            assert_eq!(publish(&parsed, &warm)?, publish(&parsed, &fresh)?);
         }
         Ok(())
     }

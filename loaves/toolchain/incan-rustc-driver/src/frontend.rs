@@ -296,7 +296,17 @@ struct GraphBodyRecordPages {
     root: PathBuf,
 }
 
+impl GraphBodyRecordPages {
+    fn owner_page(&self, identity: &str) -> PathBuf {
+        self.root.join(hex::encode(Sha256::digest(identity.as_bytes())))
+    }
+}
+
 impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordPages {
+    fn has_owner(&self, identity: &str) -> bool {
+        self.owner_page(identity).try_exists().unwrap_or(true)
+    }
+
     /// Read only the page addressed by this stable owner; absence keeps that owner on the ordinary checking path.
     fn read(
         &self,
@@ -306,7 +316,7 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
         incan_frontend::checker_records::RecordAdapterFault,
     > {
         const MAX_PAGE_BYTES: u64 = 64 * 1024 * 1024;
-        let path = self.root.join(hex::encode(Sha256::digest(identity.as_bytes())));
+        let path = self.owner_page(identity);
         let metadata = match std::fs::metadata(&path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
