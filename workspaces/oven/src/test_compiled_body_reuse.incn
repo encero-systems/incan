@@ -4,15 +4,14 @@ from pub::incan_platform.store import begin
 from pub::incan_platform.store import snapshot as store_snapshot
 from pub::incan_platform.store.memory import root as memory_root
 from pub::internal_models import CompiledBodyOutputs, CompiledBodyValue, encode_compiled_body_rows
-from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily, CheckedRecord, encode_record
+from checker_record_fixtures import empty_checker_record
+from pub::internal_models.checker_records import CheckedFamily
 from std.fs import Path
 from compiler_body_publication import prepare_compiled_bodies
 from compiler_body_values import SelectedBodyRecord
 from publication import publish_binary
 from scratch import scratch_directory
 from unit import UnitDescription
-
-const SEMANTIC_ROOT: str = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
 
 pub def test_a_selected_body_the_compiler_checked_again_counts_as_checked() -> Result[None, str]:
@@ -80,20 +79,13 @@ def body_value(name: str) -> Result[CompiledBodyValue, str]:
             module="main.incn",
             name=name,
             identity=identity,
-            declaration=record(identity, CheckedFamily.Declaration)?,
-            local=record(identity, CheckedFamily.Local)?,
-            final=record(identity, CheckedFamily.Final)?,
+            declaration=empty_checker_record(identity, CheckedFamily.Declaration)?,
+            local=empty_checker_record(identity, CheckedFamily.Local)?,
+            final=empty_checker_record(identity, CheckedFamily.Final)?,
             body_ir=b"owner-frame",
             dependency_reads=[],
         ),
     )
-
-
-def record(identity: str, family: CheckedFamily) -> Result[bytes, str]:
-    """One empty checker record of `family` for `identity`."""
-    return encode_record(
-        CheckedRecord(profile=CHECKER_PROFILE, owner=identity, root=SEMANTIC_ROOT, family=family, fields=[]),
-    ).map_err((error) => f"{error:?}")
 
 
 def publish_output_rows(output: Path, outputs: CompiledBodyOutputs) -> Result[None, str]:
