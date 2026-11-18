@@ -284,16 +284,25 @@ impl TypeChecker {
         if let Some(body) = &method.body
             && self.graph_body_records.ranked_owner().is_none()
         {
-            self.check_work.method_bodies += 1;
-            let index = self.check_callable_body(
-                body,
-                method.is_async(),
-                span,
-                yield_context,
-                super::ownership_contracts::CallableSource::Method(method),
-            );
-            if let (Some(program), Some(index)) = (program, index) {
-                self.produce_local_record(program, span, index);
+            let reused = program.is_some_and(|program| match self.reuse_graph_body_record(program, span, body) {
+                Ok(reused) => reused,
+                Err(error) => {
+                    tracing::debug!(target: "incan::invocation", ?span, ?error, "graph method selection refused");
+                    false
+                }
+            });
+            if !reused {
+                self.check_work.method_bodies += 1;
+                let index = self.check_callable_body(
+                    body,
+                    method.is_async(),
+                    span,
+                    yield_context,
+                    super::ownership_contracts::CallableSource::Method(method),
+                );
+                if let (Some(program), Some(index)) = (program, index) {
+                    self.produce_local_record(program, span, index);
+                }
             }
         }
         self.current_classmethod_self_ty = previous_classmethod;

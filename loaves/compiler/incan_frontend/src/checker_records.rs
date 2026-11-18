@@ -1280,16 +1280,18 @@ mod tests {
     /// Method records come from the ordinary checked nominal and keep owners with the same member name distinct.
     #[test]
     fn ordinary_nominal_methods_publish_their_own_checked_records() -> Result<(), Box<dyn std::error::Error>> {
-        let parsed = program(concat!(
+        let source = concat!(
             "model Left:\n    value: int\n",
             "    def read(self) -> int:\n        return self.value\n\n",
             "model Right:\n    value: int\n",
             "    def read(self) -> int:\n        return self.value + 1\n"
-        ))?;
+        );
+        let parsed = program(source)?;
         let mut checker = TypeChecker::new();
         checker.set_current_module_path(Some(vec!["main".into()]));
         checker.check_program(&parsed).map_err(|errors| format!("{errors:?}"))?;
         assert_eq!(checker.check_work().method_bodies, 2);
+        let mut selected = Vec::new();
         for declaration in &parsed.declarations {
             let crate::ast::Declaration::Model(model) = &declaration.node else {
                 continue;
@@ -1314,6 +1316,34 @@ mod tests {
                     fields.ok_or_else(|| format!("{} did not produce a checked record: {refusal:?}", model.name))?;
                 assert_eq!(record[0][1], stable);
             }
+            let mut local = checker.available_local_record(owner).ok_or("missing Local")?.clone();
+            let mut final_value = checker.available_final_record(owner).ok_or("missing Final")?.clone();
+            local[0].insert(3, "local".into());
+            final_value[0].insert(3, "final".into());
+            selected.push(super::GraphBodyRecord {
+                identity: stable,
+                local,
+                final_value,
+                body_ir: None,
+            });
+        }
+        for (changed, expected_checks) in [
+            (source.to_owned(), 0),
+            (source.replace("self.value + 1", "self.value + 2"), 1),
+        ] {
+            let current = program(&changed)?;
+            let mut warm = TypeChecker::new();
+            warm.set_current_module_path(Some(vec!["main".into()]));
+            warm.set_graph_body_records(super::GraphBodyRecords::new(selected.clone())?);
+            warm.check_program(&current).map_err(|errors| format!("{errors:?}"))?;
+            assert_eq!(warm.check_work().method_bodies, expected_checks);
+            let mut fresh = TypeChecker::new();
+            fresh.set_current_module_path(Some(vec!["main".into()]));
+            fresh.check_program(&current).map_err(|errors| format!("{errors:?}"))?;
+            assert_eq!(
+                warm.type_info().references.resolved_identities,
+                fresh.type_info().references.resolved_identities
+            );
         }
         Ok(())
     }
