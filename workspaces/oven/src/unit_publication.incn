@@ -192,10 +192,20 @@ pub def import_payload(path: Path, identity: str, expected_payload: str = "") ->
     3. Record first admission in this home's cache, leaving the imported store untouched.
     """
     # 1. Import is a trust boundary, distinct from naming an artifact during unit identification.
-    existing = available_record(path)?
+    local = record_path(path)
+    before = observe(path)?.stamp
+    mut existing = available_record(path)?
     mut proof = PayloadAdmission(identity=identity, payload=expected_payload, observation="", provenance=[])
     if existing.is_file():
         proof = read_evidence(existing, path)?
+        changed_producer = proof.identity != identity or (expected_payload != "" and proof.payload != expected_payload)
+        # A later archive can stage a new producer at the same path. Only its transported record and a fresh
+        # verification of its bytes may replace an admission for the former physical generation.
+        if changed_producer and existing.0 != local.0 and local.is_file() and expected_payload != "":
+            if proof.observation != "" and proof.observation != before:
+                existing = local
+                proof = read_evidence(local, path)?
+                proof.observation = ""
         if proof.identity != identity:
             return Err(f"{path.0}: imported producer identity disagrees")
         if expected_payload != "" and proof.payload != expected_payload:
@@ -203,7 +213,6 @@ pub def import_payload(path: Path, identity: str, expected_payload: str = "") ->
     if identity == "" and proof.refusal == "":
         return Err("unit identity refused: imported producer has no portable identity")
     # A transported record describes these bytes even when its former location or generation is stale.
-    local = record_path(path)
     if existing.0 != local.0 and local.is_file():
         transported = read_evidence(local, path)?
         if transported.identity != proof.identity or transported.payload != proof.payload:
@@ -211,7 +220,6 @@ pub def import_payload(path: Path, identity: str, expected_payload: str = "") ->
         proof.provenance = transported.provenance
         proof.refusal = transported.refusal
         proof.facts = transported.facts
-    before = observe(path)?.stamp
     if existing.is_file() and proof.observation == before:
         if existing.0 == local.0:
             return Ok(None)
