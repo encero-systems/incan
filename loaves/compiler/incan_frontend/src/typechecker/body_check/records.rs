@@ -215,9 +215,16 @@ impl TypeChecker {
     /// Fingerprint the current callable coordinates and checked native bindings before publishing its executable frame.
     pub fn graph_body_physical_inputs(&self, program: &Program, owner: Span) -> Option<[u8; 32]> {
         let local = &self.checked_body(owner)?.local;
-        Positions::for_local(self, program, owner, local)
-            .ok()?
-            .physical_inputs(local)
+        let records = [
+            self.available_declaration_record(owner)?,
+            self.available_local_record(owner)?,
+            self.available_final_record(owner)?,
+        ];
+        Positions::for_local(self, program, owner, local).ok()?.physical_inputs(
+            local,
+            records,
+            &self.symbols.declaration_origin(),
+        )
     }
 
     /// Check the exact current owner before a ranked activation enters this function's statements.
@@ -576,7 +583,12 @@ impl Positions {
     /// A position-free checker result can remain reusable after its native executable references have moved.
     /// Bind the native frame to the current owner's entire syntax geometry, checked type providers, and the exact
     /// reference, nested, and write handles settled for that owner. Hash ordered typed bytes, including scope IDs.
-    fn physical_inputs(&self, local: &BodyLocal) -> Option<[u8; 32]> {
+    fn physical_inputs(
+        &self,
+        local: &BodyLocal,
+        records: [&Fields; 3],
+        origin: &incan_semantics_core::SymbolOrigin,
+    ) -> Option<[u8; 32]> {
         use sha2::{Digest, Sha256};
         let references = local.references.resolved_identities.iter().collect::<BTreeMap<_, _>>();
         let writes = local
@@ -595,10 +607,37 @@ impl Positions {
             .iter()
             .map(|(span, context)| (span, (&context.owner, context.binding_ordinal)))
             .collect::<BTreeMap<_, _>>();
+        // Every persistent canonical handle read by the declaration/local/final decoders occupies a complete
+        // field. Resolve those cells against this activation's actual bindings. A coinciding scalar can retain
+        // an extra handle, but cannot exclude a read. Include all non-callable and foreign inputs as before.
+        let used = records
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|field| self.identities.get(field))
+            .collect::<std::collections::BTreeSet<_>>();
+        let handles = self
+            .identities
+            .iter()
+            .filter(|(_, target)| {
+                target.kind != SemanticSourceTargetKind::Function
+                    || &target.origin != origin
+                    || target.scope_discriminant.is_some()
+                    || used.contains(*target)
+            })
+            .collect::<BTreeMap<_, _>>();
+        // The store adds the family's selector to each native header and can return canonical rows in codec order.
+        // Hash the completed products' logical rows in their fixed declaration/local/final order.
+        let values = records.map(|fields| {
+            let mut rows = fields.iter().skip(1).collect::<Vec<_>>();
+            rows.sort_unstable();
+            rows
+        });
         let bytes = postcard::to_allocvec(&(
             self.nodes.root(),
             self.nodes.physical_nodes(),
-            &self.identities,
+            values,
+            handles,
             &self.type_identities,
             &local.nested,
             references,

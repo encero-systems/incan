@@ -1597,6 +1597,70 @@ mod tests {
         Ok(())
     }
 
+    /// Moving a callee invalidates its current physical call target. An earlier owner with no read of that
+    /// declaration keeps its already lowered frame, even when both owners received valid checker records.
+    #[test]
+    fn physical_owner_frames_follow_selected_callable_handles() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def unrelated() -> int:\n    return 1\n\ndef caller() -> int:\n    return provider()\n\ndef caller_through_value() -> int:\n    callback = provider\n    return callback()\n\ndef provider() -> int:\n    return 20\n";
+        let module = vec!["main".to_owned()];
+        let check = |program: &crate::ast::Program, records| -> Result<TypeChecker, String> {
+            let mut checker = TypeChecker::new();
+            checker.set_current_module_path(Some(module.clone()));
+            checker.set_graph_body_records(super::GraphBodyRecords::new(records).map_err(|err| err.to_string())?);
+            checker.check_program(program).map_err(|errors| format!("{errors:?}"))?;
+            Ok(checker)
+        };
+        let original = program(source)?;
+        let cold = check(&original, vec![])?;
+        let lowered = lower_graph_test_module(&original, &cold);
+        let mut inputs = Vec::new();
+        for output in checked_owner_record_outputs(&original, &cold, &module)? {
+            let CheckedOwnerRecordOutput::Value(owner) = output else {
+                return Err("missing checked callable in handle fixture".into());
+            };
+            if owner.name == "provider" {
+                continue;
+            }
+            let body = lowered
+                .bodies
+                .iter()
+                .find(|body| body.name == owner.name)
+                .ok_or("missing lowered owner")?;
+            let witness = cold
+                .graph_body_physical_inputs(&original, owner.span)
+                .ok_or("missing physical inputs")?;
+            let bytes = incan_semantics_core::executable_representation::encode_graph_owner(
+                &lowered.module_id,
+                "src/main.incn",
+                &owner.identity,
+                body,
+                Some(witness),
+            )?;
+            let mut input = selected_graph_record(owner)?;
+            input.body_ir = Some(incan_semantics_core::executable_representation::decode_owner(&bytes)?);
+            inputs.push(input);
+        }
+        let edited = program(&source.replace("return 20", "return 2000"))?;
+        let warm = check(&edited, inputs)?;
+        let fresh = check(&edited, vec![])?;
+        assert!(
+            warm.type_info()
+                .selected_callable_body(edited.declarations[0].span)
+                .is_some()
+        );
+        assert!(
+            warm.type_info()
+                .selected_callable_body(edited.declarations[1].span)
+                .is_none()
+        );
+        assert!(warm.type_info().selected_callable_body(edited.declarations[2].span).is_none());
+        assert_eq!(
+            lower_graph_test_module(&edited, &warm).bodies,
+            lower_graph_test_module(&edited, &fresh).bodies
+        );
+        Ok(())
+    }
+
     /// A loan-free match scrutinee is retained as a reusable owner fact instead of forcing a source fallback.
     #[test]
     fn loan_free_match_owner_publishes_reusable_value() -> Result<(), Box<dyn std::error::Error>> {
