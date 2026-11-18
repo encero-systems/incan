@@ -6,6 +6,8 @@ product-local ordinal. The product names each ordinal's declaration by stable id
 position in the unit's tables. Places, operands, operations and statements cross `body_records`.
 """
 
+from rust::incan_semantics_core import SemanticSourceTargetKind, SymbolNamespace, decode_incan_symbol_identity
+from rust::incan_semantics_core::body_ir import loaf_item_path
 from std.primitives.crumb.values import Value, IntegerValue
 from pub::internal_models.crumb_rows import required_value
 from pub::internal_models.graph_crumb_fields import items, integer as wire_integer, number, text
@@ -78,8 +80,9 @@ from _body import (
     Unwind,
 )
 
-# The Incan import prefix a Rust standard-library function keeps in a product.
+# Source import prefixes retained by the scalar product.
 const RUST_BINDING: str = "rust::"
+const PACKAGE_BINDING: str = "pub::"
 
 
 enum StoredUnwind:
@@ -581,9 +584,18 @@ def restore_external(value: StoredExternal, mut remap: NominalRemap) -> Result[E
 
 def store_binding(path: str) -> Result[str, str]:
     """Translate the bounded scalar adapter's implementation paths to stable Incan identities."""
+    if "::__incan_v" in path:
+        parts = path.split("::")
+        if len(parts) != 2:
+            return Err("invalid native path for an emitted package callable")
+        if package_item(parts[1])? != path:
+            return Err("native path disagrees with its emitted package identity")
+        return Ok(PACKAGE_BINDING + parts[1])
     match path:
         "incan_native_runtime::initialize_panic_hook" => return Ok("builtin::runtime_initialize")
         "incan_native_runtime::println_text" => return Ok("builtin::print")
+        # The native model serializer imports this host function at this exact Rust path.
+        "incan_std_data::json::__private::stringify_or_raise" => return Ok(RUST_BINDING + path)
         _ => pass
     runtime = "incan_native_runtime::"
     primitives = "incan_std_primitives::"
@@ -602,8 +614,27 @@ def store_binding(path: str) -> Result[str, str]:
     return Err("scalar function products refuse an external without an Incan binding identity")
 
 
+def package_item(symbol: str) -> Result[str, str]:
+    """Recover the package's native item from the compiler's complete canonical symbol projection."""
+    canonical = match decode_incan_symbol_identity(symbol).map_err((error) => str(error))?:
+        None => return Err("package binding has no emitted Incan symbol")
+        Some(value) => value
+    match (canonical.namespace, canonical.kind):
+        (SymbolNamespace.OrdinaryLexical, SemanticSourceTargetKind.Function) => pass
+        (SymbolNamespace.Member, SemanticSourceTargetKind.Method) => pass
+        _ => return Err("emitted Incan binding is not a supported callable")
+    path = match loaf_item_path(canonical):
+        None => return Err("emitted Incan binding has no package provider")
+        Some(value) => str(value)
+    if not path.endswith("::" + symbol):
+        return Err("noncanonical emitted Incan package binding")
+    return Ok(path)
+
+
 def restore_binding(identity: str) -> Result[str, str]:
     """Select one native implementation for an admitted Incan binding identity at adapter time."""
+    if identity.startswith(PACKAGE_BINDING):
+        return package_item(identity[len(PACKAGE_BINDING):])
     match identity:
         "builtin::runtime_initialize" => return Ok("incan_native_runtime::initialize_panic_hook")
         "builtin::print" => return Ok("incan_native_runtime::println_text")
