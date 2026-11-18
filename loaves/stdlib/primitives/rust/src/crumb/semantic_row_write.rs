@@ -555,7 +555,7 @@ impl ChargedWriter {
 pub(super) fn write_rows(rows: &Rows) -> Option<Vec<u8>> {
     let mut body = Vec::new();
     hash::unsigned(&mut body, rows.dictionary.len() as u128);
-    for entry in &rows.dictionary {
+    for entry in rows.dictionary.iter() {
         body.extend(encode_entry(entry)?);
     }
     hash::unsigned(&mut body, rows.records.len() as u128);

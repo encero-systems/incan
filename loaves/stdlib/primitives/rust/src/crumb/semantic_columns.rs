@@ -69,6 +69,11 @@ impl Budget {
         Ok(())
     }
 
+    /// The remaining nesting depth at the current cursor boundary.
+    pub(super) fn depth(&self) -> u64 {
+        self.depth
+    }
+
     /// The bytes and elements still allowed.
     pub(super) fn left(&self) -> (u64, u64) {
         (self.bytes, self.elements)

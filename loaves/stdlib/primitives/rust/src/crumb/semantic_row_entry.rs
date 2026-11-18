@@ -100,12 +100,17 @@ impl RowRequest {
 
     /// Admit the envelope, charging only this request's allowance.
     pub fn admit(&self) -> RowAdmission {
+        self.admit_with_descriptions(Some(&self.supplied))
+    }
+
+    fn admit_with_descriptions(&self, encoded_descriptions: Option<&[Vec<u8>]>) -> RowAdmission {
         let (bytes, elements, depth) = self.allowance;
         let mut budget = Budget::new(bytes, elements, depth);
         let result = match self.supplied_descriptions() {
             Some(supplied) => {
                 let inputs = ReadInputs {
                     supplied: &supplied,
+                    encoded_descriptions,
                     kinds: &self.kinds,
                     require_sealed: self.require_sealed,
                     exact: self.exact,
@@ -234,6 +239,71 @@ mod tests {
         let mut malformed = request(bytes(EMPTY_REFERENCE), true);
         malformed.supply(vec![9]);
         assert_eq!(malformed.admit().category, "invalid_description");
+    }
+
+    #[test]
+    fn referenced_dictionaries_preserve_budgets_refusals_and_row_validation() -> Result<(), String> {
+        let notation = serde_json::from_str(EMPTY_DESCRIPTION).map_err(|error| error.to_string())?;
+        let description = rows::notation(&notation).ok_or("description")?;
+        let mut encoded = Vec::new();
+        let mut budget = Budget::new(u64::MAX, u64::MAX, u64::MAX);
+        rows::encode_metadata(&description, &mut encoded, &mut budget)?;
+        let mut reference = request(bytes(EMPTY_REFERENCE), true);
+        reference.supply(encoded.clone());
+        reference.supply(encoded);
+        let first = reference.admit();
+        let second = reference.admit();
+        let dictionary = |a: RowAdmission| a.rows.map(|rows| rows.dictionary).ok_or("rows missing");
+        let byte_charge = first.bytes_charged;
+        let element_charge = first.elements_charged;
+        assert!(std::sync::Arc::ptr_eq(&dictionary(first)?, &dictionary(second)?));
+
+        let compare = |request: &RowRequest| {
+            let current = request.admit();
+            let independent = request.admit_with_descriptions(None);
+            assert_eq!(current.category, independent.category);
+            assert_eq!(current.offset, independent.offset);
+            assert_eq!(current.cause, independent.cause);
+            assert_eq!(current.field, independent.field);
+            assert_eq!(current.variant, independent.variant);
+            assert_eq!(current.bytes_charged, independent.bytes_charged);
+            assert_eq!(current.elements_charged, independent.elements_charged);
+            assert_eq!(current.records, independent.records);
+            assert_eq!(current.key(0), independent.key(0));
+            current
+        };
+        for (bytes, elements, depth) in [
+            (byte_charge, element_charge, 128),
+            (byte_charge - 1, element_charge, 128),
+            (byte_charge, element_charge - 1, 128),
+            (byte_charge / 2, element_charge / 2, 128),
+            (byte_charge, element_charge, 1),
+        ] {
+            let mut limited = reference.clone();
+            limited.allow(bytes, elements, depth);
+            compare(&limited);
+        }
+        let mut require_seal = reference.clone();
+        require_seal.require_sealed = true;
+        assert_eq!(compare(&require_seal).category, "seal_required");
+        let mut damaged_row = reference.clone();
+        if let Some(last) = damaged_row.data.last_mut() {
+            *last = 255;
+        }
+        assert!(!compare(&damaged_row).admitted());
+        let mut malformed_supply = reference.clone();
+        malformed_supply.supplied[1] = vec![9];
+        assert_eq!(compare(&malformed_supply).category, "invalid_description");
+        let mut changed_dictionary = reference.clone();
+        changed_dictionary.data[20] ^= 1;
+        assert_eq!(compare(&changed_dictionary).category, "description_mismatch");
+        let mut registered = reference.clone();
+        registered.register("Another".to_string(), false);
+        assert!(!std::sync::Arc::ptr_eq(
+            &dictionary(reference.admit())?,
+            &dictionary(compare(&registered))?
+        ));
+        Ok(())
     }
 
     #[test]

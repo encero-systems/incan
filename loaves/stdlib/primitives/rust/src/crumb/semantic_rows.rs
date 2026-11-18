@@ -74,7 +74,7 @@ pub(super) struct Record {
 /// A decoded envelope: the K-ordered dictionary, records, seal status and the input bytes it occupies.
 #[derive(Clone)]
 pub(super) struct Rows {
-    pub(super) dictionary: Vec<Stored>,
+    pub(super) dictionary: std::sync::Arc<[Stored]>,
     pub(super) records: Vec<Record>,
     pub(super) sealed: bool,
     pub(super) consumed: usize,
@@ -84,6 +84,7 @@ pub(super) struct Rows {
 /// record (true) or enum (false) shapes, whether the envelope must be sealed, and whether it must end the input.
 pub(super) struct ReadInputs<'a> {
     pub(super) supplied: &'a [Meta],
+    pub(super) encoded_descriptions: Option<&'a [Vec<u8>]>,
     pub(super) kinds: &'a [(String, bool)],
     pub(super) require_sealed: bool,
     pub(super) exact: bool,
@@ -94,6 +95,7 @@ impl<'a> ReadInputs<'a> {
     fn case(supplied: &'a [Meta], document: &Json) -> Self {
         Self {
             supplied,
+            encoded_descriptions: None,
             kinds: &[],
             require_sealed: require_sealed(document),
             exact: true,
@@ -248,8 +250,7 @@ pub(super) fn read_rows(data: &[u8], inputs: &ReadInputs, budget: &mut Budget) -
     if inputs.require_sealed && !sealed {
         return Err(at("seal_required", 6));
     }
-    let mut body = Span::new(payload, payload_origin);
-    let dictionary = read_entries(&mut body, inputs.supplied, inputs.kinds, budget)?;
+    let (dictionary, mut body) = admitted_dictionary(payload, payload_origin, inputs, budget)?;
     let records = read_records(&mut body, &dictionary, sealed, budget)?;
     body.finished()?;
     Ok(Rows {
@@ -258,6 +259,82 @@ pub(super) fn read_rows(data: &[u8], inputs: &ReadInputs, budget: &mut Budget) -
         sealed,
         consumed: cursor.consumed(),
     })
+}
+
+/// Compiler row families repeatedly supply and reference the same complete descriptions. Share only the
+/// admitted dictionary; every envelope still validates its own rows, nesting, trailer and seal.
+struct AdmittedDictionary {
+    wire: Vec<u8>,
+    supplied: Vec<Vec<u8>>,
+    kinds: Vec<(String, bool)>,
+    entries: std::sync::Arc<[Stored]>,
+    depth: u64,
+    bytes: u64,
+    elements: u64,
+}
+
+fn admitted_dictionary<'a>(
+    payload: &'a [u8],
+    origin: usize,
+    inputs: &ReadInputs,
+    budget: &mut Budget,
+) -> Positioned<(std::sync::Arc<[Stored]>, Span<'a>)> {
+    use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
+
+    static RECENT: Mutex<VecDeque<AdmittedDictionary>> = Mutex::new(VecDeque::new());
+    let mut body = Span::new(payload, origin);
+    let eligible = inputs
+        .encoded_descriptions
+        .filter(|descriptions| (2..=1024).contains(&descriptions.len()));
+    let before = budget.left();
+    let depth = budget.depth();
+    if let Some(supplied) = eligible {
+        let recent = RECENT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        for saved in recent.iter().rev() {
+            if depth == saved.depth
+                && before.0 >= saved.bytes
+                && before.1 >= saved.elements
+                && inputs.kinds == saved.kinds
+                && payload.starts_with(&saved.wire)
+                && supplied == saved.supplied
+            {
+                // A smaller budget must execute the original charge sequence so its first refusal and offset agree.
+                budget.bytes(saved.bytes).place(origin)?;
+                budget.elements(saved.elements).place(origin)?;
+                let end = saved.wire.len();
+                return Ok((Arc::clone(&saved.entries), Span::new(&payload[end..], origin + end)));
+            }
+        }
+    }
+
+    let entries: Arc<[Stored]> = read_entries(&mut body, inputs.supplied, inputs.kinds, budget)?.into();
+    let after = budget.left();
+    let bytes = before.0 - after.0;
+    if let Some(supplied) = eligible
+        && body.consumed() <= 64 * 1024
+        && bytes <= 8 * 1024 * 1024
+        && supplied.iter().map(Vec::len).sum::<usize>() <= 256 * 1024
+        && inputs.kinds.len() <= 64
+        && inputs.kinds.iter().all(|(kind, _)| kind.len() <= 1024)
+        && entries.iter().all(|entry| !entry.inline)
+    {
+        let saved = AdmittedDictionary {
+            wire: payload[..body.consumed()].to_vec(),
+            supplied: supplied.to_vec(),
+            kinds: inputs.kinds.to_vec(),
+            entries: Arc::clone(&entries),
+            depth,
+            bytes,
+            elements: before.1 - after.1,
+        };
+        let mut recent = RECENT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if recent.len() == 4 {
+            recent.pop_front();
+        }
+        recent.push_back(saved);
+    }
+    Ok((entries, body))
 }
 
 /// Read every row, feeding object contributions to the seal, then verify its count and digest.
