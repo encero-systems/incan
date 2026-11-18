@@ -19,6 +19,7 @@ from pub::internal_models import PREPARED_FAMILY, WORK_FAMILY, envelope_key
 
 pub const SNAPSHOT_FORMAT_PROFILE: str = "incan.compiler-records/1"
 pub const STORE_VIEW_SCHEMA: str = "incan.store-view/1"
+const BINDING_ROW: bytes = b"stview\x00"
 const SNAPSHOT_ROW: bytes = b"cmpsnp\x00"
 const SNAPSHOT_SCHEMA: str = "incan.compiler-snapshot/1"
 const SNAPSHOT_FAMILY: str = "incan.compiler.snapshot"
@@ -57,6 +58,13 @@ pub model StoreView:
     pub store_id: str
     pub locator: str
     pub home_view: str
+
+
+pub model SelectedStoreView:
+    """A verified binding and whether a writer can backfill the current private projection."""
+
+    pub binding: StoreView
+    pub backfill: bool = false
 
 
 @derive(Eq)
@@ -169,6 +177,48 @@ pub def encode_store_view(binding: StoreView) -> Result[str, str]:
         )
         .to_json()
         .map_err((error) => error.message())
+
+
+pub def portable_store_view(binding: StoreView) -> Result[bytes, str]:
+    """Preserve the exact portable configuration accepted by independently installed older workers."""
+    return Ok((encode_store_view(binding)? + "\n").encode("utf-8"))
+
+
+def binding_description() -> Description:
+    return model_description(BINDING_ROW, "incan.store-view/2", [
+        ModelField(identity=b"homevw", name="home_view", storage="string"),
+        ModelField(identity=b"locatr", name="locator", storage="string"),
+        ModelField(identity=b"store_", name="store_id", storage="string"),
+    ])
+
+
+pub def encode_store_binding(binding: StoreView) -> Result[bytes, str]:
+    """Persist the view, absolute locator and stable store identity as independent Crumb fields."""
+    return encode_graph_row(BINDING_ROW, binding_description(), [
+        required_value(b"homevw", Value.Text(binding.home_view)),
+        required_value(b"locatr", Value.Text(binding.locator)),
+        required_value(b"store_", Value.Text(binding.store_id)),
+    ])
+
+
+def decode_store_binding(encoded: bytes) -> Result[StoreView, str]:
+    fields = decode_graph_row(encoded, BINDING_ROW, binding_description(), 3)?
+    return validate_store_view(StoreView(store_id=text(fields[2].value)?, locator=text(fields[1].value)?, home_view=text(fields[0].value)?))
+
+
+pub def select_store_view(path: Path) -> Result[SelectedStoreView, str]:
+    """Accept the typed binding only when it reproduces the portable descriptor's exact observed bytes."""
+    portable = path.read_bytes().map_err((error) => error.message())?
+    projection = Path(path.0 + ".crumb")
+    if projection.is_file():
+        if let Ok(stored) = projection.read_bytes():
+            if let Ok(binding) = decode_store_binding(stored):
+                if portable_store_view(binding)? == portable:
+                    return Ok(SelectedStoreView(binding=binding))
+    source = RustString.from_utf8(portable).map_err((_) => "invalid portable bakery view encoding")?
+    binding = decode_store_view(str(source))?
+    # Preserve hand-authored configurations; whitespace and member order do not change the selected view.
+    return Ok(SelectedStoreView(binding=binding, backfill=portable_store_view(binding)? == portable))
 
 
 pub def encode_snapshot_handle(handle: SnapshotHandle) -> Result[str, str]:
@@ -284,10 +334,8 @@ pub def resolve_snapshot(home: str, digest: str) -> Result[ResolvedSnapshot, Sna
     binding_path = Path(home).joinpath("bakery.view")
     if not binding_path.is_file():
         return Err(fault(SnapshotFaultKind.MissingBinding, binding_path.0))
-    binding_text = binding_path
-        .read_text("utf-8", "strict")
-        .map_err((error) => fault(SnapshotFaultKind.InvalidBinding, error.message()))?
-    binding = decode_store_view(binding_text).map_err((detail) => fault(SnapshotFaultKind.InvalidBinding, detail))?
+    selected = select_store_view(binding_path).map_err((detail) => fault(SnapshotFaultKind.InvalidBinding, detail))?
+    binding = selected.binding
     root = disk_root(binding.locator)
     selected_store = read_store_identity(root).map_err((error) => store_fault(error))?
     if selected_store != binding.store_id:
@@ -327,7 +375,11 @@ def decode_store_view(text: str) -> Result[StoreView, str]:
         locator=required_text(document, "locator")?,
         home_view=required_text(document, "home_view")?,
     )
-    if binding.locator == "" or not binding.locator.startswith("/") or binding.home_view == "":
+    return validate_store_view(binding)
+
+
+def validate_store_view(binding: StoreView) -> Result[StoreView, str]:
+    if binding.store_id == "" or not binding.locator.startswith("/") or binding.home_view == "":
         return Err("bakery view requires an absolute locator and a home view")
     return Ok(binding)
 
