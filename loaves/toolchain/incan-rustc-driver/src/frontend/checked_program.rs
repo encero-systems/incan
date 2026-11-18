@@ -295,14 +295,20 @@ pub(super) fn checked_modules(
             inspection,
         )? {
             CheckedAttempt::Complete(program) => return Ok(program),
-            CheckedAttempt::Reopen(changes) => graph_body_records.reopen_callers(changes)?,
+            CheckedAttempt::Reopen(changes, current) => {
+                graph_body_records.reopen_callers(changes)?;
+                graph_body_records.retain_current(current);
+            }
         }
     }
 }
 
 enum CheckedAttempt {
     Complete(CheckedProgram),
-    Reopen(BTreeMap<String, BTreeSet<String>>),
+    Reopen(
+        BTreeMap<String, BTreeSet<String>>,
+        Vec<incan_frontend::checker_records::GraphBodyRecord>,
+    ),
 }
 
 fn checked_attempt(
@@ -507,7 +513,9 @@ fn checked_attempt(
             reads_by_module.insert(source, reads);
         }
         if !changed.is_empty() {
-            return Ok(CheckedAttempt::Reopen(changed));
+            let current =
+                graph_body_output.completed_owners(&modules, &mut bodies[loaf_modules..], &reads_by_module)?;
+            return Ok(CheckedAttempt::Reopen(changed, current));
         }
     }
     let mut cacheable_bodies = callable_products.publish(&modules, &bodies[loaf_modules..]);
@@ -549,7 +557,7 @@ fn checked_attempt(
         &cacheable_bodies,
         &reads_by_module,
     )?;
-    graph_body_output.publish()?;
+    graph_body_output.publish(graph_body_records)?;
     let graph = if library && collect_codegraph {
         let records = incan_driver::inspect::codegraph::collect_checked_unit_codegraph(
             unit,

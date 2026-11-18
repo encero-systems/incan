@@ -78,6 +78,7 @@ pub trait GraphBodyRecordSource: std::fmt::Debug + Send + Sync {
 #[derive(Debug, Clone, Default)]
 pub struct GraphBodyRecords {
     eager: Arc<BTreeMap<String, GraphBodyRecord>>,
+    current: Arc<BTreeMap<String, GraphBodyRecord>>,
     source: Option<Arc<dyn GraphBodyRecordSource>>,
     ranked_owner: Option<Arc<RankedOwner>>,
     call_reads: Arc<Mutex<BTreeMap<String, Vec<SettledCallRead>>>>,
@@ -243,7 +244,7 @@ impl GraphBodyRecords {
         if self.ranked_owner() == Some(identity) {
             return Ok(None);
         }
-        let mut record = match self.eager.get(identity) {
+        let mut record = match self.current.get(identity).or_else(|| self.eager.get(identity)) {
             Some(record) => Some(record.clone()),
             None => match &self.source {
                 Some(source) => source.read(identity)?,
@@ -346,6 +347,19 @@ impl GraphBodyRecords {
             })
             .flat_map(|(_, reads)| reads.iter().cloned())
             .collect())
+    }
+
+    /// Reuse completed source work when a changed call contract requires another attempt in this same activation.
+    pub fn retain_current(&mut self, values: Vec<GraphBodyRecord>) {
+        let current = Arc::make_mut(&mut self.current);
+        for value in values {
+            current.insert(value.identity.clone(), value);
+        }
+    }
+
+    /// The current compile checked this owner itself, even if a subsequent attempt recovered its result.
+    pub fn checked_here(&self, identity: &str) -> bool {
+        self.current.contains_key(identity)
     }
 
     /// Reopen exactly these readers' executable bodies. Their checked local and final products remain admissible.
@@ -1700,6 +1714,17 @@ mod tests {
             record.body_ir = Some(incan_semantics_core::executable_representation::decode_owner(&guarded)?);
             let mut selected = select(record.clone())?;
             if allowed {
+                let mut retry = super::GraphBodyRecords::default();
+                retry.retain_current(vec![record.clone()]);
+                assert!(retry.checked_here(&owner.identity));
+                assert!(
+                    retry
+                        .get(&owner.identity)?
+                        .ok_or("missing current provider")?
+                        .body_ir
+                        .is_some()
+                );
+                assert_eq!(retry.selected_call_reads(&source)?, reads);
                 assert!(
                     selected
                         .get(&owner.identity)?
