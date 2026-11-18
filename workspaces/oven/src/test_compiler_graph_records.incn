@@ -210,6 +210,29 @@ pub def test_build_admits_a_settled_checker_pair_while_body_ir_is_pending() -> R
     return Ok(None)
 
 
+pub def test_shared_family_witness_opens_each_selection_once() -> Result[None, str]:
+    """Independent outputs share one authenticated read, bounded by the request and selected snapshot."""
+    original = store_snapshot(memory_root()).map_err((e) => e.message())?
+    shared = request("shared-family-witness", RecordSelection.Field("value"))
+    shared_key = encode_record_key(shared.key)?
+    start = commit(put(begin(original), shared_key, b"first")).map_err((e) => e.message())?
+    first = publish_fixture(start, "shared-consumer-a", shared)?
+    second = publish_fixture(first.snapshot, "shared-consumer-b", shared)?
+    bounded = RecordRequest(key=shared.key, selection=shared.selection, byte_limit=1024)
+    third = publish_fixture(second.snapshot, "shared-consumer-c", bounded)?
+    measure_frame_reads(true)
+    rows = reusable_family_records(third.snapshot, "local", "profile", Some(OutputSlots(origin="package",
+        included=Some(["shared-consumer-a", "shared-consumer-b", "shared-consumer-c"]))))?
+    observed = finish_frame_reads()
+    assert len(rows) == 3
+    assert sum([r.reads for r in observed if r.key == shared_key]) == 2
+    changed = commit(put(begin(third.snapshot), shared_key, b"second")).map_err((e) => e.message())?
+    invalid = reusable_family_records(changed, "local", "profile", Some(OutputSlots(origin="package",
+        included=Some(["shared-consumer-a", "shared-consumer-b", "shared-consumer-c"]))))?
+    assert len(invalid) == 0
+    return Ok(None)
+
+
 pub def test_persisted_evaluations_reuse_only_while_every_witness_validates() -> Result[None, str]:
     """Present, deleted, absent and member witnesses admit unchanged values and reject each changed dependency."""
     before = store_snapshot(memory_root()).map_err((error) => error.message())?

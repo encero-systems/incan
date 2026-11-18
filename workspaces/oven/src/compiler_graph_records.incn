@@ -168,6 +168,17 @@ pub def reusable_evaluation(
     Absence is an ordinary miss. Malformed or incomplete graph state is damage and fails closed rather than silently
     recomputing through a second authority.
     """
+    mut selected_witnesses: Dict[str, tuple[RecordRequest, str]] = {}
+    return select_evaluation(selected, output, profile, selected_witnesses)
+
+
+def select_evaluation(
+    selected: Snapshot,
+    output: RecordKey,
+    profile: str,
+    mut selected_witnesses: Dict[str, tuple[RecordRequest, str]],
+) -> Result[Option[ReusableEvaluation], str]:
+    """Validate an output and share only successful selections of the same pinned family read."""
     if profile == "":
         return Err("a reusable compiler evaluation requires a producer profile")
     value_key = encode_record_key(output)?
@@ -191,7 +202,7 @@ pub def reusable_evaluation(
     value = required_value(selected, value_key)?
     if digest(value) != value_digest:
         return Err("selected compiler value differs from its evaluation digest")
-    if not witnesses_validate(selected, receipt)?:
+    if not witnesses_validate(selected, receipt, selected_witnesses)?:
         return Ok(None)
     return Ok(Some(ReusableEvaluation(value=value, receipt=receipt)))
 
@@ -217,11 +228,12 @@ pub def reusable_family_records(
     if let Some(scope) = slots:
         excluded = set(scope.excluded_outputs)
     mut records: list[ReusableRecord] = []
+    mut selected_witnesses: Dict[str, tuple[RecordRequest, str]] = {}
     for output in family_outputs(selected, family, profile, slots)?:
         if output in excluded:
             continue
         key = decode_record_key(output)?
-        match reusable_evaluation(selected, key, profile)?:
+        match select_evaluation(selected, key, profile, selected_witnesses)?:
             Some(reused) => records.append(ReusableRecord(key=key, value=reused.value, receipt=reused.receipt))
             None => pass
     return Ok(records)
@@ -543,15 +555,24 @@ def current_reader(selected: Snapshot, profile: str, reader: str) -> Result[Opti
         None => return Ok(None)
 
 
-def witnesses_validate(selected: Snapshot, receipt: ReadReceipt) -> Result[bool, str]:
-    """Re-read every dependency through the store-backed source and compare only its specified invalidation meaning."""
+def witnesses_validate(selected: Snapshot, receipt: ReadReceipt, mut verified: Dict[str, tuple[RecordRequest, str]]) -> Result[bool, str]:
+    """Authenticate each exact dependency request in the pinned view and compare its invalidation meaning."""
     scope = ReadScope(snapshot=selected.digest, profile=receipt.scope.profile)
     mut roots: list[str] = []
     for witness in receipt.witnesses:
         roots.append(encode_record_key(witness_request(witness).key)?)
     source = StoreRecordSource.open(selected, scope, roots)
-    for witness in receipt.witnesses:
+    for index in range(len(receipt.witnesses)):
+        witness = receipt.witnesses[index]
         request = witness_request(witness)
+        key = roots[index]
+        if let ReadWitness.Found(expected, _) = witness:
+            if key in verified:
+                known = verified[key]
+                if known[0] == request:
+                    if known[1] != expected.semantic_digest:
+                        return Ok(false)
+                    continue
         current = source.read(scope, request)
         match witness:
             ReadWitness.Found(expected, _) =>
@@ -559,6 +580,10 @@ def witnesses_validate(selected: Snapshot, receipt: ReadReceipt) -> Result[bool,
                     RecordRead.Found(found) =>
                         if found.evidence.semantic_digest != expected.semantic_digest:
                             return Ok(false)
+                        # This family selection retains its one leased snapshot and producer profile for the whole loop.
+                        # Keep no selected bytes, and retry any different range, field or allowance through the owner.
+                        if len(verified) < 8192 and len(key) <= 4096:
+                            verified[key] = (request, found.evidence.semantic_digest)
                     RecordRead.Failed(_) => return Err("compiler evaluation witness could not be validated")
                     _ => return Ok(false)
             ReadWitness.Deleted(_) =>
