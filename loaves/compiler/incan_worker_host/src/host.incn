@@ -29,13 +29,13 @@ from lifecycle import (
     Retirement,
     lifecycle,
 )
-from protocol import Admission, CompileRequest, MISMATCH, Reply, admit, encode_ready, encode_reply
+from protocol import Admission, CompileRequest, MISMATCH, Reply, admit, ready_frame, reply_frame
 from record_protocol import (
     RecordAdmission,
     RecordMessage,
     accept_record_reply,
     admit_record,
-    encode_record_message,
+    record_frame,
 )
 
 # The seconds a connected caller has to send its request, and to take the reply.
@@ -332,13 +332,17 @@ pub class WorkerHost:
     def answer(mut self, caller: Connection, reply: Reply) -> None:
         """Send one reply, marked retired once the socket is withdrawn, then close the connection."""
         mut answered = caller
-        delivered(answered.send(encode_reply(reply, self.phase != Phase.Serving)))
+        match reply_frame(reply, self.phase != Phase.Serving, self.generation):
+            Ok(frame) => delivered(answered.send(frame))
+            Err(reason) => delivered(Err(reason))
         hang_up(answered)
 
     def answer_record(mut self, caller: Connection, reply: RecordMessage) -> None:
         """Send one typed record reply and close its activation; lifecycle never adds fields to this schema."""
         mut answered = caller
-        delivered(answered.send(encode_record_message(reply, self.generation)))
+        match record_frame(reply, self.generation):
+            Ok(frame) => delivered(answered.send(frame))
+            Err(reason) => delivered(Err(reason))
         hang_up(answered)
 
     def retire(mut self, reason: Retirement) -> None:
@@ -417,7 +421,7 @@ pub def host_for(settings: HostSettings) -> Result[WorkerHost, str]:
     # 2. A worker that cannot announce itself is never sent a request.
     if settings.ready != "":
         mut announcing = dial(settings.ready)?
-        announcing.send(encode_ready(settings.generation, int(id())))?
+        announcing.send(ready_frame(settings.generation, int(id()))?)?
         hang_up(announcing)
     return Ok(host)
 

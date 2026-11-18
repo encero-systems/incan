@@ -60,6 +60,7 @@ pub model Toolchain:
     pub closure_anchors: bool = false
     pub search_index_crumb: bool = false
     pub checked_body_counts_crumb: bool = false
+    pub worker_protocol_crumb: bool = false
 
     pub def installed(self) -> InstalledCompiler:
         """Project frozen compiler facts without retaining any request-local readers or console selection."""
@@ -75,6 +76,7 @@ pub model Toolchain:
             closure_anchors=self.closure_anchors,
             search_index_crumb=self.search_index_crumb,
             checked_body_counts_crumb=self.checked_body_counts_crumb,
+            worker_protocol_crumb=self.worker_protocol_crumb,
             registry_lock=self.registry_lock,
             c_compiler=self.c_compiler,
             target=self.target,
@@ -103,6 +105,7 @@ pub model InstalledCompiler:
     pub closure_anchors: bool = false
     pub search_index_crumb: bool = false
     pub checked_body_counts_crumb: bool = false
+    pub worker_protocol_crumb: bool = false
     pub registry_lock: str
     pub c_compiler: str
     pub target: str
@@ -130,6 +133,7 @@ pub model InstalledCompiler:
             closure_anchors=self.closure_anchors,
             search_index_crumb=self.search_index_crumb,
             checked_body_counts_crumb=self.checked_body_counts_crumb,
+            worker_protocol_crumb=self.worker_protocol_crumb,
             console="",
             worker_generation="",
             native_closures=NativeClosureInput(),

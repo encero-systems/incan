@@ -11,6 +11,11 @@ worker that it listens.
 from rust::std::string import String as RustString
 from std.json import JsonValue, parse
 
+from std.primitives.crumb.values import Value
+from pub::internal_models.crumb_rows import required_value
+from pub::internal_models.graph_crumb_fields import integer as signed_value, items, number, text as field_text
+from worker_packets import PREFIX, COMPILE, COMPLETE, READY, Packet, flag, is_key, read_packet, value_of, write_packet
+
 pub const SCHEMA: str = "incan.compiler-worker/1"
 # The status Rust gives a process whose main thread panics; a request whose compilation panicked reports it.
 pub const PANIC_STATUS: int = 101
@@ -94,6 +99,15 @@ pub def admit(payload: bytes, generation: str) -> Admission:
     3. The console files and working directory are absolute.
     """
     # 1. A document of another schema or generation is incompatible, not merely malformed.
+    if generation.startswith(PREFIX):
+        match read_packet(payload):
+            Err(reason) => return Admission.Refused(reason)
+            Ok(packet) =>
+                if not is_key(packet.key, COMPILE) or packet.generation != generation:
+                    return Admission.Incompatible
+                match compile_packet(packet):
+                    Ok(req) => return Admission.Admitted(req)
+                    Err(reason) => return Admission.Refused(reason)
     document = decoded(payload)
     match document:
         Err(reason) => return Admission.Refused(reason)
@@ -357,3 +371,84 @@ pub def ready(document: JsonValue, generation: str, pid: int) -> Result[None, st
 def required_text(document: JsonValue, name: str) -> Result[str, str]:
     """A required string field; missing or differently typed fields keep the JSON library's diagnostic."""
     return document.require(name).map_err((error) => error.message())?.expect_str().map_err((error) => error.message())
+
+pub def compile_frame(generation: str, arguments: list[str], directory: str, stdout: str, stderr: str, retire_after: bool) -> Result[bytes, str]:
+    """Carry one compiler invocation using the format advertised by its installed worker."""
+    if not generation.startswith(PREFIX):
+        return Ok(encoded(request_document(generation, arguments, directory, stdout, stderr, retire_after)))
+    return write_packet(COMPILE, generation, [
+        required_value(b"argums", Value.List([Value.Text(argument) for argument in arguments])),
+        required_value(b"cwd___", Value.Text(directory)), required_value(b"retire", Value.Boolean(retire_after)),
+        required_value(b"stderr", Value.Text(stderr)), required_value(b"stdout", Value.Text(stdout)),
+    ])
+
+
+def compile_packet(packet: Packet) -> Result[CompileRequest, str]:
+    mut arguments: list[str] = []
+    for item in items(value_of(packet, b"argums")?)?:
+        arguments.append(field_text(item)?)
+    command = command_of(arguments)?
+    directory = field_text(value_of(packet, b"cwd___")?)?
+    stdout = field_text(value_of(packet, b"stdout")?)?
+    stderr = field_text(value_of(packet, b"stderr")?)?
+    if not directory.startswith("/") or not stdout.startswith("/") or not stderr.startswith("/"):
+        return Err("compiler worker console paths and working directory must be absolute")
+    return Ok(CompileRequest(command=command, arguments=arguments[1:], cwd=directory, stdout=stdout, stderr=stderr,
+        retire_after=flag(value_of(packet, b"retire")?)?))
+
+
+pub model WorkerCompletion:
+    pub status: int
+    pub reason: str
+    pub handoff: str
+    pub retired: bool
+
+
+pub def reply_frame(reply: Reply, retired: bool, generation: str) -> Result[bytes, str]:
+    if not generation.startswith(PREFIX):
+        return Ok(encode_reply(reply, retired))
+    mut status = 1
+    mut reason = ""
+    mut path = ""
+    match reply:
+        Reply.Completed(code) => status = code
+        Reply.Refused(detail) => reason = detail
+        Reply.CompilerFault(Fault.Panicked) => status = PANIC_STATUS
+        Reply.CompilerFault(Fault.UnsafeCleanup(detail)) => reason = detail
+        Reply.HandedOff(target) =>
+            status = 0
+            path = target
+    return write_packet(COMPLETE, generation, [
+        required_value(b"exit__", signed_value(status)), required_value(b"handof", Value.Text(path)),
+        required_value(b"reason", Value.Text(reason)), required_value(b"retire", Value.Boolean(retired)),
+    ])
+
+
+pub def read_completion(payload: bytes, generation: str) -> Result[WorkerCompletion, str]:
+    if not generation.startswith(PREFIX):
+        document = decoded(payload)?
+        return Ok(WorkerCompletion(status=completion(document)?, reason="", handoff=handoff(document).unwrap_or(""),
+            retired=retired(document)))
+    packet = read_packet(payload)?
+    if not is_key(packet.key, COMPLETE) or packet.generation != generation:
+        return Err("compiler worker completion protocol mismatch")
+    status = number(value_of(packet, b"exit__")?)?
+    if status < 0 or status > MAX_STATUS:
+        return Err("compiler worker returned no valid completion code")
+    return Ok(WorkerCompletion(status=status, reason=field_text(value_of(packet, b"reason")?)?,
+        handoff=field_text(value_of(packet, b"handof")?)?, retired=flag(value_of(packet, b"retire")?)?))
+
+
+pub def ready_frame(generation: str, pid: int) -> Result[bytes, str]:
+    if not generation.startswith(PREFIX):
+        return Ok(encode_ready(generation, pid))
+    return write_packet(READY, generation, [required_value(b"pid___", signed_value(pid))])
+
+
+pub def read_ready(payload: bytes, generation: str, pid: int) -> Result[None, str]:
+    if not generation.startswith(PREFIX):
+        return ready(decoded(payload)?, generation, pid)
+    packet = read_packet(payload)?
+    if not is_key(packet.key, READY) or packet.generation != generation or number(value_of(packet, b"pid___")?)? != pid:
+        return Err("compiler worker readiness protocol, generation or PID mismatch")
+    return Ok(None)
