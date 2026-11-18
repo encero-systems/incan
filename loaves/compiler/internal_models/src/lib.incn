@@ -143,6 +143,7 @@ pub from checker_record_models import (
 pub from checker_records import (
     decode_owned_record,
     callable_checker_fields,
+    native_fields,
     from_native_fields,
     from_native_final_fields,
     from_native_local_fields,
