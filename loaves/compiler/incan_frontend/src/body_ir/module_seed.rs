@@ -309,7 +309,7 @@ pub(super) fn lower_source_bodies(
                     vec![partials::lower_source_partial(partial, decl.span, facts)]
                 }
                 ast::Declaration::Function(function) => {
-                    if let Some(body) = facts.type_info.reused_callable_bodies.get(&decl.span) {
+                    if let Some(body) = facts.type_info.selected_callable_body(decl.span) {
                         return vec![body.clone()];
                     }
                     let body = lower_function_body(function, decl.span, facts);

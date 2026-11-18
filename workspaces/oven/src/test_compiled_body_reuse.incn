@@ -40,8 +40,12 @@ pub def test_a_body_the_compiler_restored_counts_as_reused() -> Result[None, str
     empty = store_snapshot(memory_root()).map_err((error) => error.message())?
     restored = [values[1].identity]
     prepared = prepare_compiled_bodies(begin(empty), unit, output, None, Some(empty), selected, restored)?
+    assert prepared.body_ir_evaluations == 2
     assert prepared.checking_evaluations == 1, f"{prepared.checking_evaluations} checking evaluations, expected 1"
     assert prepared.body_reuses == 1, f"{prepared.body_reuses} reuses, expected 1"
+    publish_output_rows(output, CompiledBodyOutputs(namespaces=[], values=values, fallbacks=[]))?
+    installed = prepare_compiled_bodies(begin(empty), unit, output, None, Some(empty), selected, restored, [], [values[1].identity])?
+    assert installed.body_ir_evaluations == 1 and installed.checking_evaluations == 1
     return Ok(None)
 
 

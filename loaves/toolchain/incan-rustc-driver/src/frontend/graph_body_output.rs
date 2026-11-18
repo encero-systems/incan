@@ -25,6 +25,7 @@ pub(super) struct PendingBodyValue {
     dependency_reads: Vec<internal_models::CompiledBodyDependencyRead>,
     /// Whether the checker restored this body from a selected record instead of checking its statements.
     restored: bool,
+    restored_body_ir: bool,
 }
 
 /// One complete namespace value awaiting its whole-module Body IR row.
@@ -170,6 +171,7 @@ impl GraphBodyOutput {
                     match encoded_body_value(&module_path, &fields) {
                         Ok(value) => self.values.push(PendingBodyValue {
                             restored: checker.restored_body_record(fields.span),
+                            restored_body_ir: checker.type_info().selected_callable_body(fields.span).is_some(),
                             ..value
                         }),
                         Err(refusal) => self.fallbacks.push(PendingBodyFallback {
@@ -322,7 +324,8 @@ impl GraphBodyOutput {
             .collect::<Vec<_>>();
         let report = internal_models::encode_checker_counts(&internal_models::CheckerRecordCounts {
             all_declarations: i64::try_from(all_declarations).map_err(|_| "checker declaration count exceeds i64")?,
-            reusable_declarations: i64::try_from(reusable_declarations).map_err(|_| "checker declaration count exceeds i64")?,
+            reusable_declarations: i64::try_from(reusable_declarations)
+                .map_err(|_| "checker declaration count exceeds i64")?,
             summary,
             artifact_refusals: artifact_refusals
                 .into_iter()
@@ -330,6 +333,12 @@ impl GraphBodyOutput {
                 .collect::<Result<_, _>>()
                 .map_err(|_| "checker refusal count exceeds i64")?,
             restored,
+            restored_body_ir: self
+                .values
+                .iter()
+                .filter(|value| value.restored_body_ir)
+                .map(|value| value.identity.clone())
+                .collect(),
         })?;
         let body_ir_bytes: usize = self.values.iter().map(|value| value.body_ir.len()).sum();
         let values: Vec<internal_models::CompiledBodyValue> = self
@@ -444,6 +453,7 @@ pub(super) fn encoded_body_value(
         body_ir: Vec::new(),
         dependency_reads,
         restored: false,
+        restored_body_ir: false,
     })
 }
 
