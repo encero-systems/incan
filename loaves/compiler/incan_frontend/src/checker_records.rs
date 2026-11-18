@@ -1267,13 +1267,56 @@ mod tests {
         let mut warm = TypeChecker::new();
         warm.set_current_module_path(Some(vec!["main".into()]));
         warm.set_loaves(current);
-        warm.set_graph_body_records(super::GraphBodyRecords::new(vec![selected_graph_record(owner.clone())?])?);
+        warm.set_graph_body_records(super::GraphBodyRecords::new(vec![selected_graph_record(
+            owner.clone(),
+        )?])?);
         warm.check_program(&consumer).map_err(|errors| format!("{errors:?}"))?;
         assert_eq!(warm.check_work().function_bodies, 0);
         assert_eq!(
             warm.type_info().references.resolved_identities,
             fresh.type_info().references.resolved_identities
         );
+        Ok(())
+    }
+
+    /// Method records come from the ordinary checked nominal and keep owners with the same member name distinct.
+    #[test]
+    fn ordinary_nominal_methods_publish_their_own_checked_records() -> Result<(), Box<dyn std::error::Error>> {
+        let parsed = program(concat!(
+            "model Left:\n    value: int\n",
+            "    def read(self) -> int:\n        return self.value\n\n",
+            "model Right:\n    value: int\n",
+            "    def read(self) -> int:\n        return self.value + 1\n"
+        ))?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["main".into()]));
+        checker.check_program(&parsed).map_err(|errors| format!("{errors:?}"))?;
+        assert_eq!(checker.check_work().method_bodies, 2);
+        for declaration in &parsed.declarations {
+            let crate::ast::Declaration::Model(model) = &declaration.node else {
+                continue;
+            };
+            let owner = model.methods[0].span;
+            let stable = format!("member/method:main::read#in(model:main::{})[0]", model.name);
+            for (fields, refusal) in [
+                (
+                    checker.available_declaration_record(owner),
+                    checker.declaration_record_refusal(owner),
+                ),
+                (
+                    checker.available_local_record(owner),
+                    checker.local_record_refusal(owner),
+                ),
+                (
+                    checker.available_final_record(owner),
+                    checker.final_record_refusal(owner),
+                ),
+            ] {
+                let record =
+                    fields.ok_or_else(|| format!("{} did not produce a checked record: {refusal:?}", model.name))?;
+                assert_eq!(record[0][1], stable);
+            }
+        }
         Ok(())
     }
 

@@ -274,6 +274,7 @@ impl TypeChecker {
         method: &MethodDecl,
         span: Span,
         prepared: PreparedMethodCheck,
+        program: Option<&Program>,
     ) {
         let previous_immutable_self =
             std::mem::replace(&mut self.current_immutable_self_method, prepared.immutable_self_method);
@@ -284,13 +285,16 @@ impl TypeChecker {
             && self.graph_body_records.ranked_owner().is_none()
         {
             self.check_work.method_bodies += 1;
-            let _ = self.check_callable_body(
+            let index = self.check_callable_body(
                 body,
                 method.is_async(),
                 span,
                 yield_context,
                 super::ownership_contracts::CallableSource::Method(method),
             );
+            if let (Some(program), Some(index)) = (program, index) {
+                self.produce_local_record(program, span, index);
+            }
         }
         self.current_classmethod_self_ty = previous_classmethod;
         self.current_immutable_self_method = previous_immutable_self;

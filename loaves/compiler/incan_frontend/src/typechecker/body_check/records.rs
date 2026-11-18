@@ -22,7 +22,7 @@ mod unsupported;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use super::super::canonical_nodes::{NodeBindingError, SemanticNodeAnchor, SemanticNodeBindings};
+use super::super::canonical_nodes::{NodeBindingError, SemanticNodeAnchor, SemanticNodeBindings, callable_params};
 use super::super::diagnostic_values::DiagnosticPositions;
 use super::{BodyCheckInput, BodyLocal, CheckedBodyView, LocalOwnerKind, TypeChecker};
 use crate::ast::{Program, Span};
@@ -247,7 +247,7 @@ impl TypeChecker {
         }
         let canonical = self
             .declaration_view()
-            .function(owner)
+            .callable(owner)
             .and_then(|binding| binding.identity.as_ref())
             .cloned()
             .ok_or(NodeBindingError::MissingOwner)?;
@@ -301,7 +301,7 @@ impl TypeChecker {
         let positions = Positions::new(self, program, owner, true)?;
         let restored = restore(&positions, program, owner, &fields)?;
         let binding = restored.binding.ok_or(NodeBindingError::MissingOwner)?;
-        if self.declaration_view().function(owner) != Some(&binding)
+        if self.declaration_view().callable(owner) != Some(&binding)
             || restored.defaults != default_writers(program, owner)?
         {
             return Err(NodeBindingError::BaselineDifference("declaration inputs".into()));
@@ -359,6 +359,11 @@ impl Positions {
             .iter()
             .map(|(canonical, stable)| (stable.render_compact(), canonical.clone()))
             .collect::<BTreeMap<_, _>>();
+        if let Some(binding) = checker.declaration_view().method(owner)
+            && let Some(canonical) = &binding.identity
+        {
+            identities.insert(nodes.owner().render_compact(), canonical.clone());
+        }
         // Imported package and sibling-module bindings are authenticated by their declaration records. Retain those
         // exact canonical identities alongside builtins so a body record can name the dependency declaration it read.
         for index in 0..checker.symbols.all_symbols().len() {
@@ -395,16 +400,8 @@ impl Positions {
         // Declaration records are restored before the function scope is entered. Mint the current activation's
         // parameter handles from the symbol table's next scope index so stored nested identities bind without
         // running annotation/default checking or creating the scope early.
-        let declaration_bindings = program
-            .declarations
+        let declaration_bindings = callable_params(program, owner)?
             .iter()
-            .find(|declaration| declaration.span == owner)
-            .and_then(|declaration| match &declaration.node {
-                crate::ast::Declaration::Function(function) => Some(function),
-                _ => None,
-            })
-            .into_iter()
-            .flat_map(|function| &function.params)
             .map(|parameter| {
                 (0..checker.symbols.all_symbols().len())
                     .filter_map(|index| checker.symbols.identity_of(index))

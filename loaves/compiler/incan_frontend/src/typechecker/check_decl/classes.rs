@@ -100,14 +100,14 @@ impl TypeChecker {
 
     /// Check class members after its field/default producer returns, then complete its declaration-only surface
     /// checks at their original traversal point. No class declaration evaluation encloses a statement producer.
-    pub(super) fn check_class(&mut self, class: &ClassDecl, span: Span) {
+    pub(super) fn check_class(&mut self, class: &ClassDecl, span: Span, program: Option<&Program>) {
         let index = self.body_checks.len();
         let (scope, adoptions) = self.check_declaration_owner(span, |checker| {
             checker.validate_protected_type_param_bindings(&class.type_params, span);
             checker.prepare_class_declaration(class)
         });
         self.symbols.resume_scope(scope);
-        self.check_class_members(class, index);
+        self.check_class_members(class, index, program);
         self.continue_declaration_owner(index, |checker| {
             checker.complete_class_declaration(class, &adoptions);
             checker.symbols.exit_scope();
@@ -116,7 +116,7 @@ impl TypeChecker {
     }
 
     /// Check each class member in source order using its prepared nominal scope and canonical field identities.
-    pub(super) fn check_class_members(&mut self, class: &ClassDecl, declaration: usize) {
+    pub(super) fn check_class_members(&mut self, class: &ClassDecl, declaration: usize, program: Option<&Program>) {
         // Check methods
         let active_class_methods = class
             .methods
@@ -124,7 +124,13 @@ impl TypeChecker {
             .filter(|method| self.member_binding_is_active(method.span))
             .collect::<Vec<_>>();
         for method in active_class_methods {
-            self.check_method_with_owner_type_params(&method.node, method.span, &class.name, &class.type_params);
+            self.check_method_with_owner_type_params(
+                &method.node,
+                method.span,
+                &class.name,
+                &class.type_params,
+                program,
+            );
         }
         self.continue_declaration_owner(declaration, |checker| {
             checker.check_method_partials(&class.name, &class.method_partials)

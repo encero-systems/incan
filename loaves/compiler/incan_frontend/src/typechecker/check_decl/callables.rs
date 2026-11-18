@@ -831,13 +831,14 @@ impl TypeChecker {
         method_span: Span,
         owner: &str,
         owner_params: &[TypeParam],
+        program: Option<&Program>,
     ) {
         let index = self.body_checks.len();
         let prepared = self.check_declaration_owner(method_span, |checker| {
             checker.prepare_owned_method(method, method_span, owner, owner_params)
         });
         if let Some((prepared, previous_owner)) = prepared {
-            self.check_prepared_method(method, method_span, prepared);
+            self.check_prepared_method(method, method_span, prepared, program);
             #[cfg(test)]
             if self.graph_body_records.ranked_owner().is_none() {
                 self.observe_body_local(method_span);

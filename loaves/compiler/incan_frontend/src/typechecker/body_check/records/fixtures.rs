@@ -75,7 +75,7 @@ fn verify_checked_fixture(
     .cloned()
     .ok_or(NodeBindingError::MissingOwner)?;
     let positions = Positions::new(&checker, &program, owner, declaration)?;
-    let expected_binding = checker.declaration_view().function(owner).cloned();
+    let expected_binding = checker.declaration_view().callable(owner).cloned();
     let expected_types = final_type_values(&checker, &expected);
     let expected_ownership = expected_binding
         .as_ref()
@@ -131,16 +131,7 @@ pub(super) fn default_writers(
     program: &Program,
     owner: Span,
 ) -> Result<BTreeMap<Span, (Span, String)>, NodeBindingError> {
-    let declaration = program
-        .declarations
-        .iter()
-        .find(|declaration| declaration.span == owner)
-        .ok_or(NodeBindingError::MissingOwner)?;
-    let crate::ast::Declaration::Function(function) = &declaration.node else {
-        return Err(NodeBindingError::Unsupported("default owner"));
-    };
-    Ok(function
-        .params
+    Ok(callable_params(program, owner)?
         .iter()
         .filter_map(|parameter| {
             parameter
