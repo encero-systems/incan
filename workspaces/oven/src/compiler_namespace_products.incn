@@ -1,16 +1,18 @@
 """Checked semantic namespace products independent of the positioned frame used to restore a module."""
 
 from std.primitives.crumb.values import Value
-from pub::internal_models import CompiledNamespaceValue, ProducerRank, encode_record_key
+from std.primitives.hash import sha256
+from pub::internal_models import CompiledNamespaceValue, ProducerRank, ProducerStage, encode_record_key
 from pub::internal_models.crumb_rows import ModelField, model_description, required_value
-from pub::internal_models.graph_crumb_fields import KEY_TYPE, encode_graph_row, key_value
-from pub::internal_models.records import ReadScope, RecordKey, RecordRequest
+from pub::internal_models.graph_crumb_fields import KEY_TYPE, REQUEST_TYPE, encode_graph_row, key_value, request_value
+from pub::internal_models.records import ReadReceipt, ReadScope, ReadWitness, RecordKey, RecordRequest
 from pub::incan_platform.store import Transaction
 from compiler_body_keys import body_key, namespace_key
 from compiler_graph_records import prepare_evaluation
 from compiler_prepared_records import PreparedBodyRecordSource, prepared_product_request
 
 const PROJECTION: bytes = b"nsprod\x00"
+const INPUTS: bytes = b"nsinpt\x00"
 
 
 pub def interface_key(origin: str, module: str) -> RecordKey:
@@ -25,7 +27,7 @@ pub def member_key(origin: str, identity: str) -> RecordKey:
 
 pub def member_plan_inputs(origin: str, module: str, event: str, members: &Dict[str, tuple[str, str]]) -> Result[list[RecordRequest], str]:
     """Join the current native event to a checked stable owner, or retain the complete namespace as its witness."""
-    if event not in members:
+    if not members.contains_key(event):
         return Ok([prepared_product_request(namespace_key(origin, module))])
     recorded_module, stable = members[event]
     if recorded_module != module:
@@ -42,8 +44,16 @@ pub def prepare_namespace_products(mut transaction: Transaction, mut source: Pre
         return Ok(None)
     if len(namespace.semantic_interface) != 32:
         return Err("invalid checked namespace interface digest")
+    # Every projection uses the same source discovery. Sign it once and let each projection name that small value.
+    basis = body_key("namespace-inputs", origin, namespace.module, "checked", "semantic/1")
+    discovery = source.receipt(scope, basis, reads, certificate)?
+    basis_rank = ProducerRank(namespace=rank.namespace, stage=ProducerStage.Discover, dependency=0)
+    stage_product(transaction, source, basis, input_digest(discovery)?, discovery, basis_rank)?
+    shared = [prepared_product_request(basis)]
     interface = interface_key(origin, namespace.module)
-    stage_product(transaction, source, scope, interface, namespace.semantic_interface, reads, rank, certificate)?
+    interface_receipt = source.receipt(scope, interface, shared, certificate)?
+    stage_product(transaction, source, interface, namespace.semantic_interface, interface_receipt, rank)?
+    member_rank = ProducerRank(namespace=rank.namespace, stage=ProducerStage.CheckBody, dependency=0)
     mut seen: set[str] = set()
     mut events: set[str] = set()
     for pair in namespace.member_witnesses:
@@ -51,12 +61,29 @@ pub def prepare_namespace_products(mut transaction: Transaction, mut source: Pre
             return Err("invalid or duplicate checked namespace member identity")
         seen.add(pair[1])
         events.add(pair[0])
-        stage_product(transaction, source, scope, member_key(origin, pair[1]), pair[2].encode("utf-8"), reads, rank, certificate)?
+        member = member_key(origin, pair[1])
+        receipt = source.receipt(scope, member, shared, certificate)?
+        stage_product(transaction, source, member, pair[2].encode("utf-8"), receipt, member_rank)?
     return Ok(None)
 
 
-def stage_product(mut transaction: Transaction, mut source: PreparedBodyRecordSource, scope: ReadScope, key: RecordKey,
-    semantic: bytes, reads: list[RecordRequest], rank: ProducerRank, certificate: str) -> Result[None, str]:
+def input_digest(receipt: ReadReceipt) -> Result[bytes, str]:
+    """Fingerprint exact selected inputs while keeping the snapshot-bound evidence in its original signed receipt."""
+    mut inputs: list[Value] = []
+    for witness in receipt.witnesses:
+        match witness:
+            ReadWitness.Found(evidence, selection) =>
+                inputs.append(Value.Tuple([request_value(evidence.request), Value.Text(evidence.semantic_digest), Value.Text(selection)]))
+            _ => return Err("compiled namespace inputs include an unproved discovery")
+    description = model_description(INPUTS, "incan.compiler.namespace-inputs/1", [
+        ModelField(identity=b"reads_", name="reads", storage="list<tuple<" + REQUEST_TYPE + ",string,string>>"),
+    ])
+    encoded = encode_graph_row(INPUTS, description, [required_value(b"reads_", Value.List(inputs))])?
+    return Ok(sha256.digest(encoded))
+
+
+def stage_product(mut transaction: Transaction, mut source: PreparedBodyRecordSource, key: RecordKey,
+    semantic: bytes, receipt: ReadReceipt, rank: ProducerRank) -> Result[None, str]:
     """Bind an opaque compiler-authored semantic value to its own canonical store address and read receipt."""
     description = model_description(PROJECTION, "incan.compiler.namespace-product/1", [
         ModelField(identity=b"key___", name="key", storage=KEY_TYPE),
@@ -65,7 +92,6 @@ def stage_product(mut transaction: Transaction, mut source: PreparedBodyRecordSo
     encoded = encode_graph_row(PROJECTION, description, [
         required_value(b"key___", key_value(key)), required_value(b"value_", Value.Binary(semantic)),
     ])?
-    receipt = source.receipt(scope, key, reads, certificate)?
     _ = prepare_evaluation(transaction, key.family + "-" + key.identity, rank, encoded, receipt)?
     source.add(encode_record_key(key)?, encoded)
     return Ok(None)

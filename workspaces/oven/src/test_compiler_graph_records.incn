@@ -698,7 +698,7 @@ def check_positioned_namespace_products() -> Result[None, str]:
     """Check the physical graph values across a shift in the native symbol and a real change to one member."""
     stable = "method:fixture::Counter::get"
     interface = b"01234567890123456789012345678901"
-    row = CompiledNamespaceValue(module="src/fixture.incn", interface=b"position one", body_ir=b"full body one",
+    mut row = CompiledNamespaceValue(module="src/fixture.incn", interface=b"position one", body_ir=b"full body one",
         dependencies=[], semantic_interface=interface, member_witnesses=[["event at position one", stable, "checked body"]])
     members = {"event at position one": (row.module, stable)}
     requests = member_plan_inputs("fixture", row.module, "event at position one", members)?
@@ -735,7 +735,12 @@ def staged_namespace_values(row: CompiledNamespaceValue, stable: str) -> Result[
     for key in [interface_key("fixture", row.module), member_key("fixture", stable)]:
         match reusable_evaluation(committed, key, CHECKER_PROFILE)?:
             None => return Err("a staged semantic namespace product is missing")
-            Some(value) => products.append(value.value)
+            Some(value) =>
+                assert len(value.receipt.witnesses) == 1, "a member projection repeated the namespace source census"
+                match value.receipt.witnesses[0]:
+                    ReadWitness.Found(prior, _) => assert prior.request.key.family == "namespace-inputs"
+                    _ => return Err("a member projection lost its checked semantic authority")
+                products.append(value.value)
     return Ok(products)
 
 
