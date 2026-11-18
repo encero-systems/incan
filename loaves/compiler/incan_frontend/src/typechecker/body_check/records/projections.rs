@@ -121,7 +121,7 @@ pub(super) fn project_references(
                 ]);
                 identity
             }
-            None => positions.identity(canonical)?,
+            None => positions.read_identity(canonical)?,
         };
         fields.push(vec![
             "reference".into(),
