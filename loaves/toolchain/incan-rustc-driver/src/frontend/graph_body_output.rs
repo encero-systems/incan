@@ -26,6 +26,7 @@ pub(super) struct PendingBodyValue {
     /// Whether the checker restored this body from a selected record instead of checking its statements.
     restored: bool,
     restored_body_ir: bool,
+    physical_inputs: Option<[u8; 32]>,
 }
 
 /// One complete namespace value awaiting its whole-module Body IR row.
@@ -170,6 +171,7 @@ impl GraphBodyOutput {
                 incan_frontend::checker_records::CheckedOwnerRecordOutput::Value(fields) => {
                     match encoded_body_value(&module_path, &fields) {
                         Ok(value) => self.values.push(PendingBodyValue {
+                            physical_inputs: checker.graph_body_physical_inputs(&module.ast, fields.span),
                             restored: checker.restored_body_record(fields.span),
                             restored_body_ir: checker.type_info().selected_callable_body(fields.span).is_some(),
                             ..value
@@ -254,11 +256,12 @@ impl GraphBodyOutput {
                 else {
                     continue;
                 };
-                pending.body_ir = incan_semantics_core::executable_representation::encode_owner(
+                pending.body_ir = incan_semantics_core::executable_representation::encode_graph_owner(
                     &lowered.module_id,
                     &module_path,
                     &pending.identity,
                     body,
+                    pending.physical_inputs,
                 )
                 .map_err(|error| format!("Body IR owner row output refused: {error}"))?;
             }
@@ -454,6 +457,7 @@ pub(super) fn encoded_body_value(
         dependency_reads,
         restored: false,
         restored_body_ir: false,
+        physical_inputs: None,
     })
 }
 

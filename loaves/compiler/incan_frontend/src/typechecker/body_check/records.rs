@@ -207,6 +207,14 @@ impl TypeChecker {
         self.callable_declaration_reuse.contains_key(&owner)
     }
 
+    /// Fingerprint the current callable coordinates and checked native bindings before publishing its executable frame.
+    pub fn graph_body_physical_inputs(&self, program: &Program, owner: Span) -> Option<[u8; 32]> {
+        let local = &self.checked_body(owner)?.local;
+        Positions::for_local(self, program, owner, local)
+            .ok()?
+            .physical_inputs(local)
+    }
+
     /// Check the exact current owner before a ranked activation enters this function's statements.
     pub(in crate::typechecker) fn permits_ranked_body(&self, program: Option<&Program>, owner: Span) -> bool {
         if self.graph_body_records.ranked_owner().is_none() {
@@ -255,7 +263,13 @@ impl TypeChecker {
             .body_ir
             .as_ref()
             .filter(|frame| {
-                frame.identity == canonical.render_compact() && frame.body.name == canonical.declaration_name
+                frame.identity == identity
+                    && frame.body.canonical.as_ref() == Some(&canonical)
+                    && frame.body.span == owner
+                    && frame.body.name == canonical.declaration_name
+                    && frame
+                        .physical_inputs
+                        .is_some_and(|expected| positions.physical_inputs(&restored.view.local) == Some(expected))
             })
             .map(|frame| frame.body.clone());
         let mut diagnostic_positions = DiagnosticPositions::new(program, self.symbols.declaration_origin());
@@ -538,6 +552,43 @@ impl Positions {
             }
         }
         Ok(positions)
+    }
+
+    /// A position-free checker result can remain reusable after its native executable references have moved.
+    /// Bind the native frame to the current owner's entire syntax geometry, checked type providers, and the exact
+    /// reference, nested, and write handles settled for that owner. Hash ordered typed bytes, including scope IDs.
+    fn physical_inputs(&self, local: &BodyLocal) -> Option<[u8; 32]> {
+        use sha2::{Digest, Sha256};
+        let references = local.references.resolved_identities.iter().collect::<BTreeMap<_, _>>();
+        let writes = local
+            .references
+            .resolved_write_identities
+            .iter()
+            .collect::<BTreeMap<_, _>>();
+        let types = local
+            .expressions
+            .expression_type_identities
+            .iter()
+            .collect::<BTreeMap<_, _>>();
+        let contexts = local
+            .references
+            .stable_declaration_contexts
+            .iter()
+            .map(|(span, context)| (span, (&context.owner, context.binding_ordinal)))
+            .collect::<BTreeMap<_, _>>();
+        let bytes = postcard::to_allocvec(&(
+            self.nodes.root(),
+            self.nodes.physical_nodes(),
+            &self.identities,
+            &self.type_identities,
+            &local.nested,
+            references,
+            writes,
+            types,
+            contexts,
+        ))
+        .ok()?;
+        Some(Sha256::digest(bytes).into())
     }
 
     /// Only a checked declaration or an explicitly admitted builtin can become a persistent reference.

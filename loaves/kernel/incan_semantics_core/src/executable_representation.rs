@@ -140,6 +140,9 @@ pub struct EncodedOwnerRepresentation {
     pub source: String,
     /// Position-free declaration identity used by the compiler record graph.
     pub identity: String,
+    /// Exact source coordinates and native binding handles from the producing activation, when authenticated.
+    #[serde(skip)]
+    pub physical_inputs: Option<[u8; 32]>,
     /// The complete checked executable owner.
     pub body: Body,
 }

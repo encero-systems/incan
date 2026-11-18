@@ -1348,6 +1348,81 @@ mod tests {
         Ok(())
     }
 
+    /// A retained native body needs its current positions as well as the reusable position-independent check result.
+    #[test]
+    fn selected_graph_body_requires_current_physical_inputs() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def twice(value: int) -> int:\n    return  value + value\n";
+        let module = vec!["main".to_string()];
+        let original = program(source)?;
+        let check = |parsed: &crate::ast::Program,
+                     records: Vec<super::GraphBodyRecord>|
+         -> Result<TypeChecker, String> {
+            let mut checker = TypeChecker::new();
+            checker.set_current_module_path(Some(module.clone()));
+            checker.set_graph_body_records(super::GraphBodyRecords::new(records).map_err(|error| error.to_string())?);
+            checker.check_program(parsed).map_err(|errors| format!("{errors:?}"))?;
+            Ok(checker)
+        };
+        let lower = |parsed: &crate::ast::Program, checker: &TypeChecker| {
+            let providers = crate::body_ir::ProviderOperationCatalog::new();
+            crate::body_ir::build_body_ir_module(
+                parsed,
+                &module,
+                checker.type_info(),
+                &crate::body_ir::BodyIrContext {
+                    modules: crate::body_ir::ContextModules::default(),
+                    provider_operations: &providers,
+                    registry_package: None,
+                    library_package: None,
+                    include_inline_tests: false,
+                },
+            )
+        };
+        let cold = check(&original, Vec::new())?;
+        let checked = checked_owner_record_outputs(&original, &cold, &module)?;
+        let [CheckedOwnerRecordOutput::Value(owner)] = checked.as_slice() else {
+            return Err("missing checked native owner".into());
+        };
+        let lowered = lower(&original, &cold);
+        let body = lowered.bodies.first().ok_or("missing lowered body")?;
+        let witness = cold
+            .graph_body_physical_inputs(&original, owner.span)
+            .ok_or("missing positioned producer witness")?;
+        for (input, guarded, expected) in [
+            (source.to_string(), true, true),
+            (source.to_string(), false, false),
+            (
+                source.replace("return  value + value", "return value  + value"),
+                true,
+                false,
+            ),
+            (format!("# moved\n{source}"), true, false),
+        ] {
+            let encoded = incan_semantics_core::executable_representation::encode_graph_owner(
+                &lowered.module_id,
+                "src/main.incn",
+                &owner.identity,
+                body,
+                guarded.then_some(witness),
+            )?;
+            let frame = incan_semantics_core::executable_representation::decode_owner(&encoded)?;
+            let mut record = selected_graph_record(owner.clone())?;
+            record.body_ir = Some(frame);
+            let parsed = program(&input)?;
+            let warm = check(&parsed, vec![record])?;
+            let fresh = check(&parsed, vec![])?;
+            let span = parsed.declarations[0].span;
+            assert_eq!(warm.check_work().function_bodies, 0);
+            assert_eq!(
+                warm.type_info().selected_callable_body(span).is_some(),
+                expected,
+                "{input:?}, guarded={guarded}"
+            );
+            assert_eq!(lower(&parsed, &warm).bodies, lower(&parsed, &fresh).bodies);
+        }
+        Ok(())
+    }
+
     /// A loan-free match scrutinee is retained as a reusable owner fact instead of forcing a source fallback.
     #[test]
     fn loan_free_match_owner_publishes_reusable_value() -> Result<(), Box<dyn std::error::Error>> {
