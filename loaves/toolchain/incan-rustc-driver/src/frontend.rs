@@ -398,6 +398,7 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
                 "graph namespace page is not a bounded regular file".into(),
             ));
         }
+        let _page = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::restore_namespace", module = source, bytes = metadata.len()).entered();
         let encoded = std::fs::read(&path).map_err(|error| {
             incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
                 "cannot read graph namespace page {}: {error}",
@@ -414,17 +415,21 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
                 "graph namespace page disagrees with its requested source".into(),
             ));
         }
+        let interface_span = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::decode_namespace_interface", module = source, bytes = record.interface.len()).entered();
         let checked = incan_frontend::typechecker::CheckedNamespaceInterface::from_bytes(
             &record.interface,
             &namespace_crumb::CheckedNamespaceCrumb,
         )
         .map_err(incan_frontend::checker_records::RecordAdapterFault::InvalidField)?;
+        drop(interface_span);
+        let body_span = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::decode_namespace_body_ir", module = source, bytes = record.body_ir.len()).entered();
         let body_ir = incan_semantics_core::executable_representation::decode_namespace_module(&record.body_ir)
             .map_err(|error| {
                 incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
                     "graph namespace Body IR refused: {error}"
                 ))
             })?;
+        drop(body_span);
         // Join witnesses by exact kernel owner path once per namespace. Duplicate declarations stay ambiguous.
         let mut owners = std::collections::HashMap::new();
         if !record.lowering_inputs.is_empty() {
