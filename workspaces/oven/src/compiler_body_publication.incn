@@ -342,6 +342,8 @@ def stage_compiled_body_values(
             prepared_product_request(projection.census.key),
             prepared_product_request(declaration_key),
         ]
+        for feature in projection.feature_inputs:
+            local_reads.append(prepared_product_request(feature.key))
         mut independent = len(position.members) == 1
         mut environment: set[str] = set()
         for dependency in value.dependency_reads:
@@ -425,6 +427,8 @@ def stage_compiled_namespaces(
             prepared_product_request(projection.declarations.key),
             prepared_product_request(projection.census.key),
         ]
+        for feature in projection.feature_inputs:
+            reads.append(prepared_product_request(feature.key))
         for owner in projection.owners:
             reads.append(prepared_product_request(owner.key))
         for dependency in namespace.dependencies:
@@ -595,7 +599,7 @@ def stage_source_projection(
 ) -> Result[None, str]:
     """Stage one module header, declaration index and owner records through the prepared request authority."""
     stage_put(prepared, encode_record_key(projection.documentation_key())?, projection.encoded_documentation()?)
-    for record in [projection.header, projection.declarations, projection.census, projection.positioned]:
+    for record in [projection.header, projection.declarations, projection.census, projection.positioned] + projection.feature_inputs:
         key = encode_record_key(record.key)?
         value = record.encoded()?
         stage_put(prepared, key, value)
@@ -790,6 +794,8 @@ def lowering_witnesses(
             projections[value.module].census.key,
             body_key("declaration", origin, value.identity, value.name, root(value.declaration)?),
         ]
+        for feature in projections[value.module].feature_inputs:
+            signatures.append(feature.key)
         for dependency in value.dependency_reads:
             match dependency_read_key(projections, unit, origin, dependency, editable_packages)?:
                 Some(key) => signatures.append(key)
@@ -842,7 +848,7 @@ def lowering_witnesses(
                     continue
                 return Err(reason)
 
-        for binding in [projection.header, owner]:
+        for binding in [projection.header, owner] + projection.feature_inputs:
             previous = match get(prior, encode_record_key(binding.key)?).map_err((error) => error.message())?:
                 Some(value) => value
                 None => return Err("retained Body IR is missing a current source input")
@@ -865,6 +871,7 @@ def lowering_witnesses(
                         "declaration",
                         "declaration-slot",
                         "declaration-signature",
+                        "module-feature-selection",
                         "declaration-index",
                         "owner-census",
                     ]:
@@ -876,6 +883,9 @@ def lowering_witnesses(
                         source.add(encoded, value)
                         signatures.append(input)
                 _ => return Err("retained lowering owner has an unsupported checker witness")
+        for feature in projection.feature_inputs:
+            if feature.key not in signatures:
+                return Err("retained lowering owner has no witnessed feature selection")
         witnesses.append(
             LoweringBody(
                 identity=record.identity,
@@ -1115,8 +1125,9 @@ def prepare_native_interface(
     modules = set(covered_modules + [body.module for body in bodies])
     for module in sorted([file for file in modules]):
         projection = source_projection(unit, origin, module)?
-        source.add(encode_record_key(projection.header.key)?, projection.header.encoded()?)
-        reads.append(prepared_product_request(projection.header.key))
+        for binding in [projection.header] + projection.feature_inputs:
+            source.add(encode_record_key(binding.key)?, binding.encoded()?)
+            reads.append(prepared_product_request(binding.key))
         for owner in projection.owners:
             source.add(encode_record_key(owner.key)?, owner.encoded()?)
             reads.append(prepared_product_request(owner.key))
@@ -1150,7 +1161,7 @@ def source_projection(unit: UnitDescription, origin: str, module: str) -> Result
     """Recreate one already-published projection to select its logical owner and header keys."""
     path = Path(unit.project_root).joinpath(module)
     source = path.read_text("utf-8", "strict").map_err((error) => error.message())?
-    return project_source(origin, module, source)
+    return project_source(origin, module, source, unit.declared_features, Some(unit.active_features))
 
 
 pub def retained_owner_record(projection: SourceProjection, name: str) -> Result[Option[SourceProjectionRecord], str]:

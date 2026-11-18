@@ -42,6 +42,8 @@ pub model SourceProjection:
     pub positioned: SourceProjectionRecord
     pub owners: list[SourceProjectionRecord]
     pub documentation: list[tuple[str, str]]
+    # Only guarded project modules depend on the resolved package feature environment.
+    pub feature_inputs: list[SourceProjectionRecord] = []
 
     pub def documentation_key(self) -> RecordKey:
         """The latest documentation inventory replaces the previous one even when an owner was removed."""
@@ -74,6 +76,7 @@ class SourceProjector:
     source: str
     lines: list[str]
     boundaries: list[Boundary] = []
+    guarded: bool = false
 
     @staticmethod
     pub def open(origin: str, path: str, source: str) -> SourceProjector:
@@ -106,6 +109,8 @@ class SourceProjector:
             if content != "" and indent == 0:
                 chunk = true
                 if not content.startswith("#"):
+                    if identifier_prefix(content) == "when":
+                        self.guarded = true
                     conditional = conditional_block(content)
                     member_indent = -1
             elif conditional and content != "" and not content.startswith("#"):
@@ -127,7 +132,7 @@ class SourceProjector:
         if decorated_start >= 0:
             self.boundaries.append(Boundary(start=decorated_start, owner=""))
 
-    pub def projection(mut self) -> Result[SourceProjection, str]:
+    pub def projection(mut self, declared: list[str], active: Option[list[str]]) -> Result[SourceProjection, str]:
         """Partition source owners and nested defaults while retaining a declaration surface for selector invalidation."""
         self.discover()
         mut header = ""
@@ -168,8 +173,16 @@ class SourceProjector:
         header_semantic, module_docs = split_documentation(header)
         if module_docs != "":
             docs.append(("", module_docs))
+        mut feature_inputs: list[SourceProjectionRecord] = []
+        if self.guarded and active is not None:
+            names = ["declared=" + name for name in sorted(declared)] + ["active=" + name for name in sorted(active.unwrap_or([]))]
+            feature_inputs.append(SourceProjectionRecord(
+                key=source_key("module-feature-selection", self.origin, self.path, "module"),
+                text="\n".join(names), start=0, end=0,
+            ))
         return Ok(
             SourceProjection(
+                feature_inputs=feature_inputs,
                 positioned=SourceProjectionRecord(
                     key=source_key("source-positioned", self.origin, self.path, "module"),
                     text=hexlify(sha256.digest(self.source.encode("utf-8"))), start=0, end=len(self.source),
@@ -198,11 +211,17 @@ class SourceProjector:
         )
 
 
-pub def project_source(origin: str, path: str, source: str) -> Result[SourceProjection, str]:
+pub def project_source(
+    origin: str,
+    path: str,
+    source: str,
+    declared: list[str] = [],
+    active: Option[list[str]] = None,
+) -> Result[SourceProjection, str]:
     """Produce one module header plus exact source records for top-level owners and nested field defaults."""
     if origin == "" or path == "":
         return Err("source projection requires an origin and logical path")
-    return SourceProjector.open(origin, path, source).projection()
+    return SourceProjector.open(origin, path, source).projection(declared, active)
 
 
 pub def owner_source_key(origin: str, path: str, name: str) -> RecordKey:
@@ -346,6 +365,10 @@ pub def publish_source_projection(
     positioned_key = encode_record_key(projection.positioned.key)?
     transaction = put(transaction, positioned_key, projection.positioned.encoded()?)
     published.append(positioned_key)
+    for feature in projection.feature_inputs:
+        key = encode_record_key(feature.key)?
+        transaction = put(transaction, key, feature.encoded()?)
+        published.append(key)
     for owner in projection.owners:
         for record in [owner, signature_record(owner)]:
             key = encode_record_key(record.key)?

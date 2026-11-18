@@ -45,6 +45,50 @@ pub def test_partial_module_admission_count() -> Result[None, str]:
     return Ok(None)
 
 
+def selected_choice_supplier(store: Path) -> Result[str, str]:
+    """Read the stable ranked local's actual positive declaration-slot witness."""
+    graph = store_snapshot(store).map_err((error) => error.message())?
+    scope = OutputSlots(origin="ranked_feature", identity_profile=IDENTITY_PROFILE)
+    mut targets: list[str] = []
+    for local in reusable_family_records(graph, "local", CHECKER_PROFILE, Some(scope))?:
+        if not local.key.identity.startswith("function:selector::read_choice|"):
+            continue
+        for witness in local.receipt.witnesses:
+            if let ReadWitness.Found(prior, _) = witness:
+                key = prior.request.key
+                if key.family == "declaration-slot" and key.identity == "choices":
+                    targets.append(key.facet)
+    assert len(targets) == 1
+    return Ok(targets[0])
+
+
+pub def test_feature_switch_rebinds_guarded_import_in_existing_store() -> Result[None, str]:
+    """A manifest-only switch changes the guarded supplier read by an unchanged function."""
+    scratch = scratch_directory()?
+    project = scratch.path().joinpath("project")
+    src = project.joinpath("src")
+    src.mkdir(true, true).map_err((error) => error.message())?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    manifest = project.joinpath("loaf.toml")
+    config = "[project]\nname = \"ranked_feature\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n[project.features]\ndefault = [\"alpha\"]\nalpha = []\nbeta = []\n"
+    write(manifest, config)?
+    write(src.joinpath("main.incn"), "from selector import read_choice\n\ndef main() -> None:\n    println(read_choice())\n")?
+    write(src.joinpath("choices.incn"), "pub def alpha_value() -> int:\n    return 1\n\npub def beta_value() -> int:\n    return 2\n\npub def unrelated() -> int:\n    return 9\n")?
+    write(src.joinpath("selector.incn"), "when feature(\"alpha\"):\n    from choices import alpha_value as selected\n\nwhen feature(\"beta\"):\n    from choices import beta_value as selected\n\npub def read_choice() -> int:\n    return selected()\n")?
+    store = scratch.path().joinpath("store")
+    _ = lowering_example_run(binary, project, store, "1")?
+    assert selected_choice_supplier(store)? == "alpha_value"
+    write(manifest, config.replace("default = [\"alpha\"]", "default = [\"beta\"]"))?
+    _ = lowering_example_run(binary, project, store, "2")?
+    assert selected_choice_supplier(store)? == "beta_value"
+    stop_example_engine(binary, store)?
+    project.joinpath("target").remove_tree().map_err((error) => error.message())?
+    cold = scratch.path().joinpath("fresh")
+    _ = lowering_example_run(binary, project, cold, "2")?
+    assert selected_choice_supplier(cold)? == "beta_value"
+    return stop_example_engine(binary, cold)
+
+
 pub def test_importer_rename_checks_only_its_direct_signature_reader() -> Result[None, str]:
     """An installed build checks the renamed function and its caller once each, stopping before load_summary."""
     scratch = scratch_directory()?

@@ -47,7 +47,12 @@ pub def prepare_captured_source_inputs(
         if input.path.endswith(".incn") and input.role in [InputRole.Root, InputRole.Member, InputRole.Resolved]:
             if let Some(identity) = captured_source_identity(unit, input.path)?:
                 source = Path(input.path).read_text("utf-8", "strict").map_err((error) => error.message())?
-                projection = project_source(identity[0], identity[1], source)?
+                mut declared: list[str] = []
+                mut active: Option[list[str]] = None
+                if identity[0] == source_origin(unit):
+                    declared = unit.declared_features
+                    active = Some(unit.active_features)
+                projection = project_source(identity[0], identity[1], source, declared, active)?
                 doc_key = projection.documentation_key()
                 doc_slot = encode_record_key(doc_key)?
                 documentation = projection.encoded_documentation()?
@@ -58,6 +63,17 @@ pub def prepare_captured_source_inputs(
                     key = encode_record_key(record.key)?
                     if stage_changed_projection(selected, prepared, key, record)?:
                         changed.append(record.key)
+                for feature in projection.feature_inputs:
+                    key = encode_record_key(feature.key)?
+                    prior = get(selected, key).map_err((error) => error.message())?
+                    if prior is None and get(selected, encode_record_key(projection.header.key)?).map_err((error) => error.message())? is not None:
+                        # A bakery hit publishes no new compiler receipts. Let the first fresh publication install
+                        # the feature record, so intervening cache hits cannot certify old unqualified receipts.
+                        changed.append(projection.header.key)
+                        changed.append(projection.census.key)
+                        changed.append(feature.key)
+                    elif stage_changed_projection(selected, prepared, key, feature)?:
+                        changed.append(feature.key)
                 for owner in projection.owners:
                     for record in [owner, signature_record(owner)]:
                         key = encode_record_key(record.key)?

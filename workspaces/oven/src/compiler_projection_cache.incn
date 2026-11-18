@@ -35,7 +35,7 @@ pub def projection_cache(
     for module in modules:
         path = Path(unit.project_root).joinpath(module)
         source = path.read_text("utf-8", "strict").map_err((error) => error.message())?
-        projections[module] = project_source(origin, module, source)?
+        projections[module] = project_source(origin, module, source, unit.declared_features, Some(unit.active_features))?
     mut roots: Dict[str, str] = {}
     for dependency in dependency_source_roots(unit):
         roots[dependency[0]] = dependency[1]
