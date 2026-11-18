@@ -4,6 +4,8 @@ from rust::incan_loaf_names import native_crate_name
 from rust::std::process import Command, Stdio
 from rust::std::fs import remove_dir_all
 from pub::internal_models.lowering_events import INTERFACE_REPORT, decode_lowering_event, decode_native_interface
+pub from pub::internal_models.checker_publication import CheckerRecordCounts
+from pub::internal_models.checker_publication import checker_report_suffix, decode_checker_counts
 from std.fs import Path
 from std.json import parse
 from driver_command import driver_command
@@ -33,18 +35,6 @@ pub model PlanRecordCounts:
     pub lowering_demand_evaluations: int = 0
     pub lowering_demand_reuses: int = 0
     pub native_interface_evaluations: int = 0
-
-
-pub model CheckerRecordCounts:
-    """Permanent checker-record admission counts emitted by one compiler activation."""
-
-    pub reusable_declarations: int = 0
-    pub all_declarations: int = 0
-    pub summary: str = "0/0 reusable declarations"
-    pub artifact_refusals: Dict[str, int] = {}
-    # Owners whose checked bodies the compiler restored from the selected records instead of checking them. A
-    # selected record the compiler refused is not here: that body was checked afresh.
-    pub restored: list[str] = []
 
 
 # The schema of the sidecar a check writes with `--checked-bodies`.
@@ -182,43 +172,14 @@ pub def checker_record_counts(unit: UnitDescription, key: Key) -> Result[Checker
     report = checker_record_report_path(graph_body_output_path(unit, key))
     if not report.is_file():
         return Ok(CheckerRecordCounts())
-    value = parse(report.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err(
-        (error) => f"cannot decode checker record report {report.0}: {error.message()}",
-    )?
-    schema = value.require("schema").and_then((field) => field.expect_str()).map_err((error) => error.message())?
-    if schema != "incan.checker-reuse/1":
-        return Err("unsupported checker record report")
-    fields = value.require("artifact_refusals").map_err((error) => error.message())?.expect_object().map_err(
-        (error) => error.message(),
-    )?
-    mut refusals: Dict[str, int] = {}
-    for name in fields.keys():
-        refusals[name] = fields[name].expect_int().map_err((error) => error.message())?
-    # A compiler that names no restored owner restored none.
-    mut restored: list[str] = []
-    if let Some(owners) = value.get("restored"):
-        for owner in owners.expect_array().map_err((error) => error.message())?:
-            restored.append(owner.expect_str().map_err((error) => error.message())?)
-    counts = CheckerRecordCounts(
-        reusable_declarations=value.require("reusable_declarations").map_err((error) => error.message())?.expect_int().map_err(
-            (error) => error.message(),
-        )?,
-        all_declarations=value.require("all_declarations").map_err((error) => error.message())?.expect_int().map_err(
-            (error) => error.message(),
-        )?,
-        summary=value.require("summary").map_err((error) => error.message())?.expect_str().map_err(
-            (error) => error.message(),
-        )?,
-        artifact_refusals=refusals,
-        restored=restored,
-    )
+    counts = decode_checker_counts(report.read_bytes().map_err((error) => error.message())?)?
     discard_file(report)
     return Ok(counts)
 
 
-def checker_record_report_path(output: Path) -> Path:
+pub def checker_record_report_path(output: Path) -> Path:
     """Name the compiler-owned report paired with one graph-body output generation."""
-    return Path(f"{output.0}.checker-report.json")
+    return Path(output.0 + checker_report_suffix())
 
 
 def discard_graph_body_output(output: Path) -> Result[None, str]:

@@ -1,0 +1,81 @@
+"""Typed admission and restoration counts published by one successful checked compiler invocation."""
+
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from crumb_rows import ModelField, model_description, required_value
+from graph_crumb_fields import decode_graph_row, encode_graph_row, integer, items, number, text, tuple_items
+
+const REPORT: bytes = b"chkpub\x00"
+
+
+pub model CheckerRecordCounts:
+    """Permanent checker-record admission counts emitted by one compiler activation."""
+
+    pub reusable_declarations: int = 0
+    pub all_declarations: int = 0
+    pub summary: str = "0/0 reusable declarations"
+    pub artifact_refusals: Dict[str, int] = {}
+    # Owners whose checked bodies the compiler restored from the selected records instead of checking them. A
+    # selected record the compiler refused is not here: that body was checked afresh.
+    pub restored: list[str] = []
+
+
+pub def checker_report_suffix() -> str:
+    return ".checker-report.crumb"
+
+
+def description() -> Description:
+    return model_description(REPORT, "incan.checker-reuse/2", [
+        ModelField(identity=b"all___", name="all_declarations", storage="i64"),
+        ModelField(identity=b"refuse", name="artifact_refusals", storage="list<tuple<string,i64>>"),
+        ModelField(identity=b"restor", name="restored", storage="list<string>"),
+        ModelField(identity=b"reuse_", name="reusable_declarations", storage="i64"),
+        ModelField(identity=b"sumary", name="summary", storage="string"),
+    ])
+
+
+def valid(counts: CheckerRecordCounts) -> bool:
+    if counts.reusable_declarations < 0 or counts.reusable_declarations > counts.all_declarations:
+        return false
+    if len(counts.restored) > counts.reusable_declarations:
+        return false
+    for name in counts.artifact_refusals.keys():
+        if name == "" or counts.artifact_refusals[name] <= 0:
+            return false
+    return true
+
+
+pub def encode_checker_counts(counts: CheckerRecordCounts) -> Result[bytes, str]:
+    if not valid(counts):
+        return Err("invalid checker publication counts")
+    mut ordered: list[Value] = []
+    for name in sorted([key for key in counts.artifact_refusals.keys()]):
+        ordered.append(Value.Tuple([Value.Text(name), integer(counts.artifact_refusals[name])]))
+    return encode_graph_row(REPORT, description(), [
+        required_value(b"all___", integer(counts.all_declarations)),
+        required_value(b"refuse", Value.List(ordered)),
+        required_value(b"restor", Value.List([Value.Text(owner) for owner in counts.restored])),
+        required_value(b"reuse_", integer(counts.reusable_declarations)),
+        required_value(b"sumary", Value.Text(counts.summary)),
+    ])
+
+
+pub def decode_checker_counts(encoded: bytes) -> Result[CheckerRecordCounts, str]:
+    fields = decode_graph_row(encoded, REPORT, description(), 5)?
+    mut refusals: Dict[str, int] = {}
+    mut previous = ""
+    for value in items(fields[1].value)?:
+        pair = tuple_items(value, 2)?
+        name = text(pair[0])?
+        if name <= previous:
+            return Err("checker refusal names must be distinct and ordered")
+        previous = name
+        refusals[name] = number(pair[1])?
+    mut restored: list[str] = []
+    for item in items(fields[2].value)?:
+        restored.append(text(item)?)
+    counts = CheckerRecordCounts(all_declarations=number(fields[0].value)?, reusable_declarations=number(fields[3].value)?,
+        restored=restored, summary=text(fields[4].value)?, artifact_refusals=refusals)
+    if not valid(counts):
+        return Err("invalid checker publication counts")
+    return Ok(counts)

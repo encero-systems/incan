@@ -43,6 +43,7 @@ from unit_compiler import (
     CheckerRecordCounts,
     PlanRecordCounts,
     checker_record_counts,
+    checker_record_report_path,
     graph_body_output_path,
     plan_record_counts,
     plan_record_report_path,
@@ -401,7 +402,7 @@ pub def obtain(
         checker_counts = checker_record_counts(ready, compiled_key)?
         record_work(
             Operation.EngineSidecarAuthentication,
-            graph_body_output_path(ready, compiled_key).0 + ".checker-report.json",
+            checker_record_report_path(graph_body_output_path(ready, compiled_key)).0,
             reading_checker_sidecar,
         )
         bodies = prepare_compiled_bodies(

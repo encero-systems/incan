@@ -320,15 +320,17 @@ impl GraphBodyOutput {
             .filter(|value| value.restored)
             .map(|value| value.identity.clone())
             .collect::<Vec<_>>();
-        let report = serde_json::to_vec(&serde_json::json!({
-            "schema": "incan.checker-reuse/1",
-            "summary": summary,
-            "reusable_declarations": reusable_declarations,
-            "all_declarations": all_declarations,
-            "artifact_refusals": artifact_refusals,
-            "restored": restored,
-        }))
-        .map_err(|error| format!("cannot encode checker reuse report: {error}"))?;
+        let report = internal_models::encode_checker_counts(&internal_models::CheckerRecordCounts {
+            all_declarations: i64::try_from(all_declarations).map_err(|_| "checker declaration count exceeds i64")?,
+            reusable_declarations: i64::try_from(reusable_declarations).map_err(|_| "checker declaration count exceeds i64")?,
+            summary,
+            artifact_refusals: artifact_refusals
+                .into_iter()
+                .map(|(name, count)| i64::try_from(count).map(|count| (name, count)))
+                .collect::<Result<_, _>>()
+                .map_err(|_| "checker refusal count exceeds i64")?,
+            restored,
+        })?;
         let body_ir_bytes: usize = self.values.iter().map(|value| value.body_ir.len()).sum();
         let values: Vec<internal_models::CompiledBodyValue> = self
             .values
@@ -507,7 +509,7 @@ fn dependency_module(module_path: &[String]) -> String {
 /// Name the structured checker-admission report beside the graph body rows that produced it.
 fn checker_report_path(path: &Path) -> PathBuf {
     let mut report = OsString::from(path.as_os_str());
-    report.push(".checker-report.json");
+    report.push(internal_models::checker_report_suffix());
     PathBuf::from(report)
 }
 
