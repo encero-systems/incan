@@ -160,10 +160,24 @@ pub(super) fn retain_modules_with_selected(
     context: ContextModules<'_>,
     selected: &HashSet<CanonicalSymbolId>,
 ) {
+    retain_modules_with_namespaces(modules, context, selected, &[]);
+}
+
+/// A namespace owns the settled ABI of all its bodies. Re-running inference over its rewritten reads can
+/// lend an input that its published native plan takes by value. Its signatures still constrain fresh callers.
+pub(super) fn retain_modules_with_namespaces(
+    modules: &mut [bir::BodyIrModule],
+    context: ContextModules<'_>,
+    selected: &HashSet<CanonicalSymbolId>,
+    restored: &[bool],
+) {
     let no_candidates = HashSet::new();
     let field_types = FieldTypes::collect(modules, context);
     let signatures = collect_signatures(modules, context);
-    for module in modules.iter_mut() {
+    for (index, module) in modules.iter_mut().enumerate() {
+        if restored.get(index) == Some(&true) {
+            continue;
+        }
         for body in &mut module.bodies {
             if super::body_is_selected(body, selected) {
                 continue;
@@ -174,12 +188,12 @@ pub(super) fn retain_modules_with_selected(
 
     // Every callable follows the never-consumed rule; a published one also keeps each input the base's read-only rule
     // lends under the base's own hypothesis, so no published input that was shared before becomes owned.
-    let base = candidate_parameters(modules, selected, InputRule::Base);
+    let base = candidate_parameters(modules, selected, restored, InputRule::Base);
     let published = published_reads::read_only_parameters(modules, &signatures, &field_types, base)
         .into_iter()
         .filter(|&(module_index, body_index, _)| published_body(modules, module_index, body_index))
         .collect::<HashSet<_>>();
-    let mut candidates = candidate_parameters(modules, selected, InputRule::NeverConsumed);
+    let mut candidates = candidate_parameters(modules, selected, restored, InputRule::NeverConsumed);
     candidates.extend(published.iter().copied());
     consumed_reads::refuse_consumed_parameters(modules, &signatures, &field_types, &published, &mut candidates);
 
@@ -191,7 +205,10 @@ pub(super) fn retain_modules_with_selected(
             retain_shared_parameter(body, *parameter_index, &signatures, &field_types, &candidates);
         }
     }
-    for module in modules {
+    for (index, module) in modules.iter_mut().enumerate() {
+        if restored.get(index) == Some(&true) {
+            continue;
+        }
         for body in &mut module.bodies {
             if super::body_is_selected(body, selected) {
                 continue;
@@ -242,11 +259,15 @@ fn retain_shared_parameter(
 fn candidate_parameters(
     modules: &[bir::BodyIrModule],
     selected: &HashSet<CanonicalSymbolId>,
+    restored: &[bool],
     rule: InputRule,
 ) -> HashSet<Candidate> {
     let mut candidates = HashSet::new();
     let copy_nominals = copy_nominal_identities(modules);
     for (module_index, module) in modules.iter().enumerate() {
+        if restored.get(module_index) == Some(&true) {
+            continue;
+        }
         let trait_implementations = module
             .trait_implementations
             .iter()

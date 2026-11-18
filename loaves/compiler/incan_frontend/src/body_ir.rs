@@ -190,6 +190,17 @@ pub fn settle_shared_reads_with_selected(
     shared_reads::retain_modules_with_selected(modules, context.into(), selected);
 }
 
+/// Settle fresh owners using admitted namespace frames as immutable ABI evidence, including anonymous bodies.
+pub fn settle_shared_reads_with_namespaces(
+    modules: &mut [bir::BodyIrModule],
+    context: &[bir::BodyIrModule],
+    selected: &HashSet<CanonicalSymbolId>,
+    restored: &[bool],
+) {
+    assert_eq!(modules.len(), restored.len());
+    shared_reads::retain_modules_with_namespaces(modules, context.into(), selected, restored);
+}
+
 /// Return the canonical owners whose final Body IR was selected from the graph for this checked module.
 pub fn selected_body_identities(type_info: &TypeCheckInfo) -> HashSet<CanonicalSymbolId> {
     type_info
