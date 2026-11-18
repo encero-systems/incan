@@ -1,5 +1,6 @@
 """A home installed from a pack keys each unit as the home it was packed from, so it reuses what that home compiled."""
 
+from rust::std::fs import rename
 from std.fs import Path
 from std.json import JsonValue
 from compiler_record_admission import CompilerRecordPin
@@ -11,6 +12,8 @@ from scratch import scratch_directory
 from unit_freshness import fingerprint
 from unit_publication import (
     LOAF_FACTS_SCHEMA,
+    PUBLICATION_SCHEMA,
+    import_payload,
     admitted_identity,
     facts_path,
     import_publication,
@@ -85,3 +88,40 @@ pub def test_a_directory_named_like_a_registry_entry_gives_its_artifacts_no_iden
     assert admitted_identity(forged)?.is_none(), "a directory name alone admitted an artifact"
     assert published_identity(forged).is_err(), "a directory name alone named an artifact's producer"
     return Ok(None)
+
+
+pub def test_replacing_a_staged_payload_rechecks_its_new_transport_proof() -> Result[None, str]:
+    scratch = scratch_directory()?
+    staged = scratch.path().joinpath("standard.incnbody")
+    incoming = scratch.path().joinpath("incoming.incnbody")
+    write(staged, "same body bytes")?
+    digest = file_digest(staged)?
+    write_portable_producer(staged, "previous", digest)?
+    import_publication(staged)?
+    assert published_identity(staged)? == "previous"
+
+    # Changing only the accompanying claim cannot relabel the currently admitted physical generation.
+    write_portable_producer(staged, "next", digest)?
+    assert import_publication(staged).is_err()
+    write(incoming, "damaged body bytes")?
+    rename(incoming.0, staged.0).map_err((error) => str(error))?
+    assert import_publication(staged).is_err()
+
+    # New archives can reproduce identical bytes through a different producer in a fresh staging directory.
+    write(incoming, "same body bytes")?
+    rename(incoming.0, staged.0).map_err((error) => str(error))?
+    assert import_payload(staged, "wrong external identity", digest).is_err()
+    import_publication(staged)?
+    assert published_identity(staged)? == "next"
+    import_publication(staged)?
+    return Ok(None)
+
+
+def write_portable_producer(path: Path, identity: str, digest: str) -> Result[None, str]:
+    record = JsonValue.object({
+        "schema": JsonValue.string(PUBLICATION_SCHEMA),
+        "unit": JsonValue.string(identity),
+        "payload": JsonValue.string(digest),
+        "observation": JsonValue.string(""),
+    })
+    return write(record_path(path), json_text(record)?)
