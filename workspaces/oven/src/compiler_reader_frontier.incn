@@ -163,7 +163,7 @@ pub def evaluate_reader(
     inputs = directory.joinpath("inputs")
     module_page = "namespace-" + hexlify(sha256.digest(reader.module.encode("utf-8")))
     write_selected_records(inputs, unit, [page for page in pages if page.key != module_page])?
-    description = write_unit(unit, crate_name(unit), None, described_by(key), true)?
+    description = write_unit(unit, crate_name(unit), None, described_by(key), true, typed=toolchain.unit_descriptor_crumb)?
     code = run_compiler(toolchain, ["--check-ranked-reader", description.0, toolchain.sysroot, work.0, directory.0,
         "--graph-body-records", inputs.0])?
     if code != 0:

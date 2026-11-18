@@ -3,7 +3,7 @@
 from rust::incan_loaf_names import artifact_stem
 from std.fs import Path
 from std.json import JsonValue
-from files import make_directory, parse_json, read_json, write
+from files import make_directory, parse_json, read_json
 from driver_command import driver_command
 from compiler_worker import captured_resident
 from home import standard_intents
@@ -21,6 +21,7 @@ from native_closure_input import native_bindings
 from native_references import closure_reference, native_anchors
 from toml_fields import optional_string, optional_strings, read_manifest
 from toolchain import NativeCrate, Toolchain
+from unit_transport import descriptor_path, publish_unit_document
 from unit import UnitDescription
 from unit_freshness import fingerprint, graph_imports, unit_key
 from pub::incan_platform.trace import Operation
@@ -143,8 +144,8 @@ def source_requests(unit: UnitDescription, toolchain: Toolchain) -> Result[list[
             return Ok(records)
     # 2. The compiler parses the source graph the description names.
     make_directory(directory)?
-    path = directory.joinpath(f"{unit.package}.imports.unit.json")
-    write(path, unit.to_json().to_pretty_json().map_err((error) => error.message())?)?
+    path = descriptor_path(directory, f"{unit.package}.imports", toolchain.unit_descriptor_crumb)
+    publish_unit_document(path, unit, toolchain.unit_descriptor_crumb)?
     output = rust_import_records(toolchain, path)?
     records = array(parse_json(decoded(output))?, []).map_err((_) => "invalid Rust import records")?
     # 3. An edit made while the compiler read the sources is read again next time. A record that cannot be written

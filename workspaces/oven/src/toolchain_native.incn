@@ -24,6 +24,7 @@ from unit import UnitDescription, UnitLoaf, dependency_source_roots, describe
 from unit_rust import add_extern, add_rust_root, prepare_linked
 from vocabulary import published_workers, stage_vocabulary
 from unit_reading import read_unit
+from unit_transport import read_unit_document
 from unit_freshness import artifact_files, record, unit_key
 from codegen import compiled_arguments
 
@@ -65,7 +66,7 @@ def publish_prepared(arguments: list[str]) -> Result[None, str]:
     2. Retain its identity before compilation or refuse input changes after compilation.
     3. Record completed native payloads, or publish a separately proved graph from the shared checked export.
     """
-    # 1. The script supplies the same unit JSON the compiler consumes, including checked source interfaces.
+    # 1. The script supplies the same prepared inputs the compiler consumes, including checked source interfaces.
     if (
         (arguments[2] == "identify" and len(arguments) != 4)
         or (arguments[2] in ["publish", "codegraph"] and len(arguments) != 5)
@@ -74,7 +75,7 @@ def publish_prepared(arguments: list[str]) -> Result[None, str]:
             "usage: toolchain_native REPOSITORY identify UNIT | publish UNIT DIRECTORY | codegraph UNIT DIRECTORY",
         )
     path = Path(arguments[3])
-    mut unit = read_unit(read_json(path)?)?
+    mut unit = read_unit(read_unit_document(path)?)?
     if get_or("SELFBUILD_METADATA_ONLY", "") == "1":
         unit.kind = "metadata-only"
     # 2. An input edit during compilation cannot be certified as the completed producer's identity.

@@ -18,7 +18,7 @@ from std.hash import sha256
 from std.json import JsonValue
 from compiler_worker import captured_resident
 from driver_command import driver_command
-from files import make_directory, parse_json, read_json, write
+from files import make_directory, parse_json, read_json
 from json_fields import required_items, required_text
 from loaf_local_graph import unique
 from observation import Ledger, trace
@@ -26,6 +26,7 @@ from publication import publish_binary
 from source_graph_records import decode_scopes, encode_scopes
 from rust_target import decoded
 from toolchain import Toolchain
+from unit_transport import descriptor_path, publish_unit_document
 from unit import UnitDescription, manifest_candidates
 from pub::incan_platform.trace import Operation
 from jec import begin, record
@@ -196,8 +197,8 @@ def current_graph(entry: JsonValue, mut project: Ledger) -> Result[Option[Source
 def discovered(unit: UnitDescription, toolchain: Toolchain, location: Path) -> Result[Option[SourceGraph], str]:
     """Ask the resident compiler, or one compiler process, which files the unit's collection reads and probes."""
     make_directory(location.parent())?
-    description = location.parent().joinpath(f"{location.name()}.unit.json")
-    write(description, unit.to_json().to_pretty_json().map_err((error) => error.message())?)?
+    description = descriptor_path(location.parent(), location.name(), toolchain.unit_descriptor_crumb)
+    publish_unit_document(description, unit, toolchain.unit_descriptor_crumb)?
     arguments = ["--rust-imports", description.0, "--source-graph"]
     mut output = b""
     match captured_resident(toolchain, arguments):

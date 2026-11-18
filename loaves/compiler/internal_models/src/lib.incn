@@ -184,3 +184,4 @@ pub from toolchain_search import encode_search_paths, decode_search_paths
 pub from checked_body_counts import CheckedBodyCounts, encode_checked_body_counts, decode_checked_body_counts
 
 pub from manifest_cache import ManifestCacheValue, ManifestInventory, encode_manifest_cache, decode_manifest_cache, encode_manifest_inventory, decode_manifest_inventory
+pub from unit_document import encode_unit_document, decode_unit_document

@@ -187,6 +187,8 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
         description = replaced(description, "checked_body_counts_crumb", JsonValue.bool(true))?
     if toolchain.worker_protocol_crumb:
         description = replaced(description, "worker_protocol_crumb", JsonValue.bool(true))?
+    if toolchain.unit_descriptor_crumb:
+        description = replaced(description, "unit_descriptor_crumb", JsonValue.bool(true))?
     write_json(stage.joinpath("toolchain.json"), description)?
     # The release signer the installation carries travels inside the archive (DD-0016).
     _ = ship(directory, stage)?
@@ -525,6 +527,7 @@ pub def stage_loaves(source: Path, stage: Path) -> Result[None, str]:
                     not artifact.is_file()
                     or name == "build.log"
                     or ".unit.json" in name
+                    or ".unit.crumb" in name
                     or name.endswith(RESTATED_RECORD_SUFFIX)
                 ):
                     continue

@@ -13,6 +13,7 @@ from compiler_record_admission import compiler_record_profile
 from files import parse_json, read, read_json, write
 from json_fields import array_value, required_items, required_text, string_value
 from observation import file_digest
+from unit_transport import descriptor_path, read_unit_document
 from toolchain import located
 
 
@@ -83,7 +84,10 @@ def compare(hello: Path, output: Path) -> Result[None, str]:
     write(output.joinpath("dependencies.stderr"), str(RustString.from_utf8_lossy(executed.stderr).into_owned()))?
     if not executed.status.success():
         return Err("dependency inspection refused; see dependencies.stderr")
-    unit = read_json(hello.joinpath("src/target/incan/units/hello.unit.json"))?
+    mut typed = false
+    if let Some(flag) = manifest.get("unit_descriptor_crumb"):
+        typed = flag.expect_bool().map_err((error) => error.message())?
+    unit = read_unit_document(descriptor_path(hello.joinpath("src/target/incan/units"), "hello", typed))?
     if required_text(unit, "source")? != source.0 or required_text(unit, "profile")? != "release":
         return Err("dependency inspector selected a different source or profile")
     mut profiles: Dict[str, set[str]] = {}
