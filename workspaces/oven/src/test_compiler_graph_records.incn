@@ -57,6 +57,7 @@ from compiler_graph_records import PublishedEvaluation, publish_evaluation, reus
 from compiler_prepared_records import PreparedBodyRecordSource
 from compiler_record_envelopes import RankedActivation, RankedCheckingSweep, persist_activation
 from compiler_body_keys import namespace_key
+from compiler_owner_records import encode_body_frame, read_body_frame, read_eligibility
 from compiler_body_values import (
     invalid_namespace_modules,
     encode_body_inventory,
@@ -277,7 +278,7 @@ pub def test_persisted_evaluations_reuse_only_while_every_witness_validates() ->
         body.snapshot,
         "run44-body-ir-claim",
         ProducerRank(namespace=2, stage=ProducerStage.BodyIr, dependency=0),
-        b"owner-frame",
+        encode_body_frame(body_ir_key, "profile", b"owner-frame")?,
         body_ir_receipt,
     )?
     selected_body = select_body_values(
@@ -966,7 +967,7 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
         facet="other",
         context="checker-record",
     )
-    assert required(published.snapshot, encode_record_key(fallback_key)?)? == b"full-source: local record output refused: Unsupported(\"fixture\")"
+    assert read_eligibility(fallback_key, required(published.snapshot, encode_record_key(fallback_key)?)?)? == Some("local record output refused: Unsupported(\"fixture\")")
     assert fallback_reasons(
         [CompiledBodyFallback(module="src/main.incn", name="other", identity=None, reason="exact producer refusal")],
     ) == ["src/main.incn::other: exact producer refusal"]

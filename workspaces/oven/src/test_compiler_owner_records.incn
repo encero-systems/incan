@@ -1,0 +1,36 @@
+"""Persisted owner values reject a valid record selected under another authority or with damaged kernel bytes."""
+
+from std.io import BytesIO
+from pub::internal_models.records import RecordKey
+from compiler_owner_records import encode_body_frame, encode_eligibility, read_body_frame, read_eligibility
+
+
+pub def test_selected_kernel_frames_and_owner_decisions() -> Result[None, str]:
+    key = RecordKey(family="body-ir", identity="function:one", identity_profile="incan.stable-declaration/1",
+        origin="example", facet="checked", context="selected-final")
+    other = RecordKey(family="body-ir", identity="function:two", identity_profile="incan.stable-declaration/1",
+        origin="example", facet="checked", context="selected-final")
+    frame = b"kernel-frame-1234"
+    encoded = encode_body_frame(key, "checking", frame)?
+    assert encoded[:4] == b"CRMB" and read_body_frame(key, "checking", encoded)? == frame
+    assert read_body_frame(other, "checking", encoded).is_err()
+    assert read_body_frame(key, "other-profile", encoded).is_err()
+    assert read_body_frame(key, "checking", encoded[:12]).is_err()
+    mut at = -1
+    for offset in range(len(encoded) - len(frame) + 1):
+        if encoded[offset:offset + len(frame)] == frame:
+            at = offset
+            break
+    assert at >= 0
+    damaged = BytesIO(b"")
+    damaged.write_bytes(encoded[:at]).map_err((error) => error.message())?
+    damaged.write_bytes(b"kernel-frame-1235").map_err((error) => error.message())?
+    damaged.write_bytes(encoded[at + len(frame):]).map_err((error) => error.message())?
+    assert read_body_frame(key, "checking", damaged.getvalue()).is_err()
+    eligible = RecordKey(family="eligibility", identity=key.identity, identity_profile=key.identity_profile,
+        origin=key.origin, facet="one", context="checker-record")
+    assert read_eligibility(eligible, encode_eligibility(eligible, None)?)?.is_none()
+    refused = encode_eligibility(eligible, Some("unsupported operation"))?
+    assert read_eligibility(eligible, refused)? == Some("unsupported operation")
+    assert read_eligibility(other, refused).is_err()
+    return Ok(None)

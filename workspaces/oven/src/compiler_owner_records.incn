@@ -1,0 +1,73 @@
+"""Store the compiler's opaque executable frame and scalar owner decisions under their exact graph authorities."""
+
+from std.hash import sha256
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from pub::internal_models.crumb_rows import ModelField, model_description, required_value
+from pub::internal_models.graph_crumb_fields import KEY_TYPE, decode_graph_row, encode_graph_row, key_value, read_key, text
+from pub::internal_models.records import RecordKey
+
+const BODY_FRAME: bytes = b"bodfrm\x00"
+const ELIGIBILITY: bytes = b"eligib\x00"
+
+
+def body_description() -> Description:
+    return model_description(BODY_FRAME, "incan.graph.executable-owner/1", [
+        ModelField(identity=b"digest", name="frame_sha256", storage="binary"),
+        ModelField(identity=b"frame_", name="kernel_frame", storage="binary"),
+        ModelField(identity=b"key___", name="record_key", storage=KEY_TYPE),
+        ModelField(identity=b"profil", name="producer_profile", storage="string"),
+    ])
+
+
+pub def encode_body_frame(key: RecordKey, profile: str, frame: bytes) -> Result[bytes, str]:
+    """Keep every byte of the kernel representation and bind it to the issuing profile and owner."""
+    if key.family != "body-ir" or profile == "" or len(frame) == 0:
+        return Err("invalid executable owner frame")
+    return encode_graph_row(BODY_FRAME, body_description(), [
+        required_value(b"digest", Value.Binary(sha256.digest(frame))), required_value(b"frame_", Value.Binary(frame)),
+        required_value(b"key___", key_value(key)), required_value(b"profil", Value.Text(profile)),
+    ])
+
+
+pub def read_body_frame(key: RecordKey, profile: str, encoded: bytes) -> Result[bytes, str]:
+    """Verify the selected owner, profile and kernel bytes before forwarding them to native checking or lowering."""
+    fields = decode_graph_row(encoded, BODY_FRAME, body_description(), 4)?
+    if read_key(fields[2].value)? != key or text(fields[3].value)? != profile or key.family != "body-ir":
+        return Err("executable owner frame belongs to another key or compiler profile")
+    match (fields[0].value, fields[1].value):
+        (Value.Binary(digest), Value.Binary(frame)) =>
+            if len(frame) > 0 and digest == sha256.digest(frame):
+                return Ok(frame)
+        _ => pass
+    return Err("executable owner frame differs from its digest")
+
+
+def eligibility_description() -> Description:
+    return model_description(ELIGIBILITY, "incan.graph.checking-eligibility/1", [
+        ModelField(identity=b"key___", name="record_key", storage=KEY_TYPE),
+        ModelField(identity=b"reason", name="full_source_reason", storage="option<string>"),
+    ])
+
+
+pub def encode_eligibility(key: RecordKey, reason: Option[str]) -> Result[bytes, str]:
+    """An absent reason admits record checking. A supplied reason requires full-source checking."""
+    mut value = Value.NoneValue
+    if let Some(detail) = reason:
+        value = Value.Some([Value.Text(detail)])
+    return encode_graph_row(ELIGIBILITY, eligibility_description(), [
+        required_value(b"key___", key_value(key)), required_value(b"reason", value),
+    ])
+
+
+pub def read_eligibility(key: RecordKey, encoded: bytes) -> Result[Option[str], str]:
+    fields = decode_graph_row(encoded, ELIGIBILITY, eligibility_description(), 2)?
+    if read_key(fields[0].value)? != key:
+        return Err("eligibility belongs to another owner")
+    match fields[1].value:
+        Value.NoneValue => return Ok(None)
+        Value.Some(values) =>
+            if len(values) == 1:
+                return Ok(Some(text(values[0])?))
+        _ => pass
+    return Err("invalid checking eligibility")

@@ -33,6 +33,8 @@ from pub::internal_models.records import (
     encode_record_key,
 )
 from pub::internal_models.source_value_records import source_value
+from compiler_owner_records import encode_body_frame, encode_eligibility, read_body_frame
+from store_selection_records import encode_binding
 from compiler_graph_records import prepare_evaluation, reusable_evaluation
 from compiler_body_rows import read_compiled_body_outputs
 pub from compiler_captured_sources import (
@@ -376,15 +378,16 @@ def stage_compiled_body_values(
             stage_delete(prepared, checking_basis_key(final_key)?)
         source.add(encode_record_key(final_key)?, value.final)
         body_ir_key = body_key("body-ir", origin, value.identity, "checked", root(value.final)?)
+        body_frame = encode_body_frame(body_ir_key, scope.profile, value.body_ir)?
         body_ir_receipt = source.receipt(scope, body_ir_key, [prepared_product_request(final_key)], position.evidence)?
         _ = prepare_evaluation(
             prepared,
             "compiled-body-ir-" + value.identity,
             ProducerRank(namespace=position.rank, stage=ProducerStage.BodyIr, dependency=0),
-            value.body_ir,
+            body_frame,
             body_ir_receipt,
         )?
-        source.add(encode_record_key(body_ir_key)?, value.body_ir)
+        source.add(encode_record_key(body_ir_key)?, body_frame)
         published += 1
     return Ok(published)
 
@@ -499,14 +502,12 @@ def stage_compiled_body_sources(
         )?
         stage_put(prepared, declaration_key, value.declaration)
         source.add(declaration_key, value.declaration)
-        stage_put(prepared, encode_record_key(eligibility_key(origin, value.identity, value.name))?, b"record-eligible")
+        eligibility = eligibility_key(origin, value.identity, value.name)
+        stage_put(prepared, encode_record_key(eligibility)?, encode_eligibility(eligibility, None)?)
     for fallback in outputs.fallbacks:
         if let Some(identity) = fallback.identity:
-            stage_put(
-                prepared,
-                encode_record_key(eligibility_key(origin, identity, fallback.name))?,
-                ("full-source: " + fallback.reason).encode("utf-8"),
-            )
+            eligibility = eligibility_key(origin, identity, fallback.name)
+            stage_put(prepared, encode_record_key(eligibility)?, encode_eligibility(eligibility, Some(fallback.reason))?)
     return Ok(
         StagedCompiledBodySources(
             transaction=prepared,
@@ -625,9 +626,10 @@ def stage_project_dependency_source(
 ) -> Result[None, str]:
     """Stage one same-project declaration slot, module index and exact checked signature."""
     slot = project_declaration_slot(origin, dependency.module, dependency.name)
-    slot_value = dependency.identity.encode("utf-8")
-    stage_put(prepared, encode_record_key(slot)?, slot_value)
-    source.add(encode_record_key(slot)?, slot_value)
+    slot_key = encode_record_key(slot)?
+    slot_value = encode_binding(slot_key, dependency.identity)?
+    stage_put(prepared, slot_key, slot_value)
+    source.add(slot_key, slot_value)
     projection = projections[project_dependency_module(unit, dependency.module)?]
     stage_source_record(prepared, source, projection.declarations)?
     stage_source_record(prepared, source, projection.census)?
@@ -791,7 +793,10 @@ def lowering_witnesses(
             None => return Err("retained Body IR has no selected graph")
             Some(value) => value
 
-        if get(prior, encode_record_key(key)?).map_err((error) => error.message())? != Some(record.body_ir):
+        stored = match get(prior, encode_record_key(key)?).map_err((error) => error.message())?:
+            Some(frame) => frame
+            None => return Err("retained Body IR has no graph frame")
+        if read_body_frame(key, CHECKER_PROFILE, stored)? != record.body_ir:
             return Err("retained Body IR differs from the selected graph")
         projection = source_projection(unit, origin, decoded.source)?
         owner = match compiled_owner_source(projection, decoded.source, str(decoded.body.name), record.identity):
@@ -810,7 +815,7 @@ def lowering_witnesses(
 
             if source_value(binding.key, previous)? != binding.text.encode("utf-8"):
                 return Err("retained Body IR has changed current source inputs")
-        source.add(encode_record_key(key)?, record.body_ir)
+        source.add(encode_record_key(key)?, stored)
         local_key = body_key("local", origin, record.identity, "checked", root(record.local)?)
         local = match reusable_evaluation(prior, local_key, CHECKER_PROFILE)?:
             None => return Err("retained lowering owner has no witnessed checker inputs")
