@@ -1036,11 +1036,13 @@ fn restore_identity_context(
     let name = next(values)?;
     let canonical = match positions.canonical(&identity) {
         Ok(member) => member,
-        Err(error)
-            if kind == SemanticSourceTargetKind::Variant
-                && matches!(owner.origin, incan_semantics_core::SymbolOrigin::Package { .. }) =>
-        {
-            return Err(error);
+        Err(error) if matches!(owner.origin, incan_semantics_core::SymbolOrigin::Package { .. }) => {
+            // A package declaration uses its own anchor. Only a checked generated member belongs at the owner.
+            let generated = owner.generated_member(name, kind.clone());
+            if local.calls.compiler_generated_member_identities.get(&generated) != Some(&owner) {
+                return Err(error);
+            }
+            generated
         }
         Err(_) => owner.generated_member(name, kind.clone()),
     };

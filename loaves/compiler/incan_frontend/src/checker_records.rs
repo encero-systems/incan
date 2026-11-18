@@ -1205,6 +1205,41 @@ mod tests {
         Ok(())
     }
 
+    /// Imported method calls must resolve to the current executable declaration after a provider edit.
+    #[test]
+    fn restored_method_uses_its_declaration_inside_the_current_nominal() -> Result<(), Box<dyn std::error::Error>> {
+        let provider =
+            "pub model Failure:\n    code: int\n\n    pub def message(self) -> int:\n        return self.code\n";
+        let source =
+            "from pub::provider import Failure\n\ndef result(error: Failure) -> int:\n    return error.message()\n";
+        let (original, _original_files) = provider_index(provider)?;
+        let consumer = program(source)?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["main".into()]));
+        checker.set_loaves(original);
+        checker
+            .check_program(&consumer)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let outputs = checked_owner_record_outputs(&consumer, &checker, &["main".into()])?;
+        let [CheckedOwnerRecordOutput::Value(owner)] = outputs.as_slice() else {
+            return Err("expected one reusable consumer of the package method".into());
+        };
+        let changed = provider.replace(
+            "    pub def message",
+            "    # change only the method locator\n    pub def message",
+        );
+        let (current, _current_files) = provider_index(&changed)?;
+        let differences = super::verify_fixture_with_loaves(
+            source,
+            "result",
+            owner.final_value.clone(),
+            current,
+            vec!["main".into()],
+        )?;
+        assert!(differences.is_empty(), "{differences:?}");
+        Ok(())
+    }
+
     /// A loan-free match scrutinee is retained as a reusable owner fact instead of forcing a source fallback.
     #[test]
     fn loan_free_match_owner_publishes_reusable_value() -> Result<(), Box<dyn std::error::Error>> {
