@@ -65,10 +65,15 @@ pub fn typecheck_modules(
         .cloned()
         .collect::<std::collections::HashSet<_>>();
     let imports = SourceModuleImports::new(modules, own_standard_package);
+    // The ordinary checker is the only consumer of source exports. Fully restored modules outside
+    // every checked dependency closure contribute no lookup table or copied export declaration.
     let dependency_exports = modules
         .iter()
-        .map(|module| Arc::<[ExportedSymbol]>::from(exported_symbols(&module.ast)))
+        .map(|_| std::cell::OnceCell::<Arc<[ExportedSymbol]>>::new())
         .collect::<Vec<_>>();
+    let exports = |index: usize| {
+        Arc::clone(dependency_exports[index].get_or_init(|| exported_symbols(&modules[index].ast).into()))
+    };
     let mut diagnostics_out = Vec::new();
     let mut warnings_out = Vec::new();
     let mut type_infos = Vec::with_capacity(modules.len());
@@ -76,24 +81,6 @@ pub fn typecheck_modules(
     let mut namespace_lowering_inputs = Vec::new();
     let mut dependency_interfaces = vec![None::<Arc<ModuleDependencyInterface>>; modules.len()];
     let cycle_peers = imports.cycle_peers();
-    let related_sources = modules
-        .iter()
-        .map(|module| {
-            let origin = package
-                .map(|library| SymbolOrigin::Package {
-                    library: library.to_string(),
-                    module_path: module.path_segments.clone(),
-                })
-                .unwrap_or_else(|| SymbolOrigin::Module(module.path_segments.clone()));
-            (
-                origin,
-                CliDiagnosticSource {
-                    file_path: module.file_path.to_string_lossy().to_string(),
-                    source: module.source.clone(),
-                },
-            )
-        })
-        .collect();
     let memory_trace = incan_frontend::trace_flags::enabled(incan_frontend::trace_flags::Category::TypecheckMemory);
     let mut not_prepared = unit
         .not_prepared_loaves
@@ -197,12 +184,7 @@ pub fn typecheck_modules(
             .collect::<Vec<_>>();
         let exports_for_module = dep_indexes
             .iter()
-            .map(|dep_idx| {
-                (
-                    modules[*dep_idx].name.clone(),
-                    Arc::clone(&dependency_exports[*dep_idx]),
-                )
-            })
+            .map(|dep_idx| (modules[*dep_idx].name.clone(), exports(*dep_idx)))
             .collect();
         let interfaces_for_module = dep_indexes
             .iter()
@@ -260,7 +242,7 @@ pub fn typecheck_modules(
                     Some(checker.seal_current_module_dependency_interface(
                         &module.name,
                         &module.ast,
-                        Arc::clone(&dependency_exports[idx]),
+                        exports(idx),
                         own_standard_package.is_none(),
                     ))
                 } else {
@@ -300,7 +282,7 @@ pub fn typecheck_modules(
                             (
                                 modules[*component_idx].name.as_str(),
                                 &modules[*component_idx].ast,
-                                Arc::clone(&dependency_exports[*component_idx]),
+                                exports(*component_idx),
                             )
                         })
                         .collect::<Vec<_>>();
@@ -325,7 +307,12 @@ pub fn typecheck_modules(
     }
 
     if diagnostics_out.is_empty() {
-        debug_assert!(dependency_interfaces.iter().all(Option::is_some));
+        debug_assert!(
+            dependency_interfaces
+                .iter()
+                .enumerate()
+                .all(|(idx, interface)| interface.is_some() || (restored[idx] && !needed_interfaces[idx]))
+        );
         verify_checked_c_bindings(modules, unit, &mut type_infos, c_abi_plan, &mut diagnostics_out);
     }
 
@@ -339,7 +326,24 @@ pub fn typecheck_modules(
     } else {
         Err(CliDiagnosticFailure {
             diagnostics: diagnostics_out,
-            related_sources,
+            related_sources: modules
+                .iter()
+                .map(|module| {
+                    let origin = package
+                        .map(|library| SymbolOrigin::Package {
+                            library: library.to_string(),
+                            module_path: module.path_segments.clone(),
+                        })
+                        .unwrap_or_else(|| SymbolOrigin::Module(module.path_segments.clone()));
+                    (
+                        origin,
+                        CliDiagnosticSource {
+                            file_path: module.file_path.to_string_lossy().to_string(),
+                            source: module.source.clone(),
+                        },
+                    )
+                })
+                .collect(),
             warnings: warnings_out,
         })
     }
