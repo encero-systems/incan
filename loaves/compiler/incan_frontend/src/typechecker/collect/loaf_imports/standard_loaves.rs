@@ -54,12 +54,8 @@ impl TypeChecker {
         }
     }
 
-    /// The Rust derive paths a Loaf trait declares (`@rust.derive(...)`), in declaration order.
-    pub(in crate::typechecker) fn loaf_trait_rust_derive_paths(
-        &self,
-        module_path: &[String],
-        name: &str,
-    ) -> Option<Vec<String>> {
+    /// Read the checked trait declaration without installing its package's nominal scope into the consumer.
+    fn loaf_trait_declaration(&self, module_path: &[String], name: &str) -> Option<&crate::api_metadata::ApiTrait> {
         let (library, _) = self.loaf_module(module_path)?;
         let manifest = self.loaves.manifest(&library)?;
         let canonical = self.loaf_member_identity(module_path, name)?;
@@ -70,6 +66,16 @@ impl TypeChecker {
         let ApiDeclaration::Trait(declaration) = Self::api_declaration_for_target_path(manifest, source_path)? else {
             return None;
         };
+        Some(declaration)
+    }
+
+    /// The Rust derive paths a Loaf trait declares (`@rust.derive(...)`), in declaration order.
+    pub(in crate::typechecker) fn loaf_trait_rust_derive_paths(
+        &self,
+        module_path: &[String],
+        name: &str,
+    ) -> Option<Vec<String>> {
+        let declaration = self.loaf_trait_declaration(module_path, name)?;
         let mut paths = Vec::new();
         for decorator in &declaration.decorators {
             if core_decorators::from_str(&decorator.path.join(".")) != Some(DecoratorId::RustDerive) {
@@ -231,16 +237,37 @@ impl TypeChecker {
         if let Some(info) = self.standard_traits.get(name) {
             return Some(info.clone());
         }
-        // The derive-method table names a derivable trait's module; every other builtin trait (`TryFrom`, `Error`)
-        // names its declaring module itself.
-        let segments = stdlib::trait_method_module_segments(name).or_else(|| {
-            incan_lang::lang::traits::from_str(name)
-                .and_then(incan_lang::lang::traits::source_module)
-                .map(|module| module.split('.').map(str::to_string).collect())
-        })?;
+        let segments = Self::standard_trait_module(name)?;
         let info = self.loaf_trait(&segments, name)?;
         self.standard_traits.insert(name.to_string(), info.clone());
         Some(info)
+    }
+
+    fn standard_trait_module(name: &str) -> Option<Vec<String>> {
+        // The derive-method table names a derivable trait's module; every other builtin trait (`TryFrom`, `Error`)
+        // names its declaring module itself.
+        stdlib::trait_method_module_segments(name).or_else(|| {
+            incan_lang::lang::traits::from_str(name)
+                .and_then(incan_lang::lang::traits::source_module)
+                .map(|module| module.split('.').map(str::to_string).collect())
+        })
+    }
+
+    /// An unsuccessful adopted-method probe must not publish unrelated package types into the caller's Body IR.
+    /// Check the source declaration before materializing the full trait. Older manifests without that declaration
+    /// continue to resolve through the ordinary trait lookup.
+    pub(in crate::typechecker) fn standard_trait_method(&mut self, name: &str, method: &str) -> Option<MethodInfo> {
+        if let Some(info) = self.standard_traits.get(name) {
+            return info.methods.get(method).cloned();
+        }
+        let module = Self::standard_trait_module(name)?;
+        if self
+            .loaf_trait_declaration(&module, name)
+            .is_some_and(|declaration| !declaration.methods.iter().any(|item| item.name == method))
+        {
+            return None;
+        }
+        self.standard_trait(name)?.methods.get(method).cloned()
     }
 
     /// The path `library`'s public modules are bound under (see [`LoafEntry::binding_root`]), from the index's
