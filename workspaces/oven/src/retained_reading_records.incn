@@ -32,7 +32,7 @@ def contract(kind: ReadingKind) -> tuple[bytes, Description]:
         ReadingKind.Vocabulary =>
             name = "rvoart"
             storage = "tuple<string,list<tuple<list<string>,list<string>,list<i64>,list<string>,list<string>>>>"
-    selector = (name + "\x00").encode("utf-8")
+    selector = name.encode("utf-8") + b"\x00"
     description = model_description(selector, f"incan.oven.retained-reading/{name}/1", [
         ModelField(identity=b"select", name="selection", storage="string"),
         ModelField(identity=b"source", name="source", storage="string"),
