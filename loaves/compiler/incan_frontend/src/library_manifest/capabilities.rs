@@ -33,14 +33,30 @@ pub struct CapabilityCatalog(BTreeMap<String, Contributions>);
 
 impl CapabilityCatalog {
     pub fn insert(&mut self, name: &str, bytes: &[u8]) -> Result<(), String> {
-        let facts = LibraryManifest::decode_compiler_record_value(bytes).map_err(|e| e.to_string())?;
+        #[derive(Deserialize)]
+        struct Metadata {
+            name: String,
+            vocabulary: bool,
+            provider_operations: bool,
+        }
+        let published: Metadata = LibraryManifest::decode_compiler_record_value(bytes).map_err(|e| e.to_string())?;
+        if published.name != name {
+            return Err(format!(
+                "global compiler facts name {} instead of {name}",
+                published.name
+            ));
+        }
+        let facts = Contributions {
+            vocabulary: published.vocabulary,
+            provider_operations: published.provider_operations,
+        };
         if self.0.insert(name.to_owned(), facts).is_some() {
             return Err(format!("duplicated installed package {name}"));
         }
         Ok(())
     }
 
-    pub fn encode(self, profile: &str) -> Result<(String, Vec<u8>), String> {
+    pub(crate) fn contributors(self, profile: &str) -> (String, Contributors) {
         let names = self.0.keys().cloned().collect();
         let mut facts = Contributors {
             profile: profile.into(),
@@ -55,8 +71,13 @@ impl CapabilityCatalog {
                 facts.operations.push(name.clone());
             }
         }
+        (key(profile, &names), facts)
+    }
+
+    pub fn encode(self, profile: &str) -> Result<(String, Vec<u8>), String> {
+        let (key, facts) = self.contributors(profile);
         let (encode, _) = CODEC.get().ok_or("compiler contributors Crumb codec not installed")?;
-        Ok((key(profile, &names), encode(facts)?))
+        Ok((key, encode(facts)?))
     }
 }
 
