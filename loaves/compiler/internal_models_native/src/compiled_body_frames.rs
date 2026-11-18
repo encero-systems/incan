@@ -235,9 +235,8 @@ fn check_fallback(v: &CompiledBodyFallback) -> Result<(), CodecFault> {
     }
     Ok(())
 }
-/// Encode an independently framed full-source decision.
+/// Encode a full-source decision whose metadata has been admitted.
 fn encode_fallback(v: &CompiledBodyFallback) -> Result<Vec<u8>, CodecFault> {
-    check_fallback(v)?;
     let mut out = Writer::new(&FALLBACK, MAX_TRANSPORT * 2)?;
     out.record();
     out.optional_text(b"ident_", v.identity.as_deref());
@@ -256,13 +255,21 @@ pub fn encode_compiled_body_outputs(outputs: &CompiledBodyOutputs) -> Result<Vec
             MAX_FIELDS as i64,
         ));
     }
+    // Fallback metadata can prove that the publication will fail before building any of its large frames.
+    // Visit the preceding records in wire order so an earlier fault still wins, releasing each frame as we go.
+    let invalid_fallback = outputs.fallbacks.iter().position(|f| check_fallback(f).is_err());
     let mut frames = Vec::with_capacity(count);
+    let mut retain = |frame| {
+        if invalid_fallback.is_none() {
+            frames.push(frame);
+        }
+    };
     let mut last = "";
     for ns in &outputs.namespaces {
         if ns.module.as_str() <= last {
             return Err(Malformed);
         }
-        frames.push(encode_namespace(ns)?);
+        retain(encode_namespace(ns)?);
         last = &ns.module;
     }
     let mut prev = None;
@@ -272,20 +279,23 @@ pub fn encode_compiled_body_outputs(outputs: &CompiledBodyOutputs) -> Result<Vec
         if !ordered(prev, key) {
             return Err(Malformed);
         }
-        frames.push(encode_value(v)?);
+        retain(encode_value(v)?);
         if !outputs.fallbacks.is_empty() {
             owned.insert(key);
         }
         prev = Some(key);
     }
     let mut prev = None;
-    for f in &outputs.fallbacks {
+    for (index, f) in outputs.fallbacks.iter().enumerate() {
         let id = f.identity.as_deref().unwrap_or_default();
         let key = [f.module.as_str(), f.name.as_str(), id];
         if !ordered(prev, key) || (!id.is_empty() && owned.contains(&[f.module.as_str(), id])) {
             return Err(Malformed);
         }
-        frames.push(encode_fallback(f)?);
+        if invalid_fallback == Some(index) {
+            return Err(Malformed);
+        }
+        retain(encode_fallback(f)?);
         prev = Some(key);
     }
     Ok(frames)
