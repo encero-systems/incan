@@ -93,6 +93,8 @@ struct RecordSet {
     admitted: Mutex<BTreeMap<(String, Projection), AdmittedGroup>>,
     /// Inventory summaries this process already read and authenticated, by metadata key prefix.
     summaries: Mutex<BTreeMap<String, Summary>>,
+    /// Parser registrations already authenticated under this installed set and Loaf profile.
+    vocabularies: Mutex<BTreeMap<String, (Arc<VocabExports>, String)>>,
     /// Executable surfaces this process already read and authenticated, by package prefix.
     surfaces: Mutex<BTreeMap<String, (Arc<ExecutableSurface>, String)>>,
     /// Runtime callable bindings this process already read, by record key prefix.
@@ -165,6 +167,7 @@ impl RecordSet {
             bytes_read: AtomicUsize::new(0),
             admitted: Mutex::new(BTreeMap::new()),
             summaries: Mutex::new(BTreeMap::new()),
+            vocabularies: Mutex::new(BTreeMap::new()),
             surfaces: Mutex::new(BTreeMap::new()),
             bindings: Mutex::new(BTreeMap::new()),
         }
@@ -737,7 +740,7 @@ fn digest_matches(bytes: &[u8], expected: &str) -> bool {
 
 /// The parser needs the complete vocabulary registration of an admitted contributor, independently of the
 /// contributor's type-checking contracts. Older or external stores still provide their complete validated manifest.
-pub(super) fn read_vocabulary(dir: &Path, name: &str) -> Result<Option<(VocabExports, String)>, LoafIndexError> {
+pub(super) fn read_vocabulary(dir: &Path, name: &str) -> Result<Option<(Arc<VocabExports>, String)>, LoafIndexError> {
     let Some(set) = installed().map_err(|reason| unreadable(dir, name, reason))? else {
         return Ok(None);
     };
@@ -746,6 +749,15 @@ pub(super) fn read_vocabulary(dir: &Path, name: &str) -> Result<Option<(VocabExp
         .and_then(|part| part.to_str())
         .ok_or_else(|| unreadable(dir, name, "Loaf profile directory is not UTF-8".to_owned()))?;
     let prefix = format!("loaf/{profile}/{name}/vocabulary/");
+    if let Some(found) = set
+        .vocabularies
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&prefix)
+        .cloned()
+    {
+        return Ok(Some(found));
+    }
     let rows = set
         .members(&prefix, None, 2)
         .map_err(|reason| unreadable(dir, name, reason))?;
@@ -778,7 +790,12 @@ pub(super) fn read_vocabulary(dir: &Path, name: &str) -> Result<Option<(VocabExp
             "vocabulary registration disagrees with its record key".to_owned(),
         ));
     }
-    Ok(Some((vocab, summary.identity.digest)))
+    let found = (Arc::new(vocab), summary.identity.digest);
+    set.vocabularies
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(prefix, found.clone());
+    Ok(Some(found))
 }
 
 /// Read one immutable value after the installed set receipt named it; the value itself is authenticated on open.
@@ -1439,6 +1456,15 @@ mod tests {
         let _ = index.imported_vocab();
         let _ = index.imported_dsl_surfaces();
         index.validate_demands()?;
+        // The resident worker opens independent parse and compile sessions against the same immutable set.
+        let second = LoafIndex::deferred([(
+            manifest.name.clone(),
+            manifest.name.clone(),
+            root.path().join("debug"),
+            false,
+        )])?;
+        let _ = second.imported_vocab();
+        second.validate_demands()?;
         let after = selected.0.reads();
         assert_eq!(after.records - before.records, 1);
         assert_eq!(

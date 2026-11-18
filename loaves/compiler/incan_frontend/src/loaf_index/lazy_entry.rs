@@ -483,7 +483,7 @@ impl IndexedLoaf {
                     if digest != self.summary.identity.digest {
                         return Err(self.inventory_mismatch("vocabulary differs from its admitted inventory"));
                     }
-                    return Ok(Some(Arc::new(vocabulary)));
+                    return Ok(Some(vocabulary));
                 }
                 Ok(self.demand()?.artifact.manifest.vocab.clone().map(Arc::new))
             })
