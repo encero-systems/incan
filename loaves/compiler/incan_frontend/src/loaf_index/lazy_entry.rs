@@ -458,25 +458,38 @@ impl IndexedLoaf {
 
     /// Validate every record selected under this path, including aliases, before exposing its canonical identity.
     pub fn runtime_binding(&self, path: &str) -> Result<Option<RuntimeCallableBinding>, LoafIndexError> {
-        let Some(values) = self.named_records("runtime-binding", path)? else {
-            return Ok(None);
-        };
         let mut selected = None;
-        for value in values.iter() {
-            let binding: RuntimeCallableBinding = serde_json::from_value(value.clone())
-                .map_err(|_| self.inventory_mismatch("invalid runtime-binding value"))?;
-            if binding.path != path
-                || binding.canonical.kind != incan_semantics_core::SemanticSourceTargetKind::Function
-                || !matches!(&binding.canonical.origin, incan_semantics_core::SymbolOrigin::Package { library, .. } if library == &self.name)
-                || selected.as_ref().is_some_and(|previous| previous != &binding)
-            {
-                return Err(
-                    self.inventory_mismatch("runtime binding path, identity, or owner differs from its selection")
-                );
+        if let Some(values) = self.named_records("runtime-binding", path)? {
+            for value in values.iter() {
+                let binding = serde_json::from_value(value.clone())
+                    .map_err(|_| self.inventory_mismatch("invalid runtime-binding value"))?;
+                self.admit_runtime_binding(path, binding, &mut selected)?;
             }
-            selected = Some(binding);
+        } else if self.names_record(&["runtime-binding"], None)? != Some(true) {
+            // An aggregate-only package has no individual member to select. Every matching legacy row still
+            // has to agree with the path, owner, and any other declaration of this public facade.
+            for binding in self.runtime_bindings()?.iter().filter(|binding| binding.path == path) {
+                self.admit_runtime_binding(path, binding.clone(), &mut selected)?;
+            }
         }
         Ok(selected)
+    }
+
+    fn admit_runtime_binding(
+        &self,
+        path: &str,
+        binding: RuntimeCallableBinding,
+        selected: &mut Option<RuntimeCallableBinding>,
+    ) -> Result<(), LoafIndexError> {
+        if binding.path != path
+            || binding.canonical.kind != incan_semantics_core::SemanticSourceTargetKind::Function
+            || !matches!(&binding.canonical.origin, incan_semantics_core::SymbolOrigin::Package { library, .. } if library == &self.name)
+            || selected.as_ref().is_some_and(|previous| previous != &binding)
+        {
+            return Err(self.inventory_mismatch("runtime binding path, identity, or owner differs from its selection"));
+        }
+        *selected = Some(binding);
+        Ok(())
     }
 
     /// The refusal of a record that does not belong to the inventory the index admitted this Loaf by.
