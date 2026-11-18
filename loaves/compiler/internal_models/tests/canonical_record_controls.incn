@@ -28,6 +28,7 @@ from checker_records import (
     from_native_local_fields,
     native_fields,
 )
+from record_scope import MAX_CHECKER_ROW_BYTES, RecordKey, RecordRequest, RecordSelection, checked_row_request, valid_request
 from compiled_body_rows import (
     CompiledBodyOutput,
     decode_compiled_body_row,
@@ -65,9 +66,33 @@ def scalar_wire_boundary() -> Result[None, str]:
     return Ok(None)
 
 
+def checked_row_capacity() -> Result[None, str]:
+    """A single checked owner can exceed the ordinary read page while retaining its key, root and field grammar."""
+    key = RecordKey(family="final", identity_profile="incan.stable-declaration/1", origin="fixture",
+        identity="function:fixture::import_jsonl", facet="checked", context="current")
+    node = "/".join(list.repeat("body/statement", 5600))
+    root = "sha256:2329b00af39be222014e75f38ed1f5ef7c1cbbff58ad059d4b3007ccaa90003e"
+    record = CheckedRecord(profile=CHECKER_PROFILE, family=CheckedFamily.Final, root=root, owner=key.identity,
+        fields=[CanonicalField(family="identifier", node=node, selector="kind", values=["value"])])
+    wire = encode_record(record).map_err((_) => "large checked row encoding failed")?
+    assert len(wire) > 65536 and len(wire) <= MAX_CHECKER_ROW_BYTES
+    assert decode_record(wire, CHECKER_PROFILE, key.identity, root).map_err((_) => "large checked row decoding failed")? == record
+    request = checked_row_request(key, len(wire))?
+    assert request.byte_limit == len(wire) and valid_request(request)
+    assert checked_row_request(key, 1)?.byte_limit == 65536
+    assert checked_row_request(key, MAX_CHECKER_ROW_BYTES)?.byte_limit == MAX_CHECKER_ROW_BYTES
+    for size in [0, MAX_CHECKER_ROW_BYTES + 1]:
+        match checked_row_request(key, size):
+            Ok(_) => return Err("admitted invalid checked row extent")
+            Err(_) => pass
+    assert not valid_request(RecordRequest(key=key, selection=RecordSelection.Field("other"), byte_limit=len(wire)))
+    return Ok(None)
+
+
 pub def canonical_record_controls() -> Result[None, str]:
     """Keep the existing scoped-reader case responsible for canonical bytes, native teardown and stale bindings."""
     scalar_wire_boundary()?
+    checked_row_capacity()?
     source = "def main() -> None:\n    println(\"hello\")\n"
     moved = "# changed-length comment\n\ndef main() -> None:\n    # inside comment\n    println(\"hello\")\n"
     for declaration in [true, false]:

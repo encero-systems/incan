@@ -3,6 +3,7 @@
 from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
 from pub::internal_models.source_value_records import source_value
+from pub::internal_models.record_scope import MAX_CHECKER_ROW_BYTES, checked_row_family, checked_row_request
 from pub::internal_models.records import (
     PayloadSelection,
     PreparationEvidence,
@@ -59,8 +60,16 @@ pub class PreparedBodyRecordSource with RecordSource:
             rank_certificate=rank_certificate,
             selector_witnesses="compiled-check",
         )
-        mut reads = RecordReads.start(scope, preparation, requests)
+        mut bounded: list[RecordRequest] = []
         for item in requests:
+            if item.byte_limit == MAX_CHECKER_ROW_BYTES and checked_row_family(item.key.family) and item.selection == RecordSelection.Field("value"):
+                encoded_key = encode_record_key(item.key)?
+                if encoded_key in self.values:
+                    bounded.append(checked_row_request(item.key, len(self.values[encoded_key]))?)
+                    continue
+            bounded.append(item)
+        mut reads = RecordReads.start(scope, preparation, bounded)
+        for item in bounded:
             match reads.read(self, item):
                 RecordRead.Failed(fault) =>
                     written = encode_record_key(output)?
@@ -98,4 +107,6 @@ pub def prepared_product_request(key: RecordKey) -> RecordRequest:
     if key.family in ["body-ir", "plan-function", "namespace", "plan-module"]:
         selected = PayloadSelection(reference=key.context, offset=0, length=0)
         return RecordRequest(key=key, selection=RecordSelection.Payload(selected))
+    if checked_row_family(key.family):
+        return RecordRequest(key=key, selection=RecordSelection.Field("value"), byte_limit=MAX_CHECKER_ROW_BYTES)
     return RecordRequest(key=key, selection=RecordSelection.Field("value"))

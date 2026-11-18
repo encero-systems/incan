@@ -695,6 +695,30 @@ pub def test_prepared_opaque_products_use_their_bounded_selection() -> Result[No
     return Ok(None)
 
 
+pub def test_prepared_checked_rows_bind_the_current_extent() -> Result[None, str]:
+    """A checked predecessor may grow between revisions; its receipt records the selected bytes in each revision."""
+    key = RecordKey(family="final", identity_profile="incan.stable-declaration/1", origin="fixture",
+        identity="function:fixture::import_jsonl", facet="checked", context="current")
+    scope = ReadScope(snapshot="prepared", profile=CHECKER_PROFILE)
+    mut source = PreparedBodyRecordSource.open(scope)
+    for size in [79351, 79358]:
+        physical: bytes = list.repeat(90u8, size)
+        source.add(encode_record_key(key)?, physical)
+        receipt = source.receipt(scope, key, [prepared_product_request(key)])?
+        assert receipt.operations == 1 and receipt.response_bytes == size
+        match receipt.witnesses[0]:
+            ReadWitness.Found(evidence, _) =>
+                assert evidence.request.key == key
+                assert evidence.request.selection == RecordSelection.Field("value")
+                assert evidence.request.byte_limit == size
+            _ => return Err("missing final checker row witness")
+        short = RecordRequest(key=key, selection=RecordSelection.Field("value"), byte_limit=size - 1)
+        match source.receipt(scope, key, [short]):
+            Ok(_) => return Err("receipt exceeded its explicit field extent")
+            Err(_) => pass
+    return Ok(None)
+
+
 def check_positioned_namespace_products() -> Result[None, str]:
     """Check the physical graph values across a shift in the native symbol and a real change to one member."""
     stable = "method:fixture::Counter::get"

@@ -23,24 +23,21 @@ pub from checker_record_models import (
 )
 from crumb_rows import ModelField, decode_rows, encode_rows, model_description, operation_budget, required_value
 from graph_crumb_fields import decode_graph_row, encode_graph_row
+from record_scope import MAX_CHECKER_ROW_BYTES
 
 pub const CHECKER_SCHEMA: str = "incan.checker-fields/10"
 pub const CHECKER_PROFILE: str = "incan.checker-free-functions/17"
-const MAX_RECORD_BYTES: int = 65536
 const MAX_FIELDS: int = 4096
 const CHECKER_SELECTOR: bytes = b"checkr\x00"
 const GRAPH_BODY_SELECTOR: bytes = b"grbody\x00"
 const GRAPH_CHECKING_SELECTOR: bytes = b"grchec\x00"
 const GRAPH_NAMESPACE_SELECTOR: bytes = b"grnams\x00"
-# One selected-input request carries bounded checker records plus native owner frames; bound that request at 64 MiB
-# while individual checker records retain their narrower 64 KiB limit.
-const MAX_GRAPH_TRANSPORT_BYTES: int = 67108864
 
 
 pub def encode_record(record: Borrowed[CheckedRecord]) -> Result[bytes, CodecFault]:
     """Encode one checked owner as one bounded Crumb row of the checker-record model."""
     logical = record_value(record)?
-    return encode_rows(checker_description(), [RowRecord(key=CHECKER_SELECTOR, value=logical)], MAX_RECORD_BYTES).map_err(
+    return encode_rows(checker_description(), [RowRecord(key=CHECKER_SELECTOR, value=logical)], MAX_CHECKER_ROW_BYTES).map_err(
         (reason) => CodecFault.Encoding(reason),
     )
 
@@ -105,7 +102,9 @@ def record_value(record: Borrowed[CheckedRecord]) -> Result[Value, CodecFault]:
 
 def decoded_record(encoded: bytes) -> Result[CheckedRecord, CodecFault]:
     """Admit exactly one checker-model row and reconstruct all schema-owned fields."""
-    rows = decode_rows(encoded, [checker_description()], MAX_RECORD_BYTES).map_err((_) => CodecFault.Malformed)?
+    if len(encoded) > MAX_CHECKER_ROW_BYTES:
+        return Err(CodecFault.LimitExceeded("checker-record-bytes", len(encoded), MAX_CHECKER_ROW_BYTES))
+    rows = decode_rows(encoded, [checker_description()], MAX_CHECKER_ROW_BYTES).map_err((_) => CodecFault.Malformed)?
     if len(rows) != 1:
         return Err(CodecFault.Malformed)
     row = rows[0]
@@ -399,7 +398,7 @@ pub def encode_graph_body_values(values: list[GraphBodyValue]) -> Result[bytes, 
             ),
         )
         previous = value.identity
-    return encode_rows(graph_body_description(), rows, MAX_GRAPH_TRANSPORT_BYTES).map_err((_) => CodecFault.Limit)
+    return encode_rows(graph_body_description(), rows, MAX_CHECKER_ROW_BYTES).map_err((_) => CodecFault.Limit)
 
 
 pub def encode_graph_checking_pair(identity: str, local: bytes, final: bytes) -> Result[bytes, CodecFault]:
@@ -424,7 +423,7 @@ pub def decode_graph_checking_inputs(encoded: bytes) -> Result[list[GraphBodyFie
 
 pub def decode_graph_body_values(encoded: bytes) -> Result[list[GraphBodyFields], CodecFault]:
     """Decode and authenticate every selected body pair before projecting its canonical native field primitives."""
-    rows = decode_rows(encoded, [graph_body_description()], MAX_GRAPH_TRANSPORT_BYTES).map_err(
+    rows = decode_rows(encoded, [graph_body_description()], MAX_CHECKER_ROW_BYTES).map_err(
         (_) => CodecFault.Malformed,
     )?
     if len(rows) > MAX_FIELDS:
@@ -499,14 +498,14 @@ pub def encode_graph_namespace_value(value: GraphNamespaceValue) -> Result[bytes
             ],
         ),
     )
-    return encode_rows(graph_namespace_description(), [record], MAX_GRAPH_TRANSPORT_BYTES).map_err(
+    return encode_rows(graph_namespace_description(), [record], MAX_CHECKER_ROW_BYTES).map_err(
         (_) => CodecFault.Limit,
     )
 
 
 pub def decode_graph_namespace_value(encoded: bytes) -> Result[GraphNamespaceValue, CodecFault]:
     """Decode one complete namespace row and refuse unordered, empty or trailing lowering witnesses."""
-    rows = decode_rows(encoded, [graph_namespace_description()], MAX_GRAPH_TRANSPORT_BYTES).map_err(
+    rows = decode_rows(encoded, [graph_namespace_description()], MAX_CHECKER_ROW_BYTES).map_err(
         (_) => CodecFault.Malformed,
     )?
     if len(rows) != 1 or rows[0].key != copy_frozen_bytes(GRAPH_NAMESPACE_SELECTOR):
