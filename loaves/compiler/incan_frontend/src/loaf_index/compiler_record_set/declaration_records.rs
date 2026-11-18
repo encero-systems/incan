@@ -2,6 +2,7 @@
 //! layout or defaults, or one public namespace, opens that record of that family alone.
 
 use std::path::Path;
+use std::sync::PoisonError;
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -109,6 +110,7 @@ pub(super) fn read_declaration_in(
         process_records = process.records,
         process_bytes = process.bytes
     );
+    set.present_named_families.lock().unwrap_or_else(PoisonError::into_inner).insert(prefix);
     Ok(Some((values, summary.identity.digest)))
 }
 
@@ -129,6 +131,12 @@ pub(in crate::loaf_index) fn names_record(
         .and_then(|value| value.to_str())
         .ok_or_else(|| unreadable(dir, name, "Loaf profile directory is not UTF-8".to_owned()))?;
     let group = format!("loaf/{profile}/{name}/");
+    if record.is_none() {
+        let present = set.present_named_families.lock().unwrap_or_else(PoisonError::into_inner);
+        if families.iter().any(|family| present.contains(&format!("{group}{family}/"))) {
+            return Ok(Some(true));
+        }
+    }
     if set
         .members(&format!("{group}metadata/"), None, 1)
         .map_err(|reason| unreadable(dir, name, reason))?

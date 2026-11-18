@@ -100,6 +100,8 @@ struct RecordSet {
     vocabularies: Mutex<BTreeMap<String, (Arc<VocabExports>, String)>>,
     /// Executable surfaces this process already read and authenticated, by package prefix.
     surfaces: Mutex<BTreeMap<String, (Arc<ExecutableSurface>, String)>>,
+    /// A successful exact declaration read already proves that its family exists in this immutable set.
+    present_named_families: Mutex<BTreeSet<String>>,
     /// Runtime callable bindings this process already read, by record key prefix.
     bindings: Mutex<BTreeMap<String, (Arc<Vec<RuntimeCallableBinding>>, String)>>,
 }
@@ -163,6 +165,7 @@ impl RecordSet {
         entries.sort_unstable_by(|a, b| a.key.cmp(&b.key));
         Self {
             range_values: Mutex::default(),
+            present_named_families: Mutex::default(),
             directory: None,
             root,
             entries,
