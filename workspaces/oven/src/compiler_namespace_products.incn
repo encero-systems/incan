@@ -1,0 +1,71 @@
+"""Checked semantic namespace products independent of the positioned frame used to restore a module."""
+
+from std.primitives.crumb.values import Value
+from pub::internal_models import CompiledNamespaceValue, ProducerRank, encode_record_key
+from pub::internal_models.crumb_rows import ModelField, model_description, required_value
+from pub::internal_models.graph_crumb_fields import KEY_TYPE, encode_graph_row, key_value
+from pub::internal_models.records import ReadScope, RecordKey, RecordRequest
+from pub::incan_platform.store import Transaction
+from compiler_body_keys import body_key, namespace_key
+from compiler_graph_records import prepare_evaluation
+from compiler_prepared_records import PreparedBodyRecordSource, prepared_product_request
+
+const PROJECTION: bytes = b"nsprod\x00"
+
+
+pub def interface_key(origin: str, module: str) -> RecordKey:
+    """The checked declarations importers can observe regardless of where they were written."""
+    return body_key("namespace-interface", origin, module, "checked", "semantic/1")
+
+
+pub def member_key(origin: str, identity: str) -> RecordKey:
+    """The compiler's checked lowering witness for one stable member of a nominal declaration."""
+    return body_key("namespace-member", origin, identity, "lowering", "semantic/1")
+
+
+pub def member_plan_inputs(origin: str, module: str, event: str, members: &Dict[str, tuple[str, str]]) -> Result[list[RecordRequest], str]:
+    """Join the current native event to a checked stable owner, or retain the complete namespace as its witness."""
+    if event not in members:
+        return Ok([prepared_product_request(namespace_key(origin, module))])
+    recorded_module, stable = members[event]
+    if recorded_module != module:
+        return Err("member lowering event was attributed to a different checked namespace")
+    return Ok([prepared_product_request(member_key(origin, stable)), prepared_product_request(interface_key(origin, module))])
+
+
+pub def prepare_namespace_products(mut transaction: Transaction, mut source: PreparedBodyRecordSource, scope: ReadScope,
+    namespace: CompiledNamespaceValue, origin: str, reads: list[RecordRequest], rank: ProducerRank, certificate: str) -> Result[None, str]:
+    """Stage each compiler-proven semantic output. The complete position-bearing restoration row is stored separately."""
+    if len(namespace.semantic_interface) == 0:
+        if len(namespace.member_witnesses) != 0:
+            return Err("namespace member proofs require a checked namespace interface")
+        return Ok(None)
+    if len(namespace.semantic_interface) != 32:
+        return Err("invalid checked namespace interface digest")
+    interface = interface_key(origin, namespace.module)
+    stage_product(transaction, source, scope, interface, namespace.semantic_interface, reads, rank, certificate)?
+    mut seen: set[str] = set()
+    mut events: set[str] = set()
+    for pair in namespace.member_witnesses:
+        if len(pair) != 3 or "" in pair or pair[1] in seen or pair[0] in events:
+            return Err("invalid or duplicate checked namespace member identity")
+        seen.add(pair[1])
+        events.add(pair[0])
+        stage_product(transaction, source, scope, member_key(origin, pair[1]), pair[2].encode("utf-8"), reads, rank, certificate)?
+    return Ok(None)
+
+
+def stage_product(mut transaction: Transaction, mut source: PreparedBodyRecordSource, scope: ReadScope, key: RecordKey,
+    semantic: bytes, reads: list[RecordRequest], rank: ProducerRank, certificate: str) -> Result[None, str]:
+    """Bind an opaque compiler-authored semantic value to its own canonical store address and read receipt."""
+    description = model_description(PROJECTION, "incan.compiler.namespace-product/1", [
+        ModelField(identity=b"key___", name="key", storage=KEY_TYPE),
+        ModelField(identity=b"value_", name="value", storage="binary"),
+    ])
+    encoded = encode_graph_row(PROJECTION, description, [
+        required_value(b"key___", key_value(key)), required_value(b"value_", Value.Binary(semantic)),
+    ])?
+    receipt = source.receipt(scope, key, reads, certificate)?
+    _ = prepare_evaluation(transaction, key.family + "-" + key.identity, rank, encoded, receipt)?
+    source.add(encode_record_key(key)?, encoded)
+    return Ok(None)
