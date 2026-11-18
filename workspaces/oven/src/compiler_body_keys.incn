@@ -2,7 +2,7 @@
 
 from pub::internal_models.records import RecordKey
 
-pub const NAMESPACE_IDENTITY_PROFILE: str = "incan.editable-namespace-crumb/2"
+pub const NAMESPACE_IDENTITY_PROFILE: str = "incan.editable-namespace-crumb/3"
 
 pub const IDENTITY_PROFILE: str = "incan.stable-declaration/1"
 

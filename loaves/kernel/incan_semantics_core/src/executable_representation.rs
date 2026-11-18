@@ -15,11 +15,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 mod module_codec;
+mod namespace_codec;
 mod publication;
 mod surface_build;
 mod surface_reading;
 
 pub use module_codec::*;
+pub use namespace_codec::{decode_namespace_module, encode_namespace_module};
 pub use surface_build::*;
 
 use crate::CanonicalSymbolId;

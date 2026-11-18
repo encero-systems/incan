@@ -455,7 +455,7 @@ pub(super) fn checked_modules(
     }
     cacheable_bodies.extend(additional);
     let cacheable_bodies = canonical_lowering_inputs(cacheable_bodies)?;
-    graph_body_output.attach_body_ir(&modules, &bodies[loaf_modules..], &cacheable_bodies)?;
+    graph_body_output.attach_body_ir(&modules, &mut bodies[loaf_modules..], &cacheable_bodies)?;
     graph_body_output.publish()?;
     let graph = if library && collect_codegraph {
         let records = incan_driver::inspect::codegraph::collect_checked_unit_codegraph(

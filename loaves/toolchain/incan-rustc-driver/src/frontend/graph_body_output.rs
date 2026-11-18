@@ -202,7 +202,7 @@ impl GraphBodyOutput {
     pub(super) fn attach_body_ir(
         &mut self,
         modules: &[ParsedModule],
-        body_ir: &[BodyIrModule],
+        body_ir: &mut [BodyIrModule],
         lowering_inputs: &[(incan_semantics_core::CompilerNodeId, String)],
     ) -> Result<(), String> {
         if self.path.is_none() {
@@ -221,7 +221,7 @@ impl GraphBodyOutput {
             };
             let module_path = module_path.to_string_lossy().into_owned();
             if let Some(namespace) = self.namespaces.iter_mut().find(|value| value.module == module_path) {
-                namespace.body_ir = incan_semantics_core::executable_representation::encode_module(lowered)
+                namespace.body_ir = incan_semantics_core::executable_representation::encode_namespace_module(lowered)
                     .map_err(|error| format!("Body IR namespace row output refused: {error}"))?;
                 for body in &lowered.bodies {
                     let Some(canonical) = &body.canonical else { continue };

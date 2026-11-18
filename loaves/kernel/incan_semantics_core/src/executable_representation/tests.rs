@@ -20,6 +20,36 @@ mod coverage;
 mod public_contexts;
 
 #[test]
+fn namespace_scopes_round_trip_and_restore_shared_bindings() -> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::Arc;
+    let mut first = body("first", 1);
+    let mut second = body("second", 2);
+    let third = body("third", 3);
+    let bindings = BTreeMap::from([("Provider".into(), identity("Provider", 17))]);
+    first.named_type_identities = Arc::new(bindings.clone());
+    second.named_type_identities = Arc::new(bindings);
+    let mut source = module(vec![first, second, third]);
+    let ordinary = encode_module(&source)?;
+    let frame = super::encode_namespace_module(&mut source)?;
+    assert_eq!(encode_module(&source)?, ordinary);
+    let mut restored = super::decode_namespace_module(&frame)?;
+    assert_eq!(encode_module(&restored)?, ordinary);
+    assert_eq!(super::decode_namespace_module(&ordinary)?, restored);
+    assert!(Arc::ptr_eq(
+        &restored.bodies[0].named_type_identities,
+        &restored.bodies[1].named_type_identities
+    ));
+    assert!(!Arc::ptr_eq(
+        &restored.bodies[0].named_type_identities,
+        &restored.bodies[2].named_type_identities
+    ));
+    assert_eq!(super::encode_namespace_module(&mut restored)?, frame);
+    let truncated = &frame[..frame.len() / 2];
+    assert!(super::decode_namespace_module(truncated).is_err());
+    Ok(())
+}
+
+#[test]
 fn executable_owner_frame_round_trips_the_native_body_and_provenance() -> Result<(), Box<dyn std::error::Error>> {
     let owner = body("retained", 4);
     let module = CompilerNodeId::module("probe::lib");

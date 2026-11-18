@@ -419,8 +419,8 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
             &namespace_crumb::CheckedNamespaceCrumb,
         )
         .map_err(incan_frontend::checker_records::RecordAdapterFault::InvalidField)?;
-        let body_ir =
-            incan_semantics_core::executable_representation::decode_module(&record.body_ir).map_err(|error| {
+        let body_ir = incan_semantics_core::executable_representation::decode_namespace_module(&record.body_ir)
+            .map_err(|error| {
                 incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
                     "graph namespace Body IR refused: {error}"
                 ))
