@@ -34,7 +34,6 @@ pub use type_projection::{
 };
 pub use type_refs::resolved_type_from_manifest_type_ref;
 pub use type_refs::type_ref_from_resolved;
-pub(crate) use validation::sha256_digest;
 
 /// Stable on-disk format version for `.incnlib` manifests.
 ///

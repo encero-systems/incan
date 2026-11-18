@@ -1,0 +1,49 @@
+"""Native manifest cache controls cover the stable file guard, summary semantics and opaque facts integrity."""
+
+from std.hash import sha256
+from std.io import BytesIO
+from pub::internal_models import (
+    ManifestInventory, decode_manifest_cache, decode_manifest_inventory, encode_manifest_cache, encode_manifest_inventory,
+)
+
+
+pub def test_retained_manifest_evidence() -> Result[None, str]:
+    guard = sha256.digest(b"observed source and compiler")
+    other = sha256.digest(b"changed source or compiler")
+    digest = sha256.digest(b"public manifest")
+    identity = encode_manifest_cache("identity", guard, digest, b"")?
+    assert identity[:4] == b"CRMB"
+    assert decode_manifest_cache("identity", guard, identity)?.digest == digest
+    assert decode_manifest_cache("identity", other, identity).is_err()
+    assert decode_manifest_cache("facts", guard, identity).is_err()
+    assert decode_manifest_cache("identity", guard, b"{\"version\":1}").is_err()
+
+    row = ManifestInventory(name="example", version="1.2.3", features=["a", "b"], vocabulary=true, operations=false,
+        native_unions=true, rust_paths=["native::A", "native::B"], declares_abi_cache=true, has_abi_cache=false,
+        abi_digest=Some("sha256:abc"))
+    summary = encode_manifest_inventory(row)?
+    envelope = encode_manifest_cache("inventory", guard, digest, summary)?
+    recovered = decode_manifest_cache("inventory", guard, envelope)?
+    decoded = decode_manifest_inventory(recovered.payload)?
+    assert recovered.digest == digest and encode_manifest_inventory(decoded)? == summary
+    assert decoded.name == row.name and decoded.version == row.version and decoded.features == row.features
+    assert decoded.vocabulary and not decoded.operations and decoded.native_unions
+    assert decoded.rust_paths == row.rust_paths and decoded.declares_abi_cache and not decoded.has_abi_cache
+    assert decoded.abi_digest == row.abi_digest
+
+    payload = b"selected native facts"
+    facts = encode_manifest_cache("facts", guard, digest, payload)?
+    assert decode_manifest_cache("facts", guard, facts)?.payload == payload
+    assert decode_manifest_cache("facts", other, facts).is_err()
+    mut index = -1
+    for offset in range(len(facts) - len(payload) + 1):
+        if facts[offset:offset + len(payload)] == payload:
+            index = offset
+            break
+    assert index >= 0
+    damaged = BytesIO(b"")
+    damaged.write_bytes(facts[:index]).map_err((error) => error.message())?
+    damaged.write_bytes(b"changed! native facts").map_err((error) => error.message())?
+    damaged.write_bytes(facts[index + len(payload):]).map_err((error) => error.message())?
+    assert decode_manifest_cache("facts", guard, damaged.getvalue()).is_err()
+    return Ok(None)
