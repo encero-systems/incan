@@ -1047,7 +1047,7 @@ def prepare_lowering_records(
         staged_source.add(encode_record_key(key)?, product)
         plan_keys.append(key)
     # Each module's plan functions fold into its module record; a restored module's record joins the interface's reads.
-    carried, carried_namespace = stage_plan_modules(prepared, staged_source, scope, selected, origin, rechecked, staged, report, admitted)?
+    carried, carried_namespace = stage_plan_modules(prepared, staged_source, orders, scope, selected, origin, rechecked, staged, report, admitted)?
     if not report.joinpath(INTERFACE_REPORT).is_file():
         require_plan_refusal(report)?
         return Ok(prepared)

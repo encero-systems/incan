@@ -70,6 +70,8 @@ pub model AdmittedPlanModule:
     pub module: str
     pub value: bytes
     pub namespace: int
+    pub function_count: int
+    pub certificate: str
 
 
 pub model PlanModuleSelection:
@@ -111,7 +113,10 @@ pub def select_plan_modules(
         selection.pages.append(
             SelectedBodyPage(key=hexlify(value.module.encode("utf-8")) + PLAN_MODULE_PAGE, value=record.value),
         )
-        selection.records.append(AdmittedPlanModule(key=record.key, module=value.module, value=record.value, namespace=record.namespace))
+        selection.records.append(AdmittedPlanModule(
+            key=record.key, module=value.module, value=record.value, namespace=record.namespace,
+            function_count=len(value.functions), certificate=record.receipt.preparation.rank_certificate,
+        ))
         mut witnessed: set[str] = set()
         if record.key.identity in complete_namespaces:
             for witness in record.receipt.witnesses:

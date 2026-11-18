@@ -6,9 +6,9 @@ from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue, parse
 from compiler_plan_modules import restored_modules
-from compiler_body_keys import IDENTITY_PROFILE
+from compiler_body_keys import IDENTITY_PROFILE, body_key
 from compiler_body_values import select_body_inventory_except
-from compiler_graph_records import OutputSlots, evaluation_record_key, reusable_family_records
+from compiler_graph_records import OutputSlots, evaluation_record_key, family_outputs, reusable_family_records
 from compiler_graph_rows import encode_evaluation, read_evaluation
 from compiler_plan_values import LOWERING_PROFILE
 from pub::internal_models import ProducerRank, ProducerStage
@@ -23,7 +23,7 @@ from engine_wire import zero_id
 from rust_target import decoded
 from store_path_conversion import snapshot as store_snapshot
 from pub::internal_models.lowering_events import AdmittedFunction, AdmittedModule, encode_module_note
-from pub::internal_models.plan_module_records import ADMITTED_MODULE_NOTE, PARTIAL_MODULE_NOTE
+from pub::internal_models.plan_module_records import ADMITTED_MODULE_NOTE, PARTIAL_MODULE_NOTE, PLAN_MODULE_FAMILY, decode_plan_module
 from pub::incan_platform.store import Snapshot, get, index_levels as store_index_levels, keys_with_prefix
 
 
@@ -453,6 +453,32 @@ pub def test_renaming_a_changed_default_keeps_the_current_omitted_argument() -> 
     return stop_example_engine(binary, fresh)
 
 
+def selected_main_module(store: Path, functions: list[str]) -> Result[bytes, str]:
+    """The published main page and every ordinary function it names agree with the selected scalar slots."""
+    graph = store_snapshot(store).map_err((error) => error.message())?
+    scope = OutputSlots(origin="main", identity_profile=IDENTITY_PROFILE, included=Some(["main.incn"]))
+    records = reusable_family_records(graph, PLAN_MODULE_FAMILY, LOWERING_PROFILE, Some(scope))?
+    assert len(records) == 1
+    selected = records[0]
+    page = decode_plan_module(selected.value).map_err((error) => f"invalid selected main module: {error:?}")?
+    assert page.module == "main" and [item.function for item in page.functions] == functions
+    owners = [item.identity for item in page.functions]
+    member_scope = OutputSlots(origin="main", identity_profile=IDENTITY_PROFILE, included=Some(owners))
+    current = family_outputs(graph, "plan-function", LOWERING_PROFILE, Some(member_scope))?
+    mut suppliers: list[str] = []
+    for witness in selected.receipt.witnesses:
+        if let ReadWitness.Found(prior, _) = witness:
+            suppliers.append(encode_record_key(prior.request.key)?)
+    mut expected: list[str] = []
+    for item in page.functions:
+        key = body_key("plan-function", "main", item.identity, "body:" + item.function, item.key)
+        output = encode_record_key(key)?
+        assert output in current, f"module holds superseded function: {item.function}"
+        expected.append(output)
+    assert sorted(suppliers) == sorted(expected)
+    return Ok(selected.value)
+
+
 pub def test_caller_rebuilds_when_its_callee_starts_consuming_a_model() -> Result[None, str]:
     """A body-only edit changes the callee's native argument from borrowed to owned."""
     scratch = scratch_directory()?
@@ -466,17 +492,25 @@ pub def test_caller_rebuilds_when_its_callee_starts_consuming_a_model() -> Resul
     write(root.joinpath("flag.incn"), "pub def enabled(code: int) -> bool:\n    return code == 0 or code == 1\n")?
     store = root.joinpath("store")
     _ = lowering_example_run(binary, source, store, "4")?
+    base_module = selected_main_module(store, ["invoke", "main"])?
     write(helper, initial.replace("return Request(value=request.value)", "return request"))?
     _ = lowering_example_run(binary, source, store, "4")?
     executable = root.joinpath("target/incan/release/bin/main")
     warm = executable.read_bytes().map_err((error) => error.message())?
+    warm_module = selected_main_module(store, ["invoke", "main"])?
+    assert warm_module != base_module
     stop_example_engine(binary, store)?
     root.joinpath("target").remove_tree().map_err((error) => error.message())?
     cold_store = root.joinpath("cold-store")
     _ = lowering_example_run(binary, source, cold_store, "4")?
     cold = executable.read_bytes().map_err((error) => error.message())?
     assert warm == cold
-    return stop_example_engine(binary, cold_store)
+    assert selected_main_module(cold_store, ["invoke", "main"])? == warm_module
+    stop_example_engine(binary, cold_store)?
+    write(source, "def main() -> None:\n    println(4)\n")?
+    _ = lowering_example_run(binary, source, store, "4")?
+    _ = selected_main_module(store, ["main"])?
+    return stop_example_engine(binary, store)
 
 
 pub def test_admitted_module_keeps_its_external_result_payload_layout() -> Result[None, str]:

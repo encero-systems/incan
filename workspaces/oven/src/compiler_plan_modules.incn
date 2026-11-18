@@ -3,7 +3,7 @@
 from std.fs import Path
 from std.primitives.hash import sha256
 from std.encoding.hex import hexlify, unhexlify
-from pub::internal_models.lowering_events import LoweringEvent, decode_module_note, encode_lowering_event
+from pub::internal_models.lowering_events import AdmittedModule, LoweringEvent, decode_lowering_event, decode_module_note, encode_lowering_event
 from pub::incan_platform.store import Snapshot, Transaction
 from pub::internal_models import ProducerRank, ProducerStage
 from pub::internal_models.plan_module_records import (
@@ -12,12 +12,13 @@ from pub::internal_models.plan_module_records import (
     PLAN_MODULE_FAMILY,
     PlanModuleFunction,
     PlanModuleValue,
+    decode_plan_module,
     encode_plan_module,
 )
 from pub::internal_models.records import ReadScope, RecordKey, encode_record_key
 from compiler_body_keys import IDENTITY_PROFILE, body_key
-from compiler_lowering_order import LoweringOrder
-from compiler_graph_records import OutputSlots, family_outputs, prepare_evaluation, retire_output
+from compiler_lowering_order import LoweringOrder, LoweringOrders
+from compiler_graph_records import OutputSlots, family_outputs, prepare_evaluation, retire_output, reusable_evaluation
 from compiler_plan_values import AdmittedPlanModule, LOWERING_PROFILE
 from compiler_prepared_records import PreparedBodyRecordSource, prepared_product_request
 
@@ -37,14 +38,11 @@ pub def plan_module_key(origin: str, file: str, value: bytes) -> RecordKey:
     return body_key(PLAN_MODULE_FAMILY, origin, file, "checked", hexlify(sha256.digest(value)))
 
 
-pub def folded_modules(staged: list[StagedPlan], restored: list[str]) -> Dict[str, list[StagedPlan]]:
-    """
-    Group a request's staged plan functions by module file. A module the compiler restored from its record keeps that
-    record: a body of it that took the keyed route reported the product the record already holds.
-    """
+pub def folded_modules(staged: list[StagedPlan]) -> Dict[str, list[StagedPlan]]:
+    """Group this request's keyed functions by the file that owns their aggregate."""
     mut modules: Dict[str, list[StagedPlan]] = {}
     for plan in staged:
-        if plan.file == "" or plan.module == "" or plan.module in restored:
+        if plan.file == "" or plan.module == "":
             continue
         if plan.file not in modules:
             modules[plan.file] = []
@@ -52,14 +50,21 @@ pub def folded_modules(staged: list[StagedPlan], restored: list[str]) -> Dict[st
     return modules
 
 
-pub def module_value(plans: list[StagedPlan]) -> Result[bytes, str]:
-    """Encode one module's plan functions in ascending order of owner and function."""
-    mut ordered: Dict[str, PlanModuleFunction] = {}
+def ordered_plans(plans: list[StagedPlan]) -> Result[list[StagedPlan], str]:
+    """Give aggregate bytes and read receipts the same order across keyed and restored work."""
+    mut ordered: Dict[str, StagedPlan] = {}
     for plan in plans:
         if plan.module != plans[0].module:
             return Err("one module file holds plan functions of two lowering modules")
-        ordered[plan.function.identity + "\n" + plan.function.function] = plan.function
-    functions = [ordered[name] for name in sorted([name for name in ordered.keys()])]
+        name = plan.function.identity + "\n" + plan.function.function
+        if name in ordered:
+            return Err("duplicate plan function in module publication")
+        ordered[name] = plan
+    return Ok([ordered[name] for name in sorted([name for name in ordered.keys()])])
+
+
+def module_value(plans: list[StagedPlan]) -> Result[bytes, str]:
+    functions = [plan.function for plan in plans]
     return encode_plan_module(PlanModuleValue(module=plans[0].module, functions=functions)).map_err(
         (error) => f"plan-module record refused: {error:?}",
     )
@@ -100,7 +105,12 @@ pub def retire_unfolded(
 
 pub def restored_modules(report: Path, whole_only: bool = false) -> Result[list[str], str]:
     """List module pages read by lowering, optionally requiring every ordinary body to have been restored."""
-    mut modules: list[str] = []
+    notes = admission_notes(report, whole_only)?
+    return Ok(sorted([name for name in notes.keys()]))
+
+
+def admission_notes(report: Path, whole_only: bool = false) -> Result[Dict[str, AdmittedModule], str]:
+    mut modules: Dict[str, AdmittedModule] = {}
     if not report.is_dir():
         return Ok(modules)
     for entry in report.iterdir().map_err((error) => f"plan record report: cannot {error.message()}")?:
@@ -116,8 +126,10 @@ pub def restored_modules(report: Path, whole_only: bool = false) -> Result[list[
             note = decode_module_note(entry.read_bytes().map_err((error) => error.message())?)?
             if note.module != module or note.complete != (suffix == ADMITTED_MODULE_NOTE):
                 return Err("module admission note disagrees with its filename")
-            modules.append(module)
-    return Ok(sorted(modules))
+            if module in modules:
+                return Err("module has two admission notes")
+            modules[module] = note
+    return Ok(modules)
 
 
 pub def staged_plan(
@@ -147,9 +159,57 @@ pub def staged_plan(
     return Ok(StagedPlan(file=file, module=event.module, function=recorded, plan=plan, order=order))
 
 
+def restored_plans(
+    mut source: PreparedBodyRecordSource, mut orders: LoweringOrders, graph: Snapshot,
+    module: AdmittedPlanModule, note: AdmittedModule, keyed: list[StagedPlan],
+) -> Result[list[StagedPlan], str]:
+    """Rebind only the functions restored in this compile to their selected scalar products and rank evidence."""
+    page = decode_plan_module(module.value).map_err((error) => f"selected plan module refused: {error:?}")?
+    if page.module != note.module:
+        return Err("admitted module differs from its selected plan page")
+    reported = set([plan.function.function for plan in keyed])
+    mut stored: Dict[str, PlanModuleFunction] = {}
+    for function in page.functions:
+        if function.function in stored:
+            return Err("two module functions have the same native name")
+        stored[function.function] = function
+    mut owners: list[str] = []
+    for admitted in note.functions:
+        if admitted.function in reported:
+            continue
+        if admitted.function not in stored:
+            return Err("admitted function has no selected module event")
+        owners.append(stored[admitted.function].identity)
+    slots = OutputSlots(origin=module.key.origin, identity_profile=IDENTITY_PROFILE, included=Some(owners))
+    current = set(family_outputs(graph, "plan-function", LOWERING_PROFILE, Some(slots))?)
+    mut result: list[StagedPlan] = []
+    for admitted in note.functions:
+        if admitted.function in reported:
+            continue
+        function = stored[admitted.function]
+        mut event = decode_lowering_event(function.event)?
+        key = body_key("plan-function", module.key.origin, function.identity, "body:" + function.function, function.key)
+        output = encode_record_key(key)?
+        if output not in current or event.key != function.key or event.module != note.module or event.function != function.function:
+            return Err("restored function differs from its current graph slot or selected module event")
+        if event.identity != function.symbol or function.symbol != admitted.identity:
+            return Err("restored function changed canonical identity")
+        selected = match reusable_evaluation(graph, key, LOWERING_PROFILE)?:
+            Some(value) => value
+            None => return Err("restored function lost its selected evaluation")
+        if selected.value != event.product:
+            return Err("restored module event differs from its selected function product")
+        order = orders.retained(graph, module.key.identity, selected)?
+        source.add(output, selected.value)
+        event.references = admitted.references
+        result.append(staged_plan(module.key.identity, event, function.identity, function.symbol, function.function, function.key, key, order)?)
+    return Ok(result)
+
+
 pub def stage_plan_modules(
     mut prepared: Transaction,
     mut source: PreparedBodyRecordSource,
+    mut orders: LoweringOrders,
     scope: ReadScope,
     selected: Option[Snapshot],
     origin: str,
@@ -165,16 +225,46 @@ pub def stage_plan_modules(
     2. Retire the earlier record of a module this request checked again without folding a new one.
     3. Make each restored module's record readable, so the native interface witnesses the functions it carries.
     """
-    restored = restored_modules(report)?
-    # 1. A restored module is not folded again: its record is the one the compiler read.
-    modules = folded_modules(staged, restored)
+    notes = admission_notes(report)?
+    mut modules = folded_modules(staged)
     mut folded: list[str] = []
+    mut carried: list[RecordKey] = []
+    mut carried_namespace = 0
+    mut rebuilt: set[str] = set()
+    mut seen: set[str] = set()
+    for module in admitted:
+        if module.module not in notes:
+            continue
+        if module.module in seen:
+            return Err("two selected pages for one admitted module")
+        seen.add(module.module)
+        note = notes[module.module]
+        file = module.key.identity
+        graph = match selected:
+            Some(value) => value
+            None => return Err("a restored module has no selected graph")
+        if note.complete and len(note.functions) == module.function_count and file not in modules:
+            position = orders.selected_order(graph, file, module.key.origin, module.namespace, module.certificate)?
+            if position.evidence == module.certificate and orders.fresh(file).rank <= position.rank:
+                source.add(encode_record_key(module.key)?, module.value)
+                carried.append(module.key)
+                carried_namespace = max([carried_namespace, position.rank])
+                folded.append(file)
+                continue
+        keyed = modules.get(file, [])
+        retained = restored_plans(source, orders, graph, module, note, keyed)?
+        modules[file] = keyed + retained
+        rebuilt.add(file)
+    if len(seen) != len(notes):
+        return Err("module admission note has no selected page")
     for file in sorted([name for name in modules.keys()]):
-        plans = modules[file]
+        plans = ordered_plans(modules[file])?
+        if len(plans) == 0:
+            continue
         value = module_value(plans)?
         key = plan_module_key(origin, file, value)
         # A folded module can publish independent order only when every function supplies the same proof.
-        namespace = max([plan.order.rank for plan in plans])
+        namespace = max([orders.fresh(file).rank] + [plan.order.rank for plan in plans])
         mut certificate = plans[0].order.evidence
         for plan in plans:
             if plan.order.evidence != certificate:
@@ -189,15 +279,10 @@ pub def stage_plan_modules(
             receipt,
         )?
         folded.append(file)
-    # 3. Only a record the compiler actually restored from is carried; the others were not read.
-    mut carried: list[RecordKey] = []
-    mut carried_namespace = 0
-    for module in admitted:
-        if module.module in restored:
-            source.add(encode_record_key(module.key)?, module.value)
-            carried.append(module.key)
-            carried_namespace = max([carried_namespace, module.namespace])
-            folded.append(module.key.identity)
+        if file in rebuilt:
+            source.add(encode_record_key(key)?, value)
+            carried.append(key)
+            carried_namespace = max([carried_namespace, namespace])
     # 2. Every other rechecked module's earlier record describes bodies that no longer have those products.
     retire_unfolded(prepared, selected, origin, rechecked, folded)?
     return Ok((carried, carried_namespace))
