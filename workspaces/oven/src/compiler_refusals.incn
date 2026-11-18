@@ -99,7 +99,7 @@ pub def check_or_replay(
     path, in the same home, replays the report in its own paths. `options` reach the compiler unchanged: selected
     checked-body records change how much a check checks, never its report.
 
-    1. Replay a complete record of this identity unless a caller requested compiler side channels.
+    1. Replay the certified report of this identity. Replaying runs no checker and writes no observation sidecar.
     2. Check through the resident worker, or one compiler process, with a fresh certification path.
     3. Retain a certified, normally completed report only while the unit's inputs are still those of the key.
     """
