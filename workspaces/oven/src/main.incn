@@ -1076,7 +1076,8 @@ def print_description(options: Options) -> None:
     """
     # 1. Options that only a run or build understands are refused with the usage exit status.
     # 2. A unit that cannot be described against the toolchain ends the command with status 1.
-    match describe_native(Path(options.path), options.profile, options.request, options.unattended):
+    consumer_crumb = get_or("INCAN_DESCRIBE_SEARCH_INDEX", "") == "crumb"
+    match describe_native(Path(options.path), options.profile, options.request, options.unattended, consumer_crumb):
         Err(reason) => fail(f"oven describe-unit: {reason}", 1)
         Ok(unit) =>
             if unit.trust_stop != "":
