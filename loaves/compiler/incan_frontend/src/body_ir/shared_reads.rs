@@ -50,26 +50,79 @@ struct FieldType {
 /// conflicting projection refuses instead of choosing whichever declaration was collected first.
 struct FieldTypes {
     by_identity: HashMap<CanonicalSymbolId, Vec<FieldType>>,
+    /// Available closed native loop-item layouts. A conflict between model and enum storage refuses the loan.
+    native_loop_items: HashMap<CanonicalSymbolId, Option<incan_semantics_core::SemanticSourceTargetKind>>,
 }
 
 impl FieldTypes {
     /// Collect the exact field contracts available to the bodies participating in this analysis.
     fn collect(modules: &[bir::BodyIrModule], context: ContextModules<'_>) -> Self {
-        let mut by_identity: HashMap<CanonicalSymbolId, Vec<FieldType>> = HashMap::new();
-        for declaration in context
-            .iter()
-            .chain(modules)
-            .flat_map(|module| &module.nominal_declarations)
-        {
-            for (identity, ty) in declaration.field_identities.iter().zip(&declaration.field_types) {
-                by_identity.entry(identity.clone()).or_default().push(FieldType {
-                    parameters: declaration.type_parameters.clone(),
-                    native_arguments: declaration.native_type_arguments.clone(),
-                    ty: ty.clone(),
-                });
+        use incan_semantics_core::SemanticSourceTargetKind::{Enum, Model};
+
+        let mut fields = Self {
+            by_identity: HashMap::new(),
+            native_loop_items: HashMap::new(),
+        };
+        for module in context.iter().chain(modules) {
+            for declaration in &module.nominal_declarations {
+                for (identity, ty) in declaration.field_identities.iter().zip(&declaration.field_types) {
+                    fields.by_identity.entry(identity.clone()).or_default().push(FieldType {
+                        parameters: declaration.type_parameters.clone(),
+                        native_arguments: declaration.native_type_arguments.clone(),
+                        ty: ty.clone(),
+                    });
+                }
+                if !declaration.fields.is_empty()
+                    && declaration.type_parameters.is_empty()
+                    && declaration.type_parameter_count == 0
+                    && declaration.native_type_arguments.is_empty()
+                {
+                    fields.record_native_loop_item(
+                        &declaration.canonical,
+                        &declaration.name,
+                        &declaration.native_item,
+                        Model,
+                    );
+                }
+            }
+            for declaration in &module.enum_declarations {
+                if !declaration.variants.is_empty()
+                    && declaration.type_parameters.is_empty()
+                    && declaration.native_type_arguments.is_empty()
+                {
+                    fields.record_native_loop_item(
+                        &declaration.canonical,
+                        &declaration.name,
+                        &declaration.native_item,
+                        Enum,
+                    );
+                }
             }
         }
-        Self { by_identity }
+        fields
+    }
+
+    /// Authenticate native storage once per identity. A repeated declaration requires no new path or owned key.
+    fn record_native_loop_item(
+        &mut self,
+        identity: &CanonicalSymbolId,
+        name: &str,
+        item: &str,
+        layout: incan_semantics_core::SemanticSourceTargetKind,
+    ) {
+        let incan_semantics_core::SymbolOrigin::RustCrate(path) = &identity.origin else {
+            return;
+        };
+        if name != item || !name.split("::").eq(path.iter().map(String::as_str)) {
+            return;
+        }
+        if let Some(previous) = self.native_loop_items.get_mut(identity) {
+            if previous.as_ref() != Some(&layout) {
+                *previous = None;
+            }
+        } else if bir::native_nominal_item(identity).is_some() {
+            self.native_loop_items.insert(identity.clone(), Some(layout));
+        }
     }
 
     /// Close one selected field against its checked owner type, declining missing or conflicting retained layouts.

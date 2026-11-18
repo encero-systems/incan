@@ -22,6 +22,9 @@ from pub::internal_models.body_ir_declarations import (
 )
 from pub::internal_models.body_ir_values import CompilerBlock, CompilerStatement, CompilerStatementKind
 from pub::internal_models.checked_types import CheckedPrimitiveType, CheckedType
+from rust::std::sync import Arc
+from rust::incan_semantics_core import CanonicalSymbolId as RustCanonicalSymbolId
+from rust::incan_semantics_core::body_ir import Body as RustBody, BodyIrModule as RustBodyIrModule
 from pub::internal_models.compiler_records import (
     CanonicalSymbolId,
     DeclarationKind,
@@ -83,6 +86,69 @@ pub def test_body_record_round_trip_preserves_shared_identities_and_statements()
         _ =>
             assert false
     return Ok(None)
+
+
+pub def test_foreign_loop_items_borrow_on_reads_and_own_an_escaping_body() -> Result[None, str]:
+    """A read of Body.is_async borrows each body. Returning a body keeps an independent owner."""
+    first = native_body(empty_body("skip"))?
+    mut second = native_body(empty_body("take"))?
+    second.is_async = true
+    witness = first.named_type_identities.clone()
+    second.named_type_identities = witness.clone()
+    items = [first, second]
+
+    baseline = Arc.strong_count(witness)
+    assert skipped_before_async(items, witness, baseline) == 1
+
+    mut module = RustBodyIrModule.declarations_only("app")
+    module.bodies = items
+    field_baseline = Arc.strong_count(witness)
+    assert has_async_body(module, witness, field_baseline)
+    escaped = owned_async_body(module)
+    assert Arc.strong_count(witness) == field_baseline + 1usize
+    assert len(module.bodies) == 2 and module.bodies[1].is_async
+    match escaped:
+        Some(body) => assert body.is_async
+        None => assert false, "no owned body escaped"
+    return Ok(None)
+
+
+def skipped_before_async(
+    items: &list[RustBody],
+    witness: &Arc[BTreeMap[str, RustCanonicalSymbolId]],
+    baseline: usize,
+) -> int:
+    """Read the witness before projecting the field, while the current item must still be live."""
+    mut skipped = 0
+    for item in items:
+        assert Arc.strong_count(witness) == baseline
+        if not item.is_async:
+            skipped += 1
+            continue
+        return skipped
+    return -1
+
+
+def has_async_body(
+    module: &RustBodyIrModule,
+    witness: &Arc[BTreeMap[str, RustCanonicalSymbolId]],
+    baseline: usize,
+) -> bool:
+    """Exercise the same poll when the source list is a field on a foreign record."""
+    for item in module.bodies:
+        assert Arc.strong_count(witness) == baseline
+        if not item.is_async:
+            continue
+        return true
+    return false
+
+
+def owned_async_body(module: &RustBodyIrModule) -> Option[RustBody]:
+    """Keep the selected body alive independently of the borrowed module."""
+    for item in module.bodies:
+        if item.is_async:
+            return Some(item)
+    return None
 
 
 pub def test_body_record_round_trip_keeps_async_and_refuses_tombstone() -> Result[None, str]:

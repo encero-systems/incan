@@ -4,10 +4,10 @@ use super::match_reads::{formats_reference, lend_locals, lendable_value};
 use super::*;
 
 /// Bind a plain `for` item by reference to its element when the loop only reads it (#1605), instead of copying each
-/// element out of the list. The loop polls a builtin iterator that lends a list, its item is text or a model or enum,
-/// and its body only reads both the item and the list's root local, so every element stays in place while its
-/// reference lives. The item's local becomes a reference to the element type, and lowering binds it through the
-/// list's checked element loan. This runs on final signatures, so no callable's input changes.
+/// element out of the list. The loop polls a builtin iterator that lends a list, its item has a checked shared nominal
+/// or text carrier, and its body only reads both the item and the list's root local, so every element stays in place
+/// while its reference lives. The item's local becomes a reference to the element type, and lowering binds it through
+/// the list's checked element loan. This runs on final signatures, so no callable's input changes.
 pub(super) fn retain_borrowed_loop_items(
     body: &mut bir::Body,
     signatures: &Signatures,
@@ -23,7 +23,7 @@ pub(super) fn retain_borrowed_loop_items(
     {
         return;
     }
-    let lent_lists = lent_list_iterators(&body.block.stmts, &body.locals, field_types);
+    let lent_lists = lent_list_iterators(body, field_types);
     if lent_lists.is_empty() {
         return;
     }
@@ -49,12 +49,13 @@ pub(super) fn retain_borrowed_loop_items(
         let Some((root, element)) = lent_lists.get(&iterator) else {
             return;
         };
+        let native = registered_item(element, body, field_types);
         let lendable = destination.projection.is_empty()
             && cursor.place.projection.is_empty()
             && body.locals.get(item.index()).is_some_and(|local| {
                 local.origin == bir::LocalOrigin::UserBinding
                     && local.ty == *element
-                    && lendable_value(&local.ty, &body.named_type_identities)
+                    && (native || lendable_value(&local.ty, &body.named_type_identities))
             });
         let context = |local| ReadContext {
             locals: &body.locals,
@@ -69,6 +70,7 @@ pub(super) fn retain_borrowed_loop_items(
             && readonly(rest, &context(item))
             && readonly(rest, &context(*root))
             && !formats_reference(rest, item, &body.locals)
+            && (!native || (native_observations(rest, &context(item)) && native_observations(rest, &context(*root))))
         {
             lent.push(item);
         }
@@ -76,15 +78,81 @@ pub(super) fn retain_borrowed_loop_items(
     lend_locals(body, &lent, signatures, field_types, candidates);
 }
 
+/// Require both the frame's exact Rust binding and an available closed Model or Enum layout for its reference.
+fn registered_item(ty: &IncanType, body: &bir::Body, fields: &FieldTypes) -> bool {
+    let IncanType::Named(name) = ty else { return false };
+    let Some(owner) = body.named_type_identities.get(name) else {
+        return false;
+    };
+    let incan_semantics_core::SymbolOrigin::RustCrate(path) = &owner.origin else {
+        return false;
+    };
+    name.split("::").eq(path.iter().map(String::as_str))
+        && fields.native_loop_items.get(owner).is_some_and(Option::is_some)
+}
+
+/// A shared Rust receiver can have interior effects. Copying an independent scalar or comparing fields observes the
+/// item. Forwarding it to an opaque callable, rebinding its loan or capturing it requires stronger effect evidence.
+fn native_observations(statements: &[bir::Statement], context: &ReadContext<'_>) -> bool {
+    let local = context.local;
+    let independent = |value: &bir::Operand| {
+        scalar_projection(value, local)
+            && matches!(
+                operand_type(value, context.locals, context.field_types),
+                Some(IncanType::Primitive(_))
+            )
+    };
+    let mut accepted = true;
+    walk(statements, &mut |statement| {
+        use bir::StatementKind as S;
+        accepted &= match &statement.kind {
+            S::Assign {
+                rvalue: bir::Rvalue::Use(value),
+                ..
+            } => !uses(value, local) || independent(value),
+            S::Assign {
+                rvalue: bir::Rvalue::Closure { captured_operands, .. },
+                ..
+            } => !captured_operands.iter().any(|value| uses(value, local)),
+            S::Assign {
+                rvalue: bir::Rvalue::Match { scrutinee, .. },
+                ..
+            }
+            | S::Assert {
+                kind: bir::AssertionKind::Pattern { scrutinee, .. },
+                ..
+            } => !uses(scrutinee, local) || independent(scrutinee),
+            S::Return { value } | S::Break { value } => value
+                .as_ref()
+                .is_none_or(|value| !uses(value, local) || independent(value)),
+            S::Assign {
+                rvalue: bir::Rvalue::ResultVariant(variant),
+                ..
+            } => !uses(&variant.payload, local) || independent(&variant.payload),
+            S::Assign {
+                rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::OptionSome, elements),
+                ..
+            } => elements
+                .iter()
+                .all(|element| !argument_uses(element, local) || element.as_one().is_some_and(&independent)),
+            S::Call { callee, args, .. } => args.iter().all(|argument| {
+                !argument_uses(argument, local)
+                    || argument
+                        .as_one()
+                        .is_some_and(|value| independent(value) || read_only_callee(callee))
+            }),
+            _ => true,
+        };
+    });
+    accepted
+}
+
 /// The temporaries initialized by lending a list, each with the list's root local and element type. A builtin loop's
 /// iterator is one of them when the loop neither takes nor changes its items.
-fn lent_list_iterators(
-    statements: &[bir::Statement],
-    locals: &[bir::LocalDecl],
-    field_types: &FieldTypes,
-) -> HashMap<bir::LocalId, (bir::LocalId, IncanType)> {
+fn lent_list_iterators(body: &bir::Body, field_types: &FieldTypes) -> HashMap<bir::LocalId, (bir::LocalId, IncanType)> {
+    let locals = &body.locals;
     let mut iterators = HashMap::new();
-    walk(statements, &mut |statement| {
+    walk(&body.block.stmts, &mut |statement| {
         if let bir::StatementKind::Assign {
             place,
             rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
@@ -96,8 +164,17 @@ fn lent_list_iterators(
                 .get(iterator.index())
                 .is_some_and(|local| local.origin == bir::LocalOrigin::Temporary)
             && let Some(element) = place_type(&read.place, locals, field_types).and_then(|ty| {
-                ty.collection_arguments(CollectionTypeId::List)
-                    .and_then(|arguments| arguments.first().cloned())
+                // A whole explicit &list keeps its reference here. A field is already resolved on its owner
+                // by place_type, using its canonical field identity and checked instantiated layout.
+                let owner = match &ty {
+                    IncanType::Ref(inner) => inner.as_ref(),
+                    other => other,
+                };
+                let [element] = owner.collection_arguments(CollectionTypeId::List)? else {
+                    return None;
+                };
+                (!matches!(ty, IncanType::Ref(_)) || registered_item(element, body, field_types))
+                    .then(|| element.clone())
             })
         {
             iterators.insert(iterator, (root, element));
