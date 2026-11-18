@@ -54,7 +54,7 @@ pub def prepare_captured_source_inputs(
                 if get(selected, doc_slot).map_err((error) => error.message())? != Some(documentation):
                     changed.append(doc_key)
                     stage_put(prepared, doc_slot, documentation)
-                for record in [projection.header, projection.declarations, projection.census]:
+                for record in [projection.header, projection.declarations, projection.census, projection.positioned]:
                     key = encode_record_key(record.key)?
                     if stage_changed_projection(selected, prepared, key, record)?:
                         changed.append(record.key)

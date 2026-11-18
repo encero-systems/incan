@@ -56,7 +56,9 @@ from compiler_namespace_products import interface_key, member_key, member_plan_i
 from compiler_graph_records import PublishedEvaluation, publish_evaluation, reusable_evaluation
 from compiler_prepared_records import PreparedBodyRecordSource
 from compiler_record_envelopes import RankedActivation, RankedCheckingSweep, persist_activation
+from compiler_body_keys import namespace_key
 from compiler_body_values import (
+    invalid_namespace_modules,
     encode_body_inventory,
     select_body_inventory_except,
     invalid_body_owners,
@@ -402,7 +404,7 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
 
     selected = store_snapshot(memory_root()).map_err((error) => error.message())?
     published = publish_source_projection(selected, before)?
-    assert len(published.keys) == 12
+    assert len(published.keys) == 13
     for key in published.keys:
         assert get(published.snapshot, key).map_err((error) => error.message())? is not None
 
@@ -1130,6 +1132,7 @@ pub def test_a_rechecked_namespace_reads_imports_whose_bodies_were_retained() ->
     namespace = CompiledNamespaceValue(
         module="main.incn",
         interface=b"interface",
+        semantic_interface=b"01234567890123456789012345678901",
         body_ir=b"namespace-frame",
         dependencies=["helper.incn"],
     )
@@ -1138,6 +1141,16 @@ pub def test_a_rechecked_namespace_reads_imports_whose_bodies_were_retained() ->
     empty = store_snapshot(memory_root()).map_err((error) => error.message())?
     published = publish_compiled_bodies(empty, unit, output)?
     assert published.bodies == 0 and published.fallbacks == 0
+    full = namespace_key("main", "main.incn")
+    semantic = interface_key("main", "main.incn")
+    assert reusable_evaluation(published.snapshot, full, CHECKER_PROFILE)?.is_some()
+    assert reusable_evaluation(published.snapshot, semantic, CHECKER_PROFILE)?.is_some()
+    modified = "from helper import value\n\ndef main() -> None:\n    \"\"\"Editor documentation.\"\"\"\n    println(\"edited\")\n"
+    docs = project_source("main", "main.incn", modified)?
+    assert invalid_namespace_modules(published.snapshot, [docs.positioned.key], CHECKER_PROFILE)? == ["main.incn"]
+    edited = publish_source_projection(published.snapshot, docs)?
+    assert reusable_evaluation(edited.snapshot, full, CHECKER_PROFILE)?.is_none()
+    assert reusable_evaluation(edited.snapshot, semantic, CHECKER_PROFILE)?.is_some()
     return Ok(None)
 
 
