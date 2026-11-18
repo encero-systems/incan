@@ -136,7 +136,6 @@ pub model BodySelection:
     pub graph: Snapshot
     pub projected: PreparedSourceInputs
     pub invalid: list[str]
-    pub retained: list[SelectedBodyRecord]
 
 
 model ProgramHome:
@@ -250,8 +249,7 @@ def select_bodies(
             record.identity
             for record in select_body_inventory_except(reading.graph, CHECKER_PROFILE, origin, [])?
         ]
-    retained = select_body_inventory_except(reading.graph, CHECKER_PROFILE, origin, invalid, mint_body_ir=true)?
-    return Ok(BodySelection(graph=reading.graph, projected=reading.projected, invalid=invalid, retained=retained))
+    return Ok(BodySelection(graph=reading.graph, projected=reading.projected, invalid=invalid))
 
 
 pub def obtain(
@@ -338,16 +336,19 @@ pub def obtain(
     invalid = selection.invalid
     origin = source_origin(ready)
     invalid_namespaces = invalid_namespace_modules(graph, projected.keys, CHECKER_PROFILE)?
-    retained_bodies = selection.retained
+    namespaces = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, invalid_namespaces)?
+    # A checked owner travels once when its exact plan slot and its whole checked namespace are both admitted.
+    invalid_plans = plan_owners_reading(graph, projected.keys)?
+    plan_modules = select_plan_modules(graph, origin, invalid_namespaces, invalid + invalid_plans, namespaces.complete)?
+    covered = plan_modules.covered
+    retained_bodies = select_body_inventory_except(
+        graph, CHECKER_PROFILE, origin, invalid + [owner for owner in covered.owners.keys()], mint_body_ir=true,
+    )?
     mut selected_bodies = encode_body_inventory(retained_bodies)?
     mut checking: Option[RankedBuildInputs] = None
     if not listing_refusals and len(invalid) > 0:
-        checking = Some(RankedBuildInputs(graph=graph, projected=projected.transaction, origin=origin, invalid=invalid))
-    selected_bodies.extend(select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, invalid_namespaces)?)
-    # Lowering revalidates its exact checked inputs; a changed raw source slice may still produce equal meaning.
-    invalid_plans = plan_owners_reading(graph, projected.keys)?
-    # A module this request leaves alone travels whole: one page of its plan record in place of one per function.
-    plan_modules = select_plan_modules(graph, origin, invalid_namespaces, invalid + invalid_plans)?
+        checking = Some(RankedBuildInputs(graph=graph, projected=projected.transaction, origin=origin, invalid=invalid, covered=covered))
+    selected_bodies.extend(namespaces.pages)
     selected_bodies.extend(select_plan_inventory_except(graph, origin, invalid_plans, plan_modules.outputs)?)
     selected_bodies.extend(plan_modules.pages)
     produced = obtain_executable(ready, toolchain, binary, native_key, true, Some(store), true, Some(selected_bodies), checking)?
@@ -415,6 +416,7 @@ pub def obtain(
             checker_counts.restored,
             plan_modules.records,
             checker_counts.restored_body_ir,
+            covered,
         )?
         request_transaction = bodies.transaction
         body_evaluations = bodies.checking_evaluations

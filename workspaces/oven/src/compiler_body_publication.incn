@@ -48,7 +48,7 @@ pub from compiler_captured_sources import (
 from compiler_prepared_records import PreparedBodyRecordSource
 pub from compiler_prepared_records import prepared_product_request
 from compiler_namespace_products import member_plan_inputs, prepare_namespace_products
-from compiler_plan_modules import StagedPlan, carry_selected, stage_plan_modules, staged_plan
+from compiler_plan_modules import StagedPlan, carry_selected, restored_modules, stage_plan_modules, staged_plan
 from compiler_plan_values import AdmittedPlanModule
 from compiler_body_fallbacks import (
     fallback_lowering_event,
@@ -59,7 +59,7 @@ from compiler_body_fallbacks import (
 )
 from compiler_body_keys import body_key, eligibility_key, namespace_key, project_declaration_slot
 from compiler_plan_values import LOWERING_PROFILE
-from compiler_body_values import SelectedBodyRecord
+from compiler_body_values import CoveredBodyOwners, SelectedBodyRecord, select_body_inventory_of
 from compiler_source_projection import (
     SourceProjection,
     SourceProjectionRecord,
@@ -231,6 +231,7 @@ pub def prepare_compiled_bodies(
     restored: list[str] = [],
     plan_modules: list[AdmittedPlanModule] = [],
     restored_body_ir: list[str] = [],
+    covered: CoveredBodyOwners = CoveredBodyOwners(),
 ) -> Result[PreparedCompiledBodies, str]:
     """
     Stage one successful compiler sidecar through source projections and witnessed checker evaluations.
@@ -289,6 +290,7 @@ pub def prepare_compiled_bodies(
         rechecked,
         plan_output,
         plan_modules,
+        covered,
     )?
     record_work(Operation.EngineGraphStaging, output.0, staging)
     return Ok(
@@ -464,14 +466,31 @@ def prepare_optional_lowering_records(
     rechecked: list[str],
     plan_output: Option[Path],
     plan_modules: list[AdmittedPlanModule] = [],
+    covered: CoveredBodyOwners = CoveredBodyOwners(),
 ) -> Result[Transaction, str]:
     """Stage lowering records only when this compiler activation requested a plan report."""
     if let Some(report) = plan_output:
-        witnesses = lowering_witnesses(projections, outputs.values, retained, source, selected, unit, origin)?
+        events = lowering_events(report)?
+        mut fresh = set([value.identity for value in outputs.values])
+        complete = set(restored_modules(report, whole_only=true)?)
+        for fallback in outputs.fallbacks:
+            if let Some(owner) = fallback.identity:
+                fresh.add(owner)
+        demanded = covered.lowering_demands(events, fresh, complete)
+        mut rescued: list[SelectedBodyRecord] = []
+        if len(demanded) > 0:
+            match selected:
+                None => return Err("covered lowering owner has no selected graph")
+                Some(graph) =>
+                    rescued = select_body_inventory_of(graph, CHECKER_PROFILE, origin, demanded)?
+        if len(rescued) != len(demanded):
+            return Err("partially restored plan did not retain its demanded checked owner")
+        witnesses = lowering_witnesses(projections, outputs.values, retained + rescued, source, selected, unit, origin)?
         return prepare_lowering_records(
             prepared,
             source,
             witnesses,
+            events,
             outputs.fallbacks,
             rechecked,
             origin,
@@ -480,6 +499,7 @@ def prepare_optional_lowering_records(
             selected,
             outputs.namespaces,
             plan_modules,
+            [module for module in covered.module_owners.keys()],
         )
     return Ok(prepared)
 
@@ -856,10 +876,25 @@ def lowering_witnesses(
     return Ok(witnesses)
 
 
+def lowering_events(report: Path) -> Result[list[LoweringEvent], str]:
+    """Read the compiler's actual native lowering outcomes once, including partial module admissions."""
+    if not report.is_dir():
+        return Err("successful records compile did not publish lowering outputs")
+    mut events: list[LoweringEvent] = []
+    for path in sorted([path.0 for path in report.iterdir().map_err((error) => error.message())?]):
+        entry = Path(path)
+        if not entry.is_file() or not path.endswith(".event"):
+            continue
+        event = decode_lowering_event(entry.read_bytes().map_err((error) => error.message())?)?
+        events.append(event)
+    return Ok(events)
+
+
 def prepare_lowering_records(
     transaction: Transaction,
     mut source: PreparedBodyRecordSource,
     values: list[LoweringBody],
+    events: list[LoweringEvent],
     fallbacks: list[CompiledBodyFallback],
     rechecked: list[str],
     origin: str,
@@ -868,6 +903,7 @@ def prepare_lowering_records(
     selected: Option[Snapshot],
     namespaces: list[CompiledNamespaceValue] = [],
     admitted: list[AdmittedPlanModule] = [],
+    covered_modules: list[str] = [],
 ) -> Result[Transaction, str]:
     """
     Stage evaluated lowering-demand and plan-function values through their exact Body IR witnesses.
@@ -876,8 +912,6 @@ def prepare_lowering_records(
     Earlier compilers and members without a stable identity retain the full namespace witness. A member whose module
     staged no namespace record has no authoritative plan input.
     """
-    if not report.is_dir():
-        return Err("successful records compile did not publish lowering outputs")
     scope = ReadScope(snapshot=transaction.id, profile=LOWERING_PROFILE)
     mut staged_source = source.for_profile(LOWERING_PROFILE)
     mut prepared = transaction
@@ -888,13 +922,6 @@ def prepare_lowering_records(
         if value.symbol in bodies:
             return Err("multiple graph-eligible Body IR owners have the same canonical identity")
         bodies[value.symbol] = value
-    mut events: list[LoweringEvent] = []
-    for path in sorted([path.0 for path in report.iterdir().map_err((error) => error.message())?]):
-        entry = Path(path)
-        if not entry.is_file() or not path.endswith(".event"):
-            continue
-        event = decode_lowering_event(entry.read_bytes().map_err((error) => error.message())?)?
-        events.append(event)
     namespace_files = [namespace.module for namespace in namespaces]
     mut member_inputs: Dict[str, tuple[str, str]] = {}
     for namespace in namespaces:
@@ -995,7 +1022,7 @@ def prepare_lowering_records(
     if not report.joinpath(INTERFACE_REPORT).is_file():
         require_plan_refusal(report)?
         return Ok(prepared)
-    prepare_native_interface(prepared, staged_source, scope, unit, origin, values, report, plan_keys + carried)?
+    prepare_native_interface(prepared, staged_source, scope, unit, origin, values, report, plan_keys + carried, covered_modules)?
     return Ok(prepared)
 
 
@@ -1040,6 +1067,7 @@ def prepare_native_interface(
     bodies: list[LoweringBody],
     report: Path,
     plans: list[RecordKey],
+    covered_modules: list[str],
 ) -> Result[None, str]:
     """Witness the complete loss-checked native plan against its exact function members and current source positions."""
     path = report.joinpath(INTERFACE_REPORT)
@@ -1047,16 +1075,14 @@ def prepare_native_interface(
     _ = decode_native_interface(encoded)?
     key = body_key("native-interface", origin, origin, unit.profile, unit.checked_context.unwrap_or(""))
     mut reads = [prepared_product_request(plan) for plan in plans]
-    mut modules: list[str] = []
-    for body in bodies:
-        if body.module not in modules:
-            projection = source_projection(unit, origin, body.module)?
-            source.add(encode_record_key(projection.header.key)?, projection.header.encoded()?)
-            reads.append(prepared_product_request(projection.header.key))
-            for owner in projection.owners:
-                source.add(encode_record_key(owner.key)?, owner.encoded()?)
-                reads.append(prepared_product_request(owner.key))
-            modules.append(body.module)
+    modules = set(covered_modules + [body.module for body in bodies])
+    for module in sorted([file for file in modules]):
+        projection = source_projection(unit, origin, module)?
+        source.add(encode_record_key(projection.header.key)?, projection.header.encoded()?)
+        reads.append(prepared_product_request(projection.header.key))
+        for owner in projection.owners:
+            source.add(encode_record_key(owner.key)?, owner.encoded()?)
+            reads.append(prepared_product_request(owner.key))
     receipt = source.receipt(scope, key, reads)?
     _ = prepare_evaluation(
         transaction,

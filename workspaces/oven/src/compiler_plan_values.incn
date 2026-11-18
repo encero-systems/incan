@@ -1,9 +1,9 @@
 """Select Bakery-admitted lowering products for one graph-record compiler activation."""
 
 from pub::incan_platform.store import Snapshot
-from pub::internal_models.records import RecordKey, encode_record_key
+from pub::internal_models.records import ReadWitness, RecordKey, encode_record_key
 from compiler_body_keys import IDENTITY_PROFILE, body_key
-from compiler_body_values import SelectedBodyPage
+from compiler_body_values import CoveredBodyOwners, SelectedBodyPage
 from compiler_graph_records import OutputSlots, reusable_family_records, readers_of
 from pub::internal_models.plan_module_records import PLAN_MODULE_FAMILY, PLAN_MODULE_PAGE, decode_plan_module
 from std.encoding.hex import hexlify
@@ -67,6 +67,7 @@ pub model PlanModuleSelection:
     pub pages: list[SelectedBodyPage] = []
     pub outputs: list[str] = []
     pub records: list[AdmittedPlanModule] = []
+    pub covered: CoveredBodyOwners = CoveredBodyOwners()
 
 
 pub def select_plan_modules(
@@ -74,6 +75,7 @@ pub def select_plan_modules(
     origin: str,
     invalid_modules: list[str],
     invalid_owners: list[str],
+    complete_namespaces: set[str] = set(),
 ) -> Result[PlanModuleSelection, str]:
     """
     Admit whole every module whose plan record still validates in the selected graph and that this request leaves
@@ -99,7 +101,19 @@ pub def select_plan_modules(
             SelectedBodyPage(key=hexlify(value.module.encode("utf-8")) + PLAN_MODULE_PAGE, value=record.value),
         )
         selection.records.append(AdmittedPlanModule(key=record.key, module=value.module, value=record.value))
+        mut witnessed: set[str] = set()
+        if record.key.identity in complete_namespaces:
+            for witness in record.receipt.witnesses:
+                if let ReadWitness.Found(prior, _) = witness:
+                    if prior.request.key.family == "plan-function":
+                        witnessed.add(encode_record_key(prior.request.key)?)
         for function in value.functions:
             key = body_key("plan-function", origin, function.identity, "body:" + function.function, function.key)
-            selection.outputs.append(encode_record_key(key)?)
+            output = encode_record_key(key)?
+            selection.outputs.append(output)
+            # Only the checker-backed branch of plan publication replaces the native event symbol with a
+            # separate stable body owner. A fallback, runtime, or namespace-member event keeps its own symbol.
+            if output in witnessed and function.identity != function.symbol:
+                selection.covered.include(record.key.identity, function.identity, function.symbol)?
+
     return Ok(selection)
