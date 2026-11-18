@@ -1,0 +1,129 @@
+"""The typed private records for facts retained from a selected file generation."""
+
+from std.json import JsonValue
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from pub::internal_models.crumb_rows import ModelField, model_description, required_value
+from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, integer as signed, items, number, text, tuple_items
+from json_fields import required_text
+
+pub const DESUGARER: str = "vocab.desugarer_artifact"
+
+pub enum ReadingKind:
+    Digest
+    SearchPath
+    RustProbe
+    CrateMetadata
+    ProjectLock
+    Vocabulary
+
+
+def contract(kind: ReadingKind) -> tuple[bytes, Description]:
+    mut name = ""
+    mut storage = "string"
+    match kind:
+        ReadingKind.Digest => name = "digest"
+        ReadingKind.SearchPath => name = "search"
+        ReadingKind.RustProbe => name = "rprobe"
+        ReadingKind.CrateMetadata => name = "crmeta"
+        ReadingKind.ProjectLock =>
+            name = "lkroot"
+            storage = "tuple<string,string>"
+        ReadingKind.Vocabulary =>
+            name = "rvoart"
+            storage = "tuple<string,list<tuple<list<string>,list<string>,list<i64>,list<string>,list<string>>>>"
+    selector = (name + "\x00").encode("utf-8")
+    description = model_description(selector, f"incan.oven.retained-reading/{name}/1", [
+        ModelField(identity=b"select", name="selection", storage="string"),
+        ModelField(identity=b"source", name="source", storage="string"),
+        ModelField(identity=b"stamp_", name="stamp", storage="string"),
+        ModelField(identity=b"value_", name="value", storage=storage),
+    ])
+    return (selector, description)
+
+
+pub def encode_reading(kind: ReadingKind, source: str, selection: str, stamp: str, value: JsonValue) -> Result[bytes, str]:
+    """Encode the semantic facts of this family with their complete source and selection identities."""
+    selector, description = contract(kind)
+    return encode_graph_row(selector, description, [
+        required_value(b"select", Value.Text(selection)),
+        required_value(b"source", Value.Text(source)),
+        required_value(b"stamp_", Value.Text(stamp)),
+        required_value(b"value_", stored_value(kind, value)?),
+    ])
+
+
+pub def decode_reading(kind: ReadingKind, encoded: bytes, source: str, selection: str, stamp: str) -> Result[Option[JsonValue], str]:
+    """Require the exact nominal family, source, selection and observed or content generation."""
+    selector, description = contract(kind)
+    fields = decode_graph_row(encoded, selector, description, 4)?
+    if text(fields[0].value)? != selection or text(fields[1].value)? != source or text(fields[2].value)? != stamp:
+        return Ok(None)
+    return Ok(Some(public_value(kind, fields[3].value)?))
+
+
+def stored_value(kind: ReadingKind, value: JsonValue) -> Result[Value, str]:
+    match kind:
+        ReadingKind.ProjectLock =>
+            if sorted(value.keys()) != ["digest", "manifest"]:
+                return Err("unexpected retained project lock fields")
+            return Ok(Value.Tuple([Value.Text(required_text(value, "manifest")?), Value.Text(required_text(value, "digest")?)]))
+        ReadingKind.Vocabulary =>
+            if sorted(value.keys()) != ["digest", "fields"]:
+                return Err("unexpected retained vocabulary fields")
+            fields = value.require("fields").map_err((error) => error.message())?
+            _ = fields.expect_object().map_err((error) => error.message())?
+            mut artifacts: list[Value] = []
+            if len(fields.keys()) > 0:
+                if fields.keys() != [DESUGARER]:
+                    return Err("unrecognized manifest reading")
+                artifact = fields.require(DESUGARER).map_err((error) => error.message())?
+                _ = artifact.expect_object().map_err((error) => error.message())?
+                for key in artifact.keys():
+                    if key not in ["unit_identity", "artifact_kind", "abi_version", "relative_path", "sha256"]:
+                        return Err("unknown desugarer artifact field")
+                mut abi: list[Value] = []
+                if let Some(version) = artifact.get("abi_version"):
+                    abi.append(signed(version.expect_int().map_err((error) => error.message())?))
+                artifacts.append(Value.Tuple([
+                    optional_text(artifact, "unit_identity")?, optional_text(artifact, "artifact_kind")?,
+                    Value.List(abi), optional_text(artifact, "relative_path")?, optional_text(artifact, "sha256")?,
+                ]))
+            return Ok(Value.Tuple([Value.Text(required_text(value, "digest")?), Value.List(artifacts)]))
+        _ => return Ok(Value.Text(value.expect_str().map_err((error) => error.message())?))
+
+
+def optional_text(artifact: JsonValue, key: str) -> Result[Value, str]:
+    mut result: list[Value] = []
+    if let Some(value) = artifact.get(key):
+        result.append(Value.Text(value.expect_str().map_err((error) => error.message())?))
+    return Ok(Value.List(result))
+
+
+def public_value(kind: ReadingKind, value: Value) -> Result[JsonValue, str]:
+    match kind:
+        ReadingKind.ProjectLock =>
+            pair = tuple_items(value, 2)?
+            return Ok(JsonValue.object({"manifest": JsonValue.string(text(pair[0])?), "digest": JsonValue.string(text(pair[1])?)}))
+        ReadingKind.Vocabulary =>
+            pair = tuple_items(value, 2)?
+            artifacts = items(pair[1])?
+            if len(artifacts) > 1:
+                return Err("multiple retained vocabulary workers")
+            mut fields: Dict[str, JsonValue] = {}
+            if len(artifacts) == 1:
+                parts = tuple_items(artifacts[0], 5)?
+                names = ["unit_identity", "artifact_kind", "abi_version", "relative_path", "sha256"]
+                mut artifact: Dict[str, JsonValue] = {}
+                for index in range(len(names)):
+                    present = items(parts[index])?
+                    if len(present) > 1:
+                        return Err("repeated retained vocabulary worker field")
+                    if len(present) == 1:
+                        if index == 2:
+                            artifact[names[index]] = JsonValue.int(number(present[0])?)
+                        else:
+                            artifact[names[index]] = JsonValue.string(text(present[0])?)
+                fields[DESUGARER] = JsonValue.object(artifact)
+            return Ok(JsonValue.object({"digest": JsonValue.string(text(pair[0])?), "fields": JsonValue.object(fields)}))
+        _ => return Ok(JsonValue.string(text(value)?))

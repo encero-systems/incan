@@ -11,12 +11,13 @@ from std.encoding.hex import hexlify
 from std.fs import Path
 from std.hash import sha256
 from std.json import JsonValue, parse
-from files import json_text, read_json
+from files import read_json
 from graph_queries import nested, text
 from home_paths import home
 from json_fields import required_text
 from observation import SETTLE_SECONDS, Observation, file_digest, now_seconds, observe
-from publication import publish
+from publication import publish_binary
+from retained_reading_records import ReadingKind, decode_reading, encode_reading
 from pub::incan_platform.trace import Operation
 from jec import begin, record, text_size
 from frozen_inputs import observation as frozen_observation
@@ -44,7 +45,7 @@ pub def retained_reading(source: Path, selected: list[str]) -> Result[Reading, s
     # 1. The identity covers replacement, in-place rewrites and restored modification times.
     observed = admitted_observation(source)?
     selection = ",".join(selected)
-    if let Some(value) = recall(source, selection, observed.stamp):
+    if let Some(value) = recall(source, selection, observed.stamp, ReadingKind.Vocabulary):
         return Ok(Reading(fields=nested(value, "fields"), digest=text(value, "digest")))
     # 2. The digest covers the exact bytes the JSON reading parsed.
     mut clock = begin()
@@ -61,7 +62,7 @@ pub def retained_reading(source: Path, selected: list[str]) -> Result[Reading, s
     mut value: Dict[str, JsonValue] = {}
     value["fields"] = reading.fields
     value["digest"] = JsonValue.string(reading.digest)
-    retain(source, selection, observed, JsonValue.object(value))
+    retain(source, selection, observed, JsonValue.object(value), ReadingKind.Vocabulary)
     return Ok(reading)
 
 
@@ -72,7 +73,7 @@ pub def retain_content(source: Path, selection: str, identity: str, value: JsonV
     """
     match reading_record(source, selection):
         None => return
-        Some(record) => _ = remember(record, source, selection, identity, value)
+        Some(record) => _ = remember(record, source, selection, identity, value, ReadingKind.ProjectLock)
 
 
 pub def installed_digest(source: Path) -> Result[str, str]:
@@ -91,14 +92,19 @@ pub def installed_digest(source: Path) -> Result[str, str]:
     return Ok(digest)
 
 
-pub def recall(source: Path, selection: str, stamp: str) -> Option[JsonValue]:
+pub def recall(source: Path, selection: str, stamp: str, kind: ReadingKind = ReadingKind.Digest) -> Option[JsonValue]:
     """The value retained for exactly this file, selection and file identity; any other record is a cache miss."""
     match reading_record(source, selection):
         None => return None
         Some(record) =>
-            if not record.is_file():
+            if record.is_file():
+                match record.read_bytes():
+                    Err(_) => return None
+                    Ok(encoded) => return decode_reading(kind, encoded, source.0, selection, stamp).unwrap_or(None)
+            legacy = record.parent().joinpath(record.stem() + ".json")
+            if not legacy.is_file():
                 return None
-            match retained_value(record, source, selection, stamp):
+            match retained_value(legacy, source, selection, stamp):
                 Ok(found) => return found
                 Err(_) => return None
 
@@ -110,7 +116,7 @@ def admitted_observation(source: Path) -> Result[Observation, str]:
         None => return observe(source)
 
 
-pub def retain(source: Path, selection: str, observed: Observation, value: JsonValue) -> None:
+pub def retain(source: Path, selection: str, observed: Observation, value: JsonValue, kind: ReadingKind = ReadingKind.Digest) -> None:
     """
     Retain `value` for the identity `source` had when the work began, if that identity had settled and is still the
     file's. A cache that cannot be written only costs the next command the same work.
@@ -118,7 +124,7 @@ pub def retain(source: Path, selection: str, observed: Observation, value: JsonV
     if frozen_observation(source) == Some(observed.stamp):
         match reading_record(source, selection):
             None => pass
-            Some(record) => _ = remember(record, source, selection, observed.stamp, value)
+            Some(record) => _ = remember(record, source, selection, observed.stamp, value, kind)
         return
     if now_seconds() < observed.newest + SETTLE_SECONDS:
         return
@@ -129,7 +135,7 @@ pub def retain(source: Path, selection: str, observed: Observation, value: JsonV
                 return
     match reading_record(source, selection):
         None => return
-        Some(record) => _ = remember(record, source, selection, observed.stamp, value)
+        Some(record) => _ = remember(record, source, selection, observed.stamp, value, kind)
 
 
 def selected_fields(document: JsonValue, selected: list[str]) -> JsonValue:
@@ -150,7 +156,7 @@ def reading_record(source: Path, selection: str) -> Option[Path]:
         Err(_) => return None
         Ok(root) =>
             name = hexlify(sha256.digest(f"{source.0}\n{selection}".encode("utf-8")))[:32]
-            return Some(root.joinpath("cache").joinpath("retained-readings").joinpath(f"{name}.json"))
+            return Some(root.joinpath("cache").joinpath("retained-readings").joinpath(f"{name}.crumb"))
 
 
 def retained_value(record: Path, source: Path, selection: str, stamp: str) -> Result[Option[JsonValue], str]:
@@ -163,13 +169,8 @@ def retained_value(record: Path, source: Path, selection: str, stamp: str) -> Re
     return Ok(Some(nested(document, "value")))
 
 
-def remember(record: Path, source: Path, selection: str, stamp: str, value: JsonValue) -> Result[None, str]:
-    """Publish one complete record atomically; a racing command publishes the same reading of the same identity."""
+def remember(record: Path, source: Path, selection: str, stamp: str, value: JsonValue, kind: ReadingKind) -> Result[None, str]:
+    """Publish the complete typed reading atomically for this exact file generation."""
+    encoded = encode_reading(kind, source.0, selection, stamp, value)?
     record.parent().mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
-    mut fields: Dict[str, JsonValue] = {}
-    fields["schema"] = JsonValue.string(SCHEMA)
-    fields["source"] = JsonValue.string(source.0)
-    fields["selection"] = JsonValue.string(selection)
-    fields["stamp"] = JsonValue.string(stamp)
-    fields["value"] = value
-    return publish(record, json_text(JsonValue.object(fields))?)
+    return publish_binary(record, encoded)
