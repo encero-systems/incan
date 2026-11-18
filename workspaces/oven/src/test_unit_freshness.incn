@@ -137,6 +137,14 @@ def verify_invocation_identity(setup: Fixture) -> Result[None, str]:
     mut changed = setup.unit
     changed.package = "another_crate"
     assert description_digest(changed)? != first
+    # The same text describes distinct inputs when it names a native crate and when it admits a vocabulary.
+    mut rust_input = setup.unit
+    rust_input.rust_crates = ["same"]
+    rust_input.vocab_admissions = []
+    mut vocabulary_input = setup.unit
+    vocabulary_input.rust_crates = []
+    vocabulary_input.vocab_admissions = ["same"]
+    assert description_digest(rust_input)? != description_digest(vocabulary_input)?
     changed = setup.unit
     changed.active_features = ["extra"]
     assert description_digest(changed)? != first
