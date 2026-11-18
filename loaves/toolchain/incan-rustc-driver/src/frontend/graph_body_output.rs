@@ -31,6 +31,9 @@ struct PendingBodyValue {
 struct PendingNamespaceValue {
     module: String,
     interface: Vec<u8>,
+    semantic_interface: Vec<u8>,
+    member_owners: std::collections::BTreeMap<incan_semantics_core::CanonicalSymbolId, String>,
+    member_witnesses: Vec<Vec<String>>,
     body_ir: Vec<u8>,
     dependencies: Vec<String>,
     lowering_inputs: Vec<Vec<String>>,
@@ -147,9 +150,13 @@ impl GraphBodyOutput {
             &module.ast,
             checker,
         )? {
+            let published = super::namespace_crumb::publish(&interface)?;
             self.namespaces.push(PendingNamespaceValue {
                 module: module_path.clone(),
-                interface: interface.to_bytes(&super::namespace_crumb::CheckedNamespaceCrumb)?,
+                interface: published.interface,
+                semantic_interface: published.semantic_interface,
+                member_owners: interface.lowering_member_owners(),
+                member_witnesses: Vec::new(),
                 body_ir: Vec::new(),
                 dependencies: dependencies.to_vec(),
                 lowering_inputs: Vec::new(),
@@ -202,6 +209,10 @@ impl GraphBodyOutput {
         if modules.len() != body_ir.len() {
             return Err("graph Body IR output is not aligned with authored modules".into());
         }
+        let lowering: std::collections::HashMap<_, _> = lowering_inputs
+            .iter()
+            .map(|(owner, witness)| (owner, witness))
+            .collect();
         for (module, lowered) in modules.iter().zip(body_ir) {
             let Ok(module_path) = module.file_path.strip_prefix(&self.project_root) else {
                 continue;
@@ -210,6 +221,21 @@ impl GraphBodyOutput {
             if let Some(namespace) = self.namespaces.iter_mut().find(|value| value.module == module_path) {
                 namespace.body_ir = incan_semantics_core::executable_representation::encode_module(lowered)
                     .map_err(|error| format!("Body IR namespace row output refused: {error}"))?;
+                for body in &lowered.bodies {
+                    let Some(canonical) = &body.canonical else { continue };
+                    let Some(stable) = namespace.member_owners.get(canonical) else {
+                        continue;
+                    };
+                    let Some(&witness) = lowering.get(&body.direct_call_id) else {
+                        continue;
+                    };
+                    namespace.member_witnesses.push(vec![
+                        incan_semantics_core::encode_incan_symbol_identity(canonical),
+                        stable.clone(),
+                        witness.clone(),
+                    ]);
+                }
+                namespace.member_witnesses.sort();
                 namespace.lowering_inputs = canonical_lowering_inputs(
                     lowering_inputs
                         .iter()
@@ -334,6 +360,8 @@ impl GraphBodyOutput {
             .map(|value| internal_models::CompiledNamespaceValue {
                 module: value.module,
                 interface: value.interface,
+                semantic_interface: value.semantic_interface,
+                member_witnesses: value.member_witnesses,
                 body_ir: value.body_ir,
                 dependencies: value.dependencies,
                 lowering_inputs: value.lowering_inputs,

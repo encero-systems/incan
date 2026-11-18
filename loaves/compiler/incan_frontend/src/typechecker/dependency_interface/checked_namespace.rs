@@ -138,8 +138,13 @@ impl CheckedNamespaceInterface {
 
     /// Project the checked declarations into their compiler-owned Crumb schemas.
     pub fn to_bytes(&self, codec: &impl NamespaceCrumb) -> Result<Vec<u8>, String> {
+        codec.write(self.wire_value()?)
+    }
+
+    /// The complete checked value, before selecting its stored or semantic projection.
+    pub fn wire_value(&self) -> Result<NamespaceCell, String> {
         self.validate()?;
-        codec.write(wire::project(self))
+        Ok(wire::project(self))
     }
 
     /// Admit the bounded typed Crumb before installing any identities or checked tables in a consumer.
@@ -147,6 +152,58 @@ impl CheckedNamespaceInterface {
         let value = wire::restore(codec.read(bytes)?)?;
         value.validate()?;
         Ok(value)
+    }
+
+    /// Join an exact emitted method to its position-independent declaration under the checked enclosing nominal.
+    /// Same-name overloads require an independently proved binding ordinal and stay on full namespace admission.
+    pub fn lowering_member_owners(&self) -> std::collections::BTreeMap<CanonicalSymbolId, String> {
+        use crate::api_metadata::ApiDeclaration;
+        use incan_semantics_core::stable_identity::{StableDeclarationContext, StableDeclarationId};
+        let mut owners = std::collections::BTreeMap::new();
+        for declaration in &self.api.declarations {
+            let methods = match declaration {
+                ApiDeclaration::Model(value) => &value.methods,
+                ApiDeclaration::Class(value) => &value.methods,
+                ApiDeclaration::Enum(value) => &value.methods,
+                ApiDeclaration::Trait(value) => &value.methods,
+                ApiDeclaration::Newtype(value) => &value.methods,
+                _ => continue,
+            };
+            let name = declaration.name();
+            let Some(outer) = self
+                .identities
+                .get(name)
+                .and_then(|id| StableDeclarationId::from_canonical(id, None, None))
+            else {
+                continue;
+            };
+            let Some(declared) = self.members.get(name) else {
+                continue;
+            };
+            let mut names = std::collections::HashMap::new();
+            for method in methods {
+                *names.entry(&method.name).or_insert(0) += 1;
+            }
+            for method in methods {
+                let Some(id) = declared.methods.get(&method.name) else {
+                    continue;
+                };
+                if names.get(&method.name) != Some(&1)
+                    || id.declaration_span != method.anchor.span
+                    || id.kind != SemanticSourceTargetKind::Method
+                {
+                    continue;
+                }
+                let context = StableDeclarationContext {
+                    owner: outer.clone(),
+                    binding_ordinal: 0,
+                };
+                if let Some(stable) = StableDeclarationId::from_canonical(id, None, Some(context)) {
+                    owners.insert(id.clone(), stable.render_compact());
+                }
+            }
+        }
+        owners
     }
 
     /// Return the source module key this interface installs.

@@ -5,6 +5,12 @@ use internal_models::{NamespaceAtom as Atom, NamespaceEntry, NamespaceField};
 
 pub(super) struct CheckedNamespaceCrumb;
 
+pub(super) fn publish(
+    interface: &incan_frontend::typechecker::CheckedNamespaceInterface,
+) -> Result<internal_models::NamespacePublication, String> {
+    internal_models::publish_namespace_interface(&to_atom(interface.wire_value()?))
+}
+
 impl NamespaceCrumb for CheckedNamespaceCrumb {
     fn write(&self, root: Cell) -> Result<Vec<u8>, String> {
         internal_models::encode_namespace_interface(&to_atom(root))
@@ -94,6 +100,41 @@ mod tests {
     fn program(source: &str) -> Result<incan_frontend::ast::Program, String> {
         let tokens = incan_frontend::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         incan_frontend::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))
+    }
+
+    #[test]
+    fn documentation_changes_the_hover_product_and_preserves_checked_meaning() -> Result<(), String> {
+        fn publication(
+            doc: &str,
+            ty: &str,
+            literal: &str,
+        ) -> Result<(internal_models::NamespacePublication, Vec<String>), String> {
+            let provider = program(&format!(
+                "pub model Page:\n    \"\"\"{doc}\"\"\"\n    pub value: {ty}\n\n    pub def read(self) -> {ty}:\n        return self.value\n\npub def sample() -> {ty}:\n    return {literal}\n"
+            ))?;
+            let path = vec!["domain".into()];
+            let mut checker = TypeChecker::new();
+            checker.set_current_module_path(Some(path.clone()));
+            checker
+                .check_program(&provider)
+                .map_err(|errors| format!("{errors:?}"))?;
+            let value = CheckedNamespaceInterface::from_checked("domain", &path, &provider, &checker)?
+                .ok_or("missing checked namespace")?;
+            let owners = value.lowering_member_owners().into_values().collect();
+            Ok((super::publish(&value)?, owners))
+        }
+        let (before, before_owners) = publication("Blue doc.", "int", "24")?;
+        let (moved, moved_owners) = publication("A longer documentation string for hover.", "int", "24")?;
+        let (changed, _) = publication("Blue doc.", "str", "\"24\"")?;
+        assert_ne!(before.interface, moved.interface);
+        assert_eq!(before.semantic_interface, moved.semantic_interface);
+        assert_ne!(before.semantic_interface, changed.semantic_interface);
+        assert_eq!(before.semantic_interface.len(), 32);
+        assert_eq!(before_owners.len(), 1);
+        assert_eq!(before_owners, moved_owners);
+        let restored = CheckedNamespaceInterface::from_bytes(&moved.interface, &CheckedNamespaceCrumb)?;
+        assert_eq!(restored.to_bytes(&CheckedNamespaceCrumb)?, moved.interface);
+        Ok(())
     }
 
     /// Downstream uses the restored namespace with an empty provider AST. Only the value the real compiler

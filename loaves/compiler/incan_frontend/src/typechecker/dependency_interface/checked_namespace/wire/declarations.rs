@@ -45,8 +45,8 @@ model! { ApiCallableMetadata {
 model! { ApiClass {
     name: 0x82a3537ff0db,
     anchor: 0x79bfb0e2ba76,
-    docstring: 0x247499209ab0,
-    docstring_sections: 0xc92ef4d8e45b,
+    docstring: 0x6e50d98d2431,
+    docstring_sections: 0xf7ea2f6addd6,
     decorators: 0x4cc3599f825d,
     type_params: 0x75e7e9dead7e,
     extends: 0x8e7ce76b88cc,
@@ -101,8 +101,8 @@ model! { ApiDocstringReturn {
 model! { ApiEnum {
     name: 0x82a3537ff0db,
     anchor: 0x79bfb0e2ba76,
-    docstring: 0x247499209ab0,
-    docstring_sections: 0xc92ef4d8e45b,
+    docstring: 0x6e50d98d2431,
+    docstring_sections: 0xf7ea2f6addd6,
     decorators: 0x4cc3599f825d,
     type_params: 0x75e7e9dead7e,
     traits: 0x9e27940861d7,
@@ -130,8 +130,8 @@ model! { ApiFunction {
     ownership: 0x01b8016fdce4,
     name: 0x82a3537ff0db,
     anchor: 0x79bfb0e2ba76,
-    docstring: 0x247499209ab0,
-    docstring_sections: 0xc92ef4d8e45b,
+    docstring: 0x6e50d98d2431,
+    docstring_sections: 0xf7ea2f6addd6,
     decorators: 0x4cc3599f825d,
     type_params: 0x75e7e9dead7e,
     params: 0xa20b52fae57c,
@@ -146,8 +146,8 @@ model! { ApiMethod {
     visibility: 0x7d2fb3da93a0,
     alias_of: 0x2a7e64035b19,
     anchor: 0x79bfb0e2ba76,
-    docstring: 0x247499209ab0,
-    docstring_sections: 0xc92ef4d8e45b,
+    docstring: 0x6e50d98d2431,
+    docstring_sections: 0xf7ea2f6addd6,
     decorators: 0x4cc3599f825d,
     type_params: 0x75e7e9dead7e,
     receiver: 0x81bae876b705,
@@ -161,8 +161,8 @@ model! { ApiMethod {
 model! { ApiModel {
     name: 0x82a3537ff0db,
     anchor: 0x79bfb0e2ba76,
-    docstring: 0x247499209ab0,
-    docstring_sections: 0xc92ef4d8e45b,
+    docstring: 0x6e50d98d2431,
+    docstring_sections: 0xf7ea2f6addd6,
     decorators: 0x4cc3599f825d,
     type_params: 0x75e7e9dead7e,
     traits: 0x9e27940861d7,
@@ -176,8 +176,8 @@ model! { ApiModel {
 model! { ApiNewtype {
     name: 0x82a3537ff0db,
     anchor: 0x79bfb0e2ba76,
-    docstring: 0x247499209ab0,
-    docstring_sections: 0xc92ef4d8e45b,
+    docstring: 0x6e50d98d2431,
+    docstring_sections: 0xf7ea2f6addd6,
     decorators: 0x4cc3599f825d,
     type_params: 0x75e7e9dead7e,
     traits: 0x9e27940861d7,
@@ -224,8 +224,8 @@ model! { ApiStatic {
 model! { ApiTrait {
     name: 0x82a3537ff0db,
     anchor: 0x79bfb0e2ba76,
-    docstring: 0x247499209ab0,
-    docstring_sections: 0xc92ef4d8e45b,
+    docstring: 0x6e50d98d2431,
+    docstring_sections: 0xf7ea2f6addd6,
     decorators: 0x4cc3599f825d,
     type_params: 0x75e7e9dead7e,
     supertraits: 0x4b4a86416d45,
@@ -261,8 +261,8 @@ sum! { CanonicalIdentityOriginExport {
 
 model! { CanonicalIdentitySpanExport {
     expansion: 0x167f448f11f3,
-    start: 0xcced28c6dc3f,
-    end: 0x361e48d0308f,
+    start: 0xa2f1bb14faae,
+    end: 0xe6b7aeff05e2,
 } }
 
 model! { CanonicalSymbolId {
@@ -363,8 +363,8 @@ model! { FieldExport {
 } }
 
 model! { HirSourceSpan {
-    start: 0xcced28c6dc3f,
-    end: 0x361e48d0308f,
+    start: 0xa2f1bb14faae,
+    end: 0xe6b7aeff05e2,
     expansion: 0x167f448f11f3,
 } }
 

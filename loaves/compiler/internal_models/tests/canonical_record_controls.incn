@@ -166,6 +166,8 @@ def compiled_output_controls(source: str) -> Result[None, str]:
         body_ir=b"whole-module-frame",
         dependencies=["src/helper.incn", "src/provider.incn"],
         lowering_inputs=[["main#decl.0..10", "witness"]],
+        semantic_interface=b"0123456789abcdef0123456789abcdef",
+        member_witnesses=[["event", "stable", "witness"]],
     )
     encoded = encode_compiled_body_rows(
         CompiledBodyOutputs(namespaces=[namespace], values=[value], fallbacks=[fallback, identityless]),
@@ -178,6 +180,7 @@ def compiled_output_controls(source: str) -> Result[None, str]:
             assert decoded.module == namespace.module and decoded.interface == namespace.interface
             assert decoded.body_ir == namespace.body_ir and decoded.dependencies == namespace.dependencies
             assert decoded.lowering_inputs == namespace.lowering_inputs
+            assert decoded.semantic_interface == namespace.semantic_interface and decoded.member_witnesses == namespace.member_witnesses
         _ => return Err("compiled namespace decoded as another output kind")
     match decode_compiled_body_row(encoded[1]).map_err((_) => "compiled value decode")?:
         CompiledBodyOutput.Value(decoded) =>
@@ -502,6 +505,8 @@ def graph_namespace_controls() -> Result[None, str]:
         interface=b"checked-interface",
         body_ir=b"module-body-ir",
         lowering_inputs=[["main#decl.0..10", "witness"]],
+        semantic_interface=b"0123456789abcdef0123456789abcdef",
+        member_witnesses=[["event", "stable", "witness"]],
     )
     encoded = encode_graph_namespace_value(value).map_err((_) => "graph namespace encode")?
     assert encoded[:4] == b"CRMB"

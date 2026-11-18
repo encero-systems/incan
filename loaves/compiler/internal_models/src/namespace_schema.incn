@@ -38,8 +38,8 @@ def shape_api_class() -> Description:
     return model_description(b"\x1c\x0f\x94\x55\x99\xfd\x00", "checked_namespace.ApiClass", [
         ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
         ModelField(identity=b"\x79\xbf\xb0\xe2\xba\x76", name="anchor", storage="record@f4a092c4acca"),
-        ModelField(identity=b"\x24\x74\x99\x20\x9a\xb0", name="docstring", storage="option<string>"),
-        ModelField(identity=b"\xc9\x2e\xf4\xd8\xe4\x5b", name="docstring_sections", storage="option<record@fefefb4a64ba>"),
+        ModelField(identity=b"\x6e\x50\xd9\x8d\x24\x31", name="docstring", storage="option<string>", canonical=false),
+        ModelField(identity=b"\xf7\xea\x2f\x6a\xdd\xd6", name="docstring_sections", storage="option<record@fefefb4a64ba>", canonical=false),
         ModelField(identity=b"\x4c\xc3\x59\x9f\x82\x5d", name="decorators", storage="list<record@3681cf30afc4>"),
         ModelField(identity=b"\x75\xe7\xe9\xde\xad\x7e", name="type_params", storage="list<record@80549e0eb490>"),
         ModelField(identity=b"\x8e\x7c\xe7\x6b\x88\xcc", name="extends", storage="option<string>"),
@@ -100,8 +100,8 @@ def shape_api_enum() -> Description:
     return model_description(b"\x66\xae\x2f\x01\x31\x1c\x00", "checked_namespace.ApiEnum", [
         ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
         ModelField(identity=b"\x79\xbf\xb0\xe2\xba\x76", name="anchor", storage="record@f4a092c4acca"),
-        ModelField(identity=b"\x24\x74\x99\x20\x9a\xb0", name="docstring", storage="option<string>"),
-        ModelField(identity=b"\xc9\x2e\xf4\xd8\xe4\x5b", name="docstring_sections", storage="option<record@fefefb4a64ba>"),
+        ModelField(identity=b"\x6e\x50\xd9\x8d\x24\x31", name="docstring", storage="option<string>", canonical=false),
+        ModelField(identity=b"\xf7\xea\x2f\x6a\xdd\xd6", name="docstring_sections", storage="option<record@fefefb4a64ba>", canonical=false),
         ModelField(identity=b"\x4c\xc3\x59\x9f\x82\x5d", name="decorators", storage="list<record@3681cf30afc4>"),
         ModelField(identity=b"\x75\xe7\xe9\xde\xad\x7e", name="type_params", storage="list<record@80549e0eb490>"),
         ModelField(identity=b"\x9e\x27\x94\x08\x61\xd7", name="traits", storage="list<string>"),
@@ -132,8 +132,8 @@ def shape_api_function() -> Description:
         ModelField(identity=b"\x01\xb8\x01\x6f\xdc\xe4", name="ownership", storage="option<enum@b8dfa1e04174>"),
         ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
         ModelField(identity=b"\x79\xbf\xb0\xe2\xba\x76", name="anchor", storage="record@f4a092c4acca"),
-        ModelField(identity=b"\x24\x74\x99\x20\x9a\xb0", name="docstring", storage="option<string>"),
-        ModelField(identity=b"\xc9\x2e\xf4\xd8\xe4\x5b", name="docstring_sections", storage="option<record@fefefb4a64ba>"),
+        ModelField(identity=b"\x6e\x50\xd9\x8d\x24\x31", name="docstring", storage="option<string>", canonical=false),
+        ModelField(identity=b"\xf7\xea\x2f\x6a\xdd\xd6", name="docstring_sections", storage="option<record@fefefb4a64ba>", canonical=false),
         ModelField(identity=b"\x4c\xc3\x59\x9f\x82\x5d", name="decorators", storage="list<record@3681cf30afc4>"),
         ModelField(identity=b"\x75\xe7\xe9\xde\xad\x7e", name="type_params", storage="list<record@80549e0eb490>"),
         ModelField(identity=b"\xa2\x0b\x52\xfa\xe5\x7c", name="params", storage="list<record@5e91aed5a32f>"),
@@ -149,8 +149,8 @@ def shape_api_method() -> Description:
         ModelField(identity=b"\x7d\x2f\xb3\xda\x93\xa0", name="visibility", storage="enum@5d5609e25e89"),
         ModelField(identity=b"\x2a\x7e\x64\x03\x5b\x19", name="alias_of", storage="option<string>"),
         ModelField(identity=b"\x79\xbf\xb0\xe2\xba\x76", name="anchor", storage="record@f4a092c4acca"),
-        ModelField(identity=b"\x24\x74\x99\x20\x9a\xb0", name="docstring", storage="option<string>"),
-        ModelField(identity=b"\xc9\x2e\xf4\xd8\xe4\x5b", name="docstring_sections", storage="option<record@fefefb4a64ba>"),
+        ModelField(identity=b"\x6e\x50\xd9\x8d\x24\x31", name="docstring", storage="option<string>", canonical=false),
+        ModelField(identity=b"\xf7\xea\x2f\x6a\xdd\xd6", name="docstring_sections", storage="option<record@fefefb4a64ba>", canonical=false),
         ModelField(identity=b"\x4c\xc3\x59\x9f\x82\x5d", name="decorators", storage="list<record@3681cf30afc4>"),
         ModelField(identity=b"\x75\xe7\xe9\xde\xad\x7e", name="type_params", storage="list<record@80549e0eb490>"),
         ModelField(identity=b"\x81\xba\xe8\x76\xb7\x05", name="receiver", storage="option<enum@01e4c4811dd1>"),
@@ -165,8 +165,8 @@ def shape_api_model() -> Description:
     return model_description(b"\xc9\xf3\xa3\x4a\xd8\x9f\x00", "checked_namespace.ApiModel", [
         ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
         ModelField(identity=b"\x79\xbf\xb0\xe2\xba\x76", name="anchor", storage="record@f4a092c4acca"),
-        ModelField(identity=b"\x24\x74\x99\x20\x9a\xb0", name="docstring", storage="option<string>"),
-        ModelField(identity=b"\xc9\x2e\xf4\xd8\xe4\x5b", name="docstring_sections", storage="option<record@fefefb4a64ba>"),
+        ModelField(identity=b"\x6e\x50\xd9\x8d\x24\x31", name="docstring", storage="option<string>", canonical=false),
+        ModelField(identity=b"\xf7\xea\x2f\x6a\xdd\xd6", name="docstring_sections", storage="option<record@fefefb4a64ba>", canonical=false),
         ModelField(identity=b"\x4c\xc3\x59\x9f\x82\x5d", name="decorators", storage="list<record@3681cf30afc4>"),
         ModelField(identity=b"\x75\xe7\xe9\xde\xad\x7e", name="type_params", storage="list<record@80549e0eb490>"),
         ModelField(identity=b"\x9e\x27\x94\x08\x61\xd7", name="traits", storage="list<string>"),
@@ -181,8 +181,8 @@ def shape_api_newtype() -> Description:
     return model_description(b"\xa5\x8b\xe0\xc9\x86\x03\x00", "checked_namespace.ApiNewtype", [
         ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
         ModelField(identity=b"\x79\xbf\xb0\xe2\xba\x76", name="anchor", storage="record@f4a092c4acca"),
-        ModelField(identity=b"\x24\x74\x99\x20\x9a\xb0", name="docstring", storage="option<string>"),
-        ModelField(identity=b"\xc9\x2e\xf4\xd8\xe4\x5b", name="docstring_sections", storage="option<record@fefefb4a64ba>"),
+        ModelField(identity=b"\x6e\x50\xd9\x8d\x24\x31", name="docstring", storage="option<string>", canonical=false),
+        ModelField(identity=b"\xf7\xea\x2f\x6a\xdd\xd6", name="docstring_sections", storage="option<record@fefefb4a64ba>", canonical=false),
         ModelField(identity=b"\x4c\xc3\x59\x9f\x82\x5d", name="decorators", storage="list<record@3681cf30afc4>"),
         ModelField(identity=b"\x75\xe7\xe9\xde\xad\x7e", name="type_params", storage="list<record@80549e0eb490>"),
         ModelField(identity=b"\x9e\x27\x94\x08\x61\xd7", name="traits", storage="list<string>"),
@@ -234,8 +234,8 @@ def shape_api_trait() -> Description:
     return model_description(b"\xe6\x32\xe4\x53\x86\xa4\x00", "checked_namespace.ApiTrait", [
         ModelField(identity=b"\x82\xa3\x53\x7f\xf0\xdb", name="name", storage="string"),
         ModelField(identity=b"\x79\xbf\xb0\xe2\xba\x76", name="anchor", storage="record@f4a092c4acca"),
-        ModelField(identity=b"\x24\x74\x99\x20\x9a\xb0", name="docstring", storage="option<string>"),
-        ModelField(identity=b"\xc9\x2e\xf4\xd8\xe4\x5b", name="docstring_sections", storage="option<record@fefefb4a64ba>"),
+        ModelField(identity=b"\x6e\x50\xd9\x8d\x24\x31", name="docstring", storage="option<string>", canonical=false),
+        ModelField(identity=b"\xf7\xea\x2f\x6a\xdd\xd6", name="docstring_sections", storage="option<record@fefefb4a64ba>", canonical=false),
         ModelField(identity=b"\x4c\xc3\x59\x9f\x82\x5d", name="decorators", storage="list<record@3681cf30afc4>"),
         ModelField(identity=b"\x75\xe7\xe9\xde\xad\x7e", name="type_params", storage="list<record@80549e0eb490>"),
         ModelField(identity=b"\x4b\x4a\x86\x41\x6d\x45", name="supertraits", storage="list<record@520b906148ca>"),
@@ -276,8 +276,8 @@ def shape_canonical_identity_origin_export() -> Description:
 def shape_canonical_identity_span_export() -> Description:
     return model_description(b"\x18\x80\xe9\x67\x01\x51\x00", "checked_namespace.CanonicalIdentitySpanExport", [
         ModelField(identity=b"\x16\x7f\x44\x8f\x11\xf3", name="expansion", storage="option<binary>"),
-        ModelField(identity=b"\xcc\xed\x28\xc6\xdc\x3f", name="start", storage="u64"),
-        ModelField(identity=b"\x36\x1e\x48\xd0\x30\x8f", name="end", storage="u64"),
+        ModelField(identity=b"\xa2\xf1\xbb\x14\xfa\xae", name="start", storage="u64", canonical=false),
+        ModelField(identity=b"\xe6\xb7\xae\xff\x05\xe2", name="end", storage="u64", canonical=false),
     ])
 
 def shape_canonical_symbol_id() -> Description:
@@ -391,8 +391,8 @@ def shape_field_export() -> Description:
 
 def shape_hir_source_span() -> Description:
     return model_description(b"\x74\xa6\xfa\x8e\x93\x39\x00", "checked_namespace.HirSourceSpan", [
-        ModelField(identity=b"\xcc\xed\x28\xc6\xdc\x3f", name="start", storage="u64"),
-        ModelField(identity=b"\x36\x1e\x48\xd0\x30\x8f", name="end", storage="u64"),
+        ModelField(identity=b"\xa2\xf1\xbb\x14\xfa\xae", name="start", storage="u64", canonical=false),
+        ModelField(identity=b"\xe6\xb7\xae\xff\x05\xe2", name="end", storage="u64", canonical=false),
         ModelField(identity=b"\x16\x7f\x44\x8f\x11\xf3", name="expansion", storage="option<binary>"),
     ])
 
@@ -946,3 +946,8 @@ pub def namespace_descriptions() -> list[Description]:
         shape_type_param_export(),
         shape_type_ref(),
     ]
+
+
+pub def namespace_field_is_canonical(identity: bytes) -> bool:
+    """These four reserved member selectors carry only source documentation and byte coordinates."""
+    return identity not in [b"\x6e\x50\xd9\x8d\x24\x31", b"\xf7\xea\x2f\x6a\xdd\xd6", b"\xa2\xf1\xbb\x14\xfa\xae", b"\xe6\xb7\xae\xff\x05\xe2"]

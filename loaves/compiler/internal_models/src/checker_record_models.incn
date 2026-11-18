@@ -114,6 +114,8 @@ pub model CompiledNamespaceValue:
     pub body_ir: bytes
     pub dependencies: list[str]
     pub lowering_inputs: list[list[str]] = []
+    pub semantic_interface: bytes = b""
+    pub member_witnesses: list[list[str]] = []
 
 
 pub model CompiledBodyOutputs:

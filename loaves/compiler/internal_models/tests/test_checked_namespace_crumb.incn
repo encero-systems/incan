@@ -1,7 +1,7 @@
 """A nested editable declaration keeps its typed result, anchors and identities across the graph boundary."""
 
 from std.hash import sha256
-from pub::internal_models.namespace_rows import NamespaceAtom, NamespaceField, NamespaceEntry, decode_namespace_interface, encode_namespace_interface
+from pub::internal_models.namespace_rows import NamespaceAtom, NamespaceField, NamespaceEntry, decode_namespace_interface, encode_namespace_interface, publish_namespace_interface
 
 
 def identity(name: str) -> u64:
@@ -13,7 +13,10 @@ def identity(name: str) -> u64:
 
 
 def field(name: str, value: NamespaceAtom) -> NamespaceField:
-    return NamespaceField(identity=identity(name), value=value)
+    mut key = name.clone()
+    if name in ["docstring", "docstring_sections", "start", "end"]:
+        key = "checked_namespace.presentation." + name
+    return NamespaceField(identity=identity(key), value=value)
 
 
 def record(fields: list[NamespaceField]) -> NamespaceAtom:
@@ -24,13 +27,13 @@ def alternative(name: str, fields: list[NamespaceField]) -> NamespaceAtom:
     return NamespaceAtom.Alternative(identity(name), fields)
 
 
-def namespace(return_type: NamespaceAtom) -> NamespaceAtom:
+def namespace(return_type: NamespaceAtom, doc: str = "The labels.", end: u64 = 31u64) -> NamespaceAtom:
     path = NamespaceAtom.Items([NamespaceAtom.Text("provider")])
-    span = record([field("start", NamespaceAtom.Unsigned(0u64)), field("end", NamespaceAtom.Unsigned(31u64)), field("expansion", NamespaceAtom.Missing)])
+    span = record([field("start", NamespaceAtom.Unsigned(0u64)), field("end", NamespaceAtom.Unsigned(end)), field("expansion", NamespaceAtom.Missing)])
     function = record([
         field("ownership", NamespaceAtom.Missing), field("name", NamespaceAtom.Text("labels")),
         field("anchor", record([field("id", NamespaceAtom.Text("labels")), field("span", span)])),
-        field("docstring", NamespaceAtom.Present([NamespaceAtom.Text("The labels.")])), field("docstring_sections", NamespaceAtom.Missing),
+        field("docstring", NamespaceAtom.Present([NamespaceAtom.Text(doc)])), field("docstring_sections", NamespaceAtom.Missing),
         field("decorators", NamespaceAtom.Items([])), field("type_params", NamespaceAtom.Items([])), field("params", NamespaceAtom.Items([])),
         field("return_type", return_type), field("is_async", NamespaceAtom.Flag(false)),
     ])
@@ -51,6 +54,12 @@ pub def test_checked_namespace_reads_typed_function_and_rejects_old_json() -> Re
     text = alternative("Named", [field("name", NamespaceAtom.Text("str")), field("origin", NamespaceAtom.Missing)])
     result_type = alternative("Applied", [field("name", NamespaceAtom.Text("List")), field("args", NamespaceAtom.Items([text])), field("origin", NamespaceAtom.Missing)])
     encoded = encode_namespace_interface(namespace(result_type))?
+    first = publish_namespace_interface(namespace(result_type))?
+    moved = publish_namespace_interface(namespace(result_type, "The updated labels.", 47u64))?
+    changed = publish_namespace_interface(namespace(text))?
+    assert first.interface == encoded and first.interface != moved.interface
+    assert len(first.semantic_interface) == 32 and first.semantic_interface == moved.semantic_interface
+    assert changed.semantic_interface != first.semantic_interface
     decoded = decode_namespace_interface(encoded)?
     assert encode_namespace_interface(decoded)? == encoded
     assert decode_namespace_interface(b'{"schema":6,"module_name":"provider"}').is_err()

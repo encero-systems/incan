@@ -1,9 +1,10 @@
 """The native frontend's typed checked namespace projection, framed by the public Crumb row codec."""
 
 from rust::std::primitive import f64 as RustF64
-from std.primitives.crumb.values import IntegerValue, MapEntry, Value, ValueField
-from crumb_rows import required_value
-from namespace_schema import namespace_descriptions, namespace_root
+from std.primitives.crumb.hashes import value_hash
+from std.primitives.crumb.values import Projection, IntegerValue, MapEntry, Value, ValueField
+from crumb_rows import operation_budget, required_value
+from namespace_schema import namespace_descriptions, namespace_field_is_canonical, namespace_root
 from plan_wire_rows import read_wire, write_wire
 
 
@@ -56,7 +57,8 @@ def selector_number(value: bytes) -> Result[u64, str]:
 def fields(values: list[NamespaceField]) -> Result[list[ValueField], str]:
     mut items: list[ValueField] = []
     for field in values:
-        items.append(required_value(selector(field.identity)?, logical(field.value)?))
+        key = selector(field.identity)?
+        items.append(required_value(key, logical(field.value)?, namespace_field_is_canonical(key)))
     return Ok(items)
 
 
@@ -132,3 +134,18 @@ pub def encode_namespace_interface(root: NamespaceAtom) -> Result[bytes, str]:
 
 pub def decode_namespace_interface(encoded: bytes) -> Result[NamespaceAtom, str]:
     return atom(read_wire(encoded, namespace_root(), namespace_descriptions())?)
+
+pub model NamespacePublication:
+    """The full installable namespace and its RFC 124 canonical logical-value digest."""
+
+    pub interface: bytes
+    pub semantic_interface: bytes
+
+
+pub def publish_namespace_interface(root: NamespaceAtom) -> Result[NamespacePublication, str]:
+    """Hash the same checked rows the compiler emits; canonical field selection preserves expansion identity."""
+    value = logical(root)?
+    interface = write_wire(namespace_root(), namespace_descriptions(), value)?
+    mut budget = operation_budget()?
+    semantic = value_hash(value, Projection.Canonical, budget).map_err((error) => error.message())?
+    return Ok(NamespacePublication(interface=interface, semantic_interface=semantic.digest))
