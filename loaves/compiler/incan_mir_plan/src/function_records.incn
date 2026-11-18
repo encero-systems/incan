@@ -231,18 +231,35 @@ pub def encode_product(
     stored.nominals = nominals
     text = write_wire(b"G\xc7\x7f$\xca!\x00", stored_product_descriptions(), wire_stored_product(stored))?
     # 3. Requirements and positions are part of the native product, not an assumed side effect of lowering again.
-    restored_function, restored = decode_product(text, remap.references)?
+    restored_function, restored, restored_frames, _identities = decode_product_parts(text, remap.references)?
     if not same_function(restored_function, function):
         return Err("scalar function product round trip changed native facts")
     if not same_runtime(restored, runtime):
         return Err("native product round trip changed its dependency requirements")
-    restored_frames = decode_frames(text, remap.references)?
     if len(restored_frames) != len(frames):
         return Err("native product round trip changed its helper frames")
     for index in range(len(frames)):
         if not same_function(restored_frames[index], frames[index]):
             return Err("native product round trip changed its helper frames")
     return Ok(text)
+
+
+pub def matches_product(
+    encoded: bytes,
+    function: &Function,
+    runtime: &list[ExternalFunction],
+    nominals: list[ProductNominal],
+    frames: list[Function],
+    references: list[NominalReference],
+) -> Result[bool, str]:
+    """Compare the whole plan's exact encoded function, helper frames and demand with an admitted capture."""
+    mut remap = capture_remap()
+    mut stored = stored_product(function, runtime, frames, remap)?
+    if remap.references != references or len(nominals) != len(references):
+        return Ok(false)
+    stored.nominals = nominals
+    candidate = write_wire(b"G\xc7\x7f$\xca!\x00", stored_product_descriptions(), wire_stored_product(stored))?
+    return Ok(candidate == encoded)
 
 
 pub def product_identities(text: bytes) -> Result[list[ProductNominal], str]:
@@ -266,7 +283,10 @@ pub def product_frame_names(text: bytes) -> Result[list[str], str]:
 
 pub def decode_frames(text: bytes, references: list[NominalReference] = []) -> Result[list[Function], str]:
     """Restore a product's helper frames, binding their ordinals exactly as the product's function binds them."""
-    stored = decode_product_record(text)?
+    return restore_frames(decode_product_record(text)?, references)
+
+
+def restore_frames(stored: &StoredProduct, references: list[NominalReference]) -> Result[list[Function], str]:
     if stored.schema != 7:
         return Err("unknown native product schema")
     if len(references) != len(stored.nominals):
@@ -290,7 +310,10 @@ pub def decode_product(
     3. Restore the complete function and every dependency signature.
     """
     # 1. An unknown schema remains an ordinary cache miss at the store boundary.
-    stored = decode_product_record(text)?
+    return restore_product(decode_product_record(text)?, references)
+
+
+def restore_product(stored: &StoredProduct, references: list[NominalReference]) -> Result[tuple[Function, list[ExternalFunction]], str]:
     if stored.schema != 7:
         return Err("unknown native product schema")
     # 2. The consumer resolves declarations; this codec only checks that every ordinal has a position.
@@ -306,6 +329,17 @@ pub def decode_product(
     for value in stored.runtime:
         restored.append(restore_external(value, remap)?)
     return Ok((function, restored))
+
+
+pub def decode_product_parts(
+    encoded: bytes,
+    references: list[NominalReference],
+) -> Result[tuple[Function, list[ExternalFunction], list[Function], list[ProductNominal]], str]:
+    """Restore the complete native product after one admission of its shared schema and bytes."""
+    stored = decode_product_record(encoded)?
+    function, runtime = restore_product(stored, references)?
+    frames = restore_frames(stored, references)?
+    return Ok((function, runtime, frames, stored.nominals))
 
 
 pub def encode_runtime(runtime: &list[ExternalFunction]) -> Result[list[bytes], str]:

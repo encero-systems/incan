@@ -43,9 +43,10 @@ pub def publish_plan_records(plan: &Plan, products: str, report: str) -> Result[
         if len(carried) != 0 or has_scalar_refusal(report_path)?:
             return Ok(None)
         # Unit-level runtime resolution adds forwarders after every product was captured, so none witnesses them.
+        reported = set([event.function for event in events])
         mut unwitnessed = 0
         for function in plan.functions:
-            if not witnessed(events, function.name):
+            if function.name not in reported:
                 report_scalar_refusal(
                     Some(report),
                     function.name,
@@ -106,20 +107,27 @@ def keyed_plan_products(
     per keyed product, the positions its declaration ordinals take in this unit, and `carried` the names of the helper
     frames those products carry.
     """
+    mut event_index: Dict[str, int] = {}
+    for index in range(len(events)):
+        name = events[index].function
+        if name in event_index:
+            event_index[name] = -1
+        else:
+            event_index[name] = index
     mut keyed: list[bytes] = []
     for function in plan.functions:
-        matches = [event for event in events if event.function == function.name]
-        if len(matches) == 0:
+        if function.name not in event_index:
             continue
-        if len(matches) != 1:
+        index = event_index[function.name]
+        if index < 0:
             return Err(f"native-interface has an ambiguous plan-function member {function.name}")
-        mut event = matches[0]
+        mut event = events[index]
         resolved = plan_positions(plan, event_references(event)?)?
         nodes = event_positions(event)
         frames = carried_frames(plan, event.product, carried)?
         mut positions = resolved
         if not event.admitted:
-            final_record, final_positions = finalize_scalar(products, event.key, function, event.reused, resolved, nodes, frames)?
+            final_record, final_positions = finalize_scalar(products, event.key, function, event.reused, resolved, nodes, frames, event.product)?
             if final_record != event.product:
                 event.product = final_record
                 write(report.joinpath(event.key + ".event"), encode_lowering_event(event)?)?
@@ -128,14 +136,6 @@ def keyed_plan_products(
         keyed.append(relocate_product(place_positions(product, nodes)?, str(function.span.file), function.span.line)?)
         references.append(positions)
     return Ok(keyed)
-
-
-def witnessed(events: &list[LoweringEvent], function: str) -> bool:
-    """Whether a producer event names this plan function."""
-    for event in events:
-        if event.function == function:
-            return true
-    return false
 
 
 def has_scalar_refusal(report: Path) -> Result[bool, str]:
