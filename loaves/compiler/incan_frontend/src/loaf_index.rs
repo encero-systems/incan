@@ -442,6 +442,22 @@ impl LoafIndex {
     pub fn deferred(
         locations: impl IntoIterator<Item = (String, String, PathBuf, bool)>,
     ) -> Result<Self, LoafIndexError> {
+        let locations: Vec<_> = locations.into_iter().collect();
+        if compiler_record_set::configured() {
+            let mut profiles = BTreeMap::<&str, (&Path, BTreeSet<String>)>::new();
+            for (_, name, dir, standard) in &locations {
+                if *standard && let Some(profile @ ("debug" | "release")) = dir.file_name().and_then(|n| n.to_str()) {
+                    profiles
+                        .entry(profile)
+                        .or_insert_with(|| (dir.as_path(), BTreeSet::new()))
+                        .1
+                        .insert(name.clone());
+                }
+            }
+            for (dir, names) in profiles.into_values() {
+                compiler_record_set::admit_capabilities(dir, &names)?;
+            }
+        }
         let mut index = Self::default();
         for (key, name, dir, standard) in locations {
             let namespace = if standard {

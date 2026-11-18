@@ -8,7 +8,10 @@ use std::sync::PoisonError;
 use serde::Deserialize;
 
 use super::{RecordSet, installed, read_value, record_failure, unreadable, valid_digest};
-use crate::library_manifest::LibraryManifest;
+use crate::library_manifest::{
+    LibraryManifest,
+    capabilities::{self, Capability, CapabilityCatalog},
+};
 use crate::loaf_index::lazy_entry::Summary;
 use crate::loaf_index::{LoafIdentity, LoafIndexError};
 
@@ -81,7 +84,7 @@ pub(super) fn read_summary(set: &RecordSet, dir: &Path, name: &str) -> Result<Op
     let value = read_value(&set.root, &entry.value)
         .map_err(|reason| unreadable(dir, name, record_failure(&entry.key, reason)))?;
     set.count_read(&entry.key, value.len());
-    let metadata: Metadata = LibraryManifest::decode_compiler_record_value(&value)
+    let metadata: Capability = LibraryManifest::decode_compiler_record_value(&value)
         .map_err(|error| unreadable(dir, name, format!("invalid compiler-record metadata: {error}")))?;
     if metadata.name != name {
         return Err(unreadable(
@@ -91,24 +94,76 @@ pub(super) fn read_summary(set: &RecordSet, dir: &Path, name: &str) -> Result<Op
         ));
     }
     valid_digest(&metadata.manifest_digest).map_err(|reason| unreadable(dir, name, reason))?;
-    let summary = Summary {
-        identity: LoafIdentity {
-            name: metadata.name,
-            version: metadata.version,
-            digest: metadata.manifest_digest,
-            feature_projection: BTreeSet::new(),
-        },
-        vocabulary: metadata.vocabulary,
-        provider_operations: metadata.provider_operations,
-        native_unions: metadata.native_unions,
-        rust_paths: metadata.rust_paths,
-        rust_abi_cache_declared: metadata.rust_abi_cache_declared,
-        rust_abi_cache: metadata.rust_abi_cache_declared,
-        rust_abi_cache_digest: metadata.rust_abi_cache_digest,
-    };
+    let summary = from_capability(metadata);
     set.summaries
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .insert(prefix, summary.clone());
     Ok(Some(summary))
+}
+
+/// Admit the profile's global contributors once. Installations without a catalog retain individual metadata reads.
+pub(in crate::loaf_index) fn admit_capabilities(dir: &Path, names: &BTreeSet<String>) -> Result<(), LoafIndexError> {
+    let profile = dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let Some(set) = installed().map_err(|e| unreadable(dir, profile, e))? else {
+        return Ok(());
+    };
+    load_capabilities(set, profile, names).map_err(|reason| unreadable(dir, profile, reason))
+}
+
+fn load_capabilities(set: &RecordSet, profile: &str, names: &BTreeSet<String>) -> Result<(), String> {
+    let key = capabilities::key(profile, names);
+    let hash = key.rsplit('/').next().ok_or("invalid compiler catalog key")?;
+    let mut checked = set.capability_profiles.lock().unwrap_or_else(PoisonError::into_inner);
+    if checked.contains(&key) {
+        return Ok(());
+    }
+    let entries = set.members(&capabilities::prefix(profile), Some(hash), 2)?;
+    if let Some(entry) = entries.first() {
+        if entries.len() != 1 || entry.key != key || entry.value != entry.revision {
+            return Err("ambiguous or mismatched installed capability record".into());
+        }
+        let bytes = read_value(&set.root, &entry.value).map_err(|reason| record_failure(&entry.key, reason))?;
+        set.count_read(&entry.key, bytes.len());
+        let members = CapabilityCatalog::decode(&bytes, profile)?;
+        if members.len() != names.len()
+            || members
+                .iter()
+                .zip(names)
+                .any(|(member, expected)| &member.name != expected)
+        {
+            return Err("installed compiler capability members differ from the requested package roster".into());
+        }
+        let mut admitted = Vec::with_capacity(members.len());
+        for member in members {
+            valid_digest(&member.manifest_digest)?;
+            if let Some(digest) = &member.rust_abi_cache_digest {
+                valid_digest(digest)?;
+            }
+            let key = format!("loaf/{profile}/{}/metadata/", member.name);
+            admitted.push((key, from_capability(member)));
+        }
+        let mut summaries = set.summaries.lock().unwrap_or_else(PoisonError::into_inner);
+        summaries.extend(admitted);
+    }
+    checked.insert(key);
+    Ok(())
+}
+
+fn from_capability(member: Capability) -> Summary {
+    Summary {
+        identity: LoafIdentity {
+            name: member.name,
+            version: member.version,
+            digest: member.manifest_digest,
+            feature_projection: BTreeSet::new(),
+        },
+        vocabulary: member.vocabulary,
+        provider_operations: member.provider_operations,
+        native_unions: member.native_unions,
+        rust_paths: member.rust_paths,
+        rust_abi_cache_declared: member.rust_abi_cache_declared,
+        rust_abi_cache: member.rust_abi_cache_declared,
+        rust_abi_cache_digest: member.rust_abi_cache_digest,
+    }
 }

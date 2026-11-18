@@ -38,7 +38,7 @@ mod runtime_bindings;
 mod thread_selection;
 use declaration_records::NAMED_FAMILIES;
 pub(super) use declaration_records::{names_record, read_declaration};
-pub(super) use inventory::summary;
+pub(super) use inventory::{admit_capabilities, summary};
 use inventory::{Metadata, read_summary};
 pub(super) use runtime_bindings::{read_runtime_bindings, runtime_binding_selectors};
 
@@ -93,6 +93,8 @@ struct RecordSet {
     admitted: Mutex<BTreeMap<(String, Projection), AdmittedGroup>>,
     /// Inventory summaries this process already read and authenticated, by metadata key prefix.
     summaries: Mutex<BTreeMap<String, Summary>>,
+    /// Profiles whose global contributor inventory was checked, including older installations without one.
+    capability_profiles: Mutex<BTreeSet<String>>,
     /// Parser registrations already authenticated under this installed set and Loaf profile.
     vocabularies: Mutex<BTreeMap<String, (Arc<VocabExports>, String)>>,
     /// Executable surfaces this process already read and authenticated, by package prefix.
@@ -167,6 +169,7 @@ impl RecordSet {
             bytes_read: AtomicUsize::new(0),
             admitted: Mutex::new(BTreeMap::new()),
             summaries: Mutex::new(BTreeMap::new()),
+            capability_profiles: Mutex::default(),
             vocabularies: Mutex::new(BTreeMap::new()),
             surfaces: Mutex::new(BTreeMap::new()),
             bindings: Mutex::new(BTreeMap::new()),
@@ -980,6 +983,7 @@ fn unreadable(dir: &Path, name: &str, reason: String) -> LoafIndexError {
 
 #[cfg(test)]
 mod tests {
+    mod capabilities;
     mod member_families;
     mod namespace_records;
     mod type_scopes;
