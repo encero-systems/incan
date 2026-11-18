@@ -71,6 +71,7 @@ fn lower_with_namespaces(
     mut namespace_bodies: Vec<Option<Arc<BodyIrModule>>>,
 ) -> Result<(), String> {
     let authored_start = bodies.len();
+    let restored = namespace_bodies.iter().map(Option::is_some).collect::<Vec<_>>();
     let provider_operations = ProviderOperationCatalog::from_loaves(session.loaves())?;
     let unit = session.unit();
     let library_package = (unit.kind == UnitKind::Library).then_some(unit.package.as_str());
@@ -121,7 +122,7 @@ fn lower_with_namespaces(
         .flat_map(incan_frontend::body_ir::selected_body_identities)
         .collect::<HashSet<_>>();
     let (context, authored_bodies) = bodies.split_at_mut(authored_start);
-    incan_frontend::body_ir::settle_shared_reads_with_selected(authored_bodies, context, &selected);
+    incan_frontend::body_ir::settle_shared_reads_with_namespaces(authored_bodies, context, &selected, &restored);
     Ok(())
 }
 

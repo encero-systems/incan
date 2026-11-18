@@ -1,5 +1,46 @@
 use super::*;
 
+/// A caller rebuilt against an admitted namespace uses its published ABI, even if running the optimizer
+/// a second time on the provider body would infer a different access after its reads were rewritten.
+#[test]
+fn restored_namespace_access_guides_fresh_calls() -> Result<(), Box<dyn std::error::Error>> {
+    use incan_semantics_core::IncanInputAccess::{Inferred, InferredShared};
+    let (_, _, seed) = checked_seed(
+        "model Request:\n    value: int\ndef inspect(request: Request) -> int:\n    return request.value\ndef caller(request: Request) -> int:\n    return inspect(request)\n",
+    )?;
+    for access in [Inferred, InferredShared] {
+        let mut provider = seed.clone();
+        provider.bodies.retain(|body| body.name == "inspect");
+        let body = provider.bodies.first_mut().ok_or("missing provider body")?;
+        body.params[0].input_access = access;
+        let mut caller = seed.clone();
+        caller.bodies.retain(|body| body.name == "caller");
+        let mut modules = [provider.clone(), caller];
+        crate::body_ir::settle_shared_reads_with_namespaces(
+            &mut modules,
+            &[],
+            &std::collections::HashSet::new(),
+            &[true, false],
+        );
+        assert_eq!(modules[0].bodies, provider.bodies);
+        let caller = modules[1].bodies.first().ok_or("missing fresh caller")?;
+        let operand = caller
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Call { args, .. } => match args.first()? {
+                    bir::ArgumentElement::One(bir::Operand::Place(read)) => Some(read),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .ok_or("missing caller operand")?;
+        assert_eq!(operand.fact == bir::OwnershipFact::Borrow, access == InferredShared);
+    }
+    Ok(())
+}
+
 /// Prove immutable parameter sharing across forwarding, recursion and a function-item adapter while explicit source
 /// contracts keep their established ownership and escaping operations retain their checked transfer facts.
 pub(super) fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
