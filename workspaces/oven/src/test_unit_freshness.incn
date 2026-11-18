@@ -22,7 +22,8 @@ from toolchain import NativeCrate, Toolchain
 from toolchain_access import ToolchainAccess
 from unit import UnitDescription, UnitLoaf
 from unit_reading import read_unit
-from unit_compiler import crate_name, described_by, write_unit
+from unit_compiler import crate_name, described_by, graph_body_output_path, plan_record_report_path, write_unit
+from unit_transport import read_unit_document
 from unit_publication import admit_payload, published_identity, record_path, record_payload
 from unit_freshness import Key, artifact_files, reusable, record, description_digest, staleness
 from freshness_fixtures import Fixture, fixture, make_executable, reconcile, unit_key, write
@@ -192,6 +193,29 @@ def ordinary_unit() -> UnitDescription:
         contract_models=[],
         c_headers=[],
     )
+
+
+pub def test_prepared_descriptor_generations_keep_their_own_witnesses_and_reports() -> Result[None, str]:
+    scratch = scratch_directory()?
+    mut unit = ordinary_unit()
+    unit.project_root = scratch.path().0
+    key = Key(digest="portable", parts=[], descriptor="descriptor")
+    legacy = write_unit(unit, "app", None, described_by(key), false, typed=false)?
+    typed = write_unit(unit, "app", None, described_by(key), false, typed=true)?
+    assert legacy.name() == "descriptor.unit.json" and typed.name() == "descriptor.unit.crumb"
+    assert read_unit_document(legacy)?.dumps().map_err((error) => error.message())? == read_unit_document(typed)?.dumps().map_err((error) => error.message())?
+    assert Path(typed.0 + ".oven-description").is_file() and Path(legacy.0 + ".oven-description").is_file()
+    assert graph_body_output_path(unit, key, true).0 == typed.0 + ".graph-body-output"
+    assert graph_body_output_path(unit, key, false).0 == legacy.0 + ".graph-body-output"
+    assert plan_record_report_path(unit, key, true).0 == typed.0 + ".graph-plan-report"
+    assert plan_record_report_path(unit, key, false).0 == legacy.0 + ".graph-plan-report"
+    original = typed.read_bytes().map_err((error) => error.message())?
+    assert original[:4] == b"CRMB"
+    typed.write_bytes(b"CRMBtruncated").map_err((error) => error.message())?
+    assert read_unit_document(typed).is_err()
+    refreshed = write_unit(unit, "app", None, described_by(key), false, typed=true)?
+    assert refreshed.read_bytes().map_err((error) => error.message())? == original
+    return Ok(None)
 
 
 def verify_declared_access(setup: Fixture) -> Result[None, str]:
