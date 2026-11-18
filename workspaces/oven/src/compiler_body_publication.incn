@@ -431,6 +431,8 @@ def stage_compiled_namespaces(
             stage_put(prepared, "incan.compiler.namespace-order\t" + position.evidence, position.certificate)
         rank = ProducerRank(namespace=position.rank, stage=ProducerStage.Signature, dependency=0)
         prepare_namespace_products(prepared, source, scope, namespace, origin, reads, rank, position.evidence)?
+        # Restoring the complete record also restores positioned spans and editor documentation.
+        reads.append(prepared_product_request(projection.positioned.key))
         receipt = source.receipt(scope, key, reads, position.evidence)?
         _ = prepare_evaluation(
             prepared,
@@ -559,7 +561,7 @@ def stage_source_projection(
 ) -> Result[None, str]:
     """Stage one module header, declaration index and owner records through the prepared request authority."""
     stage_put(prepared, encode_record_key(projection.documentation_key())?, projection.encoded_documentation()?)
-    for record in [projection.header, projection.declarations, projection.census]:
+    for record in [projection.header, projection.declarations, projection.census, projection.positioned]:
         key = encode_record_key(record.key)?
         value = record.encoded()?
         stage_put(prepared, key, value)
