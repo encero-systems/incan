@@ -1167,7 +1167,7 @@ fn walk_mut(statements: &mut [bir::Statement], visit: &mut impl FnMut(&mut bir::
 }
 
 /// Rewrite every call site of one body, including the calls inside its closure and generator bodies.
-fn walk_calls_mut(statements: &mut [bir::Statement], visit: &mut impl FnMut(&mut bir::Statement)) {
+pub(super) fn walk_calls_mut(statements: &mut [bir::Statement], visit: &mut impl FnMut(&mut bir::Statement)) {
     walk_statements_mut(statements, true, visit);
 }
 

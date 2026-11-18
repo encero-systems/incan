@@ -4,6 +4,8 @@ from std.primitives.crumb.descriptions import Description
 from std.primitives.crumb.records import RowRecord
 from std.primitives.crumb.values import Value, ValueField
 from std.primitives.text import copy_frozen_bytes
+from settled_call_reads import call_read_values, decoded_call_reads
+from checker_record_models import SettledCallRead
 from checker_records import (
     CHECKER_PROFILE,
     CheckedFamily,
@@ -24,7 +26,8 @@ const MAX_METADATA_BYTES: int = 65536
 # An over-long fallback reason keeps this many leading characters, at most four bytes each, under the metadata bound.
 const MAX_REASON_CHARACTERS: int = 16000
 const LEGACY_NAMESPACE_SELECTOR: bytes = b"cmpns2\x00"
-const NAMESPACE_SELECTOR: bytes = b"cmpns3\x00"
+const ROOTS_NAMESPACE_SELECTOR: bytes = b"cmpns3\x00"
+const NAMESPACE_SELECTOR: bytes = b"cmpns4\x00"
 const VALUE_SELECTOR: bytes = b"cmpval\x00"
 const FALLBACK_SELECTOR: bytes = b"cmpfbk\x00"
 
@@ -81,15 +84,18 @@ pub def decode_compiled_body_row(encoded: bytes) -> Result[CompiledBodyOutput, C
     """Decode one complete Crumb row without consulting or buffering any peer row."""
     if len(encoded) == 0 or len(encoded) > MAX_ROW_BYTES:
         return Err(CodecFault.Limit)
-    rows = decode_rows(encoded, [namespace_description(), namespace_description(true), value_description(), fallback_description()], MAX_ROW_BYTES).map_err(
+    rows = decode_rows(encoded, [namespace_description(), namespace_description(3), namespace_description(2), value_description(), fallback_description()], MAX_ROW_BYTES).map_err(
         (_) => CodecFault.Malformed,
     )?
     if len(rows) != 1:
         return Err(CodecFault.Malformed)
     if rows[0].key == copy_frozen_bytes(NAMESPACE_SELECTOR):
-        return Ok(CompiledBodyOutput.Namespace(decode_compiled_namespace_value(rows[0].value, false)?))
+        return Ok(CompiledBodyOutput.Namespace(decode_compiled_namespace_value(rows[0].value, 4)?))
+    if rows[0].key == copy_frozen_bytes(ROOTS_NAMESPACE_SELECTOR):
+        prior = decode_compiled_namespace_value(rows[0].value, 3)?
+        return Ok(CompiledBodyOutput.LegacyNamespace(prior.module))
     if rows[0].key == copy_frozen_bytes(LEGACY_NAMESPACE_SELECTOR):
-        legacy = decode_compiled_namespace_value(rows[0].value, true)?
+        legacy = decode_compiled_namespace_value(rows[0].value, 2)?
         return Ok(CompiledBodyOutput.LegacyNamespace(legacy.module))
     if rows[0].key == copy_frozen_bytes(VALUE_SELECTOR):
         return Ok(CompiledBodyOutput.Value(decode_compiled_body_value(rows[0].value)?))
@@ -145,7 +151,8 @@ def encode_compiled_namespace_value(value: CompiledNamespaceValue) -> Result[byt
                 Value.List(members),
             ), required_value(b"module", Value.Text(value.module)), required_value(
                 b"roots_", Value.List([Value.Text(root) for root in value.package_roots]),
-            ), required_value(b"semant", Value.Binary(value.semantic_interface))],
+            ), required_value(b"semant", Value.Binary(value.semantic_interface)),
+                required_value(b"wreads", Value.List(call_read_values(value.call_reads)?))],
         ),
     )
     return encoded_row(namespace_description(), row)
@@ -295,12 +302,15 @@ def member_values(members: list[list[str]]) -> Result[list[Value], CodecFault]:
     return Ok(values)
 
 
-def decode_compiled_namespace_value(value: Value, legacy: bool) -> Result[CompiledNamespaceValue, CodecFault]:
+def decode_compiled_namespace_value(value: Value, version: int) -> Result[CompiledNamespaceValue, CodecFault]:
     """Restore one bounded namespace value, imported modules and canonical lowering witnesses."""
     mut semantic_index = 7
-    if legacy:
+    if version == 2:
         semantic_index = 6
-    fields = record_fields(value, semantic_index + 1)?
+    mut count = semantic_index + 1
+    if version == 4:
+        count += 1
+    fields = record_fields(value, count)?
     dependencies = text_values(fields[1].value)?
     if len(dependencies) > MAX_FIELDS:
         return Err(CodecFault.Malformed)
@@ -329,13 +339,17 @@ def decode_compiled_namespace_value(value: Value, legacy: bool) -> Result[Compil
     members = [flattened_members[at:at + 3] for at in range(0, len(flattened_members), 3)]
     member_values(members)?
     mut roots: list[str] = []
-    if not legacy:
+    if version >= 3:
         roots = text_values(fields[6].value)?
         validate_package_roots(roots)?
     semantic = binary_value(fields[semantic_index].value)?
     if len(semantic) not in [0, 32]:
         return Err(CodecFault.Malformed)
+    mut call_reads: list[SettledCallRead] = []
+    if version == 4:
+        call_reads = decoded_call_reads(fields[8].value)?
     restored = CompiledNamespaceValue(
+        call_reads=call_reads,
         module=text_value(fields[5].value)?,
         member_witnesses=members,
         package_roots=roots,
@@ -460,7 +474,7 @@ def optional_identity(identity: Option[str]) -> str:
         None => return ""
 
 
-def namespace_description(legacy: bool = false) -> Description:
+def namespace_description(version: int = 4) -> Description:
     """Only the current compiler envelope carries the complete package-root set."""
     mut fields = [
         ModelField(identity=b"bodyir", name="body_ir", storage="binary"),
@@ -470,12 +484,15 @@ def namespace_description(legacy: bool = false) -> Description:
         ModelField(identity=b"member", name="member_witnesses", storage="list<string>"),
         ModelField(identity=b"module", name="module", storage="string"),
     ]
-    if not legacy:
+    if version >= 3:
         fields.append(ModelField(identity=b"roots_", name="package_roots", storage="list<string>"))
     fields.append(ModelField(identity=b"semant", name="semantic_interface", storage="binary"))
-    if legacy:
+    if version == 2:
         return model_description(LEGACY_NAMESPACE_SELECTOR, "incan.checker-compiled-namespace/2", fields)
-    return model_description(NAMESPACE_SELECTOR, "incan.checker-compiled-namespace/3", fields)
+    if version == 3:
+        return model_description(ROOTS_NAMESPACE_SELECTOR, "incan.checker-compiled-namespace/3", fields)
+    fields.append(ModelField(identity=b"wreads", name="call_reads", storage="list<tuple<string,string,string>>"))
+    return model_description(NAMESPACE_SELECTOR, "incan.checker-compiled-namespace/4", fields)
 
 
 def value_description() -> Description:

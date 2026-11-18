@@ -1,0 +1,44 @@
+"""The settled executable argument contract read by one checked project call."""
+
+from std.primitives.crumb.values import Value
+from checker_field_grammar import full_digest
+from checker_record_models import CodecFault, SettledCallRead
+
+
+pub def call_read_values(reads: list[SettledCallRead]) -> Result[list[Value], CodecFault]:
+    """Validate the canonical reader/target order before emitting each independently typed dependency."""
+    mut previous_reader = ""
+    mut previous_target = ""
+    mut result: list[Value] = []
+    for read in reads:
+        if read.reader == "" or read.target == "" or not full_digest(read.digest):
+            return Err(CodecFault.Malformed)
+        if previous_reader > read.reader or (previous_reader == read.reader and previous_target >= read.target):
+            return Err(CodecFault.Malformed)
+        result.append(Value.Tuple([Value.Text(read.reader), Value.Text(read.target), Value.Text(read.digest)]))
+        previous_reader = read.reader
+        previous_target = read.target
+    return Ok(result)
+
+
+pub def decoded_call_reads(value: Value) -> Result[list[SettledCallRead], CodecFault]:
+    """Refuse duplicate edges and malformed digests at the graph boundary."""
+    values = match value:
+        Value.List(found) => found
+        _ => return Err(CodecFault.Malformed)
+    mut result: list[SettledCallRead] = []
+    for item in values:
+        fields = match item:
+            Value.Tuple(found) => found
+            _ => return Err(CodecFault.Malformed)
+        if len(fields) != 3:
+            return Err(CodecFault.Malformed)
+        result.append(SettledCallRead(reader=text(fields[0])?, target=text(fields[1])?, digest=text(fields[2])?))
+    _ = call_read_values(result)?
+    return Ok(result)
+
+
+def text(value: Value) -> Result[str, CodecFault]:
+    match value:
+        Value.Text(found) => return Ok(found)
+        _ => return Err(CodecFault.Malformed)

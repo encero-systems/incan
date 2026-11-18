@@ -428,6 +428,7 @@ def stage_compiled_namespaces(
                 body_ir=namespace.body_ir,
                 lowering_inputs=namespace.lowering_inputs,
                 package_roots=namespace.package_roots,
+                call_reads=namespace.call_reads,
             ),
         ).map_err((error) => f"compiled namespace output refused: {error:?}")?
         mut position = NamespaceOrder()

@@ -1,9 +1,10 @@
 //! Internal canonical-checker test sink. The Incan contract owns schemas, validation, framing and semantic digests;
 //! these bootstrap adapters expose existing checked values and current native position bindings as field primitives.
 
+use crate::body_ir::SettledCallRead;
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use incan_semantics_core::stable_identity::{StableDeclarationContext, StableDeclarationId};
 
@@ -51,6 +52,8 @@ impl GraphNamespaceInterface for crate::typechecker::CheckedNamespaceInterface {
 pub struct GraphNamespaceRecord {
     /// Project-relative logical source path used by the source-projection record.
     pub source: String,
+    /// Settled argument accesses imported by this namespace at publication.
+    pub call_reads: Vec<SettledCallRead>,
     /// Authenticated declaration surface. A downstream source check materializes its lookup tables on demand.
     pub interface: Arc<dyn GraphNamespaceInterface>,
     /// Exact external declarations the ordinary checker selected for executable dependency resolution.
@@ -77,6 +80,9 @@ pub struct GraphBodyRecords {
     eager: Arc<BTreeMap<String, GraphBodyRecord>>,
     source: Option<Arc<dyn GraphBodyRecordSource>>,
     ranked_owner: Option<Arc<RankedOwner>>,
+    call_reads: Arc<Mutex<BTreeMap<String, Vec<SettledCallRead>>>>,
+    changed_callers: BTreeMap<String, BTreeSet<String>>,
+    selected_calls: Arc<Mutex<BTreeMap<String, BTreeSet<String>>>>,
 }
 
 /// One compiler activation shares its exact body-entry count across all of the unit's module checkers.
@@ -175,7 +181,7 @@ impl GraphBodyRecords {
         Ok(Self {
             eager: Arc::new(selected),
             source: None,
-            ranked_owner: None,
+            ..Self::default()
         })
     }
 
@@ -184,7 +190,7 @@ impl GraphBodyRecords {
         Self {
             eager: Arc::new(BTreeMap::new()),
             source: Some(source),
-            ranked_owner: None,
+            ..Self::default()
         }
     }
 
@@ -237,21 +243,107 @@ impl GraphBodyRecords {
         if self.ranked_owner() == Some(identity) {
             return Ok(None);
         }
-        if let Some(record) = self.eager.get(identity) {
-            return Ok(Some(record.clone()));
+        let mut record = match self.eager.get(identity) {
+            Some(record) => Some(record.clone()),
+            None => match &self.source {
+                Some(source) => source.read(identity)?,
+                None => None,
+            },
+        };
+        if let Some(selected) = &mut record
+            && let Some(frame) = &mut selected.body_ir
+        {
+            let source = &frame.source;
+            let reader = frame.body.direct_call_id.path();
+            let known = self
+                .call_reads
+                .lock()
+                .map_err(|_| RecordAdapterFault::InvalidField("settled call witness lock poisoned".into()))?
+                .contains_key(source);
+            if self
+                .changed_callers
+                .get(source)
+                .is_some_and(|owners| owners.contains(reader))
+            {
+                selected.body_ir = None;
+            } else if known {
+                self.selected_calls
+                    .lock()
+                    .map_err(|_| RecordAdapterFault::InvalidField("settled call reader lock poisoned".into()))?
+                    .entry(source.clone())
+                    .or_default()
+                    .insert(reader.to_owned());
+            } else if crate::body_ir::needs_call_witness(&mut frame.body) {
+                selected.body_ir = None;
+            }
         }
-        match &self.source {
-            Some(source) => source.read(identity),
-            None => Ok(None),
-        }
+        Ok(record)
     }
 
-    /// Read one complete namespace selected by the engine for this exact source projection.
+    /// Read one complete namespace and remember only the settled ownership contracts it consumed.
     pub fn namespace(&self, source: &str) -> Result<Option<GraphNamespaceRecord>, RecordAdapterFault> {
-        match &self.source {
-            Some(source_records) => source_records.read_namespace(source),
-            None => Ok(None),
+        if self.changed_callers.contains_key(source) {
+            return Ok(None);
         }
+        let Some(records) = &self.source else {
+            return Ok(None);
+        };
+        let record = records.read_namespace(source)?;
+        if let Some(row) = &record {
+            self.call_reads
+                .lock()
+                .map_err(|_| RecordAdapterFault::InvalidField("settled call witness lock poisoned".into()))?
+                .insert(source.to_owned(), row.call_reads.clone());
+        }
+        Ok(record)
+    }
+
+    /// Return only the call contracts of a namespace actually restored by this attempt.
+    pub fn settled_call_reads(&self, source: &str) -> Result<Vec<SettledCallRead>, String> {
+        self.call_reads
+            .lock()
+            .map_err(|_| "settled call witness lock poisoned".to_owned())?
+            .get(source)
+            .cloned()
+            .ok_or_else(|| format!("restored namespace has no settled call witness: {source}"))
+    }
+
+    /// Per-owner admissions inside a module that was rebuilt. The complete checked namespace did not supply these
+    /// bodies.
+    pub fn selected_call_reads(&self, source: &str) -> Result<Vec<SettledCallRead>, String> {
+        let selected = self
+            .selected_calls
+            .lock()
+            .map_err(|_| "settled call reader lock poisoned".to_owned())?;
+        let Some(owners) = selected.get(source) else {
+            return Ok(Vec::new());
+        };
+        Ok(self
+            .settled_call_reads(source)?
+            .into_iter()
+            .filter(|r| {
+                owners.contains(&r.reader)
+                    && !self
+                        .changed_callers
+                        .get(source)
+                        .is_some_and(|dirty| dirty.contains(&r.reader))
+            })
+            .collect())
+    }
+
+    /// Reopen exactly these readers' executable bodies. Their checked local and final products remain admissible.
+    pub fn reopen_callers(&mut self, changes: BTreeMap<String, BTreeSet<String>>) -> Result<(), String> {
+        let mut added = false;
+        for (source, owners) in changes {
+            let current = self.changed_callers.entry(source).or_default();
+            let before = current.len();
+            current.extend(owners);
+            added |= current.len() != before;
+        }
+        if !added {
+            return Err("settled call ABI frontier made no progress".into());
+        }
+        Ok(())
     }
 
     /// Report whether this transport carries any graph-selected bodies.
