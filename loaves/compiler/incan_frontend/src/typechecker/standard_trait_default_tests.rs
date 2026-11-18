@@ -31,9 +31,10 @@ fn absent_standard_trait_method_preserves_checked_nominal_scope() -> Result<(), 
     use crate::library_manifest::LibraryManifest;
     use crate::loaf_index::LoafIndex;
 
+    let equality = incan_lang::lang::traits::as_str(incan_lang::lang::traits::TraitId::Eq);
     let package = "incan_stdlib_primitives";
     let path = vec!["derives".to_owned(), "comparison".to_owned()];
-    let declarations = program("pub trait Eq:\n    def __eq__(self, other: Self) -> bool: ...\n")?;
+    let declarations = program(&format!("pub trait {equality}:\n    def __eq__(self, other: Self) -> bool: ...\n"))?;
     let mut provider = TypeChecker::new();
     provider.set_current_package_identity(Some(package.into()));
     provider.set_current_module_path(Some(path.clone()));
@@ -64,8 +65,8 @@ fn absent_standard_trait_method_preserves_checked_nominal_scope() -> Result<(), 
     consumer.set_loaves(std::sync::Arc::new(LoafIndex::new([entry])?));
     let initial = consumer.checked_nominal_type_identities();
     let span = crate::ast::Span::new(4, 16);
-    assert!(consumer.trait_method_info_resolved("Eq", "from_value", span).is_none());
+    assert!(consumer.trait_method_info_resolved(equality, "from_value", span).is_none());
     assert_eq!(consumer.checked_nominal_type_identities(), initial);
-    assert!(consumer.trait_method_info_resolved("Eq", "__eq__", span).is_some());
+    assert!(consumer.trait_method_info_resolved(equality, "__eq__", span).is_some());
     Ok(())
 }
