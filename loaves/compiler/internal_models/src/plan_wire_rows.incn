@@ -1,5 +1,7 @@
 """The graph's native plan profile uses compiler-owned Crumb descriptions for its stored functions and layouts."""
 
+from std.primitives.crumb import Budget
+from std.primitives.crumb.row_reader import RowSet
 from std.primitives.crumb.descriptions import Description, DescriptionMode
 from std.primitives.crumb.records import RowRecord
 from std.primitives.crumb.registrations import KindRegistry
@@ -22,6 +24,15 @@ pub def write_wire(key: bytes, descriptions: list[Description], value: Value) ->
 pub def read_wire(encoded: bytes, key: bytes, supplied: list[Description]) -> Result[Value, str]:
     """Authenticate every reachable schema and the sole root selector before interpreting the native payload."""
     mut budget = graph_read_budget()?
+    rows = admit_wire(encoded, supplied, budget)?
+    row = rows.read_record(0, budget).map_err((error) => error.message())?
+    if row.key != key:
+        return Err("unexpected native plan root selector")
+    return Ok(row.value)
+
+
+pub def admit_wire(encoded: bytes, supplied: list[Description], mut budget: Budget) -> Result[RowSet, str]:
+    """Admit the complete envelope and require exactly the supplied referenced schema closure."""
     rows = admit_rows(encoded, supplied, 67108864, budget)?
     dictionary = rows.descriptions(budget).map_err((error) => error.message())?
     if rows.len() != 1 or len(dictionary) != len(supplied):
@@ -29,10 +40,7 @@ pub def read_wire(encoded: bytes, key: bytes, supplied: list[Description]) -> Re
     for entry in dictionary:
         if entry.mode != DescriptionMode.Reference:
             return Err("native plan wire requires referenced compiler schemas")
-    row = rows.read_record(0, budget).map_err((error) => error.message())?
-    if row.key != key:
-        return Err("unexpected native plan root selector")
-    return Ok(row.value)
+    return Ok(rows)
 
 
 pub def variant_schema(identity: bytes, name: str, fields: list[ModelField]) -> Metadata:

@@ -126,10 +126,7 @@ pub fn typecheck_modules(
                 Some(source) => graph_body_records
                     .namespace(&source)
                     .map(|record| {
-                        record.filter(|record| {
-                            record.interface.module_name() == module.name
-                                && record.interface.module_path() == module.path_segments
-                        })
+                        record.filter(|record| record.interface.belongs_to(&module.name, &module.path_segments))
                     })
                     .map_err(|error| format!("graph namespace `{source}` refused: {error:?}")),
                 None => Ok(None),

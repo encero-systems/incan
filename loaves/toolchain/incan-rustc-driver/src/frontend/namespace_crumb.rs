@@ -50,13 +50,53 @@ pub(super) fn remember_published(bytes: &[u8], interface: CheckedNamespaceInterf
     insert(Sha256::digest(bytes).into(), bytes.len(), Arc::new(interface));
 }
 
-/// A fresh worker, eviction or any byte change takes the ordinary authenticated Crumb reader.
-pub(super) fn restore(bytes: &[u8]) -> Result<Arc<CheckedNamespaceInterface>, String> {
-    let digest = Sha256::digest(bytes).into();
-    if let Ok(cache) = PUBLISHED.lock()
-        && let Some(hit) = cache.entries.get(&digest)
-    {
-        return Ok(Arc::clone(hit));
+fn published(digest: &[u8; 32]) -> Option<Arc<CheckedNamespaceInterface>> {
+    PUBLISHED.lock().ok()?.entries.get(digest).cloned()
+}
+
+#[derive(Debug)]
+struct EncodedInterface {
+    name: String,
+    path: Vec<String>,
+    bytes: Vec<u8>,
+    digest: [u8; 32],
+}
+
+impl incan_frontend::checker_records::GraphNamespaceInterface for EncodedInterface {
+    fn belongs_to(&self, name: &str, path: &[String]) -> bool {
+        self.name == name && self.path == path
+    }
+
+    fn installable(&self) -> Result<Arc<incan_frontend::typechecker::ModuleDependencyInterface>, String> {
+        let checked = restore_digest(&self.bytes, self.digest)?;
+        if checked.module_name() != self.name || checked.module_path() != self.path {
+            return Err("checked namespace identity disagrees with the admitted root".into());
+        }
+        checked.installable()
+    }
+}
+
+/// The full Crumb envelope is admitted even for namespaces that nobody imports. Read its identity fields
+/// without building Rust declarations or lookup tables until an editable consumer actually needs them.
+pub(super) fn admit(
+    bytes: Vec<u8>,
+) -> Result<Arc<dyn incan_frontend::checker_records::GraphNamespaceInterface>, String> {
+    let digest = Sha256::digest(&bytes).into();
+    if let Some(hit) = published(&digest) {
+        return Ok(hit);
+    }
+    let root = internal_models::namespace_identity(&bytes, CheckedNamespaceInterface::SCHEMA)?;
+    Ok(Arc::new(EncodedInterface {
+        name: root.name,
+        path: root.path,
+        bytes,
+        digest,
+    }))
+}
+
+fn restore_digest(bytes: &[u8], digest: [u8; 32]) -> Result<Arc<CheckedNamespaceInterface>, String> {
+    if let Some(hit) = published(&digest) {
+        return Ok(hit);
     }
     let interface = Arc::new(CheckedNamespaceInterface::from_bytes(bytes, &CheckedNamespaceCrumb)?);
     insert(digest, bytes.len(), Arc::clone(&interface));
@@ -145,6 +185,11 @@ pub(super) fn to_cell(value: Atom) -> Result<Cell, String> {
 }
 
 #[cfg(test)]
+fn restore(bytes: &[u8]) -> Result<Arc<CheckedNamespaceInterface>, String> {
+    restore_digest(bytes, Sha256::digest(bytes).into())
+}
+
+#[cfg(test)]
 mod tests {
     use super::CheckedNamespaceCrumb;
     use incan_frontend::typechecker::{CheckedNamespaceInterface, TypeChecker};
@@ -213,6 +258,11 @@ mod tests {
             .ok_or("missing provider interface")?;
         let codec = CheckedNamespaceCrumb;
         let bytes = original.to_bytes(&codec)?;
+        let selected = super::admit(bytes.clone())?;
+        assert!(selected.belongs_to("domain", &path));
+        assert!(!selected.belongs_to("domain", &["other".into()]));
+        assert!(!selected.belongs_to("other", &path));
+        assert!(super::admit(bytes[..bytes.len() - 1].to_vec()).is_err());
         let restored = CheckedNamespaceInterface::from_bytes(&bytes, &codec)?;
         assert_eq!(restored.to_bytes(&codec)?, bytes);
         assert!(CheckedNamespaceInterface::from_bytes(&bytes[..bytes.len() - 1], &codec).is_err());
@@ -220,7 +270,7 @@ mod tests {
         let mut consumer = TypeChecker::new();
         consumer.set_current_module_path(Some(vec!["app".into()]));
         consumer.register_dependency_module_path_segments("domain", path);
-        consumer.select_dependency_interfaces(vec![restored.installable()?]);
+        consumer.select_dependency_interfaces(vec![selected.installable()?]);
         let source = program(
             "from domain import Order, quantity\n\npub def total(seed: Borrowed[int]) -> int:\n    order = Order(quantity=seed)\n    return quantity(order)\n",
         )?;

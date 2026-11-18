@@ -26,13 +26,33 @@ pub struct GraphBodyRecord {
     pub body_ir: Option<incan_semantics_core::executable_representation::EncodedOwnerRepresentation>,
 }
 
-/// One graph-admitted editable namespace, already decoded through its checked-interface and kernel codecs.
+/// The module identity is needed to select a namespace. Its checked declaration tables are only needed
+/// when a source module imports it. The compiler adapter owns the authenticated encoding in between.
+pub trait GraphNamespaceInterface: std::fmt::Debug + Send + Sync {
+    /// True when the checked root belongs to this collected module, including synthetic module paths.
+    fn belongs_to(&self, name: &str, path: &[String]) -> bool;
+
+    /// Materialize and validate all declarations before another checker observes their lookup tables.
+    fn installable(&self) -> Result<Arc<crate::typechecker::ModuleDependencyInterface>, String>;
+}
+
+impl GraphNamespaceInterface for crate::typechecker::CheckedNamespaceInterface {
+    fn belongs_to(&self, name: &str, path: &[String]) -> bool {
+        self.module_name() == name && self.module_path() == path
+    }
+
+    fn installable(&self) -> Result<Arc<crate::typechecker::ModuleDependencyInterface>, String> {
+        self.installable()
+    }
+}
+
+/// One graph-admitted editable namespace with an admitted declaration surface and kernel-decoded Body IR.
 #[derive(Debug, Clone)]
 pub struct GraphNamespaceRecord {
     /// Project-relative logical source path used by the source-projection record.
     pub source: String,
     /// Authenticated declaration surface. A downstream source check materializes its lookup tables on demand.
-    pub interface: Arc<crate::typechecker::CheckedNamespaceInterface>,
+    pub interface: Arc<dyn GraphNamespaceInterface>,
     /// Exact external declarations the ordinary checker selected for executable dependency resolution.
     pub package_roots: Vec<incan_semantics_core::CanonicalSymbolId>,
     /// Complete checked Body IR contribution used instead of this module's transient

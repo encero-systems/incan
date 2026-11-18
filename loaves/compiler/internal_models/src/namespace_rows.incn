@@ -1,12 +1,14 @@
 """The native frontend's typed checked namespace projection, framed by the public Crumb row codec."""
 
 from rust::std::primitive import f64 as RustF64
+from std.primitives.text import copy_frozen_bytes
 from std.primitives.crumb.hashes import value_hash
 from std.primitives.crumb.values import Projection, IntegerValue, MapEntry, Value, ValueField
 from crumb_rows import operation_budget, required_value
 from callable_schema import CALLABLE_PRODUCT, callable_descriptions
-from namespace_schema import namespace_descriptions, namespace_field_is_canonical, namespace_root
-from plan_wire_rows import read_wire, write_wire
+from graph_crumb_fields import graph_read_budget, items, text
+from namespace_schema import NAMESPACE_SCHEMA, NAMESPACE_MODULE_NAME, NAMESPACE_MODULE_PATH, namespace_descriptions, namespace_field_is_canonical, namespace_root
+from plan_wire_rows import admit_wire, read_wire, write_wire
 
 
 pub model NamespaceField:
@@ -135,6 +137,30 @@ pub def encode_namespace_interface(root: NamespaceAtom) -> Result[bytes, str]:
 
 pub def decode_namespace_interface(encoded: bytes) -> Result[NamespaceAtom, str]:
     return atom(read_wire(encoded, namespace_root(), namespace_descriptions())?)
+
+pub model NamespaceIdentity:
+    pub name: str
+    pub path: list[str]
+
+
+pub def namespace_identity(encoded: bytes, schema: u32) -> Result[NamespaceIdentity, str]:
+    """Read the checked namespace identity without constructing declarations for an unused lookup table."""
+    mut budget = graph_read_budget()?
+    rows = admit_wire(encoded, namespace_descriptions(), budget)?
+    # Only CheckedNamespaceInterface declares module_name in the closed namespace dictionary.
+    name = text(rows.read_field(0, copy_frozen_bytes(NAMESPACE_MODULE_NAME), budget).map_err((error) => error.message())?)?
+    version = rows.read_field(0, copy_frozen_bytes(NAMESPACE_SCHEMA), budget).map_err((error) => error.message())?
+    match version:
+        Value.Integer(IntegerValue.Unsigned(number)) =>
+            if number != schema.saturating_resize[u128]():
+                return Err("unsupported checked namespace schema")
+        _ => return Err("invalid checked namespace schema")
+    segments = items(rows.read_field(0, copy_frozen_bytes(NAMESPACE_MODULE_PATH), budget).map_err((error) => error.message())?)?
+    mut path: list[str] = []
+    for segment in segments:
+        path.append(text(segment)?)
+    return Ok(NamespaceIdentity(name=name, path=path))
+
 
 pub model NamespacePublication:
     """The full installable namespace and its RFC 124 canonical logical-value digest."""

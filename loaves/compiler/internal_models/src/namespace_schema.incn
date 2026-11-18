@@ -1,8 +1,14 @@
 """Crumb descriptions of the compiler-owned editable namespace declaration closure."""
 
+from std.primitives.text import copy_frozen_bytes
 from std.primitives.crumb.descriptions import Description
 from crumb_rows import ModelField, model_description
 from plan_wire_rows import enum_schema, variant_schema
+
+
+pub const NAMESPACE_SCHEMA: bytes = b"\xdf\x0a\xd6\xe4\x38\x80"
+pub const NAMESPACE_MODULE_NAME: bytes = b"\x2c\x96\x84\xb9\x61\xb6"
+pub const NAMESPACE_MODULE_PATH: bytes = b"\x81\x51\x94\x99\x5b\xb8"
 
 
 def shape_access_mode() -> Description:
@@ -300,9 +306,9 @@ def shape_checked_api_metadata() -> Description:
 
 def shape_checked_namespace_interface() -> Description:
     return model_description(b"\x78\xd2\xc9\xd3\x8a\xe9\x00", "checked_namespace.CheckedNamespaceInterface", [
-        ModelField(identity=b"\xdf\x0a\xd6\xe4\x38\x80", name="schema", storage="u32"),
-        ModelField(identity=b"\x2c\x96\x84\xb9\x61\xb6", name="module_name", storage="string"),
-        ModelField(identity=b"\x81\x51\x94\x99\x5b\xb8", name="module_path", storage="list<string>"),
+        ModelField(identity=copy_frozen_bytes(NAMESPACE_SCHEMA), name="schema", storage="u32"),
+        ModelField(identity=copy_frozen_bytes(NAMESPACE_MODULE_NAME), name="module_name", storage="string"),
+        ModelField(identity=copy_frozen_bytes(NAMESPACE_MODULE_PATH), name="module_path", storage="list<string>"),
         ModelField(identity=b"\x14\xc2\x52\x9e\xb4\x49", name="api", storage="record@3ba324839c88"),
         ModelField(identity=b"\x13\xc7\x35\x13\x60\xf0", name="identities", storage="map<string,record@28cdd429f7ec>"),
         ModelField(identity=b"\x17\x37\x3c\xa1\xc7\x63", name="members", storage="map<string,record@6a5290805847>"),

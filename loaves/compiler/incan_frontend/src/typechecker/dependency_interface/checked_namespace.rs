@@ -43,7 +43,8 @@ struct NamespaceMemberIdentities {
 }
 
 impl CheckedNamespaceInterface {
-    const SCHEMA: u32 = 7;
+    /// Schema of the compiler-owned checked declaration root and its identity projection.
+    pub const SCHEMA: u32 = 7;
 
     /// Capture one complete installable public namespace from an accepted editable module.
     ///

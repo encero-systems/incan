@@ -373,7 +373,7 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
         Ok(Some(record))
     }
 
-    /// Read one engine-selected namespace page and decode both compiler-owned payloads before exposing it.
+    /// Read one engine-selected namespace page, admit its declaration root and decode its executable contribution.
     fn read_namespace(
         &self,
         source: &str,
@@ -416,7 +416,7 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
             ));
         }
         let interface_span = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::decode_namespace_interface", module = source, bytes = record.interface.len()).entered();
-        let checked = namespace_crumb::restore(&record.interface)
+        let checked = namespace_crumb::admit(record.interface)
             .map_err(incan_frontend::checker_records::RecordAdapterFault::InvalidField)?;
         drop(interface_span);
         let body_span = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::decode_namespace_body_ir", module = source, bytes = record.body_ir.len()).entered();
