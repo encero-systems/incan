@@ -92,6 +92,38 @@ mod tests {
         let _: fn(&StoreRecordSource, &ReadScope, &RecordRequest) -> RecordRead = StoreRecordSource::read;
     }
 
+    /// A later malformed fallback cannot hide the earlier namespace size diagnostic.
+    #[test]
+    fn namespace_limit_precedes_malformed_fallback() {
+        use super::{CompiledBodyFallback, CompiledBodyOutputs, CompiledNamespaceValue, encode_compiled_body_outputs};
+
+        let limit = 67_108_864;
+        let outputs = CompiledBodyOutputs {
+            namespaces: vec![CompiledNamespaceValue {
+                module: "m".into(),
+                interface: vec![0; limit],
+                body_ir: vec![0],
+                dependencies: vec![],
+                lowering_inputs: vec![],
+            }],
+            values: vec![],
+            fallbacks: vec![CompiledBodyFallback {
+                module: "m".into(),
+                name: "f".into(),
+                identity: None,
+                reason: String::new(),
+            }],
+        };
+        assert_eq!(
+            encode_compiled_body_outputs(&outputs),
+            Err(CodecFault::LimitExceeded(
+                "compiled-output-frame-bytes".into(),
+                limit as i64 + 2,
+                limit as i64
+            ))
+        );
+    }
+
     /// Oven reads exactly eight little-endian bytes before allocating a compiled body frame.
     #[test]
     fn compiled_body_frame_size_keeps_wire_limits() {
