@@ -116,8 +116,7 @@ def measure_subject(bench: Bench, subject: str, archive: Path) -> Result[tuple[i
     replacement = original.replace(before, after)
     trace = root.joinpath("trace")
     store = root.joinpath("store")
-    build(bench, root, target, trace, store, "base")?
-    base = work(trace)?
+    base = sample(bench, root, target, trace, store, "base")?
     mut failures: list[str] = []
     mut required = [edited.0]
     if subject == "oven":
@@ -125,13 +124,12 @@ def measure_subject(bench: Bench, subject: str, archive: Path) -> Result[tuple[i
     if not observed_cold_work(base, required):
         failures.append(f"{subject}: the initial build did not check and build Body IR for {required}")
     save(edited, replacement)?
-    build(bench, root, target, trace, store, "warm")?
+    warm = sample(bench, root, target, trace, store, "warm")?
     warm_digest = digest(binary)?
-    warm = work(trace)?
-    checked = visits_since(warm.checked, base.checked)
-    built = visits_since(warm.body_ir, base.body_ir)
-    check_ns = warm.check_ns - base.check_ns
-    body_ns = warm.body_ir_ns - base.body_ir_ns
+    checked = visits(warm.checked)
+    built = visits(warm.body_ir)
+    check_ns = warm.check_ns
+    body_ns = warm.body_ir_ns
     elapsed = check_ns + body_ns
     save(root.joinpath("warm.tsv"), "check_ns\tbody_ir_ns\tbody_ir_modules\texecutable_sha256\tchecked_modules\n"
         + f"{check_ns}\t{body_ns}\t{', '.join(built)}\t{warm_digest}\t{', '.join(checked)}\n")?
@@ -146,8 +144,7 @@ def measure_subject(bench: Bench, subject: str, archive: Path) -> Result[tuple[i
         _ = run_command("tar", ["-xf", archive.0, "-C", checkout.0])?
     save(edited, replacement)?
     cold_trace = root.joinpath("cold-trace")
-    build(bench, root, target, cold_trace, root.joinpath("cold-store"), "cold")?
-    cold = work(cold_trace)?
+    cold = sample(bench, root, target, cold_trace, root.joinpath("cold-store"), "cold")?
     cold_digest = digest(binary)?
     save(root.joinpath("cold.tsv"), "check_ns\tbody_ir_ns\tchecked_module_count\tbody_ir_module_count\n"
         + f"{cold.check_ns}\t{cold.body_ir_ns}\t{len(cold.checked)}\t{len(cold.body_ir)}\n")?
@@ -207,17 +204,46 @@ def stop_store(oven: Path, store: Path) -> Result[None, str]:
     return Ok(None)
 
 
-def work(trace: Path) -> Result[Work, str]:
+def compiler_traces(trace: Path) -> Result[list[str], str]:
+    """List each compiler process trace, including ones shared by consecutive requests."""
+    return Ok(sorted([file.0 for file in trace.iterdir().map_err((error) => error.message())? if file.name().startswith("engine-compiler-") and file.name().endswith(".jsonl")]))
+
+
+def sample(bench: Bench, root: Path, target: Path, trace: Path, store: Path, label: str) -> Result[Work, str]:
+    """Save the byte offset of each active worker before submitting the build."""
+    trace.mkdir(true, true).map_err((error) => error.message())?
+    mut offsets: Dict[str, int] = {}
+    mut boundaries = ["compiler_trace\tstart_byte"]
+    for path in compiler_traces(trace)?:
+        size = Path(path).stat().map_err((error) => error.message())?.size().map_err((error) => error.message())?
+        offsets[path] = size
+        boundaries.append(f"{path}\t{size}")
+    save(root.joinpath(label + ".trace-offsets.tsv"), "\n".join(boundaries) + "\n")?
+    build(bench, root, target, trace, store, label)?
+    return work(trace, offsets)
+
+
+def work(trace: Path, offsets: Dict[str, int]) -> Result[Work, str]:
     """Pair stage boundaries in each compiler process, excluding nested per-body work from the elapsed sums."""
     mut result = Work()
-    for path in sorted([file.0 for file in trace.iterdir().map_err((error) => error.message())?]):
+    files = compiler_traces(trace)?
+    for path in offsets.keys():
+        if path not in files:
+            return Err(f"compiler trace disappeared: {path}")
+    for path in files:
         file = Path(path)
-        if not file.name().startswith("engine-compiler-") or not file.name().endswith(".jsonl"):
+        offset = offsets.get(path, 0)
+        end = file.stat().map_err((error) => error.message())?.size().map_err((error) => error.message())?
+        if offset > end:
+            return Err(f"compiler trace shortened: {path}")
+        if offset == end:
             continue
+        reader = file.open("r").map_err((error) => error.message())?
+        _ = reader.seek(offset, 0).map_err((error) => error.message())?
         mut starts: Dict[str, int] = {}
         mut checking: set[str] = set()
         mut completed: set[str] = set()
-        for line in file.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
+        for line in reader.read(-1).map_err((error) => error.message())?.split("\n"):
             if "\"kind\":\"begin\"" in line and ("\"incan_driver::typecheck_modules\"" in line or "\"incan_rustc_driver::build_body_ir\"" in line):
                 row = parse(line).map_err((error) => error.message())?
                 id = text(row, "id")?
@@ -263,11 +289,11 @@ def observed_cold_work(sample: Work, required: list[str]) -> bool:
     return true
 
 
-def visits_since(current: Dict[str, int], previous: Dict[str, int]) -> list[str]:
-    """List the path of each actual checker or Body IR entry added by the warm invocation."""
+def visits(current: Dict[str, int]) -> list[str]:
+    """List every actual entry in this request, retaining repeated visits."""
     mut visited: list[str] = []
     for module in sorted([name for name in current.keys()]):
-        for _visit in range(current[module] - previous.get(module, 0)):
+        for _visit in range(current[module]):
             visited.append(module)
     return visited
 
