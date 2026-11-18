@@ -9,6 +9,7 @@ from pub::incan_mir_plan import (
     Local,
     PlanType,
     ProductNominal,
+    NominalReference,
     SourceSpan,
     Terminator,
     TerminatorKind,
@@ -75,16 +76,19 @@ pub def test_finalization_matches_every_carried_frame_before_reusing_capture() -
     frame = positioned("helper", owner, 11, 12)
     nodes = [(0, 1), (1, 5), (2, 5)]
     inputs = record_scalar_inputs("meaning", function.name, owner, false, "reads", len(nodes))
-    retain_scalar(directory.0, inputs, function, [], [], nodes, [frame])?
+    runtime: list[ExternalFunction] = []
+    nominals: list[ProductNominal] = []
+    references: list[NominalReference] = []
+    retain_scalar(directory.0, inputs, function, runtime, nominals, nodes, [frame])?
     for path in directory.iterdir().map_err((error) => error.message())?:
         if path.name().endswith(".incnfunction"):
             captured = path.read_bytes().map_err((error) => error.message())?
             key = path.stem()
-            exact, _positions = finalize_scalar(directory.0, key, function, false, [], nodes, [frame], captured)?
+            exact, _positions = finalize_scalar(directory.0, key, function, false, references, nodes, [frame], captured)?
             assert exact == captured
             changed = positioned("helper", owner, 12, 11)
-            assert finalize_scalar(directory.0, key, function, true, [], nodes, [changed], captured).is_err()
-            replaced, _positions = finalize_scalar(directory.0, key, function, false, [], nodes, [changed], captured)?
+            assert finalize_scalar(directory.0, key, function, true, references, nodes, [changed], captured).is_err()
+            replaced, _new_positions = finalize_scalar(directory.0, key, function, false, references, nodes, [changed], captured)?
             assert replaced != captured
             assert path.read_bytes().map_err((error) => error.message())? == replaced
             return Ok(None)
