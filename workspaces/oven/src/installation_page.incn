@@ -24,7 +24,7 @@ from files import json_text
 from unit_publication import published_identity
 from rust_target import compiler_version, deployment_target
 from sealed_set import Profile, Record, SetSpec, admit, export_set, mapped_value, selected_value
-from pub::incan_platform.store import Snapshot, begin, commit, get, lease, put
+from pub::incan_platform.store import Snapshot, begin, commit, delete, get, lease, put
 from store_path_conversion import claim, snapshot
 from toolchain_types import NativeCrate, Toolchain
 from installation_documents import capture as capture_documents
@@ -198,10 +198,30 @@ pub def retain(
     return retain_generation(directory, producer, prepared, false)
 
 
-pub def readmit(directory: Path, producer: (Path) -> Result[Toolchain, str]) -> Result[Installation, str]:
+pub def readmit(
+    directory: Path,
+    producer: (Path) -> Result[Toolchain, str],
+    prepared: Option[Tuple[Toolchain, str]] = None,
+) -> Result[Installation, str]:
     """Explicitly replace a build installation's admitted page after its owner changed that installation."""
     SCOPE.forget()
-    return retain_generation(directory, producer, None, true)
+    return retain_generation(directory, producer, prepared, true)
+
+
+pub def restore_selection(directory: Path, previous: Option[str]) -> Result[None, str]:
+    """Restore the catalog binding saved before an archive install, after restoring the physical directory."""
+    SCOPE.forget()
+    clear_documents()
+    store = installation_catalog()?
+    key = question(directory)
+    held = claim(store, key).map_err((error) => error.message())?
+    view = snapshot(store).map_err((error) => error.message())?
+    selection = binding(key)
+    transaction = match previous:
+        None => delete(begin(view), selection)
+        Some(digest) => put(begin(view), selection, encode_binding(selection, digest)?)
+    commit(transaction).map_err((error) => error.message())?
+    return Ok(None)
 
 
 def retain_generation(

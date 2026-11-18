@@ -52,6 +52,7 @@ from apple_sdk import selected_sdk
 from std.environ import get_or
 from jec import begin, record
 from installation_codec import Installation
+from frozen_inputs import clear as clear_frozen_inputs
 from installation_page import (
     readmit as readmit_installation_page,
     recall as recall_installation,
@@ -80,6 +81,7 @@ pub def prepare_installation(directory: Path) -> Result[tuple[Toolchain, Install
 
 pub def finish_installation(directory: Path, admission: InstallationAdmission) -> Result[None, str]:
     """Bind the same verified generations at their final location and record completed installation admission."""
+    clear_frozen_inputs()
     for relative, payload in admission.payloads:
         relocate_payload(directory.joinpath(relative), payload)?
     for relative, fact in admission.facts:
@@ -88,7 +90,7 @@ pub def finish_installation(directory: Path, admission: InstallationAdmission) -
     toolchain, _ = parsed_toolchain(directory)?
     # The machine-local sysroot exists only after installation has selected and bound it.
     admit_compiler_facts(toolchain)?
-    retain_installation(directory, read_toolchain, Some((toolchain, generation)))?
+    readmit_installation_page(directory, read_toolchain, Some((toolchain, generation)))?
     retire_legacy_admission(directory)?
     return Ok(None)
 
