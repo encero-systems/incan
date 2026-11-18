@@ -185,3 +185,22 @@ def test_metadata_key_order_and_list_order_have_different_meanings() -> Result[N
     second = description_hash(Metadata.List([b.value, a.value]), budget).map_err((e) => e.message())?
     assert first.digest != second.digest
     return Ok(None)
+
+
+def test_ordered_map_hash_keeps_work_linear_and_preserves_the_digest() -> Result[None, str]:
+    """A compiler's already ordered nominal scope stays inside a bounded element allowance."""
+    mut entries: list[MapEntry] = []
+    for index in range(2048):
+        name = "workspace::compiler::nominal_scope::" + str(10000000 + index)
+        entries.append(MapEntry(key=Value.Text(name), value=Value.Boolean(true)))
+    mut ordered = Budget.create(bytes=8388608, elements=900000, depth=64).map_err((error) => error.message())?
+    canonical = value_hash(Value.Map(entries), Projection.Canonical, ordered).map_err((error) => error.message())?
+
+    # A different insertion order must take the general ordering path and produce the same logical digest.
+    mut reverse: list[MapEntry] = []
+    for index in range(len(entries)):
+        reverse.append(entries[len(entries) - index - 1])
+    mut general = Budget.create(bytes=8388608, elements=8388608, depth=64).map_err((error) => error.message())?
+    permuted = value_hash(Value.Map(reverse), Projection.Canonical, general).map_err((error) => error.message())?
+    assert canonical.digest == permuted.digest
+    return Ok(None)
