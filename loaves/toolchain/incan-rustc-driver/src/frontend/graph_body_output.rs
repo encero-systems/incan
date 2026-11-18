@@ -152,11 +152,13 @@ impl GraphBodyOutput {
             checker,
         )? {
             let published = super::namespace_crumb::publish(&interface)?;
+            let member_owners = interface.lowering_member_owners();
+            super::namespace_crumb::remember_published(&published.interface, interface);
             self.namespaces.push(PendingNamespaceValue {
                 module: module_path.clone(),
                 interface: published.interface,
                 semantic_interface: published.semantic_interface,
-                member_owners: interface.lowering_member_owners(),
+                member_owners,
                 member_witnesses: Vec::new(),
                 body_ir: Vec::new(),
                 dependencies: dependencies.to_vec(),

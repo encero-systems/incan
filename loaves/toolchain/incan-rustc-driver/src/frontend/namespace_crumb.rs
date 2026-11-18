@@ -1,7 +1,11 @@
 //! Bind frontend declaration values to the Incan Crumb codec at the existing compiler graph boundary.
 
-use incan_frontend::typechecker::{NamespaceCell as Cell, NamespaceCrumb};
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock, Mutex};
+
+use incan_frontend::typechecker::{CheckedNamespaceInterface, NamespaceCell as Cell, NamespaceCrumb};
 use internal_models::{NamespaceAtom as Atom, NamespaceEntry, NamespaceField};
+use sha2::{Digest, Sha256};
 
 pub(super) struct CheckedNamespaceCrumb;
 
@@ -9,6 +13,54 @@ pub(super) fn publish(
     interface: &incan_frontend::typechecker::CheckedNamespaceInterface,
 ) -> Result<internal_models::NamespacePublication, String> {
     internal_models::publish_namespace_interface(&to_atom(interface.wire_value()?))
+}
+
+/// Resident builds can consume the same physical namespace the compiler just published. Its full Crumb
+/// digest includes documentation and positions as well as the semantic projection.
+#[derive(Default)]
+struct PublishedInterfaces {
+    entries: HashMap<[u8; 32], Arc<CheckedNamespaceInterface>>,
+    wire_bytes: usize,
+}
+
+const MAX_WIRE_BYTES: usize = 96 * 1024 * 1024;
+const MAX_INTERFACES: usize = 512;
+static PUBLISHED: LazyLock<Mutex<PublishedInterfaces>> = LazyLock::new(Mutex::default);
+
+fn insert(digest: [u8; 32], size: usize, interface: Arc<CheckedNamespaceInterface>) {
+    if size > MAX_WIRE_BYTES {
+        return;
+    }
+    let Ok(mut cache) = PUBLISHED.lock() else {
+        return;
+    };
+    if cache.entries.contains_key(&digest) {
+        return;
+    }
+    if cache.entries.len() >= MAX_INTERFACES || cache.wire_bytes + size > MAX_WIRE_BYTES {
+        cache.entries.clear();
+        cache.wire_bytes = 0;
+    }
+    cache.entries.insert(digest, interface);
+    cache.wire_bytes += size;
+}
+
+/// The successful publication consumed this validated interface and produced these exact bytes.
+pub(super) fn remember_published(bytes: &[u8], interface: CheckedNamespaceInterface) {
+    insert(Sha256::digest(bytes).into(), bytes.len(), Arc::new(interface));
+}
+
+/// A fresh worker, eviction or any byte change takes the ordinary authenticated Crumb reader.
+pub(super) fn restore(bytes: &[u8]) -> Result<Arc<CheckedNamespaceInterface>, String> {
+    let digest = Sha256::digest(bytes).into();
+    if let Ok(cache) = PUBLISHED.lock()
+        && let Some(hit) = cache.entries.get(&digest)
+    {
+        return Ok(Arc::clone(hit));
+    }
+    let interface = Arc::new(CheckedNamespaceInterface::from_bytes(bytes, &CheckedNamespaceCrumb)?);
+    insert(digest, bytes.len(), Arc::clone(&interface));
+    Ok(interface)
 }
 
 impl NamespaceCrumb for CheckedNamespaceCrumb {
@@ -121,7 +173,9 @@ mod tests {
             let value = CheckedNamespaceInterface::from_checked("domain", &path, &provider, &checker)?
                 .ok_or("missing checked namespace")?;
             let owners = value.lowering_member_owners().into_values().collect();
-            Ok((super::publish(&value)?, owners))
+            let publication = super::publish(&value)?;
+            super::remember_published(&publication.interface, value);
+            Ok((publication, owners))
         }
         let (before, before_owners) = publication("Blue doc.", "int", "24")?;
         let (moved, moved_owners) = publication("A longer documentation string for hover.", "int", "24")?;
@@ -132,8 +186,13 @@ mod tests {
         assert_eq!(before.semantic_interface.len(), 32);
         assert_eq!(before_owners.len(), 1);
         assert_eq!(before_owners, moved_owners);
-        let restored = CheckedNamespaceInterface::from_bytes(&moved.interface, &CheckedNamespaceCrumb)?;
-        assert_eq!(restored.to_bytes(&CheckedNamespaceCrumb)?, moved.interface);
+        let original = super::restore(&before.interface)?;
+        let moved_value = super::restore(&moved.interface)?;
+        assert!(!std::sync::Arc::ptr_eq(&original, &moved_value));
+        assert_eq!(original.to_bytes(&CheckedNamespaceCrumb)?, before.interface);
+        assert_eq!(moved_value.to_bytes(&CheckedNamespaceCrumb)?, moved.interface);
+        assert!(std::sync::Arc::ptr_eq(&moved_value, &super::restore(&moved.interface)?));
+        assert!(super::restore(&moved.interface[..moved.interface.len() - 1]).is_err());
         Ok(())
     }
 
