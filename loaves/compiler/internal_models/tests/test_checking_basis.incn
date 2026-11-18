@@ -2,8 +2,8 @@
 
 from std.encoding.hex import hexlify
 from std.hash import sha256
-from pub::internal_models.namespace_order import checking_basis_key, encode_checking_basis, read_checking_basis
-from pub::internal_models.records import RecordKey
+from namespace_order import checking_basis_key, encode_checking_basis, read_checking_basis
+from records import RecordKey
 
 
 pub def test_checking_basis_requires_the_matching_output_and_digest() -> Result[None, str]:

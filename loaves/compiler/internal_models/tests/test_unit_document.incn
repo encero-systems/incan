@@ -1,7 +1,7 @@
 """Check the compiler unit's closed field layout, nested C/Loaf inputs and strict option decoding."""
 
 from std.json import JsonValue, parse
-from pub::internal_models import decode_unit_document, encode_unit_document
+from unit_document import decode_unit_document, encode_unit_document
 
 
 pub def test_unit_document() -> Result[None, str]:

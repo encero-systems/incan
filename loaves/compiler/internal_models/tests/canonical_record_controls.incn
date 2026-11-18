@@ -36,7 +36,7 @@ from compiled_body_rows import (
     decode_compiled_body_row,
     encode_compiled_body_rows,
 )
-from pub::internal_models.namespace_proof import encode_namespace_proof
+from namespace_proof import encode_namespace_proof
 from std.hash import sha256
 from crumb_rows import ModelField, decode_rows, encode_rows, model_description, required_value
 from std.primitives.crumb.records import RowRecord

@@ -2,7 +2,7 @@
 
 from std.hash import sha256
 from std.io import BytesIO
-from pub::internal_models import (
+from manifest_cache import (
     ManifestInventory, decode_manifest_cache, decode_manifest_inventory, encode_manifest_cache, encode_manifest_inventory,
 )
 
