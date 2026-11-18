@@ -91,6 +91,11 @@ pub def test_finalization_matches_every_carried_frame_before_reusing_capture() -
         if path.name().endswith(".incnfunction"):
             captured = path.read_bytes().map_err((error) => error.message())?
             key = path.stem()
+            mut names: list[str] = []
+            product = decode_plan_function_record(captured)?.function
+            placed = positioned_product(product, nodes, "positions.incn", 10, names)?
+            assert names == ["helper"]
+            assert placed == positioned_product(product, nodes, "positions.incn", 10)?
             exact, _positions = finalize_scalar(directory.0, key, function, false, references, nodes, [frame], captured)?
             assert exact == captured
             changed = positioned("helper", owner, 12, 11)

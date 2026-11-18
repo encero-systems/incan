@@ -115,6 +115,12 @@ def keyed_plan_products(
         else:
             event_index[name] = index
     mut keyed: list[bytes] = []
+    mut function_indexes: Dict[str, int] = {}
+    for index in range(len(plan.functions)):
+        name = plan.functions[index].name
+        if not function_indexes.contains_key(name):
+            function_indexes[name] = index
+    base = carrier_base(plan)
     for function in plan.functions:
         if function.name not in event_index:
             continue
@@ -122,14 +128,20 @@ def keyed_plan_products(
         if index < 0:
             return Err(f"native-interface has an ambiguous plan-function member {function.name}")
         mut event = events[index]
-        resolved = plan_positions(plan, event_references(event)?)?
+        resolved = plan_positions(plan, base, event_references(event)?)?
         nodes = event_positions(event)
-        frames = carried_frames(plan, event.product, carried)?
         if event.admitted:
             product = decode_plan_function_record(event.product)?.function
-            keyed.append(positioned_product(product, nodes, str(function.span.file), function.span.line)?)
+            mut names: list[str] = []
+            positioned = positioned_product(product, nodes, str(function.span.file), function.span.line, names)?
+            for name in names:
+                if not function_indexes.contains_key(name):
+                    return Err(f"plan-function frame {name} is missing from the whole-program plan")
+                carried.append(name)
+            keyed.append(positioned)
             references.append(resolved)
             continue
+        frames = carried_frames(plan, function_indexes, event.product, carried)?
         final_record, final_positions, positioned = finalized_plan_product(
             products, event.key, function, event.reused, resolved, nodes, frames, event.product,
         )?
@@ -177,24 +189,19 @@ def write(path: Path, value: bytes) -> Result[None, str]:
     return path.write_bytes(value).map_err((error) => error.message())
 
 
-def carried_frames(plan: &Plan, record: bytes, mut carried: list[str]) -> Result[list[Function], str]:
+def carried_frames(plan: &Plan, function_indexes: &Dict[str, int], record: bytes, mut carried: list[str]) -> Result[list[Function], str]:
     """Select, in a product's order, the whole-plan helper frames it carries, and record their names."""
     payload = decode_plan_function_record(record)?.function
     mut frames: list[Function] = []
     for name in product_frame_names(payload)?:
-        mut found = false
-        for function in plan.functions:
-            if function.name == name:
-                frames.append(function)
-                found = true
-                break
-        if not found:
+        if not function_indexes.contains_key(name):
             return Err(f"plan-function frame {name} is missing from the whole-program plan")
+        frames.append(plan.functions[function_indexes[name]])
         carried.append(name)
     return Ok(frames)
 
 
-def plan_positions(plan: &Plan, references: list[NominalReference]) -> Result[list[NominalReference], str]:
+def carrier_base(plan: &Plan) -> int:
     """
     Name each carrier a product reported at its lowering position by its place in the published plan.
 
@@ -206,6 +213,11 @@ def plan_positions(plan: &Plan, references: list[NominalReference]) -> Result[li
         if plan.enums[index].semantic_key is not None:
             base = index
             break
+    return base
+
+
+def plan_positions(plan: &Plan, base: int, references: list[NominalReference]) -> Result[list[NominalReference], str]:
+    """Resolve product-local carrier ordinals against the whole unit's declared table."""
     mut placed: list[NominalReference] = []
     for reference in references:
         if reference.kind != NominalKind.Enum or not is_carrier_index(reference.index):

@@ -503,20 +503,34 @@ def decode_product_record(encoded: bytes) -> Result[StoredProduct, str]:
     return read_wire_stored_product(read_wire(encoded, b"G\xc7\x7f$\xca!\x00", stored_product_descriptions())?, WirePositions())
 
 
-pub def transform_product_positions(encoded: bytes, positions: WirePositions) -> Result[bytes, str]:
+def product_root_span(value: Value, positions: &WirePositions) -> Result[StoredSpan, str]:
+    """Read only the declaration span needed to place a product. The subsequent full read validates every frame."""
+    if let Value.Record(product) = value:
+        if len(product) == 5:
+            if let Value.Record(function) = product[2].value:
+                if len(function) == 10:
+                    return read_wire_stored_span(function[2].value, positions)
+    return Err("native product has no declaration span")
+
+
+pub def transform_product_positions(encoded: bytes, positions: WirePositions, mut frame_names: list[str] = []) -> Result[bytes, str]:
     """Rebuild only native span positions while retaining every other typed field and all helper frames."""
     schema = stored_product_descriptions()
     value = read_wire(encoded, b"G\xc7\x7f$\xca!\x00", schema)?
     mut mapping = positions
     match mapping.change:
         PositionChange.Relocate(_, _, file, line) =>
-            root = read_wire_stored_product(value, WirePositions())?.function.span
+            root = product_root_span(value, WirePositions())?
             mapping.change = PositionChange.Relocate(root.file, root.line, file, line)
         PositionChange.PlaceAt(nodes, _, _, file, line) =>
-            root = read_wire_stored_product(value, WirePositions(change=PositionChange.Place(nodes)))?.function.span
+            root = product_root_span(value, WirePositions(change=PositionChange.Place(nodes)))?
             mapping.change = PositionChange.PlaceAt(nodes, root.file, root.line, file, line)
         _ => pass
     stored = read_wire_stored_product(value, mapping)?
+    if stored.schema != 7:
+        return Err("unknown native product schema")
+    for frame in stored.frames:
+        frame_names.append(str(frame.name))
     return write_wire(b"G\xc7\x7f$\xca!\x00", schema, wire_stored_product(stored))
 
 

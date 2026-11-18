@@ -31,6 +31,6 @@ pub def place_positions(encoded: bytes, positions: &list[tuple[int, int]]) -> Re
 
 
 
-pub def positioned_product(encoded: bytes, positions: &list[tuple[int, int]], file: str, line: int) -> Result[bytes, str]:
+pub def positioned_product(encoded: bytes, positions: &list[tuple[int, int]], file: str, line: int, mut frame_names: list[str] = []) -> Result[bytes, str]:
     """Place the Body IR ordinals and relocate the declaration after admitting its stored schema once."""
-    return transform_product_positions(encoded, WirePositions(change=PositionChange.PlaceAt(list(positions), "", 0, file, line)))
+    return transform_product_positions(encoded, WirePositions(change=PositionChange.PlaceAt(list(positions), "", 0, file, line)), frame_names)
