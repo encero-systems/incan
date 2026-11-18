@@ -51,6 +51,7 @@ def verify_published_installation(scratch: Path, original: Path) -> Result[None,
             assert pin.directory == fingerprint_page(b"pages") + ":0:128:" + fingerprint_page(b"page")
     assert installed.worker_protocol_crumb
     assert installed.unit_descriptor_crumb
+    assert installed.compiler_record_export_crumb
     assert installed.checked_body_counts_crumb
     assert installed.search_index_crumb
     assert installed.codegraph_on_request
@@ -76,7 +77,7 @@ def write_installation(stage: Path, original: Path, compiler: str, producer: str
     write(stage.joinpath("registry/closure.json"), "{\"externs\":{}}")?
     write(
         stage.joinpath("toolchain.json"),
-        "{\"schema\":\"incan.toolchain/1\",\"driver\":\"driver\",\"sysroot\":\"sysroot\"," + "\"rust_abi\":[\"std.rustabi\"],\"externs\":[{\"name\":\"runtime\",\"path\":\"library.rlib\"}]," + "\"search\":[],\"registry_units\":\"registry/closure.json\",\"codegraph_on_request\":true,\"search_index_crumb\":true,\"worker_protocol_crumb\":true,\"unit_descriptor_crumb\":true,\"checked_body_counts_crumb\":true,\"compiler_records\":{\"root\":\"records\",\"digest\":\"" + fingerprint_page(b"sealed") + "\",\"directory\":\"" + fingerprint_page(b"pages") + ":0:128:" + fingerprint_page(b"page") + "\"}}",
+        "{\"schema\":\"incan.toolchain/1\",\"driver\":\"driver\",\"sysroot\":\"sysroot\"," + "\"rust_abi\":[\"std.rustabi\"],\"externs\":[{\"name\":\"runtime\",\"path\":\"library.rlib\"}]," + "\"search\":[],\"registry_units\":\"registry/closure.json\",\"codegraph_on_request\":true,\"search_index_crumb\":true,\"worker_protocol_crumb\":true,\"unit_descriptor_crumb\":true,\"compiler_record_export_crumb\":true,\"checked_body_counts_crumb\":true,\"compiler_records\":{\"root\":\"records\",\"digest\":\"" + fingerprint_page(b"sealed") + "\",\"directory\":\"" + fingerprint_page(b"pages") + ":0:128:" + fingerprint_page(b"page") + "\"}}",
     )?
     return Ok(None)
 
@@ -143,6 +144,7 @@ def verify_installation_page(directory: Path) -> Result[None, str]:
             decoded = decode_installation(view)?
             assert decoded.toolchain.worker_protocol_crumb
             assert decoded.toolchain.unit_descriptor_crumb
+            assert decoded.toolchain.compiler_record_export_crumb
             assert decoded.toolchain.checked_body_counts_crumb
             assert decoded.toolchain.search_index_crumb
             assert encode_installation(decoded)? == encoded

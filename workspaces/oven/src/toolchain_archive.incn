@@ -164,7 +164,7 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
     # The standard Loaves' compiler records ship sealed and admitted, in the store's own format, so installing the
     # archive converts and copies nothing. The set holds the records of the Loaves the stage ships and no others.
     manifests = stage.parent().joinpath(f"{stage.name()}-manifests")
-    sealed = sealed_records(toolchain.driver, stage, manifests)
+    sealed = sealed_records(toolchain.driver, stage, manifests, toolchain.compiler_record_export_crumb)
     if manifests.is_dir():
         remove_dir_all(manifests.0).map_err((error) => f"cannot remove staged manifests {manifests.0}: {error}")?
     records = sealed?
@@ -189,6 +189,8 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
         description = replaced(description, "worker_protocol_crumb", JsonValue.bool(true))?
     if toolchain.unit_descriptor_crumb:
         description = replaced(description, "unit_descriptor_crumb", JsonValue.bool(true))?
+    if toolchain.compiler_record_export_crumb:
+        description = replaced(description, "compiler_record_export_crumb", JsonValue.bool(true))?
     write_json(stage.joinpath("toolchain.json"), description)?
     # The release signer the installation carries travels inside the archive (DD-0016).
     _ = ship(directory, stage)?
@@ -196,10 +198,10 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
     return archive(stage, output)
 
 
-def sealed_records(driver: str, stage: Path, manifests: Path) -> Result[CompilerRecordPin, str]:
+def sealed_records(driver: str, stage: Path, manifests: Path, typed: bool) -> Result[CompilerRecordPin, str]:
     """Seal the compiler records of the staged Loaves into the stage, exporting them from a view of their manifests."""
     shipped_manifests(stage, manifests)?
-    return convert(driver, manifests, stage)
+    return convert(driver, manifests, stage, typed)
 
 
 pub def shipped_manifests(stage: Path, view: Path) -> Result[None, str]:
@@ -887,7 +889,7 @@ def install_staged(archive: Path, plain: Path, stage: Path, target: Path) -> Res
         (error) => f"cannot verify compiler {toolchain.driver} against Rust sysroot {toolchain.sysroot}: {error}",
     )?
     # A sealed set the archive ships is verified in place; only an archive without one has its records converted.
-    pin = installed_records(toolchain.driver, stage, shipped_pin(document)?)?
+    pin = installed_records(toolchain.driver, stage, shipped_pin(document)?, toolchain.compiler_record_export_crumb)?
     document = read_json(stage.joinpath("toolchain.json"))?
     document = replaced(document, "compiler_records", pin.to_json())?
     write_json(stage.joinpath("toolchain.json"), document)?
