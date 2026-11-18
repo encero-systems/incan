@@ -36,6 +36,7 @@ pub struct CompilationAnalysis {
     type_info_by_module_path: BTreeMap<Vec<String>, Arc<TypeCheckInfo>>,
     semantic_snapshots_by_path: BTreeMap<PathBuf, incan_semantics_core::SemanticModuleSnapshot>,
     pub(crate) namespace_body_by_path: BTreeMap<PathBuf, Arc<incan_semantics_core::body_ir::BodyIrModule>>,
+    pub(crate) namespace_package_roots: BTreeSet<incan_semantics_core::CanonicalSymbolId>,
     namespace_lowering_inputs: Vec<(incan_semantics_core::CompilerNodeId, String)>,
 }
 
@@ -332,6 +333,7 @@ impl CompilationSession {
             semantic_snapshots_by_path,
             namespace_body_by_path,
             namespace_lowering_inputs,
+            namespace_package_roots: checked.namespace_package_roots,
         })
     }
 

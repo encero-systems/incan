@@ -459,9 +459,23 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
             };
             lowering_inputs.push((id.clone(), witness));
         }
+        let mut package_roots = Vec::with_capacity(record.package_roots.len());
+        for encoded in record.package_roots {
+            let identity = incan_semantics_core::decode_incan_symbol_identity(&encoded)
+                .ok()
+                .flatten()
+                .filter(|identity| matches!(identity.origin, SymbolOrigin::Package { .. }))
+                .ok_or_else(|| {
+                    incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                        "graph namespace has an invalid package declaration root".into(),
+                    )
+                })?;
+            package_roots.push(identity);
+        }
         Ok(Some(incan_frontend::checker_records::GraphNamespaceRecord {
             source: record.module,
             interface: checked,
+            package_roots,
             body_ir,
             lowering_inputs,
         }))

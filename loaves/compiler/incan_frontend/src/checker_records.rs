@@ -33,6 +33,8 @@ pub struct GraphNamespaceRecord {
     pub source: String,
     /// Authenticated declaration surface. A downstream source check materializes its lookup tables on demand.
     pub interface: Arc<crate::typechecker::CheckedNamespaceInterface>,
+    /// Exact external declarations the ordinary checker selected for executable dependency resolution.
+    pub package_roots: Vec<incan_semantics_core::CanonicalSymbolId>,
     /// Complete checked Body IR contribution used instead of this module's transient
     /// [`crate::typechecker::TypeCheckInfo`].
     pub body_ir: incan_semantics_core::body_ir::BodyIrModule,

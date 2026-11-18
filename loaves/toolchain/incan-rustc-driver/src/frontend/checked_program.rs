@@ -356,7 +356,7 @@ pub(super) fn checked_modules(
                         .collect::<Vec<_>>();
                     dependencies.sort();
                     dependencies.dedup();
-                    graph_body_output.observe(module, checker, &dependencies);
+                    graph_body_output.observe(module, checker, &dependencies, package_identity);
                 }
                 if let Some(publication) = publication.as_mut() {
                     publication.visit(module, checker, module.file_path == path);

@@ -30,6 +30,8 @@ pub struct TypecheckedModules {
     pub type_infos: Vec<TypeCheckInfo>,
     /// Whole-module Body IR selected with an installable namespace interface, aligned with `type_infos`.
     pub namespace_bodies: Vec<Option<incan_semantics_core::body_ir::BodyIrModule>>,
+    /// External package declarations witnessed by restored modules before their type facts were released.
+    pub namespace_package_roots: std::collections::BTreeSet<incan_semantics_core::CanonicalSymbolId>,
     /// Lowering witnesses carried by the complete namespace records admitted in this pass.
     pub namespace_lowering_inputs: Vec<(incan_semantics_core::CompilerNodeId, String)>,
     /// Non-fatal parser and typechecker diagnostics, for reports that expose them.
@@ -78,6 +80,7 @@ pub fn typecheck_modules(
     let mut warnings_out = Vec::new();
     let mut type_infos = Vec::with_capacity(modules.len());
     let mut namespace_bodies = Vec::with_capacity(modules.len());
+    let mut namespace_package_roots = std::collections::BTreeSet::new();
     let mut namespace_lowering_inputs = Vec::new();
     let mut dependency_interfaces = vec![None::<Arc<ModuleDependencyInterface>>; modules.len()];
     let cycle_peers = imports.cycle_peers();
@@ -176,6 +179,7 @@ pub fn typecheck_modules(
             type_infos.push(TypeCheckInfo::default());
             namespace_bodies.push(Some(record.body_ir));
             namespace_lowering_inputs.extend(record.lowering_inputs);
+            namespace_package_roots.extend(record.package_roots);
             continue;
         }
         let deps_for_module = dep_indexes
@@ -321,6 +325,7 @@ pub fn typecheck_modules(
             type_infos,
             namespace_bodies,
             namespace_lowering_inputs,
+            namespace_package_roots,
             warnings: warnings_out,
         })
     } else {

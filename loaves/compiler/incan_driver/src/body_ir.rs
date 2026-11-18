@@ -449,18 +449,35 @@ pub fn required_loaf_identities(
     analysis: &CompilationAnalysis,
     package_identity: &str,
 ) -> Result<BTreeSet<CanonicalSymbolId>, String> {
-    let infos = modules
+    let checked = modules
         .iter()
         .map(|module| {
-            analysis
+            let info = analysis
                 .type_info_for_path(&module.file_path)
-                .ok_or("module analysis is missing")
+                .ok_or("module analysis is missing")?;
+            Ok::<_, String>((module.path_segments.as_slice(), info))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let facts = modules
+    let mut requested = checked_package_roots(&checked, package_identity);
+    for identity in &analysis.namespace_package_roots {
+        if !matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library != package_identity) {
+            return Err("restored namespace supplied a non-dependency package root".into());
+        }
+        requested.insert(identity.clone());
+    }
+    Ok(requested)
+}
+
+/// Project the checked roots before a namespace discards its transient type information. Publication
+/// and ordinary dependency resolution use the same semantic facts and compiler-specific requirements.
+pub fn checked_package_roots(
+    checked: &[(&[String], &TypeCheckInfo)],
+    package_identity: &str,
+) -> BTreeSet<CanonicalSymbolId> {
+    let infos = checked.iter().map(|(_, info)| *info).collect::<Vec<_>>();
+    let facts = checked
         .iter()
-        .zip(&infos)
-        .map(|(module, info)| info.semantic_fact_store(&module.path_segments))
+        .map(|(path, info)| info.semantic_fact_store(path))
         .collect::<Vec<_>>();
     let roots = infos.iter().copied().flat_map(|info| {
         info.declarations
@@ -469,7 +486,7 @@ pub fn required_loaf_identities(
             .chain(info.declarations.member_declaration_identities.values())
             .cloned()
     });
-    let requested = incan_semantics_core::dependencies::CheckedDependencyGraph::from_fact_stores(&facts)
+    incan_semantics_core::dependencies::CheckedDependencyGraph::from_fact_stores(&facts)
         .reachable_from(roots)
         .into_iter()
         .chain(
@@ -522,8 +539,7 @@ pub fn required_loaf_identities(
         .filter(
             |identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library != package_identity),
         )
-        .collect();
-    Ok(requested)
+        .collect()
 }
 
 /// Read the authenticated dependency closure and its reached package identities, allowing only exact checked

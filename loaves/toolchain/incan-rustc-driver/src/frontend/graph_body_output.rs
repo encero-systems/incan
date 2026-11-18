@@ -33,6 +33,7 @@ struct PendingNamespaceValue {
     module: String,
     interface: Vec<u8>,
     semantic_interface: Vec<u8>,
+    package_roots: Vec<String>,
     member_owners: std::collections::BTreeMap<incan_semantics_core::CanonicalSymbolId, String>,
     member_witnesses: Vec<Vec<String>>,
     body_ir: Vec<u8>,
@@ -125,11 +126,17 @@ impl GraphBodyOutput {
     }
 
     /// Capture only values already emitted by all three producer boundaries for this checked module.
-    pub(super) fn observe(&mut self, module: &ParsedModule, checker: &TypeChecker, dependencies: &[String]) {
+    pub(super) fn observe(
+        &mut self,
+        module: &ParsedModule,
+        checker: &TypeChecker,
+        dependencies: &[String],
+        package_identity: &str,
+    ) {
         if self.path.is_none() || self.error.is_some() {
             return;
         }
-        let result = self.capture(module, checker, dependencies);
+        let result = self.capture(module, checker, dependencies, package_identity);
         if let Err(error) = result {
             self.error = Some(error);
         }
@@ -140,7 +147,13 @@ impl GraphBodyOutput {
     /// Analysis visits authored modules and dependency modules together. Only paths beneath `project_root` belong to
     /// this publication; a dependency's checked bodies remain authenticated dependency facts and must never make a
     /// successful project build fail.
-    fn capture(&mut self, module: &ParsedModule, checker: &TypeChecker, dependencies: &[String]) -> Result<(), String> {
+    fn capture(
+        &mut self,
+        module: &ParsedModule,
+        checker: &TypeChecker,
+        dependencies: &[String],
+        package_identity: &str,
+    ) -> Result<(), String> {
         let Ok(module_path) = module.file_path.strip_prefix(&self.project_root) else {
             return Ok(());
         };
@@ -154,7 +167,16 @@ impl GraphBodyOutput {
             let published = super::namespace_crumb::publish(&interface)?;
             let member_owners = interface.lowering_member_owners();
             super::namespace_crumb::remember_published(&published.interface, interface);
+            let mut package_roots = incan_driver::body_ir::checked_package_roots(
+                &[(module.path_segments.as_slice(), checker.type_info())],
+                package_identity,
+            )
+            .iter()
+            .map(incan_semantics_core::encode_incan_symbol_identity)
+            .collect::<Vec<_>>();
+            package_roots.sort_unstable();
             self.namespaces.push(PendingNamespaceValue {
+                package_roots,
                 module: module_path.clone(),
                 interface: published.interface,
                 semantic_interface: published.semantic_interface,
@@ -375,6 +397,7 @@ impl GraphBodyOutput {
                 interface: value.interface,
                 semantic_interface: value.semantic_interface,
                 member_witnesses: value.member_witnesses,
+                package_roots: value.package_roots,
                 body_ir: value.body_ir,
                 dependencies: value.dependencies,
                 lowering_inputs: value.lowering_inputs,
