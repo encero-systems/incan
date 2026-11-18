@@ -557,6 +557,8 @@ pub struct TypeChecker {
     /// Codec-validated settled values restored through the ordinary checked-body assembly and retained for graph
     /// publication without pretending the settlement producer ran in this invocation.
     selected_final_records: std::collections::BTreeMap<Span, body_check::records::Fields>,
+    /// Frames whose physical inputs can be checked only after the complete module has settled.
+    pending_graph_frames: Vec<(Span, [u8; 32], incan_semantics_core::body_ir::Body)>,
     /// Final-family records emitted by direct settlement, before any module observer.
     produced_final_records: std::collections::BTreeMap<Span, body_check::records::Fields>,
     /// Explicit capability refusals from direct final producers, retained for test and adapter reporting.

@@ -341,147 +341,209 @@ pub fn checked_record_outputs(
     module_path: &[String],
     name: Option<&str>,
 ) -> Result<Vec<CheckedOwnerRecordOutput>, String> {
+    let owners = program.declarations.iter().filter_map(|declaration| {
+        let crate::ast::Declaration::Function(function) = &declaration.node else {
+            return None;
+        };
+        name.is_none_or(|selected| selected == function.name).then_some((
+            function.name.as_str(),
+            declaration.span,
+            false,
+        ))
+    });
+    checked_callable_record_outputs(program, checker, module_path, owners)
+}
+
+/// Publish graph products for ordinary functions and concrete nominal methods under their checked source identity.
+/// Ranked function demands continue to select a single free function through the narrower producer above.
+pub fn checked_graph_record_outputs(
+    program: &crate::ast::Program,
+    checker: &crate::typechecker::TypeChecker,
+    module_path: &[String],
+) -> Result<Vec<CheckedOwnerRecordOutput>, String> {
+    let mut owners = Vec::new();
+    for declaration in &program.declarations {
+        if let crate::ast::Declaration::Function(function) = &declaration.node {
+            owners.push((function.name.as_str(), declaration.span, false));
+        }
+        for method in crate::typechecker::canonical_nodes::nominal_methods(&declaration.node) {
+            if method.node.body.is_some() && checker.available_declaration_record(method.span).is_some() {
+                owners.push((method.node.name.as_str(), method.span, true));
+            }
+        }
+    }
+    checked_callable_record_outputs(program, checker, module_path, owners)
+}
+
+fn checked_callable_record_outputs<'a>(
+    program: &crate::ast::Program,
+    checker: &crate::typechecker::TypeChecker,
+    module_path: &[String],
+    owners: impl IntoIterator<Item = (&'a str, crate::ast::Span, bool)>,
+) -> Result<Vec<CheckedOwnerRecordOutput>, String> {
     let facts = checker.type_info().semantic_fact_store(module_path);
     let dependencies = incan_semantics_core::dependencies::CheckedDependencyGraph::from_fact_stores([&facts]);
     let stable_contexts = stable_dependency_contexts(&facts);
-    program
-        .declarations
-        .iter()
-        .filter_map(|declaration| {
-            let crate::ast::Declaration::Function(function) = &declaration.node else {
-                return None;
-            };
-            if name.is_some_and(|selected| selected != function.name) {
-                return None;
-            }
-            let Some(binding) = checker
-                .type_info()
-                .declarations
-                .function_bindings_by_span
-                .get(&declaration.span)
-            else {
-                checker.record_body_check_outcome(declaration.span, "fallback");
-                return Some(Ok(CheckedOwnerRecordOutput::Fallback(CheckedOwnerRecordFallback {
-                    name: function.name.clone(),
+    let mut identities_by_name = BTreeMap::<_, BTreeSet<_>>::new();
+    for fact in facts.facts_by_kind(incan_semantics_core::SemanticFactKind::DeclarationIdentity) {
+        if let incan_semantics_core::SemanticFactValue::CanonicalIdentity(identity) = &fact.value {
+            identities_by_name
+                .entry(identity.declaration_name.as_str())
+                .or_default()
+                .insert(identity);
+        }
+    }
+    owners
+        .into_iter()
+        .map(|(name, span, method)| {
+            let Some(binding) = checker.declaration_view().callable(span) else {
+                checker.record_body_check_outcome(span, "fallback");
+                return Ok(CheckedOwnerRecordOutput::Fallback(CheckedOwnerRecordFallback {
+                    name: name.to_owned(),
                     identity: None,
                     reason: "checked owner has no function binding".into(),
                     artifact_refusals: Vec::new(),
-                })));
+                }));
             };
             let canonical = match binding.identity.as_ref() {
                 Some(identity) => identity,
                 None => {
-                    checker.record_body_check_outcome(declaration.span, "fallback");
-                    return Some(Ok(CheckedOwnerRecordOutput::Fallback(CheckedOwnerRecordFallback {
-                        name: function.name.clone(),
+                    checker.record_body_check_outcome(span, "fallback");
+                    return Ok(CheckedOwnerRecordOutput::Fallback(CheckedOwnerRecordFallback {
+                        name: name.to_owned(),
                         identity: None,
                         reason: "checked owner has no canonical declaration identity".into(),
                         artifact_refusals: Vec::new(),
-                    })));
+                    }));
                 }
             };
-            let identity = match checker.type_info().declarations.source_identities.get(canonical) {
+            let stable = if method {
+                crate::typechecker::canonical_nodes::SemanticNodeBindings::declaration(checker, program, span)
+                    .ok()
+                    .map(|nodes| nodes.owner().clone())
+            } else {
+                checker
+                    .type_info()
+                    .declarations
+                    .source_identities
+                    .get(canonical)
+                    .cloned()
+            };
+            let identity = match stable {
                 Some(identity) => identity.render_compact(),
                 None => {
-                    checker.record_body_check_outcome(declaration.span, "fallback");
-                    return Some(Ok(CheckedOwnerRecordOutput::Fallback(CheckedOwnerRecordFallback {
-                        name: function.name.clone(),
+                    checker.record_body_check_outcome(span, "fallback");
+                    return Ok(CheckedOwnerRecordOutput::Fallback(CheckedOwnerRecordFallback {
+                        name: name.to_owned(),
                         identity: None,
                         reason: "checked owner has no stable declaration identity".into(),
                         artifact_refusals: Vec::new(),
-                    })));
+                    }));
                 }
             };
-            let semantic_owners = facts
-                .facts_by_kind(incan_semantics_core::SemanticFactKind::DeclarationIdentity)
-                .filter_map(|fact| match &fact.value {
-                    incan_semantics_core::SemanticFactValue::CanonicalIdentity(candidate)
-                        if candidate.declaration_name == canonical.declaration_name =>
-                    {
-                        Some(candidate.clone())
+            let semantic_owner = identities_by_name
+                .get(canonical.declaration_name.as_str())
+                .and_then(|candidates| {
+                    if method {
+                        candidates.get(&canonical).copied()
+                    } else if candidates.len() == 1 {
+                        candidates.iter().next().copied()
+                    } else {
+                        candidates
+                            .iter()
+                            .copied()
+                            .find(|candidate| candidate.declaration_span == canonical.declaration_span)
                     }
-                    _ => None,
-                })
-                .collect::<BTreeSet<_>>();
-            let semantic_owner = if semantic_owners.len() == 1 {
-                semantic_owners.iter().next()
-            } else {
-                semantic_owners
-                    .iter()
-                    .find(|candidate| candidate.declaration_span == canonical.declaration_span)
-            };
-            let mut dependency_reads = semantic_owner
+                });
+            if method && semantic_owner.is_none() {
+                checker.record_body_check_outcome(span, "fallback");
+                return Ok(CheckedOwnerRecordOutput::Fallback(CheckedOwnerRecordFallback {
+                    name: name.to_owned(),
+                    identity: Some(identity),
+                    reason: "method has no exact checked dependency owner".into(),
+                    artifact_refusals: Vec::new(),
+                }));
+            }
+            let mut dependency_reads = Vec::new();
+            for dependency in semantic_owner
                 .into_iter()
                 .flat_map(|owner| dependencies.direct_dependencies_from([owner.clone()]))
-                .filter(|dependency| &dependency.target != canonical)
-                .filter(|dependency| projectable_source_dependency(&dependency.target))
-                .filter_map(|dependency| match &dependency.target.origin {
-                    incan_semantics_core::SymbolOrigin::Package { library, module_path } => checker
-                        .stable_dependency_identity_with_context(
-                            &dependency.target,
-                            stable_contexts.get(&dependency.target),
-                        )
-                        .map(|stable| CheckedOwnerDependencyRead {
-                            package: Some(library.clone()),
-                            module_path: module_path.clone(),
-                            declaration_name: dependency.target.declaration_name.clone(),
-                            declaration_identity: stable.render_compact(),
-                            reference_subject: dependency.subject.to_string(),
-                        }),
-                    incan_semantics_core::SymbolOrigin::Module(dependency_module) => checker
-                        .stable_dependency_identity_with_context(
-                            &dependency.target,
-                            stable_contexts.get(&dependency.target),
-                        )
-                        .map(|stable| CheckedOwnerDependencyRead {
-                            package: None,
-                            module_path: dependency_module.clone(),
-                            declaration_name: dependency.target.declaration_name.clone(),
-                            declaration_identity: stable.render_compact(),
-                            reference_subject: dependency.subject.to_string(),
-                        }),
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
+            {
+                if &dependency.target == canonical || !projectable_source_dependency(&dependency.target) {
+                    continue;
+                }
+                let (package, module_path) = match &dependency.target.origin {
+                    incan_semantics_core::SymbolOrigin::Package { library, module_path } => {
+                        (Some(library.clone()), module_path)
+                    }
+                    incan_semantics_core::SymbolOrigin::Module(module_path) => (None, module_path),
+                    _ => continue,
+                };
+                let Some(stable) = checker.stable_dependency_identity_with_context(
+                    &dependency.target,
+                    stable_contexts.get(&dependency.target),
+                ) else {
+                    if method {
+                        checker.record_body_check_outcome(span, "fallback");
+                        return Ok(CheckedOwnerRecordOutput::Fallback(CheckedOwnerRecordFallback {
+                            name: name.to_owned(),
+                            identity: Some(identity),
+                            reason: format!(
+                                "method dependency has no stable declaration identity: {}",
+                                dependency.target.render_compact()
+                            ),
+                            artifact_refusals: Vec::new(),
+                        }));
+                    }
+                    continue;
+                };
+                dependency_reads.push(CheckedOwnerDependencyRead {
+                    package,
+                    module_path: module_path.clone(),
+                    declaration_name: dependency.target.declaration_name.clone(),
+                    declaration_identity: stable.render_compact(),
+                    reference_subject: dependency.subject.to_string(),
+                });
+            }
             dependency_reads.sort();
             dependency_reads.dedup();
-            let refusal = missing_record_reason(checker, declaration.span);
+            let refusal = missing_record_reason(checker, span);
             if let Some(reason) = refusal {
-                checker.record_body_check_outcome(declaration.span, "fallback");
-                return Some(Ok(CheckedOwnerRecordOutput::Fallback(CheckedOwnerRecordFallback {
-                    name: function.name.clone(),
+                checker.record_body_check_outcome(span, "fallback");
+                return Ok(CheckedOwnerRecordOutput::Fallback(CheckedOwnerRecordFallback {
+                    name: name.to_owned(),
                     identity: Some(identity),
                     reason,
                     artifact_refusals: checker
-                        .body_artifact_refusals(declaration.span)
+                        .body_artifact_refusals(span)
                         .into_iter()
                         .map(str::to_owned)
                         .collect(),
-                })));
+                }));
             }
-            let Some(declaration_record) = checker.available_declaration_record(declaration.span).cloned() else {
-                return Some(Err("declaration record disappeared after eligibility selection".into()));
+            let Some(declaration_record) = checker.available_declaration_record(span).cloned() else {
+                return Err("declaration record disappeared after eligibility selection".into());
             };
-            let Some(local_record) = checker.available_local_record(declaration.span).cloned() else {
-                return Some(Err("local record disappeared after eligibility selection".into()));
+            let Some(local_record) = checker.available_local_record(span).cloned() else {
+                return Err("local record disappeared after eligibility selection".into());
             };
-            let Some(final_record) = checker.available_final_record(declaration.span).cloned() else {
-                return Some(Err("final record disappeared after eligibility selection".into()));
+            let Some(final_record) = checker.available_final_record(span).cloned() else {
+                return Err("final record disappeared after eligibility selection".into());
             };
-            if checker.restored_body_record(declaration.span) {
-                checker.record_body_check_outcome(declaration.span, "restored");
+            if checker.restored_body_record(span) {
+                checker.record_body_check_outcome(span, "restored");
             } else {
-                checker.record_body_check_outcome(declaration.span, "fresh");
+                checker.record_body_check_outcome(span, "fresh");
             }
-            Some(Ok(CheckedOwnerRecordOutput::Value(CheckedOwnerRecordFields {
-                name: function.name.clone(),
-                span: declaration.span,
+            Ok(CheckedOwnerRecordOutput::Value(CheckedOwnerRecordFields {
+                name: name.to_owned(),
+                span,
                 identity,
                 declaration: declaration_record,
                 local: local_record,
                 final_value: final_record,
                 dependency_reads,
-            })))
+            }))
         })
         .collect()
 }
@@ -1299,6 +1361,25 @@ mod tests {
         Ok(())
     }
 
+    fn lower_graph_test_module(
+        parsed: &crate::ast::Program,
+        checker: &TypeChecker,
+    ) -> incan_semantics_core::body_ir::BodyIrModule {
+        let providers = crate::body_ir::ProviderOperationCatalog::new();
+        crate::body_ir::build_body_ir_module(
+            parsed,
+            &["main".into()],
+            checker.type_info(),
+            &crate::body_ir::BodyIrContext {
+                modules: crate::body_ir::ContextModules::default(),
+                provider_operations: &providers,
+                registry_package: None,
+                library_package: None,
+                include_inline_tests: false,
+            },
+        )
+    }
+
     /// Method records come from the ordinary checked nominal and keep owners with the same member name distinct.
     #[test]
     fn ordinary_nominal_methods_publish_their_own_checked_records() -> Result<(), Box<dyn std::error::Error>> {
@@ -1313,41 +1394,49 @@ mod tests {
         checker.set_current_module_path(Some(vec!["main".into()]));
         checker.check_program(&parsed).map_err(|errors| format!("{errors:?}"))?;
         assert_eq!(checker.check_work().method_bodies, 2);
+        let lowered = lower_graph_test_module(&parsed, &checker);
+        let outputs = super::checked_graph_record_outputs(&parsed, &checker, &["main".into()])?;
+        assert_eq!(outputs.len(), 2);
         let mut selected = Vec::new();
-        for declaration in &parsed.declarations {
+        for (declaration, output) in parsed.declarations.iter().zip(outputs) {
             let crate::ast::Declaration::Model(model) = &declaration.node else {
-                continue;
+                return Err("missing model".into());
             };
-            let owner = model.methods[0].span;
             let stable = format!("member/method:main::read#in(model:main::{})[0]", model.name);
-            for (fields, refusal) in [
-                (
-                    checker.available_declaration_record(owner),
-                    checker.declaration_record_refusal(owner),
-                ),
-                (
-                    checker.available_local_record(owner),
-                    checker.local_record_refusal(owner),
-                ),
-                (
-                    checker.available_final_record(owner),
-                    checker.final_record_refusal(owner),
-                ),
-            ] {
-                let record =
-                    fields.ok_or_else(|| format!("{} did not produce a checked record: {refusal:?}", model.name))?;
-                assert_eq!(record[0][1], stable);
+            let CheckedOwnerRecordOutput::Value(owner) = output else {
+                return Err(format!("{}: {output:?}", model.name).into());
+            };
+            assert_eq!(owner.identity, stable);
+            for fields in [&owner.declaration, &owner.local, &owner.final_value] {
+                assert_eq!(fields[0][1], stable);
             }
-            let mut local = checker.available_local_record(owner).ok_or("missing Local")?.clone();
-            let mut final_value = checker.available_final_record(owner).ok_or("missing Final")?.clone();
-            local[0].insert(3, "local".into());
-            final_value[0].insert(3, "final".into());
-            selected.push(super::GraphBodyRecord {
-                identity: stable,
-                local,
-                final_value,
-                body_ir: None,
-            });
+            assert!(
+                owner
+                    .dependency_reads
+                    .iter()
+                    .any(|read| read.declaration_name == "value"),
+                "{}: {:?}",
+                model.name,
+                owner.dependency_reads
+            );
+            let body = lowered
+                .bodies
+                .iter()
+                .find(|body| body.span == owner.span)
+                .ok_or("missing nominal frame")?;
+            let witness = checker
+                .graph_body_physical_inputs(&parsed, owner.span)
+                .ok_or("missing nominal witness")?;
+            let wire = incan_semantics_core::executable_representation::encode_graph_owner(
+                &lowered.module_id,
+                "src/main.incn",
+                &owner.identity,
+                body,
+                Some(witness),
+            )?;
+            let mut record = selected_graph_record(owner)?;
+            record.body_ir = Some(incan_semantics_core::executable_representation::decode_owner(&wire)?);
+            selected.push(record);
         }
         for (changed, expected_checks) in [
             (source.to_owned(), 0),
@@ -1362,6 +1451,17 @@ mod tests {
             let mut fresh = TypeChecker::new();
             fresh.set_current_module_path(Some(vec!["main".into()]));
             fresh.check_program(&current).map_err(|errors| format!("{errors:?}"))?;
+            let restored_frames = current
+                .declarations
+                .iter()
+                .flat_map(|declaration| crate::typechecker::canonical_nodes::nominal_methods(&declaration.node))
+                .filter(|method| warm.type_info().selected_callable_body(method.span).is_some())
+                .count();
+            assert_eq!(restored_frames, 2 - expected_checks);
+            assert_eq!(
+                lower_graph_test_module(&current, &warm).bodies,
+                lower_graph_test_module(&current, &fresh).bodies
+            );
             assert_eq!(
                 warm.type_info().references.resolved_identities,
                 fresh.type_info().references.resolved_identities
@@ -1449,27 +1549,12 @@ mod tests {
             checker.check_program(parsed).map_err(|errors| format!("{errors:?}"))?;
             Ok(checker)
         };
-        let lower = |parsed: &crate::ast::Program, checker: &TypeChecker| {
-            let providers = crate::body_ir::ProviderOperationCatalog::new();
-            crate::body_ir::build_body_ir_module(
-                parsed,
-                &module,
-                checker.type_info(),
-                &crate::body_ir::BodyIrContext {
-                    modules: crate::body_ir::ContextModules::default(),
-                    provider_operations: &providers,
-                    registry_package: None,
-                    library_package: None,
-                    include_inline_tests: false,
-                },
-            )
-        };
         let cold = check(&original, Vec::new())?;
         let checked = checked_owner_record_outputs(&original, &cold, &module)?;
         let [CheckedOwnerRecordOutput::Value(owner)] = checked.as_slice() else {
             return Err("missing checked native owner".into());
         };
-        let lowered = lower(&original, &cold);
+        let lowered = lower_graph_test_module(&original, &cold);
         let body = lowered.bodies.first().ok_or("missing lowered body")?;
         let witness = cold
             .graph_body_physical_inputs(&original, owner.span)
@@ -1504,7 +1589,10 @@ mod tests {
                 expected,
                 "{input:?}, guarded={guarded}"
             );
-            assert_eq!(lower(&parsed, &warm).bodies, lower(&parsed, &fresh).bodies);
+            assert_eq!(
+                lower_graph_test_module(&parsed, &warm).bodies,
+                lower_graph_test_module(&parsed, &fresh).bodies
+            );
         }
         Ok(())
     }

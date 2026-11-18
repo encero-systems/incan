@@ -222,6 +222,16 @@ pub def compiled_owner_source(
     identity: str = "",
 ) -> Result[SourceProjectionRecord, str]:
     """Map one compiler body name to its exact owner or unambiguous declaration-qualified default expression."""
+    if identity.startswith("member/method:"):
+        enclosing = stable_member_declaration(identity)
+        context = identity.split("#in(")
+        if len(context) == 2 and enclosing != "":
+            kind = context[1].split(":")[0]
+            if kind in ["model", "class", "trait", "enum", "newtype"]:
+                for owner in projection.owners:
+                    if owner.key.facet == kind + ":" + enclosing:
+                        return Ok(owner)
+        return Err(f"compiled method has no enclosing declaration source: {module}:{name}; identity={identity}")
     for owner in projection.owners:
         if owner.key.facet == name:
             return Ok(owner)

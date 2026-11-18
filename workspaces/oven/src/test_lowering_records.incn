@@ -72,9 +72,11 @@ pub def test_importer_rename_checks_only_its_direct_signature_reader() -> Result
     warm = report_fixture_build(binary, project, store, Some(warm_trace))?
     stop_example_engine(binary, store)?
     diagnostic = warm.to_json().map_err((error) => error.message())?
-    assert proof_count(cold, "all_declarations")? == 6
-    assert proof_count(cold, "reusable_declarations")? == 6
+    assert proof_count(cold, "all_declarations")? == 8
+    assert proof_count(cold, "reusable_declarations")? == 8
     assert len(cold_checks) == 6
+    assert importer_physical_statement_count(trace)? == 8
+    assert importer_physical_statement_count(warm_trace)? == 2, diagnostic
     assert sorted(importer_statement_checks(warm_trace)?) == ["importer::import_jsonl", "importer::supported_schema"], diagnostic
     leaf = "function:importer::supported_schema"
     reader = "function:importer::import_jsonl"
@@ -90,16 +92,17 @@ pub def test_importer_rename_checks_only_its_direct_signature_reader() -> Result
     control_trace.mkdir(true, true).map_err((error) => error.message())?
     control_proof = report_fixture_build(binary, project, control, Some(control_trace))?
     stop_example_engine(binary, control)?
-    assert proof_count(control_proof, "body_evaluations")? == 6
-    assert proof_count(control_proof, "reusable_declarations")? == 6
+    assert proof_count(control_proof, "body_evaluations")? == 8
+    assert proof_count(control_proof, "reusable_declarations")? == 8
     assert sorted(importer_statement_checks(control_trace)?) == sorted(cold_checks)
+    assert importer_physical_statement_count(control_trace)? == 8
     assert len(importer_ranked_completions(control_trace)?) == 0
     assert importer_checked_values(control)? == warm_values
     return Ok(None)
 
 
 def importer_checked_values(store: Path) -> Result[Dict[str, list[bytes]], str]:
-    """Read all six owners' published declaration, local, final and Body IR bytes from the build-selected graph."""
+    """Read six free owners and both GraphSummary methods' complete checked products from the build-selected graph."""
     selected = store_snapshot(store).map_err((error) => error.message())?
     origin = "codegraph_importer_experiment"
     scope = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE)
@@ -120,7 +123,10 @@ def importer_checked_values(store: Path) -> Result[Dict[str, list[bytes]], str]:
     for row in select_body_inventory_except(selected, CHECKER_PROFILE, origin, [])?:
         assert row.identity in declarations and row.identity not in values
         values[row.identity] = [declarations[row.identity], row.local, row.final, row.body_ir]
-    assert len(values) == 6
+    assert len([owner for owner in values.keys() if owner.startswith("function:")]) == 6
+    assert "member/method:importer::empty#in(model:importer::GraphSummary)[0]" in values
+    assert "member/method:importer::add_fact#in(model:importer::GraphSummary)[0]" in values
+    assert len(values) == 8
     return Ok(values)
 
 
@@ -171,8 +177,25 @@ def importer_ranked_completions(trace: Path) -> Result[list[str], str]:
     return Ok(stages)
 
 
+def importer_physical_statement_count(trace: Path) -> Result[int, str]:
+    """Count all callable and property source entries, including methods without a free-function trace."""
+    mut total = 0
+    for file in trace.iterdir().map_err((error) => error.message())?:
+        if not file.name().startswith("engine-compiler-"):
+            continue
+        records = file.read_text("utf-8", "strict").map_err((error) => error.message())?
+        for line in records.split("\n"):
+            if '\"action\":\"body\"' not in line or '\"phase\":\"checking\"' not in line:
+                continue
+            fields = parse(line).and_then((record) => record.require("fields")).map_err((error) => error.message())?
+            module = fields.require("module").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+            if module in ['Some(["importer"])', 'Some(["main"])']:
+                total += 1
+    return Ok(total)
+
+
 def importer_statement_checks(trace: Path) -> Result[list[str], str]:
-    """Read actual entries into the statement checker for the two project modules."""
+    """Read free-function statement owner names for the two project modules."""
     mut checked: list[str] = []
     for file in trace.iterdir().map_err((error) => error.message())?:
         if not file.name().startswith("engine-compiler-"):
@@ -600,8 +623,8 @@ pub def test_engine_report_counts_checker_reuse_and_artifact_refusals() -> Resul
     diagnostic = report.to_json().map_err((error) => error.message())?
     # `selected` tests a `Flag` for truth through `Flag.__bool__`, a resolved operator call its record keeps. `main`
     # constructs the imported `Flag`, and its record keeps the field binding and the imported field it initializes.
-    assert proof_count(report, "reusable_declarations")? == 3, diagnostic
-    assert proof_count(report, "all_declarations")? == 4, diagnostic
+    assert proof_count(report, "reusable_declarations")? == 4, diagnostic
+    assert proof_count(report, "all_declarations")? == 5, diagnostic
     assert proof_refusal_count(report, "CallArtifacts.resolved_operator_calls")? == 0, diagnostic
     # `weighed` reads a computed property, which no record keeps yet.
     assert proof_refusal_count(report, "ExpressionArtifacts.computed_property_accesses")? == 1, diagnostic
