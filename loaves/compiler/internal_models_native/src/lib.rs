@@ -84,6 +84,14 @@ pub mod records {
 mod tests {
     use super::{CodecFault, compiled_body_frame_size};
 
+    /// Callers importing the concrete store source can read through it with no trait import.
+    #[test]
+    fn concrete_store_source_exposes_read() {
+        use super::{ReadScope, RecordRead, RecordRequest, StoreRecordSource};
+
+        let _: fn(&StoreRecordSource, &ReadScope, &RecordRequest) -> RecordRead = StoreRecordSource::read;
+    }
+
     /// Oven reads exactly eight little-endian bytes before allocating a compiled body frame.
     #[test]
     fn compiled_body_frame_size_keeps_wire_limits() {
