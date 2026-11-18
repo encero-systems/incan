@@ -323,8 +323,11 @@ def admit_registry(document: JsonValue, directory: Path) -> Result[list[Path], s
         # admitted artifact through the installation while local builds address it through the compiler home.
         if physical_root.0 != closure_root.0:
             physical = Path(located(physical_root, declared))
-            if physical.0 != artifact.0 and physical.resolve().map_err((error) => error.message())? == artifact.resolve().map_err((error) => error.message())?:
-                import_payload(physical, identity, expected)?
+            if physical.0 != artifact.0:
+                selected = artifact.resolve().map_err((error) => error.message())?
+                candidate = physical.resolve().map_err((error) => error.message())?
+                if selected.0 == candidate.0:
+                    import_payload(physical, identity, expected)?
         paths.append(artifact)
     return Ok(paths)
 
