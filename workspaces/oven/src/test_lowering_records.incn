@@ -77,6 +77,8 @@ pub def test_importer_rename_checks_only_its_direct_signature_reader() -> Result
     assert len(cold_checks) == 6
     assert importer_physical_statement_count(trace)? == 8
     assert importer_physical_statement_count(warm_trace)? == 2, diagnostic
+    assert proof_count(warm, "lowering_demand_evaluations")? == 1, diagnostic
+    assert proof_count(warm, "plan_function_evaluations")? == 1, diagnostic
     assert sorted(importer_statement_checks(warm_trace)?) == ["importer::import_jsonl", "importer::supported_schema"], diagnostic
     leaf = "function:importer::supported_schema"
     reader = "function:importer::import_jsonl"
@@ -373,6 +375,27 @@ pub def test_one_module_edit_lowers_only_that_module() -> Result[None, str]:
     assert proof_count(again, "plan_module_reuses")? == 3, again_diagnostic
     verify_module_work(warm, observed_module_work(observations)?, "lone_alpha")?
     return stop_example_engine(binary, store)
+
+
+pub def test_renaming_a_changed_default_keeps_the_current_omitted_argument() -> Result[None, str]:
+    """A caller that omits an argument observes the provider's edited default even when its type stays the same."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    source = root.joinpath("main.incn")
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    store = root.joinpath("store")
+    caller = "\n\ndef main() -> None:\n    println(value())\n"
+    write(source, "def value(number: int = 1) -> int:\n    return number\n" + caller)?
+    _ = lowering_example_run(binary, source, store, "1")?
+    write(source, "def value(count: int = 7) -> int:\n    return count\n" + caller)?
+    _ = lowering_example_run(binary, source, store, "7")?
+    plan = root.joinpath("native.plan").read_bytes().map_err((error) => error.message())?
+    stop_example_engine(binary, store)?
+    root.joinpath("target").remove_tree().map_err((error) => error.message())?
+    fresh = root.joinpath("fresh")
+    _ = lowering_example_run(binary, source, fresh, "7")?
+    assert plan == root.joinpath("native.plan").read_bytes().map_err((error) => error.message())?
+    return stop_example_engine(binary, fresh)
 
 
 pub def test_caller_rebuilds_when_its_callee_starts_consuming_a_model() -> Result[None, str]:
@@ -959,13 +982,13 @@ def finished_run(succeeded: bool, stdout: bytes, stderr: bytes) -> Result[JsonVa
 
 
 def verify_signature_edit(binary: str, root: Path) -> Result[None, str]:
-    """A signature edit through a symlink must recheck main and reproduce the cold plan and executable."""
+    """A parameter rename and return-type edit through a symlink must recheck main and reproduce the cold plan and executable."""
     root.mkdir(true, true).map_err((error) => error.message())?
     source = root.joinpath("hello.incn")
     store = root.joinpath("store")
-    write(source, "def value() -> int:\n    return 1\n\n\ndef main() -> None:\n    println(value())\n")?
+    write(source, "def value(number: int) -> int:\n    return number\n\n\ndef main() -> None:\n    println(value(1))\n")?
     _ = lowering_example_run(binary, source, store, "1")?
-    write(source, "def value() -> str:\n    return \"one\"\n\n\ndef main() -> None:\n    println(value())\n")?
+    write(source, "def value(count: int) -> str:\n    return \"one\"\n\n\ndef main() -> None:\n    println(value(1))\n")?
     warm = lowering_example_run(binary, source, store, "one")?
     diagnostic = warm.to_json().map_err((error) => error.message())?
     assert proof_count(warm, "body_evaluations")? == 2, diagnostic

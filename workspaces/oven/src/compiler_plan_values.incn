@@ -11,13 +11,18 @@ from std.encoding.hex import hexlify
 pub const LOWERING_PROFILE: str = "incan.lowering-records/8"
 
 
-pub def plan_owners_reading(selected: Snapshot, changed: list[RecordKey]) -> Result[list[str], str]:
-    """Exclude plans whose own signature witnesses changed while permitting equal-meaning body edits to cut off."""
-    mut owners: set[str] = set()
-    for reader in readers_of(selected, changed, LOWERING_PROFILE)?:
-        if reader.family in ["lowering-demand", "plan-function"]:
-            owners.add(reader.identity)
-    return Ok(sorted([owner for owner in owners]))
+pub def plan_reads_changed(selected: Snapshot, changed: list[RecordKey]) -> Result[Dict[str, list[RecordKey]], str]:
+    """Remember each exact changed input that excludes a previously certified native plan."""
+    mut inputs: Dict[str, list[RecordKey]] = {}
+    for target in changed:
+        for reader in readers_of(selected, [target], LOWERING_PROFILE)?:
+            if reader.family not in ["lowering-demand", "plan-function"]:
+                continue
+            mut causes = inputs.get(reader.identity, [])
+            if target not in causes:
+                causes.append(target)
+                inputs[reader.identity] = causes
+    return Ok(inputs)
 
 
 pub def select_plan_inventory_except(
@@ -25,14 +30,19 @@ pub def select_plan_inventory_except(
     origin: str,
     invalid: list[str],
     admitted_outputs: list[str] = [],
+    keyed_readers: Option[list[str]] = None,
 ) -> Result[list[SelectedBodyPage], str]:
     """
     Materialize only witnessed plan functions whose stable declaration owner was not invalidated by this edit. A
     function whose exact output is in `admitted_outputs` travels in its module page. Its product is not read twice.
     """
     mut pages: list[SelectedBodyPage] = []
-    slots = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, excluded=invalid, excluded_outputs=admitted_outputs)
+    slots = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, excluded=invalid, excluded_outputs=admitted_outputs, included=keyed_readers)
     for record in reusable_family_records(selected, "plan-function", LOWERING_PROFILE, Some(slots))?:
+        # A rechecked reader may probe its old ordinary scalar by the compiler's newly computed full key.
+        # A module or entry admission bypasses that lookup and therefore remains unavailable on this path.
+        if keyed_readers is not None and not record.key.facet.startswith("body:"):
+            continue
         key = record.key.context
         if not canonical_digest(key):
             return Err("selected plan-function record has a noncanonical product key")

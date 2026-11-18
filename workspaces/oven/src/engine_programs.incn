@@ -24,7 +24,7 @@ from compiler_body_values import (
     select_body_inventory_except,
     select_namespace_inventory_except,
 )
-from compiler_plan_values import select_plan_inventory_except, plan_owners_reading, select_plan_modules
+from compiler_plan_values import select_plan_inventory_except, plan_reads_changed, select_plan_modules
 from compiler_plan_modules import restored_modules
 from compiler_graph_records import supersede_outputs
 from graph_read_demands import GraphDemand, note_graph_demand
@@ -340,7 +340,8 @@ pub def obtain(
     invalid_namespaces = invalid_namespace_modules(graph, projected.keys, CHECKER_PROFILE)?
     namespaces = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, invalid_namespaces)?
     # A checked owner travels once when its exact plan slot and its whole checked namespace are both admitted.
-    invalid_plans = plan_owners_reading(graph, projected.keys)?
+    plan_reads = plan_reads_changed(graph, projected.keys)?
+    invalid_plans = sorted([owner for owner in plan_reads.keys()])
     plan_modules = select_plan_modules(graph, origin, invalid_namespaces, invalid + invalid_plans, namespaces.complete)?
     covered = plan_modules.covered
     retained_bodies = select_body_inventory_except(
@@ -349,7 +350,7 @@ pub def obtain(
     mut selected_bodies = encode_body_inventory(retained_bodies)?
     mut checking: Option[RankedBuildInputs] = None
     if not listing_refusals and len(invalid) > 0:
-        checking = Some(RankedBuildInputs(graph=graph, projected=projected.transaction, origin=origin, invalid=invalid, covered=covered))
+        checking = Some(RankedBuildInputs(graph=graph, projected=projected.transaction, origin=origin, invalid=invalid, covered=covered, plan_reads=plan_reads))
     selected_bodies.extend(namespaces.pages)
     selected_bodies.extend(select_plan_inventory_except(graph, origin, invalid_plans, plan_modules.outputs)?)
     selected_bodies.extend(plan_modules.pages)

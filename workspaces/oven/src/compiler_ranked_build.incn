@@ -24,6 +24,8 @@ from compiler_record_envelopes import RankedActivation, RankedCheckingSweep
 from compiler_snapshot import StagedSnapshot, stage_selected_snapshot
 from compiler_worker import activate_record
 from compiler_reader_frontier import ReaderFrontier, evaluate_reader
+from compiler_parameter_labels import parameter_label_edit
+from compiler_plan_values import select_plan_inventory_except
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 from home_paths import bakery_location, home as compiler_home
@@ -45,6 +47,7 @@ pub model RankedBuildInputs:
     pub origin: str
     pub invalid: list[str]
     pub covered: CoveredBodyOwners = CoveredBodyOwners()
+    pub plan_reads: Dict[str, list[RecordKey]] = {}
 
 
 model BuildOwner:
@@ -55,6 +58,8 @@ model BuildOwner:
     inputs: Dict[str, bytes]
     prior_declaration_root: str
     prior_declaration: RecordKey
+    signature_input: RecordKey
+    label_edit: bool = false
     equal_declaration: bool = false
     predecessors: list[RecordKey] = []
     local: bytes = b""
@@ -110,6 +115,7 @@ def changed_owner(graph: Snapshot, prior: RecordKey, captured: &Dict[str, bytes]
     mut name = ""
     mut prior_declaration_root = ""
     mut prior_declaration = prior
+    mut signature_input = prior
     mut families: set[str] = set()
     for witness in basis.witnesses:
         match witness:
@@ -136,11 +142,13 @@ def changed_owner(graph: Snapshot, prior: RecordKey, captured: &Dict[str, bytes]
                         return Ok(None)
                     if family == "owner-source":
                         name = key.facet
+                        signature_input = key
+                        signature_input.family = "declaration-signature"
                     inputs[encoded_key] = current
             _ => return Ok(None)
     if len(families) != 4 or name == "":
         return Ok(None)
-    return Ok(Some(BuildOwner(prior=prior, name=name, namespace=order.rank, inputs=inputs, prior_declaration_root=prior_declaration_root, prior_declaration=prior_declaration)))
+    return Ok(Some(BuildOwner(prior=prior, name=name, namespace=order.rank, inputs=inputs, prior_declaration_root=prior_declaration_root, prior_declaration=prior_declaration, signature_input=signature_input)))
 
 
 def submit(store: Path, view: str, toolchain: Toolchain, owner: &BuildOwner, family: str) -> Result[Submitted, str]:
@@ -245,6 +253,11 @@ def evaluate(store: Path, view: str, toolchain: Toolchain, pending: BuildOwner, 
     owner.predecessors.append(completed)
     if output.family == "declaration":
         owner.equal_declaration = produced.staged_root == owner.prior_declaration_root
+        if not owner.equal_declaration:
+            mut previous = owner.prior_declaration
+            previous.family = "prior-declaration"
+            prior = decode_owned_record(owner.inputs[encode_record_key(previous)?], CHECKER_PROFILE, output.identity).map_err((_) => "invalid prior ranked declaration")?
+            owner.label_edit = parameter_label_edit(prior, checked)
     elif output.family == "local":
         owner.local = value
     elif output.family == "final":
@@ -315,6 +328,12 @@ pub def ranked_build_pages(store: Path, inputs: &RankedBuildInputs, toolchain: T
                             frame = old.body_ir
                     result.append(SelectedBodyRecord(identity=identity, local=updated.local, final=updated.settled, body_ir=frame))
                 owners[identity] = updated
+    mut label_inputs: list[RecordKey] = []
+    for identity in owners.keys():
+        owner = owners[identity]
+        if owner.label_edit and not owner.refused and len(owner.settled) > 0:
+            label_inputs.append(owner.signature_input)
+    mut keyed_readers: list[str] = []
     mut refreshed = encode_body_inventory(result)?
     while true:
         if readers.joint:
@@ -345,8 +364,14 @@ pub def ranked_build_pages(store: Path, inputs: &RankedBuildInputs, toolchain: T
                 return Ok(None)
         readers.settle(graph, origin, reader, products)?
         current = products.body
+        if current.identity in inputs.plan_reads and products.declaration_digest == reader.declaration_digest:
+            causes = inputs.plan_reads[current.identity]
+            if len(causes) > 0 and len([cause for cause in causes if cause not in label_inputs]) == 0:
+                keyed_readers.append(current.identity)
         record_work(Operation.EnginePrepare, "ranked-reader\t" + current.identity + "\t" + digest(reader.prior.local)
             + "\t" + digest(current.local) + "\t" + digest(reader.prior.final) + "\t" + digest(current.final)
             + "\t" + reader.declaration_digest + "\t" + products.declaration_digest + "\t" + str(readers.remaining()), clock)
         refreshed.extend(encode_body_inventory([current])?)
+    if len(keyed_readers) > 0:
+        refreshed.extend(select_plan_inventory_except(graph, origin, [], keyed_readers=Some(keyed_readers))?)
     return Ok(Some(refreshed))

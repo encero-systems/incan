@@ -1,0 +1,78 @@
+"""Identify ranked supplier edits that preserve the checked positional contract of a direct call."""
+
+from pub::internal_models.checker_records import CanonicalField, CheckedFamily, CheckedRecord
+
+
+pub def parameter_label_edit(previous: CheckedRecord, current: CheckedRecord) -> bool:
+    """Compare checked declarations at the same stable owner; only formal parameter names and their bindings may move."""
+    if previous.family != CheckedFamily.Declaration or current.family != previous.family:
+        return false
+    if previous.owner != current.owner or previous.profile != current.profile or len(previous.fields) != len(current.fields):
+        return false
+    mut labels: dict[str, tuple[CanonicalField, CanonicalField]] = {}
+    mut bindings: dict[str, tuple[list[str], list[str]]] = {}
+    mut renamed = false
+    for index in range(len(previous.fields)):
+        before = previous.fields[index]
+        after = current.fields[index]
+        if before.family != after.family or before.node != after.node:
+            return false
+        if before.family == "parameter":
+            if before.values != after.values or before.node in labels:
+                return false
+            labels[before.node] = (before, after)
+            if before.selector != after.selector:
+                renamed = true
+        elif before.family == "binding" and before.selector == "declaration" and after.selector == before.selector:
+            bindings[before.node] = (before.values, after.values)
+    if not renamed:
+        return false
+    mut signature = false
+    for index in range(len(previous.fields)):
+        before = previous.fields[index]
+        after = current.fields[index]
+        if before.family == "signature" and before.selector == "declaration":
+            if signature or after.selector != before.selector or not positional_signature(before.values, after.values, labels):
+                return false
+            signature = true
+        elif before != after:
+            if before.node not in labels:
+                return false
+            label_pair = labels[before.node]
+            old, new = label_pair
+            if before.family == "parameter":
+                continue
+            if before.node not in bindings:
+                return false
+            binding_pair = bindings[before.node]
+            old_binding, new_binding = binding_pair
+            if before.family == "binding" and before.selector == "declaration" and after.selector == before.selector:
+                continue
+            if before.family != "write" or before.selector != old.selector or after.selector != new.selector:
+                return false
+            if before.values != old_binding or after.values != new_binding:
+                return false
+    return signature
+
+
+def positional_signature(old: list[str], new: list[str], labels: dict[str, tuple[CanonicalField, CanonicalField]]) -> bool:
+    """Check the declaration signature against each independently typed formal, including its result and ownership flags."""
+    if len(old) != len(new) or len(old) < 3 or old[:2] != new[:2] or old[1] != str(len(labels)):
+        return false
+    mut offset = 2
+    for index in range(len(labels)):
+        node = f"node/Function/params/{index}/span"
+        if node not in labels or offset + 6 > len(old):
+            return false
+        label_pair = labels[node]
+        before, after = label_pair
+        if old[offset] != "named" or new[offset] != "named" or old[offset + 1] != before.selector or new[offset + 1] != after.selector:
+            return false
+        # A default, variadic binding or preset needs its own dependency proof. Keep those on ordinary invalidation.
+        if old[offset + 2:offset + 6] != ["normal", "false", "false", "false"] or new[offset + 2:offset + 6] != old[offset + 2:offset + 6]:
+            return false
+        end = offset + 6 + len(before.values)
+        if end > len(old) or old[offset + 6:end] != before.values or new[offset + 6:end] != after.values:
+            return false
+        offset = end
+    return offset < len(old) and old[offset:] == new[offset:]
