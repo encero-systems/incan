@@ -378,6 +378,7 @@ def toolchain_of(document: JsonValue, directory: Path) -> Result[Toolchain, list
             codegraph_on_request=optional_flag(document, "codegraph_on_request")?,
             closure_anchors=optional_flag(document, "closure_anchors")?,
             search_index_crumb=optional_flag(document, "search_index_crumb")?,
+            checked_body_counts_crumb=optional_flag(document, "checked_body_counts_crumb")?,
             console="",
             worker_generation="",
             native_closures=NativeClosureInput(),

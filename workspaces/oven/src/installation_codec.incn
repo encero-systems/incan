@@ -11,7 +11,7 @@ from frozen_inputs import Document
 from page_values import read_value, write_value
 from payload_types import InstalledPayload, PayloadAdmission
 
-pub const PROFILE: str = "incan.installation-page/24"
+pub const PROFILE: str = "incan.installation-page/25"
 
 
 pub model StandardManifest:
@@ -62,7 +62,7 @@ pub def decode(view: MappedView) -> Result[Installation, str]:
     """Refuse unknown versions, truncated or duplicate rows, malformed identities and trailing bytes."""
     mut reader = Reader(view=view)
     profile = reader.text()?
-    if profile not in [PROFILE, "incan.installation-page/23", "incan.installation-page/22"]:
+    if profile not in [PROFILE, "incan.installation-page/24", "incan.installation-page/23", "incan.installation-page/22"]:
         return Err("unsupported installation page version")
     toolchain = read_toolchain(reader, profile)?
     mut manifests: list[StandardManifest] = []
@@ -172,8 +172,10 @@ def read_toolchain(mut reader: Reader, profile: str) -> Result[InstalledCompiler
         compiler_facts=reader.texts()?,
         driver_observation=reader.text()?,
     )
-    if profile == PROFILE:
+    if profile in [PROFILE, "incan.installation-page/24"]:
         toolchain.search_index_crumb = reader.count(1)? == 1
+    if profile == PROFILE:
+        toolchain.checked_body_counts_crumb = reader.count(1)? == 1
     return Ok(toolchain)
 
 
@@ -215,6 +217,10 @@ def write_toolchain(buffer: _BytesIO, toolchain: InstalledCompiler) -> Result[No
     put_texts(buffer, toolchain.compiler_facts)?
     put_text(buffer, toolchain.driver_observation)?
     if toolchain.search_index_crumb:
+        put_number(buffer, 1)?
+    else:
+        put_number(buffer, 0)?
+    if toolchain.checked_body_counts_crumb:
         return put_number(buffer, 1)
     return put_number(buffer, 0)
 

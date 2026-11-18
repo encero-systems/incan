@@ -48,7 +48,7 @@ def verify_published_installation(scratch: Path, original: Path) -> Result[None,
     write(stage.joinpath("registry/closure.json"), "{\"externs\":{}}")?
     write(
         stage.joinpath("toolchain.json"),
-        "{\"schema\":\"incan.toolchain/1\",\"driver\":\"driver\",\"sysroot\":\"sysroot\"," + "\"rust_abi\":[\"std.rustabi\"],\"externs\":[{\"name\":\"runtime\",\"path\":\"library.rlib\"}]," + "\"search\":[],\"registry_units\":\"registry/closure.json\",\"codegraph_on_request\":true,\"search_index_crumb\":true}",
+        "{\"schema\":\"incan.toolchain/1\",\"driver\":\"driver\",\"sysroot\":\"sysroot\"," + "\"rust_abi\":[\"std.rustabi\"],\"externs\":[{\"name\":\"runtime\",\"path\":\"library.rlib\"}]," + "\"search\":[],\"registry_units\":\"registry/closure.json\",\"codegraph_on_request\":true,\"search_index_crumb\":true,\"checked_body_counts_crumb\":true}",
     )?
     _, admission = prepare_installation(stage)?
     assert len(admission.payloads) == 1 and len(admission.facts) == 2
@@ -57,6 +57,7 @@ def verify_published_installation(scratch: Path, original: Path) -> Result[None,
     finish_installation(target, admission)?
     installed = load_toolchain_at(target)?
     assert installed.driver == target.joinpath("driver").0
+    assert installed.checked_body_counts_crumb
     assert installed.search_index_crumb
     assert installed.codegraph_on_request
     assert published_identity(target.joinpath("library.rlib"))? == "installed producer"
@@ -99,6 +100,7 @@ def verify_installation_page(directory: Path) -> Result[None, str]:
         None => return Err("fixture has no whole mapped range")
         Some(view) =>
             decoded = decode_installation(view)?
+            assert decoded.toolchain.checked_body_counts_crumb
             assert decoded.toolchain.search_index_crumb
             assert encode_installation(decoded)? == encoded
             assert decoded.toolchain.codegraph_on_request

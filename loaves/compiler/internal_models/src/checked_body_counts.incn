@@ -1,0 +1,47 @@
+"""Counts observed by one graph-backed check, returned to Oven separately from public diagnostics."""
+
+from std.primitives.crumb.descriptions import Description
+from crumb_rows import ModelField, model_description, required_value
+from graph_crumb_fields import decode_graph_row, encode_graph_row, integer, number
+
+const COUNTS: bytes = b"chkbdy\x00"
+
+
+pub model CheckedBodyCounts:
+    """Top-level bodies checked afresh or restored, and the pages physically decoded during this check."""
+
+    pub checked: int = 0
+    pub reused: int = 0
+    pub decoded: int = 0
+
+
+def description() -> Description:
+    return model_description(COUNTS, "incan.checked-body-counts/1", [
+        ModelField(identity=b"check_", name="checked", storage="i64"),
+        ModelField(identity=b"decode", name="decoded", storage="i64"),
+        ModelField(identity=b"reuse_", name="reused", storage="i64"),
+    ])
+
+
+def valid(counts: CheckedBodyCounts) -> bool:
+    return counts.checked >= 0 and counts.reused >= 0 and counts.decoded >= 0
+
+
+pub def encode_checked_body_counts(counts: CheckedBodyCounts) -> Result[bytes, str]:
+    """Write the three independent counts without copying module names or checked declarations."""
+    if not valid(counts):
+        return Err("checked body counts must be nonnegative")
+    return encode_graph_row(COUNTS, description(), [
+        required_value(b"check_", integer(counts.checked)),
+        required_value(b"decode", integer(counts.decoded)),
+        required_value(b"reuse_", integer(counts.reused)),
+    ])
+
+
+pub def decode_checked_body_counts(encoded: bytes) -> Result[CheckedBodyCounts, str]:
+    """Require an authentic typed counts row before reporting work performed by the compiler."""
+    fields = decode_graph_row(encoded, COUNTS, description(), 3)?
+    counts = CheckedBodyCounts(checked=number(fields[0].value)?, decoded=number(fields[1].value)?, reused=number(fields[2].value)?)
+    if not valid(counts):
+        return Err("checked body counts must be nonnegative")
+    return Ok(counts)

@@ -101,9 +101,13 @@ pub def check_prepared(
     mut options: list[str] = []
     mut sidecar: Option[Path] = None
     if let Some(directory) = pages:
-        report = Path(f"{path.0}.checked-bodies")
+        mut report = Path(f"{path.0}.checked-bodies")
+        mut flag = "--checked-bodies"
+        if toolchain.checked_body_counts_crumb:
+            report = Path(f"{path.0}.checked-bodies.crumb")
+            flag = "--checked-body-counts"
         discard_file(report)
-        options = ["--checked-bodies", report.0, "--graph-body-records", directory.0]
+        options = [flag, report.0, "--graph-body-records", directory.0]
         sidecar = Some(report)
     # 3. The record's identity covers the key and the report format, so text and JSON reports are kept apart.
     code = check_or_replay(ready, toolchain, path, format, bakery()?, key, options)?

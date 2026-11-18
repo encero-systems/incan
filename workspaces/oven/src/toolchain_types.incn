@@ -59,6 +59,7 @@ pub model Toolchain:
     # from before them refuses the options, so Oven passes them only when the installation advertises this.
     pub closure_anchors: bool = false
     pub search_index_crumb: bool = false
+    pub checked_body_counts_crumb: bool = false
 
     pub def installed(self) -> InstalledCompiler:
         """Project frozen compiler facts without retaining any request-local readers or console selection."""
@@ -73,6 +74,7 @@ pub model Toolchain:
             codegraph_on_request=self.codegraph_on_request,
             closure_anchors=self.closure_anchors,
             search_index_crumb=self.search_index_crumb,
+            checked_body_counts_crumb=self.checked_body_counts_crumb,
             registry_lock=self.registry_lock,
             c_compiler=self.c_compiler,
             target=self.target,
@@ -100,6 +102,7 @@ pub model InstalledCompiler:
     pub codegraph_on_request: bool = false
     pub closure_anchors: bool = false
     pub search_index_crumb: bool = false
+    pub checked_body_counts_crumb: bool = false
     pub registry_lock: str
     pub c_compiler: str
     pub target: str
@@ -126,6 +129,7 @@ pub model InstalledCompiler:
             codegraph_on_request=self.codegraph_on_request,
             closure_anchors=self.closure_anchors,
             search_index_crumb=self.search_index_crumb,
+            checked_body_counts_crumb=self.checked_body_counts_crumb,
             console="",
             worker_generation="",
             native_closures=NativeClosureInput(),

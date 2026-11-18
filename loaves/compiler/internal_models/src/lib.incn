@@ -178,3 +178,5 @@ pub from checker_publication import CheckerRecordCounts, checker_report_suffix, 
 pub from namespace_rows import encode_callable_inventory, decode_callable_inventory
 
 pub from toolchain_search import encode_search_paths, decode_search_paths
+
+pub from checked_body_counts import CheckedBodyCounts, encode_checked_body_counts, decode_checked_body_counts
