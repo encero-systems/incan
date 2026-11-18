@@ -140,7 +140,7 @@ pub def published_identity(path: Path) -> Result[str, str]:
         return accepted_identity(proof)
     record = available_record(path)?
     if not record.is_file():
-        if let Some(entry) = registry_entry(path)?:
+        if let Some(entry) = admitted_registry_identity(path)?:
             return Ok(entry)
         return Err(f"unit identity refused: {path.0}: linked unit has no recorded producer identity")
     proof = read_evidence(record, path)?
@@ -159,10 +159,10 @@ pub def admitted_identity(path: Path) -> Result[Option[str], str]:
     """Return an installed payload's admitted producer identity without reopening its bytes or record."""
     if let Some(admission) = frozen_payload(path)?:
         return Ok(Some(accepted_identity(admission)?))
-    return registry_entry(path)
+    return admitted_registry_identity(path)
 
 
-def registry_entry(path: Path) -> Result[Option[str], str]:
+pub def admitted_registry_identity(path: Path) -> Result[Option[str], str]:
     """
     The identity of the registry entry an artifact belongs to: `<store>/entries/sha256-<digest>/artifacts/<file>`
     names entry `sha256:<digest>`. Registry stores are content-named, so the entry directory is the producer identity.

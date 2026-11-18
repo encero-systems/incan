@@ -7,9 +7,10 @@ from compiler_record_admission import CompilerRecordPin
 from compiler_worker import generation_for
 from files import json_text, read_json
 from freshness_fixtures import compiler_fingerprint, fixture, unit_key, write
-from observation import file_digest
+from observation import file_digest, observe
+from frozen_inputs import Document, admit_observations, clear, select
 from scratch import scratch_directory
-from unit_freshness import fingerprint
+from unit_freshness import artifact_identity, fingerprint
 from unit_publication import (
     LOAF_FACTS_SCHEMA,
     PUBLICATION_SCHEMA,
@@ -87,6 +88,27 @@ pub def test_a_directory_named_like_a_registry_entry_gives_its_artifacts_no_iden
     write(forged, "bytes no registry unit produced")?
     assert admitted_identity(forged)?.is_none(), "a directory name alone admitted an artifact"
     assert published_identity(forged).is_err(), "a directory name alone named an artifact's producer"
+    registry = scratch.path().joinpath("registry")
+    artifact = registry.joinpath("entries").joinpath(entry).joinpath("artifacts/libserde.rlib")
+    write(artifact, "selected registry payload")?
+    closure = registry.joinpath("closure.json")
+    binding = JsonValue.object({"path": JsonValue.string(artifact.0)})
+    document = JsonValue.object({"externs": JsonValue.object({"serde": binding})})
+    select([Document(path=closure.0, stamp="closure-stamp", value=document)], [], [], [], closure.0, "closure", "rustc", "compiler")
+    expected = "sha256:" + entry[7:]
+    assert artifact_identity(artifact)? == expected
+    physical = observe(artifact)?.stamp
+    unrelated = observe(forged)?.stamp
+    # A completed catalog adds observations; both the selected producer and the unadmitted file keep their identities.
+    admit_observations([artifact.0, forged.0], [physical, unrelated])
+    assert artifact_identity(artifact)? == expected, "catalog observation changed the scalar producer generation"
+    assert artifact_identity(forged)? == unrelated
+    next_identity = "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+    replaced = registry.joinpath("entries/sha256-" + next_identity).joinpath("artifacts/libserde.rlib")
+    write(replaced, "replacement registry payload")?
+    admit_observations([replaced.0], [observe(replaced)?.stamp])
+    assert artifact_identity(replaced)? == "sha256:" + next_identity
+    clear()
     return Ok(None)
 
 

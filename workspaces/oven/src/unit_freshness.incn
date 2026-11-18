@@ -26,6 +26,7 @@ from native_references import NATIVE_CLOSURE_SCHEMA, RUST_NATIVE_SCHEMA
 from unit import UnitDescription
 from unit_publication import (
     admitted_identity as admitted_payload_identity,
+    admitted_registry_identity,
     published_facts,
     published_identity,
     publication,
@@ -74,14 +75,15 @@ pub def artifact_available(path: Path) -> bool:
 
 pub def artifact_identity(path: Path) -> Result[str, str]:
     """
-    Identify a published artifact by its filesystem identity, without reading its bytes.
+    Use an admitted registry entry or frozen generation before observing a local artifact.
 
     That is its device and inode, size and mode, and the nanosecond times of its last modification and last status
     change: replacing the file changes the inode, and rewriting it in place changes the status change time even when
     the modification time is put back.
     """
     if let Some(stamp) = frozen_observation(path):
-        return Ok(stamp)
+        # Registry-page recall adds a filesystem observation to the same authenticated producer.
+        return Ok(admitted_registry_identity(path)?.unwrap_or(stamp))
     if let Some(identity) = admitted_payload_identity(path)?:
         return Ok(identity)
     clock = begin()
