@@ -18,15 +18,17 @@ pub def validate_result_requirements(
     enums: &list[EnumDeclaration],
 ) -> Result[None, str]:
     """Unresolved or dependent substitutions retain a refusal, never implicit independent storage."""
-    mut layouts = ViewLifetimeLayout.start(declarations, enums)
-    mut identities: BTreeMap[str, CanonicalSymbolId] = BTreeMap.new()
-    for name, identity in body.named_type_identities.iter():
-        _ = identities.insert(str(name), identity.clone())
     match body.checked_input_profile:
         None => return Ok(None)
         Some(profile) =>
-            if profile.version in [3, 4] and len(profile.result_requirements) == 0:
-                return Err("generic result profile lost its dependency requirements")
+            if len(profile.result_requirements) == 0:
+                if profile.version in [3, 4]:
+                    return Err("generic result profile lost its dependency requirements")
+                return Ok(None)
+            mut layouts = ViewLifetimeLayout.start(declarations, enums)
+            mut identities: BTreeMap[str, CanonicalSymbolId] = BTreeMap.new()
+            for name, identity in body.named_type_identities.iter():
+                _ = identities.insert(str(name), identity.clone())
             for requirement in profile.result_requirements:
                 anchor, ty = requirement
                 if not independent_result_with_layout(ty, identities, declarations, enums, layouts):
