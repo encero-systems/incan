@@ -175,7 +175,7 @@ pub def stage_plan_modules(
         key = plan_module_key(origin, file, value)
         # A folded module can publish independent order only when every function supplies the same proof.
         namespace = max([plan.order.rank for plan in plans])
-        certificate = plans[0].order.evidence
+        mut certificate = plans[0].order.evidence
         for plan in plans:
             if plan.order.evidence != certificate:
                 certificate = LoweringOrder().evidence

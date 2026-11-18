@@ -19,6 +19,10 @@ pub class LoweringOrders:
     current: Dict[str, NamespaceOrder]
     certificates: Dict[str, NamespaceOrder] = {}
 
+    @staticmethod
+    pub def new(origin: str, current: Dict[str, NamespaceOrder]) -> LoweringOrders:
+        return LoweringOrders(origin=origin, current=current)
+
     pub def fresh(self, module: str) -> LoweringOrder:
         if module in self.current:
             order = self.current[module]

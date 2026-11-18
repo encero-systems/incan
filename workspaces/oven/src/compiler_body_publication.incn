@@ -285,7 +285,7 @@ pub def prepare_compiled_bodies(
         source,
         projections,
         outputs,
-        LoweringOrders(origin=origin, current=order),
+        LoweringOrders.new(origin, order),
         retained,
         selected,
         unit,
