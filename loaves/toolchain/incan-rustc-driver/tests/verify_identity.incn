@@ -355,7 +355,11 @@ def cached_values(trace: Path) -> Result[list[bool], str]:
         if json_text(record, "kind")? != "event":
             continue
         fields = record.require("fields").map_err((error) => error.message())?
-        if json_text(fields, "message")? == "loaded compiler library proof":
+        # Structured compiler events can carry counters without a message.
+        message = match fields.get("message"):
+            Some(value) => value.expect_str().map_err((error) => error.message())?
+            None => continue
+        if message == "loaded compiler library proof":
             values.append(
                 fields.require("cached").and_then((value) => value.expect_bool()).map_err((error) => error.message())?,
             )
