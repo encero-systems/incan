@@ -26,7 +26,6 @@ from toolchain import Toolchain, toolchain_file
 from frozen_inputs import observation as frozen_observation
 
 const SCHEMA: str = "incan.search-index/1"
-const LEGACY_SELECTION: str = "search-index/1"
 
 
 pub def search_index(toolchain: Toolchain, registry: Option[RegistryUnits] = None, allow_crumb: bool = true) -> Result[str, str]:
@@ -51,7 +50,7 @@ pub def search_index(toolchain: Toolchain, registry: Option[RegistryUnits] = Non
             generation = observe(description)?.stamp
     observed = Observation(stamp=generation, newest=0)
     current = toolchain.search_index_crumb and allow_crumb
-    mut profile = LEGACY_SELECTION.clone()
+    mut profile = "search-index/1"
     if current:
         profile = "search-index/2"
     selection = f"{profile} {registry_identity(toolchain)}"
