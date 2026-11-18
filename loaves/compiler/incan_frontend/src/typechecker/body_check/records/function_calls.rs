@@ -21,10 +21,8 @@ pub(super) fn restore(positions: &Positions, local: &mut BodyLocal) -> Result<()
     Ok(())
 }
 
-/// Direct checking records the same target at both the callee and the full call. Their common start and distinct
-/// ends recover the full-call view without requiring a parameter row, which is absent for zero-argument calls.
-/// The current declaration supplies caller provenance. Direct checking records the outer target before visiting
-/// its arguments, so source preorder retains the complete native call sequence.
+/// Direct checking records the same source target on the typed call and its callee. Use syntax roles for
+/// widened interpolation spans. The corresponding checked target on both nodes is required in either case.
 fn calls(positions: &Positions, local: &BodyLocal) -> Result<Vec<CBindingFunctionCall>, NodeBindingError> {
     let Some(caller) = &positions.caller else {
         if local.c_abi.function_calls.is_empty() {
@@ -32,15 +30,28 @@ fn calls(positions: &Positions, local: &BodyLocal) -> Result<Vec<CBindingFunctio
         }
         return Err(NodeBindingError::MissingOwner);
     };
+    let targets = &local.expressions.source_targets;
+    let widened = positions
+        .nodes
+        .direct_call_sites()
+        .filter_map(|(call, callee)| {
+            (call.start != callee.start
+                && targets
+                    .get(&callee)
+                    .is_some_and(|target| targets.get(&call) == Some(target)))
+            .then_some(call)
+        })
+        .collect::<std::collections::HashSet<_>>();
     let mut calls = local
         .expressions
         .source_targets
         .iter()
         .filter(|(span, target)| {
             target.is_function()
-                && local.expressions.source_targets.iter().any(|(callee_span, callee)| {
-                    callee == *target && callee_span.start == span.start && callee_span.end < span.end
-                })
+                && (widened.contains(span)
+                    || local.expressions.source_targets.iter().any(|(callee_span, callee)| {
+                        callee == *target && callee_span.start == span.start && callee_span.end < span.end
+                    }))
         })
         .map(|(span, target)| CBindingFunctionCall {
             span: *span,

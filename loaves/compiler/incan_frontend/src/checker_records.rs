@@ -1251,6 +1251,16 @@ mod tests {
         ))
     }
 
+    /// The interpolation's outer range includes its braces while the callee's range starts at its identifier.
+    #[test]
+    fn preserves_nested_call_provenance_inside_an_interpolation() -> Result<(), Box<dyn std::error::Error>> {
+        reusable_ordinary_calls(concat!(
+            "def inner(value: int) -> int:\n    return value + 1\n\n",
+            "def outer(value: int) -> int:\n    return value + 2\n\n",
+            "def rendered(value: int) -> str:\n    return f\"result: {outer(inner(value))}\"\n",
+        ))
+    }
+
     /// A generic function, its neighbor and the caller that instantiates it at two types all publish reusable values,
     /// so a shifted program re-checks none of their bodies.
     #[test]
