@@ -29,10 +29,10 @@ pub def member_plan_inputs(origin: str, module: str, event: str, members: &Dict[
     """Join the current native event to a checked stable owner, or retain the complete namespace as its witness."""
     if not members.contains_key(event):
         return Ok([prepared_product_request(namespace_key(origin, module))])
-    recorded_module, stable = members[event]
-    if recorded_module != module:
+    recorded = members[event]
+    if recorded[0] != module:
         return Err("member lowering event was attributed to a different checked namespace")
-    return Ok([prepared_product_request(member_key(origin, stable)), prepared_product_request(interface_key(origin, module))])
+    return Ok([prepared_product_request(member_key(origin, recorded[1])), prepared_product_request(interface_key(origin, module))])
 
 
 pub def prepare_namespace_products(mut transaction: Transaction, mut source: PreparedBodyRecordSource, scope: ReadScope,
