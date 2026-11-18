@@ -344,8 +344,47 @@ impl GraphBodyOutput {
         Ok(())
     }
 
+    /// Keep newly evaluated owners inside this activation. The ordinary physical and settled-call guards are
+    /// applied again. No provisional namespace, dependency receipt or partial output is published.
+    pub(super) fn completed_owners(
+        mut self,
+        modules: &[ParsedModule],
+        bodies: &mut [BodyIrModule],
+        reads: &BTreeMap<String, Vec<incan_frontend::body_ir::SettledCallRead>>,
+    ) -> Result<Vec<incan_frontend::checker_records::GraphBodyRecord>, String> {
+        self.values
+            .retain(|value| !value.restored && !value.restored_body_ir && value.physical_inputs.is_some());
+        if self.values.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.namespaces.clear();
+        self.attach_body_ir(modules, bodies, &[], reads)?;
+        let profile = incan_frontend::checker_records::GRAPH_BODY_RECORD_PROFILE.to_owned();
+        self.values
+            .into_iter()
+            .map(|value| {
+                let fields = |bytes: &Vec<u8>| {
+                    internal_models::decode_owned_record(bytes, &profile, &value.identity)
+                        .and_then(|record| internal_models::native_fields(&record))
+                        .map_err(|error| format!("current checker output refused: {error:?}"))
+                };
+                let frame = incan_semantics_core::executable_representation::decode_owner(&value.body_ir)
+                    .map_err(|error| format!("current executable owner refused: {error}"))?;
+                Ok(incan_frontend::checker_records::GraphBodyRecord {
+                    local: fields(&value.local)?,
+                    final_value: fields(&value.final_value)?,
+                    identity: value.identity,
+                    body_ir: Some(frame),
+                })
+            })
+            .collect()
+    }
+
     /// Encode every eligible triple and explicit fallback through the shared schema, then atomically publish it.
-    pub(super) fn publish(mut self) -> Result<(), String> {
+    pub(super) fn publish(
+        mut self,
+        selected: &incan_frontend::checker_records::GraphBodyRecords,
+    ) -> Result<(), String> {
         let Some(path) = self.path else {
             return Ok(());
         };
@@ -382,6 +421,12 @@ impl GraphBodyOutput {
             format!("{reusable_declarations}/{all_declarations} reusable declarations; refusals {refusal_text}")
         };
         // A selected record the checker refused is not restored: that body was checked afresh, and Oven counts it so.
+        for value in &mut self.values {
+            if selected.checked_here(&value.identity) {
+                value.restored = false;
+                value.restored_body_ir = false;
+            }
+        }
         let restored = self
             .values
             .iter()
