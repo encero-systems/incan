@@ -316,6 +316,8 @@ pub def obtain(
         return Err("unit records currently support ordinary program units without vocabulary or foreign headers")
     ready = prepared_for(program_view(handle)?, described, toolchain)?
     compiled_key = unit_key(ready, toolchain)?
+    plan_report = plan_record_report_path(ready, compiled_key, toolchain.unit_descriptor_crumb)
+    body_output = graph_body_output_path(ready, compiled_key, toolchain.unit_descriptor_crumb)
     if compiled_key.refusal != "":
         return Err(compiled_key.refusal)
     # Diagnosis has a separate native identity: a normal successful unit is not proof that all bodies were rechecked.
@@ -357,11 +359,11 @@ pub def obtain(
     mut plan_module_reuses = 0
     if produced.evaluations > 0:
         reading_plan_sidecars = begin_work()
-        plan_counts = plan_record_counts(ready, compiled_key)?
-        plan_module_reuses = len(restored_modules(plan_record_report_path(ready, compiled_key), whole_only=true)?)
+        plan_counts = plan_record_counts(ready, compiled_key, toolchain.unit_descriptor_crumb)?
+        plan_module_reuses = len(restored_modules(plan_report, whole_only=true)?)
         record_work(
             Operation.EngineSidecarAuthentication,
-            plan_record_report_path(ready, compiled_key).0,
+            plan_report.0,
             reading_plan_sidecars,
         )
     if produced.code != 0:
@@ -400,17 +402,17 @@ pub def obtain(
     if produced.native_bakes == 1:
         # The compiler's report names the bodies it restored; a selected record it refused was checked afresh.
         reading_checker_sidecar = begin_work()
-        checker_counts = checker_record_counts(ready, compiled_key)?
+        checker_counts = checker_record_counts(ready, compiled_key, toolchain.unit_descriptor_crumb)?
         record_work(
             Operation.EngineSidecarAuthentication,
-            checker_record_report_path(graph_body_output_path(ready, compiled_key)).0,
+            checker_record_report_path(body_output).0,
             reading_checker_sidecar,
         )
         bodies = prepare_compiled_bodies(
             request_transaction,
             ready,
-            graph_body_output_path(ready, compiled_key),
-            Some(plan_record_report_path(ready, compiled_key)),
+            body_output,
+            Some(plan_report),
             Some(graph),
             retained_bodies,
             checker_counts.restored,
