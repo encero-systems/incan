@@ -130,7 +130,7 @@ fn body(name: &str, ordinal: usize) -> Body {
 pub(super) fn module(bodies: Vec<Body>) -> BodyIrModule {
     BodyIrModule {
         runtime_callable_bindings: Vec::new(),
-        runtime_binding_selectors: Vec::new(),
+        runtime_binding_scopes: Vec::new(),
         decorated_bindings: Vec::new(),
         entrypoint_effects: Vec::new(),
         program_entrypoints: Vec::new(),

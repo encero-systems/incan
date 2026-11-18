@@ -219,7 +219,7 @@ pub model CompilerBodyIrModule:
     pub trait_declarations: list[CanonicalSymbolId]
     pub trait_implementations: list[TraitImplementation]
     pub bodies: list[CompilerBody]
-    pub runtime_binding_selectors: list[str] = []
+    pub runtime_binding_scopes: list[tuple[str, list[str]]] = []
 
 
 pub def valid_compiler_body(body: CompilerBody) -> bool:
@@ -289,7 +289,7 @@ pub def covered_body_count(coverage: CompilerBodyCoverage) -> Option[int]:
 
 pub def valid_invocation_view(module: CompilerBodyIrModule) -> bool:
     """Admit runtime bindings and selected mains only as an invocation view; a persistent provider record has neither."""
-    return len(module.runtime_callable_bindings) != 0 or len(module.runtime_binding_selectors) != 0 or len(module.program_entrypoints) != 0
+    return len(module.runtime_callable_bindings) != 0 or len(module.runtime_binding_scopes) != 0 or len(module.program_entrypoints) != 0
 
 
 pub def valid_published_expanded_body(body: CompilerBody) -> bool:

@@ -168,7 +168,7 @@ pub def lower_instances(
     mut redirects = runtime_redirects()
     mut names = function_names()
     mut nominals = product_nominal_table(program, intrinsics, product_directory(products))
-    governed_runtime = len(context.runtime_callable_bindings) != 0 or len(context.runtime_binding_selectors) != 0 or governed_runtime_module(owners)
+    governed_runtime = len(context.runtime_callable_bindings) != 0 or len(context.runtime_binding_scopes) != 0 or governed_runtime_module(owners)
     if governed_runtime:
         retain_runtime_instances(
             template_constructors,

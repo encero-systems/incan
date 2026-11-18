@@ -40,7 +40,7 @@ use declaration_records::NAMED_FAMILIES;
 pub(super) use declaration_records::{names_record, read_declaration};
 use inventory::{Metadata, read_summary};
 pub(super) use inventory::{admit_capabilities, summary};
-pub(super) use runtime_bindings::{read_runtime_bindings, runtime_binding_selectors};
+pub(super) use runtime_bindings::read_runtime_bindings;
 
 /// The record family holding a Loaf's checked API documentation, which compiles never open (RFC 179).
 const DOCUMENTATION: &str = "documentation";
@@ -1501,11 +1501,10 @@ mod tests {
         let dir = root.path().join("debug");
         let index = crate::loaf_index::LoafIndex::deferred([(name.to_owned(), name.to_owned(), dir, false)])?;
         let baseline = selected.0.reads();
-        let names = index.runtime_binding_selectors(name)?;
+        assert!(index.can_query_runtime_bindings(name));
+        assert!(!index.can_query_runtime_bindings("different-package"));
         let used = format!("{name}::used");
         let unused = format!("{name}::unused");
-        assert!(names.contains(&content_name(used.as_bytes())));
-        assert!(names.contains(&content_name(unused.as_bytes())));
         assert_eq!(selected.0.reads(), baseline);
         let binding = index.runtime_binding(name, &used)?.ok_or("expected the named facade")?;
         assert_eq!(binding.path, used);
@@ -1522,6 +1521,38 @@ mod tests {
                 .iter()
                 .any(|key| key.contains("/runtime-bindings/") || key.ends_with(&content_name(unused.as_bytes())))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn an_aggregate_only_runtime_keeps_its_published_facade_and_native_absences()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let name = "incan_native_runtime";
+        let root = tempfile::tempdir()?;
+        let manifest = surfaced_library_for(name, "pub def used() -> int:\n    return 1\n")?;
+        let mut set = installed_library(root.path(), &manifest)?;
+        set.entries.retain(|entry| !entry.key.contains("/runtime-binding/"));
+        let selected = thread_selection::select(set);
+        let dir = root.path().join("debug");
+        let index = crate::loaf_index::LoafIndex::deferred([(name.to_owned(), name.to_owned(), dir, false)])?;
+        assert!(index.can_query_runtime_bindings(name));
+        let binding = index
+            .runtime_binding(name, "incan_native_runtime::used")?
+            .ok_or("missing legacy binding")?;
+        assert_eq!(binding.path, "incan_native_runtime::used");
+        assert!(
+            index
+                .runtime_binding(name, "incan_native_runtime::unpublished")?
+                .is_none()
+        );
+        assert_eq!(
+            thread_selection::read_keys()
+                .iter()
+                .filter(|key| key.contains("/runtime-bindings/"))
+                .count(),
+            1
+        );
+        drop(selected);
         Ok(())
     }
 

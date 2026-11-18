@@ -34,7 +34,7 @@ impl RecordSet {
                 limit,
             )?;
             tracing::trace!(target: "incan::invocation", phase = "record_directory_pages", digest = %seal,
-                root = %top, selector = %selected, bytes);
+                root = %top, selector = %selected, limit, bytes);
             let mut result = Vec::with_capacity(rows.len());
             for (key, revision) in rows {
                 if !accepts(&key) {
