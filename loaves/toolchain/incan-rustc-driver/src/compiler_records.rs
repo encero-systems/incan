@@ -29,8 +29,10 @@ struct ExportedRecord {
 
 /// Convert every installed standard Loaf manifest below `loaves` into independently addressed record values.
 pub(crate) fn export(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    let [installed, output] = arguments else {
-        return Err("usage: incan-rustc-driver --compiler-records INSTALLED OUTPUT".into());
+    let (installed, output, typed) = match arguments {
+        [installed, output] => (installed, output, false),
+        [installed, output, flag] if flag == "--crumb-index" => (installed, output, true),
+        _ => return Err("usage: incan-rustc-driver --compiler-records INSTALLED OUTPUT [--crumb-index]".into()),
     };
     let installed = Path::new(installed);
     let output = Path::new(output);
@@ -75,8 +77,17 @@ pub(crate) fn export(arguments: &[String]) -> Result<(), Box<dyn std::error::Err
         write_object(output, key, value, &mut records)?;
     }
     records.sort_by(|left, right| left.key.cmp(&right.key));
-    let index = json!({"schema": EXPORT_SCHEMA, "records": records});
-    fs::write(output.join("index.json"), serde_json::to_vec(&index)?)?;
+    if typed {
+        let members = records.into_iter().map(|record| internal_models::CompilerExportMember {
+            key: record.key,
+            revision: record.revision,
+        }).collect();
+        let encoded = internal_models::encode_compiler_export(&members)?;
+        fs::write(output.join("index.crumb"), encoded)?;
+    } else {
+        let index = json!({"schema": EXPORT_SCHEMA, "records": records});
+        fs::write(output.join("index.json"), serde_json::to_vec(&index)?)?;
+    }
     Ok(())
 }
 

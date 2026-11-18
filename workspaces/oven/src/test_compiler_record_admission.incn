@@ -5,6 +5,7 @@ from std.fs import Path
 from std.hash import file_digest, sha256
 from std.json import JsonValue
 from pub::internal_models.compiler_contributors import CompilerContributors, decode_compiler_contributors, encode_compiler_contributors
+from pub::internal_models.compiler_export import CompilerExportMember, decode_compiler_export, encode_compiler_export
 from scratch import scratch_directory
 from compiler_record_admission import CompilerRecordPin, SHIPPED_RECORDS, compiler_record_profile, convert, installed_records
 from pub::incan_platform.store import begin, commit, stage_put
@@ -155,6 +156,32 @@ pub def test_one_directory_proof_checks_only_the_pages_selected_by_the_facet() -
     rest = read_directory(directory.0, root, seal, group, 0)?
     assert len(rest.members) == 320
     assert rest.checked_bytes > one.checked_bytes, "the unrelated remaining pages carry more bytes than the selected path"
+    return Ok(None)
+
+
+pub def test_typed_and_predecessor_compiler_indexes_seal_the_identical_membership() -> Result[None, str]:
+    scratch = scratch_directory()?
+    before = scratch.path().joinpath("legacy")
+    current = scratch.path().joinpath("current")
+    predecessor = ship_one_record(before)?
+    driver = ship_one_record(current)?
+    old_pin = convert(predecessor.0, before, before)?
+    revision = hexlify(sha256.digest(b"shipped record"))
+    member = CompilerExportMember(key=f"loaf/debug/probe/metadata/00000000/{revision}", revision=revision)
+    frame = encode_compiler_export([member])?
+    assert frame[:4] == b"CRMB" and decode_compiler_export(frame)? == [member]
+    assert encode_compiler_export([member, member]).is_err()
+    bad = CompilerExportMember(key="key", revision="not sha256")
+    assert encode_compiler_export([bad]).is_err()
+    index = current.joinpath(SHIPPED_RECORDS).joinpath("index.crumb")
+    index.write_bytes(frame[:16]).map_err((error) => error.message())?
+    assert convert(driver.0, current, current, true).is_err()
+    index.write_bytes(frame).map_err((error) => error.message())?
+    pin = convert(driver.0, current, current, true)?
+    assert old_pin.digest == pin.digest
+    directory = current.joinpath(pin.root).joinpath("selection").0
+    found = read_directory(directory, pin.directory, pin.digest, member.key, 1)?
+    assert len(found.members) == 1 and found.members[0].key == member.key and found.members[0].revision == revision
     return Ok(None)
 
 

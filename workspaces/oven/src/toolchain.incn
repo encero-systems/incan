@@ -395,6 +395,7 @@ def toolchain_of(document: JsonValue, directory: Path) -> Result[Toolchain, list
             checked_body_counts_crumb=optional_flag(document, "checked_body_counts_crumb")?,
             worker_protocol_crumb=optional_flag(document, "worker_protocol_crumb")?,
             unit_descriptor_crumb=optional_flag(document, "unit_descriptor_crumb")?,
+            compiler_record_export_crumb=optional_flag(document, "compiler_record_export_crumb")?,
             console="",
             worker_generation="",
             native_closures=NativeClosureInput(),
