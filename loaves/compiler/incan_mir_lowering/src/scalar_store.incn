@@ -28,7 +28,7 @@ from pub::incan_mir_plan import (
     resolve_nominals,
 )
 from scalar_products import encode_product, decode_product
-from record_positions import index_positions, place_positions, relocate_product
+from record_positions import index_positions, place_positions, positioned_product, relocate_product
 
 
 # A record whose key is its checked meaning; its spans name Body IR nodes by ordinal through a request-local position map.
@@ -138,6 +138,21 @@ pub def finalize_scalar(
     frames: list[Function] = [],
     reported: bytes = b"",
 ) -> Result[tuple[bytes, list[NominalReference]], str]:
+    """Finalize a captured scalar and return its storage bytes and resolved nominal positions."""
+    encoded, resolved, _positioned = finalized_plan_product(directory, key, function, reused, references, positions, frames, reported)?
+    return Ok((encoded, resolved))
+
+
+pub def finalized_plan_product(
+    directory: str,
+    key: str,
+    function: &Function,
+    reused: bool,
+    references: list[NominalReference],
+    positions: list[tuple[int, int]],
+    frames: list[Function] = [],
+    reported: bytes = b"",
+) -> Result[tuple[bytes, list[NominalReference], bytes], str]:
     """
     Retain the whole-program plan's final function under a keyed product's unchanged inputs and lowering demand.
 
@@ -146,14 +161,13 @@ pub def finalize_scalar(
        the declarations the product named for those positions.
     3. Accept a reused product only when it is already identical; replace a fresh product atomically.
 
-    Returns the final record and the positions its ordinals take in this request.
+    Returns the storage record, its resolved ordinals and the native product at this request's source positions.
     """
     # 1. The event key names the product by its complete producer inputs.
     path = Path(directory).joinpath(key + ".incnfunction")
     encoded = path.read_bytes().map_err((error) => f"cannot read plan-function product {error.message()}")?
     record = decode_record(encoded)?
-    placed = place_positions(record.function, positions)?
-    current = relocate_product(placed, str(function.span.file), function.span.line)?
+    current = positioned_product(record.function, positions, str(function.span.file), function.span.line)?
     _captured, demand, _captured_frames, identities = decode_product_parts(current, references)?
     # 2. The same inputs now name the exact native function compiled for this declaration.
     # A freshly captured product already passed the producer's position and schema round trips. Compare the
@@ -161,7 +175,7 @@ pub def finalize_scalar(
     if not reused and reported == encoded and matches_product(current, function, demand, identities, frames, references)?:
         if record.digest != plan_function_digest(record.function, record.requests)?:
             return Err("plan-function product digest disagrees with its capture")
-        return Ok((encoded, references))
+        return Ok((encoded, references, current))
     whole = product_nominals(function, demand, frames)?
     mut nominals: list[ProductNominal] = []
     for reference in whole:
@@ -174,12 +188,14 @@ pub def finalize_scalar(
             None => return Err(f"plan-function {function.name} names a declaration its keyed product does not")
     final = encoded_record(record.inputs, function, demand, nominals, positions, frames, record.requests)?
     if final == encoded:
-        return Ok((encoded, whole))
+        return Ok((encoded, whole, current))
     # 3. A reused product was already final when retained, so any difference is a lowering defect, never a refresh.
     if reused:
         return Err(f"plan-function {function.name} differs from the whole-program plan")
     publish_record(directory, record.inputs, final)?
-    return Ok((final, whole))
+    final_payload = decode_record(final)?.function
+    positioned = positioned_product(final_payload, positions, str(function.span.file), function.span.line)?
+    return Ok((final, whole, positioned))
 
 
 pub def report_scalar(
@@ -284,11 +300,12 @@ def encoded_record(
     if inputs[0] == RECORD_FUNCTION:
         relative = relocate_product(payload, "<owner>", 1)?
         restored = relocate_product(relative, str(function.span.file), function.span.line)?
-        references = product_nominals(function, runtime, frames)?
-        restored_function, restored_runtime = decode_product(restored, references)?
-        restored_frames = decode_frames(restored, references)?
-        if encode_product(restored_function, restored_runtime, nominals, restored_frames)? != payload:
-            return Err("plan-function position round trip changed native facts")
+        # The producer already restored every native field from payload. Identical canonical bytes carry that proof.
+        if restored != payload:
+            references = product_nominals(function, runtime, frames)?
+            restored_function, restored_runtime, restored_frames, _identities = decode_product_parts(restored, references)?
+            if encode_product(restored_function, restored_runtime, nominals, restored_frames)? != payload:
+                return Err("plan-function position round trip changed native facts")
         payload = index_positions(relative, positions)?
         if place_positions(payload, positions)? != relative:
             return Err("plan-function position map changed native facts")
@@ -318,12 +335,9 @@ def record_payload(
             if inputs[0] == RECORD_FUNCTION:
                 if let Some(current) = span:
                     # Node ordinals take this body's positions; a body without those nodes is a miss.
-                    match place_positions(payload, positions):
+                    match positioned_product(payload, positions, str(current.file), current.line):
+                        Ok(moved) => payload = moved
                         Err(_) => return None
-                        Ok(placed) =>
-                            match relocate_product(placed, str(current.file), current.line):
-                                Ok(moved) => payload = moved
-                                Err(_) => return None
             return Some(payload)
 
 
@@ -425,11 +439,7 @@ pub def admitted_payload(
     if record.inputs != expected:
         return None
     positions = [(position.line, position.column) for position in decoded.positions]
-    placed = match place_positions(record.function, positions):
-        Ok(value) => value
-        Err(_) => return None
-
-    payload = match relocate_product(placed, str(span.file), span.line):
+    payload = match positioned_product(record.function, positions, str(span.file), span.line):
         Ok(value) => value
         Err(_) => return None
 

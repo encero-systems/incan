@@ -63,6 +63,7 @@ pub enum PositionChange:
     Relocate(str, int, str, int)
     Index(dict[str, int])
     Place(list[tuple[int, int]])
+    PlaceAt(list[tuple[int, int]], str, int, str, int)
 
 
 pub model WirePositions:
@@ -73,12 +74,7 @@ pub model WirePositions:
         match self.change:
             PositionChange.Preserve => pass
             PositionChange.Relocate(old_file, origin, new_file, start) =>
-                if file != old_file:
-                    return Err("plan-function position map refuses a mixed-source frame")
-                moved = line - origin + start
-                if moved < 1:
-                    return Err("plan-function position map precedes its owner")
-                return Ok((new_file, moved, column))
+                return relocate_span(file, line, column, old_file, origin, new_file, start)
             PositionChange.Index(ordinals) =>
                 if file == "<owner>":
                     key = f"{line - 1}:{column}"
@@ -87,9 +83,27 @@ pub model WirePositions:
                     if line > 1:
                         return Err("plan-function span locates no Body IR node")
             PositionChange.Place(positions) =>
-                if file == "<owner>" and line == 0:
-                    if column < 1 or column > len(positions):
-                        return Err("plan-function product names a body position the current body does not have")
-                    node_line, node_column = positions[column - 1]
-                    return Ok((file, node_line + 1, node_column))
+                return place_span(file, line, column, positions)
+            PositionChange.PlaceAt(positions, old_file, origin, new_file, start) =>
+                placed_file, placed_line, placed_column = place_span(file, line, column, positions)?
+                return relocate_span(placed_file, placed_line, placed_column, old_file, origin, new_file, start)
         return Ok((file, line, column))
+
+
+
+def place_span(file: str, line: int, column: int, positions: &list[tuple[int, int]]) -> Result[tuple[str, int, int], str]:
+    if file == "<owner>" and line == 0:
+        if column < 1 or column > len(positions):
+            return Err("plan-function product names a body position the current body does not have")
+        node_line, node_column = positions[column - 1]
+        return Ok((file, node_line + 1, node_column))
+    return Ok((file, line, column))
+
+
+def relocate_span(file: str, line: int, column: int, old_file: str, origin: int, new_file: str, start: int) -> Result[tuple[str, int, int], str]:
+    if file != old_file:
+        return Err("plan-function position map refuses a mixed-source frame")
+    moved = line - origin + start
+    if moved < 1:
+        return Err("plan-function position map precedes its owner")
+    return Ok((new_file, moved, column))
