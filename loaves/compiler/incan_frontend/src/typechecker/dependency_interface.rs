@@ -9,6 +9,7 @@ mod checked_namespace;
 mod stable_encoding;
 
 pub use checked_namespace::{CheckedNamespaceInterface, NamespaceCell, NamespaceCrumb};
+pub(crate) use checked_namespace::{CheckedCellProjection, callable_projection};
 use serde::Serialize;
 use stable_encoding::stable_encode;
 

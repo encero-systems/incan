@@ -28,7 +28,7 @@ pub trait NamespaceCrumb {
 }
 
 type Cell = NamespaceCell;
-trait Project: Sized {
+pub(crate) trait Project: Sized {
     fn project(&self) -> Cell;
     fn restore(value: Cell) -> Result<Self, String>;
     fn project_list(values: &[Self]) -> Cell {
@@ -209,6 +209,8 @@ macro_rules! sum { ($ty:ty { $($v:ident = $tag:literal $( ( $($p:ident : $pid:li
 }}; }
 
 mod declarations;
+pub(crate) mod callable_fields;
+
 pub(super) fn project(value: &super::CheckedNamespaceInterface) -> NamespaceCell {
     value.project()
 }

@@ -4,6 +4,7 @@ from rust::std::primitive import f64 as RustF64
 from std.primitives.crumb.hashes import value_hash
 from std.primitives.crumb.values import Projection, IntegerValue, MapEntry, Value, ValueField
 from crumb_rows import operation_budget, required_value
+from callable_schema import CALLABLE_PRODUCT, callable_descriptions
 from namespace_schema import namespace_descriptions, namespace_field_is_canonical, namespace_root
 from plan_wire_rows import read_wire, write_wire
 
@@ -149,3 +150,30 @@ pub def publish_namespace_interface(root: NamespaceAtom) -> Result[NamespacePubl
     mut budget = operation_budget()?
     semantic = value_hash(value, Projection.Canonical, budget).map_err((error) => error.message())?
     return Ok(NamespacePublication(interface=interface, semantic_interface=semantic.digest))
+
+
+pub def encode_callable_inventory(root: NamespaceAtom) -> Result[bytes, str]:
+    """Keep the full checked product and its integrity witness in the same schema-bound Crumb row."""
+    value = logical(root)?
+    mut budget = operation_budget()?
+    checksum = value_hash(value, Projection.Object, budget).map_err((error) => error.message())?
+    envelope = Value.Record([required_value(b"digest", Value.Binary(checksum.digest)), required_value(b"produc", value)])
+    return write_wire(CALLABLE_PRODUCT, callable_descriptions(), envelope)
+
+
+pub def decode_callable_inventory(encoded: bytes) -> Result[NamespaceAtom, str]:
+    """Authenticate all fields, including the current source positions, before rebuilding any callable."""
+    envelope = read_wire(encoded, CALLABLE_PRODUCT, callable_descriptions())?
+    fields = match envelope:
+        Value.Record(found) => found
+        _ => return Err("invalid callable publication")
+    if len(fields) != 2 or fields[0].identity != b"digest" or fields[1].identity != b"produc":
+        return Err("invalid callable publication fields")
+    mut budget = operation_budget()?
+    checksum = value_hash(fields[1].value, Projection.Object, budget).map_err((error) => error.message())?
+    match fields[0].value:
+        Value.Binary(stored) =>
+            if stored != checksum.digest:
+                return Err("callable publication checksum differs")
+        _ => return Err("missing callable publication checksum")
+    return atom(fields[1].value)

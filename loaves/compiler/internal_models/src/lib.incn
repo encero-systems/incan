@@ -128,6 +128,7 @@ pub from activation_envelopes import (
 )
 pub from namespace_order import NamespaceOrder, certified_namespace_order, checking_basis_key, checking_completion_receipt, decode_namespace_order, encode_checking_completion
 pub from checker_record_models import (
+    CheckedFamily,
     CodecFault,
     GraphBodyValue,
     GraphBodyFields,
@@ -139,6 +140,8 @@ pub from checker_record_models import (
     CompiledBodyOutputs,
 )
 pub from checker_records import (
+    decode_owned_record,
+    callable_checker_fields,
     from_native_fields,
     from_native_final_fields,
     from_native_local_fields,
@@ -171,3 +174,5 @@ pub from source_value_records import SOURCE_PROFILE, encode_source_text, source_
 pub from namespace_rows import NamespaceAtom, NamespaceEntry, NamespaceField, NamespacePublication, decode_namespace_interface, encode_namespace_interface, publish_namespace_interface
 
 pub from checker_publication import CheckerRecordCounts, checker_report_suffix, encode_checker_counts, decode_checker_counts
+
+pub from namespace_rows import encode_callable_inventory, decode_callable_inventory

@@ -4,6 +4,7 @@ use super::*;
 
 mod wire;
 pub use wire::{NamespaceCell, NamespaceCrumb};
+pub(crate) use wire::{Project as CheckedCellProjection, callable_fields as callable_projection};
 
 /// Durable checked surface of one editable source namespace.
 ///
