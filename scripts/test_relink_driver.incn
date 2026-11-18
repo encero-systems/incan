@@ -218,20 +218,23 @@ def test_the_compiler_home_readmits_a_direct_registry_extern_by_its_link_spellin
     identity = "sha256:" + components[2][len("sha256-"):]
     # 2. This is the production readmission boundary, not a command-recording stub.
     readmit(builder.0, compiler, [])?
-    located = hexlify(sha256.digest(artifact.0.encode("utf-8")))
+    physical = artifact.resolve().map_err((error) => error.message())?
+    assert physical.0 != artifact.0
     directory = compiler.joinpath("cache/unit-admissions")
-    current = directory.joinpath(f"{located}.crumb")
-    mut admitted = ""
-    if current.is_file():
-        raw = current.read_bytes().map_err((error) => error.message())?
-        proof = decode_unit_admission(raw, artifact.0)?
-        assert proof.refusal == ""
-        admitted = proof.identity
-    else:
-        legacy = directory.joinpath(f"{located}.json")
-        document = JsonValue.parse(legacy.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err((error) => error.message())?
-        admitted = document.require("unit").and_then((value) => value.expect_str()).map_err((error) => error.message())?
-    assert admitted == identity, f"{artifact.0}: expected {identity}, admitted {admitted}"
+    for spelling in [artifact, physical]:
+        located = hexlify(sha256.digest(spelling.0.encode("utf-8")))
+        current = directory.joinpath(f"{located}.crumb")
+        mut admitted = ""
+        if current.is_file():
+            raw = current.read_bytes().map_err((error) => error.message())?
+            proof = decode_unit_admission(raw, spelling.0)?
+            assert proof.refusal == ""
+            admitted = proof.identity
+        else:
+            legacy = directory.joinpath(f"{located}.json")
+            document = JsonValue.parse(legacy.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err((error) => error.message())?
+            admitted = document.require("unit").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+        assert admitted == identity, f"{spelling.0}: expected {identity}, admitted {admitted}"
     return Ok(None)
 
 

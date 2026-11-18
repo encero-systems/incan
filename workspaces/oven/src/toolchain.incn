@@ -309,13 +309,22 @@ def admit_registry(document: JsonValue, directory: Path) -> Result[list[Path], s
         return Ok([])
     mut paths: list[Path] = []
     externs = read_json(source)?.require("externs").map_err((error) => error.message())?
+    closure_root = source.parent()
+    physical_root = closure_root.resolve().map_err((error) => error.message())?
     for identity in externs.keys():
         native = externs.require(identity).map_err((error) => error.message())?
-        artifact = Path(located(source.parent(), required_text(native, "path")?))
+        declared = required_text(native, "path")?
+        artifact = Path(located(closure_root, declared))
         mut expected = ""
         if native.get("payload_digest") != None:
             expected = required_text(native, "payload_digest")?
         import_payload(artifact, identity, expected)?
+        # A compiler home links the installed registry. Published native dependencies can address the same
+        # admitted artifact through the installation while local builds address it through the compiler home.
+        if physical_root.0 != closure_root.0:
+            physical = Path(located(physical_root, declared))
+            if physical.0 != artifact.0 and physical.resolve().map_err((error) => error.message())? == artifact.resolve().map_err((error) => error.message())?:
+                import_payload(physical, identity, expected)?
         paths.append(artifact)
     return Ok(paths)
 
