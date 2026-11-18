@@ -82,6 +82,7 @@ pub model GraphNamespaceValue:
     pub package_roots: list[str] = []
     pub call_reads: list[SettledCallRead] = []
     pub call_reads_known: bool = true
+    pub identity_proof: bytes = b""
 
 
 pub model CompiledBodyValue:
@@ -130,6 +131,7 @@ pub model CompiledNamespaceValue:
     pub call_reads: list[SettledCallRead] = []
     pub semantic_interface: bytes = b""
     pub member_witnesses: list[list[str]] = []
+    pub identity_proof: bytes = b""
 
 
 pub model CompiledBodyOutputs:

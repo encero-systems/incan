@@ -1,5 +1,6 @@
 """A nested editable declaration keeps its typed result, anchors and identities across the graph boundary."""
 
+from pub::internal_models.namespace_proof import encode_namespace_proof, read_namespace_proof
 from std.hash import sha256
 from pub::internal_models.namespace_rows import NamespaceAtom, NamespaceField, NamespaceEntry, prepare_namespace_reader, decode_prepared_namespace, identify_prepared_namespace, decode_namespace_interface, encode_namespace_interface, publish_namespace_interface
 
@@ -57,6 +58,14 @@ pub def test_checked_namespace_reads_typed_function_and_rejects_old_json() -> Re
     first = publish_namespace_interface(namespace(result_type))?
     moved = publish_namespace_interface(namespace(result_type, "The updated labels.", 47u64))?
     changed = publish_namespace_interface(namespace(text))?
+    physical = sha256.digest(first.interface)
+    seal = encode_namespace_proof("src/provider.incn", 7u32, "provider", ["provider"], physical)?
+    selected_root = read_namespace_proof(seal, "src/provider.incn", 7u32, physical)?
+    assert selected_root.name == "provider" and selected_root.path == ["provider"]
+    assert read_namespace_proof(seal, "src/provider.incn", 7u32, sha256.digest(moved.interface)).is_err()
+    assert read_namespace_proof(seal, "src/peer.incn", 7u32, physical).is_err()
+    assert read_namespace_proof(seal, "src/provider.incn", 6u32, physical).is_err()
+    assert read_namespace_proof(seal[:len(seal) - 1], "src/provider.incn", 7u32, physical).is_err()
     assert first.interface == encoded and first.interface != moved.interface
     assert len(first.semantic_interface) == 32 and first.semantic_interface == moved.semantic_interface
     assert changed.semantic_interface != first.semantic_interface

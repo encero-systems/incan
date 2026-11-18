@@ -36,6 +36,8 @@ from compiled_body_rows import (
     decode_compiled_body_row,
     encode_compiled_body_rows,
 )
+from pub::internal_models.namespace_proof import encode_namespace_proof
+from std.hash import sha256
 from crumb_rows import ModelField, decode_rows, encode_rows, model_description, required_value
 from std.primitives.crumb.records import RowRecord
 from std.primitives.crumb.values import Value
@@ -220,6 +222,7 @@ def compiled_output_controls(source: str) -> Result[None, str]:
     namespace = CompiledNamespaceValue(
         module="src/main.incn",
         interface=b"checked-interface",
+        identity_proof=encode_namespace_proof("src/main.incn", 7u32, "main", ["main"], sha256.digest(b"checked-interface"))?,
         body_ir=b"whole-module-frame",
         dependencies=["src/helper.incn", "src/provider.incn"],
         lowering_inputs=[["main#decl.0..10", "witness"]],
@@ -238,6 +241,7 @@ def compiled_output_controls(source: str) -> Result[None, str]:
         CompiledBodyOutput.Namespace(decoded) =>
             assert decoded.module == namespace.module and decoded.interface == namespace.interface
             assert decoded.body_ir == namespace.body_ir and decoded.dependencies == namespace.dependencies
+            assert decoded.identity_proof == namespace.identity_proof
             assert decoded.call_reads == namespace.call_reads
             assert decoded.package_roots == namespace.package_roots
             assert decoded.lowering_inputs == namespace.lowering_inputs
@@ -607,6 +611,11 @@ def graph_namespace_controls() -> Result[None, str]:
     assert decoded.body_ir == value.body_ir and decoded.lowering_inputs == value.lowering_inputs
     assert decoded.package_roots == ["alpha", "provider"]
     assert decoded.call_reads_known and decoded.call_reads == value.call_reads
+    assert len(decoded.identity_proof) == 0
+    value.identity_proof = encode_namespace_proof(value.module, 7u32, "main", ["main"], sha256.digest(value.interface))?
+    current = encode_graph_namespace_value(value).map_err((_) => "graph namespace with physical identity")?
+    current_value = decode_graph_namespace_value(current).map_err((_) => "graph physical identity decode")?
+    assert current_value.identity_proof == value.identity_proof and current_value.call_reads_known
     value.call_reads = decoded.call_reads + decoded.call_reads
     assert encode_graph_namespace_value(value).is_err()
     value.call_reads = [SettledCallRead(reader="invoke", target="provider", digest="wrong")]

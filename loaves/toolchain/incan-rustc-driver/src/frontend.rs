@@ -419,7 +419,7 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
             return Ok(None);
         }
         let interface_span = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::decode_namespace_interface", module = source, bytes = record.interface.len()).entered();
-        let checked = namespace_crumb::admit(record.interface)
+        let checked = namespace_crumb::admit(source, &record.identity_proof, record.interface)
             .map_err(incan_frontend::checker_records::RecordAdapterFault::InvalidField)?;
         drop(interface_span);
         let body_span = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::decode_namespace_body_ir", module = source, bytes = record.body_ir.len()).entered();

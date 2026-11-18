@@ -27,7 +27,8 @@ const MAX_METADATA_BYTES: int = 65536
 const MAX_REASON_CHARACTERS: int = 16000
 const LEGACY_NAMESPACE_SELECTOR: bytes = b"cmpns2\x00"
 const ROOTS_NAMESPACE_SELECTOR: bytes = b"cmpns3\x00"
-const NAMESPACE_SELECTOR: bytes = b"cmpns4\x00"
+const CALLS_NAMESPACE_SELECTOR: bytes = b"cmpns4\x00"
+const NAMESPACE_SELECTOR: bytes = b"cmpns5\x00"
 const VALUE_SELECTOR: bytes = b"cmpval\x00"
 const FALLBACK_SELECTOR: bytes = b"cmpfbk\x00"
 
@@ -84,12 +85,14 @@ pub def decode_compiled_body_row(encoded: bytes) -> Result[CompiledBodyOutput, C
     """Decode one complete Crumb row without consulting or buffering any peer row."""
     if len(encoded) == 0 or len(encoded) > MAX_ROW_BYTES:
         return Err(CodecFault.Limit)
-    rows = decode_rows(encoded, [namespace_description(), namespace_description(3), namespace_description(2), value_description(), fallback_description()], MAX_ROW_BYTES).map_err(
+    rows = decode_rows(encoded, [namespace_description(), namespace_description(4), namespace_description(3), namespace_description(2), value_description(), fallback_description()], MAX_ROW_BYTES).map_err(
         (_) => CodecFault.Malformed,
     )?
     if len(rows) != 1:
         return Err(CodecFault.Malformed)
     if rows[0].key == copy_frozen_bytes(NAMESPACE_SELECTOR):
+        return Ok(CompiledBodyOutput.Namespace(decode_compiled_namespace_value(rows[0].value, 5)?))
+    if rows[0].key == copy_frozen_bytes(CALLS_NAMESPACE_SELECTOR):
         return Ok(CompiledBodyOutput.Namespace(decode_compiled_namespace_value(rows[0].value, 4)?))
     if rows[0].key == copy_frozen_bytes(ROOTS_NAMESPACE_SELECTOR):
         prior = decode_compiled_namespace_value(rows[0].value, 3)?
@@ -140,22 +143,23 @@ def encode_compiled_namespace_value(value: CompiledNamespaceValue) -> Result[byt
         lowering_inputs += [Value.Text(input[0]), Value.Text(input[1])]
         previous = input[0]
     members = member_values(value.member_witnesses)?
-    row = RowRecord(
-        key=NAMESPACE_SELECTOR,
-        value=Value.Record(
-            [required_value(b"bodyir", Value.Binary(value.body_ir)), required_value(b"deps__", Value.List(dependencies)), required_value(
-                b"iface_",
-                Value.Binary(value.interface),
-            ), required_value(b"inputs", Value.List(lowering_inputs)), required_value(
-                b"member",
-                Value.List(members),
-            ), required_value(b"module", Value.Text(value.module)), required_value(
-                b"roots_", Value.List([Value.Text(root) for root in value.package_roots]),
-            ), required_value(b"semant", Value.Binary(value.semantic_interface)),
-                required_value(b"wreads", Value.List(call_read_values(value.call_reads)?))],
-        ),
-    )
-    return encoded_row(namespace_description(), row)
+    mut fields = [
+        required_value(b"bodyir", Value.Binary(value.body_ir)),
+        required_value(b"deps__", Value.List(dependencies)),
+        required_value(b"iface_", Value.Binary(value.interface)),
+        required_value(b"inputs", Value.List(lowering_inputs)),
+        required_value(b"member", Value.List(members)),
+        required_value(b"module", Value.Text(value.module)),
+        required_value(b"roots_", Value.List([Value.Text(root) for root in value.package_roots])),
+        required_value(b"semant", Value.Binary(value.semantic_interface)),
+        required_value(b"wreads", Value.List(call_read_values(value.call_reads)?)),
+    ]
+    if len(value.identity_proof) == 0:
+        return encoded_row(namespace_description(4), RowRecord(key=CALLS_NAMESPACE_SELECTOR, value=Value.Record(fields)))
+    if len(value.identity_proof) > MAX_METADATA_BYTES:
+        return Err(CodecFault.Limit)
+    fields.append(required_value(b"zproof", Value.Binary(value.identity_proof)))
+    return encoded_row(namespace_description(), RowRecord(key=NAMESPACE_SELECTOR, value=Value.Record(fields)))
 
 
 def encode_compiled_body_value(value: CompiledBodyValue) -> Result[bytes, CodecFault]:
@@ -308,7 +312,9 @@ def decode_compiled_namespace_value(value: Value, version: int) -> Result[Compil
     if version == 2:
         semantic_index = 6
     mut count = semantic_index + 1
-    if version == 4:
+    if version >= 4:
+        count += 1
+    if version >= 5:
         count += 1
     fields = record_fields(value, count)?
     dependencies = text_values(fields[1].value)?
@@ -346,9 +352,15 @@ def decode_compiled_namespace_value(value: Value, version: int) -> Result[Compil
     if len(semantic) not in [0, 32]:
         return Err(CodecFault.Malformed)
     mut call_reads: list[SettledCallRead] = []
-    if version == 4:
+    if version >= 4:
         call_reads = decoded_call_reads(fields[8].value)?
+    mut proof: bytes = b""
+    if version >= 5:
+        proof = binary_value(fields[9].value)?
+        if len(proof) == 0 or len(proof) > MAX_METADATA_BYTES:
+            return Err(CodecFault.Malformed)
     restored = CompiledNamespaceValue(
+        identity_proof=proof,
         call_reads=call_reads,
         module=text_value(fields[5].value)?,
         member_witnesses=members,
@@ -474,8 +486,8 @@ def optional_identity(identity: Option[str]) -> str:
         None => return ""
 
 
-def namespace_description(version: int = 4) -> Description:
-    """Only the current compiler envelope carries the complete package-root set."""
+def namespace_description(version: int = 5) -> Description:
+    """Each version adds package roots, settled call reads, or the physical identity proof in field order."""
     mut fields = [
         ModelField(identity=b"bodyir", name="body_ir", storage="binary"),
         ModelField(identity=b"deps__", name="dependencies", storage="list<string>"),
@@ -492,7 +504,10 @@ def namespace_description(version: int = 4) -> Description:
     if version == 3:
         return model_description(ROOTS_NAMESPACE_SELECTOR, "incan.checker-compiled-namespace/3", fields)
     fields.append(ModelField(identity=b"wreads", name="call_reads", storage="list<tuple<string,string,string>>"))
-    return model_description(NAMESPACE_SELECTOR, "incan.checker-compiled-namespace/4", fields)
+    if version == 4:
+        return model_description(CALLS_NAMESPACE_SELECTOR, "incan.checker-compiled-namespace/4", fields)
+    fields.append(ModelField(identity=b"zproof", name="identity_proof", storage="binary"))
+    return model_description(NAMESPACE_SELECTOR, "incan.checker-compiled-namespace/5", fields)
 
 
 def value_description() -> Description:

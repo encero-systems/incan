@@ -34,6 +34,7 @@ struct PendingNamespaceValue {
     module: String,
     interface: Vec<u8>,
     semantic_interface: Vec<u8>,
+    identity_proof: Vec<u8>,
     package_roots: Vec<String>,
     member_owners: std::collections::BTreeMap<incan_semantics_core::CanonicalSymbolId, String>,
     member_witnesses: Vec<Vec<String>>,
@@ -92,6 +93,7 @@ fn fallback_identity(identity: Option<String>) -> Option<String> {
 /// Invocation-local collector for the optional graph-publication sidecar.
 pub(super) struct GraphBodyOutput {
     path: Option<PathBuf>,
+    namespace_proofs: bool,
     project_root: PathBuf,
     values: Vec<PendingBodyValue>,
     namespaces: Vec<PendingNamespaceValue>,
@@ -117,7 +119,13 @@ impl GraphBodyOutput {
         } else {
             project_root
         };
+        // The requesting Oven chooses its output profile. A predecessor still receives the rows it can decode.
+        let namespace_proofs = path.as_ref().and_then(|path| path.file_name()).is_some_and(|name| {
+            name.as_encoded_bytes()
+                .ends_with(internal_models::namespace_proof_output_suffix().as_bytes())
+        });
         Ok(Self {
+            namespace_proofs,
             path,
             project_root,
             values: Vec::new(),
@@ -168,7 +176,12 @@ impl GraphBodyOutput {
         )? {
             let published = super::namespace_crumb::publish(&interface)?;
             let member_owners = interface.lowering_member_owners();
-            super::namespace_crumb::remember_published(&published.interface, interface);
+            let identity_proof = super::namespace_crumb::remember_published(
+                &module_path,
+                &published.interface,
+                interface,
+                self.namespace_proofs,
+            )?;
             let mut package_roots = incan_driver::body_ir::checked_package_roots(
                 &[(module.path_segments.as_slice(), checker.type_info())],
                 package_identity,
@@ -180,6 +193,7 @@ impl GraphBodyOutput {
             self.namespaces.push(PendingNamespaceValue {
                 package_roots,
                 module: module_path.clone(),
+                identity_proof,
                 interface: published.interface,
                 semantic_interface: published.semantic_interface,
                 member_owners,
@@ -412,6 +426,7 @@ impl GraphBodyOutput {
             .map(|value| internal_models::CompiledNamespaceValue {
                 module: value.module,
                 interface: value.interface,
+                identity_proof: value.identity_proof,
                 semantic_interface: value.semantic_interface,
                 member_witnesses: value.member_witnesses,
                 call_reads: value.call_reads,
@@ -625,6 +640,9 @@ mod tests {
         let output = Some(root.join("bodies"));
         let collector = GraphBodyOutput::prepare(output.clone(), alias)?;
         assert_eq!(collector.project_root, actual.canonicalize()?);
+        assert!(!collector.namespace_proofs);
+        let current_output = root.join(format!("units{}", internal_models::namespace_proof_output_suffix()));
+        assert!(GraphBodyOutput::prepare(Some(current_output), actual.clone())?.namespace_proofs);
         let missing = root.join("missing");
         let refused = match GraphBodyOutput::prepare(output, missing.clone()) {
             Ok(_) => return Err("an explicit missing graph body root was accepted".into()),

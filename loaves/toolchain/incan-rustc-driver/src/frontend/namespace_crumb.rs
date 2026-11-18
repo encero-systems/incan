@@ -54,8 +54,26 @@ fn insert(digest: [u8; 32], size: usize, interface: Arc<CheckedNamespaceInterfac
 }
 
 /// The successful publication consumed this validated interface and produced these exact bytes.
-pub(super) fn remember_published(bytes: &[u8], interface: CheckedNamespaceInterface) {
-    insert(Sha256::digest(bytes).into(), bytes.len(), Arc::new(interface));
+pub(super) fn remember_published(
+    source: &str,
+    bytes: &[u8],
+    interface: CheckedNamespaceInterface,
+    request_proof: bool,
+) -> Result<Vec<u8>, String> {
+    let digest: [u8; 32] = Sha256::digest(bytes).into();
+    let proof = if request_proof {
+        internal_models::encode_namespace_proof(
+            &source.to_owned(),
+            CheckedNamespaceInterface::SCHEMA,
+            interface.module_name().to_owned(),
+            &interface.module_path().to_vec(),
+            &digest.to_vec(),
+        )?
+    } else {
+        Vec::new()
+    };
+    insert(digest, bytes.len(), Arc::new(interface));
+    Ok(proof)
 }
 
 fn published(digest: &[u8; 32]) -> Option<Arc<CheckedNamespaceInterface>> {
@@ -84,16 +102,27 @@ impl incan_frontend::checker_records::GraphNamespaceInterface for EncodedInterfa
     }
 }
 
-/// The full Crumb envelope is admitted even for namespaces that nobody imports. Read its identity fields
-/// without building Rust declarations or lookup tables until an editable consumer actually needs them.
+/// Graph selection supplies the compiler's physical identity proof. Older rows recover the same
+/// identity from the full envelope. Installation independently verifies the declaration's own root.
 pub(super) fn admit(
+    source: &str,
+    proof: &[u8],
     bytes: Vec<u8>,
 ) -> Result<Arc<dyn incan_frontend::checker_records::GraphNamespaceInterface>, String> {
     let digest = Sha256::digest(&bytes).into();
-    if let Some(hit) = published(&digest) {
-        return Ok(hit);
-    }
-    let root = internal_models::identify_prepared_namespace(namespace_reader()?, &bytes, CheckedNamespaceInterface::SCHEMA)?;
+    let root = if proof.is_empty() {
+        if let Some(hit) = published(&digest) {
+            return Ok(hit);
+        }
+        internal_models::identify_prepared_namespace(namespace_reader()?, &bytes, CheckedNamespaceInterface::SCHEMA)?
+    } else {
+        internal_models::read_namespace_proof(
+            &proof.to_vec(),
+            &source.to_owned(),
+            CheckedNamespaceInterface::SCHEMA,
+            &digest.to_vec(),
+        )?
+    };
     Ok(Arc::new(EncodedInterface {
         name: root.name,
         path: root.path,
@@ -120,7 +149,10 @@ impl NamespaceCrumb for CheckedNamespaceCrumb {
         if encoded.len() > 64 * 1024 * 1024 {
             return Err("checked namespace exceeds its byte limit".into());
         }
-        to_cell(internal_models::decode_prepared_namespace(namespace_reader()?, &encoded.to_vec())?)
+        to_cell(internal_models::decode_prepared_namespace(
+            namespace_reader()?,
+            &encoded.to_vec(),
+        )?)
     }
 }
 
@@ -227,7 +259,7 @@ mod tests {
                 .ok_or("missing checked namespace")?;
             let owners = value.lowering_member_owners().into_values().collect();
             let publication = super::publish(&value)?;
-            super::remember_published(&publication.interface, value);
+            super::remember_published("domain.incn", &publication.interface, value, true)?;
             Ok((publication, owners))
         }
         let (before, before_owners) = publication("Blue doc.", "int", "24")?;
@@ -266,11 +298,17 @@ mod tests {
             .ok_or("missing provider interface")?;
         let codec = CheckedNamespaceCrumb;
         let bytes = original.to_bytes(&codec)?;
-        let selected = super::admit(bytes.clone())?;
+        assert!(super::remember_published("domain.incn", &bytes, original.clone(), false)?.is_empty());
+        let proof = super::remember_published("domain.incn", &bytes, original.clone(), true)?;
+        let selected = super::admit("domain.incn", &proof, bytes.clone())?;
+        assert!(super::admit("renamed.incn", &proof, bytes.clone()).is_err());
+        assert!(super::admit("domain.incn", &proof, bytes[..bytes.len() - 1].to_vec()).is_err());
+        assert!(super::admit("domain.incn", &proof[..proof.len() - 1], bytes.clone()).is_err());
+        assert!(super::admit("domain.incn", &[], bytes.clone())?.belongs_to("domain", &path));
         assert!(selected.belongs_to("domain", &path));
         assert!(!selected.belongs_to("domain", &["other".into()]));
         assert!(!selected.belongs_to("other", &path));
-        assert!(super::admit(bytes[..bytes.len() - 1].to_vec()).is_err());
+        assert!(super::admit("domain.incn", &[], bytes[..bytes.len() - 1].to_vec()).is_err());
         let restored = CheckedNamespaceInterface::from_bytes(&bytes, &codec)?;
         assert_eq!(restored.to_bytes(&codec)?, bytes);
         assert!(CheckedNamespaceInterface::from_bytes(&bytes[..bytes.len() - 1], &codec).is_err());

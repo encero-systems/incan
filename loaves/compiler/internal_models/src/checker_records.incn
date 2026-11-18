@@ -34,7 +34,8 @@ const CHECKER_SELECTOR: bytes = b"checkr\x00"
 const GRAPH_BODY_SELECTOR: bytes = b"grbody\x00"
 const GRAPH_CHECKING_SELECTOR: bytes = b"grchec\x00"
 const PRIOR_GRAPH_NAMESPACE_SELECTOR: bytes = b"grnam2\x00"
-const GRAPH_NAMESPACE_SELECTOR: bytes = b"grnam3\x00"
+const CALLS_GRAPH_NAMESPACE_SELECTOR: bytes = b"grnam3\x00"
+const GRAPH_NAMESPACE_SELECTOR: bytes = b"grnam4\x00"
 
 
 pub def encode_record(record: Borrowed[CheckedRecord]) -> Result[bytes, CodecFault]:
@@ -219,10 +220,10 @@ def graph_checking_description() -> Description:
     ])
 
 
-def graph_namespace_description(prior: bool = false) -> Description:
+def graph_namespace_description(version: int = 4) -> Description:
     """Read older graph rows without granting current executable-call admission."""
     mut fields = [ModelField(identity=b"bodyir", name="body_ir", storage="binary")]
-    if not prior:
+    if version >= 3:
         fields.append(ModelField(identity=b"calls_", name="call_reads", storage="list<tuple<string,string,string>>"))
     fields += [
         ModelField(identity=b"iface_", name="interface", storage="binary"),
@@ -230,9 +231,12 @@ def graph_namespace_description(prior: bool = false) -> Description:
         ModelField(identity=b"module", name="module", storage="string"),
         ModelField(identity=b"roots_", name="package_roots", storage="list<string>"),
     ]
-    if prior:
+    if version == 2:
         return model_description(PRIOR_GRAPH_NAMESPACE_SELECTOR, "incan.checker-graph-namespace/2", fields)
-    return model_description(GRAPH_NAMESPACE_SELECTOR, "incan.checker-graph-namespace/3", fields)
+    if version == 3:
+        return model_description(CALLS_GRAPH_NAMESPACE_SELECTOR, "incan.checker-graph-namespace/3", fields)
+    fields.append(ModelField(identity=b"zproof", name="identity_proof", storage="binary"))
+    return model_description(GRAPH_NAMESPACE_SELECTOR, "incan.checker-graph-namespace/4", fields)
 
 
 def validate(record: Borrowed[CheckedRecord]) -> Result[None, CodecFault]:
@@ -527,32 +531,37 @@ pub def encode_graph_namespace_value(value: GraphNamespaceValue) -> Result[bytes
             return Err(CodecFault.Malformed)
         flattened += [Value.Text(input[0]), Value.Text(input[1])]
         previous = input[0]
-    record = RowRecord(
-        key=GRAPH_NAMESPACE_SELECTOR,
-        value=Value.Record(
-            [
-                required_value(b"bodyir", Value.Binary(value.body_ir)),
-                required_value(b"calls_", Value.List(call_read_values(value.call_reads)?)),
-                required_value(b"iface_", Value.Binary(value.interface)),
-                required_value(b"inputs", Value.List(flattened)),
-                required_value(b"module", Value.Text(value.module)),
-                required_value(b"roots_", Value.List([Value.Text(root) for root in value.package_roots])),
-            ],
-        ),
-    )
-    return encode_rows(graph_namespace_description(), [record], MAX_CHECKER_ROW_BYTES).map_err(
+    mut fields = [
+        required_value(b"bodyir", Value.Binary(value.body_ir)),
+        required_value(b"calls_", Value.List(call_read_values(value.call_reads)?)),
+        required_value(b"iface_", Value.Binary(value.interface)),
+        required_value(b"inputs", Value.List(flattened)),
+        required_value(b"module", Value.Text(value.module)),
+        required_value(b"roots_", Value.List([Value.Text(root) for root in value.package_roots])),
+    ]
+    mut version = 3
+    mut key = copy_frozen_bytes(CALLS_GRAPH_NAMESPACE_SELECTOR)
+    if len(value.identity_proof) > 65536:
+        return Err(CodecFault.Limit)
+    if len(value.identity_proof) > 0:
+        version = 4
+        key = copy_frozen_bytes(GRAPH_NAMESPACE_SELECTOR)
+        fields.append(required_value(b"zproof", Value.Binary(value.identity_proof)))
+    record = RowRecord(key=key, value=Value.Record(fields))
+    return encode_rows(graph_namespace_description(version), [record], MAX_CHECKER_ROW_BYTES).map_err(
         (_) => CodecFault.Limit,
     )
 
 
 pub def decode_graph_namespace_value(encoded: bytes) -> Result[GraphNamespaceValue, CodecFault]:
     """Decode one complete namespace row and refuse unordered, empty or trailing lowering witnesses."""
-    rows = decode_rows(encoded, [graph_namespace_description(), graph_namespace_description(true)], MAX_CHECKER_ROW_BYTES).map_err(
+    rows = decode_rows(encoded, [graph_namespace_description(), graph_namespace_description(3), graph_namespace_description(2)], MAX_CHECKER_ROW_BYTES).map_err(
         (_) => CodecFault.Malformed,
     )?
     if len(rows) != 1:
         return Err(CodecFault.Malformed)
-    current = rows[0].key == copy_frozen_bytes(GRAPH_NAMESPACE_SELECTOR)
+    has_proof = rows[0].key == copy_frozen_bytes(GRAPH_NAMESPACE_SELECTOR)
+    current = has_proof or rows[0].key == copy_frozen_bytes(CALLS_GRAPH_NAMESPACE_SELECTOR)
     if not current and rows[0].key != copy_frozen_bytes(PRIOR_GRAPH_NAMESPACE_SELECTOR):
         return Err(CodecFault.Malformed)
     fields = match rows[0].value:
@@ -562,8 +571,16 @@ pub def decode_graph_namespace_value(encoded: bytes) -> Result[GraphNamespaceVal
     mut width = 5
     if current:
         width = 6
-    if len(fields) != width:
+    mut expected_width = width
+    mut proof: bytes = b""
+    if has_proof:
+        expected_width += 1
+    if len(fields) != expected_width:
         return Err(CodecFault.Malformed)
+    if has_proof:
+        proof = binary_value(fields[width].value)?
+        if len(proof) == 0 or len(proof) > 65536:
+            return Err(CodecFault.Malformed)
     body_ir = binary_value(fields[0].value)?
     mut call_reads: list[SettledCallRead] = []
     if current:
@@ -586,7 +603,7 @@ pub def decode_graph_namespace_value(encoded: bytes) -> Result[GraphNamespaceVal
         lowering_inputs.append([identity, witness])
         previous = identity
         offset += 2
-    return Ok(GraphNamespaceValue(module=module, interface=interface, body_ir=body_ir, lowering_inputs=lowering_inputs, package_roots=roots, call_reads=call_reads, call_reads_known=current))
+    return Ok(GraphNamespaceValue(module=module, interface=interface, identity_proof=proof, body_ir=body_ir, lowering_inputs=lowering_inputs, package_roots=roots, call_reads=call_reads, call_reads_known=current))
 
 
 pub def record_root(encoded: bytes) -> Result[str, CodecFault]:

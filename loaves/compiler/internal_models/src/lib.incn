@@ -173,6 +173,7 @@ pub from unit_admission import PayloadAdmission, decode_unit_admission, encode_u
 pub from selection_bindings import encode_binding, read_binding
 pub from source_value_records import SOURCE_PROFILE, encode_source_text, source_value
 
+pub from namespace_proof import encode_namespace_proof, read_namespace_proof, namespace_proof_output_suffix
 pub from namespace_rows import NamespaceAtom, NamespaceEntry, NamespaceField, NamespaceIdentity, NamespacePublication, PreparedNamespaceReader, prepare_namespace_reader, decode_prepared_namespace, identify_prepared_namespace, namespace_identity, decode_namespace_interface, encode_namespace_interface, publish_namespace_interface
 
 pub from compiler_contributors import CompilerContributors, decode_compiler_contributors, encode_compiler_contributors
