@@ -307,6 +307,12 @@ def settle(mut client: Client, mut state: ServiceState) -> Result[None, Refusal]
                         pending.request,
                         Message.Event(Event(status="Console", trace_handle=ready.console)),
                     )?
+                if ready.incomplete_proof != "":
+                    send(
+                        client.channel,
+                        pending.request,
+                        Message.Event(Event(status="ProofIncomplete", trace_handle=ready.incomplete_proof[:2048])),
+                    )?
                 match ready.pin:
                     Some(pin) =>
                         state.pin(pin.token)?

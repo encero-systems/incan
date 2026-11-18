@@ -50,6 +50,7 @@ pub model Ready:
 
     pub message: Complete
     pub console: str
+    pub incomplete_proof: str = ""
     pub pin: Option[ExecutionLease] = None
 
 
@@ -116,8 +117,11 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
     mut observation = ""
     match produced.unit:
         None =>
+            mut incomplete = ""
             if pending.proofs:
-                observation = retain(store, run, counters, produced)?
+                match retain(store, run, counters, produced):
+                    Ok(handle) => observation = handle
+                    Err(reason) => incomplete = reason
             return Ok(
                 Ready(
                     message=Complete(
@@ -129,6 +133,7 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
                         observation_handle=observation,
                     ),
                     console=produced.console,
+                    incomplete_proof=incomplete,
                 ),
             )
         Some(unit) =>
@@ -212,6 +217,7 @@ def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, 
         status = CompletionStatus.Failed
     # A requested report shows that a check produced no unit, no plans and no native bake, and which bodies it checked.
     mut observation = ""
+    mut incomplete = ""
     if pending.proofs:
         checked = ProgramOutcome(
             code=outcome.code,
@@ -227,7 +233,12 @@ def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, 
             body_page_writes=outcome.body_page_writes,
             body_page_decodes=outcome.body_page_decodes,
         )
-        observation = retain(store, hexlify(pending.request), pending.capture.counters, checked)?
+        match retain(store, hexlify(pending.request), pending.capture.counters, checked):
+            Ok(handle) => observation = handle
+            Err(reason) =>
+                if outcome.code == 0:
+                    return Err(reason)
+                incomplete = reason
     return Ok(
         Ready(
             message=Complete(
@@ -239,6 +250,7 @@ def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, 
                 observation_handle=observation,
             ),
             console=outcome.console,
+            incomplete_proof=incomplete,
         ),
     )
 
