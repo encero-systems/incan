@@ -145,6 +145,9 @@ pub struct EncodedOwnerRepresentation {
     /// Exact source coordinates and native binding handles from the producing activation, when authenticated.
     #[serde(skip)]
     pub physical_inputs: Option<[u8; 32]>,
+    /// Optional graph-only Crumb publication. The compiler's shared owner schema authenticates it before reuse.
+    #[serde(skip)]
+    pub call_witness: Option<Vec<u8>>,
     /// The complete checked executable owner.
     pub body: Body,
 }

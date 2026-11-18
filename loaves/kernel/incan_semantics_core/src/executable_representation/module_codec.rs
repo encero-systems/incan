@@ -102,14 +102,24 @@ pub fn decode_owner(bytes: &[u8]) -> Result<EncodedOwnerRepresentation, Executab
         postcard::take_from_bytes(bytes).map_err(|error| ExecutableRepresentationError::Malformed {
             reason: format!("could not decode the executable owner: {error}"),
         })?;
-    if !remainder.is_empty() {
-        let digest = remainder
-            .strip_prefix(PHYSICAL_INPUTS)
-            .and_then(|value| <[u8; 32]>::try_from(value).ok())
-            .ok_or_else(|| ExecutableRepresentationError::Malformed {
-                reason: "executable owner has an unrecognized physical input frame".into(),
-            })?;
-        framed.physical_inputs = Some(digest);
+    let mut trailing = remainder;
+    if let Some(physical) = trailing.strip_prefix(PHYSICAL_INPUTS) {
+        let (digest, rest) =
+            physical
+                .split_first_chunk::<32>()
+                .ok_or_else(|| ExecutableRepresentationError::Malformed {
+                    reason: "executable owner has a truncated physical input frame".into(),
+                })?;
+        framed.physical_inputs = Some(*digest);
+        trailing = rest;
+    }
+    if !trailing.is_empty() {
+        if !trailing.starts_with(b"CRMB\x01\x01\x00") {
+            return Err(ExecutableRepresentationError::Malformed {
+                reason: "executable owner has an unrecognized graph attachment".into(),
+            });
+        }
+        framed.call_witness = Some(trailing.to_vec());
     }
     Ok(framed)
 }

@@ -60,7 +60,7 @@ use std::collections::{HashMap, HashSet};
 
 pub use canonical_rebinding::refresh_dependency_call_targets;
 pub use settled_call_inputs::{SettledCallInputs, SettledCallRead};
-pub(crate) use settled_call_inputs::needs_call_witness;
+pub use settled_call_inputs::needs_call_witness;
 pub use context_modules::{ContextModules, ContextModulesIter};
 pub use free_function_baseline::verify_module as verify_free_function_inputs;
 pub(crate) use nominal_carriers::{retain_published_frame, retain_published_module};

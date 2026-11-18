@@ -82,7 +82,7 @@ pub struct GraphBodyRecords {
     ranked_owner: Option<Arc<RankedOwner>>,
     call_reads: Arc<Mutex<BTreeMap<String, Vec<SettledCallRead>>>>,
     changed_callers: BTreeMap<String, BTreeSet<String>>,
-    selected_calls: Arc<Mutex<BTreeMap<String, BTreeSet<String>>>>,
+    selected_calls: Arc<Mutex<BTreeMap<String, BTreeMap<String, Vec<SettledCallRead>>>>>,
 }
 
 /// One compiler activation shares its exact body-entry count across all of the unit's module checkers.
@@ -255,24 +255,42 @@ impl GraphBodyRecords {
         {
             let source = &frame.source;
             let reader = frame.body.direct_call_id.path();
-            let known = self
-                .call_reads
-                .lock()
-                .map_err(|_| RecordAdapterFault::InvalidField("settled call witness lock poisoned".into()))?
-                .contains_key(source);
             if self
                 .changed_callers
                 .get(source)
                 .is_some_and(|owners| owners.contains(reader))
             {
                 selected.body_ir = None;
-            } else if known {
+                return Ok(record);
+            }
+            let reads = if let Some(witness) = &frame.call_witness {
+                let reads =
+                    internal_models::decode_owner_call_reads(&frame.identity, &reader.to_owned(), source, witness)
+                        .map_err(RecordAdapterFault::InvalidField)?;
+                Some(
+                    reads
+                        .into_iter()
+                        .map(|read| SettledCallRead {
+                            reader: read.reader,
+                            target: read.target,
+                            digest: read.digest,
+                        })
+                        .collect(),
+                )
+            } else {
+                self.call_reads
+                    .lock()
+                    .map_err(|_| RecordAdapterFault::InvalidField("settled call witness lock poisoned".into()))?
+                    .get(source)
+                    .map(|reads| reads.iter().filter(|r| r.reader == reader).cloned().collect())
+            };
+            if let Some(reads) = reads {
                 self.selected_calls
                     .lock()
                     .map_err(|_| RecordAdapterFault::InvalidField("settled call reader lock poisoned".into()))?
                     .entry(source.clone())
                     .or_default()
-                    .insert(reader.to_owned());
+                    .insert(reader.to_owned(), reads);
             } else if crate::body_ir::needs_call_witness(&mut frame.body) {
                 selected.body_ir = None;
             }
@@ -318,16 +336,15 @@ impl GraphBodyRecords {
         let Some(owners) = selected.get(source) else {
             return Ok(Vec::new());
         };
-        Ok(self
-            .settled_call_reads(source)?
-            .into_iter()
-            .filter(|r| {
-                owners.contains(&r.reader)
-                    && !self
-                        .changed_callers
-                        .get(source)
-                        .is_some_and(|dirty| dirty.contains(&r.reader))
+        Ok(owners
+            .iter()
+            .filter(|(reader, _)| {
+                !self
+                    .changed_callers
+                    .get(source)
+                    .is_some_and(|dirty| dirty.contains(*reader))
             })
+            .flat_map(|(_, reads)| reads.iter().cloned())
             .collect())
     }
 
@@ -343,6 +360,10 @@ impl GraphBodyRecords {
         if !added {
             return Err("settled call ABI frontier made no progress".into());
         }
+        self.selected_calls
+            .lock()
+            .map_err(|_| "settled call reader lock poisoned".to_owned())?
+            .clear();
         Ok(())
     }
 
@@ -1572,6 +1593,99 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn per_owner_call_reads_survive_without_a_namespace_and_refuse_another_reader()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let module = vec!["main".to_owned()];
+        let parsed = program("def callee() -> int:\n    return 1\n\ndef caller() -> int:\n    return callee()\n")?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(module.clone()));
+        checker.check_program(&parsed).map_err(|errors| format!("{errors:?}"))?;
+        let mut lowered = lower_graph_test_module(&parsed, &checker);
+        let access = crate::body_ir::SettledCallInputs::from_modules(std::slice::from_ref(&lowered))?;
+        let reads = access.reads(&mut lowered);
+        let [read] = reads.as_slice() else {
+            return Err("expected one project call".into());
+        };
+        assert!(access.matches(read));
+        let mut forged = read.clone();
+        forged.digest = format!("sha256:{}", "0".repeat(64));
+        assert!(!access.matches(&forged));
+        let owner = checked_owner_record_outputs(&parsed, &checker, &module)?
+            .into_iter()
+            .find_map(|output| match output {
+                CheckedOwnerRecordOutput::Value(owner) if owner.name == "caller" => Some(owner),
+                _ => None,
+            })
+            .ok_or("missing caller")?;
+        let body = lowered
+            .bodies
+            .iter()
+            .find(|body| body.name == "caller")
+            .ok_or("missing kernel caller")?;
+        let source = "src/main.incn".to_owned();
+        let wire = incan_semantics_core::executable_representation::encode_graph_owner(
+            &lowered.module_id,
+            &source,
+            &owner.identity,
+            body,
+            Some([1; 32]),
+        )?;
+        let mut record = selected_graph_record(owner.clone())?;
+        let select = |record: super::GraphBodyRecord| super::GraphBodyRecords::new(vec![record]);
+        record.body_ir = Some(incan_semantics_core::executable_representation::decode_owner(&wire)?);
+        assert!(
+            select(record.clone())?
+                .get(&owner.identity)?
+                .ok_or("missing old record")?
+                .body_ir
+                .is_none()
+        );
+        let encoded_reads = vec![internal_models::SettledCallRead {
+            reader: read.reader.clone(),
+            target: read.target.clone(),
+            digest: read.digest.clone(),
+        }];
+        for (identity, allowed) in [(&owner.identity, true), (&"other".to_owned(), false)] {
+            let witness = internal_models::encode_owner_call_reads(
+                identity.clone(),
+                read.reader.clone(),
+                source.clone(),
+                &encoded_reads,
+            )?;
+            let mut guarded = wire.clone();
+            guarded.extend_from_slice(&witness);
+            record.body_ir = Some(incan_semantics_core::executable_representation::decode_owner(&guarded)?);
+            let mut selected = select(record.clone())?;
+            if allowed {
+                assert!(
+                    selected
+                        .get(&owner.identity)?
+                        .ok_or("missing current frame")?
+                        .body_ir
+                        .is_some()
+                );
+                assert_eq!(selected.selected_call_reads(&source)?, reads);
+                selected.reopen_callers(
+                    [(source.clone(), [read.reader.clone()].into_iter().collect())]
+                        .into_iter()
+                        .collect(),
+                )?;
+                assert!(
+                    selected
+                        .get(&owner.identity)?
+                        .ok_or("missing checked pair")?
+                        .body_ir
+                        .is_none()
+                );
+                assert!(selected.selected_call_reads(&source)?.is_empty());
+            } else {
+                assert!(selected.get(&owner.identity).is_err());
+            }
+        }
+        Ok(())
+    }
+
     /// A graph peer restores all body-internal scopes in source order, including empty branches, before a later owner.
     #[test]
     fn restored_nested_scopes_match_fresh_bindings_in_later_owners() -> Result<(), Box<dyn std::error::Error>> {
@@ -1755,7 +1869,11 @@ mod tests {
                 .selected_callable_body(edited.declarations[1].span)
                 .is_none()
         );
-        assert!(warm.type_info().selected_callable_body(edited.declarations[2].span).is_none());
+        assert!(
+            warm.type_info()
+                .selected_callable_body(edited.declarations[2].span)
+                .is_none()
+        );
         assert_eq!(
             lower_graph_test_module(&edited, &warm).bodies,
             lower_graph_test_module(&edited, &fresh).bodies
