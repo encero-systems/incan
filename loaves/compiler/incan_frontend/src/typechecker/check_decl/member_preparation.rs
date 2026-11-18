@@ -56,13 +56,17 @@ impl TypeChecker {
         });
         self.symbols.resume_scope(prepared.scope);
         self.current_return_error_type = prepared.return_error_type;
-        if let Some(body) = &property.node.body {
+        // A ranked activation publishes one free-function record. Nominal signatures and defaults are still
+        // checked here. The selected local/final codecs refuse pending or cross-body effect decisions.
+        if let Some(body) = &property.node.body
+            && self.graph_body_records.ranked_owner().is_none()
+        {
             self.check_property_body(body, property.span);
         }
         self.current_return_error_type = None;
         self.symbols.exit_scope();
         #[cfg(test)]
-        if property.node.body.is_some() {
+        if property.node.body.is_some() && self.graph_body_records.ranked_owner().is_none() {
             self.observe_body_local(property.span);
         }
         self.current_method_owner = previous_owner;
@@ -276,7 +280,9 @@ impl TypeChecker {
         let previous_classmethod =
             std::mem::replace(&mut self.current_classmethod_self_ty, prepared.classmethod_self_ty);
         let (restore, yield_context) = self.enter_prepared_callable(prepared.callable);
-        if let Some(body) = &method.body {
+        if let Some(body) = &method.body
+            && self.graph_body_records.ranked_owner().is_none()
+        {
             self.check_work.method_bodies += 1;
             let _ = self.check_callable_body(
                 body,
