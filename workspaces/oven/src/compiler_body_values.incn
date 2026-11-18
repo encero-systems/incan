@@ -6,6 +6,7 @@ from pub::incan_platform.store import Snapshot
 from pub::internal_models import GraphBodyValue, ProducerRank, encode_graph_body_values, encode_graph_checking_pair
 from pub::internal_models.records import ReadReceipt, RecordKey
 from compiler_body_keys import IDENTITY_PROFILE, NAMESPACE_IDENTITY_PROFILE
+from compiler_owner_records import read_body_frame
 from compiler_graph_records import (
     OutputSlots,
     PublishedEvaluation,
@@ -98,7 +99,7 @@ pub def select_body_inventory(selected: Snapshot, profile: str) -> Result[list[S
     locals = reusable_family_records(selected, "local", profile)?
     finals = reusable_family_records(selected, "final", profile)?
     bodies = reusable_family_records(selected, "body-ir", profile)?
-    return Ok(paired_records(locals, finals, bodies))
+    return paired_records(locals, finals, bodies, profile)
 
 
 pub def select_body_inventory_except(
@@ -113,7 +114,7 @@ pub def select_body_inventory_except(
     locals = reusable_family_records(selected, "local", profile, slots)?
     finals = reusable_family_records(selected, "final", profile, slots)?
     bodies = reusable_family_records(selected, "body-ir", profile, slots)?
-    return Ok(paired_records(locals, finals, bodies, mint_body_ir))
+    return paired_records(locals, finals, bodies, profile, mint_body_ir)
 
 
 pub def select_body_inventory_of(
@@ -126,37 +127,31 @@ pub def select_body_inventory_of(
     locals = reusable_owner_records(selected, "local", profile, origin, owners, IDENTITY_PROFILE)?
     finals = reusable_owner_records(selected, "final", profile, origin, owners, IDENTITY_PROFILE)?
     bodies = reusable_owner_records(selected, "body-ir", profile, origin, owners, IDENTITY_PROFILE)?
-    return Ok(paired_records(locals, finals, bodies))
+    return paired_records(locals, finals, bodies, profile)
 
 
 def paired_records(
     locals: list[ReusableRecord],
     finals: list[ReusableRecord],
     bodies: list[ReusableRecord],
+    profile: str,
     mint_body_ir: bool = false,
-) -> list[SelectedBodyRecord]:
+) -> Result[list[SelectedBodyRecord], str]:
     """Each local value whose final value and Body IR frame were selected too, as one owner's complete record."""
     mut selected_records: list[SelectedBodyRecord] = []
     for local in locals:
         match matching_record(finals, local):
             Some(final) =>
-                match matching_record(bodies, local):
-                    Some(body) =>
-                        selected_records.append(
-                            SelectedBodyRecord(
-                                identity=local.key.identity,
-                                local=local.value,
-                                final=final.value,
-                                body_ir=body.value,
-                            ),
-                        )
-                    None =>
-                        if mint_body_ir:
-                            selected_records.append(SelectedBodyRecord(
-                                identity=local.key.identity, local=local.value, final=final.value, body_ir=b"",
-                            ))
+                mut frame = b""
+                if let Some(body) = matching_record(bodies, local):
+                    # Prior installations stored an unwrapped kernel payload. Reissue it under the current graph authority.
+                    if body.value[:4] == b"CRMB":
+                        frame = read_body_frame(body.key, profile, body.value)?
+                if len(frame) > 0 or mint_body_ir:
+                    selected_records.append(SelectedBodyRecord(identity=local.key.identity, local=local.value,
+                        final=final.value, body_ir=frame))
             None => pass
-    return selected_records
+    return Ok(selected_records)
 
 
 pub def encode_body_inventory(records: list[SelectedBodyRecord]) -> Result[list[SelectedBodyPage], str]:
