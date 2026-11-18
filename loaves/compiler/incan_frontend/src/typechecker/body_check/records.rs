@@ -485,20 +485,35 @@ impl Positions {
         fields: &Fields,
     ) -> Result<Self, NodeBindingError> {
         let mut positions = Self::new(checker, program, owner, false)?;
+        let mut nested = Vec::new();
         for row in fields {
             if row.len() != 4 || row[0] != "binding" || row[2] != "declaration" {
                 continue;
             }
             let span = positions.span(&row[1])?;
+            let (kind, name) = persisted_nested_binding(positions.nodes.owner(), &row[3])?;
             let canonical = CanonicalSymbolId {
                 namespace: SymbolNamespace::OrdinaryLexical,
                 origin: checker.symbols.declaration_origin(),
-                declaration_name: persisted_local_name(positions.nodes.owner(), &row[3])?,
-                kind: SemanticSourceTargetKind::Local,
+                declaration_name: name,
+                kind,
                 scope_discriminant: Some(ScopeDiscriminant(checker.symbols.next_scope_index())),
                 declaration_span: span,
             };
-            if positions.identities.insert(row[3].clone(), canonical).is_some() {
+            nested.push((&row[3], canonical));
+        }
+        // The same structural grouping as the writer authenticates each kind, owner and collision ordinal.
+        let bound = positions
+            .nodes
+            .binding_identities(nested.iter().map(|(_, symbol)| symbol))?;
+        for (persisted, canonical) in nested {
+            if bound
+                .get(&canonical)
+                .is_none_or(|stable| stable.render_compact() != *persisted)
+            {
+                return Err(NodeBindingError::InvalidField("nested declaration identity".into()));
+            }
+            if positions.identities.insert(persisted.clone(), canonical).is_some() {
                 return Err(NodeBindingError::InvalidField(
                     "duplicate nested declaration identity".into(),
                 ));
@@ -574,40 +589,28 @@ impl Positions {
     }
 }
 
-/// The source spelling of a body-local declaration that a record names by its persisted identity, the one
-/// [`SemanticNodeBindings::binding_identities`] renders inside `owner`. A restored local is then named as a fresh check
-/// names it, so Body IR built from restored facts equals a fresh check's. The spelling is verified by rendering the
-/// identity again, so a malformed or foreign identity is refused instead of misread.
-fn persisted_local_name(owner: &StableDeclarationId, identity: &str) -> Result<String, NodeBindingError> {
+/// Recover the lexical spelling and kind for a decoded binding. The caller verifies the complete stable identity
+/// against the writer's current structural binding order before installing the handle.
+fn persisted_nested_binding(
+    owner: &StableDeclarationId,
+    identity: &str,
+) -> Result<(SemanticSourceTargetKind, String), NodeBindingError> {
     let refused = || NodeBindingError::InvalidField("nested declaration identity".into());
+    let (tag, _) = identity.split_once(':').ok_or_else(refused)?;
+    let kind = SemanticSourceTargetKind::from_kind_str(tag);
     let template = StableDeclarationId {
         namespace: SymbolNamespace::OrdinaryLexical,
         origin: owner.origin.clone(),
         declaration_name: String::new(),
-        kind: SemanticSourceTargetKind::Local,
+        kind,
         location: StableDeclarationLocation::ModuleLevel,
         signature: None,
     };
-    let (name, ordinal) = identity
+    let (name, _) = identity
         .strip_prefix(&template.render_compact())
-        .and_then(|rest| rest.split_once(&format!("#in({})[", owner.render_compact())))
+        .and_then(|rest| rest.split_once("#in("))
         .ok_or_else(refused)?;
-    let binding_ordinal = ordinal
-        .strip_suffix(']')
-        .and_then(|ordinal| ordinal.parse::<u32>().ok())
-        .ok_or_else(refused)?;
-    let rendered = StableDeclarationId {
-        declaration_name: name.to_owned(),
-        location: StableDeclarationLocation::Nested {
-            owner: Box::new(owner.clone()),
-            binding_ordinal,
-        },
-        ..template
-    };
-    if rendered.render_compact() != identity {
-        return Err(refused());
-    }
-    Ok(rendered.declaration_name)
+    Ok((template.kind, name.to_owned()))
 }
 
 /// Collect every active nominal owner that the checker already authenticated independently of one lexical spelling.
