@@ -225,6 +225,7 @@ impl TypeChecker {
         &mut self,
         program: &Program,
         owner: Span,
+        statements: &[crate::ast::Spanned<crate::ast::Statement>],
     ) -> Result<bool, NodeBindingError> {
         let identity = Positions::new(self, program, owner, false)?
             .nodes
@@ -237,7 +238,7 @@ impl TypeChecker {
         // transport. This is the one deliberate copy from immutable transport into checker-owned selected output.
         let local_fields = selected.local.clone();
         let final_fields = selected.final_value.clone();
-        let positions = Positions::for_decoded_local(self, program, owner, &local_fields)?;
+        let positions = Positions::for_decoded_local(self, program, owner, &local_fields, Some(statements))?;
         let restored = restore(&positions, program, owner, &final_fields)?;
         if restored.binding.is_some() || !restored.defaults.is_empty() {
             return Err(NodeBindingError::InvalidField(
@@ -483,9 +484,24 @@ impl Positions {
         program: &Program,
         owner: Span,
         fields: &Fields,
+        active_body: Option<&[crate::ast::Spanned<crate::ast::Statement>]>,
     ) -> Result<Self, NodeBindingError> {
         let mut positions = Self::new(checker, program, owner, false)?;
         imported_members::bind_transitive(checker, &mut positions, fields)?;
+        // The ordinary caller has already resumed this exact callable frame. Its direct assignments bind
+        // to that live scope, even if a preceding initializer opens its own nested scopes.
+        let mut direct = std::collections::BTreeSet::new();
+        for statement in active_body.unwrap_or_default() {
+            use crate::ast::Statement;
+            match &statement.node {
+                Statement::Assignment(value) => {
+                    direct.insert(value.name_span);
+                }
+                Statement::ChainedAssignment(value) => direct.extend(&value.target_spans),
+                Statement::TupleUnpack(value) => direct.extend(&value.name_spans),
+                _ => {}
+            }
+        }
         let mut nested = Vec::new();
         for row in fields {
             if row.len() != 4 || row[0] != "binding" || row[2] != "declaration" {
@@ -498,7 +514,11 @@ impl Positions {
                 origin: checker.symbols.declaration_origin(),
                 declaration_name: name,
                 kind,
-                scope_discriminant: Some(ScopeDiscriminant(checker.symbols.next_scope_index())),
+                scope_discriminant: Some(ScopeDiscriminant(if direct.contains(&span) {
+                    checker.symbols.current_scope_index()
+                } else {
+                    checker.symbols.next_scope_index()
+                })),
                 declaration_span: span,
             };
             nested.push((&row[3], canonical));

@@ -383,14 +383,17 @@ impl TypeChecker {
         let previous_raw_owner =
             std::mem::replace(&mut self.current_c_abi_raw_call_owner, prepared.c_abi_raw_call_owner);
         let (restore, yield_context) = self.enter_prepared_callable(prepared.callable);
-        let reused = record_program.is_some_and(|program| match self.reuse_graph_body_record(program, span) {
-            Ok(reused) => reused,
-            Err(error) => {
-                tracing::debug!(target: "incan::invocation", ?span, ?error, "graph body selection refused");
-                self.graph_body_records.refuse_ranked_input();
-                false
-            }
-        });
+        let reused =
+            record_program.is_some_and(
+                |program| match self.reuse_graph_body_record(program, span, &func.body) {
+                    Ok(reused) => reused,
+                    Err(error) => {
+                        tracing::debug!(target: "incan::invocation", ?span, ?error, "graph body selection refused");
+                        self.graph_body_records.refuse_ranked_input();
+                        false
+                    }
+                },
+            );
         let local_index = if reused {
             None
         } else if !self.permits_ranked_body(record_program, span) {
