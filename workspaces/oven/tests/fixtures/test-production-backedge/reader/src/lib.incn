@@ -1,0 +1,5 @@
+from pub::backedge_subject import answer
+
+
+pub def observed_answer() -> int:
+    return answer() + 1

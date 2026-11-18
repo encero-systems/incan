@@ -65,6 +65,8 @@ pub def resolve_features(
     for facet in facets:
         if facet.domain != DependencyDomain.Target or facet.project not in known:
             continue
+        if facet.project == root and facet.purpose != purpose:
+            continue
         reached.append(facet.project)
         active[facet.project] = facet.features
         for edge in intake.edges:

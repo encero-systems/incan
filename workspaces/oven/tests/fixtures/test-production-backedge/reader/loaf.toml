@@ -1,0 +1,6 @@
+[project]
+name = "backedge_reader"
+version = "1.0.0"
+
+[dependencies]
+backedge_subject = { path = "../subject" }
