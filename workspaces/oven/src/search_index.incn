@@ -9,6 +9,7 @@ unchanged reads neither to find it.
 """
 
 from std.encoding.hex import hexlify
+from pub::internal_models.toolchain_search import encode_search_paths
 from std.fs import Path
 from std.hash import sha256
 from std.json import JsonValue
@@ -16,7 +17,7 @@ from files import json_text
 from home import home
 from loaf_local_graph import unique
 from observation import Observation, observe
-from publication import publish
+from publication import publish_binary
 from retained_reading_records import ReadingKind
 from retained_readings import recall, retain
 from rust_registry import read_registry_units
@@ -25,7 +26,7 @@ from toolchain import Toolchain, toolchain_file
 from frozen_inputs import observation as frozen_observation
 
 const SCHEMA: str = "incan.search-index/1"
-const SELECTION: str = "search-index/1"
+const LEGACY_SELECTION: str = "search-index/1"
 
 
 pub def search_index(toolchain: Toolchain, registry: Option[RegistryUnits] = None) -> Result[str, str]:
@@ -49,7 +50,10 @@ pub def search_index(toolchain: Toolchain, registry: Option[RegistryUnits] = Non
                 return Err("search index requires the admitted toolchain generation")
             generation = observe(description)?.stamp
     observed = Observation(stamp=generation, newest=0)
-    selection = f"{SELECTION} {registry_identity(toolchain)}"
+    mut profile = LEGACY_SELECTION.clone()
+    if toolchain.search_index_crumb:
+        profile = "search-index/2"
+    selection = f"{profile} {registry_identity(toolchain)}"
     # 2. An index never changes once published, so a retained path is used while the file is there.
     if let Some(value) = recall(description, selection, observed.stamp, ReadingKind.SearchPath):
         if let Some(path) = value.as_str():
@@ -82,11 +86,19 @@ def published_index(toolchain: Toolchain, available: Option[RegistryUnits]) -> R
             Some(known) => known
             None => read_registry_units(registry)?
         directories = directories + known.search
-    listed = JsonValue.array([JsonValue.string(directory) for directory in unique(directories)])
-    text = json_text(JsonValue.object({"schema": JsonValue.string(SCHEMA), "search": listed}))?
-    digest = hexlify(sha256.digest(text.encode("utf-8")))
-    path = home()?.joinpath("cache").joinpath("search-indexes").joinpath(f"{digest}.json")
+    paths = unique(directories)
+    mut encoded: bytes = b""
+    mut suffix = ".crumb"
+    if toolchain.search_index_crumb:
+        encoded = encode_search_paths(paths)?
+    else:
+        # An older bootstrap compiler reads only its v1 public unit contract.
+        suffix = ".json"
+        listed = JsonValue.array([JsonValue.string(directory) for directory in paths])
+        encoded = json_text(JsonValue.object({"schema": JsonValue.string(SCHEMA), "search": listed}))?.encode("utf-8")
+    digest = hexlify(sha256.digest(encoded))
+    path = home()?.joinpath("cache").joinpath("search-indexes").joinpath(digest + suffix)
     if not path.is_file():
         path.parent().mkdir(true, true).map_err((error) => f"{path.parent().0}: {error.message()}")?
-        publish(path, text)?
+        publish_binary(path, encoded)?
     return Ok(path.0)

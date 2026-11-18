@@ -1,0 +1,39 @@
+"""The ordered directories that one content-named toolchain generation contributes to Rust library search."""
+
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from crumb_rows import ModelField, model_description, required_value
+from graph_crumb_fields import decode_graph_row, encode_graph_row, items, text
+
+const SEARCH: bytes = b"tcpath\x00"
+
+
+def description() -> Description:
+    return model_description(SEARCH, "incan.search-index/2", [
+        ModelField(identity=b"search", name="search", storage="list<string>"),
+    ])
+
+
+def canonical(paths: list[str]) -> bool:
+    for index in range(1, len(paths)):
+        if paths[index] <= paths[index - 1]:
+            return false
+    return true
+
+
+pub def encode_search_paths(paths: list[str]) -> Result[bytes, str]:
+    """Publish the already sorted distinct search roots without joining or normalizing any path."""
+    if not canonical(paths):
+        return Err("toolchain search directories must be sorted and distinct")
+    return encode_graph_row(SEARCH, description(), [required_value(b"search", Value.List([Value.Text(path) for path in paths]))])
+
+
+pub def decode_search_paths(encoded: bytes) -> Result[list[str], str]:
+    """Return the selected native search roots after checking the schema, frame and canonical path order."""
+    fields = decode_graph_row(encoded, SEARCH, description(), 1)?
+    mut paths: list[str] = []
+    for value in items(fields[0].value)?:
+        paths.append(text(value)?)
+    if not canonical(paths):
+        return Err("toolchain search directories must be sorted and distinct")
+    return Ok(paths)
