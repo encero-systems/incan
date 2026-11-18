@@ -106,7 +106,6 @@ def compare(hello: Path, output: Path) -> Result[None, str]:
     mut expected: Dict[str, int] = {}
     mut census = Census()
     mut runtime: set[str] = set()
-    mut roster_members: set[str] = set()
     for profile, names in profiles.items():
         roster = "\n".join(sorted([name for name in names]))
         selector = f"loaf/{profile}/@compiler/capabilities/" + name_hash(roster)
@@ -116,8 +115,6 @@ def compare(hello: Path, output: Path) -> Result[None, str]:
         for key in records:
             expected[key] = selected.lengths[key]
             census.rows.append(f"required-global-capabilities\t1\t{selected.lengths[key]}\t{key}")
-            for name in names:
-                roster_members.add(name)
     mut reached: set[str] = set()
     mut declared = -1
     for row in events(trace)?:
@@ -193,9 +190,8 @@ def compare(hello: Path, output: Path) -> Result[None, str]:
         reached.add(owner)
     for name in reached:
         prefix = "loaf/" + directories[name].name() + "/" + name + "/"
-        if name not in roster_members:
-            for key in selected.facets.get(prefix + "metadata/" + name_hash(name), []):
-                expected[key] = selected.lengths[key]
+        for key in selected.facets.get(prefix + "metadata/" + name_hash(name), []):
+            expected[key] = selected.lengths[key]
         if name in selected_surfaces:
             heads = selected.facets.get(prefix + "executable-range-set/" + name_hash(name), [])
             if len(heads) == 1:

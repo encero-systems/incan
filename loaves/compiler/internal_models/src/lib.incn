@@ -173,6 +173,7 @@ pub from source_value_records import SOURCE_PROFILE, encode_source_text, source_
 
 pub from namespace_rows import NamespaceAtom, NamespaceEntry, NamespaceField, NamespacePublication, decode_namespace_interface, encode_namespace_interface, publish_namespace_interface
 
+pub from compiler_contributors import CompilerContributors, decode_compiler_contributors, encode_compiler_contributors
 pub from checker_publication import CheckerRecordCounts, checker_report_suffix, encode_checker_counts, decode_checker_counts
 
 pub from namespace_rows import encode_callable_inventory, decode_callable_inventory

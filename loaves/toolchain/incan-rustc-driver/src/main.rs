@@ -121,6 +121,25 @@ fn main() -> std::process::ExitCode {
 
 /// Dispatch the command the first argument names.
 fn command() -> Result<(), Box<dyn std::error::Error>> {
+    incan_frontend::library_manifest::capabilities::install_codec(
+        |value| {
+            internal_models::encode_compiler_contributors(&internal_models::CompilerContributors {
+                profile: value.profile,
+                scope: value.scope,
+                vocabulary: value.vocabulary,
+                operations: value.operations,
+            })
+        },
+        |bytes| {
+            let facts = internal_models::decode_compiler_contributors(&bytes.to_vec())?;
+            Ok(incan_frontend::library_manifest::capabilities::Contributors {
+                profile: facts.profile,
+                scope: facts.scope,
+                vocabulary: facts.vocabulary,
+                operations: facts.operations,
+            })
+        },
+    );
     incan_frontend::loaf_index::install_directory_reader(|path, top, seal, prefix, maximum| {
         let answer = incan_worker_host::read_directory(
             path.to_owned(),

@@ -71,7 +71,8 @@ pub(crate) fn export(arguments: &[String]) -> Result<(), Box<dyn std::error::Err
         }
     }
     for (profile, catalog) in catalogs {
-        write_object(output, catalog.key(&profile), catalog.encode(&profile)?, &mut records)?;
+        let (key, value) = catalog.encode(&profile)?;
+        write_object(output, key, value, &mut records)?;
     }
     records.sort_by(|left, right| left.key.cmp(&right.key));
     let index = json!({"schema": EXPORT_SCHEMA, "records": records});
