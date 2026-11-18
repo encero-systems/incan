@@ -508,7 +508,7 @@ pub(super) fn record_held_rust_frame(body: &Body, record: &mut impl FnMut(&Incan
 }
 
 /// Record the Rust items `ty` names anywhere inside it: a type a Rust value carries is named by its item's path.
-pub(super) fn record_held_rust_items(ty: &IncanType, arities: &mut std::collections::BTreeMap<String, Option<usize>>) {
+pub fn record_held_rust_items(ty: &IncanType, arities: &mut std::collections::BTreeMap<String, Option<usize>>) {
     match ty {
         IncanType::Named(name) => note_held_rust_item(name, 0, arities),
         IncanType::Generic { base, args } => {
