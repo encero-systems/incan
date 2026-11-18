@@ -1,0 +1,136 @@
+"""Retain large opt-in engine observations in independently authenticated Crumb pages."""
+
+from std.encoding.hex import hexlify
+from std.hash import sha256
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from pub::incan_platform.store import FrameRead, Snapshot, Transaction, get, stage_put
+from pub::internal_models.crumb_rows import ModelField, model_description, required_value
+from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, integer as signed, items, number, text
+from engine_proof_records import ProofEvidence, append_evidence, render_report, report_json
+from graph_read_demands import GraphDemand
+
+pub const PAGE_ROWS: int = 128
+const HEAD: bytes = b"prfhed\x00"
+const PAGE: bytes = b"prfseg\x00"
+
+
+def head_description() -> Description:
+    return model_description(HEAD, "incan.engine.proof-pages/1", [
+        ModelField(identity=b"demand", name="demand_count", storage="i64"),
+        ModelField(identity=b"frames", name="frame_count", storage="i64"),
+        ModelField(identity=b"pages_", name="page_digests", storage="list<string>"),
+        ModelField(identity=b"run_id", name="run", storage="string"),
+        ModelField(identity=b"summry", name="summary_digest", storage="string"),
+    ])
+
+
+def page_description() -> Description:
+    return model_description(PAGE, "incan.engine.proof-page/1", [
+        ModelField(identity=b"demand", name="graph_demands", storage="list<tuple<string,string,i64,string,string,string>>"),
+        ModelField(identity=b"frames", name="store_reads", storage="list<tuple<string,string,i64,i64,i64>>"),
+        ModelField(identity=b"number", name="ordinal", storage="i64"),
+    ])
+
+
+pub def frame_values(rows: list[FrameRead]) -> list[Value]:
+    return [Value.Tuple([Value.Text(row.key), Value.Text(row.revision), signed(row.reads), signed(row.frame_bytes),
+        signed(row.value_bytes)]) for row in rows]
+
+
+pub def demand_values(rows: list[GraphDemand]) -> list[Value]:
+    return [Value.Tuple([Value.Text(row.role), Value.Text(row.store), signed(row.generation), Value.Text(row.manifest),
+        Value.Text(row.view), Value.Text(row.key)]) for row in rows]
+
+
+pub def stage_pages(
+    mut transaction: Transaction, key: str, run: str, summary: bytes, frames: list[FrameRead], demands: list[GraphDemand],
+) -> Result[None, str]:
+    """Publish the verified summary, every ordered observation page, and their manifest in one transaction."""
+    summary_digest = stage_content(transaction, summary)
+    mut pages: list[Value] = []
+    mut offset = 0
+    while offset < len(frames) or offset < len(demands):
+        mut width = min([PAGE_ROWS, max([len(frames), len(demands)]) - offset])
+        mut rows = b""
+        while true:
+            end = offset + width
+            attempted = encode_graph_row(PAGE, page_description(), [
+                required_value(b"demand", Value.List(demand_values(demands[offset:end]))),
+                required_value(b"frames", Value.List(frame_values(frames[offset:end]))),
+                required_value(b"number", signed(len(pages))),
+            ])
+            match attempted:
+                Ok(encoded) =>
+                    rows = encoded
+                    break
+                Err(reason) =>
+                    if width == 1 or not byte_limit(reason):
+                        return Err(reason)
+                    width = width // 2
+        pages.append(Value.Text(stage_content(transaction, rows)))
+        offset += width
+    head = encode_graph_row(HEAD, head_description(), [
+        required_value(b"demand", signed(len(demands))),
+        required_value(b"frames", signed(len(frames))),
+        required_value(b"pages_", Value.List(pages)),
+        required_value(b"run_id", Value.Text(run)),
+        required_value(b"summry", Value.Text(summary_digest)),
+    ])?
+    stage_put(transaction, key, head)
+    return Ok(None)
+
+
+pub def byte_limit(reason: str) -> bool:
+    return reason == "Crumb request limit exceeded: bytes" or reason.startswith("encoded Crumb rows need ")
+
+
+def stage_content(mut transaction: Transaction, encoded: bytes) -> str:
+    digest = hexlify(sha256.digest(encoded))
+    stage_put(transaction, content_key(digest), encoded)
+    return digest
+
+
+def content_key(digest: str) -> str:
+    return "incan.engine.proof-page/1\t" + digest
+
+
+def content(selected: Snapshot, digest: str) -> Result[bytes, str]:
+    if len(digest) != 64:
+        return Err("invalid engine proof content identity")
+    match get(selected, content_key(digest)).map_err((error) => error.message())?:
+        None => return Err("engine proof content missing: " + digest)
+        Some(encoded) =>
+            if hexlify(sha256.digest(encoded)) != digest:
+                return Err("engine proof content differs from its root: " + digest)
+            return Ok(encoded)
+
+
+pub def render_proof(selected: Snapshot, encoded: bytes, run: str) -> Result[str, str]:
+    """Validate the page count, ordinals, content digests, observation counts and exact request."""
+    fields = match decode_graph_row(encoded, HEAD, head_description(), 5):
+        Ok(decoded) => decoded
+        Err(_other_schema) => return report_json(encoded, run)
+    if text(fields[3].value)? != run:
+        return Err("proof page manifest names another run")
+    demands = number(fields[0].value)?
+    frames = number(fields[1].value)?
+    digests = items(fields[2].value)?
+    count = max([demands, frames])
+    if demands < 0 or frames < 0 or count == 0 or len(digests) < ((count - 1) // PAGE_ROWS) + 1 or len(digests) > count:
+        return Err("engine proof page manifest has invalid counts")
+    mut evidence = ProofEvidence()
+    mut consumed = 0
+    for ordinal in range(len(digests)):
+        page = content(selected, text(digests[ordinal])?)?
+        row = decode_graph_row(page, PAGE, page_description(), 3)?
+        if number(row[2].value)? != ordinal:
+            return Err("engine proof page is out of order")
+        append_evidence(row[1].value, row[0].value, evidence)?
+        end = max([len(evidence.frames), len(evidence.demands)])
+        if end <= consumed or end - consumed > PAGE_ROWS or len(evidence.demands) != min([demands, end]) or len(evidence.frames) != min([frames, end]):
+            return Err("engine proof page has incomplete or extra observations")
+        consumed = end
+    if consumed != count:
+        return Err("engine proof manifest omits observations")
+    return render_report(content(selected, text(fields[4].value)?)?, run, evidence)

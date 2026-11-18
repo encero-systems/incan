@@ -6,7 +6,8 @@ from rust::std::str import from_utf8
 from std.primitives.crumb.values import Value
 from pub::internal_models.crumb_rows import required_value
 from pub::internal_models.graph_crumb_fields import encode_graph_row, integer as signed
-from engine_proof_records import PROOF, proof_description, report_json
+from engine_proof_pages import PAGE_ROWS, byte_limit, demand_values, frame_values, render_proof, stage_pages
+from engine_proof_records import PROOF, proof_description
 from engine_programs import ProgramOutcome
 from pub::incan_platform.store import Transaction, begin, commit, get, put
 from store_path_conversion import snapshot
@@ -57,18 +58,32 @@ pub def prepare_report(
         "store_frame_bytes": produced.store_frame_bytes,
         "store_decoded_bytes": produced.store_decoded_bytes,
     }
-    frames = [Value.Tuple([Value.Text(row.key), Value.Text(row.revision), signed(row.reads), signed(row.frame_bytes), signed(row.value_bytes)]) for row in produced.frame_reads]
-    demands = [Value.Tuple([Value.Text(d.role), Value.Text(d.store), signed(d.generation), Value.Text(d.manifest), Value.Text(d.view), Value.Text(d.key)]) for d in produced.graph_demands]
-    encoded = encode_graph_row(PROOF, proof_description(), [
-        required_value(b"checks", Value.Text(produced.checker_reuse)),
+    selected = snapshot(store).map_err((error) => error.message())?
+    mut transaction = begin(selected)
+    if len(produced.frame_reads) + len(produced.graph_demands) <= PAGE_ROWS:
+        small = encode_proof(run, produced.checker_reuse, counts, produced.artifact_refusals,
+            frame_values(produced.frame_reads), demand_values(produced.graph_demands))
+        match small:
+            Ok(encoded) => return Ok(put(transaction, report_key(run), encoded))
+            Err(reason) =>
+                if not byte_limit(reason):
+                    return Err(reason)
+    summary = encode_proof(run, produced.checker_reuse, counts, produced.artifact_refusals, [], [])?
+    stage_pages(transaction, report_key(run), run, summary, produced.frame_reads, produced.graph_demands)?
+    return Ok(transaction)
+
+
+def encode_proof(
+    run: str, checker: str, counts: Dict[str, int], refusals: Dict[str, int], frames: list[Value], demands: list[Value],
+) -> Result[bytes, str]:
+    return encode_graph_row(PROOF, proof_description(), [
+        required_value(b"checks", Value.Text(checker)),
         required_value(b"counts", integer_map(counts)),
         required_value(b"demand", Value.List(demands)),
         required_value(b"frames", Value.List(frames)),
-        required_value(b"refuse", integer_map(produced.artifact_refusals)),
+        required_value(b"refuse", integer_map(refusals)),
         required_value(b"run_id", Value.Text(run)),
-    ])?
-    selected = snapshot(store).map_err((error) => error.message())?
-    return Ok(put(begin(selected), report_key(run), encoded))
+    ])
 
 
 def integer_map(values: Dict[str, int]) -> Value:
@@ -88,7 +103,7 @@ pub def report(store: Path, run: str) -> Result[str, str]:
         Some(encoded) =>
             if encoded[:4] != b"CRMB":
                 return Ok(str(from_utf8(encoded).map_err((error) => str(error))?))
-            return report_json(encoded, run)
+            return render_proof(selected, encoded, run)
 
 
 def report_key(run: str) -> str:

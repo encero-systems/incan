@@ -1,6 +1,6 @@
 """Submit program requests to the records engine, retain execution interest and relay only the caller's console."""
 
-from rust::std::io import Write, stdin, stdout
+from rust::std::io import Write, stderr, stdin, stdout
 from rust::std::string import String as RustString
 from std.fs import Path
 from std.environ import get_optional, get_or
@@ -615,6 +615,12 @@ def await_completion(mut channel: Channel, request: bytes) -> Result[tuple[Compl
                         console_capture["errors"] = console_capture.get("errors", "") + streams[1]
                     else:
                         relay_console(event.trace_handle)?
+                elif event.status == "ProofIncomplete":
+                    message = "engine proof incomplete: " + event.trace_handle + "\n"
+                    if console_capture.get("capturing", "") == "yes":
+                        console_capture["errors"] = console_capture.get("errors", "") + message
+                    else:
+                        _ = stderr().write_all(message.encode("utf-8"))
             Message.Complete(value) =>
                 if not captured:
                     return Err("engine completed before capture")

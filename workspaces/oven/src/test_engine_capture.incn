@@ -21,12 +21,13 @@ from engine_capture import (
 )
 from engine_epoch_records import encode_epoch, encode_head, read_epoch, read_head
 from engine_epochs import capture_submit, prepare_submit, after_projection
-from pub::incan_platform.store import FrameRead, begin, commit, get, put
+from pub::incan_platform.store import FrameRead, begin, commit, get, keys_with_prefix, put
 from store_path_conversion import snapshot
 from graph_read_demands import GraphDemand
 from engine_messages import Submit
 from engine_programs import ProgramOutcome
 from engine_proofs import retain as retain_report, report as read_report
+from engine_proof_pages import PAGE_ROWS
 from observation import observe
 from std.json import parse
 from trace_adapter import count_frozen_work, finish_frozen_counting
@@ -242,6 +243,24 @@ pub def test_frozen_inputs_get_zero_stats() -> Result[None, str]:
     expected_refusals = parse("""{"changed-signature":3}""").map_err((error) => error.message())?
     assert proof.require("store_reads").map_err((error) => error.message())?.equals(expected_frames)
     assert proof.require("graph_demands").map_err((error) => error.message())?.equals(expected_demands)
+    paged_run = "10000000000000000000000000000000"
+    mut many: list[FrameRead] = []
+    for ordinal in range(PAGE_ROWS + 2):
+        many.append(FrameRead(key=f"key-{ordinal}", revision="rev", reads=1, frame_bytes=21, value_bytes=8))
+    _ = retain_report(reports, paged_run, counters, ProgramOutcome(code=0, frame_reads=many, graph_demands=[demand]))?
+    rendered = parse(read_report(reports, paged_run)?).map_err((error) => error.message())?
+    rows = rendered.require("store_reads").map_err((error) => error.message())?.expect_array().map_err((error) => error.message())?
+    assert len(rows) == PAGE_ROWS + 2
+    for ordinal in range(len(rows)):
+        assert rows[ordinal].require("key").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())? == f"key-{ordinal}"
+    assert rendered.require("graph_demands").map_err((error) => error.message())?.equals(expected_demands)
+    retained = snapshot(reports).map_err((error) => error.message())?
+    content = keys_with_prefix(retained, "incan.engine.proof-page/1\t").map_err((error) => error.message())?
+    assert len(content) == 3
+    _ = commit(put(begin(retained), content[0], b"changed")).map_err((error) => error.message())?
+    match read_report(reports, paged_run):
+        Ok(_corrupt) => return Err("engine report accepted changed page content")
+        Err(reason) => assert reason.contains("differs from its root")
     assert proof.require("artifact_refusals").map_err((error) => error.message())?.equals(expected_refusals)
     assert proof.require("frozen_stats").map_err((error) => error.message())?.expect_int().map_err(
         (error) => error.message(),
