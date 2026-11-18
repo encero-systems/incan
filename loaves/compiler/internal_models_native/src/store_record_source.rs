@@ -125,9 +125,9 @@ fn selection_digest(parts: &[&str], value: &[u8]) -> String {
     format!("{:x}", digest.finalize())
 }
 
-impl RecordSource for StoreRecordSource {
+impl StoreRecordSource {
     /// Return authenticated evidence for the exact request under this activation.
-    fn read(&self, scope: &ReadScope, request: &RecordRequest) -> RecordRead {
+    pub fn read(&self, scope: &ReadScope, request: &RecordRequest) -> RecordRead {
         if scope.snapshot != self.scope.snapshot {
             return RecordRead::Failed(ReadFault::SnapshotMismatch);
         }
@@ -192,5 +192,12 @@ impl RecordSource for StoreRecordSource {
                 })
             }
         }
+    }
+}
+
+impl RecordSource for StoreRecordSource {
+    /// Use the same authenticated read when the caller abstracts over record sources.
+    fn read(&self, scope: &ReadScope, request: &RecordRequest) -> RecordRead {
+        Self::read(self, scope, request)
     }
 }
