@@ -220,7 +220,8 @@ impl CheckedNamespaceInterface {
     pub fn installable(&self) -> Result<Arc<ModuleDependencyInterface>, String> {
         self.validate()?;
         let mut converter = TypeChecker::new();
-        let remapping = checked_namespace_foreign_nominal_remapping(&self.api);
+        let mut remapping = TypeChecker::dependency_nominal_remapping(&self.nominal_scope);
+        remapping.extend(checked_namespace_foreign_nominal_remapping(&self.api));
         let mut symbols = HashMap::new();
         let mut reexports = HashMap::new();
         let mut symbol_rows = Vec::new();
@@ -641,6 +642,52 @@ mod tests {
         };
         assert!(model.fields.contains_key("quantity"));
         assert!(model.fields.contains_key("unit_price"));
+        Ok(())
+    }
+
+    /// A recovered facade's public signature keeps the provider it checked against, even if another facade imports
+    /// a different model under the same name. A client need not import either model to pass the returned value.
+    #[test]
+    fn installed_facades_retain_distinct_parameter_and_result_providers() -> Result<(), String> {
+        fn program(source: &str) -> Result<Program, String> {
+            let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+            crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))
+        }
+
+        let record = program("pub model Fact:\n    pub value: int\n")?;
+        let mut carriers = Vec::new();
+        for provider in ["left_records", "right_records"] {
+            let facade = program(&format!(
+                "from {provider} import Fact\n\npub def find() -> Option[Fact]:\n    return None\n\npub def read(fact: Fact) -> int:\n    return fact.value\n"
+            ))?;
+            let name = format!("{provider}_facade");
+            let path = vec![name.clone()];
+            let mut checker = TypeChecker::new();
+            checker.set_current_module_path(Some(path.clone()));
+            checker.import_module(&record, provider);
+            checker.check_program(&facade).map_err(|errors| format!("{errors:?}"))?;
+            let retained = CheckedNamespaceInterface::from_checked(&name, &path, &facade, &checker)?
+                .ok_or("missing checked facade")?;
+            let identity = retained
+                .nominal_scope
+                .get("Fact")
+                .ok_or("missing checked Fact provider")?;
+            let carrier = incan_semantics_core::body_ir::nominal_carrier_key(identity).ok_or("missing Fact carrier")?;
+            let restored = retained.installable()?;
+            let Some(SymbolKind::Function(read)) = restored.direct_member_symbols.get("read") else {
+                return Err("missing read signature".into());
+            };
+            let Some(SymbolKind::Function(find)) = restored.direct_member_symbols.get("find") else {
+                return Err("missing find signature".into());
+            };
+            let expected = ResolvedType::Named(carrier.clone());
+            assert_eq!(read.params[0].ty, expected);
+            assert!(
+                matches!(&find.return_type, ResolvedType::Generic(_, args) if args == std::slice::from_ref(&expected))
+            );
+            carriers.push(carrier);
+        }
+        assert_ne!(carriers[0], carriers[1]);
         Ok(())
     }
 }

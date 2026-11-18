@@ -198,12 +198,7 @@ impl TypeChecker {
         }
         self.restore_dependency_import_function_views(module_ast, &mut direct_symbols);
         let scope = self.checked_nominal_type_identities();
-        let remapping = scope
-            .iter()
-            .filter_map(|(name, identity)| {
-                incan_semantics_core::body_ir::nominal_carrier_key(identity).map(|key| (name.clone(), key))
-            })
-            .collect();
+        let remapping = Self::dependency_nominal_remapping(&scope);
         let mut retained_scope = false;
         for (name, kind) in &mut direct_symbols {
             if let Some(identity) = direct_identities.get(name) {
@@ -374,6 +369,18 @@ impl TypeChecker {
             }
         }
         newly_retained
+    }
+
+    /// Map signature leaves through the declaring module's checked names on both fresh and restored imports.
+    pub(super) fn dependency_nominal_remapping(
+        scope: &std::collections::BTreeMap<String, CanonicalSymbolId>,
+    ) -> HashMap<String, String> {
+        scope
+            .iter()
+            .filter_map(|(name, identity)| {
+                incan_semantics_core::body_ir::nominal_carrier_key(identity).map(|key| (name.clone(), key))
+            })
+            .collect()
     }
 
     /// Index a newly retained immutable scope once, retaining one spelling per canonical nominal. The scope registry
