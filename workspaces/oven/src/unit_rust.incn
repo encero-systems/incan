@@ -21,7 +21,7 @@ from bakery import (
 from bakery_roots import register_root
 from features import FeatureRequest
 from json_fields import array, strings
-from loaf_local_graph import LocalDemand, LocalFacet, local_facets, unique
+from loaf_local_graph import LocalDemand, LocalFacet, local_facets, root_purpose, unique
 from rust_activation import DependencyDomain
 from rust_units import build_dependencies, closure_search
 from rust_build import BuiltUnit, RustBuild, facet_bindings, incan_artifacts
@@ -474,12 +474,11 @@ def resolve_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[
     for key in sorted([key for key in built.keys()]):
         result.search = result.search + [built[key].directory] + built[key].search
     result.loaves = rebase_loaves(result.loaves, incan_artifacts(built))
-    own_key = f"{unit.project_root}@target"
-    if own_key in built:
-        own = built[own_key]
-        result = add_rust_root(result, NativeCrate(name=own.crate_name, path=own.artifact))?
+    purpose = root_purpose(facets, unit.project_root)
     for facet in facets:
-        if facet.project == unit.project_root and facet.domain == DependencyDomain.Target:
+        if facet.is_root(unit.project_root, purpose):
+            if let Some(own) = built.get(facet.key()):
+                result = add_rust_root(result, NativeCrate(name=own.crate_name, path=own.artifact))?
             result = bind_edges(result, facet, built, registry)?
     return Ok(result)
 
@@ -506,8 +505,9 @@ def registry_for_unit(
     """Bind the unit's authored Rust roots to Loaf-offered artifacts without importing private ambient dependencies."""
     mut registry = linked_registry(facets, toolchain, unit.manifests, unit.project_root)?
     mut roots: list[str] = []
+    purpose = root_purpose(facets, unit.project_root)
     for facet in facets:
-        if facet.project != unit.project_root or facet.domain != DependencyDomain.Target:
+        if not facet.is_root(unit.project_root, purpose):
             continue
         for record in facet.registry:
             name = registry_selection(record)?.loaf.split("/")[-1].replace("-", "_")
