@@ -11,7 +11,7 @@ from files import make_directory, read, read_json
 from home_paths import installation_catalog
 from installation_check import verify_runtime
 from installation_codec import decode as decode_installation, encode as encode_installation
-from installation_page import recall as recall_installation, begin_command, end_command
+from installation_page import admitted_identity, restore_selection, recall as recall_installation, begin_command, end_command
 from json_fields import required_items
 from page_codec import Reader, put_texts
 from scratch import scratch_directory
@@ -35,21 +35,7 @@ pub def test_installed_inputs_are_admitted_once() -> Result[None, str]:
 def verify_published_installation(scratch: Path, original: Path) -> Result[None, str]:
     """Installation verifies each staged payload once; first selection reads only the admission marker and description."""
     stage = scratch.joinpath("installation-stage")
-    write(stage.joinpath("driver"), "fixture compiler")?
-    rustc = stage.joinpath("sysroot/bin/rustc")
-    write(rustc, "#!/bin/sh\n[ \"$1\" = -vV ] || exit 1\nprintf 'rustc fixture\\nhost: x86_64-unknown-linux-gnu\\n'\n")?
-    make_executable(rustc)?
-    write(stage.joinpath("std.rustabi"), "fixture Rust facts")?
-    write(stage.joinpath("stdlib/primitives/loaf.toml"), "[project]\nname='primitives'\nversion='1.0.0'\n")?
-    write(stage.joinpath("stdlib/primitives/src/lib.incn"), "pub def value() -> int:\n    return 1\n")?
-    write(stage.joinpath("library.rlib"), read(original)?)?
-    write(stage.joinpath("library.native.json"), "{\"search\":[],\"externs\":[],\"macro_externs\":[]}")?
-    record_payload(stage.joinpath("library.rlib"), "installed producer")?
-    write(stage.joinpath("registry/closure.json"), "{\"externs\":{}}")?
-    write(
-        stage.joinpath("toolchain.json"),
-        "{\"schema\":\"incan.toolchain/1\",\"driver\":\"driver\",\"sysroot\":\"sysroot\"," + "\"rust_abi\":[\"std.rustabi\"],\"externs\":[{\"name\":\"runtime\",\"path\":\"library.rlib\"}]," + "\"search\":[],\"registry_units\":\"registry/closure.json\",\"codegraph_on_request\":true,\"search_index_crumb\":true,\"checked_body_counts_crumb\":true,\"compiler_records\":{\"root\":\"records\",\"digest\":\"" + fingerprint_page(b"sealed") + "\",\"directory\":\"" + fingerprint_page(b"pages") + ":0:128:" + fingerprint_page(b"page") + "\"}}",
-    )?
+    write_installation(stage, original, "fixture compiler", "installed producer")?
     _, admission = prepare_installation(stage)?
     assert len(admission.payloads) == 1 and len(admission.facts) == 2
     target = scratch.joinpath("installation-published")
@@ -67,8 +53,55 @@ def verify_published_installation(scratch: Path, original: Path) -> Result[None,
     assert installed.search_index_crumb
     assert installed.codegraph_on_request
     assert published_identity(target.joinpath("library.rlib"))? == "installed producer"
+    verify_archive_replacement(target, stage, original)?
     verify_installation_page(target)?
     _ = flush_trace()
+    return Ok(None)
+
+
+def write_installation(stage: Path, original: Path, compiler: str, producer: str) -> Result[None, str]:
+    """Stage an independent installation with the requested native compiler and library producer."""
+    write(stage.joinpath("driver"), compiler)?
+    rustc = stage.joinpath("sysroot/bin/rustc")
+    write(rustc, "#!/bin/sh\n[ \"$1\" = -vV ] || exit 1\nprintf 'rustc fixture\\nhost: x86_64-unknown-linux-gnu\\n'\n")?
+    make_executable(rustc)?
+    write(stage.joinpath("std.rustabi"), "fixture Rust facts")?
+    write(stage.joinpath("stdlib/primitives/loaf.toml"), "[project]\nname='primitives'\nversion='1.0.0'\n")?
+    write(stage.joinpath("stdlib/primitives/src/lib.incn"), "pub def value() -> int:\n    return 1\n")?
+    write(stage.joinpath("library.rlib"), read(original)?)?
+    write(stage.joinpath("library.native.json"), "{\"search\":[],\"externs\":[],\"macro_externs\":[]}")?
+    record_payload(stage.joinpath("library.rlib"), producer)?
+    write(stage.joinpath("registry/closure.json"), "{\"externs\":{}}")?
+    write(
+        stage.joinpath("toolchain.json"),
+        "{\"schema\":\"incan.toolchain/1\",\"driver\":\"driver\",\"sysroot\":\"sysroot\"," + "\"rust_abi\":[\"std.rustabi\"],\"externs\":[{\"name\":\"runtime\",\"path\":\"library.rlib\"}]," + "\"search\":[],\"registry_units\":\"registry/closure.json\",\"codegraph_on_request\":true,\"search_index_crumb\":true,\"checked_body_counts_crumb\":true,\"compiler_records\":{\"root\":\"records\",\"digest\":\"" + fingerprint_page(b"sealed") + "\",\"directory\":\"" + fingerprint_page(b"pages") + ":0:128:" + fingerprint_page(b"page") + "\"}}",
+    )?
+    return Ok(None)
+
+
+def verify_archive_replacement(target: Path, stage: Path, original: Path) -> Result[None, str]:
+    """The prepared replacement and the restored directory each select their own compiler and producer."""
+    baseline = admitted_identity(target)?
+    assert baseline.is_some()
+    old_compiler = load_toolchain_at(target)?.compiler_facts
+    write_installation(stage, original, "replacement compiler", "new installed producer")?
+    _, replacement = prepare_installation(stage)?
+    previous = target.parent().joinpath("previous-generation")
+    rename(target.0, previous.0).map_err((error) => str(error))?
+    rename(stage.0, target.0).map_err((error) => str(error))?
+    finish_installation(target, replacement)?
+    assert admitted_identity(target)? != baseline
+    assert load_toolchain_at(target)?.compiler_facts != old_compiler
+    assert published_identity(target.joinpath("library.rlib"))? == "new installed producer"
+    rename(target.0, stage.0).map_err((error) => str(error))?
+    rename(previous.0, target.0).map_err((error) => str(error))?
+    restore_selection(target, baseline)?
+    assert load_toolchain_at(target)?.compiler_facts == old_compiler
+    assert published_identity(target.joinpath("library.rlib"))? == "installed producer"
+    restore_selection(target, None)?
+    assert admitted_identity(target)?.is_none()
+    assert recall_installation(target)?.is_none()
+    restore_selection(target, baseline)?
     return Ok(None)
 
 

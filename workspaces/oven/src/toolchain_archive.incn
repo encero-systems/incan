@@ -41,6 +41,7 @@ from unit_publication import publication, published_identity, record_path, recor
 from cli_help import render, unknown_option
 from jec import begin, record
 from installation_check import verify_installed_runtime
+from installation_page import admitted_identity, restore_selection
 from surfaces import expose_entry_points
 from compiler_record_admission import CompilerRecordPin, convert, installed_records, shipped_pin
 from release_trust import CARRIED_TRUST, admit_release, anchor, record as record_signer, ship, stamped
@@ -1003,6 +1004,7 @@ def publish_install(stage: Path, target: Path, admission: InstallationAdmission)
     4. Finish preparation at the installed location, restoring the previous installation on failure.
     5. Remove the previous installation.
     """
+    prior = admitted_identity(target)?
     # 1. With nothing installed yet, the stage simply becomes the installation.
     if not target.is_dir():
         rename(stage.0, target.0).map_err((error) => f"cannot publish staged toolchain {stage.0} at {target.0}: {error}")?
@@ -1012,6 +1014,7 @@ def publish_install(stage: Path, target: Path, admission: InstallationAdmission)
                 rename(target.0, stage.0).map_err(
                     (failed) => f"{error}; cannot return failed installation {target.0} to {stage.0}: {failed}",
                 )?
+                restore_selection(target, prior).map_err((failed) => f"{error}; cannot restore installation selection: {failed}")?
                 return Err(error)
     # 2. The previous installation is moved aside, not deleted, until the new one is in place.
     previous = target.parent().joinpath(f".previous-{TOOLCHAIN}-{id()}")
@@ -1034,7 +1037,11 @@ def publish_install(stage: Path, target: Path, admission: InstallationAdmission)
             rename(target.0, stage.0).map_err(
                 (failed) => f"{error}; cannot return failed installation {target.0} to {stage.0}: {failed}",
             )?
-            return Err(restored_after(error, previous, target))
+            rename(previous.0, target.0).map_err(
+                (failed) => f"{error}; cannot restore previous installation {previous.0} at {target.0}: {failed}",
+            )?
+            restore_selection(target, prior).map_err((failed) => f"{error}; cannot restore installation selection: {failed}")?
+            return Err(f"installation failed; previous installation restored: {error}")
     # 5. Only a fully prepared installation makes the previous one disposable.
     remove_dir_all(previous.0).map_err((error) => f"cannot remove previous toolchain installation {previous.0}: {error}")?
     return Ok(None)
