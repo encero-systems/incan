@@ -5,6 +5,7 @@
 //! unit's publication writes it and the Loaf index reads it (DD-0007). JSON is the on-disk encoding, behind typed read
 //! and write APIs.
 
+pub mod capabilities;
 mod checked_replay;
 pub mod compiler_records;
 pub mod declaration_records;

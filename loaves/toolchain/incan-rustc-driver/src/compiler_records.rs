@@ -5,11 +5,14 @@
 //! writes independently content-named values for Oven to admit through the sealed-set path. Which records a Loaf has,
 //! and their two digests, are the front end's (`LibraryManifest::compiler_records`); this module only writes them.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use incan_frontend::library_manifest::LibraryManifest;
+use incan_frontend::library_manifest::{
+    LibraryManifest, capabilities::CapabilityCatalog, compiler_records::RecordFamily,
+};
 use serde::Serialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -38,6 +41,7 @@ pub(crate) fn export(arguments: &[String]) -> Result<(), Box<dyn std::error::Err
     let mut manifests = manifest_paths(installed)?;
     manifests.sort();
     let mut records = Vec::new();
+    let mut catalogs = BTreeMap::<String, CapabilityCatalog>::new();
     for path in manifests {
         let manifest_digest = format!("{:x}", Sha256::digest(fs::read(&path)?));
         let manifest = LibraryManifest::read_from_path(&path)?;
@@ -46,7 +50,8 @@ pub(crate) fn export(arguments: &[String]) -> Result<(), Box<dyn std::error::Err
             .and_then(Path::file_name)
             .and_then(|name| name.to_str())
             .ok_or_else(|| format!("manifest has no UTF-8 profile directory: {}", path.display()))?;
-        export_manifest(output, profile, &manifest_digest, &manifest, &mut records)?;
+        let catalog = matches!(profile, "debug" | "release").then(|| catalogs.entry(profile.to_owned()).or_default());
+        export_manifest(output, profile, &manifest_digest, &manifest, &mut records, catalog)?;
         if manifest.contract_metadata.executable_representation.is_some() {
             let sidecar = path.with_extension("incnbody");
             match fs::read(&sidecar) {
@@ -64,6 +69,9 @@ pub(crate) fn export(arguments: &[String]) -> Result<(), Box<dyn std::error::Err
                 Err(error) => return Err(error.into()),
             }
         }
+    }
+    for (profile, catalog) in catalogs {
+        write_object(output, catalog.key(&profile), catalog.encode(&profile)?, &mut records)?;
     }
     records.sort_by(|left, right| left.key.cmp(&right.key));
     let index = json!({"schema": EXPORT_SCHEMA, "records": records});
@@ -100,9 +108,15 @@ fn export_manifest(
     manifest_digest: &str,
     manifest: &LibraryManifest,
     records: &mut Vec<ExportedRecord>,
+    mut catalog: Option<&mut CapabilityCatalog>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let prefix = format!("loaf/{profile}/{}", manifest.name);
     for record in manifest.compiler_records(manifest_digest)?.records {
+        if record.family == RecordFamily::Metadata
+            && let Some(catalog) = catalog.as_deref_mut()
+        {
+            catalog.insert(&manifest.name, &record.value)?;
+        }
         write_object(output, format!("{prefix}/{}", record.key()), record.value, records)?;
     }
     Ok(())
