@@ -305,6 +305,9 @@ pub def order_entries(
     for _ in range(8):
         budget.charge_bytes(len(items))?
     mut indices = [index for index in range(len(items))]
+    # A map producer may already supply canonical order. Verify it once using the same projected comparison.
+    if entries_in_order(items, projection, budget)?:
+        return Ok(indices)
     mut width = 1
     while width < len(items):
         mut output: list[int] = []
@@ -333,6 +336,13 @@ pub def order_entries(
         indices = output
         width = width + min([width, len(items) - width])
     return Ok(indices)
+
+
+def entries_in_order(items: &list[MapEntry], projection: Projection, mut budget: Budget) -> Result[bool, CrumbError]:
+    for index in range(1, len(items)):
+        if compare_entries(items[index - 1], items[index], projection, budget)? > 0:
+            return Ok(false)
+    return Ok(true)
 
 
 def compare_entries(
