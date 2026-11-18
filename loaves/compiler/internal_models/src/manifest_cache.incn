@@ -1,0 +1,169 @@
+"""Generation-bound optional facts from ordinary admission of a published Loaf manifest."""
+
+from std.hash import sha256
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.records import RowRecord
+from std.primitives.crumb.values import Value
+from crumb_rows import ModelField, admit_rows, encode_rows, model_description, operation_budget, required_value
+from graph_crumb_fields import decode_graph_row, encode_graph_row, items, text
+
+
+pub model ManifestCacheValue:
+    """The public manifest digest and its optional, independently checked, family-specific value."""
+
+    pub digest: bytes
+    pub payload: bytes
+
+
+def family(kind: str) -> Result[tuple[bytes, int], str]:
+    match kind:
+        "identity" => return Ok((b"lfmdig\x00", 8192))
+        "inventory" => return Ok((b"lfminv\x00", 4194304))
+        "facts" => return Ok((b"lfmfct\x00", 134217728))
+        _ => return Err("unknown Loaf manifest cache family")
+
+
+def header(key: bytes, kind: str) -> Description:
+    return model_description(key, "incan.loaf-manifest-cache/" + kind + "/2", [
+        ModelField(identity=b"check_", name="checksum", storage="binary"),
+        ModelField(identity=b"guard_", name="observed_generation", storage="binary"),
+        ModelField(identity=b"public", name="manifest_digest", storage="binary"),
+        ModelField(identity=b"value_", name="admitted_value", storage="binary"),
+    ])
+
+
+def checksum(key: bytes, guard: bytes, digest: bytes, payload: bytes) -> bytes:
+    mut hasher = sha256.new()
+    hasher.update(key)
+    hasher.update(guard)
+    hasher.update(digest)
+    hasher.update(sha256.digest(payload))
+    return hasher.finalize_bytes()
+
+
+pub def encode_manifest_cache(kind: str, guard: bytes, digest: bytes, payload: bytes) -> Result[bytes, str]:
+    """Bind a full digest, the observed file generation and the admitted facts before publication."""
+    key, maximum = family(kind)?
+    if len(guard) != 32 or len(digest) != 32 or len(payload) > maximum or ((kind == "identity") != (len(payload) == 0)):
+        return Err("invalid Loaf manifest cache fields")
+    record = RowRecord(key=key, value=Value.Record([
+        required_value(b"check_", Value.Binary(checksum(key, guard, digest, payload))),
+        required_value(b"guard_", Value.Binary(guard)),
+        required_value(b"public", Value.Binary(digest)),
+        required_value(b"value_", Value.Binary(payload)),
+    ]))
+    return encode_rows(header(key, kind), [record], maximum)
+
+
+pub def decode_manifest_cache(kind: str, guard: bytes, encoded: bytes) -> Result[ManifestCacheValue, str]:
+    """Accept exactly one matching row with an intact checksum and the independently observed generation."""
+    key, maximum = family(kind)?
+    if len(guard) != 32 or len(encoded) > maximum:
+        return Err("invalid Loaf manifest cache size")
+    mut budget = operation_budget(maximum * 4)?
+    rows = admit_rows(encoded, [header(key, kind)], maximum, budget)?
+    if rows.len() != 1:
+        return Err("expected one Loaf manifest cache row")
+    row = rows.read_record(0, budget).map_err((error) => error.message())?
+    if row.key != key:
+        return Err("wrong Loaf manifest cache family")
+    match row.value:
+        Value.Record(fields) =>
+            if len(fields) == 4:
+                match (fields[0].value, fields[1].value, fields[2].value, fields[3].value):
+                    (Value.Binary(check), Value.Binary(observed), Value.Binary(digest), Value.Binary(payload)) =>
+                        if observed == guard and len(digest) == 32 and ((kind == "identity") == (len(payload) == 0)) and check == checksum(key, guard, digest, payload):
+                            return Ok(ManifestCacheValue(digest=digest, payload=payload))
+                    _ => pass
+        _ => pass
+    return Err("Loaf manifest cache evidence differs")
+
+
+pub model ManifestInventory:
+    """The exact named and global facts admitted from a manifest before demand loading."""
+
+    pub name: str
+    pub version: str
+    pub features: list[str]
+    pub vocabulary: bool
+    pub operations: bool
+    pub native_unions: bool
+    pub rust_paths: list[str]
+    pub declares_abi_cache: bool
+    pub has_abi_cache: bool
+    pub abi_digest: Option[str]
+
+
+const SUMMARY: bytes = b"lfmsum\x00"
+
+
+def summary_description() -> Description:
+    return model_description(SUMMARY, "incan.loaf-manifest-inventory/2", [
+        ModelField(identity=b"abidcl", name="declares_abi_cache", storage="boolean"),
+        ModelField(identity=b"abidig", name="abi_digest", storage="option<string>"),
+        ModelField(identity=b"abihas", name="has_abi_cache", storage="boolean"),
+        ModelField(identity=b"featur", name="features", storage="list<string>"),
+        ModelField(identity=b"name__", name="name", storage="string"),
+        ModelField(identity=b"ops___", name="provider_operations", storage="boolean"),
+        ModelField(identity=b"paths_", name="rust_paths", storage="list<string>"),
+        ModelField(identity=b"unions", name="native_unions", storage="boolean"),
+        ModelField(identity=b"versio", name="version", storage="string"),
+        ModelField(identity=b"vocabu", name="vocabulary", storage="boolean"),
+    ])
+
+
+def ordered(value: list[str]) -> bool:
+    for index in range(1, len(value)):
+        if value[index] <= value[index - 1]:
+            return false
+    return true
+
+
+pub def encode_manifest_inventory(row: ManifestInventory) -> Result[bytes, str]:
+    if not ordered(row.features) or not ordered(row.rust_paths):
+        return Err("manifest index sets require strictly increasing order")
+    mut abi = Value.NoneValue
+    if let Some(digest) = row.abi_digest:
+        abi = Value.Some([Value.Text(digest)])
+    return encode_graph_row(SUMMARY, summary_description(), [
+        required_value(b"abidcl", Value.Boolean(row.declares_abi_cache)),
+        required_value(b"abidig", abi), required_value(b"abihas", Value.Boolean(row.has_abi_cache)),
+        required_value(b"featur", Value.List([Value.Text(value) for value in row.features])),
+        required_value(b"name__", Value.Text(row.name)), required_value(b"ops___", Value.Boolean(row.operations)),
+        required_value(b"paths_", Value.List([Value.Text(value) for value in row.rust_paths])),
+        required_value(b"unions", Value.Boolean(row.native_unions)), required_value(b"versio", Value.Text(row.version)),
+        required_value(b"vocabu", Value.Boolean(row.vocabulary)),
+    ])
+
+
+def strings(value: Value) -> Result[list[str], str]:
+    mut result: list[str] = []
+    for item in items(value)?:
+        result.append(text(item)?)
+    if not ordered(result):
+        return Err("invalid manifest inventory set")
+    return Ok(result)
+
+
+def flag(value: Value) -> Result[bool, str]:
+    match value:
+        Value.Boolean(found) => return Ok(found)
+        _ => return Err("expected manifest inventory boolean")
+
+
+def optional_string(value: Value) -> Result[Option[str], str]:
+    match value:
+        Value.NoneValue => return Ok(None)
+        Value.Some(parts) =>
+            if len(parts) == 1:
+                return Ok(Some(text(parts[0])?))
+        _ => pass
+    return Err("invalid optional manifest ABI digest")
+
+
+pub def decode_manifest_inventory(encoded: bytes) -> Result[ManifestInventory, str]:
+    f = decode_graph_row(encoded, SUMMARY, summary_description(), 10)?
+    return Ok(ManifestInventory(name=text(f[4].value)?, version=text(f[8].value)?, features=strings(f[3].value)?,
+        vocabulary=flag(f[9].value)?, operations=flag(f[5].value)?, native_unions=flag(f[7].value)?,
+        rust_paths=strings(f[6].value)?, declares_abi_cache=flag(f[0].value)?, has_abi_cache=flag(f[2].value)?,
+        abi_digest=optional_string(f[1].value)?))

@@ -4,7 +4,6 @@
 use incan_loaf_names::artifact_stem;
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
@@ -548,20 +547,11 @@ impl IndexedLoaf {
 }
 
 /// Exact source and compiler generations bound to an optional private summary.
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 struct Observation {
     path: PathBuf,
     source: Generation,
     compiler: (PathBuf, Generation),
-}
-
-/// A separately checksummed small inventory, with no executable or acceptance result.
-#[derive(Serialize, Deserialize)]
-struct Record {
-    version: u32,
-    observation: Observation,
-    summary: Summary,
-    checksum: String,
 }
 
 /// Observe the exact file and running compiler; unsupported filesystems keep full admission.
@@ -578,54 +568,52 @@ fn observation(path: &Path) -> Option<Observation> {
 fn record_path(path: &Path) -> Option<PathBuf> {
     let canonical = path.canonicalize().ok()?;
     let key = format!("{:x}", Sha256::digest(canonical.as_os_str().as_encoded_bytes()));
-    Some(manifest_input::cache_path(&key)?.with_extension("inventory"))
+    Some(manifest_input::cache_path(&key)?.with_file_name(format!("{key}.inventory.crumb")))
 }
 
 /// Refuse stale, malformed, oversized or corrupted records and fall back to full public admission.
 fn retained(path: &Path) -> Option<Summary> {
     let observed = observation(path)?;
     let cache = record_path(path)?;
-    let metadata = fs::symlink_metadata(&cache).ok()?;
-    if !metadata.is_file() || metadata.len() > MAX_INVENTORY_RECORD_BYTES {
+    let guard = manifest_input::checked_guard(&observed.path, observed.source, &observed.compiler);
+    let (digest, payload) = manifest_input::read_cache(&cache, "inventory", guard, MAX_INVENTORY_RECORD_BYTES)?;
+    let row = internal_models::decode_manifest_inventory(&payload).ok()?;
+    if observation(path).as_ref() != Some(&observed) {
         return None;
     }
-    let mut bytes = Vec::new();
-    fs::File::open(cache)
-        .ok()?
-        .take(MAX_INVENTORY_RECORD_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .ok()?;
-    if u64::try_from(bytes.len()).ok()? > MAX_INVENTORY_RECORD_BYTES {
-        return None;
-    }
-    let record: Record = serde_json::from_slice(&bytes).ok()?;
-    if record.version != 1
-        || record.observation != observed
-        || record.checksum != checksum(&record.observation, &record.summary).ok()?
-        || observation(path).as_ref() != Some(&observed)
-    {
-        return None;
-    }
-    Some(record.summary)
-}
-
-/// Bind both the positive and negative inventory facts to their complete observation.
-fn checksum(observed: &Observation, summary: &Summary) -> std::io::Result<String> {
-    let bytes = serde_json::to_vec(&(1_u32, observed, summary)).map_err(std::io::Error::other)?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
+    Some(Summary {
+        identity: LoafIdentity {
+            name: row.name,
+            version: row.version,
+            digest,
+            feature_projection: row.features.into_iter().collect(),
+        },
+        vocabulary: row.vocabulary,
+        provider_operations: row.operations,
+        native_unions: row.native_unions,
+        rust_paths: row.rust_paths.into_iter().collect(),
+        rust_abi_cache_declared: row.declares_abi_cache,
+        rust_abi_cache: row.has_abi_cache,
+        rust_abi_cache_digest: row.abi_digest,
+    })
 }
 
 /// Atomically publish an optional inventory only after ordinary manifest admission has succeeded.
 fn retain(path: &Path, observation: Observation, summary: &Summary) -> std::io::Result<()> {
-    let Some(cache) = record_path(path) else {
-        return Ok(());
+    let Some(cache) = record_path(path) else { return Ok(()) };
+    let guard = manifest_input::checked_guard(&observation.path, observation.source, &observation.compiler);
+    let row = internal_models::ManifestInventory {
+        name: summary.identity.name.clone(),
+        version: summary.identity.version.clone(),
+        features: summary.identity.feature_projection.iter().cloned().collect(),
+        vocabulary: summary.vocabulary,
+        operations: summary.provider_operations,
+        native_unions: summary.native_unions,
+        rust_paths: summary.rust_paths.iter().cloned().collect(),
+        declares_abi_cache: summary.rust_abi_cache_declared,
+        has_abi_cache: summary.rust_abi_cache,
+        abi_digest: summary.rust_abi_cache_digest.clone(),
     };
-    let record = Record {
-        version: 1,
-        checksum: checksum(&observation, summary)?,
-        observation,
-        summary: summary.clone(),
-    };
-    let bytes = serde_json::to_vec(&record).map_err(std::io::Error::other)?;
-    super::publish_private_record(&cache, &bytes, "inventory-pending")
+    let payload = internal_models::encode_manifest_inventory(&row).map_err(std::io::Error::other)?;
+    manifest_input::write_cache(&cache, "inventory", guard, &summary.identity.digest, payload)
 }
