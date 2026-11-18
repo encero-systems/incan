@@ -8,8 +8,8 @@ use super::*;
 mod checked_namespace;
 mod stable_encoding;
 
-pub use checked_namespace::{CheckedNamespaceInterface, NamespaceCell, NamespaceCrumb};
 pub(crate) use checked_namespace::{CheckedCellProjection, callable_projection};
+pub use checked_namespace::{CheckedNamespaceInterface, NamespaceCell, NamespaceCrumb};
 use serde::Serialize;
 use stable_encoding::stable_encode;
 
@@ -104,7 +104,23 @@ pub struct ModuleDependencyInterface {
     /// Historical provider symbols retained in declaration order for checker-wide semantic scans.
     symbol_rows: Arc<[(Symbol, Option<CanonicalSymbolId>)]>,
     /// Deterministic semantic receipt for all provider-owned tables.
-    pub snapshot: ModuleDependencyInterfaceSnapshot,
+    snapshot: std::sync::OnceLock<ModuleDependencyInterfaceSnapshot>,
+}
+
+impl ModuleDependencyInterface {
+    /// Render the shadow-comparison receipt only when a caller requests it. A restored namespace already
+    /// has the immutable lookup tables needed by ordinary checking.
+    pub fn snapshot(&self) -> &ModuleDependencyInterfaceSnapshot {
+        self.snapshot.get_or_init(|| {
+            let mut installed = TypeChecker::new();
+            installed.install_dependency_interfaces_directly(&[Arc::new(self.clone())]);
+            installed.dependency_interface_snapshot_for(
+                &self.module_name,
+                Some(self.symbol_rows.as_ref()),
+                self.public_library_type_identities.as_ref(),
+            )
+        })
+    }
 }
 
 /// A deterministic representation of all dependency-owned state in one fresh checker.
@@ -552,11 +568,9 @@ impl TypeChecker {
             compiled_libraries: Arc::from(compiled_libraries),
             public_library_type_identities: Arc::new(public_library_type_identities.clone()),
             symbol_rows: Arc::from(symbol_rows.clone()),
-            snapshot: self.dependency_interface_snapshot_for(
-                module_name,
-                Some(&symbol_rows),
-                &public_library_type_identities,
-            ),
+            snapshot: self
+                .dependency_interface_snapshot_for(module_name, Some(&symbol_rows), &public_library_type_identities)
+                .into(),
         })
     }
 

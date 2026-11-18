@@ -288,7 +288,7 @@ impl CheckedNamespaceInterface {
         let (transitive_public_types, transitive_public_traits) = provider_transitive_semantics(&symbols, &identities);
         let symbols = Arc::new(symbols);
         let identities = Arc::new(identities);
-        let mut interface = ModuleDependencyInterface {
+        let interface = ModuleDependencyInterface {
             module_name: self.module_name.clone(),
             module_path: self.module_path.clone(),
             public_only: true,
@@ -318,18 +318,8 @@ impl CheckedNamespaceInterface {
             compiled_libraries: Arc::from([]),
             public_library_type_identities: Arc::default(),
             symbol_rows: Arc::from(symbol_rows),
-            snapshot: ModuleDependencyInterfaceSnapshot {
-                version: MODULE_DEPENDENCY_INTERFACE_SNAPSHOT_VERSION,
-                tables: Vec::new(),
-            },
+            snapshot: std::sync::OnceLock::new(),
         };
-        let mut installed = TypeChecker::new();
-        installed.install_dependency_interfaces_directly(&[Arc::new(interface.clone())]);
-        interface.snapshot = installed.dependency_interface_snapshot_for(
-            &interface.module_name,
-            Some(interface.symbol_rows.as_ref()),
-            interface.public_library_type_identities.as_ref(),
-        );
         Ok(Arc::new(interface))
     }
 
