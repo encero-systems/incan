@@ -369,6 +369,14 @@ pub def native_fields(record: CheckedRecord) -> Result[list[list[str]], CodecFau
     return Ok(rows)
 
 
+pub def callable_checker_fields(record: CheckedRecord) -> Result[list[list[str]], CodecFault]:
+    """Restore the scalar capture producer's original implicit local/final header after validating its typed family."""
+    mut rows = native_fields(record)?
+    if record.family != CheckedFamily.Declaration:
+        rows[0] = ["header", record.owner, record.root, record.profile]
+    return Ok(rows)
+
+
 pub def encode_graph_body_values(values: list[GraphBodyValue]) -> Result[bytes, CodecFault]:
     """
     Encode graph-selected body pairs independently of the unit description and callable-body product cache.

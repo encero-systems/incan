@@ -7,6 +7,9 @@
 //! mutation contract and complete assignment operations. Physical locators must also match; a semantic digest alone
 //! never grants a hit.
 
+mod wire;
+pub use wire::{CallableCheckerRows, CallableRowFamily};
+
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 

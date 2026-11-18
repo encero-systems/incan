@@ -6,8 +6,8 @@
 //! is an ordinary miss.
 
 use std::collections::BTreeMap;
-use std::io::Write;
-use std::path::PathBuf;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 
 use incan_driver::session::{CallableBodySource, CompilationSession};
 use incan_driver::unit::UnitDescription;
@@ -21,6 +21,7 @@ use sha2::{Digest, Sha256};
 pub(super) struct CallableProducts {
     directory: Option<PathBuf>,
     package: String,
+    project_root: PathBuf,
     inputs: BTreeMap<PathBuf, CallableBodyInputs>,
 }
 
@@ -28,6 +29,7 @@ pub(super) struct CallableProducts {
 struct StoredCallableBodies {
     directory: PathBuf,
     package: String,
+    project_root: PathBuf,
 }
 
 impl CallableBodySource for StoredCallableBodies {
@@ -36,8 +38,22 @@ impl CallableBodySource for StoredCallableBodies {
             file = %module.file_path.display())
         .entered();
         let path = self.directory.join(module_key(module));
-        let bytes = std::fs::read(path).ok()?;
-        let products = CallableBodyProducts::from_bytes(&bytes).ok()?;
+        let mut file = std::fs::File::open(path).ok()?;
+        let limit = 64 * 1024 * 1024;
+        let length = file.metadata().ok()?.len();
+        if length > limit {
+            return None;
+        }
+        let mut magic = [0; 4];
+        file.read_exact(&mut magic).ok()?;
+        if &magic != b"CRMB" {
+            return None;
+        }
+        let mut bytes = Vec::with_capacity(length as usize);
+        bytes.extend_from_slice(&magic);
+        file.take(limit + 1 - 4).read_to_end(&mut bytes).ok()?;
+        let source = project_source(&self.project_root, module)?;
+        let products = super::callable_crumb::decode(&bytes, &source).ok()?;
         let selection = products
             .select(&module.ast, &module.source, &self.package, &module.path_segments)
             .ok()?;
@@ -54,15 +70,21 @@ impl CallableProducts {
     /// Install the private scalar source when Oven supplied its authenticated compilation context.
     pub(super) fn prepare(unit: &UnitDescription, session: &mut CompilationSession) -> Self {
         let directory = product_directory(unit);
+        let project_root = directory
+            .as_ref()
+            .and_then(|_| unit.project_root.canonicalize().ok())
+            .unwrap_or_else(|| unit.project_root.clone());
         if let Some(directory) = &directory {
             session.set_callable_body_source(std::sync::Arc::new(StoredCallableBodies {
                 directory: directory.clone(),
                 package: unit.package.clone(),
+                project_root: project_root.clone(),
             }));
         }
         Self {
             directory,
             package: unit.package.clone(),
+            project_root,
             inputs: BTreeMap::new(),
         }
     }
@@ -102,8 +124,11 @@ impl CallableProducts {
                 .map_err(|error| error.to_string())
                 .and_then(|products| {
                     admitted.extend(products.native_inputs().map_err(|error| error.to_string())?);
+                    let Some(source) = project_source(&self.project_root, module) else {
+                        return Ok(());
+                    };
                     let path = directory.join(module_key(module));
-                    publish(&path, products)
+                    publish(&path, products, &body.module_id, &source)
                         .map_err(|error| format!("cannot publish callable products {}: {error}", path.display()))
                 });
             if let Err(error) = result {
@@ -133,6 +158,29 @@ pub(super) fn native_directory(unit: &UnitDescription) -> Option<String> {
     product_directory(unit).map(|directory| directory.join(&unit.profile).to_string_lossy().into_owned())
 }
 
+/// Bind the kernel owner frame to its project-relative source identity across relocations.
+fn project_source(project: &Path, module: &ParsedModule) -> Option<String> {
+    if let Ok(relative) = module.file_path.strip_prefix(project) {
+        return relative.to_str().map(str::to_owned);
+    }
+    // Explicit source roots may be siblings of the project. Preserve their identity relative to this unit as well.
+    let mut root = project.components().peekable();
+    let mut file = module.file_path.components().peekable();
+    if root.peek() != file.peek() {
+        return None;
+    }
+    while root.peek().is_some() && root.peek() == file.peek() {
+        root.next();
+        file.next();
+    }
+    let mut path = PathBuf::new();
+    for _ in root {
+        path.push("..");
+    }
+    path.extend(file);
+    path.to_str().map(str::to_owned)
+}
+
 /// Distinguish source modules through their complete producer path, without parsing any generated carrier name.
 fn module_key(module: &ParsedModule) -> String {
     let mut digest = Sha256::new();
@@ -145,9 +193,15 @@ fn module_key(module: &ParsedModule) -> String {
 
 /// Verify the complete private transport before atomically replacing one module's independent item inventory.
 /// A concurrent writer publishes another complete generation; every reader still validates its own source input.
-fn publish(path: &std::path::Path, products: CallableBodyProducts) -> Result<(), Box<dyn std::error::Error>> {
-    let bytes = products.to_bytes()?;
-    if CallableBodyProducts::from_bytes(&bytes)?.to_bytes()? != bytes {
+fn publish(
+    path: &std::path::Path,
+    products: CallableBodyProducts,
+    module: &incan_semantics_core::CompilerNodeId,
+    source: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = super::callable_crumb::encode(&products, module, source)?;
+    let restored = super::callable_crumb::decode(&bytes, source)?;
+    if super::callable_crumb::encode(&restored, module, source)? != bytes {
         return Err("callable products lost facts in their private round trip".into());
     }
     std::fs::create_dir_all(path.parent().ok_or("callable products have no owning directory")?)?;

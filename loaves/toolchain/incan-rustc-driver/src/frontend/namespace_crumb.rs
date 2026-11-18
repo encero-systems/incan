@@ -39,7 +39,7 @@ fn cell_fields(fields: Vec<NamespaceField>) -> Result<Vec<(u64, Cell)>, String> 
         .map(|field| Ok((field.identity, to_cell(field.value)?)))
         .collect()
 }
-fn to_atom(value: Cell) -> Atom {
+pub(super) fn to_atom(value: Cell) -> Atom {
     match value {
         Cell::Text(s) => Atom::Text(s),
         Cell::Binary(v) => Atom::Binary(v),
@@ -64,7 +64,7 @@ fn to_atom(value: Cell) -> Atom {
         Cell::Variant(id, fields) => Atom::Alternative(id, atom_fields(fields)),
     }
 }
-fn to_cell(value: Atom) -> Result<Cell, String> {
+pub(super) fn to_cell(value: Atom) -> Result<Cell, String> {
     Ok(match value {
         Atom::Text(s) => Cell::Text(s),
         Atom::Binary(v) => Cell::Binary(v),

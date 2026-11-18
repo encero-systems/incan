@@ -178,6 +178,7 @@ use incan_lang::lang::types::stringlike::StringLikeId;
 use incan_lang::numeric_values::numeric_type_losslessly_widens_to;
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 
+pub(crate) use dependency_interface::{CheckedCellProjection, callable_projection};
 pub use dependency_interface::{
     CheckedNamespaceInterface, DependencyInterfacePreparationCache, ModuleDependencyInterface,
     ModuleDependencyInterfaceSnapshot, NamespaceCell, NamespaceCrumb,

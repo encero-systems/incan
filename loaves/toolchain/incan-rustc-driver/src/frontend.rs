@@ -25,6 +25,7 @@ use incan_mir_lowering::{
 use incan_semantics_core::body_ir::{BodyIrModule, LoafCallable, NativeUnionDeclaration, NominalDeclaration};
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 
+mod callable_crumb;
 mod callable_products;
 mod checked_program;
 mod declaration_validation;
