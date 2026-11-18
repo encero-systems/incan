@@ -199,6 +199,18 @@ impl SemanticNodeBindings {
         &self.owner
     }
 
+    /// Pair a direct call's complete expression range with its callee from the checked syntax inventory.
+    /// Interpolation and parenthesized ranges can begin before the callee token.
+    pub(super) fn direct_call_sites(&self) -> impl Iterator<Item = (Span, Span)> + '_ {
+        self.syntax.by_path.iter().filter_map(|(path, callee)| {
+            let parent = path.strip_suffix("/node/Call/0/span")?;
+            self.syntax
+                .by_path
+                .get(&format!("{parent}/span"))
+                .map(|call| (*call, *callee))
+        })
+    }
+
     /// The normalized syntax root is semantic data; all coordinates remain in the activation-owned inventory.
     pub(crate) fn root(&self) -> &str {
         &self.syntax.root
