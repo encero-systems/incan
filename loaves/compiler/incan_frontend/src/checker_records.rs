@@ -988,13 +988,20 @@ mod tests {
     /// A ranked check enters the demanded statements once and declines an absent peer before its statement producer.
     #[test]
     fn ranked_reader_counts_actual_statement_entries() -> Result<(), Box<dyn std::error::Error>> {
-        let source = program(
-            "def left(value: int) -> int:\n    return value + 1\n\ndef right(value: int) -> int:\n    return value * 2\n",
-        )?;
+        let source = program(concat!(
+            "model Peer:\n",
+            "    value: int\n",
+            "    def read(self) -> int:\n        return self.value\n",
+            "    property doubled -> int:\n        return self.value * 2\n\n",
+            "def left(value: int) -> int:\n    return value + 1\n\n",
+            "def right(value: int) -> int:\n    return value * 2\n",
+        ))?;
         let module = vec!["main".to_owned()];
         let mut cold = TypeChecker::new();
         cold.set_current_module_path(Some(module.clone()));
         cold.check_program(&source).map_err(|errors| format!("{errors:?}"))?;
+        assert_eq!(cold.check_work().method_bodies, 1);
+        assert_eq!(cold.check_work().property_bodies, 1);
         let mut prior = Vec::new();
         let mut target = None;
         for output in checked_owner_record_outputs(&source, &cold, &module)? {
@@ -1014,6 +1021,9 @@ mod tests {
             checker.set_graph_body_records(scope.clone());
             let result = checker.check_program(&source);
             assert_eq!(result.is_err(), missing, "{result:?}");
+            assert_eq!(checker.check_work().body_local_checks, 1);
+            assert_eq!(checker.check_work().method_bodies, 0);
+            assert_eq!(checker.check_work().property_bodies, 0);
             assert_eq!(scope.ranked_admission(), Some((1, missing, false)));
         }
         Ok(())

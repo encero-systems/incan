@@ -243,8 +243,10 @@ pub fn ranked_reader(
         .ok_or_else(|| CliError::failure("ranked demand has no project function identity"))?;
     let source = unit.project_root.join(module);
     let mut selected = None;
+    let mut statement_entries = 0;
     let exact = records.for_ranked_owner(identity);
     let report = check_report_observed(unit, rust, exact.clone(), &mut |current, checker| {
+        statement_entries += checker.check_work().body_local_checks;
         if current.file_path == source {
             selected = Some(checked_record_outputs(
                 &current.ast,
@@ -256,10 +258,10 @@ pub fn ranked_reader(
     })?;
     match exact.ranked_admission() {
         Some((0..=1, true, false)) => return Ok(None),
-        Some((1, false, false)) => {}
+        Some((1, false, false)) if statement_entries == 1 => {}
         state => {
             return Err(CliError::failure(format!(
-                "ranked reader has invalid statement-entry evidence: {state:?}"
+                "ranked reader has invalid statement-entry evidence: {state:?}, {statement_entries} physical body entries"
             )));
         }
     }

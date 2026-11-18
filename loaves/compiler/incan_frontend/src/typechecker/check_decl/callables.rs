@@ -836,7 +836,9 @@ impl TypeChecker {
         if let Some((prepared, previous_owner)) = prepared {
             self.check_prepared_method(method, method_span, prepared);
             #[cfg(test)]
-            self.observe_body_local(method_span);
+            if self.graph_body_records.ranked_owner().is_none() {
+                self.observe_body_local(method_span);
+            }
             self.current_method_owner = previous_owner;
             self.continue_declaration_owner(index, |checker| {
                 checker.apply_user_defined_method_decorators(method, owner)
