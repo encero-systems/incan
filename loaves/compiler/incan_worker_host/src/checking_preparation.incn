@@ -9,6 +9,7 @@ from pub::internal_models import (
     encode_ready_work, envelope_key,
 )
 from pub::internal_models.checker_records import CHECKER_PROFILE
+from pub::internal_models.record_scope import checked_row_request
 from pub::internal_models.records import ReadScope, ReadWitness, RecordKey, RecordRead, RecordRequest, RecordSelection, RecordSource, encode_record_key
 from record_protocol import Prepare, Prepared
 from record_snapshot import ResolvedSnapshot, resolve_snapshot, valid_digest
@@ -90,9 +91,13 @@ pub def prepare_checking(home: str, request: &Prepare) -> Result[Prepared, str]:
                     return Err("checking preparation requires compiler discovery for " + supplier.key.family)
                 match source.read(scope, supplier):
                     RecordRead.Found(current) =>
+                        if supplier.key.family in ["local", "declaration"]:
+                            # The selected predecessor may have grown since preparation of the old receipt.
+                            reads.append(checked_row_request(supplier.key, len(current.value))?)
+                            continue
                         # Only typed checker values can vary after selection. A source, census or declaration-slot
                         # change requires fresh supplier discovery before this owner may be scheduled.
-                        if supplier.key.family not in ["local", "declaration"] and current.evidence.semantic_digest != prior.semantic_digest:
+                        if current.evidence.semantic_digest != prior.semantic_digest:
                             return Err("checking supplier discovery is stale for " + supplier.key.family)
                         if supplier.key.family == "declaration-slot":
                             declaration_slots.add(current.value.decode().map_err((_) => "checking declaration slot has no stable identity")?)
@@ -149,7 +154,7 @@ def current_predecessor(
                             return Err("closed owner predecessor belongs to an earlier input revision")
                     _ => return Err("closed owner predecessor lost a required input")
             _ => return Err("closed owner predecessor has unsupported supplier discovery")
-    return Ok(RecordRequest(key=key, selection=RecordSelection.Field("value")))
+    return checked_row_request(key, len(value))
 
 
 def prepare_closed_owner(resolved: &ResolvedSnapshot, request: &Prepare, keys: list[RecordKey]) -> Result[Prepared, str]:

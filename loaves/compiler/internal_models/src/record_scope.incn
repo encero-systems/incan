@@ -52,13 +52,19 @@ pub enum RecordSelection:
     Members(MemberSelection)
 
 
+# A native checker graph page and the compiled output carrying it each admit at most 64 MiB.
+# Other selected responses and individual range reads keep the record protocol's 64 KiB page bound.
+pub const MAX_CHECKER_ROW_BYTES: int = 67108864
+pub const DEFAULT_READ_BYTES: int = 65536
+
+
 @derive(Eq)
 pub model RecordRequest:
     """One bounded selection; the source must return evidence for precisely this key and selection."""
 
     pub key: RecordKey
     pub selection: RecordSelection
-    pub byte_limit: int = 65536
+    pub byte_limit: int = DEFAULT_READ_BYTES
 
 
 @derive(Eq)
@@ -269,10 +275,28 @@ pub class RecordReads:
                 )
 
 
+pub def checked_row_family(family: str) -> bool:
+    """The ranked worker's prior-declaration is a snapshot copy of the same typed declaration row."""
+    return family in ["declaration", "prior-declaration", "local", "final"]
+
+
+pub def checked_row_request(key: RecordKey, encoded_bytes: int) -> Result[RecordRequest, str]:
+    """Read one typed checker owner's complete authenticated row. An oversized reply needs its known encoded extent."""
+    if not checked_row_family(key.family) or encoded_bytes <= 0 or encoded_bytes > MAX_CHECKER_ROW_BYTES:
+        return Err("checked field lies outside its bounded compiler graph page")
+    return Ok(RecordRequest(key=key, selection=RecordSelection.Field("value"), byte_limit=max([DEFAULT_READ_BYTES, encoded_bytes])))
+
+
 pub def valid_request(request: RecordRequest) -> bool:
     """Reject incomplete full keys and invalid range requests before the source can observe them."""
-    if request.byte_limit <= 0 or request.byte_limit > 65536:
+    if request.byte_limit <= 0 or request.byte_limit > MAX_CHECKER_ROW_BYTES:
         return false
+    if request.byte_limit > DEFAULT_READ_BYTES:
+        if not checked_row_family(request.key.family):
+            return false
+        match request.selection:
+            RecordSelection.Field("value") => pass
+            _ => return false
     if not valid_key(request.key):
         return false
     match request.selection:
