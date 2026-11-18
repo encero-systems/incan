@@ -654,6 +654,33 @@ pub def test_an_edit_leaves_the_incoming_entry_of_an_unchanged_read_as_it_is() -
     return Ok(None)
 
 
+pub def test_retirement_reuses_only_identical_staged_forward_edges() -> Result[None, str]:
+    """One unchanged edge needs no old frame. A same-width changed edge still retires its old reader."""
+    before = placed_snapshot(memory_root()).map_err((error) => error.message())?
+    reader = graph_key("body-ir", "function:main", "checked")
+    requests = [RecordRequest(key=graph_key("final", name, "checked"), selection=RecordSelection.Field("value"))
+        for name in ["alpha", "bravo", "delta"]]
+    mut seed = begin(before)
+    for request in requests:
+        seed = put(seed, encode_record_key(request.key)?, b"same")
+    source = commit(seed).map_err((error) => error.message())?
+    rank = ProducerRank(namespace=2, stage=ProducerStage.CheckBody, dependency=1)
+    mut first = begin(source)
+    _ = prepare_evaluation(first, "claim", rank, b"initial", edge_receipt(source, reader, requests[:2])?)?
+    selected = commit(first).map_err((error) => error.message())?
+    mut next = begin(selected)
+    _ = prepare_evaluation(next, "claim", rank, b"changed", edge_receipt(source, reader, [requests[0], requests[2]])?)?
+    measure_frame_reads(true)
+    supersede_outputs(selected, next)?
+    opened = finish_frame_reads()
+    assert len(opened) == 1 and opened[0].reads == 1 and opened[0].key.endswith("\t1")
+    latest = commit(next).map_err((error) => error.message())?
+    assert readers_of(latest, [requests[0].key], "profile")? == [reader]
+    assert len(readers_of(latest, [requests[1].key], "profile")?) == 0
+    assert readers_of(latest, [requests[2].key], "profile")? == [reader]
+    return Ok(None)
+
+
 def incoming_segments(root: Path) -> Result[list[str], str]:
     """The segment that holds each incoming edge entry's frame in the store's latest generation, in key order."""
     latest = snapshot(root).map_err((error) => error.message())?
