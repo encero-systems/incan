@@ -51,6 +51,7 @@ from pub::internal_models import (
     encode_compiled_body_rows,
 )
 from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily, CheckedRecord, encode_record
+from compiler_namespace_products import interface_key, member_key, member_plan_inputs, prepare_namespace_products
 from compiler_graph_records import PublishedEvaluation, publish_evaluation, reusable_evaluation
 from compiler_prepared_records import PreparedBodyRecordSource
 from compiler_record_envelopes import RankedActivation, RankedCheckingSweep, persist_activation
@@ -693,8 +694,54 @@ pub def test_prepared_opaque_products_use_their_bounded_selection() -> Result[No
     return Ok(None)
 
 
+def check_positioned_namespace_products() -> Result[None, str]:
+    """Check the physical graph values across a shift in the native symbol and a real change to one member."""
+    stable = "method:fixture::Counter::get"
+    interface = b"01234567890123456789012345678901"
+    row = CompiledNamespaceValue(module="src/fixture.incn", interface=b"position one", body_ir=b"full body one",
+        dependencies=[], semantic_interface=interface, member_witnesses=[["event at position one", stable, "checked body"]])
+    members = {"event at position one": (row.module, stable)}
+    requests = member_plan_inputs("fixture", row.module, "event at position one", members)?
+    assert [request.key.family for request in requests] == ["namespace-member", "namespace-interface"]
+    assert requests[0].key.identity == stable
+    assert member_plan_inputs("fixture", "different", "event at position one", members).is_err()
+    legacy = member_plan_inputs("fixture", row.module, "unproven owner", members)?
+    assert len(legacy) == 1 and legacy[0].key.family == "namespace"
+    first = staged_namespace_values(row, stable)?
+    row.interface = b"position two"
+    row.body_ir = b"full body two"
+    row.member_witnesses = [["event at position two", stable, "checked body"]]
+    shifted = staged_namespace_values(row, stable)?
+    assert shifted == first, "positioned restoration data or a native event address changed semantic products"
+    row.member_witnesses = [["event at position two", stable, "edited body"]]
+    edited = staged_namespace_values(row, stable)?
+    assert edited[0] == first[0] and edited[1] != first[1]
+    row.semantic_interface = b"11234567890123456789012345678901"
+    changed_interface = staged_namespace_values(row, stable)?
+    assert changed_interface[0] != edited[0] and changed_interface[1] == edited[1]
+    return Ok(None)
+
+
+def staged_namespace_values(row: CompiledNamespaceValue, stable: str) -> Result[list[bytes], str]:
+    """Select just the semantic interface and member products from an independently committed graph."""
+    fresh = store_snapshot(memory_root()).map_err((error) => error.message())?
+    mut transaction = begin(fresh)
+    scope = ReadScope(snapshot=transaction.id, profile=CHECKER_PROFILE)
+    mut source = PreparedBodyRecordSource.open(scope)
+    rank = ProducerRank(namespace=0, stage=ProducerStage.Signature, dependency=0)
+    prepare_namespace_products(transaction, source, scope, row, "fixture", [], rank, "fixture namespace")?
+    committed = commit(transaction).map_err((error) => error.message())?
+    mut products: list[bytes] = []
+    for key in [interface_key("fixture", row.module), member_key("fixture", stable)]:
+        match reusable_evaluation(committed, key, CHECKER_PROFILE)?:
+            None => return Err("a staged semantic namespace product is missing")
+            Some(value) => products.append(value.value)
+    return Ok(products)
+
+
 pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[None, str]:
     """A successful sidecar witnesses editable-package sources and project declaration signatures for the next edit."""
+    check_positioned_namespace_products()?
     scratch = scratch_directory()?
     root = scratch.path().joinpath("project")
     source = root.joinpath("src").joinpath("main.incn")

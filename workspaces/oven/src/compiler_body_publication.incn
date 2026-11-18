@@ -44,6 +44,7 @@ pub from compiler_captured_sources import (
 )
 from compiler_prepared_records import PreparedBodyRecordSource
 pub from compiler_prepared_records import prepared_product_request
+from compiler_namespace_products import member_plan_inputs, prepare_namespace_products
 from compiler_plan_modules import StagedPlan, carry_selected, stage_plan_modules, staged_plan
 from compiler_plan_values import AdmittedPlanModule
 from compiler_body_fallbacks import (
@@ -422,11 +423,13 @@ def stage_compiled_namespaces(
         if order.contains_key(namespace.module):
             position = order[namespace.module]
             stage_put(prepared, "incan.compiler.namespace-order\t" + position.evidence, position.certificate)
+        rank = ProducerRank(namespace=position.rank, stage=ProducerStage.Signature, dependency=0)
+        prepare_namespace_products(prepared, source, scope, namespace, origin, reads, rank, position.evidence)?
         receipt = source.receipt(scope, key, reads, position.evidence)?
         _ = prepare_evaluation(
             prepared,
             "compiled-namespace-" + namespace.module,
-            ProducerRank(namespace=position.rank, stage=ProducerStage.Signature, dependency=0),
+            rank,
             value,
             receipt,
         )?
@@ -461,7 +464,7 @@ def prepare_optional_lowering_records(
             report,
             unit,
             selected,
-            [namespace.module for namespace in outputs.namespaces],
+            outputs.namespaces,
             plan_modules,
         )
     return Ok(prepared)
@@ -847,16 +850,15 @@ def prepare_lowering_records(
     report: Path,
     unit: UnitDescription,
     selected: Option[Snapshot],
-    namespaces: list[str] = [],
+    namespaces: list[CompiledNamespaceValue] = [],
     admitted: list[AdmittedPlanModule] = [],
 ) -> Result[Transaction, str]:
     """
     Stage evaluated lowering-demand and plan-function values through their exact Body IR witnesses.
 
-    A module-level body is witnessed by its own Body IR record. A member body, such as a method, has none: its Body IR
-    is part of its module's namespace record, so its plan reads that record, one of `namespaces`, and is keyed by the
-    member's canonical identity. A member whose module staged no namespace record gets no plan record, as an explicit
-    fallback owner gets none.
+    A module-level body reads its own Body IR. A member reads its compiler-proven body meaning and checked interface.
+    Earlier compilers and members without a stable identity retain the full namespace witness. A member whose module
+    staged no namespace record has no authoritative plan input.
     """
     if not report.is_dir():
         return Err("successful records compile did not publish lowering outputs")
@@ -877,6 +879,13 @@ def prepare_lowering_records(
             continue
         event = decode_lowering_event(entry.read_bytes().map_err((error) => error.message())?)?
         events.append(event)
+    namespace_files = [namespace.module for namespace in namespaces]
+    mut member_inputs: Dict[str, tuple[str, str]] = {}
+    for namespace in namespaces:
+        for witness in namespace.member_witnesses:
+            if len(witness) != 3 or witness[0] in member_inputs:
+                return Err("ambiguous compiled namespace member in the lowering request")
+            member_inputs[witness[0]] = (namespace.module, witness[1])
     mut plan_keys: list[RecordKey] = []
     mut staged: list[StagedPlan] = []
     # Scalar demand and plan suppliers settle before the entry-binding contribution reads main's demand.
@@ -901,10 +910,10 @@ def prepare_lowering_records(
         mut body_reads: list[RecordRequest] = []
         mut module_file = ""
         if member:
-            match member_namespace(unit, namespaces, event_identity)?:
+            match member_namespace(unit, namespace_files, event_identity)?:
                 None => continue
                 Some(module) =>
-                    body_reads = [prepared_product_request(namespace_key(origin, module))]
+                    body_reads = member_plan_inputs(origin, module, event_identity, member_inputs)?
                     module_file = module
         elif not runtime:
             body = body_value(bodies, fallbacks, event_identity)?
