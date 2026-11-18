@@ -71,17 +71,45 @@ pub fn encode_owner(
     })
 }
 
+const PHYSICAL_INPUTS: &[u8] = b"incan.physical-body/1\0";
+
+/// Encode a checked graph owner together with the producing frontend's exact physical-input witness.
+pub fn encode_graph_owner(
+    module: &CompilerNodeId,
+    source: &str,
+    identity: &str,
+    body: &Body,
+    physical_inputs: Option<[u8; 32]>,
+) -> Result<Vec<u8>, ExecutableRepresentationError> {
+    let mut encoded = encode_owner(module, source, identity, body)?;
+    // These invocation-private fields are deliberately absent from the persisted Body. Such a frame
+    // remains usable by graph readers but cannot replace the live executable representation.
+    if let Some(inputs) = physical_inputs
+        && body.nominal_instantiation.is_empty()
+        && body.trait_default_instantiation.is_none()
+        && body.native_attributes.is_empty()
+    {
+        encoded.extend_from_slice(PHYSICAL_INPUTS);
+        encoded.extend_from_slice(&inputs);
+    }
+    Ok(encoded)
+}
+
 /// Decode one checked executable owner, refusing an unfamiliar version before exposing its Body IR.
 pub fn decode_owner(bytes: &[u8]) -> Result<EncodedOwnerRepresentation, ExecutableRepresentationError> {
     require_supported_version(bytes)?;
-    let (framed, remainder): (EncodedOwnerRepresentation, _) =
+    let (mut framed, remainder): (EncodedOwnerRepresentation, _) =
         postcard::take_from_bytes(bytes).map_err(|error| ExecutableRepresentationError::Malformed {
             reason: format!("could not decode the executable owner: {error}"),
         })?;
     if !remainder.is_empty() {
-        return Err(ExecutableRepresentationError::Malformed {
-            reason: "executable owner has trailing bytes".into(),
-        });
+        let digest = remainder
+            .strip_prefix(PHYSICAL_INPUTS)
+            .and_then(|value| <[u8; 32]>::try_from(value).ok())
+            .ok_or_else(|| ExecutableRepresentationError::Malformed {
+                reason: "executable owner has an unrecognized physical input frame".into(),
+            })?;
+        framed.physical_inputs = Some(digest);
     }
     Ok(framed)
 }

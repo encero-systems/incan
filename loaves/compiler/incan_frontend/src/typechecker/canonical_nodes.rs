@@ -233,6 +233,11 @@ impl SemanticNodeBindings {
             .ok_or(NodeBindingError::MissingNode)
     }
 
+    /// All positioned nodes used by this exact owner's current syntax; only physical replay consumes this map.
+    pub(super) fn physical_nodes(&self) -> &BTreeMap<String, Span> {
+        &self.syntax.by_path
+    }
+
     /// Give nested references compiler-owned owner context and structural collision ordinals. The caller supplies
     /// only this owner's declarations, not a whole-module scope table; every declaration must have an exact node.
     pub(crate) fn binding_identities<'a>(
