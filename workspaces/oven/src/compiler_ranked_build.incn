@@ -14,6 +14,7 @@ from pub::internal_models import (
     RecordRoot, checking_basis_key, decode_namespace_order, decode_prepared_inputs, decode_read_receipt,
     encode_checking_completion, encode_demand_page, encode_ready_work, envelope_key,
 )
+from pub::internal_models.namespace_order import CHECKING_BASIS, read_checking_basis
 from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily, decode_owned_record
 from pub::internal_models.records import ReadWitness, RecordKey, encode_record_key
 from compiler_body_keys import IDENTITY_PROFILE
@@ -31,7 +32,7 @@ from toolchain import Toolchain
 from unit import UnitDescription
 from unit_freshness import Key
 
-const BASIS_FAMILY: str = "incan.compiler.checking-basis"
+
 const CERTIFICATE_FAMILY: str = "incan.compiler.namespace-order"
 const RECEIPT_FAMILY: str = "incan.engine.receipt"
 const COMPLETION_FAMILY: str = "incan.compiler.completed-checking"
@@ -87,9 +88,7 @@ def changed_owner(graph: Snapshot, prior: RecordKey, captured: &Dict[str, bytes]
         Some(value) => value
         None => return Ok(None)
 
-    root = pointer.decode().map_err((_) => "invalid ranked compiler basis")?
-    if not valid_digest(root):
-        return Err("invalid ranked compiler basis")
+    root = read_checking_basis(prior, pointer)?
     receipt_key = RECEIPT_FAMILY + "\t" + root
     encoded = required(graph, receipt_key)?
     if digest(encoded) != root:
@@ -152,7 +151,7 @@ def submit(store: Path, view: str, toolchain: Toolchain, owner: &BuildOwner, fam
         stage_put(staging, key, owner.inputs[key])
     stage_put(staging, envelope_key(DEMAND_FAMILY, demand_root)?, demand)
     exact = commit(staging).map_err((error) => error.message())?
-    roots = [BASIS_FAMILY, CERTIFICATE_FAMILY, RECEIPT_FAMILY, COMPLETION_FAMILY, DEMAND_FAMILY, PREPARED_FAMILY,
+    roots = [CHECKING_BASIS, CERTIFICATE_FAMILY, RECEIPT_FAMILY, COMPLETION_FAMILY, DEMAND_FAMILY, PREPARED_FAMILY,
         WORK_FAMILY, "module-header", "owner-source", "owner-census", "prior-declaration", "declaration", "local"]
     lease = stage_selected_snapshot(compiler_home()?, Path(toolchain.console).parent(), bakery_location()?, store, exact, roots, SNAPSHOT_FORMAT_PROFILE)?
     mut stage = ProducerStage.CheckBody
