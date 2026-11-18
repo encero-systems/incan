@@ -1244,7 +1244,7 @@ mod tests {
     #[test]
     fn restored_repeated_method_on_an_imported_return_type_skips_statements() -> Result<(), Box<dyn std::error::Error>>
     {
-        let provider = "pub model Failure:\n    code: int\n\n    pub def message(self) -> int:\n        return self.code\n\npub def failure() -> Failure:\n    return Failure(code=3)\n";
+        let provider = "pub model Failure:\n    pub code: int\n\n    pub def message(self) -> int:\n        return self.code\n\npub def failure() -> Failure:\n    return Failure(code=3)\n";
         let source = "from pub::provider import failure\n\ndef result() -> int:\n    error = failure()\n    return error.message() + error.message()\n";
         let consumer = program(source)?;
         let (original, _original_files) = provider_index(provider)?;
