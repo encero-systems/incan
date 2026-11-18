@@ -54,11 +54,17 @@ pub def describe_native(
     profile: str,
     request: FeatureRequest,
     unattended: bool = false,
+    consumer_crumb: bool = false,
 ) -> Result[UnitDescription, str]:
     """Describe the source and prepare the exact native inputs checking and compilation share."""
     mut unit = describe(source, profile, request)?
     unit.unattended = unattended
-    return prepare_native(unit, toolchain_for(unit)?, unattended)
+    toolchain = toolchain_for(unit)?
+    mut ready = prepare_native(unit, toolchain, unattended)?
+    # The public v1 unit can reach an independently installed editor that predates Crumb search indexes.
+    if toolchain.search_index_crumb and not consumer_crumb:
+        ready.search_index = Some(search_index(toolchain, None, false)?)
+    return Ok(ready)
 
 
 pub def toolchain_for(unit: UnitDescription) -> Result[Toolchain, str]:

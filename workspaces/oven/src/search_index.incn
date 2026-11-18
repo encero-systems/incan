@@ -29,7 +29,7 @@ const SCHEMA: str = "incan.search-index/1"
 const LEGACY_SELECTION: str = "search-index/1"
 
 
-pub def search_index(toolchain: Toolchain, registry: Option[RegistryUnits] = None) -> Result[str, str]:
+pub def search_index(toolchain: Toolchain, registry: Option[RegistryUnits] = None, allow_crumb: bool = true) -> Result[str, str]:
     """
     The path of the toolchain generation's search index, published when the generation has none yet.
     A caller that already read the registry supplies it, so first publication does not repeat that reading.
@@ -50,8 +50,9 @@ pub def search_index(toolchain: Toolchain, registry: Option[RegistryUnits] = Non
                 return Err("search index requires the admitted toolchain generation")
             generation = observe(description)?.stamp
     observed = Observation(stamp=generation, newest=0)
+    current = toolchain.search_index_crumb and allow_crumb
     mut profile = LEGACY_SELECTION.clone()
-    if toolchain.search_index_crumb:
+    if current:
         profile = "search-index/2"
     selection = f"{profile} {registry_identity(toolchain)}"
     # 2. An index never changes once published, so a retained path is used while the file is there.
@@ -60,7 +61,7 @@ pub def search_index(toolchain: Toolchain, registry: Option[RegistryUnits] = Non
             if Path(path).is_file():
                 return Ok(path)
     # 3. The same directories always publish the same bytes, and so the same path.
-    path = published_index(toolchain, registry)?
+    path = published_index(toolchain, registry, current)?
     retain(description, selection, observed, JsonValue.string(path), ReadingKind.SearchPath)
     return Ok(path)
 
@@ -74,7 +75,7 @@ def registry_identity(toolchain: Toolchain) -> str:
     return "no registry closure"
 
 
-def published_index(toolchain: Toolchain, available: Option[RegistryUnits]) -> Result[str, str]:
+def published_index(toolchain: Toolchain, available: Option[RegistryUnits], current: bool) -> Result[str, str]:
     """
     Publish the sorted, distinct directories of the toolchain's crates and of its registry units in one document named
     by its SHA-256, unless that document already exists.
@@ -89,7 +90,7 @@ def published_index(toolchain: Toolchain, available: Option[RegistryUnits]) -> R
     paths = unique(directories)
     mut encoded: bytes = b""
     mut suffix = ".crumb"
-    if toolchain.search_index_crumb:
+    if current:
         encoded = encode_search_paths(paths)?
     else:
         # An older bootstrap compiler reads only its v1 public unit contract.
