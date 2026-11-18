@@ -141,7 +141,7 @@ def compare(hello: Path, output: Path) -> Result[None, str]:
         if name not in directories:
             return Err(f"dependency inspector referenced unprepared Loaf {name}")
         prefix = "loaf/" + directories[name].name() + "/" + name + "/"
-        if phase in ["dependency_root", "dependency_fact", "dependency_family"]:
+        if phase in ["dependency_root", "dependency_family"]:
             reached.add(name)
         if phase == "body_surface_open":
             if name not in surfaces:
@@ -171,6 +171,7 @@ def compare(hello: Path, output: Path) -> Result[None, str]:
             member = required_text(row, "name")?
             selector = prefix + family + "/" + name_hash(member)
             for key in selected.facets.get(selector, []):
+                reached.add(name)
                 expected[key] = selected.lengths[key]
             if selector not in selected.facets:
                 census.rows.append(f"absent-named-fact\t0\t0\t{selector}\t{member}")
@@ -309,6 +310,13 @@ def observed(trace: Path, selected: Selection, surfaces: Dict[str, Surface], mut
             directory_bytes += size
             census.overhead_bytes += size
             selector = required_text(row, "selector")?
+            if selector.endswith("/runtime-binding/"):
+                mut limit = 0
+                match row.get("limit"):
+                    Some(_) => limit = number(row, "limit")?
+                    None => pass
+                if limit != 1:
+                    census.problems.append("enumerated runtime bindings beyond the selected calls: " + selector)
             census.rows.append(f"directory-page-selection\t1\t{size}\t{selector}")
         elif phase == "record_directory_read":
             if selected.directory_root != "":

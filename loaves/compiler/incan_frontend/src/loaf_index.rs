@@ -586,12 +586,10 @@ impl LoafIndex {
         Ok(Some(indexed.runtime_bindings()?))
     }
 
-    /// Exact path-name digests the installed set can resolve individually, from its sealed index alone.
-    pub fn runtime_binding_selectors(&self, key: &str) -> Result<Vec<String>, LoafIndexError> {
-        let Some(indexed) = self.entries.get(key) else {
-            return Ok(Vec::new());
-        };
-        compiler_record_set::runtime_binding_selectors(&indexed.dir, &indexed.name)
+    /// Whether this unit can address a runtime Loaf against its selected record set.
+    /// Older installed inventories are consulted on the first requested path that has no individual record.
+    pub fn can_query_runtime_bindings(&self, key: &str) -> bool {
+        compiler_record_set::configured() && self.entries.contains_key(key)
     }
 
     /// Resolve the one public runtime path requested by lowering and authenticate the stored binding's ownership.
@@ -605,7 +603,18 @@ impl LoafIndex {
         };
         tracing::trace!(target: "incan::invocation", phase = "dependency_fact", loaf = %indexed.name,
             family = "runtime-binding", name = path);
-        indexed.runtime_binding(path)
+        if let Some(binding) = indexed.runtime_binding(path)? {
+            return Ok(Some(binding));
+        }
+        if indexed.names_record(&["runtime-binding"], None)? == Some(true) {
+            return Ok(None);
+        }
+        // The older package format only has a combined inventory. Its values still own the facade's identity.
+        Ok(indexed
+            .runtime_bindings()?
+            .iter()
+            .find(|binding| binding.path == path)
+            .cloned())
     }
 
     /// Read one declaration's signature, layout or defaults in one Loaf by its module-qualified name, without the rest

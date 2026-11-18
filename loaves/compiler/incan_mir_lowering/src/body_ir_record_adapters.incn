@@ -618,7 +618,7 @@ pub def authored_body_ir_module(
         bodies.append(authored_body(body, provenance)?)
     return Ok(
         CompilerBodyIrModule(
-            runtime_binding_selectors=list(module.runtime_binding_selectors),
+            runtime_binding_scopes=list(module.runtime_binding_scopes),
             runtime_callable_bindings=[binding.clone() for binding in module.runtime_callable_bindings.iter()],
             decorated_bindings=[binding.clone() for binding in module.decorated_bindings.iter()],
             entrypoint_effects=[effect.clone() for effect in module.entrypoint_effects.iter()],
@@ -655,7 +655,7 @@ pub def native_body_ir_module(module: CompilerBodyIrModule) -> Result[RustBodyIr
     return Ok(
         RustBodyIrModule(
             runtime_callable_bindings=module.runtime_callable_bindings,
-            runtime_binding_selectors=module.runtime_binding_selectors,
+            runtime_binding_scopes=module.runtime_binding_scopes,
             decorated_bindings=module.decorated_bindings,
             entrypoint_effects=module.entrypoint_effects,
             program_entrypoints=native_identities(module.program_entrypoints)?,

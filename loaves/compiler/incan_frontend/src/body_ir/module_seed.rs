@@ -119,7 +119,7 @@ pub(super) fn build_module_seed_observed(
     bir::BodyIrModule {
         published_callables,
         runtime_callable_bindings: Vec::new(),
-        runtime_binding_selectors: Vec::new(),
+        runtime_binding_scopes: Vec::new(),
         string_conversion_contract: bir::StringConversionContract::Unselected,
         decorated_bindings,
         entrypoint_effects: entrypoint_effects::collect(program),

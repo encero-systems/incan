@@ -1,7 +1,5 @@
 """Bind runtime operations to authenticated compiled frames or ordinary governed body instances."""
 
-from std.encoding.hex import hexlify
-from std.hash import sha256
 from pub::incan_mir_plan import carrier_position
 from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import (
@@ -125,10 +123,11 @@ pub def layout_runtime_requirements(modules: &list[BodyIrModule], file: str) -> 
 
 
 def sealed_runtime_path(module: &BodyIrModule, path: str) -> bool:
-    """A known facade may be resolved by exact path without loading unrelated bindings into Body IR."""
-    if len(module.runtime_binding_selectors) == 0 or not (path.startswith("incan_native_runtime::") or path.startswith("incan_stdlib_primitives::")):
-        return false
-    return hexlify(sha256.digest(path.encode("utf-8"))) in module.runtime_binding_selectors
+    """Request this exact path once from its admitted package. A proven native path keeps its existing ABI."""
+    for package, native_paths in module.runtime_binding_scopes:
+        if path.startswith(package + "::"):
+            return path not in native_paths
+    return false
 
 
 def retains_decorated_binding(modules: &list[BodyIrModule]) -> bool:
