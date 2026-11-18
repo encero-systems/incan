@@ -13,6 +13,8 @@ mod native_types;
 mod ownership;
 mod protocol_artifacts_generated;
 mod rust_artifact_admission;
+mod scope_layout;
+pub(in crate::typechecker) use scope_layout::CallableScopeLayout;
 mod rust_artifacts_generated;
 mod types;
 use diagnostics::{project_diagnostics, read_diagnostic};
@@ -50,6 +52,9 @@ fn produce_local(
     local: &BodyLocal,
 ) -> Result<Fields, NodeBindingError> {
     let positions = Positions::for_local(checker, program, owner, local)?;
+    if positions.scopes.is_none() {
+        return Err(NodeBindingError::Unsupported("callable scope allocation"));
+    }
     let mut fields = local_fields(&positions, local)?;
     for (kind, slots, writer) in [
         ("error", &local.diagnostic_slots, &checker.errors),
@@ -233,7 +238,6 @@ impl TypeChecker {
         &mut self,
         program: &Program,
         owner: Span,
-        statements: &[crate::ast::Spanned<crate::ast::Statement>],
     ) -> Result<bool, NodeBindingError> {
         let identity = Positions::new(self, program, owner, false)?
             .nodes
@@ -246,7 +250,15 @@ impl TypeChecker {
         // transport. This is the one deliberate copy from immutable transport into checker-owned selected output.
         let local_fields = selected.local.clone();
         let final_fields = selected.final_value.clone();
-        let positions = Positions::for_decoded_local(self, program, owner, &local_fields, Some(statements))?;
+        let positions = Positions::for_decoded_local(self, program, owner, &local_fields, true)?;
+        if !final_fields
+            .iter()
+            .any(|row| row.first().is_some_and(|tag| tag == "scope"))
+        {
+            return Err(NodeBindingError::InvalidField(
+                "final callable scope allocation is missing".into(),
+            ));
+        }
         let restored = restore(&positions, program, owner, &final_fields)?;
         if restored.binding.is_some() || !restored.defaults.is_empty() {
             return Err(NodeBindingError::InvalidField(
@@ -296,6 +308,10 @@ impl TypeChecker {
             .extend(restored.final_types.bindings);
         self.selected_local_records.insert(owner, local_fields);
         self.selected_final_records.insert(owner, final_fields);
+        if let Some(layout) = positions.scopes {
+            layout.install(&mut self.symbols);
+            self.callable_scope_layouts.insert(owner, layout);
+        }
         if let Some(body) = reused_body {
             self.type_info.reused_callable_bodies.insert(owner, body);
         }
@@ -351,6 +367,7 @@ impl TypeChecker {
 /// Current coordinates and canonical activation handles, keyed by persisted semantic identity. No type, call or
 /// diagnostic payload is retained here. The test sink may build these from a separate fresh checker baseline.
 struct Positions {
+    scopes: Option<CallableScopeLayout>,
     nodes: SemanticNodeBindings,
     owner: Span,
     identities: BTreeMap<String, CanonicalSymbolId>,
@@ -453,6 +470,11 @@ impl Positions {
             })
         });
         Ok(Self {
+            scopes: if declaration {
+                None
+            } else {
+                checker.callable_scope_layouts.get(&owner).cloned()
+            },
             nodes,
             owner,
             identities,
@@ -495,27 +517,15 @@ impl Positions {
         program: &Program,
         owner: Span,
         fields: &Fields,
-        active_body: Option<&[crate::ast::Spanned<crate::ast::Statement>]>,
+        active: bool,
     ) -> Result<Self, NodeBindingError> {
         let mut positions = Self::new(checker, program, owner, false)?;
         imported_members::bind_transitive(checker, &mut positions, fields)?;
-        // The ordinary caller has already resumed this exact callable frame. Its direct assignments bind
-        // to that live scope, even if a preceding initializer opens its own nested scopes.
-        let mut direct = std::collections::BTreeSet::new();
-        for statement in active_body.unwrap_or_default() {
-            use crate::ast::Statement;
-            match &statement.node {
-                Statement::Assignment(value) => {
-                    direct.insert(value.name_span);
-                }
-                Statement::ChainedAssignment(value) => direct.extend(&value.target_spans),
-                Statement::TupleUnpack(value) => direct.extend(&value.name_spans),
-                _ => {}
-            }
-        }
+        let layout = CallableScopeLayout::decode(&checker.symbols, fields, active)?
+            .ok_or_else(|| NodeBindingError::InvalidField("callable scope allocation is missing".into()))?;
         let mut nested = Vec::new();
         for row in fields {
-            if row.len() != 4 || row[0] != "binding" || row[2] != "declaration" {
+            if row.len() < 3 || row[0] != "binding" || row[2] != "declaration" {
                 continue;
             }
             let span = positions.span(&row[1])?;
@@ -525,15 +535,17 @@ impl Positions {
                 origin: checker.symbols.declaration_origin(),
                 declaration_name: name,
                 kind,
-                scope_discriminant: Some(ScopeDiscriminant(if direct.contains(&span) {
-                    checker.symbols.current_scope_index()
-                } else {
-                    checker.symbols.next_scope_index()
-                })),
+                scope_discriminant: Some(ScopeDiscriminant(
+                    layout.binding_scope(
+                        row.get(4)
+                            .ok_or_else(|| NodeBindingError::InvalidField("binding has no scope ordinal".into()))?,
+                    )?,
+                )),
                 declaration_span: span,
             };
             nested.push((&row[3], canonical));
         }
+        positions.scopes = Some(layout);
         // The same structural grouping as the writer authenticates each kind, owner and collision ordinal.
         let bound = positions
             .nodes

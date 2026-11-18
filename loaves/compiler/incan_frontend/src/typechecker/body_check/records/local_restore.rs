@@ -24,6 +24,14 @@ pub(super) fn restore_local(
     ) {
         return inputs::restore(positions, local, row);
     }
+    if row[0] == "scope" {
+        if positions.scopes.as_ref().is_none_or(|layout| layout.row() != row) {
+            return Err(NodeBindingError::InvalidField(
+                "scope allocation differs from selected local".into(),
+            ));
+        }
+        return Ok(());
+    }
     let span = positions.span(&row[1])?;
     let mut values = row[3..].iter();
     match row[0].as_str() {
@@ -113,7 +121,18 @@ pub(super) fn restore_local(
                 .insert((span, row[2].clone()), positions.canonical(next(&mut values)?)?);
         }
         "binding" if row[2] == "declaration" => {
-            local.nested.insert(span, positions.canonical(next(&mut values)?)?);
+            let canonical = positions.canonical(next(&mut values)?)?;
+            if let Some(ordinal) = values.next() {
+                let scope = positions
+                    .scopes
+                    .as_ref()
+                    .ok_or(NodeBindingError::MissingOwner)?
+                    .binding_scope(ordinal)?;
+                if canonical.scope_discriminant.map(|physical| physical.0) != Some(scope) {
+                    return Err(NodeBindingError::WrongOwner);
+                }
+            }
+            local.nested.insert(span, canonical);
         }
         "identifier" if row[2] == "kind" => {
             let kind = match next(&mut values)? {

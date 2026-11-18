@@ -31,6 +31,13 @@ pub def decimal(text: str) -> Result[int, CodecFault]:
     return Ok(value)
 
 
+pub def allocated_scope_index(field: CanonicalField) -> Result[int, CodecFault]:
+    """Read the validated scope count or the validated binding ordinal for the record-wide range check."""
+    if field.family == "scope":
+        return decimal(field.values[0])
+    return decimal(field.values[1])
+
+
 pub def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
     """The profile defines each primitive field grammar; unknown selectors or extra primitives are unsupported."""
     values = field.values
@@ -143,6 +150,20 @@ pub def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
         else:
             return Err(CodecFault.Malformed)
     # Facts that hold one nonempty value.
+    elif field.family == "scope":
+        if field.node != "" or field.selector != "allocation" or len(values) == 0:
+            return Err(CodecFault.Malformed)
+        count = decimal(values[0])?
+        if count > 2047 or len(values) != 1 + count * 2:
+            return Err(CodecFault.Malformed)
+        for index in range(count):
+            if decimal(values[1 + index * 2])? > index or values[2 + index * 2] not in ["block", "function"]:
+                return Err(CodecFault.Malformed)
+        end = len(values)
+    elif field.family == "binding" and len(values) == 2:
+        if field.selector != "declaration" or field.node == "" or values[0] == "" or decimal(values[1])? > 2047:
+            return Err(CodecFault.Malformed)
+        end = 2
     elif field.family in ["binding", "reference", "write", "default"]:
         if len(values) != 1 or values[0] == "":
             return Err(CodecFault.Malformed)

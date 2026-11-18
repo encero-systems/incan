@@ -199,6 +199,7 @@ impl TypeChecker {
         self.declaration_record_refusals.clear();
         self.selected_declaration_records.clear();
         self.produced_local_records.clear();
+        self.callable_scope_layouts.clear();
         self.local_record_refusals.clear();
         self.selected_local_records.clear();
         self.selected_final_records.clear();

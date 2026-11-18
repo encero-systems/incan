@@ -90,9 +90,29 @@ def checked_row_capacity() -> Result[None, str]:
     return Ok(None)
 
 
+def lexical_scope_rows() -> Result[None, str]:
+    """Scope parents precede their children and a retained binding must refer to an allocated scope."""
+    root = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    header = ["header", "function:scope::read", root, CHECKER_PROFILE]
+    binding = ["binding", "node/name_span", "declaration", "local:scope::value", "2"]
+    pending = ["status", "", "pending", "true"]
+    layout = ["scope", "", "allocation", "2", "0", "block", "1", "function"]
+    record = from_native_local_fields([header, binding, layout, pending]).map_err((_) => "valid scope tree")?
+    _ = encode_record(record).map_err((_) => "scope tree encoding")?
+    for invalid in [
+        ["scope", "", "allocation", "1", "1", "block"],
+        ["scope", "", "allocation", "2", "0", "block"],
+        ["scope", "", "allocation", "1", "0", "module"],
+        ["scope", "", "allocation", "1", "0", "block"],
+    ]:
+        assert from_native_local_fields([header, binding, invalid, pending]).is_err()
+    return Ok(None)
+
+
 pub def canonical_record_controls() -> Result[None, str]:
     """Keep the existing scoped-reader case responsible for canonical bytes, native teardown and stale bindings."""
     scalar_wire_boundary()?
+    lexical_scope_rows()?
     checked_row_capacity()?
     source = "def main() -> None:\n    println(\"hello\")\n"
     moved = "# changed-length comment\n\ndef main() -> None:\n    # inside comment\n    println(\"hello\")\n"
