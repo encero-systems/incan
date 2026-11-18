@@ -4,8 +4,8 @@ from std.hash import sha256
 from std.primitives.crumb.descriptions import Description
 from std.primitives.crumb.records import RowRecord
 from std.primitives.crumb.values import Value
-from crumb_rows import ModelField, admit_rows, encode_rows, model_description, operation_budget, required_value
-from graph_crumb_fields import decode_graph_row, encode_graph_row, items, text
+from crumb_rows import ModelField, encode_rows, model_description, operation_budget, required_value
+from graph_crumb_fields import admit_graph_row, decode_graph_row, encode_graph_row, items, text
 
 
 pub model ManifestCacheValue:
@@ -61,9 +61,7 @@ pub def decode_manifest_cache(kind: str, guard: bytes, encoded: bytes) -> Result
     if len(guard) != 32 or len(encoded) > maximum:
         return Err("invalid Loaf manifest cache size")
     mut budget = operation_budget(maximum * 4)?
-    rows = admit_rows(encoded, [header(key, kind)], maximum, budget)?
-    if rows.len() != 1:
-        return Err("expected one Loaf manifest cache row")
+    rows = admit_graph_row(encoded, header(key, kind), budget, maximum)?
     row = rows.read_record(0, budget).map_err((error) => error.message())?
     if row.key != key:
         return Err("wrong Loaf manifest cache family")

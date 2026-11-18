@@ -129,9 +129,9 @@ pub def graph_read_budget() -> Result[Budget, str]:
     return Budget.create(bytes=MAX_GRAPH_RECORD_BYTES * 4, elements=4194304, depth=128).map_err((error) => error.message())
 
 
-def admit_graph_row(encoded: bytes, description: Description, mut budget: Budget) -> Result[RowSet, str]:
+pub def admit_graph_row(encoded: bytes, description: Description, mut budget: Budget, maximum: int = MAX_GRAPH_RECORD_BYTES) -> Result[RowSet, str]:
     """Authenticate the sole dictionary schema before exposing any logical fields."""
-    rows = admit_rows(encoded, [description], MAX_GRAPH_RECORD_BYTES, budget)?
+    rows = admit_rows(encoded, [description], maximum, budget)?
     dictionary = rows.descriptions(budget).map_err((error) => error.message())?
     if rows.len() != 1 or len(dictionary) != 1:
         return Err("unexpected compiler graph Crumb row")
