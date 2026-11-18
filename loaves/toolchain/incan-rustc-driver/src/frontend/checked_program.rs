@@ -480,7 +480,7 @@ fn checked_attempt(
     )
     .ok_or("unsupported Body IR string conversion contract identity")?;
     let mut reads_by_module = BTreeMap::new();
-    if observes_graph || !restored.is_empty() {
+    if observes_graph || !graph_body_records.is_empty() {
         let access = incan_frontend::body_ir::SettledCallInputs::from_modules(&bodies[loaf_modules..])?;
         let mut changed: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for (module, lowered) in modules.iter().zip(&mut bodies[loaf_modules..]) {

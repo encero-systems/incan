@@ -286,7 +286,21 @@ impl GraphBodyOutput {
                         .collect(),
                 )?;
             }
-            for body in &lowered.bodies {
+            let mut by_reader = BTreeMap::<&str, Vec<internal_models::SettledCallRead>>::new();
+            if let Some(reads) = call_reads.get(&module_path) {
+                for read in reads {
+                    by_reader
+                        .entry(&read.reader)
+                        .or_default()
+                        .push(internal_models::SettledCallRead {
+                            reader: read.reader.clone(),
+                            target: read.target.clone(),
+                            digest: read.digest.clone(),
+                        });
+                }
+            }
+            let no_reads = Vec::new();
+            for body in &mut lowered.bodies {
                 let Some(pending) = self
                     .values
                     .iter_mut()
@@ -302,6 +316,17 @@ impl GraphBodyOutput {
                     pending.physical_inputs,
                 )
                 .map_err(|error| format!("Body IR owner row output refused: {error}"))?;
+                if call_reads.contains_key(&module_path) && incan_frontend::body_ir::needs_call_witness(body) {
+                    let reader = body.direct_call_id.path();
+                    let reads = by_reader.get(reader).unwrap_or(&no_reads);
+                    let witness = internal_models::encode_owner_call_reads(
+                        pending.identity.clone(),
+                        reader.to_owned(),
+                        module_path.clone(),
+                        reads,
+                    )?;
+                    pending.body_ir.extend_from_slice(&witness);
+                }
             }
         }
         if let Some(value) = self.values.iter().find(|value| value.body_ir.is_empty()) {

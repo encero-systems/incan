@@ -101,7 +101,7 @@ impl SettledCallInputs {
 
 /// Before any per-owner read witness has been staged, a partial restore can still keep a body
 /// without project callsites. The source checker and its settled semantic fields remain admissible otherwise.
-pub(crate) fn needs_call_witness(body: &mut bir::Body) -> bool {
+pub fn needs_call_witness(body: &mut bir::Body) -> bool {
     let mut needed = false;
     shared_reads::walk_calls_mut(&mut body.block.stmts, &mut |statement| {
         let bir::StatementKind::Call { callee, .. } = &statement.kind else {
