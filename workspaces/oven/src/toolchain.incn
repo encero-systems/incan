@@ -377,6 +377,7 @@ def toolchain_of(document: JsonValue, directory: Path) -> Result[Toolchain, list
             registry_units=located(directory, text_field(document, "registry_units", [])?),
             codegraph_on_request=optional_flag(document, "codegraph_on_request")?,
             closure_anchors=optional_flag(document, "closure_anchors")?,
+            search_index_crumb=optional_flag(document, "search_index_crumb")?,
             console="",
             worker_generation="",
             native_closures=NativeClosureInput(),

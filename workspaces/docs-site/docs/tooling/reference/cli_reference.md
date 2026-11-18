@@ -310,7 +310,7 @@ Writes the selected source's unit description as a JSON object. Execution-only o
 | `vocab_policy` | String | Vocabulary policy identity. |
 | `externs` | Array of objects | Exact native bindings, each with string `name` and `path`. |
 | `search`, `rust_abi` | Arrays of strings | Additional native search directories and Rust ABI cache paths. |
-| `search_index` | String or null | The toolchain generation's `incan.search-index/1` file, named by the SHA-256 of its content. `search` lists directories beyond this index. |
+| `search_index` | String or null | The toolchain generation's content-named search index. Current compilers use `incan.search-index/2` Crumb rows. Older toolchains use the `incan.search-index/1` JSON representation. The filename contains the SHA-256 of the exact file bytes. `search` lists directories beyond this index. |
 
 ## `incan fmt`
 

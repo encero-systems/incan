@@ -176,3 +176,5 @@ pub from namespace_rows import NamespaceAtom, NamespaceEntry, NamespaceField, Na
 pub from checker_publication import CheckerRecordCounts, checker_report_suffix, encode_checker_counts, decode_checker_counts
 
 pub from namespace_rows import encode_callable_inventory, decode_callable_inventory
+
+pub from toolchain_search import encode_search_paths, decode_search_paths
