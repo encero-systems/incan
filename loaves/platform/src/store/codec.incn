@@ -85,6 +85,15 @@ pub def encoded_frames(writes: list[Write]) -> Result[Encoded, StoreError]:
     return Ok(result)
 
 
+pub def matches_value_frame(write: Write, location: Location) -> Result[bool, StoreError]:
+    """Whether a staged value supplies the exact full key and bytes authenticated in this live index location."""
+    if location.tombstone or write.kind != KIND_VALUE:
+        return Ok(false)
+    if location.length != 8 + len(write.key.encode("utf-8")) + len(write.value):
+        return Ok(false)
+    return Ok(sha256.digest(encode_frame(write)?) == location.digest)
+
+
 def encode_frame(write: Write) -> Result[bytes, StoreError]:
     """A frame: the full key's length and bytes, then the value; a tombstone has no value."""
     key = write.key.encode("utf-8")

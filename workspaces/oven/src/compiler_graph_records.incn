@@ -14,7 +14,8 @@ from pub::incan_platform.store import (
     stage_delete,
     stage_put,
 )
-from pub::incan_platform.store.codec import KIND_TOMBSTONE
+from pub::incan_platform.store.codec import KIND_TOMBSTONE, matches_value_frame
+from pub::incan_platform.store.index import entries_with_prefix
 from pub::internal_models import (
     ProducerRank,
     ProducerStage,
@@ -375,15 +376,17 @@ pub def supersede_outputs(selected: Snapshot, mut transaction: Transaction) -> R
     """
     if selected.index == "":
         return Ok(None)
-    mut writing: set[str] = set()
+    mut writing: Dict[str, int] = {}
     mut slots: list[str] = []
+    mut position = -1
     for write in transaction.writes:
+        position += 1
         if write.kind == KIND_TOMBSTONE:
             continue
         key = write.key
         if key.startswith("incan.engine.output/2\t") and key not in writing and len(key.split("\t")) == 7:
             slots.append(key)
-        writing.add(key)
+        writing[key] = position
     for slot in sorted(slots):
         # An earlier Oven keyed a slot's outputs by their context as well; the slot's own entry replaces them.
         for old in keys_with_prefix(selected, slot + "\t").map_err((error) => error.message())?:
@@ -397,14 +400,23 @@ def retire_edges(
     selected: Snapshot,
     mut transaction: Transaction,
     outgoing: str,
-    writing: set[str],
+    writing: Dict[str, int],
 ) -> Result[None, str]:
     """Remove a slot's earlier outgoing edges and their incoming entries, except those written again."""
     mut earlier: list[OutgoingEdge] = []
-    for key in keys_with_prefix(selected, outgoing).map_err((error) => error.message())?:
-        earlier.append(read_outgoing(required_value(selected, key)?)?)
-        if key not in writing:
-            stage_delete(transaction, key)
+    for entry in entries_with_prefix(selected.root, selected.index, outgoing).map_err((error) => f"{error.object}: {error.detail}")?:
+        if let Some(location) = entry.location:
+            if location.tombstone:
+                continue
+            key = entry.key
+            if let Some(position) = writing.get(key):
+                if matches_value_frame(transaction.writes[position], location).map_err((error) => error.message())?:
+                    # The authenticated previous frame has exactly these bytes. Commit still verifies its storage.
+                    earlier.append(read_outgoing(transaction.writes[position].value)?)
+                    continue
+            earlier.append(read_outgoing(required_value(selected, key)?)?)
+            if key not in writing:
+                stage_delete(transaction, key)
     mut retired: set[str] = set()
     for incoming in incoming_keys(earlier)?:
         if incoming not in writing and incoming not in retired:
