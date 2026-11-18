@@ -25,6 +25,7 @@ from lock_format import (
 from json_fields import required_text
 from observation import file_digest, observe, trace
 from registry_units import RegistryDemand, RegistryUnit, RegistryUnits
+from retained_reading_records import ReadingKind
 from retained_readings import recall, retain_content
 from rust_activation import DependencyDomain
 from semver_req import (
@@ -168,7 +169,7 @@ def settled(root: Path, question: str, lock: str) -> Result[bool, str]:
     if lock == "":
         return Ok(false)
     path = lock_path(root)
-    match recall(path, question, lock):
+    match recall(path, question, lock, ReadingKind.ProjectLock):
         None => return Ok(false)
         Some(value) =>
             manifest = root.joinpath("loaf.toml")

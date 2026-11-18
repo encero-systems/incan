@@ -17,6 +17,7 @@ from home import home
 from loaf_local_graph import unique
 from observation import Observation, observe
 from publication import publish
+from retained_reading_records import ReadingKind
 from retained_readings import recall, retain
 from rust_registry import read_registry_units
 from registry_units import RegistryUnits
@@ -50,13 +51,13 @@ pub def search_index(toolchain: Toolchain, registry: Option[RegistryUnits] = Non
     observed = Observation(stamp=generation, newest=0)
     selection = f"{SELECTION} {registry_identity(toolchain)}"
     # 2. An index never changes once published, so a retained path is used while the file is there.
-    if let Some(value) = recall(description, selection, observed.stamp):
+    if let Some(value) = recall(description, selection, observed.stamp, ReadingKind.SearchPath):
         if let Some(path) = value.as_str():
             if Path(path).is_file():
                 return Ok(path)
     # 3. The same directories always publish the same bytes, and so the same path.
     path = published_index(toolchain, registry)?
-    retain(description, selection, observed, JsonValue.string(path))
+    retain(description, selection, observed, JsonValue.string(path), ReadingKind.SearchPath)
     return Ok(path)
 
 
