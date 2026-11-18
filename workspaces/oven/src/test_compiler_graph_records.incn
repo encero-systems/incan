@@ -1,5 +1,6 @@
 """Ranked compiler graph records publish their value, receipt and both edge directions atomically."""
 
+from checker_record_fixtures import empty_checker_record
 import compiler_source_projection
 from pub::internal_models.source_value_records import read_documentation
 from pub::incan_platform.store import Snapshot, begin, commit, delete, get, keys, put
@@ -50,7 +51,7 @@ from pub::internal_models import (
     encode_ready_work,
     encode_compiled_body_rows,
 )
-from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily, CheckedRecord, encode_record
+from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily
 from compiler_namespace_products import interface_key, member_key, member_plan_inputs, prepare_namespace_products
 from compiler_graph_records import PublishedEvaluation, publish_evaluation, reusable_evaluation
 from compiler_prepared_records import PreparedBodyRecordSource
@@ -784,22 +785,9 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     )
     identity = "app|module:main|main|function|module|0|() -> unit"
     fallback_identity = "app|module:main|other|function|module|0|() -> unit"
-    semantic_root = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-    declaration = encode_record(
-        CheckedRecord(
-            profile=CHECKER_PROFILE,
-            owner=identity,
-            root=semantic_root,
-            family=CheckedFamily.Declaration,
-            fields=[],
-        ),
-    ).map_err((error) => f"{error:?}")?
-    local = encode_record(
-        CheckedRecord(profile=CHECKER_PROFILE, owner=identity, root=semantic_root, family=CheckedFamily.Local, fields=[]),
-    ).map_err((error) => f"{error:?}")?
-    final = encode_record(
-        CheckedRecord(profile=CHECKER_PROFILE, owner=identity, root=semantic_root, family=CheckedFamily.Final, fields=[]),
-    ).map_err((error) => f"{error:?}")?
+    declaration = empty_checker_record(identity, CheckedFamily.Declaration)?
+    local = empty_checker_record(identity, CheckedFamily.Local)?
+    final = empty_checker_record(identity, CheckedFamily.Final)?
     output = scratch.path().joinpath("compiled-body-output")
     publish_compiled_output(
         output,
