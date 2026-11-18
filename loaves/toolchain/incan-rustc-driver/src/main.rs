@@ -124,9 +124,9 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
     incan_frontend::loaf_index::install_directory_reader(|path, top, seal, prefix, maximum| {
         let answer = incan_worker_host::read_directory(
             path.to_owned(),
-            top.to_owned(),
-            seal.to_owned(),
-            prefix.to_owned(),
+            &top.to_owned(),
+            &seal.to_owned(),
+            &prefix.to_owned(),
             i64::try_from(maximum).map_err(|e| e.to_string())?,
         )?;
         Ok((
