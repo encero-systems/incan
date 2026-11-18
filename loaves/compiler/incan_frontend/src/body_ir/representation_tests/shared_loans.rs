@@ -41,6 +41,43 @@ fn restored_namespace_access_guides_fresh_calls() -> Result<(), Box<dyn std::err
     Ok(())
 }
 
+/// The ownership frontier reads the actual selected callees. Changes stop at callers whose own
+/// exported input access stays equal, even when their outgoing reads changed.
+#[test]
+fn only_direct_readers_see_a_changed_settled_input() -> Result<(), Box<dyn std::error::Error>> {
+    use incan_semantics_core::IncanInputAccess::{Inferred, InferredShared};
+    let (_, _, mut module) = checked_seed(
+        "model Request:\n    value: int\ndef leaf(request: Request) -> int:\n    return request.value\ndef invoke(value: int) -> int:\n    return leaf(Request(value=value))\ndef main() -> None:\n    println(invoke(4))\n",
+    )?;
+    let leaf = module
+        .bodies
+        .iter_mut()
+        .find(|b| b.name == "leaf")
+        .ok_or("missing leaf")?;
+    leaf.params[0].input_access = InferredShared;
+    let first = crate::body_ir::SettledCallInputs::from_modules(std::slice::from_ref(&module))?;
+    let prior = first.reads(&mut module);
+    assert_eq!(prior.len(), 2);
+    assert!(prior.iter().all(|r| first.matches(r)));
+    module
+        .bodies
+        .iter_mut()
+        .find(|b| b.name == "leaf")
+        .ok_or("missing leaf")?
+        .params[0]
+        .input_access = Inferred;
+    let changed = crate::body_ir::SettledCallInputs::from_modules(std::slice::from_ref(&module))?;
+    let stale = prior.iter().filter(|r| !changed.matches(r)).collect::<Vec<_>>();
+    assert_eq!(stale.len(), 1);
+    let invoke = module
+        .bodies
+        .iter()
+        .find(|b| b.name == "invoke")
+        .ok_or("missing invoke")?;
+    assert_eq!(stale[0].reader, invoke.direct_call_id.path());
+    Ok(())
+}
+
 /// Prove immutable parameter sharing across forwarding, recursion and a function-item adapter while explicit source
 /// contracts keep their established ownership and escaping operations retain their checked transfer facts.
 pub(super) fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {

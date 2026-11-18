@@ -133,6 +133,7 @@ pub from checker_record_models import (
     GraphBodyValue,
     GraphBodyFields,
     GraphNamespaceValue,
+    SettledCallRead,
     CompiledBodyValue,
     CompiledBodyDependencyRead,
     CompiledBodyFallback,

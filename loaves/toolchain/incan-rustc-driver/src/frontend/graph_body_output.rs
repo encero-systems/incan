@@ -37,6 +37,7 @@ struct PendingNamespaceValue {
     package_roots: Vec<String>,
     member_owners: std::collections::BTreeMap<incan_semantics_core::CanonicalSymbolId, String>,
     member_witnesses: Vec<Vec<String>>,
+    call_reads: Vec<internal_models::SettledCallRead>,
     body_ir: Vec<u8>,
     dependencies: Vec<String>,
     lowering_inputs: Vec<Vec<String>>,
@@ -183,6 +184,7 @@ impl GraphBodyOutput {
                 semantic_interface: published.semantic_interface,
                 member_owners,
                 member_witnesses: Vec::new(),
+                call_reads: Vec::new(),
                 body_ir: Vec::new(),
                 dependencies: dependencies.to_vec(),
                 lowering_inputs: Vec::new(),
@@ -230,6 +232,7 @@ impl GraphBodyOutput {
         modules: &[ParsedModule],
         body_ir: &mut [BodyIrModule],
         lowering_inputs: &[(incan_semantics_core::CompilerNodeId, String)],
+        call_reads: &std::collections::BTreeMap<String, Vec<incan_frontend::body_ir::SettledCallRead>>,
     ) -> Result<(), String> {
         if self.path.is_none() {
             return Ok(());
@@ -247,6 +250,17 @@ impl GraphBodyOutput {
             };
             let module_path = module_path.to_string_lossy().into_owned();
             if let Some(namespace) = self.namespaces.iter_mut().find(|value| value.module == module_path) {
+                namespace.call_reads = call_reads
+                    .get(&module_path)
+                    .into_iter()
+                    .flatten()
+                    .cloned()
+                    .map(|read| internal_models::SettledCallRead {
+                        reader: read.reader,
+                        target: read.target,
+                        digest: read.digest,
+                    })
+                    .collect();
                 namespace.body_ir = incan_semantics_core::executable_representation::encode_namespace_module(lowered)
                     .map_err(|error| format!("Body IR namespace row output refused: {error}"))?;
                 for body in &lowered.bodies {
@@ -400,6 +414,7 @@ impl GraphBodyOutput {
                 interface: value.interface,
                 semantic_interface: value.semantic_interface,
                 member_witnesses: value.member_witnesses,
+                call_reads: value.call_reads,
                 package_roots: value.package_roots,
                 body_ir: value.body_ir,
                 dependencies: value.dependencies,

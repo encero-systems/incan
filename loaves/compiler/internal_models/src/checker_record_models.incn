@@ -63,6 +63,15 @@ pub model GraphBodyFields:
     pub body_ir: bytes
 
 
+@derive(Eq)
+pub model SettledCallRead:
+    """One checked caller and target with the target's settled executable input contract."""
+
+    pub reader: str
+    pub target: str
+    pub digest: str
+
+
 pub model GraphNamespaceValue:
     """One graph-selected editable namespace with its interface, Body IR and authenticated lowering witnesses."""
 
@@ -71,6 +80,8 @@ pub model GraphNamespaceValue:
     pub body_ir: bytes
     pub lowering_inputs: list[list[str]] = []
     pub package_roots: list[str] = []
+    pub call_reads: list[SettledCallRead] = []
+    pub call_reads_known: bool = true
 
 
 pub model CompiledBodyValue:
@@ -116,6 +127,7 @@ pub model CompiledNamespaceValue:
     pub dependencies: list[str]
     pub lowering_inputs: list[list[str]] = []
     pub package_roots: list[str] = []
+    pub call_reads: list[SettledCallRead] = []
     pub semantic_interface: bytes = b""
     pub member_witnesses: list[list[str]] = []
 

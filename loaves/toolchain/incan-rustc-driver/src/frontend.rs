@@ -415,6 +415,9 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
                 "graph namespace page disagrees with its requested source".into(),
             ));
         }
+        if !record.call_reads_known {
+            return Ok(None);
+        }
         let interface_span = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::decode_namespace_interface", module = source, bytes = record.interface.len()).entered();
         let checked = namespace_crumb::admit(record.interface)
             .map_err(incan_frontend::checker_records::RecordAdapterFault::InvalidField)?;
@@ -474,6 +477,15 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
         }
         Ok(Some(incan_frontend::checker_records::GraphNamespaceRecord {
             source: record.module,
+            call_reads: record
+                .call_reads
+                .into_iter()
+                .map(|r| incan_frontend::body_ir::SettledCallRead {
+                    reader: r.reader,
+                    target: r.target,
+                    digest: r.digest,
+                })
+                .collect(),
             interface: checked,
             package_roots,
             body_ir,

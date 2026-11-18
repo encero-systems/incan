@@ -278,11 +278,43 @@ pub(super) fn checked_modules(
     rust: &RustFactsSetup,
     resident: bool,
     receipt: &RefusalReceipt,
-    graph_body_records: incan_frontend::checker_records::GraphBodyRecords,
+    mut graph_body_records: incan_frontend::checker_records::GraphBodyRecords,
     graph_body_output: Option<PathBuf>,
     collect_codegraph: bool,
     inspection: bool,
 ) -> Result<CheckedProgram, String> {
+    loop {
+        match checked_attempt(
+            unit,
+            rust,
+            resident,
+            receipt,
+            &graph_body_records,
+            graph_body_output.clone(),
+            collect_codegraph,
+            inspection,
+        )? {
+            CheckedAttempt::Complete(program) => return Ok(program),
+            CheckedAttempt::Reopen(changes) => graph_body_records.reopen_callers(changes)?,
+        }
+    }
+}
+
+enum CheckedAttempt {
+    Complete(CheckedProgram),
+    Reopen(BTreeMap<String, BTreeSet<String>>),
+}
+
+fn checked_attempt(
+    unit: &UnitDescription,
+    rust: &RustFactsSetup,
+    resident: bool,
+    receipt: &RefusalReceipt,
+    graph_body_records: &incan_frontend::checker_records::GraphBodyRecords,
+    graph_body_output: Option<PathBuf>,
+    collect_codegraph: bool,
+    inspection: bool,
+) -> Result<CheckedAttempt, String> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::checked_modules", input = %unit.source.display()).entered();
     let path = unit
         .source
@@ -298,7 +330,7 @@ pub(super) fn checked_modules(
     let mut session = session
         .and_then(|session| session.with_rust_facts(rust))
         .map_err(|error| error.to_string())?;
-    session.set_graph_body_records(graph_body_records);
+    session.set_graph_body_records(graph_body_records.clone());
     let library = unit.kind == UnitKind::Library;
     let mut modules = if library {
         collect_library_modules_detailed_with_session(path.clone(), &session)
@@ -323,6 +355,7 @@ pub(super) fn checked_modules(
     let tests = collected.tests;
     let package_identity = unit.package.as_str();
     let mut callable_products = callable_products::CallableProducts::prepare(unit, &mut session);
+    let observes_graph = graph_body_output.is_some();
     let mut graph_body_output =
         graph_body_output::GraphBodyOutput::prepare(graph_body_output, unit.project_root.clone())?;
     let mut publication = library.then(|| PublicationFacts::new(package_identity).for_inspection(inspection));
@@ -406,6 +439,12 @@ pub(super) fn checked_modules(
     let mut entry = entry + loaf_modules;
 
     // ---- The program's own modules ----
+    let restored = modules
+        .iter()
+        .filter(|m| analysis.namespace_body_for_path(&m.file_path).is_some())
+        .filter_map(|m| m.file_path.strip_prefix(&unit.project_root).ok())
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect::<BTreeSet<_>>();
     lower_authored_modules(&modules, &mut analysis, &session, &mut bodies, &mut files)?;
     let retained_generated_member_owners = retained_generated_member_owners(&modules, &analysis)?;
     let retained_requirements = retained_body_call_requirements(
@@ -440,6 +479,37 @@ pub(super) fn checked_modules(
         &requested,
     )
     .ok_or("unsupported Body IR string conversion contract identity")?;
+    let mut reads_by_module = BTreeMap::new();
+    if observes_graph || !restored.is_empty() {
+        let access = incan_frontend::body_ir::SettledCallInputs::from_modules(&bodies[loaf_modules..])?;
+        let mut changed: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for (module, lowered) in modules.iter().zip(&mut bodies[loaf_modules..]) {
+            let Ok(relative) = module.file_path.strip_prefix(&unit.project_root) else {
+                continue;
+            };
+            let source = relative.to_string_lossy().into_owned();
+            let reads = if restored.contains(&source) {
+                let reads = graph_body_records.settled_call_reads(&source)?;
+                for read in &reads {
+                    if !access.matches(read) {
+                        changed.entry(source.clone()).or_default().insert(read.reader.clone());
+                    }
+                }
+                reads
+            } else {
+                for read in graph_body_records.selected_call_reads(&source)? {
+                    if !access.matches(&read) {
+                        changed.entry(source.clone()).or_default().insert(read.reader);
+                    }
+                }
+                access.reads(lowered)
+            };
+            reads_by_module.insert(source, reads);
+        }
+        if !changed.is_empty() {
+            return Ok(CheckedAttempt::Reopen(changed));
+        }
+    }
     let mut cacheable_bodies = callable_products.publish(&modules, &bodies[loaf_modules..]);
     cacheable_bodies.extend(analysis.namespace_lowering_inputs().iter().cloned());
     let mut witnessed = cacheable_bodies
@@ -456,8 +526,29 @@ pub(super) fn checked_modules(
         }
     }
     cacheable_bodies.extend(additional);
-    let cacheable_bodies = canonical_lowering_inputs(cacheable_bodies)?;
-    graph_body_output.attach_body_ir(&modules, &mut bodies[loaf_modules..], &cacheable_bodies)?;
+    let mut cacheable_bodies = canonical_lowering_inputs(cacheable_bodies)?;
+    let mut by_reader: BTreeMap<&str, Vec<(&str, &str)>> = BTreeMap::new();
+    for read in reads_by_module.values().flatten() {
+        by_reader
+            .entry(&read.reader)
+            .or_default()
+            .push((&read.target, &read.digest));
+    }
+    for (id, witness) in &mut cacheable_bodies {
+        if let Some(reads) = by_reader.get(id.path()) {
+            let digest = incan_semantics_core::semantic_digest::semantic_digest(reads).map_err(|e| e.to_string())?;
+            let base = witness
+                .split_once("|incan.settled-calls/1:")
+                .map_or(witness.as_str(), |(base, _)| base);
+            *witness = format!("{base}|incan.settled-calls/1:{digest}");
+        }
+    }
+    graph_body_output.attach_body_ir(
+        &modules,
+        &mut bodies[loaf_modules..],
+        &cacheable_bodies,
+        &reads_by_module,
+    )?;
     graph_body_output.publish()?;
     let graph = if library && collect_codegraph {
         let records = incan_driver::inspect::codegraph::collect_checked_unit_codegraph(
@@ -514,7 +605,7 @@ pub(super) fn checked_modules(
         &checked_local,
     )?;
     session.loaves().validate_demands().map_err(|error| error.to_string())?;
-    Ok(program)
+    Ok(CheckedAttempt::Complete(program))
 }
 
 /// Resolve explicit program sources to checked main identities before joining module contexts. Ordinary imported

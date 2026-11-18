@@ -14,6 +14,7 @@ from checker_records import (
     CompiledNamespaceValue,
     GraphBodyValue,
     GraphNamespaceValue,
+    SettledCallRead,
     decode_graph_body_values,
     decode_graph_namespace_value,
     encode_record,
@@ -215,6 +216,7 @@ def compiled_output_controls(source: str) -> Result[None, str]:
         semantic_interface=b"0123456789abcdef0123456789abcdef",
         member_witnesses=[["event", "stable", "witness"]],
         package_roots=["alpha", "provider"],
+        call_reads=[SettledCallRead(reader="invoke", target="provider", digest="sha256:" + "a" * 64)],
     )
     encoded = encode_compiled_body_rows(
         CompiledBodyOutputs(namespaces=[namespace], values=[value], fallbacks=[fallback, identityless]),
@@ -226,6 +228,7 @@ def compiled_output_controls(source: str) -> Result[None, str]:
         CompiledBodyOutput.Namespace(decoded) =>
             assert decoded.module == namespace.module and decoded.interface == namespace.interface
             assert decoded.body_ir == namespace.body_ir and decoded.dependencies == namespace.dependencies
+            assert decoded.call_reads == namespace.call_reads
             assert decoded.package_roots == namespace.package_roots
             assert decoded.lowering_inputs == namespace.lowering_inputs
             assert decoded.semantic_interface == namespace.semantic_interface and decoded.member_witnesses == namespace.member_witnesses
@@ -569,6 +572,7 @@ def graph_namespace_controls() -> Result[None, str]:
         body_ir=b"module-body-ir",
         lowering_inputs=[["main#decl.0..10", "witness"]],
         package_roots=["alpha", "provider"],
+        call_reads=[SettledCallRead(reader="invoke", target="provider", digest="sha256:" + "a" * 64)],
     )
     encoded = encode_graph_namespace_value(value).map_err((_) => "graph namespace encode")?
     assert encoded[:4] == b"CRMB"
@@ -576,6 +580,13 @@ def graph_namespace_controls() -> Result[None, str]:
     assert decoded.module == value.module and decoded.interface == value.interface
     assert decoded.body_ir == value.body_ir and decoded.lowering_inputs == value.lowering_inputs
     assert decoded.package_roots == ["alpha", "provider"]
+    assert decoded.call_reads_known and decoded.call_reads == value.call_reads
+    value.call_reads = decoded.call_reads + decoded.call_reads
+    assert encode_graph_namespace_value(value).is_err()
+    value.call_reads = [SettledCallRead(reader="invoke", target="provider", digest="wrong")]
+    assert encode_graph_namespace_value(value).is_err()
+    value.call_reads = decoded.call_reads
+
     for roots in [["provider", "alpha"], ["alpha", "alpha"], [""]]:
         value.package_roots = roots
         assert encode_graph_namespace_value(value).is_err()
