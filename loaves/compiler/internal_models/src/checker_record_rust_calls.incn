@@ -16,7 +16,7 @@ pub def rust_artifact_end(field: CanonicalField) -> Result[int, CodecFault]:
         return RustCallFields.validate(field.values, 1)
     if field.selector == "iteration_hooks":
         return RustCallFields.validate(field.values, 2)
-    return Err(CodecFault.Unsupported(field.selector))
+    return RustCallFields.value(field)
 
 
 class RustCallFields:
@@ -24,6 +24,25 @@ class RustCallFields:
 
     values: list[str]
     offset: int = 0
+
+    @staticmethod
+    pub def value(field: CanonicalField) -> Result[int, CodecFault]:
+        """Validate one checked field carrier, bound item path or argument conversion."""
+        mut reader = RustCallFields(values=field.values)
+        if field.selector == "value_item_paths":
+            reader.handle()?
+            reader.handle()?
+        elif field.selector == "field_values":
+            reader.checked_type()?
+            if reader.tag(["none", "some"])? == "some":
+                reader.handle()?
+        elif field.selector == "arg_coercions":
+            reader.handle()?
+            reader.tag(["exact", "lossless", "builtin-borrow", "lossy", "rusttype-unwrap", "rusttype-interop", "box-payload", "borrow", "borrow-mut", "trait-borrow", "trait-borrow-mut"])?
+            reader.checked_type()?
+        else:
+            return Err(CodecFault.Unsupported(field.selector))
+        return Ok(reader.offset)
 
     @staticmethod
     pub def validate(values: list[str], calls: int) -> Result[int, CodecFault]:
