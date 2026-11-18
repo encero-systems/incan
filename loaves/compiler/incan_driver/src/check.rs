@@ -256,19 +256,19 @@ pub fn ranked_reader(
             ));
         }
     })?;
-    match exact.ranked_admission() {
-        Some((0..=1, true, false)) => return Ok(None),
-        Some((1, false, false)) if statement_entries == 1 => {}
-        state => {
-            return Err(CliError::failure(format!(
-                "ranked reader has invalid statement-entry evidence: {state:?}, {statement_entries} physical body entries"
-            )));
-        }
+    let admission = exact.ranked_admission();
+    if matches!(admission, Some((0..=1, true, false))) {
+        return Ok(None);
     }
     if !report.ok {
         return Err(CliError::failure(report.human_message.unwrap_or_else(|| {
             format!("ranked checker refused: {:?}", report.diagnostics)
         })));
+    }
+    if admission != Some((1, false, false)) || statement_entries != 1 {
+        return Err(CliError::failure(format!(
+            "ranked reader has invalid statement-entry evidence: {admission:?}, {statement_entries} physical body entries"
+        )));
     }
     let checked: Vec<_> = report
         .bodies
