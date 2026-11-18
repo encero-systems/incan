@@ -133,7 +133,7 @@ pub def inspect_prepared(ready: UnitDescription, toolchain: Toolchain, owner: Op
     directory = interface_directory(pending_entry)
     interface = directory.joinpath(f"{artifact_stem(ready.package)}.incnlib")
     # 3. The compiler writes its output beside the entry's name, so a failed export leaves nothing at the entry itself.
-    description = write_unit(ready, crate_name(ready), Some(cache_root))?
+    description = write_unit(ready, crate_name(ready), Some(cache_root), typed=toolchain.unit_descriptor_crumb)?
     output = Path(f"{pending_entry.0}.{id()}.analysis")
     pending = Path(f"{interface.0}.{id()}.analysis")
     mut arguments = ["--codegraph", description.0, toolchain.sysroot, output.0]

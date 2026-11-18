@@ -96,7 +96,7 @@ pub def check_prepared(
     """
     # 1. An unchanged description is kept as it is.
     key = unit_key(ready, toolchain)?
-    path = write_unit(ready, crate_name(ready), None, described_by(key), true)?
+    path = write_unit(ready, crate_name(ready), None, described_by(key), true, typed=toolchain.unit_descriptor_crumb)?
     # 2. The engine keeps a check's pages apart from a build's, which may be selected for the same unit.
     mut options: list[str] = []
     mut sidecar: Option[Path] = None
@@ -127,7 +127,7 @@ pub def report_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Resu
     3. Ask the compiler for the closure. The report is never retained, so it always describes the current inputs.
     """
     ready = prepare_native(unit, toolchain)?
-    path = write_unit(ready, crate_name(ready))?
+    path = write_unit(ready, crate_name(ready), typed=toolchain.unit_descriptor_crumb)?
     mut arguments = ["--dependencies", path.0, toolchain.sysroot]
     if toolchain.codegraph_on_request:
         arguments.append("--no-codegraph")

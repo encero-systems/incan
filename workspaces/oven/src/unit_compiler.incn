@@ -24,6 +24,7 @@ from rust_facts import refresh as refresh_rust_facts
 from shared_link import shared_arguments
 from toolchain import Toolchain
 from native_references import anchor_arguments
+from unit_transport import descriptor_path, publish_unit_document
 from unit import UnitDescription, dependency_source_roots
 from unit_freshness import Key, artifact_identity, unit_key
 from compiler_body_values import SelectedBodyPage
@@ -69,7 +70,7 @@ pub def compile_prepared_unit(
             key = unit_key(unit, toolchain)?
     compiled = crate_name(unit)
     trace_boundary("unit_write_begin")
-    path = write_unit(unit, compiled, None, described_by(key), true)?
+    path = write_unit(unit, compiled, None, described_by(key), true, typed=toolchain.unit_descriptor_crumb)?
     trace_boundary("unit_written")
     output.parent().mkdir(true, true).map_err((error) => f"{output.parent().0}: {error.message()}")?
     # 2. Native flags match the profile and the caller's explicit linkage request; published closures are anchored.
@@ -91,11 +92,11 @@ pub def compile_prepared_unit(
         write_selected_records(records_path, unit, records)?
         native += ["--graph-body-records", records_path.0]
         native += ["--plan-record-products", records_path.0]
-        output_path = Path(f"{path.0}.graph-body-output")
+        output_path = graph_body_output_path(unit, key)
         discard_graph_body_output(output_path)?
         discard_file(checker_record_report_path(output_path))
         native += ["--graph-body-output", output_path.0]
-        report = Path(f"{path.0}.graph-plan-report")
+        report = plan_record_report_path(unit, key)
         if report.exists():
             remove_dir_all(report.0).map_err((error) => f"cannot replace plan record report {report.0}: {error}")?
         report.mkdir(true, true).map_err((error) => f"plan record report: cannot {error.message()}")?
@@ -233,6 +234,7 @@ pub def write_unit(
     owner: Option[Path] = None,
     described: str = "",
     rust_facts: bool = false,
+    typed: bool = false,
 ) -> Result[Path, str]:
     """
     Publish a description, retaining its generation only while the exact description witness remains valid.
@@ -241,7 +243,7 @@ pub def write_unit(
     2. For a compile or check (`rust_facts`), bake the Rust ABI extractions its last run staged and index them in
        the `<name>.rust-facts` directory beside the description, where the compiler finds them.
     3. Reuse only a complete unchanged generation of that description.
-    4. Otherwise publish the complete JSON and its new witness atomically.
+    4. Otherwise publish the complete unit and its new witness atomically.
     """
     # 1. An explicit owner controls only where the description is stored.
     mut root = Path(unit.project_root)
@@ -252,7 +254,7 @@ pub def write_unit(
     mut name = compiled
     if described != "":
         name = described
-    path = directory.joinpath(f"{name}.unit.json")
+    path = descriptor_path(directory, name, typed)
     witness = Path(f"{path.0}.oven-description")
     # 2. The compiler finds the directory by the description's location, so the description itself is unchanged and
     #    a compiler that predates it reads the same description.
@@ -264,8 +266,7 @@ pub def write_unit(
     if described != "" and description_current(path, witness, described):
         return Ok(path)
     # 4. Missing, changed and unwitnessed descriptions are published again.
-    text = unit.to_json().to_pretty_json().map_err((error) => error.message())?
-    publish(path, text)?
+    publish_unit_document(path, unit, typed)?
     if described != "":
         publish(witness, description_witness(described, artifact_identity(path)?))?
     return Ok(path)

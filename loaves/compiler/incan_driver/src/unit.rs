@@ -321,7 +321,13 @@ impl UnitDescription {
     /// Decode and validate a description from Oven, retaining its origin in schema and registration failures.
     /// Every client receives the same search-index merge and prepared-vocabulary admission checks.
     pub fn parse(bytes: &[u8], origin: &Path) -> CliResult<Self> {
-        let mut unit: Self = serde_json::from_slice(bytes)
+        let mut unit: Self = if bytes.starts_with(b"CRMB") {
+            let fields = internal_models::decode_unit_document(&bytes.to_vec())
+                .map_err(|error| CliError::failure(format!("{}: {error}", origin.display())))?;
+            serde_json::to_value(fields).and_then(serde_json::from_value)
+        } else {
+            serde_json::from_slice(bytes)
+        }
             .map_err(|error| CliError::failure(format!("{} is not a unit description: {error}", origin.display())))?;
         if unit.schema != UNIT_DESCRIPTION_SCHEMA {
             return Err(CliError::failure(format!(
@@ -378,9 +384,10 @@ impl UnitDescription {
     }
 }
 
-/// The Rust ABI extraction directory Oven keeps beside a `<name>.unit.json` description, when it exists.
+/// The Rust ABI extraction directory Oven keeps beside a `<name>.unit.crumb` or legacy `<name>.unit.json` description, when it exists.
 fn rust_facts_directory(origin: &Path) -> Option<PathBuf> {
-    let name = origin.file_name()?.to_str()?.strip_suffix(".unit.json")?;
+    let file = origin.file_name()?.to_str()?;
+    let name = file.strip_suffix(".unit.crumb").or_else(|| file.strip_suffix(".unit.json"))?;
     let directory = origin.with_file_name(format!("{name}.rust-facts"));
     directory.is_dir().then_some(directory)
 }
