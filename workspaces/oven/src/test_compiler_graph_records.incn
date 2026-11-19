@@ -293,7 +293,8 @@ pub def test_build_admits_a_settled_checker_pair_while_body_ir_is_pending() -> R
 
 pub def test_selected_checker_products_supply_later_witnesses_once() -> Result[None, str]:
     """Reading one complete owner opens each selected product once, including the inputs of later phases."""
-    mut graph = store_snapshot(memory_root()).map_err((error) => error.message())?
+    empty = store_snapshot(memory_root()).map_err((error) => error.message())?
+    mut graph = commit(put(begin(empty), "seed", b"present")).map_err((error) => error.message())?
     mut local = family_key("local", "shared-products")
     local.identity_profile = "incan.stable-declaration/1"
     mut final = local
