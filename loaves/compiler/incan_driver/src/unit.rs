@@ -146,9 +146,9 @@ pub struct UnitDescription {
     /// Directories containing the transitive dependencies of the named libraries. Once read, this also holds the
     /// directories of the search index, sorted by their bytes without repeats.
     pub search: Vec<PathBuf>,
-    /// The toolchain generation's content-named search index (Crumb v2 or legacy JSON v1): the directories of the toolchain's crates
-    /// and of its compiled registry, published once by Oven and named by the SHA-256 of its content. The description
-    /// lists in `search` only the directories beyond it.
+    /// The toolchain generation's content-named search index (Crumb v2 or legacy JSON v1): the directories of the
+    /// toolchain's crates and of its compiled registry, published once by Oven and named by the SHA-256 of its
+    /// content. The description lists in `search` only the directories beyond it.
     #[serde(default)]
     pub search_index: Option<PathBuf>,
     /// Rust ABI caches supplied by the toolchain for this unit.
@@ -328,7 +328,7 @@ impl UnitDescription {
         } else {
             serde_json::from_slice(bytes)
         }
-            .map_err(|error| CliError::failure(format!("{} is not a unit description: {error}", origin.display())))?;
+        .map_err(|error| CliError::failure(format!("{} is not a unit description: {error}", origin.display())))?;
         if unit.schema != UNIT_DESCRIPTION_SCHEMA {
             return Err(CliError::failure(format!(
                 "{} has schema `{}`; this compiler reads `{UNIT_DESCRIPTION_SCHEMA}`",
@@ -384,10 +384,13 @@ impl UnitDescription {
     }
 }
 
-/// The Rust ABI extraction directory Oven keeps beside a `<name>.unit.crumb` or legacy `<name>.unit.json` description, when it exists.
+/// The Rust ABI extraction directory Oven keeps beside a `<name>.unit.crumb` or legacy `<name>.unit.json` description,
+/// when it exists.
 fn rust_facts_directory(origin: &Path) -> Option<PathBuf> {
     let file = origin.file_name()?.to_str()?;
-    let name = file.strip_suffix(".unit.crumb").or_else(|| file.strip_suffix(".unit.json"))?;
+    let name = file
+        .strip_suffix(".unit.crumb")
+        .or_else(|| file.strip_suffix(".unit.json"))?;
     let directory = origin.with_file_name(format!("{name}.rust-facts"));
     directory.is_dir().then_some(directory)
 }

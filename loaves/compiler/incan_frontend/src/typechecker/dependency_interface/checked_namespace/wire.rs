@@ -208,8 +208,8 @@ macro_rules! sum { ($ty:ty { $($v:ident = $tag:literal $( ( $($p:ident : $pid:li
     fn restore(value:Cell)->Result<Self,String>{let Cell::Variant(tag,fields)=value else{return Err(concat!("expected namespace sum ",stringify!($ty)).into())};match tag { $($tag=>{let [$($($p),*)? $($($f),*)?]=read_fields(fields,[$($($pid),*)? $($($fid),*)?])?;Ok(Self::$v $( ( $(Project::restore($p)?),* ) )? $( { $($f:Project::restore($f)?),* } )?)},)* _=>Err(concat!("unknown namespace alternative for ",stringify!($ty)).into())} }
 }}; }
 
-mod declarations;
 pub(crate) mod callable_fields;
+mod declarations;
 
 pub(super) fn project(value: &super::CheckedNamespaceInterface) -> NamespaceCell {
     value.project()

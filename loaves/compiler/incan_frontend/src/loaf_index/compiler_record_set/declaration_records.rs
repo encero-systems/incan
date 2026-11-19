@@ -110,7 +110,10 @@ pub(super) fn read_declaration_in(
         process_records = process.records,
         process_bytes = process.bytes
     );
-    set.present_named_families.lock().unwrap_or_else(PoisonError::into_inner).insert(prefix);
+    set.present_named_families
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(prefix);
     Ok(Some((values, summary.identity.digest)))
 }
 
@@ -132,8 +135,14 @@ pub(in crate::loaf_index) fn names_record(
         .ok_or_else(|| unreadable(dir, name, "Loaf profile directory is not UTF-8".to_owned()))?;
     let group = format!("loaf/{profile}/{name}/");
     if record.is_none() {
-        let present = set.present_named_families.lock().unwrap_or_else(PoisonError::into_inner);
-        if families.iter().any(|family| present.contains(&format!("{group}{family}/"))) {
+        let present = set
+            .present_named_families
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if families
+            .iter()
+            .any(|family| present.contains(&format!("{group}{family}/")))
+        {
             return Ok(Some(true));
         }
     }

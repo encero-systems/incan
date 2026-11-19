@@ -22,7 +22,9 @@ use crate::typechecker::TypeChecker;
 mod body_products;
 mod callable_module;
 
-pub use body_products::{CallableBodyInputs, CallableBodyProducts, CallableCheckerRows, CallableRowFamily, ValidatedCallableBodies};
+pub use body_products::{
+    CallableBodyInputs, CallableBodyProducts, CallableCheckerRows, CallableRowFamily, ValidatedCallableBodies,
+};
 pub use callable_module::{CallableLookupWitness, CheckedCallableModule};
 
 /// One checked free-function header, including private visibility and declaration-time mutation contracts.

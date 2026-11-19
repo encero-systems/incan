@@ -377,7 +377,8 @@ fn standard_path_wrapped_slot_survives_the_complete_value_lifecycle() -> Result<
                 graph.value_uses.iter().find_map(|(span, value_use)| {
                     (value_use.kind == kind && consumer.get(span.start..span.end) == Some(source)).then_some(*span)
                 })
-            }.ok_or_else(|| format!("{route}: {source} lacks its checked {kind:?} evidence"))?;
+            }
+            .ok_or_else(|| format!("{route}: {source} lacks its checked {kind:?} evidence"))?;
             let identity = checker
                 .type_info
                 .resolved_identity(span)
