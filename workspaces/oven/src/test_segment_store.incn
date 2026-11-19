@@ -10,7 +10,7 @@ from std.encoding.hex import hexlify
 from std.hash import file_digest, sha256
 from std.io import BytesIO
 from pub::incan_platform.store.index import Entry, Location
-from pub::incan_platform.store.index import write_index, entries as index_entries, pages_written
+from pub::incan_platform.store.index import write_index, entries as index_entries, pages_written, copied_index_bytes
 from store_path_conversion import collect_layouts, store_path
 from std.fs import Path
 from pub::incan_platform.durability import sync_ordered
@@ -857,16 +857,20 @@ pub def test_a_lookup_checks_no_index_page_an_earlier_lookup_checked() -> Result
     scratch = scratch_directory()?
     root = scratch.path().joinpath("store")
     mut transaction = begin(snapshot(root).map_err((error) => error.message())?)
+    prefix = "".join(list.repeat("é", 768))
     for item in range(1000):
-        transaction = put(transaction, f"k-{1000 + item}", f"value {item}".encode("utf-8"))
+        transaction = put(transaction, f"{prefix}-{1000 + item}", f"value {item}".encode("utf-8"))
     commit(transaction).map_err((error) => error.message())?
     latest = snapshot(root).map_err((error) => error.message())?
     before = read_counts()
-    assert text(lookup(latest, "k-1500")) == "value 500"
+    assert text(lookup(latest, prefix + "-1500")) == "value 500"
     first = read_counts()
-    assert text(lookup(latest, "k-1500")) == "value 500"
-    assert text(lookup(latest, "k-1501")) == "value 501"
+    index_copied = copied_index_bytes()
+    assert text(lookup(latest, prefix + "-1500")) == "value 500"
+    assert text(lookup(latest, prefix + "-1501")) == "value 501"
     second = read_counts()
+    copies = copied_index_bytes() - index_copied
+    assert copies < len(prefix.encode("utf-8")), f"repeated lookups copied {copies} index bytes for long keys"
     assert first.checked > before.checked, "the first lookup checked no index page"
     assert second.pages > first.pages, "the later lookups read no index page"
     again = second.checked - first.checked
