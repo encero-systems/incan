@@ -67,7 +67,7 @@ pub(super) struct Record {
     pub(super) slot: usize,
     pub(super) value: Value,
     /// Bytes, elements and starting depth used to validate this row's logical value.
-    pub(super) read_allowance: (u64, u64, u64),
+    pub(super) read_allowance: Option<(u64, u64, u64)>,
     /// The row frame's envelope offset and length, for reading it again on request.
     pub(super) origin: usize,
     pub(super) length: usize,
@@ -401,7 +401,7 @@ fn read_records(
         records.push(Record {
             slot,
             value,
-            read_allowance,
+            read_allowance: Some(read_allowance),
             origin,
             length: raw.len(),
         });

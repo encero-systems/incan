@@ -432,9 +432,12 @@ impl RowAdmission {
 
         let (rows, record) = self.row(index)?;
         let entry = &rows.dictionary[record.slot];
-        let (bytes, elements, depth) = record.read_allowance;
         let (available_bytes, available_elements) = budget.left();
-        let value = if bytes <= available_bytes && elements <= available_elements && depth <= budget.depth() {
+        let value = if let Some((bytes, elements, depth)) = record.read_allowance
+            && bytes <= available_bytes
+            && elements <= available_elements
+            && depth <= budget.depth()
+        {
             budget.bytes(bytes).place(record.origin)?;
             budget.elements(elements).place(record.origin)?;
             Cow::Borrowed(&record.value)

@@ -28,6 +28,7 @@ pub use encoders::{Encoded, encode_integer_unsigned, encode_native_signed, encod
 const MAX_PAYLOAD_BYTES: usize = 67_108_864;
 const PAYLOAD_BUDGET_BYTES: u64 = 268_435_456;
 
+/// Write the bounded codegraph payload as one synthetic Crumb row.
 fn encode_payload_row_native(
     selector: Vec<u8>,
     model: String,
@@ -64,6 +65,7 @@ fn encode_payload_row_native(
         dictionary: vec![description].into(),
         records: vec![Record {
             slot: 0,
+            read_allowance: None,
             value,
             origin: 0,
             length: 0,

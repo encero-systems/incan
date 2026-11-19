@@ -221,7 +221,7 @@ impl TypeChecker {
             }
             if let Some(target) = self.type_aliases.get(&alias.name) {
                 let mut target = target.clone();
-                let bindings = remapping
+                let bindings: HashMap<_, _> = remapping
                     .iter()
                     .filter(|(name, _)| !target.type_params.contains(*name))
                     .map(|(name, qualified)| (name.clone(), qualified.clone()))
