@@ -586,16 +586,21 @@ def namespace_description(version: int = 5) -> Description:
 
 
 def validate_scope_names(owner: str, names: &list[str]) -> Result[None, CodecFault]:
-    if owner not in names or len(names) > MAX_FIELDS:
+    if len(names) > MAX_FIELDS:
         return Err(CodecFault.Malformed)
     mut previous = ""
+    mut found = false
     for name in names:
+        if name == owner:
+            found = true
         if name <= previous or len(name) > MAX_METADATA_BYTES or name[0] in "0123456789":
             return Err(CodecFault.Malformed)
         for ch in name:
             if ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789":
                 return Err(CodecFault.Malformed)
         previous = name
+    if not found:
+        return Err(CodecFault.Malformed)
     return Ok(None)
 
 
