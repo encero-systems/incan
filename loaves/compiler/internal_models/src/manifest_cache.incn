@@ -41,7 +41,7 @@ def checksum(key: bytes, guard: bytes, digest: bytes, payload: bytes) -> bytes:
     return hasher.finalize_bytes()
 
 
-pub def encode_manifest_cache(kind: str, guard: bytes, digest: bytes, payload: bytes) -> Result[bytes, str]:
+pub def encode_manifest_cache(kind: &str, guard: bytes, digest: bytes, payload: bytes) -> Result[bytes, str]:
     """Bind a full digest, the observed file generation and the admitted facts before publication."""
     key, maximum = family(kind)?
     if len(guard) != 32 or len(digest) != 32 or len(payload) > maximum or ((kind == "identity") != (len(payload) == 0)):
@@ -55,7 +55,7 @@ pub def encode_manifest_cache(kind: str, guard: bytes, digest: bytes, payload: b
     return encode_rows(header(key, kind), [record], maximum)
 
 
-pub def decode_manifest_cache(kind: str, guard: bytes, encoded: bytes) -> Result[ManifestCacheValue, str]:
+pub def decode_manifest_cache(kind: &str, guard: bytes, encoded: bytes) -> Result[ManifestCacheValue, str]:
     """Accept exactly one matching row with an intact checksum and the independently observed generation."""
     key, maximum = family(kind)?
     if len(guard) != 32 or len(encoded) > maximum:
@@ -117,7 +117,7 @@ def ordered(value: list[str]) -> bool:
     return true
 
 
-pub def encode_manifest_inventory(row: ManifestInventory) -> Result[bytes, str]:
+pub def encode_manifest_inventory(row: &ManifestInventory) -> Result[bytes, str]:
     if not ordered(row.features) or not ordered(row.rust_paths):
         return Err("manifest index sets require strictly increasing order")
     mut abi = Value.NoneValue
