@@ -204,9 +204,9 @@ def stop_store(oven: Path, store: Path) -> Result[None, str]:
     return Ok(None)
 
 
-def compiler_traces(trace: Path) -> Result[list[str], str]:
-    """List each compiler process trace, including ones shared by consecutive requests."""
-    return Ok(sorted([file.0 for file in trace.iterdir().map_err((error) => error.message())? if file.name().startswith("engine-compiler-") and file.name().endswith(".jsonl")]))
+def compiler_traces(trace: Path, prefix: str = "engine-compiler-") -> Result[list[str], str]:
+    """List process traces for one producer, including ones shared by consecutive requests."""
+    return Ok(sorted([file.0 for file in trace.iterdir().map_err((error) => error.message())? if file.name().startswith(prefix) and file.name().endswith(".jsonl")]))
 
 
 def sample(bench: Bench, root: Path, target: Path, trace: Path, store: Path, label: str) -> Result[Work, str]:
@@ -219,6 +219,11 @@ def sample(bench: Bench, root: Path, target: Path, trace: Path, store: Path, lab
         offsets[path] = size
         boundaries.append(f"{path}\t{size}")
     save(root.joinpath(label + ".trace-offsets.tsv"), "\n".join(boundaries) + "\n")?
+    mut handoffs = ["client_trace\tstart_byte"]
+    for path in compiler_traces(trace, prefix="engine-oven-")?:
+        size = Path(path).stat().map_err((error) => error.message())?.size().map_err((error) => error.message())?
+        handoffs.append(f"{path}\t{size}")
+    save(root.joinpath(label + ".handoff-trace-offsets.tsv"), "\n".join(handoffs) + "\n")?
     build(bench, root, target, trace, store, label)?
     return work(trace, offsets)
 
