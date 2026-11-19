@@ -311,6 +311,7 @@ enum CheckedAttempt {
     ),
 }
 
+/// Check the selected program and collect the current imports, physical owners and Body IR for this attempt.
 fn checked_attempt(
     unit: &UnitDescription,
     rust: &RustFactsSetup,
@@ -410,7 +411,7 @@ fn checked_attempt(
             .map_err(|failure| receipt.diagnostic(failure))?
     };
     if let Some((imports, indexes)) = &namespace_imports {
-        graph_body_output.include_restored_imports(indexes, |index| project_dependencies(imports, index))?;
+        graph_body_output.include_restored_imports(&path, indexes, |index| project_dependencies(imports, index))?;
     }
     let entry = modules
         .iter()

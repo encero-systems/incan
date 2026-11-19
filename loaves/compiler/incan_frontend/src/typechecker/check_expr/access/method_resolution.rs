@@ -227,7 +227,10 @@ impl TypeChecker {
             _ => return None,
         };
         let receiver = self.symbols.module_type_identity(name)?.clone();
-        let candidates = candidates.iter().map(|value| value.info.identity.clone()).collect::<Option<Vec<_>>>()?;
+        let candidates = candidates
+            .iter()
+            .map(|value| value.info.identity.clone())
+            .collect::<Option<Vec<_>>>()?;
         Some(crate::typechecker::type_info::MethodLookup { receiver, candidates })
     }
 

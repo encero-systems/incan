@@ -47,9 +47,9 @@ pub class PreparedBodyRecordSource with RecordSource:
         """Transfer this transaction's staged values to its next producer phase after the previous phase finishes."""
         self.scope = ReadScope(snapshot=self.scope.snapshot, profile=profile)
 
-    pub def matches(self, key: str, value: &bytes) -> bool:
+    pub def matches(self, key: str, value: bytes) -> bool:
         """Check whether two checked readers staged the same membership for their shared receiver."""
-        return key in self.values and len(self.values[key]) == len(value) and self.values[key].as_slice().starts_with(value.as_slice())
+        return key in self.values and self.values[key] == value
 
     pub def for_profile(self, profile: str) -> PreparedBodyRecordSource:
         """Bind the same staged values to the next producer profile without weakening its read-scope check."""

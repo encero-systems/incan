@@ -209,9 +209,7 @@ def evaluate(store: Path, view: str, toolchain: Toolchain, pending: BuildOwner, 
         prepared_root=job.prepared_root, reservation=job.prepared_root, cancellation_generation=0))
     attempt = enter_producer("oven", output.family, output.identity, job.work_root)
     produced = match activate_record(toolchain, request, job.selected.authority)?:
-        RecordMessage.Produced(value) =>
-            finish_producer(attempt, "produced")
-            value
+        RecordMessage.Produced(value) => value
         RecordMessage.CompilerFault(fault) =>
             finish_producer(attempt, "refused")
             if output.family == "declaration" and fault.fault_root == "unsupported-closed-checking-inputs":
@@ -220,6 +218,7 @@ def evaluate(store: Path, view: str, toolchain: Toolchain, pending: BuildOwner, 
             return Err("ranked compiler evaluation: " + fault.fault_root)
         _ => return Err("ranked closed owner evaluation returned an unexpected disposition")
 
+    finish_producer(attempt, "produced")
     staged = snapshot(store, view).map_err((error) => error.message())?
     value = page(staged, "value", produced.staged_root)?
     encoded = page(staged, "receipt", produced.witness_root)?

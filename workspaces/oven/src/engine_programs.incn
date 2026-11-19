@@ -406,7 +406,7 @@ pub def obtain(
     mut request_transaction = projected.transaction
     mut native = produced.transaction
     if not editor:
-        request_transaction = merge_request_transaction(produced.transaction, projected.transaction)
+        request_transaction = merge_request_transaction(produced.transaction, projected.transaction)?
         native = None
     mut body_evaluations = 0
     mut body_reuses = 0
@@ -519,15 +519,26 @@ def refusal_diagnostic_key(key: Key) -> Result[Key, str]:
     )
 
 
-def merge_request_transaction(native: Option[Transaction], source: Transaction) -> Transaction:
-    """Combine prepared native payload records and captured source projections under one request publication."""
+def merge_request_transaction(native: Option[Transaction], source: Transaction) -> Result[Transaction, str]:
+    """Publish the native payload and captured inputs against the graph that authorized their preparation."""
     match native:
-        None => return source
+        None => return Ok(source)
         Some(value) =>
+            # Bakery prepares its payload after the compiler finishes. Capturing other views can advance the
+            # store's generation in between. Its writes carry their own publication preconditions and share the
+            # request's store and view. Keep the original graph generation for every admitted compiler record.
+            if (
+                value.root.value != source.root.value or value.root.placement != source.root.placement
+                or value.view != source.view or value.base < source.base or value.fork != "" or source.fork != ""
+                or (value.compared is not None and value.compared != source.compared)
+            ):
+                return Err("native and source transactions do not share a compatible request view")
             mut combined = value
+            combined.base = source.base
+            combined.compared = source.compared
             combined.writes.extend(source.writes)
             combined.payloads.extend(source.payloads)
-            return combined
+            return Ok(combined)
 
 
 pub def select_program(store: Path, view: str, unit: NativeUnit, handle: str) -> Result[NativeSelection, str]:

@@ -129,10 +129,18 @@ impl GraphBodyOutput {
         let import_closures = path
             .as_ref()
             .and_then(|path| path.file_name())
-            .filter(|name| name.as_encoded_bytes().ends_with(internal_models::ranked_output_suffix().as_bytes()))
+            .filter(|name| {
+                name.as_encoded_bytes()
+                    .ends_with(internal_models::ranked_output_suffix().as_bytes())
+            })
             .map(|_| BTreeMap::new());
-        let method_reads = path.as_ref().and_then(|path| path.file_name())
-            .filter(|name| name.as_encoded_bytes().ends_with(internal_models::method_lookup_suffix().as_bytes()))
+        let method_reads = path
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .filter(|name| {
+                name.as_encoded_bytes()
+                    .ends_with(internal_models::method_lookup_suffix().as_bytes())
+            })
             .map(|_| Vec::new());
         Ok(Self {
             import_closures,
@@ -167,14 +175,33 @@ impl GraphBodyOutput {
     /// Complete checked modules' certificates with their suppliers, including suppliers restored from records.
     pub(super) fn include_restored_imports(
         &mut self,
+        entry: &std::path::Path,
         indexes: &BTreeMap<PathBuf, usize>,
         dependencies: impl Fn(usize) -> Vec<String>,
     ) -> Result<(), String> {
-        let Some(closures) = &mut self.import_closures else { return Ok(()) };
-        let missing = closures.values().flatten().filter(|path| !closures.contains_key(*path))
-            .cloned().collect::<std::collections::BTreeSet<_>>();
+        let Some(closures) = &mut self.import_closures else {
+            return Ok(());
+        };
+        // The native interface also consumes the entry namespace when its checker was restored. Anchor its rank in
+        // today's collected imports before filling in the predecessor closures needed to certify that entry.
+        if let Ok(relative) = entry.strip_prefix(&self.project_root) {
+            let module = relative.to_string_lossy();
+            if !closures.contains_key(module.as_ref()) {
+                let index = indexes
+                    .get(entry)
+                    .ok_or_else(|| format!("missing collected entry {}", entry.display()))?;
+                closures.insert(module.into_owned(), dependencies(*index));
+            }
+        }
+        let missing = closures
+            .values()
+            .flatten()
+            .filter(|path| !closures.contains_key(*path))
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
         for module in missing {
-            let index = indexes.get(&self.project_root.join(&module))
+            let index = indexes
+                .get(&self.project_root.join(&module))
                 .ok_or_else(|| format!("ranked import {module} has no collected source"))?;
             closures.insert(module, dependencies(*index));
         }
@@ -243,8 +270,9 @@ impl GraphBodyOutput {
                 incan_frontend::checker_records::CheckedOwnerRecordOutput::Value(fields) => {
                     let restored = checker.restored_body_record(fields.span);
                     let uses_methods = uses_method_dispatch(&fields);
-                    let witnessed = !uses_methods || self.method_reads.is_some()
-                        && (restored || fields.method_lookups.as_ref().is_some_and(|rows| !rows.is_empty()));
+                    let witnessed = !uses_methods
+                        || self.method_reads.is_some()
+                            && (restored || fields.method_lookups.as_ref().is_some_and(|rows| !rows.is_empty()));
                     let record = if witnessed {
                         encoded_body_value(&module_path, &fields)
                     } else {
@@ -253,12 +281,20 @@ impl GraphBodyOutput {
                             artifact_refusals: vec!["CallArtifacts.resolved_method_calls".into()],
                         })
                     };
-                    if uses_methods && record.is_ok() && let Some(reads) = &mut self.method_reads {
+                    if uses_methods
+                        && record.is_ok()
+                        && let Some(reads) = &mut self.method_reads
+                    {
                         if restored {
                             reads.push(vec![fields.identity.clone()]);
                         } else if let Some(lookups) = &fields.method_lookups {
                             for lookup in lookups {
-                                let mut cells = vec![fields.identity.clone(), dependency_module(&lookup.module), lookup.receiver.clone(), lookup.method.clone()];
+                                let mut cells = vec![
+                                    fields.identity.clone(),
+                                    dependency_module(&lookup.module),
+                                    lookup.receiver.clone(),
+                                    lookup.method.clone(),
+                                ];
                                 cells.extend(lookup.candidates.iter().cloned());
                                 reads.push(cells);
                             }
@@ -572,17 +608,24 @@ impl GraphBodyOutput {
                 "compiled graph output refused: {error:?} ({body_count} owner rows, {body_ir_bytes} raw Body IR bytes)"
             )
         })?;
-        let import_order = self.import_closures.map(|closures| {
-            let rows = closures.into_iter().map(|(module, imports)| {
-                std::iter::once(module).chain(imports).collect()
-            }).collect::<Vec<Vec<String>>>();
-            internal_models::encode_import_closures(&rows)
-        }).transpose()?;
-        let methods = self.method_reads.map(|mut rows| {
-            rows.sort_unstable();
-            rows.dedup();
-            internal_models::encode_method_lookups(&rows)
-        }).transpose()?;
+        let import_order = self
+            .import_closures
+            .map(|closures| {
+                let rows = closures
+                    .into_iter()
+                    .map(|(module, imports)| std::iter::once(module).chain(imports).collect())
+                    .collect::<Vec<Vec<String>>>();
+                internal_models::encode_import_closures(&rows)
+            })
+            .transpose()?;
+        let methods = self
+            .method_reads
+            .map(|mut rows| {
+                rows.sort_unstable();
+                rows.dedup();
+                internal_models::encode_method_lookups(&rows)
+            })
+            .transpose()?;
         publish_rows(&path, rows, import_order, methods)?;
         publish(&checker_report_path(&path), vec![report])
     }
@@ -752,7 +795,12 @@ fn publish(path: &Path, frames: Vec<Vec<u8>>) -> Result<(), String> {
 }
 
 /// Replace one compiler sidecar with a directory holding one independently bounded Crumb row per file.
-fn publish_rows(path: &Path, rows: Vec<Vec<u8>>, import_order: Option<Vec<u8>>, methods: Option<Vec<u8>>) -> Result<(), String> {
+fn publish_rows(
+    path: &Path,
+    rows: Vec<Vec<u8>>,
+    import_order: Option<Vec<u8>>,
+    methods: Option<Vec<u8>>,
+) -> Result<(), String> {
     let parent = path.parent().ok_or("compiled graph output has no parent directory")?;
     std::fs::create_dir_all(parent)
         .map_err(|error| format!("cannot create compiled graph output {}: {error}", parent.display()))?;

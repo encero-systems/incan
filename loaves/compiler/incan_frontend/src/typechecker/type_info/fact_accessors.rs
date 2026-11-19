@@ -479,9 +479,14 @@ impl TypeCheckInfo {
                 .entry(span)
                 .or_insert(BuiltinMethodId::Iterator(method_id));
         }
-        self.calls
-            .resolved_method_calls
-            .insert(span, ResolvedMethodCall { method, dispatch, lookup: None });
+        self.calls.resolved_method_calls.insert(
+            span,
+            ResolvedMethodCall {
+                method,
+                dispatch,
+                lookup: None,
+            },
+        );
     }
 
     /// Remove and return the facts method resolution recorded for the call at `span` (see [`CallSiteFacts`]).

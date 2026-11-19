@@ -36,7 +36,7 @@ def receiver_source(projection: &SourceProjection, receiver: str) -> Result[Sour
 
 pub def method_inputs(
     mut prepared: Transaction, mut source: PreparedBodyRecordSource, selected: Option[Snapshot],
-    methods: &MethodReads, local: RecordKey, value: &bytes, mut projections: Dict[str, SourceProjection],
+    methods: &MethodReads, local: RecordKey, value: bytes, mut projections: Dict[str, SourceProjection],
     unit: UnitDescription,
 ) -> Result[list[RecordRequest], str]:
     mut reads: list[RecordRequest] = []
@@ -60,7 +60,7 @@ pub def method_inputs(
         previous = match reusable_evaluation(prior, local, CHECKER_PROFILE)?:
             Some(record) => record
             None => return Err("restored method lookup has no valid caller receipt")
-        if len(previous.value) != len(value) or not previous.value.as_slice().starts_with(value.as_slice()):
+        if previous.value != value:
             return Err("restored method lookup caller differs from its receipt")
         for witness in previous.receipt.witnesses:
             if let ReadWitness.Members(_, request, _, _) = witness:

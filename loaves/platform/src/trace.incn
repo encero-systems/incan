@@ -338,6 +338,10 @@ pub model ProducerAttempt:
     producer: str
     address: str
 
+    @staticmethod
+    pub def opened(clock: Clock, channel: str, producer: str, address: str) -> Self:
+        return ProducerAttempt(clock=clock, channel=channel, producer=producer, address=address)
+
     pub def event(self, kind: str, outcome: str) -> None:
         work = f"{id()}:{self.clock.span}"
         span = complete(self.clock, self.producer, kind, self.address, work=work, outcome=outcome)
@@ -357,8 +361,8 @@ pub def enter_producer(actor: str, family: str, identity: &str, detail: &str) ->
     if directory == "":
         return None
     if let Some(clock) = begin(true):
-        attempt = ProducerAttempt(clock=clock, channel=f"{directory}/engine-producers-{id()}.jsonl",
-            producer=actor, address=family + "\t" + identity + "\t" + detail)
+        attempt = ProducerAttempt.opened(clock, f"{directory}/engine-producers-{id()}.jsonl",
+            actor, f"{family}\t{identity}\t{detail}")
         attempt.event("producer_attempt", "entered")
         return Some(attempt)
     return None
