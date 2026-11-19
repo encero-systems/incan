@@ -645,6 +645,29 @@ mod tests {
         Ok(())
     }
 
+    /// Reopening a namespace must preserve each explicit argument contract under the identity the caller resolves.
+    #[test]
+    fn reopened_namespace_retains_explicit_function_and_method_contracts() -> Result<(), String> {
+        let source = "pub model Parcel:\n    pub value: int\n    pub def inspect(self, other: Borrowed[Parcel]) -> int:\n        return other.value\n\npub def inspect(other: Borrowed[Parcel]) -> int:\n    return other.value\n";
+        let program = crate::parser::parse(&crate::lexer::lex(source).map_err(|e| format!("{e:?}"))?)
+            .map_err(|e| format!("{e:?}"))?;
+        let path = vec!["parcels".to_owned()];
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(path.clone()));
+        checker.check_program(&program).map_err(|e| format!("{e:?}"))?;
+        let expected = checker.type_info().declarations.ownership_contracts.iter()
+            .filter(|(identity, _)| provider_input_contract(identity, &path))
+            .map(|(id, contract)| (id.clone(), contract.clone())).collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(expected.len(), 2);
+        let selected = CheckedNamespaceInterface::from_checked("parcels", &path, &program, &checker)?
+            .ok_or("provider was not captured")?;
+        let reopened = wire::restore(selected.wire_value()?)?;
+        reopened.validate()?;
+        let installed = reopened.installable()?;
+        assert_eq!(*installed.input_contracts, expected);
+        Ok(())
+    }
+
     /// A recovered facade's public signature keeps the provider it checked against, even if another facade imports
     /// a different model under the same name. A client need not import either model to pass the returned value.
     #[test]
