@@ -206,6 +206,7 @@ impl TypeChecker {
         self.local_record_refusals.clear();
         self.selected_local_records.clear();
         self.selected_final_records.clear();
+        self.pending_checked_frames.clear();
         self.pending_graph_frames.clear();
         self.produced_final_records.clear();
         self.final_record_refusals.clear();

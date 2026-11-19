@@ -224,6 +224,27 @@ def paired_records(
     return Ok(selected_records)
 
 
+pub def frames_after_check(
+    graph: Snapshot, origin: str, profile: str, invalid: list[str], changed: list[RecordKey],
+) -> Result[list[SelectedBodyPage], str]:
+    """Keep a signature reader's kernel frame available while its checker predecessors run again."""
+    if len(invalid) == 0 or len([key for key in changed if key.family == "declaration-signature"]) == 0:
+        return Ok([])
+    other = [key for key in changed if key.family != "declaration-signature"]
+    readers = readers_of(graph, other, profile)?
+    excluded = set([reader.identity for reader in readers if reader.family in ["local", "final", "body-ir"]])
+    eligible = [identity for identity in invalid if identity not in excluded]
+    mut pages: list[SelectedBodyPage] = []
+    for record in reusable_owner_records(graph, "body-ir", profile, origin, eligible, IDENTITY_PROFILE)?:
+        if record.value[:4] == b"CRMB":
+            value = read_body_frame(record.key, profile, record.value)?
+            key = "after-check-" + hexlify(sha256.digest(record.key.identity.encode("utf-8")))
+            pages.append(SelectedBodyPage(key=key, value=value))
+    if len(pages) > 0:
+        pages.append(SelectedBodyPage(key="after-check", value=b"1"))
+    return Ok(pages)
+
+
 pub def encode_body_inventory(records: list[SelectedBodyRecord]) -> Result[list[SelectedBodyPage], str]:
     """Encode each graph-admitted checker pair and owner frame as one bounded, identity-addressed page."""
     mut pages: list[SelectedBodyPage] = []

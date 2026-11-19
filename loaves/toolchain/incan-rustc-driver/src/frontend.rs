@@ -297,6 +297,7 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
 /// Filesystem-backed source of independently bounded graph body pages.
 #[derive(Debug)]
 struct GraphBodyRecordPages {
+    after_check: bool,
     root: PathBuf,
     bakery: Option<PathBuf>,
     reopened: std::sync::OnceLock<Result<tempfile::TempDir, String>>,
@@ -394,6 +395,40 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
         };
         decoded_pages::remember(digest, &record);
         Ok(Some(record))
+    }
+
+    fn frame_after_check(
+        &self,
+        identity: &str,
+    ) -> Result<
+        Option<incan_semantics_core::executable_representation::EncodedOwnerRepresentation>,
+        incan_frontend::checker_records::RecordAdapterFault,
+    > {
+        use incan_frontend::checker_records::RecordAdapterFault;
+        if !self.after_check {
+            return Ok(None);
+        }
+        let key = hex::encode(Sha256::digest(identity.as_bytes()));
+        let path = self.root.join(format!("after-check-{key}"));
+        let metadata = match std::fs::metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(RecordAdapterFault::InvalidField(error.to_string())),
+        };
+        if !metadata.is_file() || metadata.len() > 64 * 1024 * 1024 {
+            return Err(RecordAdapterFault::InvalidField(
+                "invalid after-check frame size".into(),
+            ));
+        }
+        let bytes = std::fs::read(path).map_err(|e| RecordAdapterFault::InvalidField(e.to_string()))?;
+        let frame = incan_semantics_core::executable_representation::decode_owner(&bytes)
+            .map_err(|e| RecordAdapterFault::InvalidField(e.to_string()))?;
+        if frame.identity != identity || frame.source.is_empty() {
+            return Err(RecordAdapterFault::InvalidField(
+                "after-check frame names a different owner".into(),
+            ));
+        }
+        Ok(Some(frame))
     }
 
     fn reopen_namespace_peers(&self, source: &str, changed: &std::collections::BTreeSet<String>) -> Result<(), String> {
@@ -570,6 +605,7 @@ fn read_graph_body_records(
     Ok(incan_frontend::checker_records::GraphBodyRecords::from_source(
         std::sync::Arc::new(GraphBodyRecordPages {
             root: path.to_path_buf(),
+            after_check: path.join("after-check").is_file(),
             bakery,
             reopened: std::sync::OnceLock::new(),
         }),
@@ -1284,6 +1320,7 @@ mod graph_body_page_tests {
         std::fs::write(&unrelated, b"malformed unrelated page")?;
         let source = GraphBodyRecordPages {
             root: root.clone(),
+            after_check: false,
             bakery: None,
             reopened: Default::default(),
         };

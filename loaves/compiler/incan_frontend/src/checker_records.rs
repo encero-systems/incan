@@ -75,6 +75,16 @@ pub trait GraphBodyRecordSource: std::fmt::Debug + Send + Sync {
     /// Read and authenticate the page for one exact stable owner identity, returning absence without scanning peers.
     fn read(&self, identity: &str) -> Result<Option<GraphBodyRecord>, RecordAdapterFault>;
 
+    /// Return only a kernel frame whose owner must still undergo ordinary checking. A matching physical proof
+    /// and current settled call contracts are required before its executable contribution can be installed.
+    fn frame_after_check(
+        &self,
+        _identity: &str,
+    ) -> Result<Option<incan_semantics_core::executable_representation::EncodedOwnerRepresentation>, RecordAdapterFault>
+    {
+        Ok(None)
+    }
+
     /// Ask the graph owner for the checked peers of an admitted namespace reopened by a settled call change.
     fn reopen_namespace_peers(&self, _source: &str, _changed: &BTreeSet<String>) -> Result<(), String> {
         Ok(())
@@ -287,49 +297,69 @@ impl GraphBodyRecords {
         if let Some(selected) = &mut record
             && let Some(frame) = &mut selected.body_ir
         {
-            let source = &frame.source;
-            let reader = frame.body.direct_call_id.path();
-            if self
-                .changed_callers
-                .get(source)
-                .is_some_and(|owners| owners.contains(reader))
-            {
-                selected.body_ir = None;
-                return Ok(record);
-            }
-            let reads = if let Some(witness) = &frame.call_witness {
-                let reads =
-                    internal_models::decode_owner_call_reads(&frame.identity, &reader.to_owned(), source, witness)
-                        .map_err(RecordAdapterFault::InvalidField)?;
-                Some(
-                    reads
-                        .into_iter()
-                        .map(|read| SettledCallRead {
-                            reader: read.reader,
-                            target: read.target,
-                            digest: read.digest,
-                        })
-                        .collect(),
-                )
-            } else {
-                self.call_reads
-                    .lock()
-                    .map_err(|_| RecordAdapterFault::InvalidField("settled call witness lock poisoned".into()))?
-                    .get(source)
-                    .map(|reads| reads.iter().filter(|r| r.reader == reader).cloned().collect())
-            };
-            if let Some(reads) = reads {
-                self.selected_calls
-                    .lock()
-                    .map_err(|_| RecordAdapterFault::InvalidField("settled call reader lock poisoned".into()))?
-                    .entry(source.clone())
-                    .or_default()
-                    .insert(reader.to_owned(), reads);
-            } else if crate::body_ir::needs_call_witness(&mut frame.body) {
+            if !self.admit_frame_calls(frame)? {
                 selected.body_ir = None;
             }
         }
         Ok(record)
+    }
+
+    pub(crate) fn frame_after_check(
+        &self,
+        identity: &str,
+    ) -> Result<Option<incan_semantics_core::executable_representation::EncodedOwnerRepresentation>, RecordAdapterFault>
+    {
+        match &self.source {
+            Some(source) if self.ranked_owner.is_none() => source.frame_after_check(identity),
+            _ => Ok(None),
+        }
+    }
+
+    /// Retain the exact calls a selected frame depends on so a changed callee contract reopens its reader.
+    pub(crate) fn admit_frame_calls(
+        &self,
+        frame: &mut incan_semantics_core::executable_representation::EncodedOwnerRepresentation,
+    ) -> Result<bool, RecordAdapterFault> {
+        let source = &frame.source;
+        let reader = frame.body.direct_call_id.path();
+        if self
+            .changed_callers
+            .get(source)
+            .is_some_and(|owners| owners.contains(reader))
+        {
+            return Ok(false);
+        }
+        let reads = if let Some(witness) = &frame.call_witness {
+            let reads = internal_models::decode_owner_call_reads(&frame.identity, &reader.to_owned(), source, witness)
+                .map_err(RecordAdapterFault::InvalidField)?;
+            Some(
+                reads
+                    .into_iter()
+                    .map(|read| SettledCallRead {
+                        reader: read.reader,
+                        target: read.target,
+                        digest: read.digest,
+                    })
+                    .collect(),
+            )
+        } else {
+            self.call_reads
+                .lock()
+                .map_err(|_| RecordAdapterFault::InvalidField("settled call witness lock poisoned".into()))?
+                .get(source)
+                .map(|reads| reads.iter().filter(|r| r.reader == reader).cloned().collect())
+        };
+        if let Some(reads) = reads {
+            self.selected_calls
+                .lock()
+                .map_err(|_| RecordAdapterFault::InvalidField("settled call reader lock poisoned".into()))?
+                .entry(source.clone())
+                .or_default()
+                .insert(reader.to_owned(), reads);
+        } else if crate::body_ir::needs_call_witness(&mut frame.body) {
+            return Ok(false);
+        }
+        Ok(true)
     }
 
     /// Read one complete namespace and remember only the settled ownership contracts it consumed.
@@ -2033,6 +2063,82 @@ mod tests {
         refused.check_program(&source).map_err(|errors| format!("{errors:?}"))?;
         assert_eq!(refused.check_work().function_bodies, 2);
         assert_eq!(refused.symbols.next_scope_index(), cold.symbols.next_scope_index());
+        Ok(())
+    }
+
+    /// Fresh checking can prove an old executable frame without restoring the checker's old value.
+    #[test]
+    fn fresh_check_requires_equal_physical_inputs_before_reusing_a_frame() -> Result<(), Box<dyn std::error::Error>> {
+        use incan_semantics_core::executable_representation::{
+            EncodedOwnerRepresentation, decode_owner, encode_graph_owner,
+        };
+
+        #[derive(Debug)]
+        struct PriorFrame(EncodedOwnerRepresentation);
+        impl super::GraphBodyRecordSource for PriorFrame {
+            fn read(&self, _: &str) -> Result<Option<super::GraphBodyRecord>, super::RecordAdapterFault> {
+                Ok(None)
+            }
+            fn read_namespace(
+                &self,
+                _: &str,
+            ) -> Result<Option<super::GraphNamespaceRecord>, super::RecordAdapterFault> {
+                Ok(None)
+            }
+            fn frame_after_check(
+                &self,
+                id: &str,
+            ) -> Result<Option<EncodedOwnerRepresentation>, super::RecordAdapterFault> {
+                Ok((self.0.identity == id).then(|| self.0.clone()))
+            }
+        }
+
+        let source = "def twice(value: int) -> int:\n    return value + value\n";
+        let module = vec!["main".to_string()];
+        let original = program(source)?;
+        let mut baseline = TypeChecker::new();
+        baseline.set_current_module_path(Some(module.clone()));
+        baseline.check_program(&original).map_err(|e| format!("{e:?}"))?;
+        let owners = checked_owner_record_outputs(&original, &baseline, &module)?;
+        let [CheckedOwnerRecordOutput::Value(owner)] = owners.as_slice() else {
+            return Err("expected one checked owner".into());
+        };
+        let lowered = lower_graph_test_module(&original, &baseline);
+        let body = lowered.bodies.first().ok_or("missing native body")?;
+        let witness = baseline
+            .graph_body_physical_inputs(&original, owner.span)
+            .ok_or("missing physical proof")?;
+        let bytes = encode_graph_owner(&lowered.module_id, "main.incn", &owner.identity, body, Some(witness))?;
+        for (input, corrupt, expected) in [
+            (source.to_string(), false, true),
+            (source.to_string(), true, false),
+            (source.replace("value + value", "value  + value"), false, false),
+        ] {
+            let mut prior = decode_owner(&bytes)?;
+            if corrupt {
+                prior.physical_inputs = Some([0; 32]);
+            }
+            let mut edited = TypeChecker::new();
+            edited.set_current_module_path(Some(module.clone()));
+            edited.set_graph_body_records(super::GraphBodyRecords::from_source(Arc::new(PriorFrame(prior))));
+            let parsed = program(&input)?;
+            edited.check_program(&parsed).map_err(|e| format!("{e:?}"))?;
+            assert_eq!(edited.check_work().function_bodies, 1);
+            assert_eq!(
+                edited
+                    .type_info()
+                    .selected_callable_body(parsed.declarations[0].span)
+                    .is_some(),
+                expected
+            );
+            let mut fresh = TypeChecker::new();
+            fresh.set_current_module_path(Some(module.clone()));
+            fresh.check_program(&parsed).map_err(|e| format!("{e:?}"))?;
+            assert_eq!(
+                lower_graph_test_module(&parsed, &edited).bodies,
+                lower_graph_test_module(&parsed, &fresh).bodies
+            );
+        }
         Ok(())
     }
 

@@ -29,6 +29,7 @@ impl TypeChecker {
             local_record_refusals: std::collections::BTreeMap::new(),
             selected_local_records: std::collections::BTreeMap::new(),
             selected_final_records: std::collections::BTreeMap::new(),
+            pending_checked_frames: Vec::new(),
             pending_graph_frames: Vec::new(),
             produced_final_records: std::collections::BTreeMap::new(),
             final_record_refusals: std::collections::BTreeMap::new(),

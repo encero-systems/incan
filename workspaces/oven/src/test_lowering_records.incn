@@ -481,6 +481,32 @@ pub def test_one_module_edit_lowers_only_that_module() -> Result[None, str]:
     return stop_example_engine(binary, store)
 
 
+pub def test_edited_default_rechecks_readers_and_reuses_their_equal_body_ir() -> Result[None, str]:
+    """Changing a default affects the omitted call and leaves two caller frames byte-identical."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    source = root.joinpath("main.incn")
+    store = root.joinpath("store")
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    caller = "\ndef supplied() -> int:\n    return value(8)\n\ndef main() -> None:\n    println(value() + supplied())\n"
+    provider = "def value(number: int = 1) -> int:\n    return number\n"
+    write(source, provider + caller)?
+    _ = lowering_example_run(binary, source, store, "9")?
+    write(source, provider.replace("= 1", "= 4") + caller)?
+    warm = lowering_example_run(binary, source, store, "12")?
+    plan = root.joinpath("native.plan").read_bytes().map_err((error) => error.message())?
+    details = warm.to_json().map_err((error) => error.message())?
+    assert proof_count(warm, "body_evaluations")? == 3, details
+    assert proof_count(warm, "body_ir_evaluations")? == 1, details
+    stop_example_engine(binary, store)?
+    root.joinpath("target").remove_tree().map_err((error) => error.message())?
+    fresh = root.joinpath("fresh")
+    control = lowering_example_run(binary, source, fresh, "12")?
+    assert proof_count(control, "body_ir_evaluations")? == 3
+    assert plan == root.joinpath("native.plan").read_bytes().map_err((error) => error.message())?
+    return stop_example_engine(binary, fresh)
+
+
 pub def test_renaming_a_changed_default_keeps_the_current_omitted_argument() -> Result[None, str]:
     """A caller that omits an argument observes the provider's edited default even when its type stays the same."""
     scratch = scratch_directory()?

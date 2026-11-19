@@ -284,6 +284,12 @@ impl TypeChecker {
         let nodes = SemanticNodeBindings::new(self, program, owner)?;
         let identity = nodes.owner().render_compact();
         let Some(selected) = self.graph_body_records.get(&identity)? else {
+            if let Some(frame) = self.graph_body_records.frame_after_check(&identity)?
+                && frame.identity == identity
+                && frame.physical_inputs.is_some()
+            {
+                self.pending_checked_frames.push((owner, frame));
+            }
             return Ok(false);
         };
         // The checker owns selected rows after this boundary so its publication view cannot outlive the invocation
@@ -363,6 +369,20 @@ impl TypeChecker {
     /// Compare in the same completed module phase that produced the frame. Earlier callables have not seen the
     /// declaration and scope identities of their later siblings during statement admission.
     pub(in crate::typechecker) fn finish_graph_body_frames(&mut self, program: &Program) {
+        for (owner, mut frame) in std::mem::take(&mut self.pending_checked_frames) {
+            let canonical = self
+                .declaration_view()
+                .callable(owner)
+                .and_then(|binding| binding.identity.as_ref());
+            if frame.body.span == owner
+                && canonical.is_some()
+                && frame.body.canonical.as_ref() == canonical
+                && self.graph_body_physical_inputs(program, owner) == frame.physical_inputs
+                && self.graph_body_records.admit_frame_calls(&mut frame).unwrap_or(false)
+            {
+                self.type_info.reused_callable_bodies.insert(owner, frame.body);
+            }
+        }
         for (owner, expected, mut body, coordinates) in std::mem::take(&mut self.pending_graph_frames) {
             let Some(local) = self.checked_body(owner).map(|view| &view.local) else {
                 continue;

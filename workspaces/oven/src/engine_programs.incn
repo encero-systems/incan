@@ -21,6 +21,7 @@ from compiler_body_publication import (
 from compiler_body_values import (
     SelectedBodyRecord,
     body_owners_reading,
+    frames_after_check,
     encode_body_inventory,
     invalid_namespace_modules,
     select_body_inventory_except,
@@ -354,6 +355,7 @@ pub def obtain(
     mut selected_bodies = encode_body_inventory(retained_bodies)?
     mut checking: Option[RankedBuildInputs] = None
     if not listing_refusals and len(invalid) > 0:
+        selected_bodies.extend(frames_after_check(graph, origin, CHECKER_PROFILE, invalid, projected.keys)?)
         checking = Some(RankedBuildInputs(graph=graph, projected=projected.transaction, origin=origin, invalid=invalid, covered=covered, plan_reads=plan_reads))
     if len(covered.owners) > 0:
         selected_bodies.append(reopen_selection(graph, origin)?)
