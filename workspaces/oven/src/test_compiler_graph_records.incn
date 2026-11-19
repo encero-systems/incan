@@ -291,6 +291,33 @@ pub def test_build_admits_a_settled_checker_pair_while_body_ir_is_pending() -> R
     return Ok(None)
 
 
+pub def test_checker_inventory_shares_exact_witnesses_between_phases() -> Result[None, str]:
+    """Local, final and Body IR selections use one leased snapshot and respect a different byte allowance."""
+    empty = store_snapshot(memory_root()).map_err((error) => error.message())?
+    shared = request("shared-checker-phases", RecordSelection.Field("value"))
+    shared_key = encode_record_key(shared.key)?
+    mut graph = commit(put(begin(empty), shared_key, b"first")).map_err((error) => error.message())?
+    rank = ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=0)
+    for family in ["local", "final", "body-ir"]:
+        mut key = family_key(family, "three-phases")
+        key.identity_profile = "incan.stable-declaration/1"
+        mut witness = shared
+        mut payload = b"checked"
+        if family == "body-ir":
+            witness = RecordRequest(key=shared.key, selection=shared.selection, byte_limit=1024)
+            payload = encode_body_frame(key, "profile", b"native body")?
+        receipt = fixture_receipt(graph, key, witness)?
+        graph = publish_evaluation(graph, family, rank, payload, receipt)?.snapshot
+    measure_frame_reads(true)
+    rows = select_body_inventory_except(graph, "profile", "package", [])?
+    opened = finish_frame_reads()
+    assert len(rows) == 1 and rows[0].body_ir == b"native body"
+    assert sum([r.reads for r in opened if r.key == shared_key]) == 2
+    changed = commit(put(begin(graph), shared_key, b"second")).map_err((error) => error.message())?
+    assert len(select_body_inventory_except(changed, "profile", "package", [])?) == 0
+    return Ok(None)
+
+
 pub def test_shared_family_witness_opens_each_selection_once() -> Result[None, str]:
     """Independent outputs share one authenticated read, bounded by the request and selected snapshot."""
     original = store_snapshot(memory_root()).map_err((e) => e.message())?
