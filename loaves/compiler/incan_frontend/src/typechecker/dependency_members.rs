@@ -389,7 +389,12 @@ impl TypeChecker {
         &mut self,
         scope: &std::collections::BTreeMap<String, CanonicalSymbolId>,
     ) {
-        for identity in scope.values() {
+        self.retain_nominal_carriers(scope.values());
+    }
+
+    /// Index the canonical declarations contributed by a selected provider.
+    pub(super) fn retain_nominal_carriers<'a>(&mut self, identities: impl Iterator<Item = &'a CanonicalSymbolId>) {
+        for identity in identities {
             if self.retained_nominal_carriers.contains_key(identity) {
                 continue;
             }

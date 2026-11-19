@@ -45,9 +45,10 @@ def namespace(return_type: NamespaceAtom, doc: str = "The labels.", end: u64 = 3
         field("scope_discriminant", NamespaceAtom.Missing), field("declaration_span", span),
     ])
     return record([
-        field("schema", NamespaceAtom.Unsigned(7u64)), field("module_name", NamespaceAtom.Text("provider")), field("module_path", path),
+        field("schema", NamespaceAtom.Unsigned(8u64)), field("module_name", NamespaceAtom.Text("provider")), field("module_path", path),
         field("api", api), field("identities", NamespaceAtom.Mapping([NamespaceEntry(key=NamespaceAtom.Text("labels"), value=owner)])),
         field("members", NamespaceAtom.Mapping([])), field("constructor_defaults", NamespaceAtom.Items([])), field("nominal_scope", NamespaceAtom.Mapping([])),
+        field("compiled_libraries", NamespaceAtom.Items([NamespaceAtom.Text("worker")])),
     ])
 
 
@@ -59,13 +60,13 @@ pub def test_checked_namespace_reads_typed_function_and_rejects_old_json() -> Re
     moved = publish_namespace_interface(namespace(result_type, "The updated labels.", 47u64))?
     changed = publish_namespace_interface(namespace(text))?
     physical = sha256.digest(first.interface)
-    seal = encode_namespace_proof("src/provider.incn", 7u32, "provider", ["provider"], physical)?
-    selected_root = read_namespace_proof(seal, "src/provider.incn", 7u32, physical)?
+    seal = encode_namespace_proof("src/provider.incn", 8u32, "provider", ["provider"], physical)?
+    selected_root = read_namespace_proof(seal, "src/provider.incn", 8u32, physical)?
     assert selected_root.name == "provider" and selected_root.path == ["provider"]
-    assert read_namespace_proof(seal, "src/provider.incn", 7u32, sha256.digest(moved.interface)).is_err()
-    assert read_namespace_proof(seal, "src/peer.incn", 7u32, physical).is_err()
-    assert read_namespace_proof(seal, "src/provider.incn", 6u32, physical).is_err()
-    assert read_namespace_proof(seal[:len(seal) - 1], "src/provider.incn", 7u32, physical).is_err()
+    assert read_namespace_proof(seal, "src/provider.incn", 8u32, sha256.digest(moved.interface)).is_err()
+    assert read_namespace_proof(seal, "src/peer.incn", 8u32, physical).is_err()
+    assert read_namespace_proof(seal, "src/provider.incn", 7u32, physical).is_err()
+    assert read_namespace_proof(seal[:len(seal) - 1], "src/provider.incn", 8u32, physical).is_err()
     assert first.interface == encoded and first.interface != moved.interface
     assert len(first.semantic_interface) == 32 and first.semantic_interface == moved.semantic_interface
     assert changed.semantic_interface != first.semantic_interface
@@ -74,10 +75,10 @@ pub def test_checked_namespace_reads_typed_function_and_rejects_old_json() -> Re
     reader = prepare_namespace_reader()?
     rebound = decode_prepared_namespace(reader, encoded)?
     assert encode_namespace_interface(rebound)? == encoded
-    selected = identify_prepared_namespace(reader, encoded, 7u32)?
+    selected = identify_prepared_namespace(reader, encoded, 8u32)?
     assert selected.name == "provider" and selected.path == ["provider"]
-    assert identify_prepared_namespace(reader, encoded, 6u32).is_err()
-    assert identify_prepared_namespace(reader, encoded[:len(encoded) - 1], 7u32).is_err()
+    assert identify_prepared_namespace(reader, encoded, 7u32).is_err()
+    assert identify_prepared_namespace(reader, encoded[:len(encoded) - 1], 8u32).is_err()
     assert decode_prepared_namespace(reader, b'{"schema":6}').is_err()
     assert decode_namespace_interface(b'{"schema":6,"module_name":"provider"}').is_err()
     assert decode_namespace_interface(encoded[:len(encoded) - 1]).is_err()

@@ -274,6 +274,7 @@ model! { CheckedNamespaceInterface {
     members: 0x17373ca1c763,
     constructor_defaults: 0x6d7c7890aef6,
     nominal_scope: 0x043a98799675,
+    compiled_libraries: 0x91722588bb63,
 } }
 
 sum! { DecoratorArgMetadata {

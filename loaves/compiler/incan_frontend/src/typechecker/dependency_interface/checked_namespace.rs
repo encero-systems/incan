@@ -28,6 +28,8 @@ pub struct CheckedNamespaceInterface {
         Vec<Option<ownership_contracts::defaults::DefaultValue>>,
     )>,
     nominal_scope: Arc<std::collections::BTreeMap<String, CanonicalSymbolId>>,
+    /// Manifest lookup keys the checker admitted while preparing this provider.
+    compiled_libraries: Vec<String>,
 }
 
 /// The canonical identities of one declaration's members, by member name, as the cold checker recorded them.
@@ -44,7 +46,7 @@ struct NamespaceMemberIdentities {
 
 impl CheckedNamespaceInterface {
     /// Schema of the compiler-owned checked declaration root and its identity projection.
-    pub const SCHEMA: u32 = 7;
+    pub const SCHEMA: u32 = 8;
 
     /// Capture one complete installable public namespace from an accepted editable module.
     ///
@@ -126,7 +128,10 @@ impl CheckedNamespaceInterface {
             .map(|(owner, fields)| (owner.clone(), fields.clone()))
             .collect();
         constructor_defaults.sort_by(|(left, _), (right, _)| left.cmp(right));
+        let mut compiled_libraries: Vec<_> = checker.cached_pub_libraries.iter().cloned().collect();
+        compiled_libraries.sort_unstable();
         let retained = Self {
+            compiled_libraries,
             schema: Self::SCHEMA,
             constructor_defaults,
             module_name: module_name.to_owned(),
@@ -301,7 +306,13 @@ impl CheckedNamespaceInterface {
                 converter.retain_declaration_nominal_scope(identity, kind, nominal_scope);
             }
         }
-        converter.retain_nominal_scope_carriers(nominal_scope);
+        // The provider's own declarations retain their lexical scopes. The sealed dependency interface exports
+        // carrier entries only for the module that owns them, just like ordinary declaration collection.
+        converter.retain_nominal_carriers(
+            nominal_scope
+                .values()
+                .filter(|identity| identity_owned_by(identity, &self.module_path)),
+        );
         let (transitive_public_types, transitive_public_traits) = provider_transitive_semantics(&symbols, &identities);
         let symbols = Arc::new(symbols);
         let identities = Arc::new(identities);
@@ -332,7 +343,7 @@ impl CheckedNamespaceInterface {
             trait_rust_derive_paths: Arc::default(),
             transitive_public_types: Arc::new(transitive_public_types),
             transitive_public_traits: Arc::new(transitive_public_traits),
-            compiled_libraries: Arc::from([]),
+            compiled_libraries: Arc::from(self.compiled_libraries.as_slice()),
             public_library_type_identities: Arc::default(),
             symbol_rows: Arc::from(symbol_rows),
             snapshot: std::sync::OnceLock::new(),
@@ -405,6 +416,11 @@ impl CheckedNamespaceInterface {
             || self.api.declarations.len() != self.identities.len()
         {
             return Err("checked namespace interface has mismatched authority".into());
+        }
+        if self.compiled_libraries.iter().any(String::is_empty)
+            || self.compiled_libraries.windows(2).any(|pair| pair[0] >= pair[1])
+        {
+            return Err("compiled library keys in checked namespace are empty, duplicated or unordered".into());
         }
         if self.constructor_defaults.windows(2).any(|pair| pair[0].0 >= pair[1].0)
             || self.constructor_defaults.iter().any(|(owner, _)| {
@@ -680,6 +696,34 @@ fn namespace_exports(declaration: &crate::api_metadata::ApiDeclaration) -> Vec<E
 mod tests {
     use super::*;
 
+    /// A retained provider selects the same compiled manifests as the ordinary provider, including a manifest
+    /// used only through another module's signatures.
+    #[test]
+    fn checked_namespace_replays_compiled_library_keys() -> Result<(), String> {
+        let tokens =
+            crate::lexer::lex("pub def answer() -> int:\n    return 42\n").map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let path = vec!["provider".to_string()];
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(path.clone()));
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        checker
+            .cached_pub_libraries
+            .extend(["worker".to_string(), "platform".to_string()]);
+        let namespace = CheckedNamespaceInterface::from_checked("provider", &path, &program, &checker)?
+            .ok_or("missing provider projection")?;
+        let mut decoded = CheckedNamespaceInterface::from_wire_value(namespace.wire_value()?)?;
+        assert_eq!(
+            decoded.installable()?.compiled_libraries.as_ref(),
+            ["platform", "worker"]
+        );
+        decoded.compiled_libraries.reverse();
+        assert!(decoded.wire_value().is_err());
+        Ok(())
+    }
+
     /// A retained editable interface must install the same nominal ownership tables used by ordinary dependencies.
     #[test]
     fn installable_retains_nominal_scopes_carriers_and_layouts() -> Result<(), String> {
@@ -694,13 +738,23 @@ mod tests {
             .map_err(|errors| format!("{errors:?}"))?;
         let retained = CheckedNamespaceInterface::from_checked("domain", &module_path, &program, &checker)?
             .ok_or("model namespace was not retained")?;
+        let mut retained = retained;
+        let foreign = CanonicalSymbolId::module_declaration(
+            vec!["neighbor".into()],
+            "Internal",
+            SemanticSourceTargetKind::Model,
+            Span::new(12, 18).into(),
+        );
+        Arc::make_mut(&mut retained.nominal_scope).insert("ImportedAlias".into(), foreign.clone());
         let installed = retained.installable()?;
+        assert!(!installed.retained_nominal_carriers.contains_key(&foreign));
         let order = retained.identities.get("Order").ok_or("missing Order identity")?;
         let scope = installed
             .declaration_nominal_scopes
             .get(order)
             .ok_or("missing Order declaration scope")?;
         assert_eq!(scope.get("Order"), Some(order));
+        assert_eq!(scope.get("ImportedAlias"), Some(&foreign));
         let carrier =
             incan_semantics_core::body_ir::nominal_carrier_key(order).ok_or("missing Order nominal carrier")?;
         assert_eq!(installed.retained_nominal_carriers.get(order), Some(&carrier));

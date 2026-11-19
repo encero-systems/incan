@@ -314,6 +314,7 @@ def shape_checked_namespace_interface() -> Description:
         ModelField(identity=b"\x17\x37\x3c\xa1\xc7\x63", name="members", storage="map<string,record@6a5290805847>"),
         ModelField(identity=b"\x6d\x7c\x78\x90\xae\xf6", name="constructor_defaults", storage="list<tuple<record@28cdd429f7ec,list<option<enum@154e90b7aa31>>>>"),
         ModelField(identity=b"\x04\x3a\x98\x79\x96\x75", name="nominal_scope", storage="map<string,record@28cdd429f7ec>"),
+        ModelField(identity=b"\x91\x72\x25\x88\xbb\x63", name="compiled_libraries", storage="list<string>"),
     ])
 
 def shape_decorator_arg_metadata() -> Description:
