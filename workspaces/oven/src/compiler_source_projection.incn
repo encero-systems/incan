@@ -180,7 +180,10 @@ class SourceProjector:
                         mut offset = byte_start
                         if relative != 0:
                             offset += len(text[:relative].encode("utf-8"))
-                        raw = text[relative:record.end - boundary.start].rstrip()
+                        mut raw_end = record.end - boundary.start
+                        while raw_end > relative and text[raw_end - 1] in " \t\r\n":
+                            raw_end -= 1
+                        raw = text[relative:raw_end]
                         mark_placement(placements, record, offset, raw)
                 byte_start += len(text.encode("utf-8"))
         header_semantic, module_docs = split_documentation(header)
