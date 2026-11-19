@@ -22,6 +22,15 @@ Incan is a Python-like language that compiles to native code through the pinned 
 >
 > **Commits and pushes are yours.** Commit your own work using the repo’s message convention, push the branch, and open the PR when it is ready. Two rules keep that safe: re-check a PR’s state immediately before pushing to its branch, because a squash-merge silently strands any later push; and prove work reached the integration branch by content (`git show origin/<dev-line>:<file> | grep <symbol>`), never by PR status alone. Sync a pushed branch with a merge commit rather than a rebase, so ancestry survives and no force-push is needed.
 
+## Ownership, reuse, and proof of work
+
+1. **Avoid deep copies.** Borrow to inspect, move to transfer ownership, and share large immutable values by reference. Treat `.clone()`, `to_owned()`, buffering, and repeated serialization as copy sites. Justify each necessary deep copy at its boundary and account for its size. A cloned shared handle keeps one payload allocation.
+2. **Design ownership and reuse at every boundary.** Identify the owner, the consumers, what they borrow, the exact reuse key, and when the value can be released. Share verified immutable data across stages within its validity scope. Bound the lifetime and size of cached data.
+3. **Compute once per complete input identity.** Reuse results while their recorded dependencies still validate. Include producer, format, target, and other inputs wherever they affect the result. Allow stale or unneeded values to be reclaimed.
+4. **Traverse the affected graph once.** Start from changed inputs, follow their readers, and evaluate each affected producer once after its dependencies settle. Stop propagation when an output stays equal. Share authenticated reads and materialize payloads on demand.
+5. **Apply the [Zen of Incan](workspaces/docs-site/docs/_snippets/language/zen_of_incan.md).** Keep ownership, namespaces, and costs visible in the code. Use one obvious route to each fact and surface misses, invalid evidence, and fallbacks explicitly.
+6. **Prove the work on the normal entry point.** Measure real cold, edited warm, and independently fresh runs with matched inputs and pinned tools. Count and attribute reads, bytes copied or decoded, and producer executions. Check warm and fresh results and enforce the work and time budgets before calling the change done.
+
 ## Key References
 
 | Document                 | Path                                                                                 |
