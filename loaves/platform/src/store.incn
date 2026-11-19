@@ -963,7 +963,7 @@ def needed(write: &Write, found: Lookup) -> Result[bool, StoreError]:
     """Whether `write` changes what is committed, refusing it when its precondition no longer holds."""
     match found:
         Lookup.Found(value) =>
-            if write.kind == KIND_VALUE and value.len() == len(write.value) and value.0.as_bytes() == write.value.as_slice():
+            if write.kind == KIND_VALUE and value.len() == len(write.value) and value.0.as_bytes().starts_with(write.value.as_slice()):
                 return Ok(false)
             if write.expect not in [EXPECT_ANY, EXPECT_REPAIR]:
                 return Err(failure("conflict", write.key, "another value was committed under this key"))

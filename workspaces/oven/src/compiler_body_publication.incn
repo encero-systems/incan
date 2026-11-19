@@ -1,9 +1,10 @@
 """Publish successful compiler body outputs into the ranked record graph."""
 
+from pub::incan_platform.trace import enter_producer, finish_producer
 from std.fs import Path
 from std.environ import get_or
 from pub::internal_models.lowering_events import INTERFACE_REPORT, LoweringEvent, decode_lowering_event, decode_lowering_refusal, decode_native_interface
-from pub::internal_models.plan_function_records import decode_plan_function_record, encode_lowering_demand
+from pub::internal_models.plan_function_records import LoweringDemands, decode_plan_function_record
 from rust::std::fs import remove_dir_all
 from rust::incan_semantics_core import encode_incan_symbol_identity
 from rust::incan_semantics_core::executable_representation import decode_owner
@@ -37,7 +38,9 @@ from compiler_owner_retirement import retire_missing_functions
 from compiler_owner_records import encode_body_frame, encode_eligibility, read_body_frame
 from store_selection_records import encode_binding
 from compiler_graph_records import prepare_evaluation, reusable_evaluation
-from compiler_body_rows import compiled_namespace_order, read_compiled_body_outputs
+from compiler_body_rows import compiled_namespace_order, compiled_method_reads, read_compiled_body_outputs
+from pub::internal_models.overload_members import MethodReads
+from compiler_method_lookups import method_inputs
 pub from compiler_captured_sources import (
     PreparedSourceInputs,
     PublishedSourceInputs,
@@ -137,6 +140,8 @@ model AuthenticatedCompiledBodies:
 
     outputs: CompiledBodyOutputs
     order: Dict[str, NamespaceOrder]
+
+    methods: MethodReads
     origin: str
     owner_evaluations: int
     owner_reuses: int
@@ -169,10 +174,18 @@ def authenticate_compiled_bodies(
     outputs = read_compiled_body_outputs(output)?
     origin = source_origin(unit)
     order = compiled_namespace_order(output, origin, outputs.namespaces)?
+
+    methods = compiled_method_reads(output)?
     remove_dir_all(output.0).map_err((error) => f"cannot consume compiled body output {output.0}: {error}")?
     chosen = set([record.identity for record in retained])
     installed_frames = set(restored_body_ir)
     published = set([value.identity for value in outputs.values])
+    for reader in methods.groups.keys():
+        if reader not in published:
+            return Err("fresh method lookup reader is not a published owner")
+    for reader in methods.retained:
+        if reader not in published or reader not in restored:
+            return Err("retained method lookup reader was not restored")
     for owner in restored_body_ir:
         if owner not in published:
             return Err("compiler reported a restored Body IR frame outside its published owners")
@@ -201,6 +214,8 @@ def authenticate_compiled_bodies(
         AuthenticatedCompiledBodies(
             outputs=outputs,
             order=order,
+
+            methods=methods,
             origin=origin,
             owner_evaluations=owner_evaluations,
             owner_reuses=owner_reuses,
@@ -262,7 +277,7 @@ pub def prepare_compiled_bodies(
 
     # 2. The prepared source authenticates only values carried by this exact request transaction.
     staging = begin_work()
-    mut staged = stage_compiled_body_sources(transaction, unit, origin, authenticated.outputs)?
+    mut staged = stage_compiled_body_sources(transaction, unit, origin, authenticated.outputs, authenticated.methods)?
     for positioned in captured_positions.keys():
         staged.source.add(positioned, captured_positions[positioned])
 
@@ -283,6 +298,8 @@ pub def prepare_compiled_bodies(
         staged.scope,
         staged.projections,
         authenticated.outputs.values,
+        authenticated.methods,
+        selected,
         unit,
         origin,
         staged.editable_packages,
@@ -322,8 +339,10 @@ def stage_compiled_body_values(
     mut prepared: Transaction,
     mut source: PreparedBodyRecordSource,
     scope: ReadScope,
-    projections: &Dict[str, SourceProjection],
+    mut projections: Dict[str, SourceProjection],
     values: list[CompiledBodyValue],
+    methods: &MethodReads,
+    selected: Option[Snapshot],
     unit: UnitDescription,
     origin: str,
     editable_packages: list[str],
@@ -351,7 +370,9 @@ def stage_compiled_body_values(
         ]
         for feature in projection.feature_inputs:
             local_reads.append(prepared_product_request(feature.key))
-        mut independent = value.module in checked_namespaces and len(position.members) == 1
+        method_reads = method_inputs(prepared, source, selected, methods, local_key, value.local, projections, unit)?
+        local_reads.extend(method_reads)
+        mut independent = value.module in checked_namespaces and len(position.members) == 1 and len(method_reads) == 0
         mut environment: set[str] = set()
         for dependency in value.dependency_reads:
             if dependency.package is not None or dependency.identity not in declarations:
@@ -533,12 +554,17 @@ def stage_compiled_body_sources(
     unit: UnitDescription,
     origin: str,
     outputs: CompiledBodyOutputs,
+    methods: &MethodReads,
 ) -> Result[StagedCompiledBodySources, str]:
     """Stage source, dependency, declaration and eligibility records that authenticate compiler output rows."""
     scope = ReadScope(snapshot=transaction.id, profile=CHECKER_PROFILE)
     mut source = PreparedBodyRecordSource.open(scope)
     mut prepared = transaction
-    projections = projection_cache(unit, origin, outputs)?
+    mut lookup_modules: set[str] = set()
+    for groups in methods.groups.values():
+        for group in groups:
+            lookup_modules.add(project_dependency_module(unit, group.module)?)
+    projections = projection_cache(unit, origin, outputs, lookup_modules)?
     rechecked = stage_compiled_projection_sources(prepared, source, projections, outputs, origin, unit)?
     editable_packages = [dependency[0] for dependency in dependency_source_roots(unit)]
     stage_compiled_dependency_sources(prepared, source, projections, outputs.values, editable_packages, origin, unit)?
@@ -636,6 +662,7 @@ def stage_compiled_dependency_sources(
     unit: UnitDescription,
 ) -> Result[None, str]:
     """Stage the exact editable-package or same-project declaration records each compiled owner reports reading."""
+    mut slots: Dict[str, str] = {}
     for value in values:
         for dependency in value.dependency_reads:
             match dependency.package:
@@ -657,13 +684,14 @@ def stage_compiled_dependency_sources(
                             ),
                         )?
                         stage_source_record(prepared, source, owner)?
-                None => stage_project_dependency_source(prepared, source, projections, value, dependency, origin, unit)?
+                None => stage_project_dependency_source(prepared, source, slots, projections, value, dependency, origin, unit)?
     return Ok(None)
 
 
 def stage_project_dependency_source(
     mut prepared: Transaction,
     mut source: PreparedBodyRecordSource,
+    mut slots: Dict[str, str],
     projections: &Dict[str, SourceProjection],
     value: CompiledBodyValue,
     dependency: CompiledBodyDependencyRead,
@@ -671,8 +699,14 @@ def stage_project_dependency_source(
     unit: UnitDescription,
 ) -> Result[None, str]:
     """Stage one same-project declaration slot, module index and exact checked signature."""
-    slot = project_declaration_slot(origin, dependency.module, dependency.name)
+    slot = project_declaration_slot(origin, dependency.module, dependency.name, dependency.identity)
     slot_key = encode_record_key(slot)?
+    if slot_key in slots:
+        if slots[slot_key] != dependency.identity:
+            return Err(f"two checked declarations claim the same project slot: {slot_key}")
+        # The same supplier's projection, census and signature were staged with its binding.
+        return Ok(None)
+    slots[slot_key] = dependency.identity
     slot_value = encode_binding(slot_key, dependency.identity)?
     stage_put(prepared, slot_key, slot_value)
     source.add(slot_key, slot_value)
@@ -973,6 +1007,7 @@ def prepare_lowering_records(
     mut plan_keys: list[RecordKey] = []
     mut staged: list[StagedPlan] = []
     mut interface_namespace = 0
+    mut demands = LoweringDemands()
     # Scalar demand and plan suppliers settle before the entry-binding contribution reads main's demand.
     for event in events:
         if event.role == "entry":
@@ -1015,7 +1050,10 @@ def prepare_lowering_records(
         if position.rank > interface_namespace:
             interface_namespace = position.rank
         demand_key = body_key("lowering-demand", origin, identity, function, key)
-        demand_value = lowering_demand(product)?
+        attempt = enter_producer("oven", "lowering-demand", identity, key)
+        record = decode_plan_function_record(product)?
+        demand_value = demands.encode(record.inputs, record.function)?
+        finish_producer(attempt, "produced")
         demand_receipt = source.receipt(scope, demand_key, body_reads, position.evidence)?
         check_reused_output(selected, event, demand_key, demand_value)?
         _ = prepare_evaluation(
@@ -1095,12 +1133,6 @@ def require_plan_refusal(report: Path) -> Result[None, str]:
             _ = decode_lowering_refusal(entry.read_bytes().map_err((error) => error.message())?)?
             return Ok(None)
     return Err("successful records compile omitted its native interface without a lowering refusal")
-
-
-def lowering_demand(product: bytes) -> Result[bytes, str]:
-    """Select the witnessed lowering inputs and the native runtime declarations they require."""
-    record = decode_plan_function_record(product)?
-    return encode_lowering_demand(record.inputs, record.function)
 
 
 def check_reused_output(
@@ -1286,7 +1318,7 @@ def dependency_read_key(
                     ),
                 )
             return Ok(None)
-        None => return Ok(Some(project_declaration_slot(origin, dependency.module, dependency.name)))
+        None => return Ok(Some(project_declaration_slot(origin, dependency.module, dependency.name, dependency.identity)))
 
 
 def dependency_projection_refusal(

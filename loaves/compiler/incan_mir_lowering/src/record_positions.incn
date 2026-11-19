@@ -16,13 +16,23 @@ pub def relocate_product(encoded: bytes, file: str, line: int) -> Result[bytes, 
 
 pub def index_positions(encoded: bytes, positions: &list[tuple[int, int]]) -> Result[bytes, str]:
     """Replace each known source coordinate by its first Body IR node ordinal."""
-    mut ordinals: dict[str, int] = {}
+    return transform_product_positions(encoded, WirePositions(change=PositionChange.Index(node_ordinals(positions))))
+
+
+pub def indexed_product(encoded: bytes, positions: &list[tuple[int, int]], file: str, line: int) -> Result[bytes, str]:
+    """Move source spans into the owner's node coordinate space in one typed traversal."""
+    return transform_product_positions(encoded, WirePositions(change=PositionChange.IndexFrom(node_ordinals(positions), file, line)))
+
+
+def node_ordinals(positions: &list[tuple[int, int]]) -> Dict[str, int]:
+    """Keep the first Body IR node at each coordinate, including coordinates shared by nested expressions."""
+    mut ordinals: Dict[str, int] = {}
     for index in range(len(positions)):
         line, column = positions[index]
         key = f"{line}:{column}"
         if key not in ordinals:
             ordinals[key] = index
-    return transform_product_positions(encoded, WirePositions(change=PositionChange.Index(ordinals)))
+    return ordinals
 
 
 pub def place_positions(encoded: bytes, positions: &list[tuple[int, int]]) -> Result[bytes, str]:

@@ -1,5 +1,6 @@
 """Select ordinary direct readers from exact prior checking receipts and compare completed compiler values."""
 
+from pub::incan_platform.trace import enter_producer, finish_producer
 from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
 from pub::incan_platform.store import Snapshot, get
@@ -164,14 +165,17 @@ pub def evaluate_reader(
     module_page = "namespace-" + hexlify(sha256.digest(reader.module.encode("utf-8")))
     write_selected_records(inputs, unit, [page for page in pages if page.key != module_page])?
     description = write_unit(unit, crate_name(unit), None, described_by(key), true, typed=toolchain.unit_descriptor_crumb)?
+    attempt = enter_producer("oven", "reader", demand.identity, reader.module)
     code = run_compiler(toolchain, ["--check-ranked-reader", description.0, toolchain.sysroot, work.0, directory.0,
         "--graph-body-records", inputs.0])?
     if code != 0:
+        finish_producer(attempt, "refused")
         return Err(f"ranked reader {demand.identity} refused with compiler status {code}")
     status = directory.joinpath("unavailable")
     if status.is_file():
         if status.read_bytes().map_err((error) => error.message())? != b"missing-settled-peer":
             return Err("invalid ranked reader admission disposition")
+        finish_producer(attempt, "unavailable")
         return Ok(None)
     declaration = directory.joinpath("declaration.crumb").read_bytes().map_err((error) => error.message())?
     local = directory.joinpath("local.crumb").read_bytes().map_err((error) => error.message())?
@@ -185,4 +189,5 @@ pub def evaluate_reader(
     if final == reader.prior.final:
         frame = reader.prior.body_ir
     body = SelectedBodyRecord(identity=demand.identity, local=local, final=final, body_ir=frame)
+    finish_producer(attempt, "produced")
     return Ok(Some(ReaderProducts(declaration_digest=hexlify(sha256.digest(declaration)), body=body)))

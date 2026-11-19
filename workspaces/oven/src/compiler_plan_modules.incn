@@ -1,5 +1,6 @@
 """Fold a module's plan functions into one module-level plan record, and read which modules a compile restored."""
 
+from pub::incan_platform.trace import enter_producer, finish_producer
 from std.fs import Path
 from std.primitives.hash import sha256
 from std.encoding.hex import hexlify, unhexlify
@@ -256,7 +257,9 @@ def rebind_complete_module(
             replaced += 1
     if len(changes) != replaced or len(proofs) != len(requests):
         return Err("admitted placement or scalar set differs from its selected module")
+    attempt = enter_producer("oven", "plan-module", module.key.identity, "reposition")
     value = encode_plan_module(page).map_err((error) => f"positioned plan module refused: {error:?}")?
+    finish_producer(attempt, "produced")
     output = plan_module_key(module.key.origin, module.key.identity, value)
     bind_source_position(source, module.key.origin, module.key.identity, requests)?
     receipt = source.receipt(scope, output, requests, order.evidence, proofs)?
@@ -325,7 +328,9 @@ pub def stage_plan_modules(
         plans = ordered_plans(modules[file])?
         if len(plans) == 0:
             continue
+        attempt = enter_producer("oven", "plan-module", file, "fold")
         value = module_value(plans)?
+        finish_producer(attempt, "produced")
         key = plan_module_key(origin, file, value)
         # A folded module can publish independent order only when every function supplies the same proof.
         namespace = max([orders.fresh(file).rank] + [plan.order.rank for plan in plans])

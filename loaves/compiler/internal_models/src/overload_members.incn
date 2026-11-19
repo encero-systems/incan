@@ -1,0 +1,132 @@
+"""Bind a checked overload lookup to the exact signature-addressed candidates enumerated by the resolver."""
+
+from namespace_order import ranked_output_suffix
+from std.encoding.hex import hexlify
+from std.hash import sha256
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from crumb_rows import ModelField, model_description, required_value
+from graph_crumb_fields import KEY_TYPE, decode_graph_row, encode_graph_row, items, key_value, read_key, text
+from record_scope import MemberFact, MemberSelection, ReadFault, ReadScope, RecordKey, RecordRead, RecordRequest, RecordSelection
+
+pub const OVERLOAD_MEMBERS: str = "overload-members"
+pub const LOOKUP_FILE: str = "method-lookups.crumb"
+const INVENTORY: bytes = b"ovluse\x00"
+const MEMBER_PAGE: bytes = b"ovlset\x00"
+
+
+pub model MethodLookup:
+    pub reader: str
+    pub module: str
+    pub receiver: str
+    pub method: str
+    pub candidates: list[str]
+
+
+pub def method_lookup_suffix() -> str:
+    """Negotiate the separately encoded membership evidence with a compiler that can publish it."""
+    return ".methods" + ranked_output_suffix()
+
+
+def inventory_description() -> Description:
+    return model_description(INVENTORY, "incan.compiler.method-lookups/1", [
+        ModelField(identity=b"lookup", name="reader_and_candidates", storage="list<list<string>>"),
+    ])
+
+
+pub def encode_method_lookups(rows: list[list[str]]) -> Result[bytes, str]:
+    return encode_graph_row(INVENTORY, inventory_description(), [
+        required_value(b"lookup", Value.List([Value.List([Value.Text(cell) for cell in row]) for row in rows])),
+    ])
+
+
+def canonical_members(values: list[Value]) -> Result[list[str], str]:
+    mut names: list[str] = []
+    mut prior = ""
+    for value in values:
+        name = text(value)?
+        if name <= prior or "\n" in name or "\t" in name:
+            return Err("invalid or unordered overload member identity")
+        names.append(name)
+        prior = name
+    if len(names) == 0:
+        return Err("successful overload selection has no candidates")
+    return Ok(names)
+
+
+pub model MethodReads:
+    pub groups: Dict[str, list[MethodLookup]] = {}
+    pub retained: set[str] = set()
+
+
+pub def read_method_lookups(encoded: bytes) -> Result[MethodReads, str]:
+    fields = decode_graph_row(encoded, INVENTORY, inventory_description(), 1)?
+    mut lookups: Dict[str, list[MethodLookup]] = {}
+    mut retained: set[str] = set()
+    for value in items(fields[0].value)?:
+        cells = items(value)?
+        if len(cells) == 1:
+            reader = text(cells[0])?
+            if reader == "" or reader in lookups or reader in retained:
+                return Err("invalid retained method lookup")
+            retained.add(reader)
+            continue
+        if len(cells) < 5:
+            return Err("incomplete compiler method lookup")
+        mut header: list[str] = []
+        for cell in cells[:4]:
+            part = text(cell)?
+            if part == "" or "\n" in part or "\t" in part:
+                return Err("invalid compiler method lookup scope")
+            header.append(part)
+        reader = header[0]
+        if reader in retained:
+            return Err("fresh and retained lookups share one owner")
+        if reader not in lookups:
+            lookups[reader] = []
+        lookups[reader].append(MethodLookup(reader=reader, module=header[1], receiver=header[2], method=header[3], candidates=canonical_members(cells[4:])?))
+    return Ok(MethodReads(groups=lookups, retained=retained))
+
+
+def page_description() -> Description:
+    return model_description(MEMBER_PAGE, "incan.compiler.overload-members/1", [
+        ModelField(identity=b"key___", name="scope", storage=KEY_TYPE),
+        ModelField(identity=b"member", name="candidates", storage="list<string>"),
+    ])
+
+
+pub def method_member_request(key: RecordKey) -> RecordRequest:
+    return RecordRequest(key=key, selection=RecordSelection.Members(MemberSelection(
+        selector=key.facet, order="canonical", lower="", upper="", continuation="",
+    )))
+
+
+pub def encode_method_members(key: RecordKey, candidates: list[str]) -> Result[bytes, str]:
+    if key.family != OVERLOAD_MEMBERS:
+        return Err("method membership requires a receiver-scoped key")
+    members = [Value.Text(candidate) for candidate in candidates]
+    canonical_members(members)?
+    return encode_graph_row(MEMBER_PAGE, page_description(), [
+        required_value(b"key___", key_value(key)), required_value(b"member", Value.List(members)),
+    ])
+
+
+pub def read_method_members(scope: ReadScope, request: RecordRequest, encoded: bytes) -> RecordRead:
+    """Read one authenticated receiver group, including its ordered members and terminal continuation."""
+    if request != method_member_request(request.key) or request.key.family != OVERLOAD_MEMBERS:
+        return RecordRead.Failed(ReadFault.SelectionMismatch)
+    match member_names(request.key, encoded):
+        Err(_) => return RecordRead.Failed(ReadFault.DamagedRecord)
+        Ok(members) =>
+            value = "\n".join(members).encode("utf-8")
+            if len(value) > request.byte_limit:
+                return RecordRead.Failed(ReadFault.InvalidEvidence)
+            digest = hexlify(sha256.digest((request.key.facet + "\ncanonical\n\n\nend\n" + hexlify(sha256.digest(value))).encode("utf-8")))
+            return RecordRead.Members(MemberFact(scope=scope, request=request, value=value, membership_digest=digest, continuation="end"))
+
+
+def member_names(key: RecordKey, encoded: bytes) -> Result[list[str], str]:
+    fields = decode_graph_row(encoded, MEMBER_PAGE, page_description(), 2)?
+    if read_key(fields[0].value)? != key:
+        return Err("overload member page belongs to a different receiver")
+    return canonical_members(items(fields[1].value)?)

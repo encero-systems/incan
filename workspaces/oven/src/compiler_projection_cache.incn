@@ -16,9 +16,10 @@ pub def projection_cache(
     unit: UnitDescription,
     origin: str,
     outputs: CompiledBodyOutputs,
+    lookup_modules: set[str] = set(),
 ) -> Result[Dict[str, SourceProjection], str]:
     """Project each current module once, including project dependency modules read by fresh bodies."""
-    mut modules: set[str] = set()
+    mut modules = lookup_modules
     for namespace in outputs.namespaces:
         modules.add(namespace.module)
         for dependency in namespace.dependencies:

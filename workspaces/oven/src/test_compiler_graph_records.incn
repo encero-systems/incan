@@ -1,6 +1,7 @@
 """Ranked compiler graph records publish their value, receipt and both edge directions atomically."""
 
 from checker_record_fixtures import empty_checker_record
+from store_selection_records import read_binding
 import compiler_source_projection
 from pub::internal_models.source_value_records import read_documentation
 from pub::incan_platform.store import Snapshot, begin, commit, delete, finish_frame_reads, get, keys, measure_frame_reads, put
@@ -57,7 +58,7 @@ from compiler_graph_records import OutputSlots, PublishedEvaluation, family_outp
 from compiler_owner_retirement import retire_missing_functions
 from compiler_prepared_records import PreparedBodyRecordSource
 from compiler_record_envelopes import RankedActivation, RankedCheckingSweep, persist_activation
-from compiler_body_keys import body_key, namespace_key
+from compiler_body_keys import body_key, namespace_key, project_declaration_slot
 from compiler_plan_values import LOWERING_PROFILE, select_plan_modules
 from compiler_plan_modules import plan_module_key
 from pub::internal_models.plan_module_records import PlanModuleFunction, PlanModuleValue, encode_plan_module
@@ -140,12 +141,13 @@ pub def test_certified_module_owner_overlap_and_partial_cycle() -> Result[None, 
         reads.append(prepared_product_request(key))
     receipt = staged_source.receipt(scope, plan_module_key(origin, left, value), reads)?
     graph = publish_evaluation(graph, "plan", rank, value, receipt)?.snapshot
-    selection = select_plan_modules(graph, origin, [], [], namespaces.complete)?
+    unchanged_positions: set[str] = set()
+    selection = select_plan_modules(graph, origin, [], [], namespaces.complete, unchanged_positions)?
     assert selection.covered.module_owners[left] == [owner]
     assert selection.covered.symbols["native-left-read"] == owner
     assert len(selection.covered.owners) == 1
-    assert len(select_plan_modules(graph, origin, [], [owner], namespaces.complete)?.covered.owners) == 0
-    assert len(select_plan_modules(graph, origin, [], [], incomplete.complete)?.covered.owners) == 0
+    assert len(select_plan_modules(graph, origin, [], [owner], namespaces.complete, unchanged_positions)?.covered.owners) == 0
+    assert len(select_plan_modules(graph, origin, [], [], incomplete.complete, unchanged_positions)?.covered.owners) == 0
     event = LoweringEvent(identity="native-left-read", key=token, function="read", product=b"product", module="left", reused=true)
     assert selection.covered.lowering_demands([event], set(), set(["left"])) == []
     assert selection.covered.lowering_demands([event], set(), set()) == [owner]
@@ -958,6 +960,8 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     declaration = empty_checker_record(identity, CheckedFamily.Declaration)?
     local = empty_checker_record(identity, CheckedFamily.Local)?
     final = empty_checker_record(identity, CheckedFamily.Final)?
+    helper_symbol = "function:helper::value"
+    helper_signature = helper_symbol + "|incan.source-signature/2:sha256:2d80b426dc13f3912758ac2c52ad2a1235531fa8b4afe5446164ac2275fee1ea"
     output = scratch.path().joinpath("compiled-body-output")
     publish_compiled_output(
         output,
@@ -976,7 +980,14 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
                             package=None,
                             module="helper",
                             name="value",
-                            identity="app|module:helper|value|function|module|0|() -> int",
+                            identity=helper_symbol,
+                            reference_subject="expr:main#7..9",
+                        ),
+                        CompiledBodyDependencyRead(
+                            package=None,
+                            module="helper",
+                            name="value",
+                            identity=helper_signature,
                             reference_subject="expr:main#10..17",
                         ),
                         CompiledBodyDependencyRead(
@@ -1195,14 +1206,13 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     module_signature_edit = publish_source_projection(published.snapshot, module_signature)?
     assert invalid_body_owners(module_signature_edit.snapshot, [module_signature.declarations.key], CHECKER_PROFILE)? == []
 
-    project_slot = RecordKey(
-        family="declaration-slot",
-        identity_profile="incan.stable-declaration/1",
-        origin="app",
-        identity="helper",
-        facet="value",
-        context="checked-signature",
-    )
+    project_slot = project_declaration_slot("app", "helper", "value", helper_signature)
+    for supplier in [helper_symbol, helper_signature]:
+        address = encode_record_key(project_declaration_slot("app", "helper", "value", supplier))?
+        stored = get(published.snapshot, address).map_err((error) => error.message())?
+        match stored:
+            Some(value) => assert read_binding(address, value)? == supplier
+            None => return Err("published declaration slot is absent")
     helper_body = project_source("app", "src/helper.incn", "pub def value() -> int:\n    return 2\n")?
     helper_body_edit = publish_source_projection(published.snapshot, helper_body)?
     assert invalid_body_owners(helper_body_edit.snapshot, [helper_body.owners[0].key], CHECKER_PROFILE)? == []
@@ -1652,3 +1662,16 @@ pub def test_removed_and_replaced_functions_leave_only_their_historical_graph_sl
                 assert len(readers_of(edited, [row.key], profile)?) == 0
                 assert get(edited, encode_record_key(body_key(family, origin, owner, "owned", "prior"))?).map_err((error) => error.message())? == Some(b"prior-value")
     return Ok(None)
+
+
+pub def test_checked_declaration_slots_separate_actual_receivers_and_signature_reads() -> None:
+    bare = "function:apple_sdk::selected_sdk"
+    first = "|incan.source-signature/2:sha256:2d80b426dc13f3912758ac2c52ad2a1235531fa8b4afe5446164ac2275fee1ea"
+    next = "|incan.source-signature/2:sha256:1afbf05e3e945151320b9294edf7fc24ac471db805ece1c9c010f3c3669ca4c5"
+    signed = project_declaration_slot("oven", "apple_sdk", "selected_sdk", bare + first)
+    assert signed != project_declaration_slot("oven", "apple_sdk", "selected_sdk", bare)
+    assert signed == project_declaration_slot("oven", "apple_sdk", "selected_sdk", bare + next)
+    field = "member/field:observation::stamp#in(model:observation::"
+    assert project_declaration_slot("oven", "observation", "stamp", field + "FileEntry)[0]") != project_declaration_slot("oven", "observation", "stamp", field + "DirectoryEntry)[0]")
+    nested = field + "Observation" + first + ")[0]"
+    assert project_declaration_slot("oven", "observation", "stamp", nested).context == "symbol:" + nested

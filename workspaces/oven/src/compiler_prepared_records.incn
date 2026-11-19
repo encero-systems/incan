@@ -1,5 +1,6 @@
 """Authenticate compiler facts staged in the current unpublished graph transaction."""
 
+from pub::internal_models.overload_members import OVERLOAD_MEMBERS, read_method_members
 from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
 from pub::internal_models.source_value_records import source_value
@@ -45,6 +46,10 @@ pub class PreparedBodyRecordSource with RecordSource:
     pub def bind_profile(mut self, profile: str) -> None:
         """Transfer this transaction's staged values to its next producer phase after the previous phase finishes."""
         self.scope = ReadScope(snapshot=self.scope.snapshot, profile=profile)
+
+    pub def matches(self, key: str, value: &bytes) -> bool:
+        """Check whether two checked readers staged the same membership for their shared receiver."""
+        return key in self.values and len(self.values[key]) == len(value) and self.values[key].as_slice().starts_with(value.as_slice())
 
     pub def for_profile(self, profile: str) -> PreparedBodyRecordSource:
         """Bind the same staged values to the next producer profile without weakening its read-scope check."""
@@ -102,6 +107,8 @@ pub class PreparedBodyRecordSource with RecordSource:
         if key not in self.values:
             return RecordRead.Failed(ReadFault.UnfinishedSupplier)
         physical = self.values[key]
+        if request.key.family == OVERLOAD_MEMBERS:
+            return read_method_members(scope, request, physical)
         value = match source_value(request.key, physical):
             Ok(logical) => logical
             Err(_) => return RecordRead.Failed(ReadFault.DamagedRecord)

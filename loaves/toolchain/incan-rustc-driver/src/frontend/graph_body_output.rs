@@ -93,6 +93,7 @@ fn fallback_identity(identity: Option<String>) -> Option<String> {
 /// Invocation-local collector for the optional graph-publication sidecar.
 pub(super) struct GraphBodyOutput {
     path: Option<PathBuf>,
+    method_reads: Option<Vec<Vec<String>>>,
     namespace_proofs: bool,
     import_closures: Option<BTreeMap<String, Vec<String>>>,
     project_root: PathBuf,
@@ -130,8 +131,12 @@ impl GraphBodyOutput {
             .and_then(|path| path.file_name())
             .filter(|name| name.as_encoded_bytes().ends_with(internal_models::ranked_output_suffix().as_bytes()))
             .map(|_| BTreeMap::new());
+        let method_reads = path.as_ref().and_then(|path| path.file_name())
+            .filter(|name| name.as_encoded_bytes().ends_with(internal_models::method_lookup_suffix().as_bytes()))
+            .map(|_| Vec::new());
         Ok(Self {
             import_closures,
+            method_reads,
             namespace_proofs,
             path,
             project_root,
@@ -236,7 +241,30 @@ impl GraphBodyOutput {
         {
             match output {
                 incan_frontend::checker_records::CheckedOwnerRecordOutput::Value(fields) => {
-                    match encoded_body_value(&module_path, &fields) {
+                    let restored = checker.restored_body_record(fields.span);
+                    let uses_methods = uses_method_dispatch(&fields);
+                    let witnessed = !uses_methods || self.method_reads.is_some()
+                        && (restored || fields.method_lookups.as_ref().is_some_and(|rows| !rows.is_empty()));
+                    let record = if witnessed {
+                        encoded_body_value(&module_path, &fields)
+                    } else {
+                        Err(BodyValueRefusal {
+                            reason: "source method lookup has no complete candidate membership evidence".into(),
+                            artifact_refusals: vec!["CallArtifacts.resolved_method_calls".into()],
+                        })
+                    };
+                    if uses_methods && record.is_ok() && let Some(reads) = &mut self.method_reads {
+                        if restored {
+                            reads.push(vec![fields.identity.clone()]);
+                        } else if let Some(lookups) = &fields.method_lookups {
+                            for lookup in lookups {
+                                let mut cells = vec![fields.identity.clone(), dependency_module(&lookup.module), lookup.receiver.clone(), lookup.method.clone()];
+                                cells.extend(lookup.candidates.iter().cloned());
+                                reads.push(cells);
+                            }
+                        }
+                    }
+                    match record {
                         Ok(value) => self.values.push(PendingBodyValue {
                             physical_inputs: checker.graph_body_physical_inputs(&module.ast, fields.span),
                             restored: checker.restored_body_record(fields.span),
@@ -550,9 +578,22 @@ impl GraphBodyOutput {
             }).collect::<Vec<Vec<String>>>();
             internal_models::encode_import_closures(&rows)
         }).transpose()?;
-        publish_rows(&path, rows, import_order)?;
+        let methods = self.method_reads.map(|mut rows| {
+            rows.sort_unstable();
+            rows.dedup();
+            internal_models::encode_method_lookups(&rows)
+        }).transpose()?;
+        publish_rows(&path, rows, import_order, methods)?;
         publish(&checker_report_path(&path), vec![report])
     }
+}
+
+/// Does either checker product require evidence of its receiver's method membership?
+pub(super) fn uses_method_dispatch(fields: &incan_frontend::checker_records::CheckedOwnerRecordFields) -> bool {
+    fields.final_value.iter().chain(&fields.local).any(|row| {
+        row.first().is_some_and(|value| value == "artifact-call")
+            && row.get(2).is_some_and(|value| value == "resolved_method_calls")
+    })
 }
 
 /// Convert one compiler-produced owner independently so a codec limitation cannot refuse its successful build.
@@ -711,7 +752,7 @@ fn publish(path: &Path, frames: Vec<Vec<u8>>) -> Result<(), String> {
 }
 
 /// Replace one compiler sidecar with a directory holding one independently bounded Crumb row per file.
-fn publish_rows(path: &Path, rows: Vec<Vec<u8>>, import_order: Option<Vec<u8>>) -> Result<(), String> {
+fn publish_rows(path: &Path, rows: Vec<Vec<u8>>, import_order: Option<Vec<u8>>, methods: Option<Vec<u8>>) -> Result<(), String> {
     let parent = path.parent().ok_or("compiled graph output has no parent directory")?;
     std::fs::create_dir_all(parent)
         .map_err(|error| format!("cannot create compiled graph output {}: {error}", parent.display()))?;
@@ -722,6 +763,10 @@ fn publish_rows(path: &Path, rows: Vec<Vec<u8>>, import_order: Option<Vec<u8>>) 
         let page = temporary.join("import-closures.crumb");
         std::fs::write(&page, bytes)
             .map_err(|error| format!("cannot write compiler import closure {}: {error}", page.display()))?;
+    }
+    if let Some(bytes) = methods {
+        let page = temporary.join("method-lookups.crumb");
+        std::fs::write(&page, bytes).map_err(|error| format!("cannot write {}: {error}", page.display()))?;
     }
     for (index, row) in rows.into_iter().enumerate() {
         let page = temporary.join(format!("{index:08}.crumb"));

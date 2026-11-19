@@ -2,6 +2,8 @@
 
 from std.fs import Path
 from pub::internal_models.namespace_order import IMPORT_ORDER_FILE, NamespaceOrder, certified_namespace_order, ranked_output_suffix, read_import_closures
+
+from pub::internal_models.overload_members import LOOKUP_FILE, MethodReads, method_lookup_suffix, read_method_lookups
 from pub::internal_models import (
     CompiledBodyFallback,
     CompiledBodyOutput,
@@ -32,6 +34,15 @@ pub def compiled_namespace_order(path: Path, origin: str, namespaces: &list[Comp
             closures[namespace.module] = namespace.dependencies
     return certified_namespace_order(origin, closures)
 
+pub def compiled_method_reads(path: Path) -> Result[MethodReads, str]:
+    page = path.joinpath(LOOKUP_FILE)
+    if not path.0.endswith(method_lookup_suffix()) or not page.exists():
+        return Ok(MethodReads())
+    size = page.stat().map_err((error) => error.message())?.size().map_err((error) => error.message())?
+    if not page.is_file() or size <= 0 or size > MAX_COMPILED_BODY_ROW_BYTES:
+        return Err("invalid method lookup inventory length")
+    return read_method_lookups(page.read_bytes().map_err((error) => error.message())?)
+
 
 pub def read_compiled_body_outputs(path: Path) -> Result[CompiledBodyOutputs, str]:
     """Read one bounded Crumb row per sidecar file while retaining only decoded semantic values."""
@@ -43,6 +54,10 @@ pub def read_compiled_body_outputs(path: Path) -> Result[CompiledBodyOutputs, st
     mut row_count = len(entries)
     if has_order:
         row_count -= 1
+    member_file = path.joinpath(LOOKUP_FILE).0
+    has_members = path.0.endswith(method_lookup_suffix()) and member_file in entries
+    if has_members:
+        row_count -= 1
     if row_count > MAX_COMPILED_BODY_ROWS:
         return Err("compiled body output contains too many rows")
     mut values: list[CompiledBodyValue] = []
@@ -52,7 +67,7 @@ pub def read_compiled_body_outputs(path: Path) -> Result[CompiledBodyOutputs, st
     mut previous_value = ""
     mut previous_fallback = ""
     for entry in entries:
-        if has_order and entry == order_file:
+        if (has_order and entry == order_file) or (has_members and entry == member_file):
             continue
         row = Path(entry)
         if not row.is_file() or not row.name().endswith(".crumb"):

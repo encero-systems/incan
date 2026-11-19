@@ -1,5 +1,6 @@
 """Lower a program's ordinary bodies, entrypoints, async entries, tests, and Loaf exports."""
 
+from pub::incan_platform.trace import enter_producer, finish_producer
 from pub::incan_mir_plan import (
     Carrier,
     CalleeKind,
@@ -629,6 +630,7 @@ def lower_ordinary_frame(
                         event_module,
                     )?
                     return Ok((function, runtime, requests, frames))
+    attempt = enter_producer("compiler", "plan-function", record_identity, str(body.name))
     function, runtime, pending, synthesized = lower_function(
         context,
         program,
@@ -640,6 +642,7 @@ def lower_ordinary_frame(
         [],
         DecoratorFrame.Normal,
     )?
+    finish_producer(attempt, "produced")
     # A product carries synthesized helper frames and the generic instance requests this lowering made, and names any
     # carrier it admitted by declaration, so a reuse needs that carrier present already. Each closed instance is its
     # own product. A request only a source position names stays outside a product.

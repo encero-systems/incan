@@ -1,0 +1,24 @@
+"""Overload receipts authenticate a receiver's complete set independently of body positioning."""
+
+from overload_members import encode_method_lookups, encode_method_members, method_member_request, read_method_lookups, read_method_members
+from record_scope import ReadScope, RecordKey, RecordRead
+
+
+pub def test_only_a_complete_scoped_lookup_can_authenticate_overload_members() -> Result[None, str]:
+    rows = [["reader", "main", "Describable", "describe", "signature:int", "signature:str"]]
+    lookups = read_method_lookups(encode_method_lookups(rows)?)?
+    assert lookups.groups["reader"][0].candidates == ["signature:int", "signature:str"]
+    key = RecordKey(family="overload-members", identity_profile="stable", origin="app", identity="main", facet="Describable.describe", context="instance")
+    other = RecordKey(family="overload-members", identity_profile="stable", origin="other-app", identity="main", facet="Describable.describe", context="instance")
+    scope = ReadScope(snapshot="snapshot", profile="checking")
+    page = encode_method_members(key, lookups.groups["reader"][0].candidates)?
+    match read_method_members(scope, method_member_request(key), page):
+        RecordRead.Members(read) =>
+            assert read.value == b"signature:int\nsignature:str" and read.continuation == "end"
+        _ => return Err("missing lookup receipt")
+    match read_method_members(scope, method_member_request(other), page):
+        RecordRead.Failed(_) => pass
+        _ => return Err("accepted a foreign group")
+    assert encode_method_members(key, ["signature:str", "signature:int"]).is_err()
+    assert read_method_lookups(encode_method_lookups([["reader", "main"]])?).is_err()
+    return Ok(None)
