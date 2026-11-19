@@ -2,9 +2,10 @@
 
 from rust::std::primitive import f64 as RustF64
 from std.primitives.crumb.budget import Budget
-from std.primitives.crumb.row_values import build_value, settle
+from std.primitives.crumb.row_values import Nodes, settle
 from std.primitives.text import copy_frozen_bytes
 from std.primitives.crumb.hashes import value_hash
+from std.primitives.crumb.types import AbsentPolicy
 from std.primitives.crumb.values import Projection, IntegerValue, MapEntry, Value, ValueField
 from crumb_rows import operation_budget, required_value
 from callable_schema import CALLABLE_PRODUCT, callable_descriptions
@@ -133,6 +134,64 @@ def atom(value: Value) -> Result[NamespaceAtom, str]:
     return Err("invalid logical cell in a checked namespace")
 
 
+def atom_fields(mut nodes: Nodes, count: int) -> Result[list[NamespaceField], str]:
+    """Decode the compiler field projection from the validated Crumb node stream."""
+    mut fields: list[NamespaceField] = []
+    for _ in range(count):
+        if nodes.next() != 18:
+            return Err("invalid field in a checked namespace")
+        identity = selector_number(nodes.data())?
+        if AbsentPolicy.from_value(nodes.text()).is_none():
+            return Err("invalid absent policy in a checked namespace")
+        fields.append(NamespaceField(identity=identity, value=read_atom(nodes)?))
+    return Ok(fields)
+
+
+def read_atom(mut nodes: Nodes) -> Result[NamespaceAtom, str]:
+    """Build the compiler carrier directly from one settled Crumb record in preorder."""
+    code = nodes.next()
+    match code:
+        0 => return Ok(NamespaceAtom.Missing)
+        1 => return Ok(NamespaceAtom.Present([read_atom(nodes)?]))
+        2 => return Ok(NamespaceAtom.Flag(nodes.flag()))
+        3 =>
+            signed = nodes.signed()
+            if signed.try_resize[i64]().is_some():
+                return Ok(NamespaceAtom.Signed(signed.saturating_resize[i64]()))
+        4 =>
+            unsigned = nodes.unsigned()
+            if unsigned.try_resize[u64]().is_some():
+                return Ok(NamespaceAtom.Unsigned(unsigned.saturating_resize[u64]()))
+        5 =>
+            data = nodes.data()
+            if nodes.number() == 64 and len(data) == 8:
+                mut bits = 0u64
+                for byte in data:
+                    bits = (bits << 8) | byte.saturating_resize[u64]()
+                return Ok(NamespaceAtom.Real(RustF64.from_bits(bits)))
+        7 => return Ok(NamespaceAtom.Text(nodes.text()))
+        8 => return Ok(NamespaceAtom.Binary(nodes.data()))
+        10 | 11 =>
+            mut values: list[NamespaceAtom] = []
+            for _ in range(nodes.count()):
+                values.append(read_atom(nodes)?)
+            if code == 10:
+                return Ok(NamespaceAtom.Items(values))
+            return Ok(NamespaceAtom.TupleItems(values))
+        13 =>
+            mut entries: list[NamespaceEntry] = []
+            for _ in range(nodes.count()):
+                key = read_atom(nodes)?
+                entries.append(NamespaceEntry(key=key, value=read_atom(nodes)?))
+            return Ok(NamespaceAtom.Mapping(entries))
+        14 => return Ok(NamespaceAtom.Fields(atom_fields(nodes, nodes.count())?))
+        15 =>
+            identity = selector_number(nodes.data())?
+            return Ok(NamespaceAtom.Alternative(identity, atom_fields(nodes, nodes.count())?))
+        _ => pass
+    return Err("invalid logical cell in a checked namespace")
+
+
 pub model PreparedNamespaceReader:
     """The immutable D-encoded compiler descriptions shared by namespace reads in one driver process."""
 
@@ -148,7 +207,11 @@ pub model PreparedNamespaceReader:
         remaining_bytes, remaining_elements = budget.codec_allowance()
         decoded = row.read_record(0, remaining_bytes, remaining_elements, budget.depth_allowance())
         settle(decoded, budget).map_err((error) => error.message())?
-        return atom(build_value(decoded).map_err((error) => error.message())?)
+        mut nodes = Nodes.create(decoded)
+        root = read_atom(nodes)?
+        if nodes.next() != -1:
+            return Err("checked namespace row has trailing logical cells")
+        return Ok(root)
 
     pub def identity(self, encoded: bytes, schema: u32) -> Result[NamespaceIdentity, str]:
         mut budget = graph_read_budget()?
