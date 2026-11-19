@@ -69,6 +69,7 @@ pub model ReusableEvaluation:
     """One persisted compiler value admitted only after every recorded dependency still validates."""
 
     pub value: bytes
+    pub value_digest: str
     pub receipt: ReadReceipt
     pub namespace: int
 
@@ -78,6 +79,7 @@ pub model ReusableRecord:
 
     pub key: RecordKey
     pub value: bytes
+    pub value_digest: str
     pub receipt: ReadReceipt
     pub namespace: int
 
@@ -121,6 +123,7 @@ pub def prepare_evaluation(
     rank: ProducerRank,
     value: bytes,
     receipt: ReadReceipt,
+    expected_value_digest: str = "",
 ) -> Result[PreparedEvaluation, str]:
     """Stage a value, evaluation, completed receipt and both edge directions in a caller-owned transaction."""
     if claim_key == "" or receipt.scope.profile == "" or receipt.schema != READ_SCHEMA:
@@ -129,6 +132,8 @@ pub def prepare_evaluation(
         return Err("a completed evaluation requires a nonnegative certified rank")
     value_key = encode_record_key(receipt.preparation.output)?
     value_digest = digest(value)
+    if expected_value_digest != "" and value_digest != expected_value_digest:
+        return Err("retained compiler value differs from its selected witness")
     edges = normalized_edges(receipt.witnesses)?
     receipt_bytes = encode_read_receipt(receipt)?
     receipt_root = digest(receipt_bytes)
@@ -214,7 +219,7 @@ def select_evaluation(
     if output.identity_profile != SOURCE_PROFILE and checked_row_family(output.family) and len(selected_witnesses) < 8192 and len(value_key) <= 4096:
         if let Ok(request) = checked_row_request(output, len(value)):
             selected_witnesses[value_key] = (request, value_digest)
-    return Ok(Some(ReusableEvaluation(value=value, receipt=receipt, namespace=evaluation.namespace)))
+    return Ok(Some(ReusableEvaluation(value=value, value_digest=value_digest, receipt=receipt, namespace=evaluation.namespace)))
 
 
 pub model OutputSlots:
@@ -260,7 +265,9 @@ def select_family_records(
             continue
         key = decode_record_key(output)?
         match select_evaluation(selected, key, profile, verified)?:
-            Some(reused) => records.append(ReusableRecord(key=key, value=reused.value, receipt=reused.receipt, namespace=reused.namespace))
+            Some(reused) =>
+                records.append(ReusableRecord(key=key, value=reused.value, value_digest=reused.value_digest,
+                    receipt=reused.receipt, namespace=reused.namespace))
             None => pass
     return Ok(records)
 

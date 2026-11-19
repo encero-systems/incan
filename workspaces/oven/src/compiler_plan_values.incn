@@ -1,12 +1,12 @@
 """Select Bakery-admitted lowering products for one graph-record compiler activation."""
 
-from pub::incan_platform.store import Snapshot
+from pub::incan_platform.store import Snapshot, get
 from pub::internal_models.records import ReadReceipt, ReadWitness, RecordKey, encode_record_key
 from compiler_source_projection import positioned_source_key
 from compiler_prepared_records import prepared_product_request
 from compiler_body_keys import IDENTITY_PROFILE, body_key
 from compiler_body_values import CoveredBodyOwners, SelectedBodyPage
-from compiler_graph_records import OutputSlots, reusable_family_records, readers_of
+from compiler_graph_records import OutputSlots, digest, reusable_evaluation, reusable_family_records, readers_of
 from pub::internal_models.plan_module_records import PLAN_MODULE_FAMILY, POSITIONED_MODULE_PAGE, REPOSITION_MODULE_PAGE, decode_plan_module
 from std.encoding.hex import hexlify
 
@@ -27,18 +27,32 @@ pub def plan_reads_changed(selected: Snapshot, changed: list[RecordKey]) -> Resu
     return Ok(inputs)
 
 
+pub model RetainedPlanInputs:
+    """One pinned view's scalar plans and their authenticated lowering-demand digests."""
+
+    pub snapshot: str = ""
+    pub digests: Dict[str, tuple[str, str]] = {}
+
+
+pub model PlanFunctionSelection:
+    """Compiler pages and the verified inputs publication can carry forward after the worker returns."""
+
+    pub pages: list[SelectedBodyPage] = []
+    pub retained: RetainedPlanInputs = RetainedPlanInputs()
+
+
 pub def select_plan_inventory_except(
     selected: Snapshot,
     origin: str,
     invalid: list[str],
     admitted_outputs: list[str] = [],
     keyed_readers: Option[list[str]] = None,
-) -> Result[list[SelectedBodyPage], str]:
+) -> Result[PlanFunctionSelection, str]:
     """
     Materialize only witnessed plan functions whose stable declaration owner was not invalidated by this edit. A
     function whose exact output is in `admitted_outputs` travels in its module page. Its product is not read twice.
     """
-    mut pages: list[SelectedBodyPage] = []
+    mut inventory = PlanFunctionSelection(retained=RetainedPlanInputs(snapshot=selected.digest))
     slots = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, excluded=invalid, excluded_outputs=admitted_outputs, included=keyed_readers)
     for record in reusable_family_records(selected, "plan-function", LOWERING_PROFILE, Some(slots))?:
         # A rechecked reader may probe its old ordinary scalar by the compiler's newly computed full key.
@@ -51,8 +65,51 @@ pub def select_plan_inventory_except(
         mut extension = ".incnfunction"
         if record.key.facet == "entry":
             extension = ".incnentry"
-        pages.append(SelectedBodyPage(key=key + extension, value=record.value))
-    return Ok(pages)
+        inventory.pages.append(SelectedBodyPage(key=key + extension, value=record.value))
+        if record.key.facet.startswith("body:") and keyed_readers is None:
+            demand = body_key("lowering-demand", origin, record.key.identity, record.key.facet[5:], key)
+            evidence = lowering_demand_digest(record.receipt, demand)?
+            inventory.retained.digests[encode_record_key(record.key)?] = (record.value_digest, evidence)
+    return Ok(inventory)
+
+
+pub def carried_lowering_demand(
+    selected: Option[Snapshot],
+    retained: &RetainedPlanInputs,
+    plan: RecordKey,
+    demand: RecordKey,
+    product: bytes,
+) -> Result[tuple[bytes, str], str]:
+    """Carry the exact demand witnessed by an admitted plan whose returned product still matches."""
+    graph = match selected:
+        Some(value) => value
+        None => return Err("a reused lowering record has no selected graph snapshot")
+    encoded = encode_record_key(plan)?
+    mut evidence = ("", "")
+    if retained.snapshot == graph.digest and encoded in retained.digests:
+        evidence = retained.digests[encoded]
+    else:
+        # Ranked readers can supply exact additional scalar pages after the main selection.
+        prior = match reusable_evaluation(graph, plan, LOWERING_PROFILE)?:
+            Some(value) => value
+            None => return Err("a reused lowering record has no selected plan evaluation")
+        evidence = (prior.value_digest, lowering_demand_digest(prior.receipt, demand)?)
+    if digest(product) != evidence[0]:
+        return Err("a reused lowering record differs from its selected graph authority")
+    value = match get(graph, encode_record_key(demand)?).map_err((error) => error.message())?:
+        Some(bytes) => bytes
+        None => return Err("a reused lowering record has no selected demand")
+    return Ok((value, evidence[1]))
+
+
+def lowering_demand_digest(receipt: &ReadReceipt, key: RecordKey) -> Result[str, str]:
+    """Read exactly the complete payload identity selected by this plan's own preparation."""
+    expected = prepared_product_request(key)
+    for witness in receipt.witnesses:
+        if let ReadWitness.Found(prior, _) = witness:
+            if prior.request == expected:
+                return Ok(prior.semantic_digest)
+    return Err("a reused lowering plan has no exact demand witness")
 
 
 pub def canonical_digest(value: str) -> bool:

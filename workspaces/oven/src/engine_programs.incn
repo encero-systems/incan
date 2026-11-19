@@ -13,6 +13,7 @@ from bakery_records import Fact
 from bakery_roots import register_root
 from check_pages import check_page_directory, keep_check_pages
 from compiler_body_publication import (
+    LoweringDemandWork,
     PreparedSourceInputs,
     prepare_captured_source_inputs,
     prepare_compiled_bodies,
@@ -362,7 +363,8 @@ pub def obtain(
     if len(covered.owners) > 0:
         selected_bodies.append(reopen_selection(graph, origin)?)
     selected_bodies.extend(namespaces.pages)
-    selected_bodies.extend(select_plan_inventory_except(graph, origin, invalid_plans, plan_modules.outputs)?)
+    scalar_plans = select_plan_inventory_except(graph, origin, invalid_plans, plan_modules.outputs)?
+    selected_bodies.extend(scalar_plans.pages)
     selected_bodies.extend(plan_modules.pages)
     # The descriptor is shared across source edits and stores. Each active compile owns its selected pages and
     # admission notes until Bakery has read them, even if another request replaces the diagnostic report.
@@ -394,8 +396,6 @@ pub def obtain(
                 epoch_reads=epoch_reads,
                 plan_function_evaluations=plan_counts.plan_evaluations,
                 plan_function_reuses=plan_counts.plan_reuses,
-                lowering_demand_evaluations=plan_counts.lowering_demand_evaluations,
-                lowering_demand_reuses=plan_counts.lowering_demand_reuses,
             ),
         )
     # 4. Source edits cannot certify a native unit for a different captured epoch.
@@ -416,6 +416,7 @@ pub def obtain(
     mut body_reuses = 0
     mut body_ir_evaluations = 0
     mut checker_counts = CheckerRecordCounts()
+    mut demand_work = LoweringDemandWork()
     if produced.native_bakes == 1:
         # The compiler's report names the bodies it restored; a selected record it refused was checked afresh.
         reading_checker_sidecar = begin_work()
@@ -439,8 +440,10 @@ pub def obtain(
             projected.keys,
             projected.positioned,
             Some(admission_report),
+            scalar_plans.retained,
         )?
         request_transaction = bodies.transaction
+        demand_work = bodies.lowering_demands
         body_evaluations = bodies.checking_evaluations
         body_reuses = bodies.body_reuses
         body_ir_evaluations = bodies.body_ir_evaluations
@@ -475,8 +478,8 @@ pub def obtain(
             native_bakes=produced.native_bakes,
             plan_function_evaluations=plan_counts.plan_evaluations,
             plan_function_reuses=plan_counts.plan_reuses,
-            lowering_demand_evaluations=plan_counts.lowering_demand_evaluations,
-            lowering_demand_reuses=plan_counts.lowering_demand_reuses,
+            lowering_demand_evaluations=demand_work.evaluations,
+            lowering_demand_reuses=demand_work.reuses,
             native_interface_evaluations=plan_counts.native_interface_evaluations,
             plan_module_reuses=plan_module_reuses,
             reusable_declarations=checker_counts.reusable_declarations,

@@ -53,7 +53,7 @@ pub from compiler_prepared_records import prepared_product_request
 from compiler_namespace_products import ExecutableCallInputs, member_plan_inputs, prepare_namespace_products, stage_call_contracts
 from compiler_lowering_order import LoweringOrder, LoweringOrders
 from compiler_plan_modules import StagedPlan, restored_modules, stage_plan_modules, staged_plan
-from compiler_plan_values import AdmittedPlanModule
+from compiler_plan_values import AdmittedPlanModule, RetainedPlanInputs, carried_lowering_demand
 from compiler_body_fallbacks import (
     fallback_lowering_event,
     fallback_reasons,
@@ -125,6 +125,13 @@ pub model PublishedCompiledBodies:
     pub body_ir_evaluations: int
 
 
+pub model LoweringDemandWork:
+    """Actual demand computations and confirmed reuse during graph publication."""
+
+    pub evaluations: int = 0
+    pub reuses: int = 0
+
+
 pub model PreparedCompiledBodies:
     """Body records staged beside a native request's other outputs without publishing another generation."""
 
@@ -135,6 +142,7 @@ pub model PreparedCompiledBodies:
     pub body_ir_evaluations: int
     # Bodies the compiler restored from selected records instead of checking them.
     pub body_reuses: int = 0
+    pub lowering_demands: LoweringDemandWork = LoweringDemandWork()
 
 
 model AuthenticatedCompiledBodies:
@@ -259,6 +267,7 @@ pub def prepare_compiled_bodies(
     changed_sources: list[RecordKey] = [],
     captured_positions: Dict[str, bytes] = {},
     admission_report: Option[Path] = None,
+    retained_plans: RetainedPlanInputs = RetainedPlanInputs(),
 ) -> Result[PreparedCompiledBodies, str]:
     """
     Stage one successful compiler sidecar through source projections and witnessed checker evaluations.
@@ -310,7 +319,7 @@ pub def prepare_compiled_bodies(
         order,
         executable,
     )?
-    prepare_optional_lowering_records(
+    lowering_demands = prepare_optional_lowering_records(
         staged.transaction,
         staged.source,
         staged.projections,
@@ -325,6 +334,7 @@ pub def prepare_compiled_bodies(
         plan_modules,
         covered,
         admission_report,
+        retained_plans,
     )?
     record_work(Operation.EngineGraphStaging, output.0, staging)
     return Ok(
@@ -335,6 +345,7 @@ pub def prepare_compiled_bodies(
             checking_evaluations=owner_evaluations,
             body_ir_evaluations=authenticated.body_ir_evaluations,
             body_reuses=owner_reuses,
+            lowering_demands=lowering_demands,
         ),
     )
 
@@ -530,7 +541,8 @@ def prepare_optional_lowering_records(
     plan_modules: list[AdmittedPlanModule] = [],
     covered: CoveredBodyOwners = CoveredBodyOwners(),
     admission_report: Option[Path] = None,
-) -> Result[None, str]:
+    retained_plans: RetainedPlanInputs = RetainedPlanInputs(),
+) -> Result[LoweringDemandWork, str]:
     """Stage lowering records only when this compiler activation requested a plan report."""
     if let Some(report) = plan_output:
         events = lowering_events(report)?
@@ -567,8 +579,9 @@ def prepare_optional_lowering_records(
             plan_modules,
             [module for module in covered.module_owners.keys()],
             Some(notes),
+            retained_plans,
         )
-    return Ok(None)
+    return Ok(LoweringDemandWork())
 
 
 def stage_compiled_body_sources(
@@ -1004,7 +1017,8 @@ def prepare_lowering_records(
     admitted: list[AdmittedPlanModule] = [],
     covered_modules: list[str] = [],
     admission_report: Option[Path] = None,
-) -> Result[None, str]:
+    retained_plans: RetainedPlanInputs = RetainedPlanInputs(),
+) -> Result[LoweringDemandWork, str]:
     """
     Stage evaluated lowering-demand and plan-function values through their exact Body IR witnesses.
 
@@ -1032,6 +1046,7 @@ def prepare_lowering_records(
     mut staged: list[StagedPlan] = []
     mut interface_namespace = 0
     mut demands = LoweringDemands()
+    mut work = LoweringDemandWork()
     # Scalar demand and plan suppliers settle before the entry-binding contribution reads main's demand.
     for event in events:
         if event.role == "entry":
@@ -1074,22 +1089,32 @@ def prepare_lowering_records(
         if position.rank > interface_namespace:
             interface_namespace = position.rank
         demand_key = body_key("lowering-demand", origin, identity, function, key)
-        attempt = enter_producer("oven", "lowering-demand", identity, key)
-        record = decode_plan_function_record(product)?
-        demand_value = demands.encode(record.inputs, record.function)?
-        finish_producer(attempt, "produced")
+        plan_key = body_key("plan-function", origin, identity, "body:" + function, key)
+        mut demand_value: bytes = b""
+        mut expected_digest = ""
+        if event.reused:
+            retained_value, witness_digest = carried_lowering_demand(
+                selected, retained_plans, plan_key, demand_key, product,
+            )?
+            demand_value = retained_value
+            expected_digest = witness_digest
+            work.reuses += 1
+        else:
+            attempt = enter_producer("oven", "lowering-demand", identity, key)
+            record = decode_plan_function_record(product)?
+            demand_value = demands.encode(record.inputs, record.function)?
+            finish_producer(attempt, "produced")
+            work.evaluations += 1
         demand_receipt = source.receipt(scope, demand_key, body_reads, position.evidence)?
-        check_reused_output(selected, event, demand_key, demand_value)?
         _ = prepare_evaluation(
             prepared,
             "lowering-demand-" + identity,
             ProducerRank(namespace=position.rank, stage=ProducerStage.LoweringDemand, dependency=0),
             demand_value,
             demand_receipt,
+            expected_value_digest=expected_digest,
         )?
         source.add(encode_record_key(demand_key)?, demand_value)
-        plan_key = body_key("plan-function", origin, identity, "body:" + function, key)
-        check_reused_output(selected, event, plan_key, product)?
         plan_receipt = source.receipt(scope, plan_key, [prepared_product_request(demand_key)] + signature_reads, position.evidence)?
         _ = prepare_evaluation(
             prepared,
@@ -1142,12 +1167,12 @@ def prepare_lowering_records(
     carried, carried_namespace = stage_plan_modules(prepared, source, orders, scope, selected, origin, rechecked, staged, admission_report.unwrap_or(report), admitted)?
     if not report.joinpath(INTERFACE_REPORT).is_file():
         require_plan_refusal(report)?
-        return Ok(None)
+        return Ok(work)
     prepare_native_interface(
         projections, prepared, source, scope, unit, origin, values, report, plan_keys + carried, covered_modules,
         max([interface_namespace, carried_namespace]), orders,
     )?
-    return Ok(None)
+    return Ok(work)
 
 
 def require_plan_refusal(report: Path) -> Result[None, str]:

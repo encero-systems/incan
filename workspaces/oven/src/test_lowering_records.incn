@@ -1329,7 +1329,11 @@ def physical_demands(trace: Path) -> Result[int, str]:
             continue
         text = path.read_text("utf-8", "strict").map_err((error) => error.message())?
         for line in text.split("\n"):
-            if "\"operation\":\"producer_attempt\"" in line and "\"key\":\"lowering-demand\t" in line:
+            if "\"operation\":\"producer_attempt\"" not in line:
+                continue
+            event = parse(line).map_err((error) => error.message())?
+            key = event.require("key").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+            if key.starts_with("lowering-demand\t"):
                 entries += 1
     return Ok(entries)
 

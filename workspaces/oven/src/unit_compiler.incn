@@ -38,8 +38,6 @@ pub model PlanRecordCounts:
 
     pub plan_evaluations: int = 0
     pub plan_reuses: int = 0
-    pub lowering_demand_evaluations: int = 0
-    pub lowering_demand_reuses: int = 0
     pub native_interface_evaluations: int = 0
 
 
@@ -208,16 +206,10 @@ pub def plan_record_counts(unit: UnitDescription, key: Key, typed: bool) -> Resu
         if not entry.is_file() or not entry.name().endswith(".event"):
             continue
         event = decode_lowering_event(entry.read_bytes().map_err((error) => error.message())?)?
-        reused = event.reused
-        entry_role = event.role == "entry"
-        if reused:
+        if event.reused:
             counts.plan_reuses += 1
-            if not entry_role:
-                counts.lowering_demand_reuses += 1
         else:
             counts.plan_evaluations += 1
-            if not entry_role:
-                counts.lowering_demand_evaluations += 1
     interface = report.joinpath(INTERFACE_REPORT)
     if interface.is_file():
         _ = decode_native_interface(interface.read_bytes().map_err((error) => error.message())?)?

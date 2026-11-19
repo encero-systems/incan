@@ -3,8 +3,8 @@ The store's copy-on-write B+tree directory: immutable, content-checked index pag
 
 Part of the storage substrate with `crate.store`; it names no Oven type. A view's index is one root page. A lookup
 reads only the pages on its path from that root to one leaf, and each page is checked against its content digest.
-Pages are mapped and read in place: a lookup copies out only the keys it compares and the location it finds. A write
-copies the pages on the paths it changes and leaves every other page shared with older roots and other views.
+Pages are mapped and read in place. A lookup compares borrowed keys and copies only the selected references and
+frame location. A write copies the pages on its changed paths and shares the other pages with older views.
 
 Packs: every page one commit writes goes into one pack file, `indexes/<sha256>.pack`, named by its content, so a
 commit installs one index file however many leaves its keys reach. A page reference is `pack:offset:length:digest`;
@@ -25,6 +25,7 @@ cannot reach an answer.
 """
 
 from rust::std::cell import RefCell
+from rust::std::str import from_utf8
 from rust::std::ops import Deref, DerefMut
 from rust::std::rc import Rc
 from rust::std::string import String as RustString
@@ -177,7 +178,7 @@ pub def pages_checked() -> int:
 
 
 pub def copied_index_bytes() -> int:
-    """How many bytes this process copied out of mapped index pages: compared keys and decoded entries."""
+    """Count bytes copied from mapped index pages to return decoded keys, child references, and frame locations."""
     return pages_read.get("copied", 0)
 
 
@@ -254,7 +255,7 @@ pub def find(root: Path, top: str, key: str) -> Result[Option[Location], IndexEr
     """
     The location `key` has under the index rooted at `top`; an empty root is an empty index.
 
-    Each page on the path is read in place; only the keys compared and the one location found are copied out.
+    Compare keys in place and copy only the references and frame location the search selects.
     """
     return Ok(search(root, top, key)?.location)
 
@@ -269,12 +270,12 @@ pub def search(root: Path, top: str, key: str) -> Result[SearchResult, IndexErro
         names.append(page_digest(name))
         page = mapped_page(root, name)?
         if page.level == 0:
-            match leaf_span(page, key).map_err((detail) => malformed_at(name, detail))?:
+            match select_span(page, key, false).map_err((detail) => malformed_at(name, detail))?:
                 None => return Ok(SearchResult(location=None, path_digest=search_digest(names, key)))
                 Some(span) =>
                     found = location_at(page.view, span).map_err((detail) => malformed_at(name, detail))?
                     return Ok(SearchResult(location=Some(found), path_digest=search_digest(names, key)))
-        match covering_span(page, key).map_err((detail) => malformed_at(name, detail))?:
+        match select_span(page, key, true).map_err((detail) => malformed_at(name, detail))?:
             None => return Ok(SearchResult(location=None, path_digest=search_digest(names, key)))
             Some(span) => name = child_at(page, span).map_err((detail) => malformed_at(name, detail))?
 
@@ -284,24 +285,25 @@ def search_digest(path: list[str], key: str) -> str:
     return hexlify(sha256.digest(("\n".join(path) + "\n" + key).encode("utf-8")))
 
 
-def leaf_span(page: Layout, key: str) -> Result[Option[Span], str]:
-    """The leaf entry under `key`; only keys of its length are copied out to compare."""
-    wanted = key.encode("utf-8")
-    for span in page.spans:
-        if span.size == len(wanted) and copied(page.view, span.key, span.size)? == wanted:
+def select_span(page: &Layout, wanted: str, floor: bool) -> Result[Option[Span], str]:
+    """Search the checked key directory for an exact leaf or the inner child covering the key."""
+    mut lower = 0
+    mut upper = len(page.spans)
+    while lower < upper:
+        middle = (lower + upper) // 2
+        span = page.spans[middle]
+        candidate = key_view(page.view, span)?
+        text = from_utf8(candidate.0.as_bytes()).map_err((_) => "key is not valid UTF-8")?
+        if text < wanted:
+            lower = middle + 1
+        elif text > wanted:
+            upper = middle
+        else:
             return Ok(Some(span))
+    if floor and lower > 0:
+        return Ok(Some(page.spans[lower - 1]))
     return Ok(None)
 
-
-def covering_span(page: Layout, key: str) -> Result[Option[Span], str]:
-    """The inner entry whose child's key range holds `key`."""
-    mut chosen: Option[Span] = None
-    for span in page.spans:
-        if key_at(page.view, span)? <= key:
-            chosen = Some(span)
-        else:
-            break
-    return Ok(chosen)
 
 
 pub def entries(root: Path, top: str) -> Result[list[Entry], IndexError]:
@@ -470,7 +472,7 @@ pub def view_digest(view: MappedView) -> bytes:
 
 
 def layout(view: MappedView, pack: str) -> Result[Layout, str]:
-    """Where each entry of a page lies, refusing any length or field that does not fit; nothing is copied."""
+    """Validate the ordered UTF-8 keys and record the bounds of each entry in the checked page."""
     if view.len() < 24:
         return Err("not an index page")
     magic = scalar(view, 0)?
@@ -485,6 +487,7 @@ def layout(view: MappedView, pack: str) -> Result[Layout, str]:
     count = scalar(view, 16)?
     mut offset = 24
     mut spans: list[Span] = []
+    mut previous: Option[MappedView] = None
     for _position in range(count):
         size = scalar(view, offset)?
         field = offset + 8 + size
@@ -499,7 +502,15 @@ def layout(view: MappedView, pack: str) -> Result[Layout, str]:
             width = 8 + scalar(view, field)?
         if field + width > view.len():
             return Err("entry runs past the page")
-        spans.append(Span(key=offset + 8, size=size, field=field))
+        span = Span(key=offset + 8, size=size, field=field)
+        key = key_view(view, span)?
+        title = from_utf8(key.0.as_bytes()).map_err((_) => "key is not valid UTF-8")?
+        if let Some(prior) = previous:
+            earlier = from_utf8(prior.0.as_bytes()).map_err((_) => "key is not valid UTF-8")?
+            if earlier >= title:
+                return Err("index keys are out of order")
+        previous = Some(key)
+        spans.append(span)
         offset = field + width
     if offset != view.len():
         return Err("trailing bytes")
@@ -512,6 +523,13 @@ def entry_at(page: Layout, span: Span) -> Result[Entry, str]:
     if page.level == 0:
         return Ok(Entry(key=key, location=Some(location_at(page.view, span)?), child=""))
     return Ok(Entry(key=key, location=None, child=child_at(page, span)?))
+
+
+def key_view(view: MappedView, span: Span) -> Result[MappedView, str]:
+    """Borrow the key's checked extent within this immutable page."""
+    match view.slice(span.key, span.size):
+        Some(key) => return Ok(key)
+        None => return Err("key runs past the page")
 
 
 def key_at(view: MappedView, span: Span) -> Result[str, str]:

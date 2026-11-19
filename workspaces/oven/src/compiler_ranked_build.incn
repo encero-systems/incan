@@ -388,5 +388,6 @@ pub def ranked_build_pages(store: Path, inputs: &RankedBuildInputs, toolchain: T
             + "\t" + reader.declaration_digest + "\t" + products.declaration_digest + "\t" + str(readers.remaining()), clock)
         refreshed.extend(encode_body_inventory([current])?)
     if len(keyed_readers) > 0:
-        refreshed.extend(select_plan_inventory_except(graph, origin, [], keyed_readers=Some(keyed_readers))?)
+        inventory = select_plan_inventory_except(graph, origin, [], keyed_readers=Some(keyed_readers))?
+        refreshed.extend(inventory.pages)
     return Ok(Some(refreshed))
