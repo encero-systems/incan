@@ -16,11 +16,13 @@ pub model ManifestCacheValue:
 
 
 def family(kind: &str) -> Result[tuple[bytes, int], str]:
-    match kind:
-        "identity" => return Ok((b"lfmdig\x00", 8192))
-        "inventory" => return Ok((b"lfminv\x00", 4194304))
-        "facts" => return Ok((b"lfmfct\x00", 134217728))
-        _ => return Err("unknown Loaf manifest cache family")
+    if kind == "identity":
+        return Ok((b"lfmdig\x00", 8192))
+    if kind == "inventory":
+        return Ok((b"lfminv\x00", 4194304))
+    if kind == "facts":
+        return Ok((b"lfmfct\x00", 134217728))
+    return Err("unknown Loaf manifest cache family")
 
 
 def header(key: bytes, kind: &str) -> Description:
