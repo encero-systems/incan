@@ -321,22 +321,16 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     """
     scratch = scratch_directory()?
     root = scratch.path()
-    source = root.joinpath("main.incn")
+    source = root.joinpath("hello.incn")
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     store = root.joinpath("store")
     write(source, "def greeting() -> str:\n    return \"hello\"\n\n\ndef main() -> None:\n    println(greeting())\n")?
-    trace = root.joinpath("trace")
-    trace.mkdir(true, false).map_err((error) => error.message())?
-    initial = lowering_example_run_with_fingerprints(binary, source, store, "hello", Some(trace))?
+    initial = lowering_example_run_with_fingerprints(binary, source, store, "hello")?
     initial_fingerprints = native_fingerprints(root)?
-    initial_demands = physical_demands(trace)?
-    assert initial_demands == 2, f"initial build executed {initial_demands} demand producers"
     assert proof_count(initial, "plan_function_evaluations")? == 3
     write(source, "def greeting() -> str:\n    return \"hullo\"\n\n\ndef main() -> None:\n    println(greeting())\n")?
-    edited = lowering_example_run_with_fingerprints(binary, source, store, "hullo", Some(trace))?
+    edited = lowering_example_run_with_fingerprints(binary, source, store, "hullo")?
     edited_fingerprints = native_fingerprints(root)?
-    edited_demands = physical_demands(trace)? - initial_demands
-    assert edited_demands == 1, f"edited build executed {edited_demands} demand producers"
     assert fingerprint_for(edited_fingerprints, "greeting")? != fingerprint_for(initial_fingerprints, "greeting")?
     assert fingerprint_for(edited_fingerprints, "main")? == fingerprint_for(initial_fingerprints, "main")?
     assert partition_for(edited_fingerprints, "greeting")? == partition_for(initial_fingerprints, "greeting")?
@@ -700,16 +694,23 @@ def verify_module_work(previous: Dict[str, int], current: Dict[str, int], edited
 pub def test_body_edits_keep_one_indexed_output_per_slot() -> Result[None, str]:
     """
     Five body edits in a row leave one indexed output per slot: each edit's evaluations retire the outputs they
-    replace, so what the next edit selects and invalidates does not grow with the edits before it.
+    replace. Only the changed callee enters the demand producer after the first build.
     """
     scratch = scratch_directory()?
     root = scratch.path()
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     source = root.joinpath("main.incn")
     store = root.joinpath("store")
+    trace = root.joinpath("trace")
+    trace.mkdir(true, false).map_err((error) => error.message())?
+    mut previous_demands = 0
     for edit in range(5):
-        write(source, f"def main() -> None:\n    println(\"edit {edit}\")\n")?
-        _ = lowering_example_run(binary, source, store, f"edit {edit}")?
+        write(source, f"def greeting() -> str:\n    return \"edit {edit}\"\n\n\ndef main() -> None:\n    println(greeting())\n")?
+        _ = lowering_example_run(binary, source, store, f"edit {edit}", Some(trace))?
+        entered = physical_demands(trace)?
+        expected = 2 if edit == 0 else 1
+        assert entered - previous_demands == expected, f"edit {edit} executed {entered - previous_demands} demand producers"
+        previous_demands = entered
     latest = store_snapshot(store).map_err((error) => error.message())?
     mut slots: Dict[str, int] = {}
     for key in keys_with_prefix(latest, "incan.engine.output/2\t").map_err((error) => error.message())?:
@@ -1302,10 +1303,14 @@ def stop_example_engine(binary: str, store: Path) -> Result[None, str]:
     return Ok(None)
 
 
-def lowering_example_run(binary: str, source: Path, store: Path, expected: str) -> Result[JsonValue, str]:
+def lowering_example_run(
+    binary: str, source: Path, store: Path, expected: str, trace: Option[Path] = None,
+) -> Result[JsonValue, str]:
     """Run one real engine request and require both successful native output and its measured proof."""
-    outcome = Command
-        .new(binary)
+    mut command = Command.new(binary)
+    if let Some(directory) = trace:
+        command.env("INCAN_ENGINE_TRACE", directory.0).env("INCAN_TRACE_PRODUCERS", "1")
+    outcome = command
         .arg("run")
         .arg(source.0)
         .args(["--profile", "release", "--engine-report"])
@@ -1322,7 +1327,7 @@ def lowering_example_run(binary: str, source: Path, store: Path, expected: str) 
 
 
 def physical_demands(trace: Path) -> Result[int, str]:
-    """Count physical demand entries in this fixture's one engine trace."""
+    """Count physical demand entries in the fixture's engine trace directory."""
     mut entries = 0
     for path in trace.iterdir().map_err((error) => error.message())?:
         if not path.name().startswith("engine-producers-"):
@@ -1343,13 +1348,10 @@ def lowering_example_run_with_fingerprints(
     source: Path,
     store: Path,
     expected: str,
-    trace: Option[Path] = None,
 ) -> Result[JsonValue, str]:
-    """Run one native request with per-definition tracked inputs and optional producer entries."""
-    mut command = Command.new(binary)
-    if let Some(directory) = trace:
-        command.env("INCAN_ENGINE_TRACE", directory.0).env("INCAN_TRACE_PRODUCERS", "1")
-    outcome = command
+    """Run one native request while asking the adapter for per-definition tracked-input evidence."""
+    outcome = Command
+        .new(binary)
         .arg("run")
         .arg(source.0)
         .args(["--profile", "release", "--engine-report"])
