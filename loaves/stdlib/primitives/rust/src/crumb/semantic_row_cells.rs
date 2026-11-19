@@ -15,6 +15,7 @@ pub(super) fn read_root(
     raw: &[u8],
     origin: usize,
     dictionary: &[Stored],
+    mapped: Option<&hash::RowView>,
     budget: &mut Budget,
 ) -> Positioned<Value> {
     let mut cursor = Span::new(raw, origin);
@@ -25,6 +26,7 @@ pub(super) fn read_root(
             &bitmap,
             &index,
             dictionary,
+            mapped,
             budget,
         )?));
     }
@@ -36,7 +38,7 @@ pub(super) fn read_root(
     let identity = &variant.identity;
     let (bitmap, index) =
         read_record_index(&variant.fields, &mut cursor, budget).map_err(|refusal| refusal.in_variant(identity))?;
-    let fields = read_fields(&variant.fields, &bitmap, &index, dictionary, budget)
+    let fields = read_fields(&variant.fields, &bitmap, &index, dictionary, mapped, budget)
         .map_err(|refusal| refusal.in_variant(identity))?;
     Ok(Value::Enum(identity.clone(), fields))
 }
@@ -82,6 +84,7 @@ fn read_fields(
     bitmap: &Bitmap,
     index: &CellIndex,
     dictionary: &[Stored],
+    mapped: Option<&hash::RowView>,
     budget: &mut Budget,
 ) -> Positioned<Vec<hash::Field>> {
     let (mut result, mut eligible, mut position) = (Vec::with_capacity(fields.len()), 0, 0);
@@ -96,7 +99,8 @@ fn read_fields(
         let value = if present {
             let (view, origin) = index.selected(position, budget)?;
             position += 1;
-            field_cell(field, view, origin, dictionary, budget).map_err(|refusal| refusal.in_field(&field.identity))?
+            field_cell(field, view, origin, dictionary, mapped, budget)
+                .map_err(|refusal| refusal.in_field(&field.identity))?
         } else {
             absent_value(field, bitmap.origin)?
         };
@@ -116,6 +120,7 @@ fn field_cell(
     view: &[u8],
     origin: usize,
     dictionary: &[Stored],
+    mapped: Option<&hash::RowView>,
     budget: &mut Budget,
 ) -> Positioned<Value> {
     if field.absent == 'n' {
@@ -130,10 +135,11 @@ fn field_cell(
             view,
             origin,
             dictionary,
+            mapped,
             budget,
         )?)));
     }
-    let value = cell(&field.storage, view, origin, dictionary, budget)?;
+    let value = cell(&field.storage, view, origin, dictionary, mapped, budget)?;
     if field.absent == 'e' {
         match &value {
             Value::List(items) | Value::Set(items) if items.is_empty() => return Err(at("redundant_presence", origin)),
@@ -146,10 +152,17 @@ fn field_cell(
 }
 
 /// Decode one typed cell under the shared depth allowance.
-fn cell(node: &Node, view: &[u8], origin: usize, dictionary: &[Stored], budget: &mut Budget) -> Positioned<Value> {
+fn cell(
+    node: &Node,
+    view: &[u8],
+    origin: usize,
+    dictionary: &[Stored],
+    mapped: Option<&hash::RowView>,
+    budget: &mut Budget,
+) -> Positioned<Value> {
     budget.elements(1).place(origin)?;
     budget.enter().place(origin)?;
-    let result = cell_inner(node, view, origin, dictionary, budget);
+    let result = cell_inner(node, view, origin, dictionary, mapped, budget);
     budget.leave();
     result
 }
@@ -160,12 +173,13 @@ fn cell_inner(
     view: &[u8],
     origin: usize,
     dictionary: &[Stored],
+    mapped: Option<&hash::RowView>,
     budget: &mut Budget,
 ) -> Positioned<Value> {
     match node {
-        Node::Scalar(kind) => scalar(kind, view, origin, budget),
+        Node::Scalar(kind) => scalar(kind, view, origin, mapped, budget),
         Node::Decimal(precision, scale) => decimal(*precision, *scale, view, origin, budget),
-        Node::Reference(_) => scalar("reference", view, origin, budget),
+        Node::Reference(_) => scalar("reference", view, origin, None, budget),
         Node::Nominal(..) => {
             let key = hash::closed_selector_charged(node, budget).map_err(|kind| {
                 at(
@@ -183,15 +197,21 @@ fn cell_inner(
                 .iter()
                 .find(|entry| entry.key == key)
                 .ok_or_else(|| at("invalid_selector", origin))?;
-            read_root(entry, view, origin, dictionary, budget)
+            read_root(entry, view, origin, dictionary, mapped, budget)
         }
-        Node::Container(kind, arguments) => container(kind, arguments, view, origin, dictionary, budget),
+        Node::Container(kind, arguments) => container(kind, arguments, view, origin, dictionary, mapped, budget),
         _ => Err(at("invalid_selector", origin)),
     }
 }
 
 /// Decode one scalar cell of its admitted width and type.
-fn scalar(kind: &str, view: &[u8], origin: usize, budget: &mut Budget) -> Positioned<Value> {
+fn scalar(
+    kind: &str,
+    view: &[u8],
+    origin: usize,
+    mapped: Option<&hash::RowView>,
+    budget: &mut Budget,
+) -> Positioned<Value> {
     if let Some(columns::KeyType::Integer(signed, width)) = columns::key_type(kind) {
         if view.len() != width {
             return Err(at("invalid_cell", origin));
@@ -222,7 +242,17 @@ fn scalar(kind: &str, view: &[u8], origin: usize, budget: &mut Budget) -> Positi
         "binary" => {
             let raw = cursor.frame(budget)?;
             budget.bytes(raw.len() as u64).place(origin)?;
-            Value::Binary(raw.to_vec())
+            let bytes = match mapped {
+                Some(backing) => {
+                    let start = cursor.absolute() - raw.len();
+                    let view = backing
+                        .slice(start, raw.len())
+                        .ok_or_else(|| at("invalid_offsets", start))?;
+                    hash::Binary::Mapped(view)
+                }
+                None => hash::Binary::Owned(raw.to_vec()),
+            };
+            Value::Binary(bytes)
         }
         "secret_string" | "secret_bytes" => {
             if view.len() != 1 || cursor.byte(budget)? != 0 {
@@ -264,6 +294,7 @@ fn container(
     view: &[u8],
     origin: usize,
     dictionary: &[Stored],
+    mapped: Option<&hash::RowView>,
     budget: &mut Budget,
 ) -> Positioned<Value> {
     let mut cursor = Span::new(view, origin);
@@ -273,7 +304,14 @@ fn container(
             1 => {
                 let child = cursor.frame(budget)?;
                 let child_origin = cursor.absolute() - child.len();
-                Value::Some(Box::new(cell(&arguments[0], child, child_origin, dictionary, budget)?))
+                Value::Some(Box::new(cell(
+                    &arguments[0],
+                    child,
+                    child_origin,
+                    dictionary,
+                    mapped,
+                    budget,
+                )?))
             }
             _ => return Err(at("invalid_cell", origin)),
         };
@@ -283,7 +321,7 @@ fn container(
         return Ok(value);
     }
     if kind == "union" {
-        return union(arguments, &mut cursor, dictionary, budget);
+        return union(arguments, &mut cursor, dictionary, mapped, budget);
     }
     let count = cursor.length(budget)?;
     budget.elements(count as u64).place(origin)?;
@@ -299,7 +337,7 @@ fn container(
     }
     let index = read_index(&mut cursor, slots, budget)?;
     if kind == "map" {
-        return map(arguments, &index, dictionary, budget);
+        return map(arguments, &index, dictionary, mapped, budget);
     }
     let mut values: Vec<Value> = Vec::with_capacity(count);
     for position in 0..count {
@@ -309,7 +347,7 @@ fn container(
         } else {
             &arguments[0]
         };
-        let value = cell(element, child, child_origin, dictionary, budget)?;
+        let value = cell(element, child, child_origin, dictionary, mapped, budget)?;
         if kind == "set"
             && let Some(previous) = values.last()
         {
@@ -326,13 +364,19 @@ fn container(
 }
 
 /// Read a map's key and value cells pair by pair, refusing each key not strictly after the one before it.
-fn map(arguments: &[Node], index: &CellIndex, dictionary: &[Stored], budget: &mut Budget) -> Positioned<Value> {
+fn map(
+    arguments: &[Node],
+    index: &CellIndex,
+    dictionary: &[Stored],
+    mapped: Option<&hash::RowView>,
+    budget: &mut Budget,
+) -> Positioned<Value> {
     let mut entries: Vec<(Value, Value)> = Vec::with_capacity(index.count() / 2);
     for position in 0..index.count() / 2 {
         let (key_view, key_origin) = index.selected(position * 2, budget)?;
         let (value_view, value_origin) = index.selected(position * 2 + 1, budget)?;
-        let key = cell(&arguments[0], key_view, key_origin, dictionary, budget)?;
-        let value = cell(&arguments[1], value_view, value_origin, dictionary, budget)?;
+        let key = cell(&arguments[0], key_view, key_origin, dictionary, mapped, budget)?;
+        let value = cell(&arguments[1], value_view, value_origin, dictionary, mapped, budget)?;
         if let Some((previous, _)) = entries.last() {
             checked_order(previous, &key, key_origin)?;
         }
@@ -342,7 +386,13 @@ fn map(arguments: &[Node], index: &CellIndex, dictionary: &[Stored], budget: &mu
 }
 
 /// Select a union member by its rank in the written selector order, then read the rest of the cell as that member.
-fn union(arguments: &[Node], cursor: &mut Span, dictionary: &[Stored], budget: &mut Budget) -> Positioned<Value> {
+fn union(
+    arguments: &[Node],
+    cursor: &mut Span,
+    dictionary: &[Stored],
+    mapped: Option<&hash::RowView>,
+    budget: &mut Budget,
+) -> Positioned<Value> {
     let offset = cursor.absolute();
     let requested = cursor.length(budget)?;
     if requested >= arguments.len() {
@@ -359,7 +409,7 @@ fn union(arguments: &[Node], cursor: &mut Span, dictionary: &[Stored], budget: &
         if rank == requested {
             let origin = cursor.absolute();
             let rest = cursor.rest(budget)?;
-            let value = cell(candidate, rest, origin, dictionary, budget)?;
+            let value = cell(candidate, rest, origin, dictionary, mapped, budget)?;
             return Ok(Value::Union(candidate.clone(), Box::new(value)));
         }
     }
@@ -488,9 +538,8 @@ pub(super) fn read_selected(
     budget: &mut Budget,
 ) -> Positioned<Value> {
     let value = match selected.cell {
-        Some((view, origin)) => {
-            field_cell(selected.field, view, origin, dictionary, budget).map_err(|refusal| refusal.in_field(identity))
-        }
+        Some((view, origin)) => field_cell(selected.field, view, origin, dictionary, None, budget)
+            .map_err(|refusal| refusal.in_field(identity)),
         None => absent_value(selected.field, selected.bitmap_origin),
     };
     match selected.variant {

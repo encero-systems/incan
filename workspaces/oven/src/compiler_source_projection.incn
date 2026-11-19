@@ -43,6 +43,7 @@ pub model SourceProjection:
     pub owners: list[SourceProjectionRecord]
     pub documentation: list[tuple[str, str]]
     pub placements: Dict[str, SourceProjectionRecord] = {}
+    pub bindings: Dict[str, list[str]] = {}
     # Only guarded project modules depend on the resolved package feature environment.
     pub feature_inputs: list[SourceProjectionRecord] = []
 
@@ -141,6 +142,7 @@ class SourceProjector:
         mut owners: list[SourceProjectionRecord] = []
         mut docs: list[tuple[str, str]] = []
         mut placements: Dict[str, SourceProjectionRecord] = {}
+        mut bindings: Dict[str, list[str]] = {}
         if len(self.boundaries) == 0:
             header = self.source
         else:
@@ -176,6 +178,7 @@ class SourceProjector:
                             owners.append(semantic_record(default, comment_free(default.text)))
                     for owner_index in range(first_owner, len(owners)):
                         record = owners[owner_index]
+                        add_scope_binding(bindings, record.key.facet)
                         relative = record.start - boundary.start
                         mut offset = byte_start
                         if relative != 0:
@@ -222,6 +225,7 @@ class SourceProjector:
                 owners=owners,
                 documentation=docs,
                 placements=placements,
+                bindings=bindings,
             ),
         )
 
@@ -232,17 +236,35 @@ pub def scope_members(census: str) -> Dict[str, list[str]]:
     for facet in census.split("\n"):
         if facet == "":
             continue
-        parts = facet.split(":")
-        name = parts[len(parts) - 1]
-        if name not in by_name:
-            by_name[name] = []
-        by_name[name].append(facet)
+        add_scope_binding(by_name, facet)
     return by_name
+
+
+def add_scope_binding(mut bindings: Dict[str, list[str]], facet: str) -> None:
+    name = scope_name(facet)
+    if name not in bindings:
+        bindings[name] = []
+    bindings[name].append(facet)
+
+
+def scope_name(facet: str) -> str:
+    parts = facet.split(":")
+    return parts[len(parts) - 1]
+
+
+pub def scope_key(census: &SourceProjectionRecord, name: str) -> RecordKey:
+    """Address one declared name, including all its same-name owners."""
+    return source_key("scope-name", census.key.origin, census.key.identity, name)
+
+
+pub def signature_scope_key(signature: &RecordKey) -> RecordKey:
+    """Observe presence of the exact name whose signature a caller binds."""
+    return source_key("scope-name", signature.origin, signature.identity, scope_name(signature.facet))
 
 
 pub def scope_member(census: &SourceProjectionRecord, members: &Dict[str, list[str]], name: str) -> SourceProjectionRecord:
     """An empty selection proves that no declaration of this name exists in the captured module."""
-    key = source_key("scope-name", census.key.origin, census.key.identity, name)
+    key = scope_key(census, name)
     mut text = ""
     if members.contains_key(name):
         text = "\n".join(sorted(members[name]))

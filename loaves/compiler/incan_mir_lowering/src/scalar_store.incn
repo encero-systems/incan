@@ -3,6 +3,7 @@
 from pub::internal_models.lowering_events import (
     EventPosition, EventReference, LoweringEvent, LoweringRefusal, decode_lowering_event, encode_lowering_event, encode_lowering_refusal,
 )
+from pub::incan_platform.trace import enter_producer, finish_producer
 from rust::incan_semantics_core::semantic_digest import semantic_digest
 from rust::std::process import id as process_id
 from std.fs import Path
@@ -86,16 +87,14 @@ pub def retained_scalar(
                 Err(_) => return None
                 Ok(encoded) =>
                     # 2. A changed or missing named declaration is a miss, never a stale position.
-                    payload = match record_payload(encoded, inputs, span, positions):
+                    payload, requests = match record_payload(encoded, inputs, span, positions):
                         Some(value) => value
                         None => return None
                     match restore_named_product(payload, unit):
                         None => return None
                         Some(product) =>
                             function, runtime, resolved, frames = product
-                            match decode_record(encoded):
-                                Ok(record) => return Some((function, runtime, resolved, frames, record.requests))
-                                Err(_) => return None
+                            return Some((function, runtime, resolved, frames, requests))
 
 
 pub def retain_scalar(
@@ -162,9 +161,9 @@ pub def finalized_plan_product(
     mapping = WirePositions(change=PositionChange.PlaceAt(list(positions), "", 0, str(function.span.file), function.span.line))
     current, demand, identities = positioned_product_requirements(record.function, mapping, references)?
     # 2. The same inputs now name the exact native function compiled for this declaration.
-    # A freshly captured product already passed the producer's position and schema round trips. Compare the
-    # canonical whole-plan bytes, including floating-point bits and helper frames, before reusing that proof.
-    if not reused and reported == encoded and matches_product(current, function, demand, identities, frames, references)?:
+    # Captured and restored products already passed schema and position admission. Compare the exact whole-plan
+    # bytes, including floating-point bits and helper frames, before keeping that proof under its original key.
+    if reported == encoded and matches_product(current, function, demand, identities, frames, references)?:
         if record.digest != plan_function_digest(record.function, record.requests)?:
             return Err("plan-function product digest disagrees with its capture")
         return Ok((encoded, references, current))
@@ -178,7 +177,9 @@ pub def finalized_plan_product(
         match named:
             Some(nominal) => nominals.append(nominal)
             None => return Err(f"plan-function {function.name} names a declaration its keyed product does not")
+    retried = enter_producer("compiler", "plan-function-reencode", function.name, key)
     final = encoded_record(record.inputs, function, demand, nominals, positions, frames, record.requests)?
+    finish_producer(retried, "produced")
     if final == encoded:
         return Ok((encoded, whole, current))
     # 3. A reused product was already final when retained, so any difference is a lowering defect, never a refresh.
@@ -325,8 +326,8 @@ def record_payload(
     inputs: list[str],
     span: Option[SourceSpan] = None,
     positions: list[tuple[int, int]] = [],
-) -> Option[bytes]:
-    """Treat invalid schema, changed inputs and altered native bytes as cache misses before decoding a function."""
+) -> Option[tuple[bytes, list[bytes]]]:
+    """Verify one decoded record and hand its positioned payload and generic requests to the caller."""
     match decode_record(encoded):
         Err(_) => return None
         Ok(record) =>
@@ -344,14 +345,14 @@ def record_payload(
                     match positioned_product(payload, positions, str(current.file), current.line):
                         Ok(moved) => payload = moved
                         Err(_) => return None
-            return Some(payload)
+            return Some((payload, record.requests))
 
 
 def valid_record(encoded: bytes, inputs: list[str]) -> bool:
     """Require a record to decode completely, binding each named declaration to its own ordinal."""
     match record_payload(encoded, inputs):
         None => return false
-        Some(payload) => return valid_ordinal_product(payload)
+        Some((payload, _)) => return valid_ordinal_product(payload)
 
 
 def decode_record(encoded: bytes) -> Result[PlanFunctionRecord, str]:

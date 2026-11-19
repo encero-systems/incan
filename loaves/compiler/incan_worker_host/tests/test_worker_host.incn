@@ -562,6 +562,85 @@ pub def test_an_idle_worker_retires_and_withdraws_its_socket() -> Result[None, s
     return Ok(None)
 
 
+pub def test_editor_check_keeps_the_worker_through_ordinary_idleness() -> Result[None, str]:
+    """An editor check extends the idle deadline. An ordinary follow-up still answers under that deadline."""
+    socket = socket_path("editor-idle")
+    mut configuration = settings(socket, 40, 16777216, None)
+    configuration.bounds = Bounds(idle_millis=40, margin=16777216, ceiling=FOOTPRINT_CEILING, retained_idle_millis=300)
+    mut host = host_for(configuration)?
+    editor = check_text(GENERATION).replace("\"/p/sysroot\"]", "\"/p/sysroot\",\"--retain-checked-modules\"]")
+    mut initial = caller(socket, editor)?
+    assert is_check(served(host)?)
+    complete(host, ActivationOutcome.Exited(0), 1000)
+    assert not retired(reply(initial)?)
+    sleep(Duration.from_millis(90))
+    mut renewed = caller(socket, editor)?
+    assert is_check(served(host)?)
+    started = Instant.now()
+    complete(host, ActivationOutcome.Exited(0), 1000)
+    assert not retired(reply(renewed)?)
+    sleep(Duration.from_millis(90))
+    mut next = caller(socket, check_text(GENERATION))?
+    assert is_check(served(host)?)
+    complete(host, ActivationOutcome.Exited(0), 1000)
+    assert not retired(reply(next)?)
+    assert ended(host)
+    assert int(started.elapsed().as_millis()) >= 300
+    assert withdrawn(socket)
+    return Ok(None)
+
+
+pub def test_saved_build_keeps_the_worker_through_ordinary_idleness() -> Result[None, str]:
+    """A completed records build can serve another save after the ordinary worker deadline."""
+    socket = socket_path("saved-build-idle")
+    mut configuration = settings(socket, 40, FOOTPRINT_MARGIN, None)
+    configuration.bounds = Bounds(idle_millis=40, margin=FOOTPRINT_MARGIN, ceiling=FOOTPRINT_CEILING, retained_idle_millis=300)
+    mut host = host_for(configuration)?
+    saved = unit_text(GENERATION).replace(
+        "\"/p/sysroot\"]",
+        "\"/p/sysroot\",\"--graph-body-output\",\"/p/bodies\",\"--plan-record-products\",\"/p/products\"]",
+    )
+    mut initial = caller(socket, saved)?
+    assert served(host)?.command == WorkerCommand.Unit
+    complete(host, ActivationOutcome.Exited(0), 1000)
+    assert not retired(reply(initial)?)
+    sleep(Duration.from_millis(90))
+    mut renewed = caller(socket, saved)?
+    assert served(host)?.command == WorkerCommand.Unit
+    started = Instant.now()
+    complete(host, ActivationOutcome.Exited(0), 1000)
+    assert not retired(reply(renewed)?)
+    assert ended(host)
+    assert int(started.elapsed().as_millis()) >= 300
+    return Ok(None)
+
+
+pub def test_editor_checks_measure_growth_from_the_first_successful_project() -> Result[None, str]:
+    """Dependency preparation and refused buffers precede project retention. Growth and the ceiling still apply."""
+    bounds = Bounds(idle_millis=10000, margin=100, ceiling=5000)
+    mut policy = lifecycle(bounds)
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 1000, false, 800).retirement)
+    policy.note_retained_activity(false)
+    assert stays(policy.settle(ActivationOutcome.Exited(1), 1000, false, 800).retirement)
+    for _version in range(3):
+        policy.note_retained_activity(true)
+        assert stays(policy.settle(ActivationOutcome.Exited(0), 3200, false, 2400).retirement)
+    policy.note_retained_activity(true)
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 3350, false, 2520).retirement)
+    policy.note_retained_activity(true)
+    match policy.settle(ActivationOutcome.Exited(0), 3350, false, 2520).retirement:
+        Some(reason) =>
+            assert reason == Retirement.Footprint
+        None => return Err("growth above the retained editor project kept the worker")
+    mut ceiling = lifecycle(bounds)
+    ceiling.note_retained_activity(true)
+    match ceiling.settle(ActivationOutcome.Exited(0), 5001, false, 2400).retirement:
+        Some(reason) =>
+            assert reason == Retirement.Footprint
+        None => return Err("the first editor check exceeded the physical ceiling")
+    return Ok(None)
+
+
 pub def test_a_worker_retires_once_its_socket_or_home_is_gone() -> Result[None, str]:
     """
     A worker whose socket path is removed, replaced or whose home is deleted retires within about a second, long

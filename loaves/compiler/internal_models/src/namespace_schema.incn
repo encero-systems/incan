@@ -314,6 +314,10 @@ def shape_checked_namespace_interface() -> Description:
         ModelField(identity=b"\x17\x37\x3c\xa1\xc7\x63", name="members", storage="map<string,record@6a5290805847>"),
         ModelField(identity=b"\x6d\x7c\x78\x90\xae\xf6", name="constructor_defaults", storage="list<tuple<record@28cdd429f7ec,list<option<enum@154e90b7aa31>>>>"),
         ModelField(identity=b"\x04\x3a\x98\x79\x96\x75", name="nominal_scope", storage="map<string,record@28cdd429f7ec>"),
+        ModelField(identity=b"\x81\xb5\x3d\x1a\xc8\x77", name="provider_carriers", storage="option<list<string>>"),
+        ModelField(identity=b"\x91\x72\x25\x88\xbb\x63", name="compiled_libraries", storage="list<string>"),
+        ModelField(identity=b"\xf6\x0c\x79\xee\x37\x14", name="compiled_providers", storage="list<record@9779a056d087>"),
+        ModelField(identity=b"\x16\x79\x6a\x34\x8a\xef", name="compiled_types", storage="map<string,record@488634673770>"),
     ])
 
 def shape_decorator_arg_metadata() -> Description:
@@ -527,6 +531,15 @@ def shape_member_visibility_export() -> Description:
     return enum_schema(b"\x5d\x56\x09\xe2\x5e\x89\x00", "checked_namespace.MemberVisibilityExport", [
         variant_schema(b"\xc6\x3e\xb6\x72\x0c\x6e", "Private", []),
         variant_schema(b"\x59\x19\x35\xb1\x5b\x1c", "Public", []),
+    ])
+
+def shape_namespace_compiled_type() -> Description:
+    return model_description(b"\x48\x86\x34\x67\x37\x70\x00", "checked_namespace.NamespaceCompiledType", [
+        ModelField(identity=b"\xed\x93\x6e\x25\x5c\x4b", name="dependency_key", storage="string"),
+        ModelField(identity=b"\x85\x7d\xc6\xeb\xc7\xd2", name="source_path", storage="list<string>"),
+        ModelField(identity=b"\xaa\x7c\x07\xd6\x0f\x68", name="scope_binding", storage="boolean"),
+        ModelField(identity=b"\x0d\xee\xb8\xfa\x1d\xbb", name="canonical", storage="option<record@28cdd429f7ec>"),
+        ModelField(identity=b"\xdd\x21\x5c\x07\x2f\x9f", name="selected_provider", storage="option<u32>"),
     ])
 
 def shape_namespace_member_identities() -> Description:
@@ -914,6 +927,7 @@ pub def namespace_descriptions() -> list[Description]:
         shape_loaf_identity(),
         shape_made_private_export(),
         shape_member_visibility_export(),
+        shape_namespace_compiled_type(),
         shape_namespace_member_identities(),
         shape_native_union_export(),
         shape_native_union_owner_export(),

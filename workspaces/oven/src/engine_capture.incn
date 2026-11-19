@@ -589,7 +589,7 @@ model Capture:
                 listing = CapturedListing(
                     path=directory,
                     metadata=observed,
-                    settled=observed.settled(self.settle),
+                    settled=observed.settled_for_capture(self.settle),
                     files=entry.files,
                     directories=entry.directories,
                 )
@@ -674,7 +674,7 @@ model Capture:
                     if stable_across_read(before, after):
                         self.counters.in_reach.hashes += 1
                         digest = hexlify(sha256.digest(content))
-                        settled = after.settled(self.settle)
+                        settled = after.settled_for_capture(self.settle)
                         self.found[path] = CapturedInput(
                             path=path,
                             role=role,

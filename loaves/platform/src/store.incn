@@ -43,7 +43,7 @@ from rust::std::rc import Rc
 from std.primitives.hash import sha256
 from std.primitives.hex import hexlify
 from std.primitives.locking import LockGuard
-from std.primitives.views import MappedView
+from std.primitives.views import MappedFile, MappedView
 from crate.trace.schema import Operation
 from crate.ipc import session_id
 from crate.store.files import file_digest
@@ -485,6 +485,15 @@ pub def lookup(view: Snapshot, key: str) -> Result[Lookup, StoreError]:
             return read_frame(view.root, key, location)
 
 
+pub def locate_value(view: Snapshot, key: str) -> Result[Option[Location], StoreError]:
+    """Select a live frame address from a pinned index. The consumer authenticates the frame when it opens it."""
+    found = index_find(view.root, view.index, key).map_err(index_failure)?
+    if let Some(location) = found:
+        if not location.tombstone:
+            return Ok(found)
+    return Ok(None)
+
+
 pub def lookup_binding(view: Snapshot, key: str) -> Result[BindingLookup, StoreError]:
     """Read one complete value with its authenticated binding evidence."""
     return select_binding(view, key, true)
@@ -598,6 +607,24 @@ pub def read_frame(root: Path, key: str, location: Location) -> Result[Lookup, S
     """
     path = root.joinpath("segments").joinpath(f"{location.segment}.seg")
     mapped = path.store_map_read().map_err((error) => failure("integrity", path.value, error.message()))?
+    return read_placed_frame(path, mapped, key, location)
+
+
+pub def read_frame_cached(
+    root: Path, key: str, location: Location, mut mappings: Dict[str, MappedFile],
+) -> Result[Lookup, StoreError]:
+    """Reuse immutable segment mappings within one leased request, retaining at most 32 segments."""
+    path = root.joinpath("segments").joinpath(f"{location.segment}.seg")
+    if let Some(mapped) = mappings.get(location.segment):
+        return read_placed_frame(path, mapped, key, location)
+    mapped = path.store_map_read().map_err((error) => failure("integrity", path.value, error.message()))?
+    if len(mappings) < 32:
+        mappings[location.segment] = mapped
+    return read_placed_frame(path, mapped, key, location)
+
+
+def read_placed_frame(path: Path, mapped: &MappedFile, key: str, location: Location) -> Result[Lookup, StoreError]:
+    """Verify an indexed frame from its established immutable backing and retain only the bounded value view."""
     frame = part(path, mapped.view(location.offset, location.length), "frame runs past its segment")?
     counted["records"] = counted.get("records", 0) + 1
     counted["bytes"] = counted.get("bytes", 0) + location.length

@@ -21,6 +21,8 @@ from rust::incan_semantics_core::body_ir import (
     NominalDeclaration,
 )
 from rust::std::collections import BTreeMap
+from rust::incan_semantics_core::body_ir import nominal_carrier_key
+from type_parameters import source_nominal_owner
 from rust::std::sync import Arc
 from body_ir_record_adapters import native_body
 from decls import ViewLifetimeLayout
@@ -93,6 +95,27 @@ pub def test_generic_result_requires_independent_closed_storage() -> None:
     assert not independent_result(generic("Result", [unit, generic("Reference", [text])]))
 
 
+pub def test_source_nominal_lookup_respects_direct_and_legacy_carriers() -> Result[None, str]:
+    """A missing spelling needs a checked carrier, and a direct checked alias wins."""
+    source = CanonicalSymbolId.module_declaration(
+        ["local_packet"], "Payload", SemanticSourceTargetKind.Model, HirSourceSpan.new(0, 10),
+    )
+    mut scope: BTreeMap[str, CanonicalSymbolId] = BTreeMap.new()
+    _ = scope.insert("Payload", source.clone())
+    assert source_nominal_owner(scope, "Payload")
+    assert not source_nominal_owner(scope, "Optional")
+    match nominal_carrier_key(source):
+        Some(key) =>
+            assert source_nominal_owner(scope, key)
+            shadow = CanonicalSymbolId.module_declaration(
+                ["local_packet"], "Plain", SemanticSourceTargetKind.TypeAlias, HirSourceSpan.new(11, 20),
+            )
+            _ = scope.insert(key.clone(), shadow)
+            assert not source_nominal_owner(scope, key)
+        None => return Err("source declaration has no carrier")
+    return Ok(None)
+
+
 def source_identity(module: str, name: str, kind: SemanticSourceTargetKind) -> CanonicalSymbolId:
     return CanonicalSymbolId.module_declaration(
         ["std", str(module)], name, kind, HirSourceSpan.new(0, 10),
@@ -122,7 +145,7 @@ def source_enum(name: str, fields: list[RustType]) -> EnumDeclaration:
             ),
         ],
         derives=[],
-        named_type_identities=identities,
+        named_type_identities=Arc.new(identities),
     )
 
 
@@ -215,8 +238,9 @@ pub def test_result_requirements_use_exact_owned_source_declaration_closure() ->
     foreign.canonical = CanonicalSymbolId.module_declaration(
         ["other"], "Value", SemanticSourceTargetKind.Enum, HirSourceSpan.new(0, 10),
     )
-    foreign.named_type_identities.clear()
-    _ = foreign.named_type_identities.insert("Value", foreign.canonical.clone())
+    mut foreign_scope: BTreeMap[str, CanonicalSymbolId] = BTreeMap.new()
+    _ = foreign_scope.insert("Value", foreign.canonical.clone())
+    foreign.named_type_identities = Arc.new(foreign_scope)
     mut repointed = identities.clone()
     _ = repointed.insert("Value", foreign.canonical.clone())
     assert not checked_requirement(
@@ -231,7 +255,9 @@ pub def test_result_requirements_use_exact_owned_source_declaration_closure() ->
     )
     mut alias_cycle = value.clone()
     alias_cycle.variants[0].fields = [RustType.Named("Wrong")]
-    _ = alias_cycle.named_type_identities.insert("Wrong", alias_cycle.canonical.clone())
+    mut alias_cycle_scope = alias_cycle.named_type_identities.as_ref().clone()
+    _ = alias_cycle_scope.insert("Wrong", alias_cycle.canonical.clone())
+    alias_cycle.named_type_identities = Arc.new(alias_cycle_scope)
     assert not checked_requirement(
         generic("Result", [RustType.Named("Value"), RustType.Named("CodecFault")]),
         identities,
@@ -258,8 +284,9 @@ pub def test_result_requirements_use_exact_owned_source_declaration_closure() ->
         wrapped.canonical = source_identity(
             "result_requirements", f"{wrapper}Payload", SemanticSourceTargetKind.Enum,
         )
-        wrapped.named_type_identities.clear()
-        _ = wrapped.named_type_identities.insert(f"{wrapper}Payload", wrapped.canonical.clone())
+        mut wrapped_scope: BTreeMap[str, CanonicalSymbolId] = BTreeMap.new()
+        _ = wrapped_scope.insert(f"{wrapper}Payload", wrapped.canonical.clone())
+        wrapped.named_type_identities = Arc.new(wrapped_scope)
         wrapped.variants[0].fields = [generic(wrapper, [text.clone()])]
         mut wrapped_ids: BTreeMap[str, CanonicalSymbolId] = BTreeMap.new()
         _ = wrapped_ids.insert(f"{wrapper}Payload", wrapped.canonical.clone())
@@ -269,8 +296,9 @@ pub def test_result_requirements_use_exact_owned_source_declaration_closure() ->
     mut hidden = borrowed.clone()
     hidden.name = "HiddenBorrow"
     hidden.canonical = source_identity("result_requirements", "HiddenBorrow", SemanticSourceTargetKind.Enum)
-    hidden.named_type_identities.clear()
-    _ = hidden.named_type_identities.insert("HiddenBorrow", hidden.canonical.clone())
+    mut hidden_scope: BTreeMap[str, CanonicalSymbolId] = BTreeMap.new()
+    _ = hidden_scope.insert("HiddenBorrow", hidden.canonical.clone())
+    hidden.named_type_identities = Arc.new(hidden_scope)
     hidden.variants[0].fields = [generic("List", [RustType.Ref(text.clone())])]
     mut hidden_ids: BTreeMap[str, CanonicalSymbolId] = BTreeMap.new()
     _ = hidden_ids.insert("HiddenBorrow", hidden.canonical.clone())
@@ -280,8 +308,12 @@ pub def test_result_requirements_use_exact_owned_source_declaration_closure() ->
 
     mut left = source_enum("Left", [RustType.Named("Right")])
     mut right = source_enum("Right", [RustType.Named("Left"), RustType.Ref(text.clone())])
-    _ = left.named_type_identities.insert("Right", right.canonical.clone())
-    _ = right.named_type_identities.insert("Left", left.canonical.clone())
+    mut left_scope = left.named_type_identities.as_ref().clone()
+    _ = left_scope.insert("Right", right.canonical.clone())
+    left.named_type_identities = Arc.new(left_scope)
+    mut right_scope = right.named_type_identities.as_ref().clone()
+    _ = right_scope.insert("Left", left.canonical.clone())
+    right.named_type_identities = Arc.new(right_scope)
     mut cycle_ids: BTreeMap[str, CanonicalSymbolId] = BTreeMap.new()
     _ = cycle_ids.insert("Left", left.canonical.clone())
     borrow_cycle_enums = [left.clone(), right.clone()]
