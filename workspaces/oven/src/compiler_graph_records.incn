@@ -1,6 +1,9 @@
 """Atomic ranked-graph publication for compiler values, completed receipts and their forward and reverse edges."""
 
 from graph_read_demands import note_graph_demand
+from compiler_prepared_records import prepared_product_request
+from pub::internal_models.record_scope import checked_row_family
+from pub::internal_models.source_value_records import SOURCE_PROFILE
 from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
 from pub::incan_platform.store import (
@@ -207,6 +210,12 @@ def select_evaluation(
         return Err("selected compiler value differs from its evaluation digest")
     if not witnesses_validate(selected, receipt, selected_witnesses)?:
         return Ok(None)
+    # A checked row is already authenticated by this snapshot and the evaluation digest. Its complete
+    # contents have the same digest as the canonical whole-row witness used by the next checker phase.
+    if output.identity_profile != SOURCE_PROFILE and checked_row_family(output.family):
+        request = prepared_product_request(output)
+        if len(value) <= request.byte_limit and len(selected_witnesses) < 8192 and len(value_key) <= 4096:
+            selected_witnesses[value_key] = (request, value_digest)
     return Ok(Some(ReusableEvaluation(value=value, receipt=receipt, namespace=evaluation.namespace)))
 
 
