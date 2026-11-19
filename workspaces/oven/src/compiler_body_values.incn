@@ -15,6 +15,7 @@ from compiler_graph_records import (
     ReusableRecord,
     publish_evaluation,
     readers_of,
+    reusable_checker_records,
     reusable_evaluation,
     reusable_family_records,
     reusable_owner_records,
@@ -162,9 +163,7 @@ pub def select_body_values(
 
 pub def select_body_inventory(selected: Snapshot, profile: str) -> Result[list[SelectedBodyRecord], str]:
     """Select complete checker pairs with final Body IR while invalidated owners stay on fresh production."""
-    locals = reusable_family_records(selected, "local", profile)?
-    finals = reusable_family_records(selected, "final", profile)?
-    bodies = reusable_family_records(selected, "body-ir", profile)?
+    locals, finals, bodies = reusable_checker_records(selected, profile, None)?
     return paired_records(locals, finals, bodies, profile)
 
 
@@ -177,9 +176,7 @@ pub def select_body_inventory_except(
 ) -> Result[list[SelectedBodyRecord], str]:
     """Select this project origin's complete owners except those reached by its current source changes."""
     slots = Some(OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, excluded=invalid))
-    locals = reusable_family_records(selected, "local", profile, slots)?
-    finals = reusable_family_records(selected, "final", profile, slots)?
-    bodies = reusable_family_records(selected, "body-ir", profile, slots)?
+    locals, finals, bodies = reusable_checker_records(selected, profile, slots)?
     return paired_records(locals, finals, bodies, profile, mint_body_ir)
 
 
@@ -191,9 +188,8 @@ pub def select_body_inventory_of(
     mint_body_ir: bool = false,
 ) -> Result[list[SelectedBodyRecord], str]:
     """Select the complete owners of this project origin that `owners` names, validating no other owner's records."""
-    locals = reusable_owner_records(selected, "local", profile, origin, owners, IDENTITY_PROFILE)?
-    finals = reusable_owner_records(selected, "final", profile, origin, owners, IDENTITY_PROFILE)?
-    bodies = reusable_owner_records(selected, "body-ir", profile, origin, owners, IDENTITY_PROFILE)?
+    slots = Some(OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, included=Some(owners)))
+    locals, finals, bodies = reusable_checker_records(selected, profile, slots)?
     return paired_records(locals, finals, bodies, profile, mint_body_ir)
 
 
