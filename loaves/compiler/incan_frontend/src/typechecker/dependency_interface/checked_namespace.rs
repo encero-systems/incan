@@ -162,7 +162,12 @@ impl CheckedNamespaceInterface {
 
     /// Admit the bounded typed Crumb before installing any identities or checked tables in a consumer.
     pub fn from_bytes(bytes: &[u8], codec: &impl NamespaceCrumb) -> Result<Self, String> {
-        let value = wire::restore(codec.read(bytes)?)?;
+        Self::from_wire_value(codec.read(bytes)?)
+    }
+
+    /// Validate and hydrate an already decoded compiler-owned Crumb projection.
+    pub fn from_wire_value(root: NamespaceCell) -> Result<Self, String> {
+        let value = wire::restore(root)?;
         value.validate()?;
         Ok(value)
     }

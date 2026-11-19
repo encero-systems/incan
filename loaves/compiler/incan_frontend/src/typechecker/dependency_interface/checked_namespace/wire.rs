@@ -196,19 +196,18 @@ impl<T: Project> Project for BTreeMap<String, T> {
 }
 
 fn read_fields<const N: usize>(fields: Vec<(u64, Cell)>, expected: [u64; N]) -> Result<[Cell; N], String> {
-    if fields.len() != N {
-        return Err("incorrect namespace field count".into());
+    let mut fields: [(u64, Cell); N] = fields.try_into().map_err(|_| "incorrect namespace field count")?;
+    for (index, id) in expected.into_iter().enumerate() {
+        if fields[index].0 != id {
+            let remaining = index + 1;
+            let offset = fields[remaining..]
+                .iter()
+                .position(|(candidate, _)| *candidate == id)
+                .ok_or("incorrect namespace field identity")?;
+            fields.swap(index, remaining + offset);
+        }
     }
-    let mut source: BTreeMap<_, _> = fields.into_iter().collect();
-    let ordered = expected
-        .into_iter()
-        .map(|id| {
-            source
-                .remove(&id)
-                .ok_or_else(|| "incorrect namespace field identity".to_string())
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    ordered.try_into().map_err(|_| "incorrect namespace field order".into())
+    Ok(fields.map(|(_, value)| value))
 }
 
 macro_rules! model { ($ty:ty { $($f:ident : $id:literal),* $(,)? }) => {impl Project for $ty {

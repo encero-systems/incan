@@ -94,7 +94,13 @@ impl incan_frontend::checker_records::GraphNamespaceInterface for EncodedInterfa
     }
 
     fn installable(&self) -> Result<Arc<incan_frontend::typechecker::ModuleDependencyInterface>, String> {
-        let checked = restore_digest(&self.bytes, self.digest)?;
+        let checked = restore_digest(self.bytes.len(), self.digest, || {
+            if self.bytes.len() > 64 * 1024 * 1024 {
+                return Err("checked namespace exceeds its byte limit".into());
+            }
+            let root = internal_models::decode_prepared_namespace(namespace_reader()?, &self.bytes)?;
+            CheckedNamespaceInterface::from_wire_value(to_cell(root)?)
+        })?;
         if checked.module_name() != self.name || checked.module_path() != self.path {
             return Err("checked namespace identity disagrees with the admitted root".into());
         }
@@ -131,12 +137,16 @@ pub(super) fn admit(
     }))
 }
 
-fn restore_digest(bytes: &[u8], digest: [u8; 32]) -> Result<Arc<CheckedNamespaceInterface>, String> {
+fn restore_digest(
+    size: usize,
+    digest: [u8; 32],
+    decode: impl FnOnce() -> Result<CheckedNamespaceInterface, String>,
+) -> Result<Arc<CheckedNamespaceInterface>, String> {
     if let Some(hit) = published(&digest) {
         return Ok(hit);
     }
-    let interface = Arc::new(CheckedNamespaceInterface::from_bytes(bytes, &CheckedNamespaceCrumb)?);
-    insert(digest, bytes.len(), Arc::clone(&interface));
+    let interface = Arc::new(decode()?);
+    insert(digest, size, Arc::clone(&interface));
     Ok(interface)
 }
 
@@ -226,7 +236,9 @@ pub(super) fn to_cell(value: Atom) -> Result<Cell, String> {
 
 #[cfg(test)]
 fn restore(bytes: &[u8]) -> Result<Arc<CheckedNamespaceInterface>, String> {
-    restore_digest(bytes, Sha256::digest(bytes).into())
+    restore_digest(bytes.len(), Sha256::digest(bytes).into(), || {
+        CheckedNamespaceInterface::from_bytes(bytes, &CheckedNamespaceCrumb)
+    })
 }
 
 #[cfg(test)]
