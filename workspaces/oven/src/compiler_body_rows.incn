@@ -1,6 +1,7 @@
 """Read compiler-produced checker and Body IR values from independently bounded Crumb row files."""
 
 from std.fs import Path
+from pub::internal_models.namespace_order import IMPORT_ORDER_FILE, NamespaceOrder, certified_namespace_order, ranked_output_suffix, read_import_closures
 from pub::internal_models import (
     CompiledBodyFallback,
     CompiledBodyOutput,
@@ -14,12 +15,35 @@ const MAX_COMPILED_BODY_ROWS: int = 4096
 const MAX_COMPILED_BODY_ROW_BYTES: int = 67108864
 
 
+pub def compiled_namespace_order(path: Path, origin: str, namespaces: &list[CompiledNamespaceValue]) -> Result[Dict[str, NamespaceOrder], str]:
+    """Bind fresh owners to verified import closures even when their entire namespace cannot be restored."""
+    mut closures: Dict[str, list[str]] = {}
+    order_path = path.joinpath(IMPORT_ORDER_FILE)
+    if path.0.endswith(ranked_output_suffix()) and order_path.exists():
+        size = order_path.stat().map_err((error) => error.message())?.size().map_err((error) => error.message())?
+        if not order_path.is_file() or size <= 0 or size > MAX_COMPILED_BODY_ROW_BYTES:
+            return Err("compiled import inventory exceeds its bound")
+        closures = read_import_closures(order_path.read_bytes().map_err((error) => error.message())?)?
+        for namespace in namespaces:
+            if namespace.module not in closures or closures[namespace.module] != namespace.dependencies:
+                return Err("compiled namespace and import inventory disagree: " + namespace.module)
+    else:
+        for namespace in namespaces:
+            closures[namespace.module] = namespace.dependencies
+    return certified_namespace_order(origin, closures)
+
+
 pub def read_compiled_body_outputs(path: Path) -> Result[CompiledBodyOutputs, str]:
     """Read one bounded Crumb row per sidecar file while retaining only decoded semantic values."""
     if not path.is_dir():
         return Err("compiled body output is not a row directory")
     entries = sorted([entry.0 for entry in path.iterdir().map_err((error) => error.message())?])
-    if len(entries) > MAX_COMPILED_BODY_ROWS:
+    order_file = path.joinpath(IMPORT_ORDER_FILE).0
+    has_order = path.0.endswith(ranked_output_suffix()) and order_file in entries
+    mut row_count = len(entries)
+    if has_order:
+        row_count -= 1
+    if row_count > MAX_COMPILED_BODY_ROWS:
         return Err("compiled body output contains too many rows")
     mut values: list[CompiledBodyValue] = []
     mut fallbacks: list[CompiledBodyFallback] = []
@@ -28,6 +52,8 @@ pub def read_compiled_body_outputs(path: Path) -> Result[CompiledBodyOutputs, st
     mut previous_value = ""
     mut previous_fallback = ""
     for entry in entries:
+        if has_order and entry == order_file:
+            continue
         row = Path(entry)
         if not row.is_file() or not row.name().endswith(".crumb"):
             return Err("compiled body output contains a non-row entry")

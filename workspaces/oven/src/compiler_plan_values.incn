@@ -1,11 +1,13 @@
 """Select Bakery-admitted lowering products for one graph-record compiler activation."""
 
 from pub::incan_platform.store import Snapshot
-from pub::internal_models.records import ReadWitness, RecordKey, encode_record_key
+from pub::internal_models.records import ReadReceipt, ReadWitness, RecordKey, encode_record_key
+from compiler_source_projection import positioned_source_key
+from compiler_prepared_records import prepared_product_request
 from compiler_body_keys import IDENTITY_PROFILE, body_key
 from compiler_body_values import CoveredBodyOwners, SelectedBodyPage
 from compiler_graph_records import OutputSlots, reusable_family_records, readers_of
-from pub::internal_models.plan_module_records import PLAN_MODULE_FAMILY, PLAN_MODULE_PAGE, decode_plan_module
+from pub::internal_models.plan_module_records import PLAN_MODULE_FAMILY, POSITIONED_MODULE_PAGE, REPOSITION_MODULE_PAGE, decode_plan_module
 from std.encoding.hex import hexlify
 
 pub const LOWERING_PROFILE: str = "incan.lowering-records/9"
@@ -53,7 +55,7 @@ pub def select_plan_inventory_except(
     return Ok(pages)
 
 
-def canonical_digest(value: str) -> bool:
+pub def canonical_digest(value: str) -> bool:
     """Accept the lowercase SHA-256 spelling used by the lowering codec as a safe page filename."""
     if len(value) != 64:
         return false
@@ -72,6 +74,9 @@ pub model AdmittedPlanModule:
     pub namespace: int
     pub function_count: int
     pub certificate: str
+    pub admitted_snapshot: str
+    pub receipt: ReadReceipt
+    pub placement_current: bool
 
 
 pub model PlanModuleSelection:
@@ -89,6 +94,7 @@ pub def select_plan_modules(
     invalid_modules: list[str],
     invalid_owners: list[str],
     complete_namespaces: set[str] = set(),
+    changed_positions: set[str] = set(),
 ) -> Result[PlanModuleSelection, str]:
     """
     Admit whole every module whose plan record still validates in the selected graph and that this request leaves
@@ -110,12 +116,21 @@ pub def select_plan_modules(
                 valid = false
         if not valid:
             continue
-        selection.pages.append(
-            SelectedBodyPage(key=hexlify(value.module.encode("utf-8")) + PLAN_MODULE_PAGE, value=record.value),
-        )
+        positioned = prepared_product_request(positioned_source_key(origin, record.key.identity))
+        mut bound = false
+        for witness in record.receipt.witnesses:
+            if let ReadWitness.Found(prior, _) = witness:
+                if prior.request == positioned:
+                    bound = true
+        mut suffix = REPOSITION_MODULE_PAGE
+        if bound and record.key.identity not in changed_positions:
+            suffix = POSITIONED_MODULE_PAGE
+        # An earlier worker sees no qualified module page and keeps the ordinary keyed route.
+        selection.pages.append(SelectedBodyPage(key=hexlify(value.module.encode("utf-8")) + suffix, value=record.value))
         selection.records.append(AdmittedPlanModule(
             key=record.key, module=value.module, value=record.value, namespace=record.namespace,
             function_count=len(value.functions), certificate=record.receipt.preparation.rank_certificate,
+            receipt=record.receipt, admitted_snapshot=selected.digest, placement_current=bound and record.key.identity not in changed_positions,
         ))
         mut witnessed: set[str] = set()
         if record.key.identity in complete_namespaces:

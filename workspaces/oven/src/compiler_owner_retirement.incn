@@ -1,6 +1,6 @@
 """Withdraw current output slots for free functions whose source was removed or whose checked signature was replaced."""
 
-from pub::incan_platform.store import Snapshot, Transaction, get
+from pub::incan_platform.store import Snapshot, Transaction, get, stage_delete
 from pub::internal_models import CompiledBodyOutputs
 from pub::internal_models.checker_records import CHECKER_PROFILE
 from pub::internal_models.records import ReadWitness, RecordKey, encode_record_key
@@ -8,12 +8,12 @@ from pub::internal_models.source_value_records import source_value
 from compiler_body_keys import IDENTITY_PROFILE
 from compiler_graph_records import OutputSlots, decode_record_key, family_outputs, readers_of, retire_output, reusable_evaluation
 from compiler_plan_values import LOWERING_PROFILE
-from compiler_source_projection import SourceProjection, owner_source_key
+from compiler_source_projection import SourceProjection, owner_source_key, signature_key
 
 
 pub def retire_missing_functions(
     selected: Snapshot, mut transaction: Transaction, origin: str,
-    changes: &list[RecordKey], projections: &Dict[str, SourceProjection], outputs: &CompiledBodyOutputs,
+    changes: &list[RecordKey], projections: &Dict[str, SourceProjection], rechecked: &list[str], outputs: &CompiledBodyOutputs,
 ) -> Result[None, str]:
     """Use changed source slots and the compiler's checked free-function census in the same source module."""
     mut changed: Dict[str, list[RecordKey]] = {}
@@ -25,8 +25,7 @@ pub def retire_missing_functions(
     if len(changed) == 0:
         return Ok(None)
     mut retired: set[str] = set()
-    for namespace in outputs.namespaces:
-        module = namespace.module
+    for module in rechecked:
         if module not in changed:
             continue
         changes_here = changed[module]
@@ -41,6 +40,10 @@ pub def retire_missing_functions(
         if census in changes_here:
             old_counts = name_counts(previous.split("\n"))
             for name in old_counts.keys():
+                if name != "" and name not in current:
+                    # The complete source census owns both mutable bindings. Historical snapshots retain the old bytes.
+                    for key in [owner_source_key(origin, module, name), signature_key(origin, module, name)]:
+                        stage_delete(transaction, encode_record_key(key)?)
                 if old_counts[name] > current.get(name, 0):
                     touched.add(name)
         mut rows = [value.name for value in outputs.values if value.module == module and value.identity.startswith("function:")]

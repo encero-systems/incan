@@ -27,6 +27,7 @@ from pub::incan_worker_host.record_protocol import (
     record_frame,
 )
 from observation import trace, trace_boundary
+from core_process import executable
 from owner_client import status_code
 from owner_endpoint import Endpoint, attach, bindable, prepare_directory, socket_prefix
 from decimal_text import digits_only
@@ -418,7 +419,7 @@ pub def generation_for(toolchain: Toolchain, compiler: str) -> Result[str, str]:
     environment remains unchanged. Every other caller derives it for the request; source, checking and compilation are
     never retained.
     """
-    mut selected = [SCHEMA, RECORD_SCHEMA, compiler]
+    mut selected = [SCHEMA, RECORD_SCHEMA, compiler, "reopened-peer-reader/1", executable()?]
     if let Some(pin) = toolchain.compiler_records:
         selected.append(f"compiler-records {pin.digest}")
         if pin.directory != "":

@@ -42,6 +42,10 @@ pub class PreparedBodyRecordSource with RecordSource:
         """Whether a value is already available under one encoded record key."""
         return key in self.values
 
+    pub def bind_profile(mut self, profile: str) -> None:
+        """Transfer this transaction's staged values to its next producer phase after the previous phase finishes."""
+        self.scope = ReadScope(snapshot=self.scope.snapshot, profile=profile)
+
     pub def for_profile(self, profile: str) -> PreparedBodyRecordSource:
         """Bind the same staged values to the next producer profile without weakening its read-scope check."""
         scope = ReadScope(snapshot=self.scope.snapshot, profile=profile)
@@ -53,6 +57,7 @@ pub class PreparedBodyRecordSource with RecordSource:
         output: RecordKey,
         requests: list[RecordRequest],
         rank_certificate: str = "compiled-check",
+        validated_plans: Dict[str, str] = {},
     ) -> Result[ReadReceipt, str]:
         """Authenticate one producer's exact inputs from the caller-owned publication transaction."""
         preparation = PreparationEvidence(
@@ -69,8 +74,16 @@ pub class PreparedBodyRecordSource with RecordSource:
                     continue
             bounded.append(item)
         mut reads = RecordReads.start(scope, preparation, bounded)
+        plans = AdmittedPlanDigests.open(scope, validated_plans)
         for item in bounded:
-            match reads.read(self, item):
+            mut retained = false
+            if len(validated_plans) > 0 and item.key.family == "plan-function":
+                written = encode_record_key(item.key)?
+                retained = written in validated_plans and written not in self.values
+            result = match retained:
+                true => reads.read(plans, item)
+                false => reads.read(self, item)
+            match result:
                 RecordRead.Failed(fault) =>
                     written = encode_record_key(output)?
                     wanted = encode_record_key(item.key)?
@@ -100,6 +113,29 @@ pub class PreparedBodyRecordSource with RecordSource:
         semantic = hexlify(sha256.digest(value))
         evidence = RevisionEvidence(scope=scope, request=request, revision=hexlify(sha256.digest(physical)), semantic_digest=semantic)
         return RecordRead.Found(SelectedFact(evidence=evidence, value=selected, selection_digest=semantic))
+
+
+class AdmittedPlanDigests with RecordSource:
+    """Only the validated zero-byte selections of one complete admitted module during its placement-only publication."""
+    scope: ReadScope
+    digests: Dict[str, str]
+
+    @staticmethod
+    pub def open(scope: ReadScope, digests: Dict[str, str]) -> AdmittedPlanDigests:
+        return AdmittedPlanDigests(scope=scope, digests=digests)
+
+    def read(self, scope: ReadScope, request: RecordRequest) -> RecordRead:
+        if scope != self.scope or request.key.family != "plan-function" or request != prepared_product_request(request.key):
+            return RecordRead.Failed(ReadFault.InvalidEvidence)
+        key = match encode_record_key(request.key):
+            Ok(value) => value
+            Err(_) => return RecordRead.Failed(ReadFault.InvalidEvidence)
+        if key not in self.digests:
+            return RecordRead.Failed(ReadFault.OutsidePreparation)
+        # A plan-function is opaque: its two prepared digests are the hash of the exact same bytes.
+        digest = self.digests[key]
+        proof = RevisionEvidence(scope=scope, request=request, revision=digest, semantic_digest=digest)
+        return RecordRead.Found(SelectedFact(evidence=proof, value=b"", selection_digest=digest))
 
 
 pub def prepared_product_request(key: RecordKey) -> RecordRequest:

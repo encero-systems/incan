@@ -126,6 +126,7 @@ pub from activation_envelopes import (
     envelope_key,
     stage_name,
 )
+pub from namespace_order import encode_import_closures, ranked_output_suffix
 pub from namespace_order import NamespaceOrder, certified_namespace_order, checking_basis_key, checking_completion_receipt, decode_namespace_order, encode_checking_completion
 pub from checker_record_models import (
     CheckedFamily,

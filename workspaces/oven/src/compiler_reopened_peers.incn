@@ -1,0 +1,91 @@
+"""Supply checked peers only when a compiler reopens an admitted namespace for a changed call contract."""
+
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from pub::incan_platform.store import Snapshot, read_manifest
+from pub::incan_platform.store.disk import root as disk_root
+from pub::internal_models.checker_records import CHECKER_PROFILE
+from pub::internal_models.crumb_rows import ModelField, model_description, required_value
+from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, integer as signed, number, text
+from pub::internal_models.plan_module_records import PLAN_MODULE_FAMILY, PLAN_MODULE_PAGE, POSITIONED_MODULE_PAGE, REPOSITION_MODULE_PAGE, decode_plan_module
+from pub::internal_models.records import ReadWitness, encode_record_key
+from compiler_body_keys import IDENTITY_PROFILE, body_key
+from compiler_body_values import SelectedBodyPage, encode_body_inventory, select_body_inventory_of
+from compiler_graph_records import reusable_owner_records
+from compiler_plan_values import LOWERING_PROFILE, canonical_digest
+from publication import publish_binary
+
+const ROW: bytes = b"reopen\x00"
+pub const REOPEN_SELECTION: str = "reopen-snapshot.crumb"
+
+
+def description() -> Description:
+    return model_description(ROW, "incan.oven.reopened-peers/1", [
+        ModelField(identity=b"genera", name="generation", storage="i64"),
+        ModelField(identity=b"manife", name="manifest", storage="string"),
+        ModelField(identity=b"origin", name="origin", storage="string"),
+        ModelField(identity=b"view__", name="view", storage="string"),
+    ])
+
+
+pub def selection(snapshot: Snapshot, origin: str) -> Result[SelectedBodyPage, str]:
+    """Keep the identity of the request's pinned view. Each owner payload stays in the store until requested."""
+    value = encode_graph_row(ROW, description(), [
+        required_value(b"genera", signed(snapshot.generation)), required_value(b"manife", Value.Text(snapshot.digest)),
+        required_value(b"origin", Value.Text(origin)), required_value(b"view__", Value.Text(snapshot.view)),
+    ])?
+    return Ok(SelectedBodyPage(key=REOPEN_SELECTION, value=value))
+
+
+pub def supply(arguments: list[str]) -> Result[None, str]:
+    """Validate the exact previously selected module and materialize only its unaffected checker-backed owners."""
+    if len(arguments) < 5:
+        return Err("reopened peer selection needs a bakery, a request directory, a private output directory, a module and its changed readers")
+    bakery = Path(arguments[0])
+    directory = Path(arguments[1])
+    destination = Path(arguments[2])
+    source = arguments[3]
+    changed = set(arguments[4:])
+    raw = directory.joinpath(REOPEN_SELECTION).read_bytes().map_err((error) => error.message())?
+    fields = decode_graph_row(raw, ROW, description(), 4)?
+    generation = number(fields[0].value)?
+    manifest = text(fields[1].value)?
+    origin = text(fields[2].value)?
+    view = text(fields[3].value)?
+    if generation < 1 or not canonical_digest(manifest) or origin == "" or view == "":
+        return Err("invalid pinned graph for reopened peers")
+    graph = read_manifest(disk_root(bakery.0), generation, manifest, view).map_err((error) => error.message())?
+    mut peers: list[str] = []
+    for retained in reusable_owner_records(graph, PLAN_MODULE_FAMILY, LOWERING_PROFILE, origin, [source], IDENTITY_PROFILE)?:
+        value = decode_plan_module(retained.value).map_err((error) => f"invalid reopened module: {error:?}")?
+        basename = hexlify(value.module.encode("utf-8"))
+        mut offered: list[Path] = []
+        for suffix in [POSITIONED_MODULE_PAGE, REPOSITION_MODULE_PAGE, PLAN_MODULE_PAGE]:
+            page = directory.joinpath(basename + suffix)
+            if page.is_file():
+                offered.append(page)
+        if len(offered) == 0:
+            continue
+        if len(offered) != 1:
+            return Err("reopened module has conflicting placement pages")
+        if offered[0].read_bytes().map_err((error) => error.message())? != retained.value:
+            return Err("reopened plan module differs from the selected snapshot")
+        mut witnessed: set[str] = set()
+        for read in retained.receipt.witnesses:
+            if let ReadWitness.Found(previous, _) = read:
+                if previous.request.key.family == "plan-function":
+                    witnessed.add(encode_record_key(previous.request.key)?)
+        for function in value.functions:
+            if function.symbol in changed or function.identity == function.symbol:
+                continue
+            key = body_key("plan-function", origin, function.identity, "body:" + function.function, function.key)
+            if encode_record_key(key)? in witnessed:
+                peers.append(function.identity)
+    for page in encode_body_inventory(select_body_inventory_of(graph, CHECKER_PROFILE, origin, peers, mint_body_ir=true)?)?:
+        # A previously selected or ranked page is already authoritative for this activation.
+        path = directory.joinpath(page.key)
+        if not path.exists():
+            publish_binary(destination.joinpath(page.key), page.value)?
+    return Ok(None)

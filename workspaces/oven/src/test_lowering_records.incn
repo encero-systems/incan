@@ -6,6 +6,7 @@ from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue, parse
 from compiler_plan_modules import restored_modules
+from compiler_source_projection import positioned_source_key
 from compiler_body_keys import IDENTITY_PROFILE, body_key
 from compiler_body_values import select_body_inventory_except
 from compiler_graph_records import OutputSlots, evaluation_record_key, family_outputs, reusable_family_records
@@ -334,6 +335,7 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     assert fingerprint_for(edited_fingerprints, "main")? == fingerprint_for(initial_fingerprints, "main")?
     assert partition_for(edited_fingerprints, "greeting")? == partition_for(initial_fingerprints, "greeting")?
     assert partition_for(edited_fingerprints, "main")? == partition_for(initial_fingerprints, "main")?
+    edited_page = selected_main_module(store, ["greeting", "main"])?
     diagnostic = edited.to_json().map_err((error) => error.message())?
     assert proof_count(edited, "body_evaluations")? == 1, diagnostic
     assert proof_count(edited, "body_ir_evaluations")? == 1, diagnostic
@@ -355,6 +357,8 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     # binding is the one plan function reused by its key.
     assert proof_count(commented, "plan_function_reuses")? == 1, comment_diagnostic
     assert proof_count(commented, "plan_module_reuses")? == 1, comment_diagnostic
+    commented_page = selected_main_module(store, ["greeting", "main"])?
+    assert commented_page != edited_page, "whole-module admission kept the old source positions"
     assert proof_count(commented, "lowering_demand_evaluations")? == 0, comment_diagnostic
     assert proof_count(commented, "native_interface_evaluations")? == 1, comment_diagnostic
     # The comment line moves `main`, so its line tables change and the unit is baked again (BE-34).
@@ -368,6 +372,7 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     documented_diagnostic = documented.to_json().map_err((error) => error.message())?
     assert proof_count(documented, "body_evaluations")? == 0, documented_diagnostic
     assert proof_count(documented, "body_ir_evaluations")? == 0, documented_diagnostic
+    assert selected_main_module(store, ["greeting", "main"])? != commented_page, "copied module after inserting a docstring"
     # Rewording the docstring moves no code, so not even `greeting`'s plan is evaluated again.
     write(
         source,
@@ -513,7 +518,7 @@ def selected_main_module(store: Path, functions: list[str]) -> Result[bytes, str
     for witness in selected.receipt.witnesses:
         if let ReadWitness.Found(prior, _) = witness:
             suppliers.append(encode_record_key(prior.request.key)?)
-    mut expected: list[str] = []
+    mut expected = [encode_record_key(positioned_source_key("main", "main.incn"))?]
     for item in page.functions:
         key = body_key("plan-function", "main", item.identity, "body:" + item.function, item.key)
         output = encode_record_key(key)?

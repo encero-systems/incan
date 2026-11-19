@@ -59,12 +59,12 @@
 use std::collections::{HashMap, HashSet};
 
 pub use canonical_rebinding::refresh_dependency_call_targets;
-pub use settled_call_inputs::{SettledCallInputs, SettledCallRead};
-pub use settled_call_inputs::needs_call_witness;
 pub use context_modules::{ContextModules, ContextModulesIter};
 pub use free_function_baseline::verify_module as verify_free_function_inputs;
 pub(crate) use nominal_carriers::{retain_published_frame, retain_published_module};
 pub use primitive_adapter_requirements::required as required_primitive_adapters;
+pub use settled_call_inputs::needs_call_witness;
+pub use settled_call_inputs::{SettledCallInputs, SettledCallRead};
 pub use source_comparison::required_published_defaults as required_comparison_defaults;
 
 use incan_lang::lang::keywords::KeywordId;
@@ -658,7 +658,6 @@ mod reads;
 mod shared_reads;
 
 mod canonical_rebinding;
-mod settled_call_inputs;
 mod carrier_projection;
 mod collect;
 mod collection_context;
@@ -674,6 +673,7 @@ mod registry_effects;
 mod representation_facts;
 mod result_channels;
 mod returned_views;
+mod settled_call_inputs;
 mod static_aliases;
 mod union_layouts;
 pub use union_layouts::reaches_union;

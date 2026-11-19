@@ -24,6 +24,8 @@ from pub::incan_mir_plan import (
     product_nominals,
 )
 from record_plan_codec import decode_record_plan
+from pub::internal_models.lowering_events import AdmittedFunction, AdmittedPlacement, EventPosition, read_module_admission
+from plan_modules import report_admitted
 from record_plan_outputs import publish_plan_records
 from scalar_store import record_scalar_inputs, report_scalar, retain_scalar
 
@@ -192,3 +194,32 @@ def interface_plan(report: Path) -> Result[bytes, str]:
 def read(path: Path) -> Result[bytes, str]:
     """Read one complete producer record."""
     return path.read_bytes().map_err((error) => error.message())
+
+
+pub def test_admitted_positions_are_private_to_the_compiler_request() -> Result[None, str]:
+    """Two overlapping requests have the same visible description, scalar, symbol and number of nodes."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = scratch.path()
+    first = TemporaryDirectory.try_new_with("plan-admission-", "", Some(root)).map_err((error) => error.message())?
+    second = TemporaryDirectory.try_new_with("plan-admission-", "", Some(root)).map_err((error) => error.message())?
+    assert first.path().0 != second.path().0
+    mut line = 8
+    for attempt in [first.path(), second.path()]:
+        products = attempt.joinpath("products")
+        node = EventPosition(line=line, column=3)
+        owner = AdmittedFunction(function="f", identity="stable.symbol", references=[],
+            placement=Some(AdmittedPlacement(key="same-normalized-product", positions=[node])))
+        report_admitted(Some(root.0), "m", [owner], 1, true, Some(products.0))?
+        line += 1
+    line = 8
+    for attempt in [first.path(), second.path()]:
+        path = attempt.joinpath("products").joinpath("admissions").joinpath("6d.admitted")
+        note = read_module_admission(path)?
+        assert note.inspected and len(note.functions) == 1
+        match note.functions[0].placement:
+            Some(placed) => assert placed.positions == [EventPosition(line=line, column=3)]
+            None => return Err("a later request replaced the earlier admission")
+        line += 1
+    # An old reader sees the usual note. Its shared path carries no authoritative placement.
+    assert not root.joinpath("6d.admitted.placement").is_file()
+    return Ok(None)
