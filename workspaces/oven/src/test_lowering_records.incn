@@ -708,7 +708,9 @@ pub def test_body_edits_keep_one_indexed_output_per_slot() -> Result[None, str]:
         write(source, f"def greeting() -> str:\n    return \"edit {edit}\"\n\n\ndef main() -> None:\n    println(greeting())\n")?
         _ = lowering_example_run(binary, source, store, f"edit {edit}", Some(trace))?
         entered = physical_demands(trace)?
-        expected = 2 if edit == 0 else 1
+        mut expected = 1
+        if edit == 0:
+            expected = 2
         assert entered - previous_demands == expected, f"edit {edit} executed {entered - previous_demands} demand producers"
         previous_demands = entered
     latest = store_snapshot(store).map_err((error) => error.message())?
