@@ -291,6 +291,34 @@ pub def test_build_admits_a_settled_checker_pair_while_body_ir_is_pending() -> R
     return Ok(None)
 
 
+pub def test_selected_checker_products_supply_later_witnesses_once() -> Result[None, str]:
+    """Reading one complete owner opens each selected product once, including the inputs of later phases."""
+    mut graph = store_snapshot(memory_root()).map_err((error) => error.message())?
+    mut local = family_key("local", "shared-products")
+    local.identity_profile = "incan.stable-declaration/1"
+    mut final = local
+    final.family = "final"
+    mut body = local
+    body.family = "body-ir"
+    first_rank = ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=0)
+    final_rank = ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=1)
+    body_rank = ProducerRank(namespace=0, stage=ProducerStage.BodyIr, dependency=0)
+    graph = publish_evaluation(graph, "local", first_rank, b"local bytes", fixture_receipt_many(graph, local, [])?)?.snapshot
+    graph = publish_evaluation(graph, "final", final_rank, b"final bytes", fixture_receipt(graph, final, prepared_product_request(local))?)?.snapshot
+    frame = encode_body_frame(body, "profile", b"native bytes")?
+    graph = publish_evaluation(graph, "body", body_rank, frame, fixture_receipt(graph, body, prepared_product_request(final))?)?.snapshot
+
+    measure_frame_reads(true)
+    selected = select_body_inventory_except(graph, "profile", local.origin, [])?
+    opened = finish_frame_reads()
+    assert len(selected) == 1 and selected[0].body_ir == b"native bytes"
+    for key in [local, final, body]:
+        encoded = encode_record_key(key)?
+        physical = sum([read.reads for read in opened if read.key == encoded])
+        assert physical == 1, f"{key.family} opened {physical} times"
+    return Ok(None)
+
+
 pub def test_shared_family_witness_opens_each_selection_once() -> Result[None, str]:
     """Independent outputs share one authenticated read, bounded by the request and selected snapshot."""
     original = store_snapshot(memory_root()).map_err((e) => e.message())?
