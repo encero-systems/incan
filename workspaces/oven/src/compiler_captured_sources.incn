@@ -61,24 +61,8 @@ pub def prepare_captured_source_inputs(
                 if get(selected, doc_slot).map_err((error) => error.message())? != Some(documentation):
                     changed.append(doc_key)
                     stage_put(prepared, doc_slot, documentation)
-                if let Some(old_census) = get(selected, encode_record_key(projection.census.key)?).map_err((error) => error.message())?:
-                    old_text = source_value(projection.census.key, old_census)?.decode().map_err((_) => "invalid declaration census")?
-                    if old_text != projection.census.text:
-                        old = scope_members(old_text)
-                        current = scope_members(projection.census.text)
-                        mut names: set[str] = set()
-                        for name in old.keys():
-                            names.add(name)
-                        for name in current.keys():
-                            names.add(name)
-                        for name in sorted([item for item in names]):
-                            if sorted(old.get(name, [])) != sorted(current.get(name, [])):
-                                binding = scope_member(projection.census, current, name)
-                                slot = encode_record_key(binding.key)?
-                                if get(selected, slot).map_err((error) => error.message())?.is_some():
-                                    stage_put(prepared, slot, binding.encoded()?)
-                                    changed.append(binding.key)
-                for record in [projection.header, projection.declarations, projection.census, projection.positioned]:
+                changed.extend(stage_census_members(selected, prepared, projection.census)?)
+                for record in [projection.header, projection.declarations, projection.positioned]:
                     key = encode_record_key(record.key)?
                     if stage_changed_projection(selected, prepared, key, record, positioned)?:
                         changed.append(record.key)
@@ -103,6 +87,35 @@ pub def prepare_captured_source_inputs(
                         if stage_changed_projection(selected, prepared, key, record, positioned)?:
                             changed.append(record.key)
     return Ok(PreparedSourceInputs(transaction=prepared, keys=changed, positioned=positioned))
+
+
+def stage_census_members(selected: Snapshot, mut transaction: Transaction, census: &SourceProjectionRecord) -> Result[list[RecordKey], str]:
+    """Publish a module census and update exactly the previously observed names whose bindings changed."""
+    slot = encode_record_key(census.key)?
+    previous = get(selected, slot).map_err((error) => error.message())?
+    stage_put(transaction, slot, census.encoded()?)
+    old_bytes = match previous:
+        None => return Ok([census.key])
+        Some(stored) => source_value(census.key, stored)?
+
+    if old_bytes == census.text.encode("utf-8"):
+        return Ok([])
+    old = scope_members(old_bytes.decode().map_err((_) => "invalid declaration census")?)
+    current = scope_members(census.text)
+    mut changed = [census.key]
+    mut names: set[str] = set()
+    for name in old.keys():
+        names.add(name)
+    for name in current.keys():
+        names.add(name)
+    for name in sorted([item for item in names]):
+        if sorted(old.get(name, [])) != sorted(current.get(name, [])):
+            binding = scope_member(census, current, name)
+            selection = encode_record_key(binding.key)?
+            if get(selected, selection).map_err((error) => error.message())?.is_some():
+                stage_put(transaction, selection, binding.encoded()?)
+                changed.append(binding.key)
+    return Ok(changed)
 
 
 def stage_changed_projection(selected: Snapshot, mut transaction: Transaction, key: str, record: SourceProjectionRecord, mut positioned: Dict[str, bytes]) -> Result[bool, str]:
