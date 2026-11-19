@@ -61,11 +61,20 @@ pub(super) struct Stored {
     pub(super) supplied: Option<usize>,
 }
 
+/// Exact successful admission charges. A smaller read allowance must walk the wire to recover its first refusal.
+#[derive(Clone, Copy)]
+pub(super) struct RecordReadCost {
+    pub(super) bytes: u64,
+    pub(super) elements: u64,
+    pub(super) depth: u64,
+}
+
 /// One decoded record: its description slot and logical value.
 #[derive(Clone)]
 pub(super) struct Record {
     pub(super) slot: usize,
     pub(super) value: Value,
+    pub(super) cost: RecordReadCost,
     /// The row frame's envelope offset and length, for reading it again on request.
     pub(super) origin: usize,
     pub(super) length: usize,
@@ -364,7 +373,15 @@ fn read_records(
         }
         let raw = cursor.frame(budget)?;
         let origin = cursor.absolute() - raw.len();
+        let before = budget.left();
+        let depth = budget.depth();
         let value = read_root(&dictionary[slot], raw, origin, dictionary, budget)?;
+        let after = budget.left();
+        let cost = RecordReadCost {
+            bytes: before.0 - after.0,
+            elements: before.1 - after.1,
+            depth,
+        };
         if sealed {
             let mut contribution = Vec::new();
             hash::emit_object_charged(&value, &mut contribution, budget).place(origin)?;
@@ -374,6 +391,7 @@ fn read_records(
         records.push(Record {
             slot,
             value,
+            cost,
             origin,
             length: raw.len(),
         });

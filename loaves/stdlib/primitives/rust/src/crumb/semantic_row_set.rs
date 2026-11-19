@@ -419,10 +419,20 @@ impl RowAdmission {
     fn record_items(&self, index: i64, budget: &mut Budget) -> Positioned<RowRead> {
         let (rows, record) = self.row(index)?;
         let entry = &rows.dictionary[record.slot];
-        let value = row_cells::read_root(entry, self.raw(record), record.origin, &rows.dictionary, budget)?;
+        let (bytes, elements) = budget.left();
+        let cost = record.cost;
+        let decoded;
+        let value = if budget.depth() >= cost.depth && bytes >= cost.bytes && elements >= cost.elements {
+            budget.bytes(cost.bytes).place(record.origin)?;
+            budget.elements(cost.elements).place(record.origin)?;
+            &record.value
+        } else {
+            decoded = row_cells::read_root(entry, self.raw(record), record.origin, &rows.dictionary, budget)?;
+            &decoded
+        };
         budget.bytes(entry.key.len() as u64).place(record.origin)?;
         let mut nodes = Vec::new();
-        flatten_root(entry, &value, &rows.dictionary, &mut nodes).place(record.origin)?;
+        flatten_root(entry, value, &rows.dictionary, &mut nodes).place(record.origin)?;
         Ok(items(nodes))
     }
 }
@@ -677,6 +687,50 @@ mod tests {
     }
 
     const BOOLEAN: &str = "43524d42010100310101071ddb0b3ce6d3001da133a298ed40ff061c1219f095f290c49ba4ed00e4c9dad4afcf37eb2519ae01000401000101";
+
+    #[test]
+    fn an_admitted_record_replays_its_exact_charges_under_each_read_allowance() -> Result<(), &'static str> {
+        let rows = admitted(BOOLEAN, "boolean");
+        let mut forced_wire = rows.clone();
+        let retained = forced_wire.rows.as_mut().ok_or("missing test rows")?;
+        std::sync::Arc::make_mut(retained).records[0].cost.depth = u64::MAX;
+        let full = rows.read_record(0, 65_536, 65_536, 128);
+        assert!(full.succeeded());
+        for depth in [0, 1, 64, 128, 256] {
+            for bytes in [0, full.bytes_charged - 1, full.bytes_charged, full.bytes_charged + 1] {
+                for elements in [
+                    0,
+                    full.elements_charged - 1,
+                    full.elements_charged,
+                    full.elements_charged + 1,
+                ] {
+                    let actual = rows.read_record(0, bytes, elements, depth);
+                    let expected = forced_wire.read_record(0, bytes, elements, depth);
+                    assert_eq!(
+                        (
+                            &actual.category,
+                            actual.offset,
+                            &actual.cause,
+                            &actual.field,
+                            &actual.variant
+                        ),
+                        (
+                            &expected.category,
+                            expected.offset,
+                            &expected.cause,
+                            &expected.field,
+                            &expected.variant
+                        )
+                    );
+                    assert_eq!(
+                        (actual.bytes_charged, actual.elements_charged, actual.items),
+                        (expected.bytes_charged, expected.elements_charged, expected.items)
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn records_arrive_in_their_incan_carriers_shape() {

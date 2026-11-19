@@ -6,6 +6,8 @@
 //! allowance left in the caller's budget. Its admission reports a positioned refusal or what it admitted, and always
 //! the allowance it used, so the caller charges its own budget exactly that much.
 
+use std::sync::Arc;
+
 use super::columns::Budget;
 use super::row_cursor::{Refusal, at};
 use super::rows::{self, Meta, ReadInputs, Rows};
@@ -34,8 +36,8 @@ pub struct RowAdmission {
     /// Elements of the allowance this admission used, admitted or refused.
     pub elements_charged: i64,
     /// The admitted envelope's bytes and decoded rows, which `semantic_row_set.rs` reads on request.
-    pub(super) data: Vec<u8>,
-    pub(super) rows: Option<Rows>,
+    pub(super) data: Arc<Vec<u8>>,
+    pub(super) rows: Option<Arc<Rows>>,
 }
 
 impl std::fmt::Debug for RowAdmission {
@@ -60,7 +62,7 @@ impl RowAdmission {
 /// The inputs of one public row read, gathered by the Incan caller before it asks for the admission.
 #[derive(Clone, Debug)]
 pub struct RowRequest {
-    data: Vec<u8>,
+    data: Arc<Vec<u8>>,
     supplied: Vec<Vec<u8>>,
     kinds: Vec<(String, bool)>,
     require_sealed: bool,
@@ -73,7 +75,7 @@ impl RowRequest {
     /// prefix read, as `read_prefix` does, reports how many bytes it occupies. The allowance starts empty.
     pub fn new(data: Vec<u8>, require_sealed: bool, exact: bool) -> Self {
         Self {
-            data,
+            data: Arc::new(data),
             supplied: Vec::new(),
             kinds: Vec::new(),
             require_sealed,
@@ -141,7 +143,7 @@ impl RowRequest {
 /// The admission's facts from a read result and the allowance it used.
 fn admission(
     result: Result<Rows, Refusal>,
-    data: &[u8],
+    data: &Arc<Vec<u8>>,
     bytes: u64,
     elements: u64,
     cause: Option<&str>,
@@ -159,7 +161,7 @@ fn admission(
         records: 0,
         bytes_charged: charged(bytes),
         elements_charged: charged(elements),
-        data: Vec::new(),
+        data: Arc::default(),
         rows: None,
     };
     match result {
@@ -167,8 +169,13 @@ fn admission(
             admission.consumed = count(rows.consumed);
             admission.sealed = rows.sealed;
             admission.records = count(rows.records.len());
-            admission.data = data[..rows.consumed].to_vec();
-            admission.rows = Some(rows);
+            // Release unrelated trailing input and oversized reservations when the request goes away.
+            admission.data = if rows.consumed == data.len() && data.capacity() <= data.len().saturating_mul(2) {
+                Arc::clone(data)
+            } else {
+                Arc::new(data[..rows.consumed].to_vec())
+            };
+            admission.rows = Some(Arc::new(rows));
         }
         Err(refusal) => {
             admission.category = refusal.category.to_string();
@@ -269,7 +276,7 @@ mod tests {
         reference.supply(encoded);
         let first = reference.admit();
         let second = reference.admit();
-        let dictionary = |a: RowAdmission| a.rows.map(|rows| rows.dictionary).ok_or("rows missing");
+        let dictionary = |a: RowAdmission| a.rows.map(|rows| Arc::clone(&rows.dictionary)).ok_or("rows missing");
         let byte_charge = first.bytes_charged;
         let element_charge = first.elements_charged;
         assert!(std::sync::Arc::ptr_eq(&dictionary(first)?, &dictionary(second)?));
@@ -303,7 +310,7 @@ mod tests {
         require_seal.require_sealed = true;
         assert_eq!(compare(&require_seal).category, "seal_required");
         let mut damaged_row = reference.clone();
-        if let Some(last) = damaged_row.data.last_mut() {
+        if let Some(last) = Arc::make_mut(&mut damaged_row.data).last_mut() {
             *last = 255;
         }
         assert!(!compare(&damaged_row).admitted());
@@ -311,7 +318,7 @@ mod tests {
         malformed_supply.supplied[1] = vec![9];
         assert_eq!(compare(&malformed_supply).category, "invalid_description");
         let mut changed_dictionary = reference.clone();
-        changed_dictionary.data[20] ^= 1;
+        Arc::make_mut(&mut changed_dictionary.data)[20] ^= 1;
         assert_eq!(compare(&changed_dictionary).category, "description_mismatch");
         let mut registered = reference.clone();
         registered.register("Another".to_string(), false);

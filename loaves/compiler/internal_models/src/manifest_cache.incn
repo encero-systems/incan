@@ -15,7 +15,7 @@ pub model ManifestCacheValue:
     pub payload: bytes
 
 
-def family(kind: str) -> Result[tuple[bytes, int], str]:
+def family(kind: &str) -> Result[tuple[bytes, int], str]:
     match kind:
         "identity" => return Ok((b"lfmdig\x00", 8192))
         "inventory" => return Ok((b"lfminv\x00", 4194304))
@@ -23,8 +23,8 @@ def family(kind: str) -> Result[tuple[bytes, int], str]:
         _ => return Err("unknown Loaf manifest cache family")
 
 
-def header(key: bytes, kind: str) -> Description:
-    return model_description(key, "incan.loaf-manifest-cache/" + kind + "/2", [
+def header(key: bytes, kind: &str) -> Description:
+    return model_description(key, f"incan.loaf-manifest-cache/{kind}/2", [
         ModelField(identity=b"check_", name="checksum", storage="binary"),
         ModelField(identity=b"guard_", name="observed_generation", storage="binary"),
         ModelField(identity=b"public", name="manifest_digest", storage="binary"),
