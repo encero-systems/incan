@@ -7,7 +7,7 @@ from compiler_prepared_records import prepared_product_request
 from compiler_body_keys import IDENTITY_PROFILE, body_key
 from compiler_body_values import CoveredBodyOwners, SelectedBodyPage
 from compiler_graph_records import OutputSlots, reusable_evaluation, reusable_family_records, readers_of
-from pub::internal_models.plan_module_records import PLAN_MODULE_FAMILY, POSITIONED_MODULE_PAGE, REPOSITION_MODULE_PAGE, decode_plan_module
+from pub::internal_models.plan_module_records import PLAN_MODULE_FAMILY, POSITIONED_MODULE_PAGE, REPOSITION_MODULE_PAGE, PlanModuleValue, decode_plan_module
 from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
 
@@ -124,13 +124,12 @@ pub def canonical_digest(value: str) -> bool:
 
 
 pub model AdmittedPlanModule:
-    """A module plan record the engine selected for a compile: its key, the module as lowering names it, its value."""
+    """A verified module plan and the receipt selecting it from the current graph view."""
 
     pub key: RecordKey
-    pub module: str
-    pub value: bytes
+    pub plan: PlanModuleValue
+    pub value_digest: str
     pub namespace: int
-    pub function_count: int
     pub certificate: str
     pub admitted_snapshot: str
     pub receipt: ReadReceipt
@@ -185,11 +184,6 @@ pub def select_plan_modules(
             suffix = POSITIONED_MODULE_PAGE
         # An earlier worker sees no qualified module page and keeps the ordinary keyed route.
         selection.pages.append(SelectedBodyPage(key=hexlify(value.module.encode("utf-8")) + suffix, value=record.value))
-        selection.records.append(AdmittedPlanModule(
-            key=record.key, module=value.module, value=record.value, namespace=record.namespace,
-            function_count=len(value.functions), certificate=record.receipt.preparation.rank_certificate,
-            receipt=record.receipt, admitted_snapshot=selected.digest, placement_current=bound and record.key.identity not in changed_positions,
-        ))
         mut witnessed: set[str] = set()
         if record.key.identity in complete_namespaces:
             for witness in record.receipt.witnesses:
@@ -204,5 +198,10 @@ pub def select_plan_modules(
             # separate stable body owner. A fallback, runtime, or namespace-member event keeps its own symbol.
             if output in witnessed and function.identity != function.symbol:
                 selection.covered.include(record.key.identity, function.identity, function.symbol)?
+        selection.records.append(AdmittedPlanModule(
+            key=record.key, plan=value, value_digest=record.value_digest, namespace=record.namespace,
+            certificate=record.receipt.preparation.rank_certificate, receipt=record.receipt,
+            admitted_snapshot=selected.digest, placement_current=bound and record.key.identity not in changed_positions,
+        ))
 
     return Ok(selection)

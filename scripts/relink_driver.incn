@@ -429,6 +429,8 @@ pub def install_driver(toolchain: Path, built: Path, sysroot: str) -> Result[tup
     fields["worker_protocol_crumb"] = JsonValue.bool(true)
     fields["unit_descriptor_crumb"] = JsonValue.bool(true)
     fields["compiler_record_export_crumb"] = JsonValue.bool(true)
+    fields["namespace_references"] = JsonValue.bool(true)
+    fields["retain_checked_modules"] = JsonValue.bool(true)
     # The bundle's compiler records describe the Loaves its own compiler built; the relinked compiler keeps no pin to
     # them, as a release candidate home keeps none.
     mut retained: Dict[str, JsonValue] = {}

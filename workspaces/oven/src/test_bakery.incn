@@ -1,6 +1,6 @@
 """Bakery contracts: one bake per identity across projects and processes, views that cost nothing to lose, collection."""
 
-from rust::std::fs import Permissions, remove_dir_all, rename, set_permissions
+from rust::std::fs import OpenOptions, Permissions, metadata, remove_dir_all, rename, set_permissions
 from rust::std::os::unix::fs import PermissionsExt
 from rust::std::process import Command
 from std.fs import Path
@@ -267,6 +267,36 @@ pub def test_verify_reports_a_damaged_frame_in_every_live_segment() -> Result[No
     damaged = verify_all(store)?
     assert len(damaged) == 1, f"verification reported {len(damaged)} damaged objects"
     assert segment.0 in damaged[0], damaged[0]
+    return Ok(None)
+
+
+pub def test_view_replaces_a_different_payload_with_the_same_size_and_timestamp() -> Result[None, str]:
+    """The same filesystem timestamp can belong to two different baked payloads."""
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("bakery")
+    first_id = digest_of("ca")
+    second_id = digest_of("cb")
+    assert bake(store, first_id, "one")?
+    assert bake(store, second_id, "two")?
+    first = baked(store, first_id)?
+    second = baked(store, second_id)?
+    first_payload = match fact_file(store, first, "payload"):
+        Some(path) => path
+        None => return Err("first unit has no payload")
+    second_payload = match fact_file(store, second, "payload"):
+        Some(path) => path
+        None => return Err("second unit has no payload")
+    modified = metadata(first_payload.0).map_err((error) => str(error))?.modified().map_err((error) => str(error))?
+    second_payload.chmod(false).map_err((error) => error.message())?
+    mut options = OpenOptions.new()
+    options.write(true)
+    handle = options.open(second_payload.0).map_err((error) => str(error))?
+    handle.set_modified(modified).map_err((error) => str(error))?
+    destination = scratch.path().joinpath("view")
+    view(store, first, "payload", destination)?
+    assert read(destination)? == "one"
+    view(store, second, "payload", destination)?
+    assert read(destination)? == "two"
     return Ok(None)
 
 

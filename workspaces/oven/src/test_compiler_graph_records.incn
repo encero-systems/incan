@@ -55,6 +55,7 @@ from pub::internal_models import (
     encode_compiled_body_rows,
 )
 from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily
+from pub::internal_models.namespace_references import decode_namespace_references, namespace_reference_filename
 from compiler_namespace_products import contract_key, stage_call_contracts, interface_key, member_key, member_plan_inputs, prepare_namespace_products
 from compiler_graph_records import OutputSlots, PublishedEvaluation, family_outputs, prepare_evaluation, publish_evaluation, readers_of, reusable_evaluation, reusable_family_records, retire_compiler_versions, retire_output, supersede_outputs
 from compiler_owner_retirement import retire_missing_functions
@@ -126,6 +127,16 @@ pub def test_certified_module_owner_overlap_and_partial_cycle() -> Result[None, 
     assert len(namespaces.pages) == 2 and namespaces.complete == set([left, right])
     incomplete = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, [right])?
     assert len(incomplete.pages) == 1 and len(incomplete.complete) == 0
+    measure_frame_reads(true)
+    reference_selection = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, [right], true)
+    reference_reads = finish_frame_reads()
+    offered = reference_selection?
+    assert len(offered.pages) == 1 and len(offered.complete) == 0
+    assert offered.pages[0].key == namespace_reference_filename()
+    references = decode_namespace_references(offered.pages[0].value)?
+    assert len(references) == 1 and references[0].key.identity == left
+    for read in reference_reads:
+        assert not read.key.startswith("namespace\t")
     owner = "function:left::read|signature"
     token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     function = PlanModuleFunction(identity=owner, symbol="native-left-read", function="read", key=token, event=b"event")

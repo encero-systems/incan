@@ -274,6 +274,9 @@ model! { CheckedNamespaceInterface {
     members: 0x17373ca1c763,
     constructor_defaults: 0x6d7c7890aef6,
     nominal_scope: 0x043a98799675,
+    compiled_libraries: 0x91722588bb63,
+    compiled_providers: 0xf60c79ee3714,
+    compiled_types: 0x16796a348aef,
 } }
 
 sum! { DecoratorArgMetadata {
@@ -464,6 +467,14 @@ model! { MadePrivateExport {
 sum! { MemberVisibilityExport {
     Private = 0xc63eb6720c6e,
     Public = 0x591935b15b1c,
+} }
+
+model! { NamespaceCompiledType {
+    dependency_key: 0xed936e255c4b,
+    source_path: 0x857dc6ebc7d2,
+    scope_binding: 0xaa7c07d60f68,
+    canonical: 0x0deeb8fa1dbb,
+    selected_provider: 0xdd215c072f9f,
 } }
 
 model! { NamespaceMemberIdentities {

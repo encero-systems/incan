@@ -156,7 +156,7 @@ mod tests {
         assert_generation(&checker);
         let scope = Arc::new(BTreeMap::from([("Item".into(), identity.clone())]));
         checker.declaration_nominal_scopes.insert(identity, Arc::clone(&scope));
-        checker.retain_nominal_scope_carriers(&scope);
+        checker.retain_nominal_scope_carriers(scope.values());
         assert_generation(&checker);
         checker.symbols.get_mut(id).ok_or("missing symbol")?.kind = SymbolKind::Type(TypeInfo::TypeAlias);
         assert_generation(&checker);

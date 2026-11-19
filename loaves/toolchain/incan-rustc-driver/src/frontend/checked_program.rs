@@ -258,6 +258,44 @@ fn canonical_lowering_inputs(
     Ok(canonical.into_iter().collect())
 }
 
+/// Bind newly admitted lowering inputs to their call contracts. Keep the same ordered digest across cold publication
+/// and legacy namespace admission, then carry it as long as every contract matches the current program.
+pub(super) fn settle_lowering_witnesses<'a>(
+    inputs: &mut [(incan_semantics_core::CompilerNodeId, String)],
+    reads: impl Iterator<Item = &'a incan_frontend::body_ir::SettledCallRead>,
+) -> Result<usize, String> {
+    if inputs.is_empty() {
+        return Ok(0);
+    }
+    let mut by_reader: BTreeMap<&str, Vec<(&str, &str)>> = BTreeMap::new();
+    {
+        let wanted = inputs
+            .iter()
+            .map(|(id, _)| id.path())
+            .collect::<std::collections::HashSet<_>>();
+        for read in reads {
+            if wanted.contains(read.reader.as_str()) {
+                by_reader
+                    .entry(&read.reader)
+                    .or_default()
+                    .push((&read.target, &read.digest));
+            }
+        }
+    }
+    let mut settled = 0;
+    for (id, witness) in inputs {
+        if let Some(reads) = by_reader.get(id.path()) {
+            let digest = incan_semantics_core::semantic_digest::semantic_digest(reads).map_err(|e| e.to_string())?;
+            let base = witness
+                .split_once("|incan.settled-calls/1:")
+                .map_or(witness.as_str(), |(base, _)| base);
+            *witness = format!("{base}|incan.settled-calls/1:{digest}");
+            settled += 1;
+        }
+    }
+    Ok(settled)
+}
+
 /// Collect and analyze the described unit's source through its compilation session, retaining canonical checked facts.
 ///
 /// Native-only declaration refusals follow analysis; desugaring and the Loaves the program imports from are owned by
@@ -366,22 +404,22 @@ fn checked_attempt(
     let mut graph_body_output =
         graph_body_output::GraphBodyOutput::prepare(graph_body_output, unit.project_root.clone())?;
     let mut publication = library.then(|| PublicationFacts::new(package_identity).for_inspection(inspection));
-    let namespace_imports = graph_body_output.enabled().then(|| {
-        let path_indexes = modules
+    let imports = std::sync::Arc::new(incan_driver::modules::SourceModuleImports::new(
+        &modules,
+        session.own_standard_package(),
+    ));
+    let namespace_indexes = graph_body_output.enabled().then(|| {
+        modules
             .iter()
             .enumerate()
             .map(|(index, module)| (module.file_path.clone(), index))
-            .collect::<BTreeMap<_, _>>();
-        (
-            incan_driver::modules::SourceModuleImports::new(&modules, session.own_standard_package()),
-            path_indexes,
-        )
+            .collect::<BTreeMap<_, _>>()
     });
-    let project_dependencies = |imports: &incan_driver::modules::SourceModuleImports, index: usize| {
+    let project_dependencies = |index: usize| {
         let mut dependencies = imports
             .dependencies(index)
-            .into_iter()
-            .filter_map(|dependency| {
+            .iter()
+            .filter_map(|&dependency| {
                 modules[dependency]
                     .file_path
                     .strip_prefix(&unit.project_root)
@@ -396,22 +434,28 @@ fn checked_attempt(
     let mut analysis = {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::analyze_modules", modules = modules.len()).entered();
         session
-            .analyze_unit(&modules, library.then_some(package_identity), &mut |module, checker| {
-                callable_products.observe(module, checker);
-                if let Some((imports, indexes)) = &namespace_imports
-                    && let Some(&index) = indexes.get(module.file_path.as_path())
-                {
-                    let dependencies = project_dependencies(imports, index);
-                    graph_body_output.observe(module, checker, &dependencies, package_identity);
-                }
-                if let Some(publication) = publication.as_mut() {
-                    publication.visit(module, checker, module.file_path == path);
-                }
-            })
+            .analyze_unit_with_imports(
+                &modules,
+                library.then_some(package_identity),
+                std::sync::Arc::clone(&imports),
+                library && collect_codegraph,
+                &mut |module, checker| {
+                    callable_products.observe(module, checker);
+                    if let Some(indexes) = &namespace_indexes
+                        && let Some(&index) = indexes.get(module.file_path.as_path())
+                    {
+                        let dependencies = project_dependencies(index);
+                        graph_body_output.observe(module, checker, &dependencies, package_identity);
+                    }
+                    if let Some(publication) = publication.as_mut() {
+                        publication.visit(module, checker, module.file_path == path);
+                    }
+                },
+            )
             .map_err(|failure| receipt.diagnostic(failure))?
     };
-    if let Some((imports, indexes)) = &namespace_imports {
-        graph_body_output.include_restored_imports(&path, indexes, |index| project_dependencies(imports, index))?;
+    if let Some(indexes) = &namespace_indexes {
+        graph_body_output.include_restored_imports(&path, indexes, project_dependencies)?;
     }
     let entry = modules
         .iter()
@@ -459,7 +503,7 @@ fn checked_attempt(
         .filter_map(|m| m.file_path.strip_prefix(&unit.project_root).ok())
         .map(|p| p.to_string_lossy().into_owned())
         .collect::<BTreeSet<_>>();
-    lower_authored_modules(&modules, &mut analysis, &session, &mut bodies, &mut files)?;
+    let rebound = lower_authored_modules(&modules, &mut analysis, &session, &mut bodies, &mut files)?;
     let retained_generated_member_owners = retained_generated_member_owners(&modules, &analysis)?;
     let retained_requirements = retained_body_call_requirements(
         &bodies[loaf_modules..],
@@ -531,9 +575,9 @@ fn checked_attempt(
         }
     }
     let mut cacheable_bodies = callable_products.publish(&modules, &bodies[loaf_modules..]);
-    cacheable_bodies.extend(analysis.namespace_lowering_inputs().iter().cloned());
     let mut witnessed = cacheable_bodies
         .iter()
+        .chain(analysis.namespace_lowering_inputs())
         .map(|(identity, _)| identity)
         .collect::<std::collections::HashSet<_>>();
     let mut additional = Vec::new();
@@ -546,23 +590,12 @@ fn checked_attempt(
         }
     }
     cacheable_bodies.extend(additional);
-    let mut cacheable_bodies = canonical_lowering_inputs(cacheable_bodies)?;
-    let mut by_reader: BTreeMap<&str, Vec<(&str, &str)>> = BTreeMap::new();
-    for read in reads_by_module.values().flatten() {
-        by_reader
-            .entry(&read.reader)
-            .or_default()
-            .push((&read.target, &read.digest));
-    }
-    for (id, witness) in &mut cacheable_bodies {
-        if let Some(reads) = by_reader.get(id.path()) {
-            let digest = incan_semantics_core::semantic_digest::semantic_digest(reads).map_err(|e| e.to_string())?;
-            let base = witness
-                .split_once("|incan.settled-calls/1:")
-                .map_or(witness.as_str(), |(base, _)| base);
-            *witness = format!("{base}|incan.settled-calls/1:{digest}");
-        }
-    }
+    let settled = settle_lowering_witnesses(&mut cacheable_bodies, reads_by_module.values().flatten())?;
+    let carried = cacheable_bodies.len();
+    cacheable_bodies.extend(analysis.namespace_lowering_inputs().cloned());
+    tracing::trace!(target: "incan::invocation", fresh_settled = settled, namespace_witnesses = cacheable_bodies.len() - carried,
+        "prepared lowering inputs");
+    let cacheable_bodies = canonical_lowering_inputs(cacheable_bodies)?;
     graph_body_output.attach_body_ir(
         &modules,
         &mut bodies[loaf_modules..],
@@ -584,6 +617,19 @@ fn checked_attempt(
     } else {
         None
     };
+    let retained_namespaces = if resident && unit.kind == UnitKind::Program && !inspection {
+        retained_namespace_bodies(
+            &modules,
+            &bodies[loaf_modules..],
+            &restored,
+            &rebound,
+            graph_body_records,
+            &unit.project_root,
+            entry - loaf_modules,
+        )
+    } else {
+        Vec::new()
+    };
     sources.extend(modules.into_iter().map(|module| module.source));
     let program_entrypoints = program_entrypoints(unit, &bodies, &files)?;
     let entry_module = bodies.get_mut(entry).ok_or("selected Body IR entry is missing")?;
@@ -594,6 +640,7 @@ fn checked_attempt(
     let program = complete_dependency_context(
         CheckedProgram {
             cacheable_bodies,
+            retained_namespaces,
             dependencies: RuntimeDependencyContext {
                 loaves: std::sync::Arc::clone(session.loaves()),
                 requested: requested.clone(),
@@ -683,6 +730,108 @@ pub(super) fn checked_local_identities(manifest: Option<&LibraryManifest>) -> BT
                 .filter(move |identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library == &manifest.name))
         })
         .collect()
+}
+
+/// A body borrowed for one native compilation, plus the exact source scopes it held on admission.
+pub(super) struct RetainedNamespaceBody {
+    source: String,
+    offset: usize,
+    scopes: Vec<incan_semantics_core::body_ir::SharedIdentities>,
+    entry_union_count: Option<usize>,
+}
+
+/// A restored module can return its exact compiled Body IR once planning drops the invocation's native context.
+/// Exclude modules with rewritten call locators or fields the context takes ownership of.
+fn retained_namespace_bodies(
+    modules: &[ParsedModule],
+    authored: &[BodyIrModule],
+    restored: &BTreeSet<String>,
+    rebound: &BTreeSet<PathBuf>,
+    records: &incan_frontend::checker_records::GraphBodyRecords,
+    project: &Path,
+    entry: usize,
+) -> Vec<RetainedNamespaceBody> {
+    modules
+        .iter()
+        .zip(authored)
+        .enumerate()
+        .filter_map(|(offset, (source, module))| {
+            let relative = source.file_path.strip_prefix(project).ok()?.to_str()?;
+            if !records.retains_namespace(relative)
+                || (restored.contains(relative) && rebound.contains(&source.file_path))
+                || !module.loaf_callables.is_empty()
+                || module
+                    .nominal_declarations
+                    .iter()
+                    .any(|layout| matches!(layout.canonical.origin, SymbolOrigin::RustCrate(_)))
+                || module
+                    .enum_declarations
+                    .iter()
+                    .any(|layout| matches!(layout.canonical.origin, SymbolOrigin::RustCrate(_)))
+            {
+                return None;
+            }
+            // Namespace publication precedes entry preparation. Keep the authored union prefix and admit an entry
+            // only when its other invocation-owned fields are empty.
+            let entry_union_count = if offset == entry {
+                if !module.program_entrypoints.is_empty()
+                    || !module.runtime_callable_bindings.is_empty()
+                    || !module.runtime_binding_scopes.is_empty()
+                    || !matches!(
+                        module.string_conversion_contract,
+                        incan_semantics_core::body_ir::StringConversionContract::Unselected
+                    )
+                {
+                    return None;
+                }
+                Some(module.native_union_declarations.len())
+            } else {
+                None
+            };
+            // Runtime preparation may extend a scope with target-specific names. Keep only the original shared handles.
+            let scopes = module
+                .bodies
+                .iter()
+                .map(|body| std::sync::Arc::clone(&body.named_type_identities))
+                .collect();
+            Some(RetainedNamespaceBody {
+                source: relative.to_owned(),
+                offset,
+                scopes,
+                entry_union_count,
+            })
+        })
+        .collect()
+}
+
+/// Move protected authored bodies back to their exact verified records. The native plan now owns its own products.
+pub(super) fn return_retained_namespaces(
+    program: &mut CheckedProgram,
+    records: &incan_frontend::checker_records::GraphBodyRecords,
+) {
+    for retained in program.retained_namespaces.drain(..) {
+        let Some(module) = program.modules.get_mut(program.own + retained.offset) else {
+            continue;
+        };
+        if module.bodies.len() != retained.scopes.len() {
+            continue;
+        }
+        if let Some(original) = retained.entry_union_count {
+            if module.native_union_declarations.len() < original {
+                continue;
+            }
+            module.native_union_declarations.truncate(original);
+            module.program_entrypoints.clear();
+            module.runtime_callable_bindings.clear();
+            module.runtime_binding_scopes.clear();
+            module.string_conversion_contract = incan_semantics_core::body_ir::StringConversionContract::Unselected;
+            module.loaf_callables.clear();
+        }
+        for (body, scope) in module.bodies.iter_mut().zip(retained.scopes) {
+            body.named_type_identities = scope;
+        }
+        records.retain_namespace(&retained.source, module);
+    }
 }
 
 /// Complete selected defaults and native layouts before the first planning attempt.
@@ -1135,14 +1284,9 @@ pub(super) fn retain_linked_loaf_declarations(modules: &mut [BodyIrModule], link
 pub(super) fn take_rust_layouts(modules: &mut [BodyIrModule]) -> Result<Vec<NominalDeclaration>, String> {
     let mut layouts = std::collections::BTreeMap::<String, NominalDeclaration>::new();
     for module in modules {
-        for declaration in std::mem::take(&mut module.nominal_declarations) {
-            if !matches!(
-                declaration.canonical.origin,
-                incan_semantics_core::SymbolOrigin::RustCrate(_)
-            ) {
-                module.nominal_declarations.push(declaration);
-                continue;
-            }
+        for declaration in module.nominal_declarations.extract_if(.., |declaration| {
+            matches!(declaration.canonical.origin, SymbolOrigin::RustCrate(_))
+        }) {
             if let Some(previous) = layouts.get(&declaration.native_item) {
                 if previous != &declaration {
                     return Err(format!(
@@ -1264,14 +1408,9 @@ pub(super) fn take_rust_enums(
 ) -> Result<Vec<incan_semantics_core::body_ir::EnumDeclaration>, String> {
     let mut layouts = std::collections::BTreeMap::new();
     for module in modules {
-        for declaration in std::mem::take(&mut module.enum_declarations) {
-            if !matches!(
-                declaration.canonical.origin,
-                incan_semantics_core::SymbolOrigin::RustCrate(_)
-            ) {
-                module.enum_declarations.push(declaration);
-                continue;
-            }
+        for declaration in module.enum_declarations.extract_if(.., |declaration| {
+            matches!(declaration.canonical.origin, SymbolOrigin::RustCrate(_))
+        }) {
             if let Some(previous) = layouts.get(&declaration.native_item) {
                 if previous != &declaration {
                     return Err(format!(

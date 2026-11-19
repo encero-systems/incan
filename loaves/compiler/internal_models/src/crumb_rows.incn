@@ -8,7 +8,7 @@ from std.primitives.crumb.row_reader import RowSet, read_rows
 from std.primitives.crumb.row_writer import write_rows
 from std.primitives.crumb.types import AbsentPolicy
 from std.primitives.crumb.values import Metadata, MetadataEntry, Value, ValueField
-from std.primitives.views import MappedFile
+from std.primitives.views import MappedFile, MappedView
 
 
 pub model ModelField:
@@ -62,6 +62,11 @@ pub def decode_rows(encoded: bytes, descriptions: list[Description], maximum: in
     """Admit one complete envelope and materialize only its bounded logical rows."""
     mut budget = operation_budget(maximum * 4)?
     rows = admit_rows(encoded, descriptions, maximum, budget)?
+    return materialize_rows(rows, budget)
+
+
+def materialize_rows(rows: RowSet, mut budget: Budget) -> Result[list[RowRecord], str]:
+    """Project each admitted row under the original remaining budget."""
     mut records: list[RowRecord] = []
     for index in range(rows.len()):
         records.append(rows.read_record(index, budget).map_err((error) => error.message())?)
@@ -86,10 +91,17 @@ pub def admit_rows(encoded: bytes, descriptions: list[Description], maximum: int
     """Retain the validated logical row view so callers may read a field without decoding its siblings."""
     if len(encoded) > maximum:
         return Err("encoded Crumb rows exceed their byte boundary")
-    registry = KindRegistry.create([], budget).map_err((error) => error.message())?
     owner = MappedFile.owned(encoded)?
     view = match owner.view(0, owner.len()):
         Some(selected) => selected
         None => return Err("Crumb row envelope has no complete view")
 
+    return admit_rows_view(view, descriptions, maximum, budget)
+
+
+pub def admit_rows_view(view: MappedView, descriptions: list[Description], maximum: int, mut budget: Budget) -> Result[RowSet, str]:
+    """Admit a borrowed store range with the same envelope and budget checks as owned input."""
+    if view.len() > maximum:
+        return Err("encoded Crumb rows exceed their byte boundary")
+    registry = KindRegistry.create([], budget).map_err((error) => error.message())?
     return read_rows(view, descriptions, registry, false, budget).map_err((error) => error.message())
