@@ -433,6 +433,8 @@ pub def supersede_outputs(selected: Snapshot, mut transaction: Transaction) -> R
         return Ok(None)
     mut writing: Dict[str, int] = {}
     mut slots: set[str] = set()
+    mut renewed_scopes: set[str] = set()
+    mut removed_scope_edges: set[str] = set()
     mut position = -1
     for write in transaction.writes:
         position += 1
@@ -441,12 +443,25 @@ pub def supersede_outputs(selected: Snapshot, mut transaction: Transaction) -> R
             slots.add(key)
         if write.kind != KIND_TOMBSTONE:
             writing[key] = position
+            if key.startswith("incan.engine.edge-in/3\tscope-name\t"):
+                renewed_scopes.add("\t".join(key.split("\t")[1:6]))
     for slot in sorted([key for key in slots]):
         # An earlier Oven keyed a slot's outputs by their context as well; the slot's own entry replaces them.
         for old in keys_with_prefix(selected, slot + "\t").map_err((error) => error.message())?:
             stage_delete(transaction, old)
         fields = slot.split("\t")
-        retire_edges(selected, transaction, outgoing_prefix(fields[1], "\t".join(fields[2:7])), writing)?
+        retire_edges(selected, transaction, outgoing_prefix(fields[1], "\t".join(fields[2:7])), writing, removed_scope_edges)?
+    # Scope-name values are materialized on demand. Only losing the last current reader withdraws the value.
+    candidates = set(["\t".join(key.split("\t")[1:6]) for key in removed_scope_edges])
+    for slot in sorted([item for item in candidates if item not in renewed_scopes]):
+        readers = keys_with_prefix(selected, "incan.engine.edge-in/3\t" + slot + "\t").map_err((error) => error.message())?
+        mut retained = false
+        for reader in readers:
+            if reader not in removed_scope_edges:
+                retained = true
+                break
+        if not retained:
+            stage_delete(transaction, slot + "\t")
     return Ok(None)
 
 
@@ -454,7 +469,8 @@ def retire_edges(
     selected: Snapshot,
     mut transaction: Transaction,
     outgoing: str,
-    writing: Dict[str, int],
+    writing: &Dict[str, int],
+    mut removed_scope_edges: set[str],
 ) -> Result[None, str]:
     """Remove a slot's earlier outgoing edges and their incoming entries, except those written again."""
     mut earlier: list[OutgoingEdge] = []
@@ -476,6 +492,8 @@ def retire_edges(
         if incoming not in writing and incoming not in retired:
             stage_delete(transaction, incoming)
             retired.add(incoming)
+            if incoming.startswith("incan.engine.edge-in/3\tscope-name\t"):
+                removed_scope_edges.add(incoming)
     return Ok(None)
 
 

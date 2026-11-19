@@ -56,7 +56,7 @@ from pub::internal_models import (
 )
 from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily
 from compiler_namespace_products import contract_key, stage_call_contracts, interface_key, member_key, member_plan_inputs, prepare_namespace_products
-from compiler_graph_records import OutputSlots, PublishedEvaluation, family_outputs, publish_evaluation, readers_of, reusable_evaluation, reusable_family_records, retire_compiler_versions, supersede_outputs
+from compiler_graph_records import OutputSlots, PublishedEvaluation, family_outputs, prepare_evaluation, publish_evaluation, readers_of, reusable_evaluation, reusable_family_records, retire_compiler_versions, retire_output, supersede_outputs
 from compiler_owner_retirement import retire_missing_functions
 from compiler_prepared_records import PreparedBodyRecordSource
 from compiler_record_envelopes import RankedActivation, RankedCheckingSweep, persist_activation
@@ -519,6 +519,11 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
     wide = project_source("package", "src/main.incn", "# é\ndef main() -> int:\n    return 1\n")?
     narrow = project_source("package", "src/main.incn", "# x\ndef main() -> int:\n    return 1\n")?
     assert wide.placements["main"].text != narrow.placements["main"].text
+    leaf = "def leaf() -> int:\n    return 1\n"
+    appended = project_source("package", "main.incn", leaf + "\n\ndef extra() -> int:\n    return 2\n")?
+    old_leaf = project_source("package", "main.incn", leaf)?
+    assert appended.owners[0].digest() == old_leaf.owners[0].digest()
+    assert appended.placements["leaf"].text != old_leaf.placements["leaf"].text
     earlier = scope_members("first\nsecond\n")
     later = scope_members("first\nsecond\nother\n")
     shadow = scope_members("first\nsecond\nmodel:str\n")
@@ -1702,7 +1707,7 @@ pub def test_removed_and_replaced_functions_leave_only_their_historical_graph_sl
     supersede_outputs(graph, next)?
     edited = commit(next).map_err((error) => error.message())?
     for row in before.owners:
-        for key in [row.key, signature_record(row).key]:
+        for key in [row.key, signature_record(row).key, before.placements[row.key.facet].key]:
             present_before = get(graph, encode_record_key(key)?).map_err((error) => error.message())?
             present_after = get(edited, encode_record_key(key)?).map_err((error) => error.message())?
             assert present_before is not None
@@ -1719,6 +1724,46 @@ pub def test_removed_and_replaced_functions_leave_only_their_historical_graph_sl
                 assert len(selected) == 0
                 assert len(readers_of(edited, [row.key], profile)?) == 0
                 assert get(edited, encode_record_key(body_key(family, origin, owner, "owned", "prior"))?).map_err((error) => error.message())? == Some(b"prior-value")
+    return Ok(None)
+
+
+pub def test_scope_name_leaves_only_after_its_last_reader_is_retired() -> Result[None, str]:
+    empty = store_snapshot(memory_root()).map_err((error) => error.message())?
+    projection = project_source("app", "main.incn", "def f():\n    pass\n")?
+    binding = scope_member(projection.census, scope_members(projection.census.text), "str")
+    key = encode_record_key(binding.key)?
+    encoded = binding.encoded()?
+    initial = commit(put(begin(empty), key, encoded)).map_err((error) => error.message())?
+    rank = ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=0)
+    owners = [body_key("local", "app", name, "checked", "current") for name in ["first", "second", "third"]]
+    mut graph = initial
+    for owner in owners[:2]:
+        scope = ReadScope(snapshot=graph.digest, profile=CHECKER_PROFILE)
+        mut source = PreparedBodyRecordSource.open(scope)
+        source.add(key, encoded)
+        receipt = source.receipt(scope, owner, [prepared_product_request(binding.key)])?
+        graph = publish_evaluation(graph, owner.identity, rank, b"checked", receipt)?.snapshot
+    mut first = begin(graph)
+    retire_output(first, CHECKER_PROFILE, owners[0])?
+    supersede_outputs(graph, first)?
+    shared = commit(first).map_err((error) => error.message())?
+    assert get(shared, key).map_err((error) => error.message())? == Some(encoded)
+    scope = ReadScope(snapshot=shared.digest, profile=CHECKER_PROFILE)
+    mut source = PreparedBodyRecordSource.open(scope)
+    source.add(key, encoded)
+    receipt = source.receipt(scope, owners[2], [prepared_product_request(binding.key)])?
+    mut transfer = begin(shared)
+    retire_output(transfer, CHECKER_PROFILE, owners[1])?
+    _ = prepare_evaluation(transfer, owners[2].identity, rank, b"checked", receipt)?
+    supersede_outputs(shared, transfer)?
+    moved = commit(transfer).map_err((error) => error.message())?
+    assert get(moved, key).map_err((error) => error.message())? == Some(encoded)
+    mut last = begin(moved)
+    retire_output(last, CHECKER_PROFILE, owners[2])?
+    supersede_outputs(moved, last)?
+    final_view = commit(last).map_err((error) => error.message())?
+    assert get(final_view, key).map_err((error) => error.message())? is None
+    assert get(graph, key).map_err((error) => error.message())? == Some(encoded)
     return Ok(None)
 
 

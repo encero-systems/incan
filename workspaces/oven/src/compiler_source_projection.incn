@@ -180,10 +180,8 @@ class SourceProjector:
                         mut offset = byte_start
                         if relative != 0:
                             offset += len(text[:relative].encode("utf-8"))
-                        mut raw_end = record.end - boundary.start
-                        while raw_end > relative and text[raw_end - 1] in " \t\r\n":
-                            raw_end -= 1
-                        raw = text[relative:raw_end]
+                        # The parser's dedent span reaches the next declaration or EOF, including separating newlines.
+                        raw = text[relative:record.end - boundary.start]
                         mark_placement(placements, record, offset, raw)
                 byte_start += len(text.encode("utf-8"))
         header_semantic, module_docs = split_documentation(header)
@@ -253,7 +251,7 @@ pub def scope_member(census: &SourceProjectionRecord, members: &Dict[str, list[s
 
 def mark_placement(mut placements: Dict[str, SourceProjectionRecord], owner: &SourceProjectionRecord, offset: int, raw: str) -> None:
     """Bind an owner's physical source bytes and absolute UTF-8 offset, including every same-named overload."""
-    key = source_key("owner-placement", owner.key.origin, owner.key.identity, owner.key.facet)
+    key = owner_placement_key(owner.key.origin, owner.key.identity, owner.key.facet)
     content = hexlify(sha256.digest(raw.encode("utf-8")))
     mut stamp = str(offset) + "|" + content
     if owner.key.facet in placements:
@@ -272,6 +270,11 @@ pub def project_source(
     if origin == "" or path == "":
         return Err("source projection requires an origin and logical path")
     return SourceProjector.open(origin, path, source).projection(declared, active)
+
+
+pub def owner_placement_key(origin: str, path: str, name: str) -> RecordKey:
+    """The mutable coordinate binding owned by this source declaration."""
+    return source_key("owner-placement", origin, path, name)
 
 
 pub def owner_source_key(origin: str, path: str, name: str) -> RecordKey:

@@ -8,7 +8,7 @@ from pub::internal_models.source_value_records import source_value
 from compiler_body_keys import IDENTITY_PROFILE
 from compiler_graph_records import OutputSlots, decode_record_key, family_outputs, readers_of, retire_output, reusable_evaluation
 from compiler_plan_values import LOWERING_PROFILE
-from compiler_source_projection import SourceProjection, owner_source_key, signature_key
+from compiler_source_projection import SourceProjection, owner_placement_key, owner_source_key, signature_key
 
 
 pub def retire_missing_functions(
@@ -41,8 +41,8 @@ pub def retire_missing_functions(
             old_counts = name_counts(previous.split("\n"))
             for name in old_counts.keys():
                 if name != "" and name not in current:
-                    # The complete source census owns both mutable bindings. Historical snapshots retain the old bytes.
-                    for key in [owner_source_key(origin, module, name), signature_key(origin, module, name)]:
+                    # The complete source census owns these mutable bindings. Historical snapshots retain the old bytes.
+                    for key in [owner_source_key(origin, module, name), signature_key(origin, module, name), owner_placement_key(origin, module, name)]:
                         stage_delete(transaction, encode_record_key(key)?)
                 if old_counts[name] > current.get(name, 0):
                     touched.add(name)
