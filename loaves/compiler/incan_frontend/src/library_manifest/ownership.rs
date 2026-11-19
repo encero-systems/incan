@@ -51,7 +51,7 @@ fn representable_type(ty: &crate::symbols::ResolvedType) -> bool {
 }
 
 /// Rehydrate only explicit checked facts; this does not authorize invoking the imported callable.
-pub(super) fn hydrate(contract: &OwnershipExport) -> Result<CheckedOwnershipContract, LibraryManifestError> {
+pub(crate) fn hydrate(contract: &OwnershipExport) -> Result<CheckedOwnershipContract, LibraryManifestError> {
     let OwnershipExport::Checked(contract) = contract else {
         return Err(invalid("unrepresentable ownership projection"));
     };

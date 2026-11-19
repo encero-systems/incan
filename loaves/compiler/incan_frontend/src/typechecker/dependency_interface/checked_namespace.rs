@@ -126,7 +126,7 @@ impl CheckedNamespaceInterface {
             .map(|(owner, fields)| (owner.clone(), fields.clone()))
             .collect();
         constructor_defaults.sort_by(|(left, _), (right, _)| left.cmp(right));
-        Ok(Some(Self {
+        let retained = Self {
             schema: Self::SCHEMA,
             constructor_defaults,
             module_name: module_name.to_owned(),
@@ -135,7 +135,18 @@ impl CheckedNamespaceInterface {
             identities,
             members,
             nominal_scope: Arc::new(nominal_scope),
-        }))
+        };
+        // A partial ownership projection cannot replace the ordinary provider. Compare the projected contracts
+        // with the completed source check before this namespace is made available for future builds.
+        let Ok(mut projected) = retained.projected_input_contracts() else {
+            return Ok(None);
+        };
+        for (identity, contract) in &checker.type_info().declarations.ownership_contracts {
+            if provider_input_contract(identity, module_path) && projected.remove(identity).as_ref() != Some(contract) {
+                return Ok(None);
+            }
+        }
+        Ok(projected.is_empty().then_some(retained))
     }
 
     /// Project the checked declarations into their compiler-owned Crumb schemas.
@@ -305,7 +316,7 @@ impl CheckedNamespaceInterface {
             declaration_nominal_scopes: Arc::new(std::mem::take(&mut converter.declaration_nominal_scopes)),
             retained_nominal_carriers: Arc::new(std::mem::take(&mut converter.retained_nominal_carriers)),
             declaration_callables: Arc::new(std::mem::take(&mut converter.declaration_callables)),
-            input_contracts: Arc::default(),
+            input_contracts: Arc::new(self.projected_input_contracts()?),
             constructor_defaults: Arc::new(self.constructor_defaults.iter().cloned().collect()),
             member_reexports: Arc::new(reexports),
             body_ir_pub_reexports: Arc::default(),
@@ -322,6 +333,63 @@ impl CheckedNamespaceInterface {
             snapshot: std::sync::OnceLock::new(),
         };
         Ok(Arc::new(interface))
+    }
+
+    /// Key the exported ownership facts by the same checked declaration selected at the editable call site.
+    fn projected_input_contracts(
+        &self,
+    ) -> Result<
+        std::collections::BTreeMap<CanonicalSymbolId, crate::ownership_metadata::CheckedOwnershipContract>,
+        String,
+    > {
+        use crate::api_metadata::ApiDeclaration;
+        use crate::library_manifest::ownership::{OwnershipExport, hydrate};
+        let mut contracts = std::collections::BTreeMap::new();
+        let mut add = |name: &str,
+                       id: Option<&CanonicalSymbolId>,
+                       kind: SemanticSourceTargetKind,
+                       contract: &OwnershipExport| {
+            let identity = id
+                .filter(|id| id.declaration_name == name && id.kind == kind && identity_owned_by(id, &self.module_path))
+                .ok_or_else(|| format!("checked ownership contract has no matching declaration for {name}"))?;
+            let value = hydrate(contract).map_err(|error| error.to_string())?;
+            if contracts.insert(identity.clone(), value).is_some() {
+                return Err(format!("ambiguous editable ownership contract for {name}"));
+            }
+            Ok(())
+        };
+        for declaration in &self.api.declarations {
+            let methods = match declaration {
+                ApiDeclaration::Function(function) => {
+                    if let Some(contract) = &function.ownership {
+                        add(
+                            &function.name,
+                            self.identities.get(&function.name),
+                            SemanticSourceTargetKind::Function,
+                            contract,
+                        )?;
+                    }
+                    continue;
+                }
+                ApiDeclaration::Model(value) => &value.methods,
+                ApiDeclaration::Class(value) => &value.methods,
+                ApiDeclaration::Enum(value) => &value.methods,
+                ApiDeclaration::Trait(value) => &value.methods,
+                ApiDeclaration::Newtype(value) => &value.methods,
+                _ => continue,
+            };
+            for method in methods {
+                if let Some(contract) = &method.ownership {
+                    let id = self
+                        .members
+                        .get(declaration.name())
+                        .and_then(|group| group.methods.get(&method.name))
+                        .filter(|id| id.declaration_span == method.anchor.span);
+                    add(&method.name, id, SemanticSourceTargetKind::Method, contract)?;
+                }
+            }
+        }
+        Ok(contracts)
     }
 
     /// Refuse crossed module identities, duplicate names and schema drift before installation.
@@ -642,6 +710,34 @@ mod tests {
         };
         assert!(model.fields.contains_key("quantity"));
         assert!(model.fields.contains_key("unit_price"));
+        Ok(())
+    }
+
+    /// Reopening a namespace must preserve each explicit argument contract under the identity the caller resolves.
+    #[test]
+    fn reopened_namespace_retains_explicit_function_and_method_contracts() -> Result<(), String> {
+        let source = "pub model Parcel:\n    pub value: int\n    pub def inspect(self, other: Borrowed[Parcel]) -> int:\n        return other.value\n\npub def inspect(other: Borrowed[Parcel]) -> int:\n    return other.value\n";
+        let program = crate::parser::parse(&crate::lexer::lex(source).map_err(|e| format!("{e:?}"))?)
+            .map_err(|e| format!("{e:?}"))?;
+        let path = vec!["parcels".to_owned()];
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(path.clone()));
+        checker.check_program(&program).map_err(|e| format!("{e:?}"))?;
+        let expected = checker
+            .type_info()
+            .declarations
+            .ownership_contracts
+            .iter()
+            .filter(|(identity, _)| provider_input_contract(identity, &path))
+            .map(|(id, contract)| (id.clone(), contract.clone()))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(expected.len(), 2);
+        let selected = CheckedNamespaceInterface::from_checked("parcels", &path, &program, &checker)?
+            .ok_or("provider was not captured")?;
+        let reopened = wire::restore(selected.wire_value()?)?;
+        reopened.validate()?;
+        let installed = reopened.installable()?;
+        assert_eq!(*installed.input_contracts, expected);
         Ok(())
     }
 
