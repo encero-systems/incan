@@ -2,7 +2,6 @@
 
 from rust::std::primitive import f64 as RustF64
 from std.primitives.crumb.budget import Budget
-from std.primitives.crumb.row_values import build_value, settle
 from std.primitives.text import copy_frozen_bytes
 from std.primitives.crumb.hashes import value_hash
 from std.primitives.crumb.values import Projection, IntegerValue, MapEntry, Value, ValueField
@@ -144,23 +143,22 @@ pub model PreparedNamespaceReader:
 
     pub def decode(self, encoded: bytes) -> Result[NamespaceAtom, str]:
         mut budget = graph_read_budget()?
-        row = self.reader.admit(encoded, budget)?
-        remaining_bytes, remaining_elements = budget.codec_allowance()
-        decoded = row.read_record(0, remaining_bytes, remaining_elements, budget.depth_allowance())
-        settle(decoded, budget).map_err((error) => error.message())?
-        return atom(build_value(decoded).map_err((error) => error.message())?)
+        return atom(self.reader.admit(encoded, budget)?)
 
     pub def identity(self, encoded: bytes, schema: u32) -> Result[NamespaceIdentity, str]:
         mut budget = graph_read_budget()?
         row = self.reader.admit(encoded, budget)?
-        name = text(wire_field(row, copy_frozen_bytes(NAMESPACE_MODULE_NAME), budget)?)?
-        version = wire_field(row, copy_frozen_bytes(NAMESPACE_SCHEMA), budget)?
+        fields = match row:
+            Value.Record(items) => items
+            _ => return Err("invalid checked namespace record")
+        name = text(wire_field(fields, copy_frozen_bytes(NAMESPACE_MODULE_NAME))?)?
+        version = wire_field(fields, copy_frozen_bytes(NAMESPACE_SCHEMA))?
         match version:
             Value.Integer(IntegerValue.Unsigned(number)) =>
                 if number != schema.saturating_resize[u128]():
                     return Err("unsupported checked namespace schema")
             _ => return Err("invalid checked namespace schema")
-        segments = items(wire_field(row, copy_frozen_bytes(NAMESPACE_MODULE_PATH), budget)?)?
+        segments = items(wire_field(fields, copy_frozen_bytes(NAMESPACE_MODULE_PATH))?)?
         mut path: list[str] = []
         for segment in segments:
             path.append(text(segment)?)

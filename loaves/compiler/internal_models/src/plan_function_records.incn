@@ -2,11 +2,10 @@
 
 from std.primitives.crumb.descriptions import Description
 from std.primitives.crumb.values import Value
-from std.primitives.crumb.row_values import settle
 from std.encoding.hex import hexlify
 from std.hash import sha256
 from rust::incan_semantics_core::semantic_digest import semantic_digest
-from plan_wire_rows import PreparedWireReader, wire_field, write_wire
+from plan_wire_rows import read_wire, write_wire
 from plan_wire_schema import stored_product_descriptions, stored_external_descriptions
 from graph_crumb_fields import graph_read_budget, items, decode_graph_row, encode_graph_row
 from crumb_rows import ModelField, model_description, required_value
@@ -123,54 +122,32 @@ pub def encode_entry_record(entry: str, inputs: list[str]) -> Result[bytes, str]
 
 
 pub model LoweringDemands:
-    """One publication's decoder and bounded cache of fully authenticated runtime signature lists."""
-
-    reader: Option[PreparedWireReader] = None
-    externals: Dict[str, list[Value]] = {}
-    cache_bytes: int = 0
+    """Keep the seed's schema available across checked demand reads."""
+    descriptions: list[Description] = []
 
     pub def encode(mut self, inputs: list[str], function: bytes) -> Result[bytes, str]:
-        root: bytes = b"\x47\xc7\x7f\x24\xca\x21\x00"
-        runtime: bytes = b"\xd9\x2c\x6a\x81\xb2\xff"
-        if self.reader is None:
-            self.reader = Some(PreparedWireReader.create(root, stored_product_descriptions(), "native plan wire")?)
-        mut budget = graph_read_budget()?
-        mut slots: list[int] = []
-        row = self.reader.unwrap().admit(function, budget, slots)?
-        available, elements = budget.codec_allowance()
-        cell = row.field_cell(0, runtime, available, elements, budget.depth_allowance())
-        settle(cell, budget).map_err((error) => error.message())?
-        if not cell.present or cell.origin < 0 or cell.length < 0 or cell.origin + cell.length > len(function):
-            return Err("native plan product has no typed runtime requirements")
-        # The source bytes and dictionary ordinals together specify every runtime signature. A cache hit still
-        # requires full admission, including all fields, the exact root and the complete referenced dictionary.
-        mut key = ""
-        if cell.length <= 65536:
-            key = ",".join([str(slot) for slot in slots]) + ":" + hexlify(function[cell.origin:cell.origin + cell.length])
-        if key != "" and key in self.externals:
-            return demand_row(inputs, self.externals[key])
-        mut externals: list[Value] = []
-        mut size = len(key)
-        for signature in items(wire_field(row, runtime, budget)?)?:
-            encoded = write_wire(b"\x74\xaa\x5e\x89\x16\x44\x00", stored_external_descriptions(), signature)?
-            size += len(encoded)
-            externals.append(Value.Binary(encoded))
-        if key != "" and self.cache_bytes + size <= 67108864:
-            self.externals[key] = externals
-            self.cache_bytes += size
-        return demand_row(inputs, externals)
-
-
-def demand_row(inputs: list[str], externals: list[Value]) -> Result[bytes, str]:
-    selector: bytes = b"lowdem\x00"
-    description = model_description(selector, "incan.lowering-demand/4", [
-        ModelField(identity=b"inputs", name="inputs", storage="list<string>"),
-        ModelField(identity=b"runtim", name="runtime", storage="list<binary>"),
-    ])
-    return encode_graph_row(selector, description, [
-        required_value(b"inputs", Value.List(text_items(inputs))),
-        required_value(b"runtim", Value.List(externals)),
-    ])
+        """Preserve the ordered producer inputs and each separately bounded native dependency signature."""
+        selector: bytes = b"lowdem\x00"
+        description = model_description(selector, "incan.lowering-demand/4", [
+            ModelField(identity=b"inputs", name="inputs", storage="list<string>"),
+            ModelField(identity=b"runtim", name="runtime", storage="list<binary>"),
+        ])
+        if len(self.descriptions) == 0:
+            self.descriptions = stored_product_descriptions()
+        value = read_wire(function, b"\x47\xc7\x7f\x24\xca\x21\x00", self.descriptions)?
+        match value:
+            Value.Record(fields) =>
+                for field in fields:
+                    if field.identity == b"\xd9\x2c\x6a\x81\xb2\xff":
+                        mut externals: list[Value] = []
+                        for signature in items(field.value)?:
+                            externals.append(Value.Binary(write_wire(b"\x74\xaa\x5e\x89\x16\x44\x00", stored_external_descriptions(), signature)?))
+                        return encode_graph_row(selector, description, [
+                            required_value(b"inputs", Value.List(text_items(inputs))),
+                            required_value(b"runtim", Value.List(externals)),
+                        ])
+            _ => pass
+        return Err("native plan product has no typed runtime requirements")
 
 
 pub def encode_lowering_demand(inputs: list[str], function: bytes) -> Result[bytes, str]:
