@@ -317,6 +317,25 @@ pub def entries(root: Path, top: str) -> Result[list[Entry], IndexError]:
     return Ok(result)
 
 
+pub def first_stored_key(root: Path, top: str, lower: str) -> Result[Option[str], IndexError]:
+    """Seek the first physical key at or above a lower bound, including keys whose current value is deleted."""
+    if top == "":
+        return Ok(None)
+    page = read_page(root, top)?
+    if page.level == 0:
+        for entry in page.entries:
+            if entry.key >= lower:
+                return Ok(Some(entry.key))
+        return Ok(None)
+    for position in range(len(page.entries)):
+        if position + 1 < len(page.entries) and page.entries[position + 1].key <= lower:
+            continue
+        match first_stored_key(root, page.entries[position].child, lower)?:
+            Some(key) => return Ok(Some(key))
+            None => pass
+    return Ok(None)
+
+
 pub def entries_with_prefix(root: Path, top: str, prefix: str) -> Result[list[Entry], IndexError]:
     """Collect the complete prefix range, retaining the existing three-argument store interface."""
     return limited_entries_with_prefix(root, top, prefix, 0)

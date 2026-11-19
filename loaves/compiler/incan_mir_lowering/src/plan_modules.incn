@@ -18,9 +18,8 @@ pub def module_page(products: str, module: str) -> Path:
 
 
 pub model AdmittedPage:
-    """An admitted module's final events by native function name, and the producer generation this request selected."""
+    """An admitted module's final events by native function name."""
 
-    pub generation: str
     pub events: Dict[str, PlanModuleFunction]
     pub inspect_placement: bool = true
 
@@ -34,26 +33,24 @@ pub model AdmittedPage:
         return None
 
 
-pub def admitted_page(products: Option[str], module: str) -> AdmittedPage:
+pub def admitted_page(products: Option[str], module: str, generation: Option[str]) -> AdmittedPage:
     """
     The final events of an admitted module, by the native function name of the body each belongs to.
 
     Bakery writes the page only for a module whose every witness still validates. No page, or a page that does not
     decode or names another module, admits nothing: every body then takes the keyed route.
     """
-    mut page = AdmittedPage(generation="", events={})
+    mut page = AdmittedPage(events={})
     directory = match products:
         Some(value) => value
         None => return page
 
+    if generation is None:
+        return page
     path = module_page(directory, module)
     if not path.is_file():
         return page
     encoded = match path.read_bytes():
-        Ok(value) => value
-        Err(_) => return page
-
-    generation = match Path(directory).joinpath("producer-profile").read_text("utf-8", "strict"):
         Ok(value) => value
         Err(_) => return page
 
@@ -62,7 +59,6 @@ pub def admitted_page(products: Option[str], module: str) -> AdmittedPage:
         Ok(record) =>
             if record.module != module:
                 return page
-            page.generation = generation
             page.inspect_placement = path.0.endswith(REPOSITION_MODULE_PAGE)
             for function in record.functions:
                 page.events[function.function] = function

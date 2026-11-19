@@ -13,6 +13,7 @@ from pub::incan_mir_plan import (
     source_span as plan_span,
     ExternalFunction,
     Function,
+    Callee,
     ModelDeclaration,
     EnumDeclaration,
     Plan,
@@ -631,11 +632,15 @@ def finish_unit_plan(
     original_nominal_count = len(context.as_ref().nominal_declarations)
     trace_lowering(trace, "generic instances")
     retry_intrinsic_layouts = list(intrinsics)
-    retry_functions = list(functions)
+    original_functions = len(functions)
+    # Prior to runtime closure, lowering only appends frames and binds deferred future callees. Preserve
+    # that small mutable surface; the native blocks of existing functions are rewritten only on success.
+    mut future_callees: list[tuple[int, Callee]] = []
+    for index in range(original_functions):
+        if let Some(callee) = borrowed_at(functions, index).future_callee:
+            future_callees.append((index, callee))
     retry_externals = list(externals)
     retry_instances = list(instances)
-    retry_emitted_frames = emitted_frames.clone()
-    retry_statics = list(statics)
     mut instance_cells: list[StaticCell] = []
     retention = lower_instances(
         template_constructors.as_ref(),
@@ -654,10 +659,12 @@ def finish_unit_plan(
         instance_cells,
         products,
     )?
-    for cell in instance_cells:
-        statics.append(cell)
     match retention:
         RuntimeRetention.NeedsRuntime(requests) =>
+            while len(functions) > original_functions:
+                _ = functions.pop()
+            for index, callee in future_callees:
+                functions[index].future_callee = Some(callee)
             retry = UnitContinuation(
                 source_context=source_context,
                 template_constructors=template_constructors,
@@ -675,21 +682,20 @@ def finish_unit_plan(
                 intrinsic_layouts=retry_intrinsic_layouts,
                 models=models,
                 enums=list(enums),
-                functions=retry_functions,
+                functions=list(functions),
                 externals=retry_externals,
                 instances=retry_instances,
-                emitted_frames=retry_emitted_frames,
-                statics=retry_statics,
+                emitted_frames=emitted_frames,
+                statics=list(statics),
                 instance_products=products,
             )
             return Ok(UnitPlanning.NeedsRuntime(retry, requests))
         RuntimeRetention.Complete =>
             drop(retry_intrinsic_layouts)
-            drop(retry_functions)
             drop(retry_externals)
             drop(retry_instances)
-            drop(retry_emitted_frames)
-            drop(retry_statics)
+            for cell in instance_cells:
+                statics.append(cell)
 
     retained_constructors = retained_program.constructors.as_ref()
     original_constructors = constructors.as_ref()

@@ -28,6 +28,7 @@ from nominal_identities import (
     read_wire_product_nominal,
     wire_product_nominal,
 )
+from std.primitives.crumb.descriptions import Description
 from plan_wire_rows import read_wire, write_wire, PositionChange
 from pub::internal_models.plan_wire_schema import stored_product_descriptions, stored_function_descriptions, stored_external_descriptions
 
@@ -39,6 +40,8 @@ from nominal_identities import (
     NominalReference,
     NominalRemap,
     ProductNominal,
+    UnitNominals,
+    resolve_nominals,
     binding_remap,
     capture_remap,
     preserving_remap,
@@ -334,6 +337,34 @@ def restore_product(stored: &StoredProduct, references: list[NominalReference]) 
     return Ok((function, restored))
 
 
+pub def restore_named_product(encoded: bytes, unit: &UnitNominals) -> Option[tuple[Function, list[ExternalFunction], list[NominalReference], list[Function]]]:
+    """Bind a retained product to this unit and restore its function and helper frames from one typed decode."""
+    stored = match decode_product_record(encoded):
+        Ok(value) => value
+        Err(_) => return None
+    resolved = match resolve_nominals(stored.nominals, unit):
+        Some(value) => value
+        None => return None
+    product = match restore_product(stored, resolved):
+        Ok(value) => value
+        Err(_) => return None
+    function, runtime = product
+    match restore_frames(stored, resolved):
+        Ok(frames) => return Some((function, runtime, resolved, frames))
+        Err(_) => return None
+
+
+pub def valid_ordinal_product(encoded: bytes) -> bool:
+    """Validate the native function against its own product-local nominal order after admitting the schema once."""
+    stored = match decode_product_record(encoded):
+        Ok(value) => value
+        Err(_) => return false
+    mut ordinals: list[NominalReference] = []
+    for ordinal in range(len(stored.nominals)):
+        ordinals.append(NominalReference(kind=stored.nominals[ordinal].kind, index=ordinal))
+    return restore_product(stored, ordinals).is_ok()
+
+
 pub def decode_product_parts(
     encoded: bytes,
     references: list[NominalReference],
@@ -519,6 +550,26 @@ def product_root_span(value: Value, positions: &WirePositions) -> Result[StoredS
 pub def transform_product_positions(encoded: bytes, positions: WirePositions, mut frame_names: list[str] = []) -> Result[bytes, str]:
     """Rebuild only native span positions while retaining every other typed field and all helper frames."""
     schema = stored_product_descriptions()
+    stored = positioned_record(encoded, positions, schema)?
+    for frame in stored.frames:
+        frame_names.append(str(frame.name))
+    return write_wire(b"G\xc7\x7f$\xca!\x00", schema, wire_stored_product(stored))
+
+
+pub def positioned_product_requirements(
+    encoded: bytes, positions: WirePositions, references: list[NominalReference],
+) -> Result[tuple[bytes, list[ExternalFunction], list[ProductNominal]], str]:
+    """Bind the complete native value and its dependencies in the same decode that places its stored spans."""
+    schema = stored_product_descriptions()
+    stored = positioned_record(encoded, positions, schema)?
+    _function, runtime = restore_product(stored, references)?
+    _frames = restore_frames(stored, references)?
+    positioned = write_wire(b"G\xc7\x7f$\xca!\x00", schema, wire_stored_product(stored))?
+    return Ok((positioned, runtime, stored.nominals))
+
+
+def positioned_record(encoded: bytes, positions: WirePositions, schema: list[Description]) -> Result[StoredProduct, str]:
+    """Apply the selected coordinate mapping to one fully admitted typed product."""
     value = read_wire(encoded, b"G\xc7\x7f$\xca!\x00", schema)?
     mut mapping = positions
     match mapping.change:
@@ -532,9 +583,7 @@ pub def transform_product_positions(encoded: bytes, positions: WirePositions, mu
     stored = read_wire_stored_product(value, mapping)?
     if stored.schema != 7:
         return Err("unknown native product schema")
-    for frame in stored.frames:
-        frame_names.append(str(frame.name))
-    return write_wire(b"G\xc7\x7f$\xca!\x00", schema, wire_stored_product(stored))
+    return Ok(stored)
 
 
 def decode_external_record(encoded: bytes) -> Result[StoredExternal, str]:

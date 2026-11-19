@@ -47,6 +47,25 @@ pub def test_fresh_keyed_plan_retains_the_whole_program_function() -> Result[Non
     return Ok(None)
 
 
+pub def test_runtime_retry_keeps_current_requests_product_fresh() -> Result[None, str]:
+    """The first ordinary pass can capture a provisional native function before runtime selection closes."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    products, report = record_directories(scratch.path())?
+    span = source_span(file="keyed_plan.incn", line=4, column=1)
+    captured = unit_function("main", span, 2)
+    key = retain_product(products, report, captured, false)?
+    path = report.joinpath(key + ".event")
+    first = decode_lowering_event(read(path)?)?
+    record = decode_plan_function_record(first.product)?
+    report_scalar(Some(report.0), products.0, record.inputs, captured.name, captured.name, true, 0)?
+    assert not decode_lowering_event(read(path)?)?.reused
+    final = unit_function("main", span, 1)
+    plan = Plan(enums=[], models=[], functions=[final], externals=[], programs=["main"], span=span)
+    publish_plan_records(plan, products.0, report.0)?
+    assert decode_record_plan(interface_plan(report)?)? == plan
+    return Ok(None)
+
+
 pub def test_reused_keyed_plan_must_equal_whole_program_plan() -> Result[None, str]:
     """A reused product that differs from its whole-plan function refuses, even when the unit publishes no interface."""
     scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?

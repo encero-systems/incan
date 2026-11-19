@@ -85,9 +85,13 @@ pub def encode_record_plan_products(
         file=str(plan.span.file), line=plan.span.line, column=plan.span.column,
     )
     encoded = write_plan(stored)?
-    if decode_record_plan(encoded)? != plan.clone():
+    if not same_plan(decode_record_plan(encoded)?, plan):
         return Err("native-interface codec changed complete native plan facts")
     return Ok(encoded)
+
+
+def same_plan(left: &Plan, right: &Plan) -> bool:
+    return left == right
 
 
 pub def decode_record_plan(encoded: bytes) -> Result[Plan, str]:

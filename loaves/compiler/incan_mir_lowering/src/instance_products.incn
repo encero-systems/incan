@@ -13,7 +13,9 @@ from pub::internal_models.checked_types import CheckedType
 from compiler_record_adapters import checked_type, native_checked_type, checked_type_matches_native
 from rust::incan_semantics_core import CompilerNodeId, IncanType as RustType, SymbolOrigin, encode_incan_symbol_identity
 from rust::incan_semantics_core::stable_identity import StableDeclarationId
-from rust::incan_semantics_core::body_ir import Body as RustBody
+from rust::incan_semantics_core::stable_identity::source_signature import SourceSignatureContext
+from rust::incan_semantics_core import IncanCallableParam
+from rust::incan_semantics_core::body_ir import Body as RustBody, CallableParamDefault
 from rust::std::collections import BTreeMap
 from pub::incan_mir_plan import ExternalFunction, Function, UnitNominals, encode_instance_request, decode_instance_request
 from pub::internal_models.compiler_records import RUNTIME_INSTANCE_IDENTITY
@@ -23,7 +25,7 @@ from type_parameters import Instance, request_instance
 from scalar_store import reported, retained_scalar, report_scalar, report_scalar_refusal
 from nominal_records import retain_named_scalar
 from checked_values import location
-from plan_product_inputs import graph_owner, ordinary_product_inputs
+from plan_product_inputs import graph_owner, ordinary_product_inputs, producer_generation
 
 # Separates a closed instance's request identity from its generic body's checked witness in the product key.
 const INSTANCE_FUNCTION: str = "incan.instance-function/2"
@@ -37,6 +39,7 @@ pub model InstanceProducts:
     """The keyed-product transport of one records request, shared by every closed instance its unit lowers."""
 
     pub directory: str
+    pub generation: Option[str]
     pub admitted: BTreeMap[CompilerNodeId, str]
     pub report: Option[str]
     pub overflow_checks: bool
@@ -61,13 +64,9 @@ pub def request_identity(request: &Instance) -> Result[bytes, str]:
     """
     if not graph_owner(request.body):
         return Err("generic instance of a member is named for its receiver")
-    mut declaration = ""
-    match request.body.canonical:
-        None => return Err("generic instance has no declaration identity")
-        Some(canonical) =>
-            match StableDeclarationId.from_canonical(canonical, None, None):
-                None => return Err("generic instance has no stable declaration identity")
-                Some(stable) => declaration = stable.render_compact()
+    declaration = match signed_template(request.body):
+        None => return Err("generic instance has no checked declaration signature")
+        Some(stable) => stable.render_compact()
     mut arguments: list[CheckedType] = []
     for index in range(len(request.arguments)):
         native = borrowed_at(request.arguments, index)
@@ -244,6 +243,7 @@ def instance_key(
         Some(products.directory),
         products.admitted,
         products.report is not None,
+        products.generation,
         unchecked,
     )
     match selected:
@@ -266,19 +266,57 @@ def runtime_generic(origin: SymbolOrigin) -> bool:
         _ => return false
 
 
+def signed_template(body: &RustBody) -> Option[StableDeclarationId]:
+    """Project the checked generic overload through the same source signature used by the checker."""
+    match body.canonical:
+        None => return None
+        Some(canonical) =>
+            mut parameters: list[IncanCallableParam] = []
+            for slot in range(len(body.params)):
+                param = borrowed_at(body.params, slot)
+                optional = match param.default:
+                    CallableParamDefault.Required => false
+                    _ => true
+                parameters.append(IncanCallableParam(
+                    name=None,
+                    ty=param.ty,
+                    kind=param.kind,
+                    has_default=optional,
+                    is_partial_preset=false,
+                    is_mut=param.mutable,
+                    native_owned=param.native_owned,
+                    input_access=param.input_access,
+                ))
+            signature = SourceSignatureContext(nominals=body.named_type_identities.as_ref(), binders=body.type_parameters.as_slice())
+            match signature.callable(parameters, body.return_type, body.is_async):
+                None => return None
+                Some(value) => return StableDeclarationId.from_canonical(canonical, Some(value), None)
+
+
 def template_position(context: &BodyIrModule, declaration: str) -> Option[int]:
-    """Find the generic template whose declaration has this stable identity in the unit's checked module."""
+    """Restore one uniquely matching overload. Older unsigned requests require a unique declaration."""
+    name = declaration.split("|")[0]
+    mut selected: Option[int] = None
     for position in range(len(context.bodies)):
         body = borrowed_at(context.bodies, position)
         match body.canonical:
-            None => pass
+            None => continue
             Some(canonical) =>
                 match StableDeclarationId.from_canonical(canonical, None, None):
-                    None => pass
+                    None => continue
                     Some(stable) =>
-                        if stable.render_compact() == declaration:
-                            return Some(position)
-    return None
+                        if stable.render_compact() != name:
+                            continue
+        if name != declaration:
+            match signed_template(body):
+                None => continue
+                Some(signed) =>
+                    if signed.render_compact() != declaration:
+                        continue
+        if selected is not None:
+            return None
+        selected = Some(position)
+    return selected
 
 
 pub def product_directory(products: &Option[InstanceProducts]) -> Option[str]:
@@ -298,4 +336,4 @@ pub def instance_transport(
     match directory:
         None => return None
         Some(root) =>
-            return Some(InstanceProducts(directory=root, admitted=admitted, report=report, overflow_checks=overflow_checks))
+            return Some(InstanceProducts(directory=root, admitted=admitted, report=report, overflow_checks=overflow_checks, generation=producer_generation(Some(root))))

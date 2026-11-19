@@ -54,7 +54,7 @@ from pub::internal_models import (
 )
 from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily
 from compiler_namespace_products import interface_key, member_key, member_plan_inputs, prepare_namespace_products
-from compiler_graph_records import OutputSlots, PublishedEvaluation, family_outputs, publish_evaluation, readers_of, reusable_evaluation, reusable_family_records, supersede_outputs
+from compiler_graph_records import OutputSlots, PublishedEvaluation, family_outputs, publish_evaluation, readers_of, reusable_evaluation, reusable_family_records, retire_compiler_versions, supersede_outputs
 from compiler_owner_retirement import retire_missing_functions
 from compiler_prepared_records import PreparedBodyRecordSource
 from compiler_record_envelopes import RankedActivation, RankedCheckingSweep, persist_activation
@@ -1675,3 +1675,33 @@ pub def test_checked_declaration_slots_separate_actual_receivers_and_signature_r
     assert project_declaration_slot("oven", "observation", "stamp", field + "FileEntry)[0]") != project_declaration_slot("oven", "observation", "stamp", field + "DirectoryEntry)[0]")
     nested = field + "Observation" + first + ")[0]"
     assert project_declaration_slot("oven", "observation", "stamp", nested).context == "symbol:" + nested
+
+
+pub def test_toolchain_transition_retires_only_previous_profiles_of_the_same_source() -> Result[None, str]:
+    """Old compiler indexes leave the current view while another program and prior snapshot keep their values."""
+    empty = store_snapshot(memory_root()).map_err((error) => error.message())?
+    projection = project_source("app", "main.incn", "def pick() -> int:\n    return 1\n")?
+    mut graph = publish_source_projection(empty, projection)?.snapshot
+    dependency = projection.owners[0]
+    rank = ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=0)
+    for origin, profile in [("app", "checker/18"), ("other", "checker/18"), ("app", "unrelated/18")]:
+        scope = ReadScope(snapshot=graph.digest, profile=profile)
+        mut source = PreparedBodyRecordSource.open(scope)
+        source.add(encode_record_key(dependency.key)?, dependency.encoded()?)
+        key = body_key("local", origin, profile, "checked", "context")
+        receipt = source.receipt(scope, key, [prepared_product_request(dependency.key)])?
+        graph = publish_evaluation(graph, profile + origin, rank, b"old", receipt)?.snapshot
+    older = graph
+    mut tx = begin(graph)
+    retire_compiler_versions(graph, tx, "app", "checker/19")?
+    supersede_outputs(graph, tx)?
+    current = commit(tx).map_err((error) => error.message())?
+    app = encode_record_key(body_key("local", "app", "checker/18", "checked", "context"))?
+    other = encode_record_key(body_key("local", "other", "checker/18", "checked", "context"))?
+    assert family_outputs(current, "local", "checker/18")? == [other]
+    assert len(family_outputs(current, "local", "unrelated/18")?) == 1
+    assert app in family_outputs(older, "local", "checker/18")?
+    assert get(older, app).map_err((error) => error.message())? == Some(b"old")
+    assert len(readers_of(current, [dependency.key], "checker/18")?) == 1
+    assert len(readers_of(older, [dependency.key], "checker/18")?) == 2
+    return Ok(None)

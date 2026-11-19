@@ -27,7 +27,7 @@ pub struct CheckedNamespaceInterface {
         CanonicalSymbolId,
         Vec<Option<ownership_contracts::defaults::DefaultValue>>,
     )>,
-    nominal_scope: std::collections::BTreeMap<String, CanonicalSymbolId>,
+    nominal_scope: Arc<std::collections::BTreeMap<String, CanonicalSymbolId>>,
 }
 
 /// The canonical identities of one declaration's members, by member name, as the cold checker recorded them.
@@ -134,7 +134,7 @@ impl CheckedNamespaceInterface {
             api,
             identities,
             members,
-            nominal_scope,
+            nominal_scope: Arc::new(nominal_scope),
         }))
     }
 
@@ -279,13 +279,13 @@ impl CheckedNamespaceInterface {
             .iter()
             .map(|(name, identity)| (name.clone(), identity.clone()))
             .collect::<HashMap<_, _>>();
-        let nominal_scope = Arc::new(self.nominal_scope.clone());
+        let nominal_scope = &self.nominal_scope;
         for (name, kind) in &symbols {
             if let Some(identity) = identities.get(name) {
-                converter.retain_declaration_nominal_scope(identity, kind, &nominal_scope);
+                converter.retain_declaration_nominal_scope(identity, kind, nominal_scope);
             }
         }
-        converter.retain_nominal_scope_carriers(&nominal_scope);
+        converter.retain_nominal_scope_carriers(nominal_scope);
         let (transitive_public_types, transitive_public_traits) = provider_transitive_semantics(&symbols, &identities);
         let symbols = Arc::new(symbols);
         let identities = Arc::new(identities);
@@ -302,9 +302,9 @@ impl CheckedNamespaceInterface {
             direct_member_symbols: symbols,
             direct_member_type_aliases: Arc::default(),
             direct_member_identities: identities,
-            declaration_nominal_scopes: Arc::new(converter.declaration_nominal_scopes.clone()),
-            retained_nominal_carriers: Arc::new(converter.retained_nominal_carriers.clone()),
-            declaration_callables: Arc::new(converter.declaration_callables.clone()),
+            declaration_nominal_scopes: Arc::new(std::mem::take(&mut converter.declaration_nominal_scopes)),
+            retained_nominal_carriers: Arc::new(std::mem::take(&mut converter.retained_nominal_carriers)),
+            declaration_callables: Arc::new(std::mem::take(&mut converter.declaration_callables)),
             input_contracts: Arc::default(),
             constructor_defaults: Arc::new(self.constructor_defaults.iter().cloned().collect()),
             member_reexports: Arc::new(reexports),
@@ -363,7 +363,7 @@ impl CheckedNamespaceInterface {
             }
             if !matches!(declaration, crate::api_metadata::ApiDeclaration::Alias(_))
                 && (identity.declaration_name != name
-                    || identity.origin != SymbolOrigin::Module(self.module_path.clone()))
+                    || !matches!(&identity.origin, SymbolOrigin::Module(path) if path == &self.module_path))
             {
                 return Err("checked namespace interface declaration identity disagrees with its module".into());
             }

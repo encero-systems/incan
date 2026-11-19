@@ -79,7 +79,7 @@ pub def publish_plan_records(plan: &Plan, products: str, report: str) -> Result[
     inputs = ["incan.plan-entry/2", generation, main, selection, selected.key]
     key = semantic_digest(inputs).map_err((error) => str(error))?.replace("sha256:", "")
     path = Path(products).joinpath(key + ".incnentry")
-    entry_attempt = enter_producer("compiler", "plan-function", selected.identity, key)
+    entry_attempt = enter_producer("compiler", "plan-function", selected.identity, "entry")
     value = encode_entry_record(main, inputs)?
     finish_producer(entry_attempt, "produced")
     mut reused = false

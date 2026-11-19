@@ -9,6 +9,7 @@ from pub::incan_platform.store import (
     begin,
     commit,
     get,
+    first_stored_key,
     keys_with_prefix,
     revisions_with_prefix,
     stage_delete,
@@ -372,6 +373,46 @@ pub def readers_of(selected: Snapshot, changed: list[RecordKey], profile: str) -
             if let Some(reader) = current_reader(selected, profile, edge.reader)?:
                 readers[reader] = decode_record_key(reader)?
     return Ok([readers[key] for key in sorted([item for item in readers.keys()])])
+
+
+def index_components(selected: Snapshot, prefix: str) -> Result[list[str], str]:
+    """Seek each immediately nested component once. A tab's byte successor skips the entire component."""
+    mut components: list[str] = []
+    mut lower = prefix
+    while let Some(key) = first_stored_key(selected, lower).map_err((error) => error.message())?:
+        if not key.startswith(prefix):
+            break
+        fields = key[len(prefix):].split("\t")
+        if len(fields) < 2 or fields[0] == "":
+            return Err("invalid compiler output index component")
+        components.append(fields[0])
+        lower = prefix + fields[0] + "\n"
+    return Ok(components)
+
+
+pub def retire_compiler_versions(selected: Snapshot, mut transaction: Transaction, origin: str, current: str) -> Result[None, str]:
+    """
+    Remove obsolete output pointers for this producer and source origin before publishing new values.
+    Compiler versions can produce different physical bytes for the same logical output key. The source
+    transaction retires their old indexes and edges atomically. Earlier snapshots still own their values.
+    """
+    if selected.index == "":
+        return Ok(None)
+    parts = current.split("/")
+    if len(parts) != 2 or parts[0] == "" or parts[1] == "" or "\t" in current or "\t" in origin:
+        return Err("invalid compiler version or source origin")
+    versions = "incan.engine.output/2\t" + parts[0] + "/"
+    for version in index_components(selected, versions)?:
+        if version == parts[1]:
+            continue
+        family_root = versions + version + "\t"
+        for family in index_components(selected, family_root)?:
+            identities = family_root + family + "\t"
+            for identity in index_components(selected, identities)?:
+                scoped = identities + identity + "\t" + origin + "\t"
+                for key in keys_with_prefix(selected, scoped).map_err((error) => error.message())?:
+                    stage_delete(transaction, key)
+    return Ok(None)
 
 
 pub def supersede_outputs(selected: Snapshot, mut transaction: Transaction) -> Result[None, str]:

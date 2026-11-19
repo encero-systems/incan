@@ -149,6 +149,25 @@ pub fn typecheck_modules(
         .map(|(index, &complete)| complete && cycle_peers[index].iter().all(|&peer| complete_namespaces[peer]))
         .collect::<Vec<_>>();
     let (checked_dependencies, needed_interfaces) = imports.checker_dependencies(&restored);
+    let selected = namespace_records
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| restored[*index] && needed_interfaces[*index])
+        .filter_map(|(index, row)| {
+            row.as_ref()
+                .map(|record| (index, modules[index].file_path.as_path(), &record.interface))
+        })
+        .collect::<Vec<_>>();
+    for (index, interface) in restore_dependency_interfaces(&selected).map_err(|message| {
+        CliDiagnosticFailure::single(
+            "",
+            "",
+            diagnostics::CompileError::new(message, Default::default()),
+            diagnostics::DiagnosticPhase::Typecheck,
+        )
+    })? {
+        dependency_interfaces[index] = Some(interface);
+    }
     for (((idx, module), namespace), dep_indexes) in modules
         .iter()
         .enumerate()
@@ -162,17 +181,6 @@ pub fn typecheck_modules(
             && restored[idx]
         {
             warnings_out.extend(parser_warning_diagnostics(module));
-            if needed_interfaces[idx] {
-                let _install = tracing::trace_span!(target: "incan::invocation", "incan_driver::restore_dependency_interface", module = %module.file_path.display()).entered();
-                dependency_interfaces[idx] = Some(record.interface.installable().map_err(|message| {
-                    CliDiagnosticFailure::single(
-                        "",
-                        "",
-                        diagnostics::CompileError::new(message, Default::default()),
-                        diagnostics::DiagnosticPhase::Typecheck,
-                    )
-                })?);
-            }
             type_infos.push(TypeCheckInfo::default());
             namespace_bodies.push(Some(record.body_ir));
             namespace_lowering_inputs.extend(record.lowering_inputs);
@@ -578,4 +586,62 @@ fn resolve_package_owned_c_binding_header(unit: &UnitDescription, binding: &CBin
     let mut resolved = binding.clone();
     resolved.header = unit.project_root.join(&binding.header).to_string_lossy().into_owned();
     resolved
+}
+
+type SelectedNamespace<'a> = (
+    usize,
+    &'a Path,
+    &'a Arc<dyn incan_frontend::checker_records::GraphNamespaceInterface>,
+);
+type InstalledNamespace = (usize, Arc<ModuleDependencyInterface>);
+
+/// Materialize only the sealed namespaces a checked module reads. Disjoint immutable interfaces can be
+/// decoded independently. The requesting checker still installs their tables in source dependency order.
+fn restore_dependency_interfaces(selected: &[SelectedNamespace<'_>]) -> Result<Vec<InstalledNamespace>, String> {
+    /// Decode one contiguous batch in dependency order and retain its original module indexes.
+    fn restore(batch: &[SelectedNamespace<'_>], parent: &tracing::Span) -> Result<Vec<InstalledNamespace>, String> {
+        batch.iter().map(|&(index, path, interface)| {
+            let _install = tracing::trace_span!(target: "incan::invocation", parent: parent, "incan_driver::restore_dependency_interface", module = %path.display()).entered();
+            Ok((index, interface.installable()?))
+        }).collect()
+    }
+
+    const MAX_WORKERS: usize = 4;
+    let parent = tracing::Span::current();
+    if selected.len() < MAX_WORKERS * 2 {
+        return restore(selected, &parent);
+    }
+    let available = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    let jobs = std::env::var("INCAN_JOBS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(MAX_WORKERS);
+    let workers = available.min(jobs).clamp(1, MAX_WORKERS);
+    if workers == 1 {
+        return restore(selected, &parent);
+    }
+    let dispatch = tracing::dispatcher::get_default(Clone::clone);
+    std::thread::scope(|scope| {
+        let mut tasks = Vec::new();
+        for batch in selected.chunks(selected.len().div_ceil(workers)) {
+            let dispatch = &dispatch;
+            let parent = &parent;
+            let task = std::thread::Builder::new()
+                .name(format!("incan-namespace-{}", batch[0].0))
+                .stack_size(incan_frontend::compiler_stack::compiler_stack_bytes())
+                .spawn_scoped(scope, move || {
+                    tracing::dispatcher::with_default(dispatch, || restore(batch, parent))
+                })
+                .map_err(|error| format!("could not start dependency interface worker: {error}"))?;
+            tasks.push(task);
+        }
+        let mut interfaces = Vec::with_capacity(selected.len());
+        for task in tasks {
+            match task.join() {
+                Ok(result) => interfaces.extend(result?),
+                Err(payload) => std::panic::resume_unwind(payload),
+            }
+        }
+        Ok(interfaces)
+    })
 }

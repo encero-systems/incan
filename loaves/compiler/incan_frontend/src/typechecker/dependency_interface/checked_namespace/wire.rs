@@ -136,6 +136,18 @@ impl<T: Project> Project for Option<T> {
         }
     }
 }
+/// Shared native tables use their ordinary typed field representation on the wire.
+impl<T: Project> Project for std::sync::Arc<T> {
+    /// Project the single shared value without copying its native table.
+    fn project(&self) -> Cell {
+        self.as_ref().project()
+    }
+
+    /// Allocate the checked table once for the namespace and its installed dependency interfaces.
+    fn restore(value: Cell) -> Result<Self, String> {
+        T::restore(value).map(std::sync::Arc::new)
+    }
+}
 impl<A: Project, B: Project> Project for (A, B) {
     fn project(&self) -> Cell {
         Cell::Tuple(vec![self.0.project(), self.1.project()])

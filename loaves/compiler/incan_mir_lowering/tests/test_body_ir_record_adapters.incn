@@ -52,6 +52,53 @@ from rust::incan_semantics_core::body_ir import (
 from symbols import model_symbol
 
 
+from instance_products import request_identity, restore_requests
+from type_parameters import Instance
+from pub::incan_mir_plan import decode_instance_request, encode_instance_request
+from rust::incan_semantics_core import IncanCallableParamKind, IncanInputAccess
+from rust::incan_semantics_core::body_ir import CallableParam, CallableParamDefault, LocalId
+
+
+pub def test_generic_instance_requests_select_the_exact_overload() -> Result[None, str]:
+    """Reordering overloads preserves signed requests. An old unsigned request requires a unique match."""
+    mut one = native_body(empty_body("pick"))?
+    one.type_parameters = ["T"]
+    mut second_source = empty_body("pick")
+    mut declared = identity("pick", DeclarationKind.Function)
+    declared.declaration_span = HirSourceSpan(file="src/main.incn", start=12, end=28)
+    second_source.canonical = Some(declared)
+    second_source.span = declared.declaration_span
+    second_source.direct_call_id = CompilerNodeId.declaration_span("app", 12, 28)
+    second_source.type_parameters = ["T"]
+    mut two = native_body(second_source)?
+    two.params = [CallableParam(
+        local=LocalId(0), name="value", ty=one.return_type, kind=IncanCallableParamKind.Normal,
+        span=one.span, default=CallableParamDefault.Required, mutable=false, native_owned=false,
+        input_access=IncanInputAccess.Inferred,
+    )]
+    mut module = RustBodyIrModule.declarations_only("app")
+    module.bodies = [two.clone(), one.clone()]
+    first = Instance(body=one, arguments=[], owned_callable_slots=[], original_callable=false)
+    second = Instance(body=two, arguments=[], owned_callable_slots=[], original_callable=false)
+    short = request_identity(first)?
+    long = request_identity(second)?
+    assert short != long, "distinct checked signatures produced identical request bytes"
+    match restore_requests([short, long], module):
+        None => return Err("signed overload requests did not restore")
+        Some(found) =>
+            assert len(found) == 2, "one of two restored overloads disappeared"
+            assert len(found[0].body.params) == 0, "first signed request restored the wrong overload"
+            assert len(found[1].body.params) == 1, "second signed request restored the wrong overload"
+    stable, args, slots, original = decode_instance_request(short)?
+    old = encode_instance_request(stable.split("|")[0], args, slots, original)?
+    assert restore_requests([old], module) is None, "an ambiguous legacy request was accepted"
+    module.bodies = [first.body]
+    assert restore_requests([old], module) is not None, "a uniquely identified historical request was lost"
+    module.bodies = [second.body, second.body]
+    assert restore_requests([long], module) is None, "two current bodies had the same signed identity"
+    return Ok(None)
+
+
 pub def test_native_body_positions_keep_nested_order_and_utf8_offsets() -> Result[None, str]:
     """Child statement spans precede their owners; identity metadata contributes no positional nodes."""
     mut body = empty_body("walk")

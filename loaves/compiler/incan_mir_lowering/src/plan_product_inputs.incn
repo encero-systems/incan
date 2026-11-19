@@ -15,6 +15,15 @@ from body_positions import body_position_map
 from scalar_store import record_scalar_inputs, scalar_inputs
 
 
+pub def producer_generation(products: Option[str]) -> Option[str]:
+    """Read the immutable producer profile for this request's selected product directory."""
+    if let Some(directory) = products:
+        match Path(directory).joinpath("producer-profile").read_text("utf-8", "strict"):
+            Ok(value) => return Some(value)
+            Err(_) => pass
+    return None
+
+
 pub def ordinary_product_inputs(
     context: &BodyIrModule,
     body: &RustBody,
@@ -24,6 +33,7 @@ pub def ordinary_product_inputs(
     products: Option[str],
     admitted: &BTreeMap[CompilerNodeId, str],
     records: bool,
+    generation: Option[str],
     unchecked: Option[str] = None,
 ) -> Option[tuple[list[str], list[tuple[int, int]]]]:
     """
@@ -48,11 +58,11 @@ pub def ordinary_product_inputs(
             Ok(value) => value
             Err(_) => return None
         positions = body_position_map(body, source, file, span)
-        generation = match Path(products.unwrap_or("")).joinpath("producer-profile").read_text("utf-8", "strict"):
-            Ok(value) => value
-            Err(_) => return None
+        profile = match generation:
+            None => return None
+            Some(value) => value
         mut inputs = record_scalar_inputs(meaning, name, span, overflow_checks, witness, len(positions))
-        inputs.append(generation)
+        inputs.append(profile)
         return Some((inputs, positions))
     # The cold scalar witness includes all checked fields and physical positions; only its digest enters the graph.
     encoded: list[u8] = match to_allocvec(body):

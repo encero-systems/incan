@@ -183,6 +183,9 @@ pub def lower_instances(
             runtime_unions,
             redirects,
         )?
+    mut source_indexes: dict[str, int] = {}
+    for index in range(len(owners)):
+        source_indexes[owners[index]] = index
     enqueue_instances(queue, instances)
     while let Some(request) = queue.pending.pop_front():
         arguments = request.arguments
@@ -196,7 +199,7 @@ pub def lower_instances(
             context.nominal_declarations.push(declaration.clone())
         if len(declarations) != 0:
             runtime_unions = collect_unions(context)
-        role, source_index = instance_frame_selection(body, original_callable, owners)?
+        role, source_index = instance_frame_selection(body, original_callable, source_indexes)?
         retain_nominal_tables(program, context)?
         constructors = program.constructors.as_ref()
         retain_body_carriers(constructors, context, intrinsics, body, files[source_index])?
@@ -352,22 +355,18 @@ def governed_runtime_module(owners: &list[str]) -> bool:
 
 
 def instance_frame_selection(
-    body: RustBody,
+    body: &RustBody,
     original_callable: bool,
-    owners: list[str],
+    source_indexes: &dict[str, int],
 ) -> Result[tuple[DecoratorFrame, int], str]:
     """Keep the checked execution role and last matching source owner, refusing an instance without provenance."""
     mut role = DecoratorFrame.Normal
     if original_callable:
         role = DecoratorFrame.Original
     owner = body_module_identity(body)?
-    mut source_index = -1
-    for index in range(len(owners)):
-        if owners[index] == owner:
-            source_index = index
-    if source_index < 0:
+    if not source_indexes.contains_key(owner):
         return Err("unsupported Body IR instance without source provenance")
-    return Ok((role, source_index))
+    return Ok((role, source_indexes[owner]))
 
 
 pub model FunctionNames:

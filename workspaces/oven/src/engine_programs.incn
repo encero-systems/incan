@@ -26,9 +26,9 @@ from compiler_body_values import (
     select_body_inventory_except,
     select_namespace_inventory_except,
 )
-from compiler_plan_values import select_plan_inventory_except, plan_reads_changed, select_plan_modules
+from compiler_plan_values import LOWERING_PROFILE, select_plan_inventory_except, plan_reads_changed, select_plan_modules
 from compiler_plan_modules import restored_modules
-from compiler_graph_records import supersede_outputs
+from compiler_graph_records import retire_compiler_versions, supersede_outputs
 from graph_read_demands import GraphDemand, note_graph_demand
 from engine_epochs import load_epoch
 pub from engine_program_records import NativeUnit
@@ -441,6 +441,8 @@ pub def obtain(
         body_reuses = bodies.body_reuses
         body_ir_evaluations = bodies.body_ir_evaluations
     # Each slot keeps one indexed output: the request's new evaluations retire the outputs they replace.
+    retire_compiler_versions(graph, request_transaction, origin, CHECKER_PROFILE)?
+    retire_compiler_versions(graph, request_transaction, origin, LOWERING_PROFILE)?
     supersede_outputs(graph, request_transaction)?
     fact = produced_fact(produced.fact)?
     unit = NativeUnit(identity=key.digest, payload=executable_payload(fact, binary.name())?, binary=binary.0)

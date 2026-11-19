@@ -48,6 +48,7 @@ from crate.trace.schema import Operation
 from crate.ipc import session_id
 from crate.store.files import file_digest
 from crate.store.index import Entry, Location, build, entries as index_entries, find as index_find, insert
+from crate.store.index import first_stored_key as index_first_stored_key
 from crate.store.index import entries_for_keys as index_entries_for_keys
 from crate.store.index import entries_with_prefix as index_entries_with_prefix
 from crate.store.index import read_page as index_page, search as index_search
@@ -622,6 +623,14 @@ pub def index_levels(view: Snapshot) -> Result[int, StoreError]:
     if view.index == "":
         return Ok(0)
     return Ok(index_page(view.root, view.index).map_err(index_failure)?.level + 1)
+
+
+pub def first_stored_key(view: Snapshot, lower: str) -> Result[Option[str], StoreError]:
+    """Seek one physical index key, including deleted keys, without reading or listing its neighboring records."""
+    found = index_first_stored_key(view.root, view.index, lower).map_err(index_failure)?
+    if found is not None:
+        counted["listed"] = counted.get("listed", 0) + 1
+    return Ok(found)
 
 
 pub def keys_with_prefix(view: Snapshot, prefix: str) -> Result[list[str], StoreError]:

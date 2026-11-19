@@ -62,7 +62,7 @@ from frame_instances import (
 )
 from function_frames import lower_function
 from checked_values import indexed_location, line_starts, location
-from plan_product_inputs import ordinary_product_inputs
+from plan_product_inputs import ordinary_product_inputs, producer_generation
 from instance_products import encode_requests, restore_requests
 from body_positions import indexed_body_positions
 from pub::internal_models.plan_module_records import PlanModuleFunction
@@ -250,6 +250,7 @@ def lower_module_frames(
     unions = collect_unions(context.as_ref())
     mut intrinsics = intrinsic_declarations(constructors.as_ref(), context.as_ref(), entry_file, [])?
     program = program_context(constructors, context.as_ref(), intrinsics, unions, overflow_checks)?
+    generation = producer_generation(scalar_products)
     mut nominals = product_nominal_table(program, intrinsics, scalar_products)
     mut completed: list[ModuleFrames] = []
     for module_index in range(len(positions_by_module)):
@@ -268,6 +269,7 @@ def lower_module_frames(
                 trace,
                 scalar_products,
                 scalar_bodies.as_ref(),
+                generation,
                 record_report,
                 nominals,
             )?,
@@ -289,6 +291,7 @@ def lower_selected_module(
     trace: bool,
     scalar_products: Option[str],
     scalar_bodies: &BTreeMap[CompilerNodeId, str],
+    generation: Option[str],
     record_report: Option[str],
     mut nominals: UnitNominals,
 ) -> Result[ModuleFrames, str]:
@@ -302,7 +305,7 @@ def lower_selected_module(
     mut signatures = external_index()
     # The module's admitted plan record, read once at its first ordinary body, and the functions restored from it.
     mut module = ""
-    mut admitted = admitted_page(None, "")
+    mut admitted = admitted_page(None, "", None)
     mut placement_lines: list[int] = []
     mut restored: list[AdmittedFunction] = []
     mut ordinary = 0
@@ -313,7 +316,7 @@ def lower_selected_module(
         ordinary += 1
         if module == "":
             module = body_module_identity(body)?
-            admitted = admitted_page(scalar_products, module)
+            admitted = admitted_page(scalar_products, module, generation)
             if len(admitted.events) > 0 and admitted.inspect_placement:
                 placement_lines = line_starts(source)
         diagnostic_owner = f" in {body.name} at {file}"
@@ -335,7 +338,7 @@ def lower_selected_module(
             nominals,
             module_event,
             placement_lines,
-            admitted.generation,
+            generation,
             restored,
         ).map_err((reason) => reason + diagnostic_owner)?
         # Only a body that took the keyed route was lowered or looked up; a restored body is not traced.
@@ -403,6 +406,7 @@ pub def lower_ordinary_bodies_serial(
     Bodies are grouped by retained module provenance once, frame names are checked by key, and native signatures merge through
     a keyed index, so no step rescans every body, frame or signature per frame.
     """
+    generation = producer_generation(scalar_products)
     mut nominals = product_nominal_table(program, intrinsics, scalar_products)
     mut module_bodies: BTreeMap[str, list[int]] = BTreeMap.new()
     for position in range(len(context.bodies)):
@@ -420,7 +424,7 @@ pub def lower_ordinary_bodies_serial(
             None => pass
         # The module's admitted plan record and the functions restored from it, as in `lower_selected_module`.
         module = str(checked_owner)
-        admitted = admitted_page(scalar_products, module)
+        admitted = admitted_page(scalar_products, module, generation)
         mut placement_lines: list[int] = []
         if len(admitted.events) > 0 and admitted.inspect_placement:
             placement_lines = line_starts(sources[index])
@@ -450,7 +454,7 @@ pub def lower_ordinary_bodies_serial(
                 nominals,
                 module_event,
                 placement_lines,
-                admitted.generation,
+                generation,
                 restored,
             ).map_err((reason) => reason + diagnostic_owner)?
             if trace and len(restored) == restored_before:
@@ -511,7 +515,7 @@ def lower_ordinary_frame(
     mut nominals: UnitNominals,
     module_event: Option[PlanModuleFunction],
     placement_lines: &list[int],
-    generation: str,
+    generation: Option[str],
     mut restored: list[AdmittedFunction],
 ) -> Result[tuple[Function, list[ExternalFunction], list[Instance], list[Function]], str]:
     """
@@ -546,7 +550,7 @@ def lower_ordinary_frame(
                 evaluator_name(context, body),
                 program.overflow_checks,
                 str(reads),
-                generation,
+                generation.unwrap_or(""),
                 current,
             )
             if let Some(found) = stored:
@@ -576,7 +580,7 @@ def lower_ordinary_frame(
                             )
                             return Ok((function, runtime, requests, frames))
     product_inputs = ordinary_product_inputs(
-        context, body, source, file, program.overflow_checks, products, admitted, record_report is not None,
+        context, body, source, file, program.overflow_checks, products, admitted, record_report is not None, generation,
     )
     # A member body gets a product as a module-level body does: Bakery witnesses its event against the namespace
     # record of its module, which carries the module's whole Body IR.
@@ -630,7 +634,7 @@ def lower_ordinary_frame(
                         event_module,
                     )?
                     return Ok((function, runtime, requests, frames))
-    attempt = enter_producer("compiler", "plan-function", record_identity, str(body.name))
+    attempt = enter_producer("compiler", "plan-function", record_identity, "body:" + str(body.name))
     function, runtime, pending, synthesized = lower_function(
         context,
         program,

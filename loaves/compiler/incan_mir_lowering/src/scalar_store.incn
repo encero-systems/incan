@@ -6,6 +6,7 @@ from pub::internal_models.lowering_events import (
 from rust::incan_semantics_core::semantic_digest import semantic_digest
 from rust::std::process import id as process_id
 from std.fs import Path
+from pub::incan_mir_plan import WirePositions, PositionChange
 from pub::internal_models.plan_function_records import (
     PlanFunctionRecord,
     decode_plan_function_record,
@@ -22,12 +23,14 @@ from pub::incan_mir_plan import (
     UnitNominals,
     product_identities,
     product_nominals,
-    decode_frames,
     decode_product_parts,
+    restore_named_product,
+    valid_ordinal_product,
+    positioned_product_requirements,
     matches_product,
     resolve_nominals,
 )
-from scalar_products import encode_product, decode_product
+from scalar_products import encode_product
 from record_positions import indexed_product, index_positions, place_positions, positioned_product, relocate_product
 
 
@@ -86,23 +89,12 @@ pub def retained_scalar(
                     payload = match record_payload(encoded, inputs, span, positions):
                         Some(value) => value
                         None => return None
-                    references = match product_identities(payload):
-                        Ok(identities) => resolve_nominals(identities, unit)
-                        Err(_) => None
-                    match references:
+                    match restore_named_product(payload, unit):
                         None => return None
-                        Some(resolved) =>
-                            # 3. The restored function names the declarations at their current positions.
-                            match decode_product(payload, resolved):
-                                Ok(product) =>
-                                    function, runtime = product
-                                    match decode_frames(payload, resolved):
-                                        Ok(frames) =>
-                                            match decode_record(encoded):
-                                                Ok(record) =>
-                                                    return Some((function, runtime, resolved, frames, record.requests))
-                                                Err(_) => return None
-                                        Err(_) => return None
+                        Some(product) =>
+                            function, runtime, resolved, frames = product
+                            match decode_record(encoded):
+                                Ok(record) => return Some((function, runtime, resolved, frames, record.requests))
                                 Err(_) => return None
 
 
@@ -167,8 +159,8 @@ pub def finalized_plan_product(
     path = Path(directory).joinpath(key + ".incnfunction")
     encoded = path.read_bytes().map_err((error) => f"cannot read plan-function product {error.message()}")?
     record = decode_record(encoded)?
-    current = positioned_product(record.function, positions, str(function.span.file), function.span.line)?
-    _captured, demand, _captured_frames, identities = decode_product_parts(current, references)?
+    mapping = WirePositions(change=PositionChange.PlaceAt(list(positions), "", 0, str(function.span.file), function.span.line))
+    current, demand, identities = positioned_product_requirements(record.function, mapping, references)?
     # 2. The same inputs now name the exact native function compiled for this declaration.
     # A freshly captured product already passed the producer's position and schema round trips. Compare the
     # canonical whole-plan bytes, including floating-point bits and helper frames, before reusing that proof.
@@ -225,19 +217,28 @@ pub def report_scalar(
                 NominalKind.Model => "model"
                 NominalKind.Enum => "enum"
             stored.append(EventReference(kind=kind, index=reference.index, name=reference.name))
+        event_key = digest.replace("sha256:", "")
+        path = Path(root).joinpath(event_key + ".event")
+        mut reused_product = reused
+        # Oven empties this report for each compiler request. A runtime retry can read a product this request
+        # just produced before its final native function existed. Keep that first production verdict while
+        # recording the current nominal ordinals and positions. Other products still require exact equality.
+        if reused and path.is_file():
+            prior = decode_lowering_event(path.read_bytes().map_err((error) => error.message())?)?
+            if prior.key == event_key and prior.module == module and prior.identity == identity and prior.function == function and prior.product == encoded and not prior.admitted:
+                reused_product = prior.reused
         event = LoweringEvent(
             module=module,
             identity=identity,
-            key=digest.replace("sha256:", ""),
+            key=event_key,
             function=function,
             product=encoded,
-            reused=reused,
+            reused=reused_product,
             runtime_requirements=runtime,
             references=stored,
             positions=event_nodes(positions),
         )
         report = encode_lowering_event(event)?
-        path = Path(root).joinpath(digest.replace("sha256:", "") + ".event")
         path.parent().mkdir(true, true).map_err((error) => error.message())?
         path.write_bytes(report).map_err((error) => error.message())?
     return Ok(None)
@@ -350,16 +351,7 @@ def valid_record(encoded: bytes, inputs: list[str]) -> bool:
     """Require a record to decode completely, binding each named declaration to its own ordinal."""
     match record_payload(encoded, inputs):
         None => return false
-        Some(payload) =>
-            match product_identities(payload):
-                Err(_) => return false
-                Ok(identities) =>
-                    mut ordinals: list[NominalReference] = []
-                    for ordinal in range(len(identities)):
-                        ordinals.append(NominalReference(kind=identities[ordinal].kind, index=ordinal))
-                    match decode_product(payload, ordinals):
-                        Ok(_) => return true
-                        Err(_) => return false
+        Some(payload) => return valid_ordinal_product(payload)
 
 
 def decode_record(encoded: bytes) -> Result[PlanFunctionRecord, str]:
@@ -466,11 +458,6 @@ pub def admitted_function(
     Decode an admitted product whose declarations resolved in the current unit: its function, the runtime it demands
     and the helper frames it carries. A product that does not decode is a miss.
     """
-    product = match decode_product(payload, resolved):
-        Ok(value) => value
-        Err(_) => return None
-
-    function, runtime = product
-    match decode_frames(payload, resolved):
-        Ok(frames) => return Some((function, runtime, frames))
+    match decode_product_parts(payload, resolved):
+        Ok((function, runtime, frames, _identities)) => return Some((function, runtime, frames))
         Err(_) => return None
