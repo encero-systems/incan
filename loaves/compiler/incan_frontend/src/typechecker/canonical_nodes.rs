@@ -211,6 +211,12 @@ impl SemanticNodeBindings {
         })
     }
 
+    /// Select the direct callee under this exact recorded expression path.
+    pub(super) fn direct_callee(&self, path: &str) -> Option<Span> {
+        let parent = path.strip_suffix("/span")?;
+        self.syntax.by_path.get(&format!("{parent}/node/Call/0/span")).copied()
+    }
+
     /// The normalized syntax root is semantic data; all coordinates remain in the activation-owned inventory.
     pub(crate) fn root(&self) -> &str {
         &self.syntax.root

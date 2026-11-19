@@ -74,6 +74,75 @@ pub(super) fn bind_transitive(
     Ok(())
 }
 
+/// Resolve a missing payload only through the exact direct callee selected by the expression.
+pub(super) fn bind_result_types(
+    checker: &TypeChecker,
+    positions: &mut Positions,
+    fields: &Fields,
+) -> Result<(), NodeBindingError> {
+    let mut signatures = BTreeMap::new();
+    for row in fields {
+        if row.len() != 4 || row[0] != "type-identity" || positions.canonical_type(&row[3]).is_ok() {
+            continue;
+        }
+        let span = positions.span(&row[1])?;
+        let Some(callee) = positions.nodes.direct_callee(&row[1]) else {
+            continue;
+        };
+        let anchor = positions.nodes.anchor(callee)?.path;
+        let key = ["reference", anchor.as_str(), "read"];
+        let Ok(slot) = fields.binary_search_by(|candidate| candidate.iter().take(3).map(String::as_str).cmp(key))
+        else {
+            continue;
+        };
+        let Some(canonical) = fields[slot].get(3).and_then(|stable| positions.identities.get(stable)) else {
+            continue;
+        };
+        let SymbolOrigin::Module(module) = &canonical.origin else {
+            continue;
+        };
+        let name = &canonical.declaration_name;
+        if canonical.kind != SemanticSourceTargetKind::Function {
+            continue;
+        }
+        let module = module.join("_");
+        if checker
+            .dependency_direct_member_identities
+            .get(&module)
+            .and_then(|members| members.get(name))
+            != Some(canonical)
+        {
+            continue;
+        }
+        let Some(SymbolKind::Function(signature)) = checker
+            .dependency_direct_member_symbols
+            .get(&module)
+            .and_then(|members| members.get(name))
+        else {
+            continue;
+        };
+        let path = read_type_identity_path(&row[2])?;
+        let native = local_restore::native_component_item(&signature.return_type, &path)
+            .and_then(incan_semantics_core::body_ir::rust_item_identity);
+        let identity = native.or_else(|| {
+            let leaves = signatures.entry(canonical).or_insert_with(|| {
+                let mut identities = BTreeMap::new();
+                checker.collect_expression_type_identities(&signature.return_type, &mut Vec::new(), &mut identities);
+                identities
+            });
+            leaves.get(&path).cloned()
+        });
+        if let Some(identity) = identity
+            && identity.kind == SemanticSourceTargetKind::RustItem
+            && StableDeclarationId::from_canonical(&identity, None, None)
+                .is_some_and(|id| id.render_compact() == row[3])
+        {
+            positions.source_results.insert((span, path), identity);
+        }
+    }
+    Ok(())
+}
+
 fn collect(owner: &CanonicalSymbolId, nominal: Nominal<'_>, identities: &mut Vec<(String, CanonicalSymbolId)>) {
     let mut record = |member: &CanonicalSymbolId, kind: SemanticSourceTargetKind| {
         if member.kind == kind
