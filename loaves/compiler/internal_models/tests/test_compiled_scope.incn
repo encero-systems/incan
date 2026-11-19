@@ -22,7 +22,8 @@ def frame(family: CheckedFamily) -> Result[bytes, str]:
 pub def test_scoped_value_wire_binds_names_and_excludes_dependency_reads() -> Result[None, str]:
     mut owner = CompiledBodyValue(module="main.incn", name="greeting", identity=OWNER, declaration=frame(CheckedFamily.Declaration)?,
         local=frame(CheckedFamily.Local)?, final=frame(CheckedFamily.Final)?, body_ir=b"body")
-    for names in [[], ["greeting", "str"]]:
+    empty_names: list[str] = []
+    for names in [empty_names, ["greeting", "str"]]:
         owner.scope_names = names
         rows = wire_rows(CompiledBodyOutputs(values=[owner], fallbacks=[])).map_err((_) => "encode scalar")?
         match decode_compiled_body_row(rows[0]).map_err((_) => "decode scalar")?:
@@ -41,7 +42,9 @@ pub def test_namespace_wire_preserves_absent_empty_and_supplied_call_contracts()
     proof = encode_namespace_proof("main.incn", 1u32, "main", ["main"], sha256.digest(b"interface"))?
     mut namespace = CompiledNamespaceValue(module="main.incn", interface=b"interface", body_ir=b"body", identity_proof=proof, dependencies=[])
     supplied = SettledCallContract(reader="callee#1", target="main::callee", digest=ROOT, owner="function:main::callee")
-    for contracts in [None, Some([]), Some([supplied])]:
+    empty: list[SettledCallContract] = []
+    cases: list[Option[list[SettledCallContract]]] = [None, Some(empty), Some([supplied])]
+    for contracts in cases:
         namespace.call_contracts = contracts
         rows = wire_rows(CompiledBodyOutputs(namespaces=[namespace], values=[], fallbacks=[])).map_err((_) => "encode namespace")?
         match decode_compiled_body_row(rows[0]).map_err((_) => "decode namespace")?:
