@@ -6,6 +6,8 @@
 //! allowance left in the caller's budget. Its admission reports a positioned refusal or what it admitted, and always
 //! the allowance it used, so the caller charges its own budget exactly that much.
 
+use std::sync::Arc;
+
 use super::columns::Budget;
 use super::row_cursor::{Refusal, at};
 use super::rows::{self, Meta, ReadInputs, Rows};
@@ -34,7 +36,7 @@ pub struct RowAdmission {
     /// Elements of the allowance this admission used, admitted or refused.
     pub elements_charged: i64,
     /// The admitted envelope's bytes and decoded rows, which `semantic_row_set.rs` reads on request.
-    pub(super) data: Vec<u8>,
+    pub(super) data: Arc<Vec<u8>>,
     pub(super) rows: Option<Rows>,
 }
 
@@ -60,7 +62,7 @@ impl RowAdmission {
 /// The inputs of one public row read, gathered by the Incan caller before it asks for the admission.
 #[derive(Clone, Debug)]
 pub struct RowRequest {
-    data: Vec<u8>,
+    data: Arc<Vec<u8>>,
     supplied: Vec<Vec<u8>>,
     kinds: Vec<(String, bool)>,
     require_sealed: bool,
@@ -73,7 +75,7 @@ impl RowRequest {
     /// prefix read, as `read_prefix` does, reports how many bytes it occupies. The allowance starts empty.
     pub fn new(data: Vec<u8>, require_sealed: bool, exact: bool) -> Self {
         Self {
-            data,
+            data: Arc::new(data),
             supplied: Vec::new(),
             kinds: Vec::new(),
             require_sealed,
@@ -103,14 +105,15 @@ impl RowRequest {
         self.admit_with_descriptions(Some(&self.supplied))
     }
 
+    /// Admit with the exact supplied reference list, or independently decode that list for the reference test.
     fn admit_with_descriptions(&self, encoded_descriptions: Option<&[Vec<u8>]>) -> RowAdmission {
         let (bytes, elements, depth) = self.allowance;
         let mut budget = Budget::new(bytes, elements, depth);
-        let result = match self.supplied_descriptions() {
+        let result = match self.supplied_descriptions(encoded_descriptions.is_some()) {
             Some(supplied) => {
                 let inputs = ReadInputs {
                     supplied: &supplied,
-                    encoded_descriptions,
+                    encoded_descriptions: encoded_descriptions.map(|encoded| (encoded, &supplied)),
                     kinds: &self.kinds,
                     require_sealed: self.require_sealed,
                     exact: self.exact,
@@ -129,25 +132,36 @@ impl RowRequest {
         )
     }
 
-    /// Decode each supplied description outside the caller's allowance; the caller already holds them as values.
-    fn supplied_descriptions(&self) -> Option<Vec<Meta>> {
+    /// Resolve supplied descriptions outside the caller's allowance. Exact bytes may share admitted metadata.
+    fn supplied_descriptions(&self, use_cache: bool) -> Option<Arc<[Meta]>> {
+        if use_cache && let Some(metadata) = rows::cached_reference_metadata(&self.supplied) {
+            return Some(metadata);
+        }
         self.supplied
             .iter()
             .map(|encoded| rows::read_description(encoded))
-            .collect()
+            .collect::<Option<Vec<_>>>()
+            .map(Into::into)
     }
 }
 
 /// The admission's facts from a read result and the allowance it used.
 fn admission(
     result: Result<Rows, Refusal>,
-    data: &[u8],
+    data: &Arc<Vec<u8>>,
     bytes: u64,
     elements: u64,
     cause: Option<&str>,
 ) -> RowAdmission {
     let count = |value: usize| i64::try_from(value).unwrap_or(i64::MAX);
     let charged = |value: u64| i64::try_from(value).unwrap_or(i64::MAX);
+    // An exact admission and the request share the same immutable bytes. A prefix read retains only its envelope,
+    // so it cannot keep unrelated trailing bytes alive.
+    let admitted_bytes = match &result {
+        Ok(rows) if rows.consumed == data.len() => Arc::clone(data),
+        Ok(rows) => Arc::new(data[..rows.consumed].to_vec()),
+        Err(_) => Arc::default(),
+    };
     let mut admission = RowAdmission {
         category: String::new(),
         offset: 0,
@@ -159,7 +173,7 @@ fn admission(
         records: 0,
         bytes_charged: charged(bytes),
         elements_charged: charged(elements),
-        data: Vec::new(),
+        data: admitted_bytes,
         rows: None,
     };
     match result {
@@ -167,7 +181,6 @@ fn admission(
             admission.consumed = count(rows.consumed);
             admission.sealed = rows.sealed;
             admission.records = count(rows.records.len());
-            admission.data = data[..rows.consumed].to_vec();
             admission.rows = Some(rows);
         }
         Err(refusal) => {
@@ -216,6 +229,7 @@ mod tests {
         );
         let prefix = request(data, false).admit();
         assert!(prefix.admitted(), "prefix read refused: {}", prefix.category);
+        assert_eq!(prefix.reference_index(0), -1);
         assert_eq!(
             (prefix.consumed, prefix.records, prefix.sealed),
             (length as i64, 1, false)
@@ -253,6 +267,11 @@ mod tests {
         reference.supply(encoded);
         let first = reference.admit();
         let second = reference.admit();
+        assert!(Arc::ptr_eq(&reference.data, &first.data));
+        assert!(Arc::ptr_eq(&first.data, &second.data));
+        assert_eq!(second.reference_index(0), 0);
+        assert_eq!(second.reference_index(1), -1);
+        assert!(rows::cached_reference_metadata(&reference.supplied).is_some());
         let dictionary = |a: RowAdmission| a.rows.map(|rows| rows.dictionary).ok_or("rows missing");
         let byte_charge = first.bytes_charged;
         let element_charge = first.elements_charged;
@@ -287,7 +306,7 @@ mod tests {
         require_seal.require_sealed = true;
         assert_eq!(compare(&require_seal).category, "seal_required");
         let mut damaged_row = reference.clone();
-        if let Some(last) = damaged_row.data.last_mut() {
+        if let Some(last) = Arc::make_mut(&mut damaged_row.data).last_mut() {
             *last = 255;
         }
         assert!(!compare(&damaged_row).admitted());
@@ -295,7 +314,7 @@ mod tests {
         malformed_supply.supplied[1] = vec![9];
         assert_eq!(compare(&malformed_supply).category, "invalid_description");
         let mut changed_dictionary = reference.clone();
-        changed_dictionary.data[20] ^= 1;
+        Arc::make_mut(&mut changed_dictionary.data)[20] ^= 1;
         assert_eq!(compare(&changed_dictionary).category, "description_mismatch");
         let mut registered = reference.clone();
         registered.register("Another".to_string(), false);

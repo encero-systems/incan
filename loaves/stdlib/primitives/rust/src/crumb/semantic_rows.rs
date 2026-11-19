@@ -66,6 +66,8 @@ pub(super) struct Stored {
 pub(super) struct Record {
     pub(super) slot: usize,
     pub(super) value: Value,
+    /// Bytes, elements and starting depth used to validate this row's logical value.
+    pub(super) read_allowance: (u64, u64, u64),
     /// The row frame's envelope offset and length, for reading it again on request.
     pub(super) origin: usize,
     pub(super) length: usize,
@@ -84,7 +86,7 @@ pub(super) struct Rows {
 /// record (true) or enum (false) shapes, whether the envelope must be sealed, and whether it must end the input.
 pub(super) struct ReadInputs<'a> {
     pub(super) supplied: &'a [Meta],
-    pub(super) encoded_descriptions: Option<&'a [Vec<u8>]>,
+    pub(super) encoded_descriptions: Option<(&'a [Vec<u8>], &'a std::sync::Arc<[Meta]>)>,
     pub(super) kinds: &'a [(String, bool)],
     pub(super) require_sealed: bool,
     pub(super) exact: bool,
@@ -266,6 +268,7 @@ pub(super) fn read_rows(data: &[u8], inputs: &ReadInputs, budget: &mut Budget) -
 struct AdmittedDictionary {
     wire: Vec<u8>,
     supplied: Vec<Vec<u8>>,
+    metadata: std::sync::Arc<[Meta]>,
     kinds: Vec<(String, bool)>,
     entries: std::sync::Arc<[Stored]>,
     depth: u64,
@@ -273,24 +276,41 @@ struct AdmittedDictionary {
     elements: u64,
 }
 
+static RECENT_DICTIONARIES: std::sync::Mutex<std::collections::VecDeque<AdmittedDictionary>> =
+    std::sync::Mutex::new(std::collections::VecDeque::new());
+
+/// Reuse reference metadata only when a previous admission validated exactly the same complete D inputs.
+pub(super) fn cached_reference_metadata(encoded: &[Vec<u8>]) -> Option<std::sync::Arc<[Meta]>> {
+    if !(2..=1024).contains(&encoded.len()) {
+        return None;
+    }
+    RECENT_DICTIONARIES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .rev()
+        .find(|saved| encoded == saved.supplied)
+        .map(|saved| std::sync::Arc::clone(&saved.metadata))
+}
+
+/// Admit one dictionary or reuse its previously validated wire and reference inputs.
 fn admitted_dictionary<'a>(
     payload: &'a [u8],
     origin: usize,
     inputs: &ReadInputs,
     budget: &mut Budget,
 ) -> Positioned<(std::sync::Arc<[Stored]>, Span<'a>)> {
-    use std::collections::VecDeque;
-    use std::sync::{Arc, Mutex};
-
-    static RECENT: Mutex<VecDeque<AdmittedDictionary>> = Mutex::new(VecDeque::new());
+    use std::sync::Arc;
     let mut body = Span::new(payload, origin);
     let eligible = inputs
         .encoded_descriptions
-        .filter(|descriptions| (2..=1024).contains(&descriptions.len()));
+        .filter(|(descriptions, _)| (2..=1024).contains(&descriptions.len()));
     let before = budget.left();
     let depth = budget.depth();
-    if let Some(supplied) = eligible {
-        let recent = RECENT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((supplied, _)) = eligible {
+        let recent = RECENT_DICTIONARIES
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for saved in recent.iter().rev() {
             if depth == saved.depth
                 && before.0 >= saved.bytes
@@ -311,7 +331,7 @@ fn admitted_dictionary<'a>(
     let entries: Arc<[Stored]> = read_entries(&mut body, inputs.supplied, inputs.kinds, budget)?.into();
     let after = budget.left();
     let bytes = before.0 - after.0;
-    if let Some(supplied) = eligible
+    if let Some((supplied, metadata)) = eligible
         && body.consumed() <= 64 * 1024
         && bytes <= 8 * 1024 * 1024
         && supplied.iter().map(Vec::len).sum::<usize>() <= 256 * 1024
@@ -322,13 +342,16 @@ fn admitted_dictionary<'a>(
         let saved = AdmittedDictionary {
             wire: payload[..body.consumed()].to_vec(),
             supplied: supplied.to_vec(),
+            metadata: Arc::clone(metadata),
             kinds: inputs.kinds.to_vec(),
             entries: Arc::clone(&entries),
             depth,
             bytes,
             elements: before.1 - after.1,
         };
-        let mut recent = RECENT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut recent = RECENT_DICTIONARIES
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if recent.len() == 4 {
             recent.pop_front();
         }
@@ -364,7 +387,11 @@ fn read_records(
         }
         let raw = cursor.frame(budget)?;
         let origin = cursor.absolute() - raw.len();
+        let (bytes, elements) = budget.left();
+        let depth = budget.depth();
         let value = read_root(&dictionary[slot], raw, origin, dictionary, budget)?;
+        let (remaining_bytes, remaining_elements) = budget.left();
+        let read_allowance = (bytes - remaining_bytes, elements - remaining_elements, depth);
         if sealed {
             let mut contribution = Vec::new();
             hash::emit_object_charged(&value, &mut contribution, budget).place(origin)?;
@@ -374,6 +401,7 @@ fn read_records(
         records.push(Record {
             slot,
             value,
+            read_allowance,
             origin,
             length: raw.len(),
         });

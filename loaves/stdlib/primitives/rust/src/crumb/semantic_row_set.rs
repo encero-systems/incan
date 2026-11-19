@@ -1,8 +1,8 @@
 //! The native row set behind an admitted envelope: records, single fields, field cells and written descriptions,
 //! read on request under the caller's remaining allowance and handed to Incan in its carriers' own shapes.
 //!
-//! `row_reader.RowSet` reads a record or field again from the admitted bytes under the caller's budget; so does
-//! each method here, charging only the allowance it is given and positioning any refusal as the Incan reader does.
+//! A row read charges only the caller's allowance. When it covers the full validated read, project the value
+//! already built by admission. Tighter budgets use the cursor to preserve the first positioned refusal.
 //! A materialized value, written description or union selector arrives as a `RowRead` cursor over its nodes in
 //! pre-order, from which Incan builds `Value`, `Metadata` and `TypeNode` trees without decoding any envelope bytes.
 
@@ -333,7 +333,7 @@ impl RowAdmission {
             .unwrap_or_default()
     }
 
-    /// Materialize one record again from the admitted bytes, as `RowSet.read_record` does.
+    /// Project one admitted record under the caller's allowance, as `RowSet.read_record` does.
     pub fn read_record(&self, index: i64, bytes: i64, elements: i64, depth: i64) -> RowRead {
         let (limits, mut budget) = allowance(bytes, elements, depth);
         let result = self.record_items(index, &mut budget);
@@ -378,6 +378,17 @@ impl RowAdmission {
             .map_or(0, |rows| i64::try_from(rows.dictionary.len()).unwrap_or(i64::MAX))
     }
 
+    /// The supplied description index for a referenced slot, or -1 for an inline or missing description.
+    /// Accessing the already admitted reference needs no reconstruction of its metadata tree.
+    pub fn reference_index(&self, index: i64) -> i64 {
+        usize::try_from(index)
+            .ok()
+            .and_then(|slot| self.rows.as_ref()?.dictionary.get(slot))
+            .filter(|entry| !entry.inline)
+            .and_then(|entry| i64::try_from(entry.supplied?).ok())
+            .unwrap_or(-1)
+    }
+
     /// One complete written description in dictionary order, charged as `RowSet.descriptions` charges its copy.
     pub fn description(&self, index: i64, bytes: i64, elements: i64, depth: i64) -> RowRead {
         let (limits, mut budget) = allowance(bytes, elements, depth);
@@ -415,11 +426,27 @@ impl RowAdmission {
         &self.data[record.origin..record.origin + record.length]
     }
 
-    /// Read a record again under `budget`, then charge its key as `RowSet.read_record` does.
+    /// Project the admitted value once the original row and key charges fit this read's allowance.
     fn record_items(&self, index: i64, budget: &mut Budget) -> Positioned<RowRead> {
+        use std::borrow::Cow;
+
         let (rows, record) = self.row(index)?;
         let entry = &rows.dictionary[record.slot];
-        let value = row_cells::read_root(entry, self.raw(record), record.origin, &rows.dictionary, budget)?;
+        let (bytes, elements, depth) = record.read_allowance;
+        let (available_bytes, available_elements) = budget.left();
+        let value = if bytes <= available_bytes && elements <= available_elements && depth <= budget.depth() {
+            budget.bytes(bytes).place(record.origin)?;
+            budget.elements(elements).place(record.origin)?;
+            Cow::Borrowed(&record.value)
+        } else {
+            Cow::Owned(row_cells::read_root(
+                entry,
+                self.raw(record),
+                record.origin,
+                &rows.dictionary,
+                budget,
+            )?)
+        };
         budget.bytes(entry.key.len() as u64).place(record.origin)?;
         let mut nodes = Vec::new();
         flatten_root(entry, &value, &rows.dictionary, &mut nodes).place(record.origin)?;
@@ -725,6 +752,19 @@ mod tests {
         assert_eq!((unknown.category.as_str(), unknown.offset), ("missing_field", 53));
         let short = rows.field_cell(0, b"short".to_vec(), 64, 64, 16);
         assert_eq!(short.category, "missing_field");
+        let reused = rows.read_record(0, 64, 64, 128);
+        let reread = rows.read_record(0, 64, 64, 16);
+        assert!(reused.succeeded() && reread.succeeded());
+        assert_eq!(reused.items, reread.items);
+        assert_eq!(reused.bytes_charged, reread.bytes_charged);
+        assert_eq!(reused.elements_charged, reread.elements_charged);
+        let tight_bytes = reused.bytes_charged - 1;
+        let tight = rows.read_record(0, tight_bytes, 64, 128);
+        let independent = rows.read_record(0, tight_bytes, 64, 16);
+        assert_eq!(tight.category, independent.category);
+        assert_eq!(tight.offset, independent.offset);
+        assert_eq!(tight.cause, independent.cause);
+        assert_eq!(tight.bytes_charged, independent.bytes_charged);
         let short = rows.read_record(0, 0, 64, 16);
         assert_eq!(short.category, "limit_exceeded");
         assert_eq!(short.cause, "bytes");

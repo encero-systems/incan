@@ -70,12 +70,10 @@ pub model PreparedWireReader:
         if row.records != 1 or row.key(0) != self.root or row.description_count() != len(self.dictionary):
             return Err(self.name + " requires one root and its complete declaration dictionary")
         for index in range(row.description_count()):
-            descriptor_bytes, descriptor_elements = budget.codec_allowance()
-            descriptor = row.description(index, descriptor_bytes, descriptor_elements, budget.depth_allowance())
-            settle(descriptor, budget).map_err((error) => error.message())?
-            if descriptor.inline or descriptor.supplied < 0:
+            slot = row.reference_index(index)
+            if slot < 0:
                 return Err(self.name + " requires referenced compiler descriptions")
-            slots.append(descriptor.supplied)
+            slots.append(slot)
         return Ok(row)
 
     @staticmethod

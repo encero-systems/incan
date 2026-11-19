@@ -238,8 +238,7 @@ impl CheckedNamespaceInterface {
     pub fn installable(&self) -> Result<Arc<ModuleDependencyInterface>, String> {
         self.validate()?;
         let mut converter = TypeChecker::new();
-        let mut remapping = TypeChecker::dependency_nominal_remapping(&self.nominal_scope);
-        remapping.extend(checked_namespace_foreign_nominal_remapping(&self.api));
+        let foreign_aliases = checked_namespace_foreign_nominal_remapping(&self.api);
         let mut symbols = HashMap::new();
         let mut reexports = HashMap::new();
         let mut symbol_rows = Vec::new();
@@ -269,7 +268,7 @@ impl CheckedNamespaceInterface {
                 );
                 continue;
             };
-            converter.remap_symbol_kind_with_import_aliases(&mut kind, &remapping);
+            converter.remap_checked_namespace_aliases(&mut kind, &self.nominal_scope, &foreign_aliases);
             if let Some(members) = self.members.get(name) {
                 members.restore(&mut kind);
             }
