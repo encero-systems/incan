@@ -28,7 +28,7 @@ pub def directory_member_key(seal: str, key: str, revision: str) -> Result[str, 
     return Ok(seal + "\t" + "/".join(parts[:4] + [parts[5], parts[4], revision]))
 
 
-pub def read_directory(directory: str, top: &str, seal: str, prefix: str, maximum: int) -> Result[DirectoryAnswer, str]:
+pub def read_directory(directory: str, top: str, seal: str, prefix: str, maximum: int) -> Result[DirectoryAnswer, str]:
     """Read just the index pages containing this key range, checking the seal anchor and each traversed page."""
     # A root is a single content-named page or a bounded page in a content-named pack.
     fields = top.split(":")
