@@ -6,9 +6,10 @@ from compiler_source_projection import positioned_source_key
 from compiler_prepared_records import prepared_product_request
 from compiler_body_keys import IDENTITY_PROFILE, body_key
 from compiler_body_values import CoveredBodyOwners, SelectedBodyPage
-from compiler_graph_records import OutputSlots, digest, reusable_evaluation, reusable_family_records, readers_of
+from compiler_graph_records import OutputSlots, reusable_evaluation, reusable_family_records, readers_of
 from pub::internal_models.plan_module_records import PLAN_MODULE_FAMILY, POSITIONED_MODULE_PAGE, REPOSITION_MODULE_PAGE, decode_plan_module
 from std.encoding.hex import hexlify
+from std.primitives.hash import sha256
 
 pub const LOWERING_PROFILE: str = "incan.lowering-records/11"
 
@@ -94,7 +95,7 @@ pub def carried_lowering_demand(
             Some(value) => value
             None => return Err("a reused lowering record has no selected plan evaluation")
         evidence = (prior.value_digest, lowering_demand_digest(prior.receipt, demand)?)
-    if digest(product) != evidence[0]:
+    if hexlify(sha256.digest(product)) != evidence[0]:
         return Err("a reused lowering record differs from its selected graph authority")
     value = match get(graph, encode_record_key(demand)?).map_err((error) => error.message())?:
         Some(bytes) => bytes
