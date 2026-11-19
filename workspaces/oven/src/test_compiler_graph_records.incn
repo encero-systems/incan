@@ -1258,8 +1258,8 @@ pub def test_executable_reads_require_the_current_callee_contract() -> Result[No
     graph = store_snapshot(memory_root()).map_err((error) => error.message())?
     mut tx = begin(graph)
     mut source = PreparedBodyRecordSource.open(ReadScope(snapshot=graph.digest, profile=CHECKER_PROFILE))
-    before = "sha256:" + "b" * 64
-    after = "sha256:" + "a" * 64
+    before = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    after = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     owner = SettledCallContract(target="caller", digest=before, reader="call#1", owner="checked/caller")
     target = SettledCallContract(target="provider", digest=after, reader="", owner="")
     mut module = CompiledNamespaceValue(module="file.incn", interface=b"i", body_ir=b"b", dependencies=[],

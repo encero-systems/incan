@@ -1,6 +1,7 @@
 """The canonical codec survives comment/move edits and reconstructs the complete selected native owner."""
 
 from std.encoding.hex import unhexlify
+from checker_record_models import SettledCallContract
 from checker_records import (
     CHECKER_PROFILE,
     CanonicalField,
@@ -15,7 +16,6 @@ from checker_records import (
     GraphBodyValue,
     GraphNamespaceValue,
     SettledCallRead,
-    SettledCallContract,
     decode_graph_body_values,
     decode_graph_namespace_value,
     encode_record,
@@ -230,7 +230,7 @@ def compiled_output_controls(source: str) -> Result[None, str]:
         semantic_interface=b"0123456789abcdef0123456789abcdef",
         member_witnesses=[["event", "stable", "witness"]],
         package_roots=["alpha", "provider"],
-        call_reads=[SettledCallRead(reader="invoke", target="provider", digest="sha256:" + "a" * 64)],
+        call_reads=[SettledCallRead(reader="invoke", target="provider", digest="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")],
     )
     legacy = encode_compiled_body_rows(CompiledBodyOutputs(namespaces=[namespace], values=[], fallbacks=[])).map_err((_) => "legacy namespace encode")?
     match decode_compiled_body_row(legacy[0]).map_err((_) => "legacy namespace decode")?:
@@ -249,7 +249,7 @@ def compiled_output_controls(source: str) -> Result[None, str]:
     scoped.scope_names = ["main", "str\talias"]
     assert encode_compiled_body_rows(CompiledBodyOutputs(values=[scoped], fallbacks=[])).is_err()
     mut supplied = namespace
-    supplied.call_contracts = Some([SettledCallContract(target="provider", digest="sha256:" + "a" * 64, reader="supplier#1", owner="stable/supplier")])
+    supplied.call_contracts = Some([SettledCallContract(target="provider", digest="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", reader="supplier#1", owner="stable/supplier")])
     encoded = encode_compiled_body_rows(
         CompiledBodyOutputs(namespaces=[supplied], values=[value], fallbacks=[fallback, identityless]),
     ).map_err((_) => "compiled output encode")?
@@ -622,7 +622,7 @@ def graph_namespace_controls() -> Result[None, str]:
         body_ir=b"module-body-ir",
         lowering_inputs=[["main#decl.0..10", "witness"]],
         package_roots=["alpha", "provider"],
-        call_reads=[SettledCallRead(reader="invoke", target="provider", digest="sha256:" + "a" * 64)],
+        call_reads=[SettledCallRead(reader="invoke", target="provider", digest="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")],
     )
     encoded = encode_graph_namespace_value(value).map_err((_) => "graph namespace encode")?
     assert encoded[:4] == b"CRMB"
