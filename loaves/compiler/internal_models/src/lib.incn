@@ -135,6 +135,7 @@ pub from checker_record_models import (
     GraphBodyFields,
     GraphNamespaceValue,
     SettledCallRead,
+    SettledCallContract,
     CompiledBodyValue,
     CompiledBodyDependencyRead,
     CompiledBodyFallback,
@@ -193,4 +194,4 @@ pub from compiler_export import CompilerExportMember, decode_compiler_export, en
 
 pub from settled_call_reads import encode_owner_call_reads, decode_owner_call_reads
 
-pub from overload_members import coordinate_output_suffix, encode_method_lookups, method_lookup_suffix
+pub from overload_members import contract_output_suffix, coordinate_output_suffix, encode_method_lookups, method_lookup_suffix

@@ -79,6 +79,19 @@ const SEED_BRIDGE_SOURCES: FrozenList[str] = [
     "loaves/compiler/internal_models/src/checker_records.incn",
     "loaves/compiler/internal_models/src/compiled_body_rows.incn",
 ]
+# The dev.8 seed exposes the checked RowSet interface. Its three compiler readers have
+# a bootstrap spelling using that interface. Authenticate both ends so that a change to
+# a qualified reader cannot silently compile through a stale seed implementation.
+const SEED_ROW_READERS: FrozenList[str] = [
+    "loaves/compiler/internal_models/src/namespace_rows.incn",
+    "loaves/compiler/internal_models/src/plan_function_records.incn",
+    "loaves/compiler/internal_models/src/plan_wire_rows.incn",
+]
+const SEED_ROW_BLOBS: FrozenList[str] = [
+    "a908ce5b343728c59734a0d049f6b6c98209fd24", "35b42a2864d4c11b76ab03efcdf7876c40072bc2",
+    "dca2fde766f04f0e2b6c77e829eb2543b72cf93e", "ca636435b970bb294d2bea384326bc259aa33c20",
+    "4db20dca287cb21e8b5eae59606db5e7dc8d6bf3", "eea255210422c60d32935990c55cd20456efc44c",
+]
 const SEED_BRIDGE_SOURCE: str = "seed-bridge-source"
 const SEED_TOOL_SOURCE: str = "seed-tool-source"
 
@@ -568,7 +581,14 @@ def seed_tool_source(run: ReleaseRun) -> Result[Path, str]:
             ],
         )?
         paths = [line for line in changed.split("\n") if line != ""]
-        validate_seed_bridge(run.options.source_sha, run.options.seed_bridge, parents, paths)?
+        mut row_blobs: list[str] = []
+        if len(paths) == len(SEED_BRIDGE_SOURCES) + len(SEED_ROW_READERS):
+            mut refs = ["-C", run.root.0, "rev-parse"]
+            for path in SEED_ROW_READERS:
+                refs.append(run.options.source_sha + ":" + path)
+                refs.append(run.options.seed_bridge + ":" + path)
+            row_blobs = command_text("git", refs)?.strip().split("\n")
+        validate_seed_bridge(run.options.source_sha, run.options.seed_bridge, parents, paths, row_blobs)?
         selected_source = run.options.seed_bridge
     root = run.paths.output.joinpath(SEED_TOOL_SOURCE)
     clone = ["clone", "--shared", "--no-checkout", run.root.0, root.0]
@@ -592,13 +612,18 @@ def exact_seed_bridge_source(run: ReleaseRun) -> Result[Path, str]:
     return Ok(root)
 
 
-pub def validate_seed_bridge(source: str, bridge: str, parents: list[str], paths: list[str]) -> Result[None, str]:
+pub def validate_seed_bridge(source: str, bridge: str, parents: list[str], paths: list[str], row_blobs: list[str] = []) -> Result[None, str]:
     """Require one direct-child seed bridge whose complete diff is the authenticated compatibility surface."""
     if parents != [source]:
         return Err(f"--seed-bridge {bridge} must have qualified source {source} as its only parent")
-    if sorted(paths) != sorted([path for path in SEED_BRIDGE_SOURCES]):
-        return Err(f"--seed-bridge changes unsupported paths: {", ".join(sorted(paths))}")
-    return Ok(None)
+    signatures = [path for path in SEED_BRIDGE_SOURCES]
+    if sorted(paths) == sorted(signatures) and len(row_blobs) == 0:
+        return Ok(None)
+    if sorted(paths) == sorted(signatures + [path for path in SEED_ROW_READERS]):
+        if row_blobs == [blob for blob in SEED_ROW_BLOBS]:
+            return Ok(None)
+        return Err("--seed-bridge contains an unrecognized bootstrap row reader")
+    return Err(f"--seed-bridge changes unsupported paths: {", ".join(sorted(paths))}")
 
 
 def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str]:

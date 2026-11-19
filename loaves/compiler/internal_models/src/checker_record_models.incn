@@ -119,6 +119,15 @@ pub model CompiledBodyFallback:
     pub reason: str
 
 
+@derive(Eq)
+pub model SettledCallContract:
+    """The executable declaration that supplies one positional access contract."""
+    pub target: str
+    pub digest: str
+    pub reader: str
+    pub owner: str
+
+
 pub model CompiledNamespaceValue:
     """One installable checked namespace plus the lowering witnesses produced by the same completed check."""
 
@@ -131,6 +140,7 @@ pub model CompiledNamespaceValue:
     pub call_reads: list[SettledCallRead] = []
     pub semantic_interface: bytes = b""
     pub member_witnesses: list[list[str]] = []
+    pub call_contracts: Option[list[SettledCallContract]] = None
     pub identity_proof: bytes = b""
 
 

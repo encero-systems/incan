@@ -255,7 +255,10 @@ pub def invalid_body_owners(selected: Snapshot, changed: list[RecordKey], profil
 pub def body_owners_reading(selected: Snapshot, changed: list[RecordKey], profile: str) -> Result[list[str], str]:
     """Select body owners whose prior evaluations read keys with changed values staged by the current request."""
     mut owners: set[str] = set()
-    for reader in readers_of(selected, changed, profile)?:
+    # A position edit can restamp a selected executable frame against today's syntax.
+    # Only changed semantic inputs withdraw an owner's checked pair from the compiler.
+    semantic = [key for key in changed if key.family != "owner-placement"]
+    for reader in readers_of(selected, semantic, profile)?:
         if reader.family in ["local", "final", "body-ir"]:
             owners.add(reader.identity)
     return Ok(sorted([owner for owner in owners]))

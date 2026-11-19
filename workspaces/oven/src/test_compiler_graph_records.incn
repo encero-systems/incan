@@ -28,6 +28,8 @@ from pub::internal_models.records import (
 )
 from pub::internal_models import (
     CompiledBodyFallback,
+    SettledCallRead,
+    SettledCallContract,
     CompiledBodyDependencyRead,
     CompiledBodyOutputs,
     CompiledNamespaceValue,
@@ -53,7 +55,7 @@ from pub::internal_models import (
     encode_compiled_body_rows,
 )
 from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily
-from compiler_namespace_products import interface_key, member_key, member_plan_inputs, prepare_namespace_products
+from compiler_namespace_products import contract_key, stage_call_contracts, interface_key, member_key, member_plan_inputs, prepare_namespace_products
 from compiler_graph_records import OutputSlots, PublishedEvaluation, family_outputs, publish_evaluation, readers_of, reusable_evaluation, reusable_family_records, retire_compiler_versions, supersede_outputs
 from compiler_owner_retirement import retire_missing_functions
 from compiler_prepared_records import PreparedBodyRecordSource
@@ -507,7 +509,16 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
 
     selected = store_snapshot(memory_root()).map_err((error) => error.message())?
     published = publish_source_projection(selected, before)?
-    assert len(published.keys) == 13
+    assert len(published.keys) == 17
+    assert before.placements["first"].key == after.placements["first"].key
+    assert before.placements["first"].text != after.placements["first"].text
+    assert before.placements["second"].text == after.placements["second"].text
+    shifted = project_source("package", "src/main.incn", original.replace("return 1", "return 123"))?
+    assert before.placements["second"].text != shifted.placements["second"].text
+    assert projected_owner(before, "second")?.digest() == projected_owner(shifted, "second")?.digest()
+    wide = project_source("package", "src/main.incn", "# é\ndef main() -> int:\n    return 1\n")?
+    narrow = project_source("package", "src/main.incn", "# x\ndef main() -> int:\n    return 1\n")?
+    assert wide.placements["main"].text != narrow.placements["main"].text
     for key in published.keys:
         assert get(published.snapshot, key).map_err((error) => error.message())? is not None
 
@@ -1234,6 +1245,30 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     projected = publish_source_projection(published.snapshot, edited)?
     assert invalid_body_owners(projected.snapshot, [changed], CHECKER_PROFILE)? == [identity]
     return verify_linked_capture(unit, scratch.path())
+
+
+pub def test_executable_reads_require_the_current_callee_contract() -> Result[None, str]:
+    graph = store_snapshot(memory_root()).map_err((error) => error.message())?
+    mut tx = begin(graph)
+    mut source = PreparedBodyRecordSource.open(ReadScope(snapshot=graph.digest, profile=CHECKER_PROFILE))
+    before = "sha256:" + "b" * 64
+    after = "sha256:" + "a" * 64
+    owner = SettledCallContract(target="caller", digest=before, reader="call#1", owner="checked/caller")
+    target = SettledCallContract(target="provider", digest=after, reader="", owner="")
+    mut module = CompiledNamespaceValue(module="file.incn", interface=b"i", body_ir=b"b", dependencies=[],
+        call_contracts=Some([owner, target]), call_reads=[SettledCallRead(reader="call#1", target="provider", digest=after)])
+    links = stage_call_contracts(tx, source, "main", [module])?
+    supplier = contract_key("main", "provider")
+    assert links.owners["checked/caller"] == [supplier]
+    assert links.modules["file.incn"] == [supplier]
+    committed = commit(tx).map_err((error) => error.message())?
+    assert get(committed, encode_record_key(supplier)?).map_err((error) => error.message())?.is_some()
+    mut mismatch = begin(committed)
+    module.call_reads = [SettledCallRead(reader="call#1", target="provider", digest=before)]
+    assert stage_call_contracts(mismatch, source, "main", [module]).is_err()
+    module.call_contracts = Some([owner])
+    assert stage_call_contracts(mismatch, source, "main", [module]).is_err()
+    return Ok(None)
 
 
 pub def test_a_rechecked_namespace_reads_imports_whose_bodies_were_retained() -> Result[None, str]:

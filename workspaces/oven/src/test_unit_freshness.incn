@@ -205,7 +205,7 @@ pub def test_prepared_descriptor_generations_keep_their_own_witnesses_and_report
     assert legacy.name() == "descriptor.unit.json" and typed.name() == "descriptor.unit.crumb"
     assert read_unit_document(legacy)?.dumps().map_err((error) => error.message())? == read_unit_document(typed)?.dumps().map_err((error) => error.message())?
     assert Path(typed.0 + ".oven-description").is_file() and Path(legacy.0 + ".oven-description").is_file()
-    assert graph_body_output_path(unit, key, true).0 == typed.0 + ".placement.methods.ranked.cmpns5.graph-body-output"
+    assert graph_body_output_path(unit, key, true).0 == typed.0 + ".contracts.placement.methods.ranked.cmpns5.graph-body-output"
     assert graph_body_output_path(unit, key, false).0 == legacy.0 + ".graph-body-output"
     assert plan_record_report_path(unit, key, true).0 == typed.0 + ".graph-plan-report"
     assert plan_record_report_path(unit, key, false).0 == legacy.0 + ".graph-plan-report"

@@ -232,13 +232,28 @@ def test_release_seed_bridge_is_explicit_and_requires_the_seed_generation() -> R
 
 
 def test_seed_bridge_is_one_direct_child_with_only_the_authenticated_sources() -> Result[None, str]:
-    """The temporary bridge cannot hide another commit or change anything outside the two internal-model signatures."""
+    """A seed bridge changes only authenticated sources and has the qualified commit as its sole parent."""
     bridge = "fedcba9876543210fedcba9876543210fedcba98"
     paths = [
         "loaves/compiler/internal_models/src/checker_records.incn",
         "loaves/compiler/internal_models/src/compiled_body_rows.incn",
     ]
     validate_seed_bridge(SHA, bridge, [SHA], paths)?
+    readers = paths + [
+        "loaves/compiler/internal_models/src/namespace_rows.incn",
+        "loaves/compiler/internal_models/src/plan_function_records.incn",
+        "loaves/compiler/internal_models/src/plan_wire_rows.incn",
+    ]
+    blobs = [
+        "a908ce5b343728c59734a0d049f6b6c98209fd24", "35b42a2864d4c11b76ab03efcdf7876c40072bc2",
+        "dca2fde766f04f0e2b6c77e829eb2543b72cf93e", "ca636435b970bb294d2bea384326bc259aa33c20",
+        "4db20dca287cb21e8b5eae59606db5e7dc8d6bf3", "eea255210422c60d32935990c55cd20456efc44c",
+    ]
+    validate_seed_bridge(SHA, bridge, [SHA], readers, blobs)?
+    assert validate_seed_bridge(SHA, bridge, [SHA], readers).is_err()
+    assert validate_seed_bridge(SHA, bridge, [SHA], readers, blobs[1:] + [blobs[0]]).is_err()
+    assert validate_seed_bridge(SHA, bridge, [bridge], readers, blobs).is_err()
+    assert validate_seed_bridge(SHA, bridge, [SHA], readers + ["scripts/release.incn"], blobs).is_err()
     match validate_seed_bridge(SHA, bridge, [bridge], paths):
         Ok(_) => return Err("a bridge whose parent differs from the qualified source was accepted")
         Err(message) =>

@@ -50,7 +50,7 @@ pub from compiler_captured_sources import (
 )
 from compiler_prepared_records import PreparedBodyRecordSource
 pub from compiler_prepared_records import prepared_product_request
-from compiler_namespace_products import member_plan_inputs, prepare_namespace_products
+from compiler_namespace_products import ExecutableCallInputs, member_plan_inputs, prepare_namespace_products, stage_call_contracts
 from compiler_lowering_order import LoweringOrder, LoweringOrders
 from compiler_plan_modules import StagedPlan, restored_modules, stage_plan_modules, staged_plan
 from compiler_plan_values import AdmittedPlanModule
@@ -291,7 +291,8 @@ pub def prepare_compiled_bodies(
             staged_certificates.add(position.evidence)
     if let Some(prior) = selected:
         retire_missing_functions(prior, staged.transaction, origin, changed_sources, staged.projections, staged.rechecked, authenticated.outputs)?
-    stage_compiled_namespaces(staged.transaction, staged.source, staged.scope, staged.projections, authenticated.outputs.namespaces, origin, order)?
+    executable = stage_call_contracts(staged.transaction, staged.source, origin, authenticated.outputs.namespaces)?
+    stage_compiled_namespaces(staged.transaction, staged.source, staged.scope, staged.projections, authenticated.outputs.namespaces, origin, order, executable)?
     published = stage_compiled_body_values(
         staged.transaction,
         staged.source,
@@ -305,6 +306,7 @@ pub def prepare_compiled_bodies(
         staged.editable_packages,
         set([namespace.module for namespace in authenticated.outputs.namespaces]),
         order,
+        executable,
     )?
     prepare_optional_lowering_records(
         staged.transaction,
@@ -348,6 +350,7 @@ def stage_compiled_body_values(
     editable_packages: list[str],
     checked_namespaces: set[str],
     order: &Dict[str, NamespaceOrder],
+    executable: &ExecutableCallInputs,
 ) -> Result[int, str]:
     """Stage each compiler-produced local, final and Body IR value with its exact source and dependency witnesses."""
     mut published = 0
@@ -419,7 +422,10 @@ def stage_compiled_body_values(
         source.add(encode_record_key(final_key)?, value.final)
         body_ir_key = body_key("body-ir", origin, value.identity, "checked", root(value.final)?)
         body_frame = encode_body_frame(body_ir_key, scope.profile, value.body_ir)?
-        body_ir_receipt = source.receipt(scope, body_ir_key, [prepared_product_request(final_key)], position.evidence)?
+        mut frame_reads = [prepared_product_request(final_key), prepared_product_request(projection.placements[owner.key.facet].key)]
+        if value.identity in executable.owners:
+            frame_reads.extend([prepared_product_request(key) for key in executable.owners[value.identity]])
+        body_ir_receipt = source.receipt(scope, body_ir_key, frame_reads, position.evidence)?
         _ = prepare_evaluation(
             prepared,
             "compiled-body-ir-" + value.identity,
@@ -440,6 +446,7 @@ def stage_compiled_namespaces(
     namespaces: list[CompiledNamespaceValue],
     origin: str,
     order: &Dict[str, NamespaceOrder],
+    executable: &ExecutableCallInputs,
 ) -> Result[None, str]:
     """
     Stage every checked namespace row with its projection owners and imported declaration indexes as witnesses.
@@ -480,6 +487,8 @@ def stage_compiled_namespaces(
         prepare_namespace_products(prepared, source, scope, namespace, origin, reads, rank, position.evidence)?
         # Restoring the complete record also restores positioned spans and editor documentation.
         reads.append(prepared_product_request(projection.positioned.key))
+        if namespace.module in executable.modules:
+            reads.extend([prepared_product_request(target) for target in executable.modules[namespace.module]])
         receipt = source.receipt(scope, key, reads, position.evidence)?
         _ = prepare_evaluation(
             prepared,
@@ -640,6 +649,8 @@ def stage_source_projection(
         value = record.encoded()?
         stage_put(prepared, key, value)
         source.add(key, value)
+    for facet in projection.placements.keys():
+        stage_source_record(prepared, source, projection.placements[facet])?
     for owner in projection.owners:
         mut records = [owner]
         if signatures:

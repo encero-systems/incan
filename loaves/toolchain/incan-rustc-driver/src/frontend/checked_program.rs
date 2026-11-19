@@ -494,6 +494,7 @@ fn checked_attempt(
     )
     .ok_or("unsupported Body IR string conversion contract identity")?;
     let mut reads_by_module = BTreeMap::new();
+    let mut settled_inputs = None;
     if observes_graph || !graph_body_records.is_empty() {
         let access = incan_frontend::body_ir::SettledCallInputs::from_modules(&bodies[loaf_modules..])?;
         let mut changed: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
@@ -524,6 +525,9 @@ fn checked_attempt(
             let current =
                 graph_body_output.completed_owners(&modules, &mut bodies[loaf_modules..], &reads_by_module)?;
             return Ok(CheckedAttempt::Reopen(changed, current));
+        }
+        if graph_body_output.requests_contracts() {
+            settled_inputs = Some(access);
         }
     }
     let mut cacheable_bodies = callable_products.publish(&modules, &bodies[loaf_modules..]);
@@ -564,6 +568,7 @@ fn checked_attempt(
         &mut bodies[loaf_modules..],
         &cacheable_bodies,
         &reads_by_module,
+        settled_inputs.as_ref(),
     )?;
     graph_body_output.publish(graph_body_records)?;
     let graph = if library && collect_codegraph {

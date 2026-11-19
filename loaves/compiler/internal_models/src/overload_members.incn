@@ -135,3 +135,8 @@ def member_names(key: RecordKey, encoded: bytes) -> Result[list[str], str]:
 pub def coordinate_output_suffix() -> str:
     """Ask a native producer to retain bounded syntax coordinates alongside its exact physical input stamp."""
     return ".placement" + method_lookup_suffix()
+
+
+pub def contract_output_suffix() -> str:
+    """Request the checked declarations' executable parameter access digests."""
+    return ".contracts" + coordinate_output_suffix()

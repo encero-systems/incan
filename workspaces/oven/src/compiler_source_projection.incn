@@ -42,6 +42,7 @@ pub model SourceProjection:
     pub positioned: SourceProjectionRecord
     pub owners: list[SourceProjectionRecord]
     pub documentation: list[tuple[str, str]]
+    pub placements: Dict[str, SourceProjectionRecord] = {}
     # Only guarded project modules depend on the resolved package feature environment.
     pub feature_inputs: list[SourceProjectionRecord] = []
 
@@ -139,11 +140,13 @@ class SourceProjector:
         mut declarations = ""
         mut owners: list[SourceProjectionRecord] = []
         mut docs: list[tuple[str, str]] = []
+        mut placements: Dict[str, SourceProjectionRecord] = {}
         if len(self.boundaries) == 0:
             header = self.source
         else:
             if self.boundaries[0].start > 0:
                 header += self.source[:self.boundaries[0].start]
+            mut byte_start = len(header.encode("utf-8"))
             for index in range(len(self.boundaries)):
                 boundary = self.boundaries[index]
                 mut end = len(self.source)
@@ -153,6 +156,7 @@ class SourceProjector:
                 if boundary.owner == "":
                     header += text
                 else:
+                    first_owner = len(owners)
                     semantic, documentation = split_documentation(text)
                     if documentation != "":
                         docs.append((boundary.owner, documentation))
@@ -170,6 +174,15 @@ class SourceProjector:
                             owners.append(semantic_record(field, documentation_free(field.text)))
                         for default in field_default_records(boundary.owner, text, boundary.start, self.origin, self.path):
                             owners.append(semantic_record(default, comment_free(default.text)))
+                    for owner_index in range(first_owner, len(owners)):
+                        record = owners[owner_index]
+                        relative = record.start - boundary.start
+                        mut offset = byte_start
+                        if relative != 0:
+                            offset += len(text[:relative].encode("utf-8"))
+                        raw = text[relative:record.end - boundary.start].rstrip()
+                        mark_placement(placements, record, offset, raw)
+                byte_start += len(text.encode("utf-8"))
         header_semantic, module_docs = split_documentation(header)
         if module_docs != "":
             docs.append(("", module_docs))
@@ -207,8 +220,19 @@ class SourceProjector:
                 ),
                 owners=owners,
                 documentation=docs,
+                placements=placements,
             ),
         )
+
+
+def mark_placement(mut placements: Dict[str, SourceProjectionRecord], owner: &SourceProjectionRecord, offset: int, raw: str) -> None:
+    """Bind an owner's physical source bytes and absolute UTF-8 offset, including every same-named overload."""
+    key = source_key("owner-placement", owner.key.origin, owner.key.identity, owner.key.facet)
+    content = hexlify(sha256.digest(raw.encode("utf-8")))
+    mut stamp = str(offset) + "|" + content
+    if owner.key.facet in placements:
+        stamp = hexlify(sha256.digest((placements[owner.key.facet].text + "|" + stamp).encode("utf-8")))
+    placements[owner.key.facet] = SourceProjectionRecord(key=key, text=stamp, start=owner.start, end=owner.end)
 
 
 pub def project_source(
@@ -365,7 +389,7 @@ pub def publish_source_projection(
     positioned_key = encode_record_key(projection.positioned.key)?
     transaction = put(transaction, positioned_key, projection.positioned.encoded()?)
     published.append(positioned_key)
-    for feature in projection.feature_inputs:
+    for feature in projection.feature_inputs + [projection.placements[facet] for facet in sorted([name for name in projection.placements.keys()])]:
         key = encode_record_key(feature.key)?
         transaction = put(transaction, key, feature.encoded()?)
         published.append(key)

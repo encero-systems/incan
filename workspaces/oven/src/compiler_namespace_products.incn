@@ -6,7 +6,7 @@ from pub::internal_models import CompiledNamespaceValue, ProducerRank, ProducerS
 from pub::internal_models.crumb_rows import ModelField, model_description, required_value
 from pub::internal_models.graph_crumb_fields import KEY_TYPE, REQUEST_TYPE, encode_graph_row, key_value, request_value
 from pub::internal_models.records import ReadReceipt, ReadScope, ReadWitness, RecordKey, RecordRequest
-from pub::incan_platform.store import Transaction
+from pub::incan_platform.store import Transaction, stage_put
 from compiler_body_keys import body_key, namespace_key
 from compiler_graph_records import prepare_evaluation
 from compiler_prepared_records import PreparedBodyRecordSource, prepared_product_request
@@ -85,13 +85,72 @@ def input_digest(receipt: ReadReceipt) -> Result[bytes, str]:
 def stage_product(mut transaction: Transaction, mut source: PreparedBodyRecordSource, key: RecordKey,
     semantic: bytes, receipt: ReadReceipt, rank: ProducerRank) -> Result[None, str]:
     """Bind an opaque compiler-authored semantic value to its own canonical store address and read receipt."""
+    encoded = projection_value(key, semantic)?
+    _ = prepare_evaluation(transaction, key.family + "-" + key.identity, rank, encoded, receipt)?
+    source.add(encode_record_key(key)?, encoded)
+    return Ok(None)
+
+
+def projection_value(key: RecordKey, semantic: bytes) -> Result[bytes, str]:
     description = model_description(PROJECTION, "incan.compiler.namespace-product/1", [
         ModelField(identity=b"key___", name="key", storage=KEY_TYPE),
         ModelField(identity=b"value_", name="value", storage="binary"),
     ])
-    encoded = encode_graph_row(PROJECTION, description, [
+    return encode_graph_row(PROJECTION, description, [
         required_value(b"key___", key_value(key)), required_value(b"value_", Value.Binary(semantic)),
-    ])?
-    _ = prepare_evaluation(transaction, key.family + "-" + key.identity, rank, encoded, receipt)?
-    source.add(encode_record_key(key)?, encoded)
-    return Ok(None)
+    ])
+
+
+pub model ExecutableCallInputs:
+    """The exact settled targets read by an owner or by a complete restorable namespace."""
+    pub owners: Dict[str, list[RecordKey]] = {}
+    pub modules: Dict[str, list[RecordKey]] = {}
+
+
+pub def stage_call_contracts(mut transaction: Transaction, mut source: PreparedBodyRecordSource,
+    origin: str, namespaces: &list[CompiledNamespaceValue]) -> Result[ExecutableCallInputs, str]:
+    """Capture the native settlement boundary before authenticating executable consumers from its results."""
+    mut result = ExecutableCallInputs()
+    mut supplied: Dict[str, str] = {}
+    for namespace in namespaces:
+        contracts = match namespace.call_contracts:
+            Some(found) => found
+            None => continue
+        mut readers: Dict[str, str] = {}
+        mut current: Dict[str, str] = {}
+        for contract in contracts:
+            current[contract.target] = contract.digest
+            if contract.owner != "":
+                if contract.reader in readers and readers[contract.reader] != contract.owner:
+                    return Err("conflicting executable reader identities")
+                readers[contract.reader] = contract.owner
+            if contract.target in supplied:
+                if supplied[contract.target] != contract.digest:
+                    return Err("conflicting settled call suppliers: " + contract.target)
+                continue
+            key = contract_key(origin, contract.target)
+            slot = encode_record_key(key)?
+            encoded = projection_value(key, contract.digest.encode("utf-8"))?
+            stage_put(transaction, slot, encoded)
+            source.add(slot, encoded)
+            supplied[contract.target] = contract.digest
+        mut targets: set[str] = set()
+        mut module_reads: list[RecordKey] = []
+        for read in namespace.call_reads:
+            if read.target not in current or current[read.target] != read.digest:
+                return Err("executable call read differs from independently supplied contract: " + read.target)
+            key = contract_key(origin, read.target)
+            if read.target not in targets:
+                targets.add(read.target)
+                module_reads.append(key)
+            if read.reader in readers:
+                owner = readers[read.reader]
+                if owner not in result.owners:
+                    result.owners[owner] = []
+                result.owners[owner].append(key)
+        result.modules[namespace.module] = module_reads
+    return Ok(result)
+
+
+pub def contract_key(origin: str, target: str) -> RecordKey:
+    return body_key("settled-call-contract", origin, target, "parameters", "access/1")

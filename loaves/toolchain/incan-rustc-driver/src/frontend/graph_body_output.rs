@@ -40,6 +40,7 @@ struct PendingNamespaceValue {
     member_owners: std::collections::BTreeMap<incan_semantics_core::CanonicalSymbolId, String>,
     member_witnesses: Vec<Vec<String>>,
     call_reads: Vec<internal_models::SettledCallRead>,
+    call_contracts: Option<Vec<internal_models::SettledCallContract>>,
     body_ir: Vec<u8>,
     dependencies: Vec<String>,
     lowering_inputs: Vec<Vec<String>>,
@@ -97,6 +98,7 @@ pub(super) struct GraphBodyOutput {
     method_reads: Option<Vec<Vec<String>>>,
     namespace_proofs: bool,
     owner_coordinates: bool,
+    report_contracts: bool,
     import_closures: Option<BTreeMap<String, Vec<String>>>,
     project_root: PathBuf,
     values: Vec<PendingBodyValue>,
@@ -109,6 +111,10 @@ impl GraphBodyOutput {
     /// Whether this invocation requested graph rows for freshly checked modules.
     pub(super) fn enabled(&self) -> bool {
         self.path.is_some()
+    }
+
+    pub(super) fn requests_contracts(&self) -> bool {
+        self.report_contracts
     }
 
     /// Prepare an inert collector unless Oven explicitly requested one output path.
@@ -153,6 +159,10 @@ impl GraphBodyOutput {
             method_reads,
             namespace_proofs,
             owner_coordinates,
+            report_contracts: path.as_ref().and_then(|p| p.file_name()).is_some_and(|name| {
+                name.as_encoded_bytes()
+                    .ends_with(internal_models::contract_output_suffix().as_bytes())
+            }),
             path,
             project_root,
             values: Vec::new(),
@@ -265,6 +275,7 @@ impl GraphBodyOutput {
                 member_owners,
                 member_witnesses: Vec::new(),
                 call_reads: Vec::new(),
+                call_contracts: None,
                 body_ir: Vec::new(),
                 dependencies: dependencies.to_vec(),
                 lowering_inputs: Vec::new(),
@@ -353,6 +364,7 @@ impl GraphBodyOutput {
         body_ir: &mut [BodyIrModule],
         lowering_inputs: &[(incan_semantics_core::CompilerNodeId, String)],
         call_reads: &std::collections::BTreeMap<String, Vec<incan_frontend::body_ir::SettledCallRead>>,
+        access: Option<&incan_frontend::body_ir::SettledCallInputs>,
     ) -> Result<(), String> {
         if self.path.is_none() {
             return Ok(());
@@ -364,12 +376,28 @@ impl GraphBodyOutput {
             .iter()
             .map(|(owner, witness)| (owner, witness))
             .collect();
+        let mut namespaces = std::collections::HashMap::with_capacity(self.namespaces.len());
+        for namespace in &mut self.namespaces {
+            if namespaces.insert(namespace.module.clone(), namespace).is_some() {
+                return Err("multiple checked namespaces for one module".into());
+            }
+        }
+        // Preserve capture order when generated owners share a source span.
+        let mut owners = BTreeMap::<String, BTreeMap<_, Vec<usize>>>::new();
+        for (index, value) in self.values.iter().enumerate() {
+            owners
+                .entry(value.module.clone())
+                .or_default()
+                .entry(value.span)
+                .or_default()
+                .push(index);
+        }
         for (module, lowered) in modules.iter().zip(body_ir) {
             let Ok(module_path) = module.file_path.strip_prefix(&self.project_root) else {
                 continue;
             };
             let module_path = module_path.to_string_lossy().into_owned();
-            if let Some(namespace) = self.namespaces.iter_mut().find(|value| value.module == module_path) {
+            if let Some(namespace) = namespaces.remove(&module_path) {
                 namespace.call_reads = call_reads
                     .get(&module_path)
                     .into_iter()
@@ -397,12 +425,61 @@ impl GraphBodyOutput {
                         witness.clone(),
                     ]);
                 }
+                if let Some(access) = access {
+                    let mut contracts = BTreeMap::new();
+                    for body in &lowered.bodies {
+                        let Some((target, digest)) = body.canonical.as_ref().and_then(|id| access.supplied_by(id))
+                        else {
+                            continue;
+                        };
+                        let owner = owners
+                            .get(&module_path)
+                            .and_then(|by_span| by_span.get(&body.span))
+                            .and_then(|candidates| {
+                                candidates
+                                    .iter()
+                                    .map(|&i| &self.values[i])
+                                    .find(|v| v.name == body.name)
+                            })
+                            .map(|pending| pending.identity.clone())
+                            .unwrap_or_default();
+                        contracts.insert(
+                            target.to_owned(),
+                            internal_models::SettledCallContract {
+                                target: target.to_owned(),
+                                digest: digest.to_owned(),
+                                reader: body.direct_call_id.path().to_owned(),
+                                owner,
+                            },
+                        );
+                    }
+                    // A restored provider may have no namespace row in this transaction. Use the supplier's
+                    // current settled parameters to authenticate the consumer's read across that boundary.
+                    for read in &namespace.call_reads {
+                        let digest = access.contract(&read.target).ok_or("missing settled call supplier")?;
+                        if digest != read.digest {
+                            return Err("executable call witness differs from its settled supplier".into());
+                        }
+                        contracts
+                            .entry(read.target.clone())
+                            .or_insert_with(|| internal_models::SettledCallContract {
+                                target: read.target.clone(),
+                                digest: digest.to_owned(),
+                                reader: String::new(),
+                                owner: String::new(),
+                            });
+                    }
+                    namespace.call_contracts = Some(contracts.into_values().collect());
+                }
                 namespace.member_witnesses.sort();
                 namespace.lowering_inputs = canonical_lowering_inputs(
-                    lowering_inputs
+                    lowered
+                        .bodies
                         .iter()
-                        .filter(|(identity, _)| lowered.bodies.iter().any(|body| &body.direct_call_id == identity))
-                        .map(|(identity, witness)| vec![identity.path().to_owned(), witness.clone()])
+                        .filter_map(|body| {
+                            let witness = lowering.get(&body.direct_call_id)?;
+                            Some(vec![body.direct_call_id.path().to_owned(), (*witness).clone()])
+                        })
                         .collect(),
                 )?;
             }
@@ -420,14 +497,19 @@ impl GraphBodyOutput {
                 }
             }
             let no_reads = Vec::new();
+            let Some(module_owners) = owners.get(&module_path) else {
+                continue;
+            };
             for body in &mut lowered.bodies {
-                let Some(pending) = self
-                    .values
-                    .iter_mut()
-                    .find(|value| value.module == module_path && value.name == body.name && value.span == body.span)
-                else {
+                let Some(index) = module_owners.get(&body.span).and_then(|candidates| {
+                    candidates
+                        .iter()
+                        .copied()
+                        .find(|&index| self.values[index].name == body.name)
+                }) else {
                     continue;
                 };
+                let pending = &mut self.values[index];
                 pending.body_ir = incan_semantics_core::executable_representation::encode_graph_owner(
                     &lowered.module_id,
                     &module_path,
@@ -484,7 +566,7 @@ impl GraphBodyOutput {
             return Ok(Vec::new());
         }
         self.namespaces.clear();
-        self.attach_body_ir(modules, bodies, &[], reads)?;
+        self.attach_body_ir(modules, bodies, &[], reads, None)?;
         let profile = incan_frontend::checker_records::GRAPH_BODY_RECORD_PROFILE.to_owned();
         self.values
             .into_iter()
@@ -611,6 +693,7 @@ impl GraphBodyOutput {
                 identity_proof: value.identity_proof,
                 semantic_interface: value.semantic_interface,
                 member_witnesses: value.member_witnesses,
+                call_contracts: value.call_contracts,
                 call_reads: value.call_reads,
                 package_roots: value.package_roots,
                 body_ir: value.body_ir,

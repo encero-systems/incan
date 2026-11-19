@@ -5,7 +5,8 @@ from std.primitives.crumb.records import RowRecord
 from std.primitives.crumb.values import Value, ValueField
 from std.primitives.text import copy_frozen_bytes
 from settled_call_reads import call_read_values, decoded_call_reads
-from checker_record_models import SettledCallRead
+from checker_field_grammar import full_digest
+from checker_record_models import SettledCallContract, SettledCallRead
 from checker_records import (
     CHECKER_PROFILE,
     CheckedFamily,
@@ -29,6 +30,7 @@ const LEGACY_NAMESPACE_SELECTOR: bytes = b"cmpns2\x00"
 const ROOTS_NAMESPACE_SELECTOR: bytes = b"cmpns3\x00"
 const CALLS_NAMESPACE_SELECTOR: bytes = b"cmpns4\x00"
 const NAMESPACE_SELECTOR: bytes = b"cmpns5\x00"
+const CONTRACT_NAMESPACE_SELECTOR: bytes = b"cmpns6\x00"
 const VALUE_SELECTOR: bytes = b"cmpval\x00"
 const FALLBACK_SELECTOR: bytes = b"cmpfbk\x00"
 
@@ -85,11 +87,13 @@ pub def decode_compiled_body_row(encoded: bytes) -> Result[CompiledBodyOutput, C
     """Decode one complete Crumb row without consulting or buffering any peer row."""
     if len(encoded) == 0 or len(encoded) > MAX_ROW_BYTES:
         return Err(CodecFault.Limit)
-    rows = decode_rows(encoded, [namespace_description(), namespace_description(4), namespace_description(3), namespace_description(2), value_description(), fallback_description()], MAX_ROW_BYTES).map_err(
+    rows = decode_rows(encoded, [namespace_description(6), namespace_description(), namespace_description(4), namespace_description(3), namespace_description(2), value_description(), fallback_description()], MAX_ROW_BYTES).map_err(
         (_) => CodecFault.Malformed,
     )?
     if len(rows) != 1:
         return Err(CodecFault.Malformed)
+    if rows[0].key == copy_frozen_bytes(CONTRACT_NAMESPACE_SELECTOR):
+        return Ok(CompiledBodyOutput.Namespace(decode_compiled_namespace_value(rows[0].value, 6)?))
     if rows[0].key == copy_frozen_bytes(NAMESPACE_SELECTOR):
         return Ok(CompiledBodyOutput.Namespace(decode_compiled_namespace_value(rows[0].value, 5)?))
     if rows[0].key == copy_frozen_bytes(CALLS_NAMESPACE_SELECTOR):
@@ -127,6 +131,11 @@ def encode_compiled_namespace_value(value: CompiledNamespaceValue) -> Result[byt
     for input in value.lowering_inputs:
         for field in input:
             raw_bytes += len(field.encode())
+    if let Some(contracts) = value.call_contracts:
+        if len(contracts) > MAX_FIELDS:
+            return Err(CodecFault.Limit)
+        for contract in contracts:
+            raw_bytes += len(contract.owner.encode()) + len(contract.reader.encode()) + len(contract.target.encode()) + len(contract.digest.encode())
     require_row_room(raw_bytes)?
     mut dependencies: list[Value] = []
     mut previous = ""
@@ -155,10 +164,15 @@ def encode_compiled_namespace_value(value: CompiledNamespaceValue) -> Result[byt
         required_value(b"wreads", Value.List(call_read_values(value.call_reads)?)),
     ]
     if len(value.identity_proof) == 0:
+        if value.call_contracts is not None:
+            return Err(CodecFault.Malformed)
         return encoded_row(namespace_description(4), RowRecord(key=CALLS_NAMESPACE_SELECTOR, value=Value.Record(fields)))
     if len(value.identity_proof) > MAX_METADATA_BYTES:
         return Err(CodecFault.Limit)
     fields.append(required_value(b"zproof", Value.Binary(value.identity_proof)))
+    if let Some(contracts) = value.call_contracts:
+        fields.append(required_value(b"zsupp_", Value.List(contract_values(contracts)?)))
+        return encoded_row(namespace_description(6), RowRecord(key=CONTRACT_NAMESPACE_SELECTOR, value=Value.Record(fields)))
     return encoded_row(namespace_description(), RowRecord(key=NAMESPACE_SELECTOR, value=Value.Record(fields)))
 
 
@@ -306,6 +320,42 @@ def member_values(members: list[list[str]]) -> Result[list[Value], CodecFault]:
     return Ok(values)
 
 
+def contract_values(contracts: &list[SettledCallContract]) -> Result[list[Value], CodecFault]:
+    mut values: list[Value] = []
+    mut previous = ""
+    for contract in contracts:
+        if contract.target <= previous or (contract.reader == "" and contract.owner != "") or not full_digest(contract.digest):
+            return Err(CodecFault.Malformed)
+        values.append(Value.Tuple([Value.Text(contract.target), Value.Text(contract.digest), Value.Text(contract.reader), Value.Text(contract.owner)]))
+        previous = contract.target
+    return Ok(values)
+
+
+def read_contracts(value: Value) -> Result[list[SettledCallContract], CodecFault]:
+    entries = match value:
+        Value.List(found) => found
+        _ => return Err(CodecFault.Malformed)
+    if len(entries) > MAX_FIELDS:
+        return Err(CodecFault.Limit)
+    mut contracts: list[SettledCallContract] = []
+    mut previous = ""
+    for entry in entries:
+        cells = match entry:
+            Value.Tuple(found) => found
+            _ => return Err(CodecFault.Malformed)
+        if len(cells) != 4:
+            return Err(CodecFault.Malformed)
+        target = text_value(cells[0])?
+        digest = text_value(cells[1])?
+        reader = text_value(cells[2])?
+        owner = text_value(cells[3])?
+        if target <= previous or (reader == "" and owner != "") or not full_digest(digest):
+            return Err(CodecFault.Malformed)
+        contracts.append(SettledCallContract(target=target, digest=digest, reader=reader, owner=owner))
+        previous = target
+    return Ok(contracts)
+
+
 def decode_compiled_namespace_value(value: Value, version: int) -> Result[CompiledNamespaceValue, CodecFault]:
     """Restore one bounded namespace value, imported modules and canonical lowering witnesses."""
     mut semantic_index = 7
@@ -315,6 +365,8 @@ def decode_compiled_namespace_value(value: Value, version: int) -> Result[Compil
     if version >= 4:
         count += 1
     if version >= 5:
+        count += 1
+    if version >= 6:
         count += 1
     fields = record_fields(value, count)?
     dependencies = text_values(fields[1].value)?
@@ -359,7 +411,11 @@ def decode_compiled_namespace_value(value: Value, version: int) -> Result[Compil
         proof = binary_value(fields[9].value)?
         if len(proof) == 0 or len(proof) > MAX_METADATA_BYTES:
             return Err(CodecFault.Malformed)
+    mut contracts: Option[list[SettledCallContract]] = None
+    if version >= 6:
+        contracts = Some(read_contracts(fields[10].value)?)
     restored = CompiledNamespaceValue(
+        call_contracts=contracts,
         identity_proof=proof,
         call_reads=call_reads,
         module=text_value(fields[5].value)?,
@@ -507,7 +563,10 @@ def namespace_description(version: int = 5) -> Description:
     if version == 4:
         return model_description(CALLS_NAMESPACE_SELECTOR, "incan.checker-compiled-namespace/4", fields)
     fields.append(ModelField(identity=b"zproof", name="identity_proof", storage="binary"))
-    return model_description(NAMESPACE_SELECTOR, "incan.checker-compiled-namespace/5", fields)
+    if version == 5:
+        return model_description(NAMESPACE_SELECTOR, "incan.checker-compiled-namespace/5", fields)
+    fields.append(ModelField(identity=b"zsupp_", name="settled_contracts", storage="list<tuple<string,string,string,string>>"))
+    return model_description(CONTRACT_NAMESPACE_SELECTOR, "incan.checker-compiled-namespace/6", fields)
 
 
 def value_description() -> Description:

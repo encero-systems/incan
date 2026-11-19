@@ -76,6 +76,10 @@ pub def prepare_captured_source_inputs(
                         changed.append(feature.key)
                     elif stage_changed_projection(selected, prepared, key, feature, positioned)?:
                         changed.append(feature.key)
+                for facet in projection.placements.keys():
+                    placement = projection.placements[facet]
+                    if stage_changed_projection(selected, prepared, encode_record_key(placement.key)?, placement, positioned)?:
+                        changed.append(placement.key)
                 for owner in projection.owners:
                     for record in [owner, signature_record(owner)]:
                         key = encode_record_key(record.key)?

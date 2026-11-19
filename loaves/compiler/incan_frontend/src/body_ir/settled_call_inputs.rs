@@ -67,6 +67,19 @@ impl SettledCallInputs {
             ambiguous,
         })
     }
+    /// The checked target and its current parameter contract, independent of any caller's stored witness.
+    pub fn supplied_by(&self, owner: &CanonicalSymbolId) -> Option<(&str, &str)> {
+        let target = self.by_owner.get(owner)?;
+        Some((target, self.contract(target)?))
+    }
+
+    pub fn contract(&self, target: &str) -> Option<&str> {
+        if self.ambiguous.contains(target) {
+            return None;
+        }
+        self.contracts.get(target).map(String::as_str)
+    }
+
     pub fn matches(&self, read: &SettledCallRead) -> bool {
         !self.ambiguous.contains(&read.target) && self.contracts.get(&read.target) == Some(&read.digest)
     }

@@ -15,6 +15,7 @@ from checker_records import (
     GraphBodyValue,
     GraphNamespaceValue,
     SettledCallRead,
+    SettledCallContract,
     decode_graph_body_values,
     decode_graph_namespace_value,
     encode_record,
@@ -231,8 +232,14 @@ def compiled_output_controls(source: str) -> Result[None, str]:
         package_roots=["alpha", "provider"],
         call_reads=[SettledCallRead(reader="invoke", target="provider", digest="sha256:" + "a" * 64)],
     )
+    legacy = encode_compiled_body_rows(CompiledBodyOutputs(namespaces=[namespace], values=[], fallbacks=[])).map_err((_) => "legacy namespace encode")?
+    match decode_compiled_body_row(legacy[0]).map_err((_) => "legacy namespace decode")?:
+        CompiledBodyOutput.Namespace(decoded) => assert decoded.call_contracts is None
+        _ => return Err("legacy namespace row lost")
+    mut supplied = namespace
+    supplied.call_contracts = Some([SettledCallContract(target="provider", digest="sha256:" + "a" * 64, reader="supplier#1", owner="stable/supplier")])
     encoded = encode_compiled_body_rows(
-        CompiledBodyOutputs(namespaces=[namespace], values=[value], fallbacks=[fallback, identityless]),
+        CompiledBodyOutputs(namespaces=[supplied], values=[value], fallbacks=[fallback, identityless]),
     ).map_err((_) => "compiled output encode")?
     assert len(encoded) == 4
     for row in encoded:
@@ -243,6 +250,7 @@ def compiled_output_controls(source: str) -> Result[None, str]:
             assert decoded.body_ir == namespace.body_ir and decoded.dependencies == namespace.dependencies
             assert decoded.identity_proof == namespace.identity_proof
             assert decoded.call_reads == namespace.call_reads
+            assert decoded.call_contracts == supplied.call_contracts
             assert decoded.package_roots == namespace.package_roots
             assert decoded.lowering_inputs == namespace.lowering_inputs
             assert decoded.semantic_interface == namespace.semantic_interface and decoded.member_witnesses == namespace.member_witnesses
