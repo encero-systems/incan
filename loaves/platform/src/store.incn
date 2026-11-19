@@ -790,21 +790,21 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
     """
     if len(transactions) == 0:
         return Err(failure("format", "transaction", "an empty group has no selected view"))
-    first = transactions[0]
-    root = first.root
+    transaction_id = transactions[0].id
+    root = transactions[0].root
     ensure_directory(root.joinpath("locks"))?
     locking = begin_work()
     held = root.joinpath("locks/publication").store_lock_exclusive().map_err((error) => io_failure(root, error))?
     record_work(Operation.StoreLock, root.value, locking)
-    mut selected_view = first.view
+    mut selected_view = transactions[0].view
     if execution_view != "":
         selected_view = execution_view
     latest = snapshot(root, selected_view)?
-    staged = root.joinpath("staging").joinpath(first.id)
-    if len(transactions) == 1 and first.fork != "":
+    staged = root.joinpath("staging").joinpath(transaction_id)
+    if len(transactions) == 1 and transactions[0].fork != "":
         if execution_view != "":
             return Err(failure("format", "transaction", "a fork does not select an execution view"))
-        return publish_fork(root, latest, first, staged).map((view) => Publication(snapshot=view))
+        return publish_fork(root, latest, transactions[0], staged).map((view) => Publication(snapshot=view))
     # 1. Duplicate views are combined before their preconditions are checked.
     mut writes: Dict[str, list[Write]] = {}
     mut compared: Dict[str, str] = {}
@@ -816,9 +816,9 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
         ):
             return Err(failure("format", "transaction", "a group needs one store and no forks"))
         check_view_key(transaction.view)?
-        mut combined = writes.get(transaction.view, [])
-        combined.extend(transaction.writes)
-        writes[transaction.view] = combined
+        if transaction.view not in writes:
+            writes[transaction.view] = []
+        writes[transaction.view].extend(transaction.writes)
         if let Some(revision) = transaction.compared:
             compared[transaction.view] = revision
     mut changed: Dict[str, list[Write]] = {}
@@ -853,7 +853,7 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
     for name in sorted([view for view in staged_roots.keys()]):
         views = with_view(views, name, installed_reference(staged_roots[name], pack))
     # 3. One switch is the only visibility and durability boundary for the entire request.
-    published = publish_switch(root, latest, views, first.id, execution_view)?
+    published = publish_switch(root, latest, views, transaction_id, execution_view)?
     remove_tree(staged)
     return Ok(published)
 
@@ -949,7 +949,7 @@ def pending_each(latest: Snapshot, writes: list[Write]) -> Result[list[Write], S
     return Ok(remaining)
 
 
-def kept(write: Write, found: Result[Lookup, StoreError]) -> Result[bool, StoreError]:
+def kept(write: &Write, found: Result[Lookup, StoreError]) -> Result[bool, StoreError]:
     """Whether `write` stays pending given its key's lookup, refusing it when its precondition no longer holds."""
     match found:
         Err(error) =>
@@ -959,11 +959,11 @@ def kept(write: Write, found: Result[Lookup, StoreError]) -> Result[bool, StoreE
         Ok(outcome) => return needed(write, outcome)
 
 
-def needed(write: Write, found: Lookup) -> Result[bool, StoreError]:
+def needed(write: &Write, found: Lookup) -> Result[bool, StoreError]:
     """Whether `write` changes what is committed, refusing it when its precondition no longer holds."""
     match found:
         Lookup.Found(value) =>
-            if write.kind == KIND_VALUE and value.len() == len(write.value) and owned(value) == write.value:
+            if write.kind == KIND_VALUE and value.len() == len(write.value) and value.0.as_bytes() == write.value.as_slice():
                 return Ok(false)
             if write.expect not in [EXPECT_ANY, EXPECT_REPAIR]:
                 return Err(failure("conflict", write.key, "another value was committed under this key"))

@@ -475,7 +475,7 @@ def stage_compiled_namespaces(
 def prepare_optional_lowering_records(
     mut prepared: Transaction,
     mut source: PreparedBodyRecordSource,
-    projections: &Dict[str, SourceProjection],
+    mut projections: Dict[str, SourceProjection],
     outputs: CompiledBodyOutputs,
     mut orders: LoweringOrders,
     retained: list[SelectedBodyRecord],
@@ -508,6 +508,7 @@ def prepare_optional_lowering_records(
             return Err("partially restored plan did not retain its demanded checked owner")
         witnesses = lowering_witnesses(projections, outputs.values, retained + rescued, source, selected, unit, origin, orders)?
         return prepare_lowering_records(
+            projections,
             prepared,
             source,
             orders,
@@ -786,7 +787,7 @@ def body_projection_refusal(reason: str, value: CompiledBodyValue) -> str:
 
 
 def lowering_witnesses(
-    projections: &Dict[str, SourceProjection],
+    mut projections: Dict[str, SourceProjection],
     fresh: list[CompiledBodyValue],
     retained: list[SelectedBodyRecord],
     mut source: PreparedBodyRecordSource,
@@ -797,6 +798,7 @@ def lowering_witnesses(
 ) -> Result[list[LoweringBody], str]:
     """Carry only graph-selected inputs with unchanged current owner/header bytes; never invent fresh checker facts."""
     mut witnesses: list[LoweringBody] = []
+    mut witnessed: set[str] = set()
     editable_packages = [dependency[0] for dependency in dependency_source_roots(unit)]
     for value in fresh:
         mut signatures = [
@@ -825,8 +827,9 @@ def lowering_witnesses(
                 signature_reads=signatures,
             ),
         )
+        witnessed.add(value.identity)
     for record in retained:
-        if record.identity in [value.identity for value in witnesses]:
+        if record.identity in witnessed:
             continue
         if len(record.body_ir) == 0:
             continue
@@ -847,7 +850,9 @@ def lowering_witnesses(
             None => return Err("retained Body IR has no selected evaluation")
         if read_body_frame(key, CHECKER_PROFILE, body.value)? != record.body_ir:
             return Err("retained Body IR differs from the selected graph")
-        projection = source_projection(unit, origin, decoded.source)?
+        if decoded.source not in projections:
+            projections[decoded.source] = source_projection(unit, origin, decoded.source)?
+        projection = projections[decoded.source]
         owner = match compiled_owner_source(projection, decoded.source, str(decoded.body.name), record.identity):
             Ok(value) => value
             Err(reason) =>
@@ -906,6 +911,7 @@ def lowering_witnesses(
                 signature_reads=signatures,
             ),
         )
+        witnessed.add(record.identity)
     return Ok(witnesses)
 
 
@@ -924,6 +930,7 @@ def lowering_events(report: Path) -> Result[list[LoweringEvent], str]:
 
 
 def prepare_lowering_records(
+    mut projections: Dict[str, SourceProjection],
     mut prepared: Transaction,
     mut source: PreparedBodyRecordSource,
     mut orders: LoweringOrders,
@@ -1075,7 +1082,7 @@ def prepare_lowering_records(
         require_plan_refusal(report)?
         return Ok(None)
     prepare_native_interface(
-        prepared, source, scope, unit, origin, values, report, plan_keys + carried, covered_modules,
+        projections, prepared, source, scope, unit, origin, values, report, plan_keys + carried, covered_modules,
         max([interface_namespace, carried_namespace]), orders,
     )?
     return Ok(None)
@@ -1114,6 +1121,7 @@ def check_reused_output(
 
 
 def prepare_native_interface(
+    mut projections: Dict[str, SourceProjection],
     mut transaction: Transaction,
     mut source: PreparedBodyRecordSource,
     scope: ReadScope,
@@ -1134,7 +1142,9 @@ def prepare_native_interface(
     mut reads = [prepared_product_request(plan) for plan in plans]
     mut modules = set(covered_modules + [body.module for body in bodies])
     for module in sorted([file for file in modules]):
-        projection = source_projection(unit, origin, module)?
+        if module not in projections:
+            projections[module] = source_projection(unit, origin, module)?
+        projection = projections[module]
         for binding in [projection.header] + projection.feature_inputs:
             source.add(encode_record_key(binding.key)?, binding.encoded()?)
             reads.append(prepared_product_request(binding.key))
