@@ -59,7 +59,7 @@ def owner_description() -> Description:
     ])
 
 
-def check_owner_reads(identity: str, reader: str, source: str, reads: list[SettledCallRead]) -> Result[None, str]:
+def check_owner_reads(identity: &str, reader: &str, source: &str, reads: list[SettledCallRead]) -> Result[None, str]:
     if identity == "" or reader == "" or source == "":
         return Err("missing executable call witness owner")
     for read in reads:
@@ -78,7 +78,7 @@ pub def encode_owner_call_reads(identity: str, reader: str, source: str, reads: 
     ])
 
 
-pub def decode_owner_call_reads(identity: str, reader: str, source: str, encoded: bytes) -> Result[list[SettledCallRead], str]:
+pub def decode_owner_call_reads(identity: &str, reader: &str, source: &str, encoded: bytes) -> Result[list[SettledCallRead], str]:
     """Verify the checked and physical reader identities before admitting any call contract."""
     fields = decode_graph_row(encoded, OWNER_CALLS, owner_description(), 4)?
     if graph_text(fields[0].value)? != identity or graph_text(fields[1].value)? != reader or graph_text(fields[3].value)? != source:
