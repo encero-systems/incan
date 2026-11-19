@@ -470,6 +470,7 @@ struct Positions {
     rust_reads: BTreeMap<String, Option<CanonicalSymbolId>>,
     caller: Option<super::super::type_info::CBindingRawCallOwner>,
     type_identities: BTreeMap<String, CanonicalSymbolId>,
+    source_results: BTreeMap<(Span, Vec<usize>), CanonicalSymbolId>,
 }
 
 impl Positions {
@@ -614,6 +615,7 @@ impl Positions {
             rust_reads,
             caller,
             type_identities,
+            source_results: BTreeMap::new(),
         })
     }
 
@@ -656,6 +658,7 @@ impl Positions {
     ) -> Result<Self, NodeBindingError> {
         let mut positions = Self::from_nodes(checker, program, owner, false, nodes)?;
         imported_members::bind_transitive(checker, &mut positions, fields)?;
+        imported_members::bind_result_types(checker, &mut positions, fields)?;
         let layout = CallableScopeLayout::decode(&checker.symbols, fields, active)?
             .ok_or_else(|| NodeBindingError::InvalidField("callable scope allocation is missing".into()))?;
         let mut nested = Vec::new();

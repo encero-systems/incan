@@ -2,6 +2,40 @@
 
 use super::*;
 
+/// Select the actual native return item at the recorded component of this exact call.
+fn native_result_item<'a>(call: &'a crate::typechecker::type_info::RustCheckedCall, path: &[usize]) -> Option<&'a str> {
+    if path.is_empty() {
+        return call.result_item_path.as_deref();
+    }
+    native_component_item(&call.return_type, path)
+}
+
+/// A checked signature can name a Rust item inside a structural return value.
+pub(super) fn native_component_item<'a>(mut ty: &'a crate::symbols::ResolvedType, path: &[usize]) -> Option<&'a str> {
+    use crate::symbols::ResolvedType;
+    for &component in path {
+        ty = match ty {
+            ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => args.get(component)?,
+            ResolvedType::Ref(inner)
+            | ResolvedType::RefMut(inner)
+            | ResolvedType::TypeToken(inner)
+            | ResolvedType::FrozenList(inner)
+            | ResolvedType::FrozenSet(inner)
+                if component == 0 =>
+            {
+                inner
+            }
+            ResolvedType::FrozenDict(key, _) if component == 0 => key,
+            ResolvedType::FrozenDict(_, value) if component == 1 => value,
+            _ => return None,
+        };
+    }
+    match ty {
+        ResolvedType::RustPath(item) => Some(item),
+        _ => None,
+    }
+}
+
 /// Recreate every supported local map directly from the selected field's typed primitives.
 pub(super) fn restore_local(
     positions: &Positions,
@@ -154,21 +188,24 @@ pub(super) fn restore_local(
             let path = read_type_identity_path(&row[2])?;
             let stable = next(&mut values)?;
             let identity = positions.canonical_type(stable).or_else(|error| {
-                if !path.is_empty() {
-                    return Err(error);
-                }
                 // The checked native call at this exact expression carries its result's original Rust item.
                 let item = local
                     .rust
                     .checked_calls
                     .get(&span)
-                    .and_then(|call| call.result_item_path.as_deref())
+                    .and_then(|call| native_result_item(call, &path))
                     .and_then(incan_semantics_core::body_ir::rust_item_identity)
                     .filter(|canonical| {
                         StableDeclarationId::from_canonical(canonical, None, None)
                             .is_some_and(|candidate| candidate.render_compact() == stable)
                     });
-                item.ok_or(error)
+                item.or_else(|| {
+                    let id = positions.source_results.get(&(span, path.clone()))?;
+                    StableDeclarationId::from_canonical(id, None, None)
+                        .is_some_and(|candidate| candidate.render_compact() == stable)
+                        .then(|| id.clone())
+                })
+                .ok_or(error)
             })?;
             if local
                 .expressions

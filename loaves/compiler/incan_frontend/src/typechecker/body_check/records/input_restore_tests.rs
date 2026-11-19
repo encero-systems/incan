@@ -83,6 +83,102 @@ fn restored_native_result_requires_the_same_checked_call() -> Result<(), Box<dyn
             .and_then(|identities| identities.get(&Vec::new())),
         Some(&canonical)
     );
+    // A checked Result owns its payloads at different paths from the Result declaration itself.
+    let result_call = local.rust.checked_calls.get_mut(&owner).ok_or("missing call")?;
+    result_call.path = "std::string::String::from_utf8".into();
+    result_call.result_item_path = Some("core::result::Result".into());
+    let error_item = "std::string::FromUtf8Error";
+    use crate::symbols::ResolvedType;
+    result_call.return_type = ResolvedType::Generic(
+        "Result".into(),
+        vec![ResolvedType::Str, ResolvedType::RustPath(error_item.into())],
+    );
+    let error_id = incan_semantics_core::body_ir::rust_item_identity(error_item).ok_or("missing error item")?;
+    let mut payload = row.clone();
+    payload[3] = incan_semantics_core::stable_identity::StableDeclarationId::from_canonical(&error_id, None, None)
+        .ok_or("missing stable error identity")?
+        .render_compact();
+    for path in ["root", "0", "2", "1.0"] {
+        payload[2] = path.into();
+        assert!(super::super::restore_local(&positions, &mut local, &mut identities, &payload).is_err());
+    }
+    payload[2] = "1".into();
+    super::super::restore_local(&positions, &mut local, &mut identities, &payload)?;
+    assert_eq!(
+        local.expressions.expression_type_identities[&owner].get(&vec![1]),
+        Some(&error_id)
+    );
+    Ok(())
+}
+
+/// The callee's checked provider owns a nested return type, even when that type has no local source binding.
+#[test]
+fn restored_source_result_requires_current_provider_and_component() -> Result<(), Box<dyn std::error::Error>> {
+    use crate::symbols::{ResolvedType, SymbolKind};
+    use incan_semantics_core::stable_identity::StableDeclarationId;
+    use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    let (program, mut checker, owner) = fixture(
+        "def open_stream() -> int:\n    return 1\ndef view() -> int:\n    return open_stream()\n",
+        "view",
+    )?;
+    let mut positions = Positions::new(&checker, &program, owner, false)?;
+    let (call, callee) = positions.nodes.direct_call_sites().next().ok_or("missing call")?;
+    let target = CanonicalSymbolId::module_declaration(
+        vec!["files".into()],
+        "open_stream",
+        SemanticSourceTargetKind::Function,
+        crate::ast::Span::new(12, 22).into(),
+    );
+    let target_key = StableDeclarationId::from_canonical(&target, None, None)
+        .ok_or("missing function key")?
+        .render_compact();
+    positions.identities.insert(target_key.clone(), target.clone());
+    let id = checker.symbols.lookup("open_stream").ok_or("missing function")?;
+    let SymbolKind::Function(mut signature) = checker.symbols.get(id).ok_or("missing symbol")?.kind.clone() else {
+        return Err("missing signature".into());
+    };
+    let native = "std::fs::File";
+    signature.return_type = ResolvedType::Generic(
+        "Result".into(),
+        vec![ResolvedType::RustPath(native.into()), ResolvedType::Str],
+    );
+    checker.dependency_direct_member_symbols.insert(
+        "files".into(),
+        Arc::new(HashMap::from([("open_stream".into(), SymbolKind::Function(signature))])),
+    );
+    let item = incan_semantics_core::body_ir::rust_item_identity(native).ok_or("missing native type")?;
+    let stable = StableDeclarationId::from_canonical(&item, None, None)
+        .ok_or("missing stable native type")?
+        .render_compact();
+    let mut rows = vec![
+        vec![
+            "reference".into(),
+            positions.nodes.anchor(callee)?.path,
+            "read".into(),
+            target_key,
+        ],
+        vec![
+            "type-identity".into(),
+            positions.nodes.anchor(call)?.path,
+            "0".into(),
+            stable,
+        ],
+    ];
+    super::super::imported_members::bind_result_types(&checker, &mut positions, &rows)?;
+    assert!(positions.source_results.is_empty());
+    checker.dependency_direct_member_identities.insert(
+        "files".into(),
+        Arc::new(HashMap::from([("open_stream".into(), target)])),
+    );
+    rows[1][2] = "1".into();
+    super::super::imported_members::bind_result_types(&checker, &mut positions, &rows)?;
+    assert!(positions.source_results.is_empty());
+    rows[1][2] = "0".into();
+    super::super::imported_members::bind_result_types(&checker, &mut positions, &rows)?;
+    assert_eq!(positions.source_results.get(&(call, vec![0])), Some(&item));
     Ok(())
 }
 
