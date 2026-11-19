@@ -37,7 +37,7 @@ pub def compiled_namespace_order(path: Path, origin: str, namespaces: &list[Comp
 pub def compiled_method_reads(path: Path) -> Result[MethodReads, str]:
     page = path.joinpath(LOOKUP_FILE)
     if not path.0.endswith(method_lookup_suffix()) or not page.exists():
-        return Ok(MethodReads())
+        return Ok(MethodReads(groups={}, retained=set()))
     size = page.stat().map_err((error) => error.message())?.size().map_err((error) => error.message())?
     if not page.is_file() or size <= 0 or size > MAX_COMPILED_BODY_ROW_BYTES:
         return Err("invalid method lookup inventory length")
