@@ -140,3 +140,8 @@ pub def coordinate_output_suffix() -> str:
 pub def contract_output_suffix() -> str:
     """Request the checked declarations' executable parameter access digests."""
     return ".contracts" + coordinate_output_suffix()
+
+
+pub def scope_output_suffix() -> str:
+    """Request exact name membership for functions with a compiler-proven closed scalar scope."""
+    return ".scope" + contract_output_suffix()

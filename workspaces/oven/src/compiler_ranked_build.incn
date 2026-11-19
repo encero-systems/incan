@@ -118,12 +118,17 @@ def changed_owner(graph: Snapshot, prior: RecordKey, captured: &Dict[str, bytes]
     mut prior_declaration = prior
     mut signature_input = prior
     mut families: set[str] = set()
+    mut scope_names: set[str] = set()
     for witness in basis.witnesses:
         match witness:
             ReadWitness.Found(previous, _) =>
                 mut key = previous.request.key
                 family = key.family
-                if family in families or family not in ["module-header", "owner-source", "owner-census", "declaration"]:
+                if family == "scope-name":
+                    if key.facet == "" or key.facet in scope_names:
+                        return Ok(None)
+                    scope_names.add(key.facet)
+                elif family in families or family not in ["module-header", "owner-source", "owner-census", "declaration"]:
                     return Ok(None)
                 families.add(family)
                 encoded_key = encode_record_key(key)?
@@ -135,9 +140,15 @@ def changed_owner(graph: Snapshot, prior: RecordKey, captured: &Dict[str, bytes]
                     inputs[encode_record_key(key)?] = required(graph, encoded_key)?
                     prior_declaration_root = previous.semantic_digest
                 else:
-                    if not captured.contains_key(encoded_key) or key.identity != order.members[0]:
+                    if key.identity != order.members[0]:
                         return Ok(None)
-                    current = captured[encoded_key]
+                    mut current: bytes = b""
+                    if encoded_key in captured:
+                        current = captured[encoded_key]
+                    elif family == "scope-name":
+                        current = required(graph, encoded_key)?
+                    else:
+                        return Ok(None)
                     changed = digest(source_value(key, current)?) != previous.semantic_digest
                     if changed != (family == "owner-source"):
                         return Ok(None)
@@ -147,7 +158,7 @@ def changed_owner(graph: Snapshot, prior: RecordKey, captured: &Dict[str, bytes]
                         signature_input.family = "declaration-signature"
                     inputs[encoded_key] = current
             _ => return Ok(None)
-    if len(families) != 4 or name == "":
+    if len(families) != 4 or name == "" or (len(scope_names) > 0 and name not in scope_names):
         return Ok(None)
     return Ok(Some(BuildOwner(prior=prior, name=name, namespace=order.rank, inputs=inputs, prior_declaration_root=prior_declaration_root, prior_declaration=prior_declaration, signature_input=signature_input)))
 
@@ -166,7 +177,7 @@ def submit(store: Path, view: str, toolchain: Toolchain, owner: &BuildOwner, fam
     stage_put(staging, envelope_key(DEMAND_FAMILY, demand_root)?, demand)
     exact = commit(staging).map_err((error) => error.message())?
     roots = [CHECKING_BASIS, CERTIFICATE_FAMILY, RECEIPT_FAMILY, COMPLETION_FAMILY, DEMAND_FAMILY, PREPARED_FAMILY,
-        WORK_FAMILY, "module-header", "owner-source", "owner-census", "prior-declaration", "declaration", "local"]
+        WORK_FAMILY, "module-header", "owner-source", "owner-census", "scope-name", "prior-declaration", "declaration", "local"]
     lease = stage_selected_snapshot(compiler_home()?, Path(toolchain.console).parent(), bakery_location()?, store, exact, roots, SNAPSHOT_FORMAT_PROFILE)?
     mut stage = ProducerStage.CheckBody
     mut stage_name = "check-body"

@@ -77,7 +77,7 @@ pub def read_local_activation(activation: &ResolvedCheckingActivation) -> Result
                 environment.append(fields)
                 environment_names.append(request.key.facet)
                 environment_identities.append(request.key.identity)
-        elif request.key.family in ["owner-census", "declaration-slot", "declaration-signature"]:
+        elif request.key.family in ["owner-census", "scope-name", "declaration-slot", "declaration-signature"]:
             # These checked scalar reads fix the selection of typed declarations in the prepared environment.
             pass
         else:

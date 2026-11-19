@@ -74,6 +74,8 @@ from compiler_source_projection import (
     owner_source_key,
     project_source,
     signature_record,
+    scope_member,
+    scope_members,
 )
 from compiler_projection_cache import (
     cached_editable_dependency_signature_record,
@@ -355,6 +357,7 @@ def stage_compiled_body_values(
     """Stage each compiler-produced local, final and Body IR value with its exact source and dependency witnesses."""
     mut published = 0
     mut declarations: Dict[str, RecordKey] = {}
+    mut bindings: Dict[str, Dict[str, list[str]]] = {}
     for value in values:
         declarations[value.identity] = body_key("declaration", origin, value.identity, value.name, root(value.declaration)?)
     for value in values:
@@ -368,9 +371,19 @@ def stage_compiled_body_values(
         mut local_reads = [
             prepared_product_request(owner.key),
             prepared_product_request(projection.header.key),
-            prepared_product_request(projection.census.key),
-            prepared_product_request(declaration_key),
         ]
+        if len(value.scope_names) == 0:
+            local_reads.append(prepared_product_request(projection.census.key))
+        else:
+            if value.module not in bindings:
+                bindings[value.module] = scope_members(projection.census.text)
+            for name in value.scope_names:
+                selection = scope_member(projection.census, bindings[value.module], name)
+                slot = encode_record_key(selection.key)?
+                if not source.holds(slot):
+                    stage_source_record(prepared, source, selection)?
+                local_reads.append(prepared_product_request(selection.key))
+        local_reads.append(prepared_product_request(declaration_key))
         for feature in projection.feature_inputs:
             local_reads.append(prepared_product_request(feature.key))
         method_reads = method_inputs(prepared, source, selected, methods, local_key, value.local, projections, unit)?

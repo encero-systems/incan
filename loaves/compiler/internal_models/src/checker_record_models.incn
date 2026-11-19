@@ -96,6 +96,8 @@ pub model CompiledBodyValue:
     pub final: bytes
     pub body_ir: bytes
     pub dependency_reads: list[CompiledBodyDependencyRead] = []
+    # Nonempty only when the frontend proves that a scalar body can consult these project names alone.
+    pub scope_names: list[str] = []
 
 
 @derive(Eq)

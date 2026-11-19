@@ -31,6 +31,7 @@ const ROOTS_NAMESPACE_SELECTOR: bytes = b"cmpns3\x00"
 const CALLS_NAMESPACE_SELECTOR: bytes = b"cmpns4\x00"
 const NAMESPACE_SELECTOR: bytes = b"cmpns5\x00"
 const CONTRACT_NAMESPACE_SELECTOR: bytes = b"cmpns6\x00"
+const SCOPED_VALUE_SELECTOR: bytes = b"cmpscp\x00"
 const VALUE_SELECTOR: bytes = b"cmpval\x00"
 const FALLBACK_SELECTOR: bytes = b"cmpfbk\x00"
 
@@ -87,7 +88,7 @@ pub def decode_compiled_body_row(encoded: bytes) -> Result[CompiledBodyOutput, C
     """Decode one complete Crumb row without consulting or buffering any peer row."""
     if len(encoded) == 0 or len(encoded) > MAX_ROW_BYTES:
         return Err(CodecFault.Limit)
-    rows = decode_rows(encoded, [namespace_description(6), namespace_description(), namespace_description(4), namespace_description(3), namespace_description(2), value_description(), fallback_description()], MAX_ROW_BYTES).map_err(
+    rows = decode_rows(encoded, [namespace_description(6), namespace_description(), namespace_description(4), namespace_description(3), namespace_description(2), value_description(true), value_description(), fallback_description()], MAX_ROW_BYTES).map_err(
         (_) => CodecFault.Malformed,
     )?
     if len(rows) != 1:
@@ -104,6 +105,8 @@ pub def decode_compiled_body_row(encoded: bytes) -> Result[CompiledBodyOutput, C
     if rows[0].key == copy_frozen_bytes(LEGACY_NAMESPACE_SELECTOR):
         legacy = decode_compiled_namespace_value(rows[0].value, 2)?
         return Ok(CompiledBodyOutput.LegacyNamespace(legacy.module))
+    if rows[0].key == copy_frozen_bytes(SCOPED_VALUE_SELECTOR):
+        return Ok(CompiledBodyOutput.Value(decode_compiled_body_value(rows[0].value, true)?))
     if rows[0].key == copy_frozen_bytes(VALUE_SELECTOR):
         return Ok(CompiledBodyOutput.Value(decode_compiled_body_value(rows[0].value)?))
     if rows[0].key == copy_frozen_bytes(FALLBACK_SELECTOR):
@@ -184,6 +187,8 @@ def encode_compiled_body_value(value: CompiledBodyValue) -> Result[bytes, CodecF
     mut raw_bytes = (len(value.declaration) + len(value.local) + len(value.final) + len(value.body_ir) + len(
         value.module.encode(),
     ) + len(value.name.encode()) + len(value.identity.encode()))
+    for name in value.scope_names:
+        raw_bytes += len(name.encode("utf-8"))
     for read in value.dependency_reads:
         raw_bytes += (len(optional_identity(read.package).encode()) + len(read.module.encode()) + len(read.name.encode()) + len(
             read.identity.encode(),
@@ -210,10 +215,7 @@ def encode_compiled_body_value(value: CompiledBodyValue) -> Result[bytes, CodecF
             read.reference_subject,
         )]
         previous = order
-    row = RowRecord(
-        key=VALUE_SELECTOR,
-        value=Value.Record(
-            [required_value(b"bodyir", Value.Binary(value.body_ir)), required_value(
+    mut fields = [required_value(b"bodyir", Value.Binary(value.body_ir)), required_value(
                 b"declar",
                 Value.Binary(value.declaration),
             ), required_value(b"deps__", Value.List(dependency_reads)), required_value(
@@ -222,10 +224,14 @@ def encode_compiled_body_value(value: CompiledBodyValue) -> Result[bytes, CodecF
             ), required_value(b"ident_", Value.Text(value.identity)), required_value(
                 b"local_",
                 Value.Binary(value.local),
-            ), required_value(b"module", Value.Text(value.module)), required_value(b"name__", Value.Text(value.name))],
-        ),
-    )
-    return encoded_row(value_description(), row)
+            ), required_value(b"module", Value.Text(value.module)), required_value(b"name__", Value.Text(value.name))]
+    if len(value.scope_names) > 0:
+        if len(value.dependency_reads) > 0:
+            return Err(CodecFault.Malformed)
+        validate_scope_names(value.name, value.scope_names)?
+        fields.append(required_value(b"zscope", Value.List([Value.Text(name) for name in value.scope_names])))
+        return encoded_row(value_description(true), RowRecord(key=SCOPED_VALUE_SELECTOR, value=Value.Record(fields)))
+    return encoded_row(value_description(), RowRecord(key=VALUE_SELECTOR, value=Value.Record(fields)))
 
 
 def encode_compiled_body_fallback(fallback: CompiledBodyFallback) -> Result[bytes, CodecFault]:
@@ -259,9 +265,12 @@ def bounded_reason(reason: str) -> str:
     return reason[:MAX_REASON_CHARACTERS] + f" [reason cut from {size} bytes]"
 
 
-def decode_compiled_body_value(value: Value) -> Result[CompiledBodyValue, CodecFault]:
+def decode_compiled_body_value(value: Value, scoped: bool = false) -> Result[CompiledBodyValue, CodecFault]:
     """Restore one value row after checking its exact fields and flattened dependency ordering."""
-    fields = record_fields(value, 8)?
+    mut count = 8
+    if scoped:
+        count = 9
+    fields = record_fields(value, count)?
     flattened = text_values(fields[2].value)?
     if len(flattened) % 6 != 0 or len(flattened) / 6 > MAX_FIELDS:
         return Err(CodecFault.Malformed)
@@ -290,6 +299,12 @@ def decode_compiled_body_value(value: Value) -> Result[CompiledBodyValue, CodecF
         dependency_reads.append(read)
         previous = order
         offset += 6
+    mut scope_names: list[str] = []
+    if scoped:
+        if len(dependency_reads) > 0:
+            return Err(CodecFault.Malformed)
+        scope_names = text_values(fields[8].value)?
+        validate_scope_names(text_value(fields[7].value)?, scope_names)?
     restored = CompiledBodyValue(
         module=text_value(fields[6].value)?,
         name=text_value(fields[7].value)?,
@@ -299,6 +314,7 @@ def decode_compiled_body_value(value: Value) -> Result[CompiledBodyValue, CodecF
         final=binary_value(fields[3].value)?,
         body_ir=binary_value(fields[0].value)?,
         dependency_reads=dependency_reads,
+        scope_names=scope_names,
     )
     if restored.module == "" or restored.name == "" or restored.identity == "":
         return Err(CodecFault.Malformed)
@@ -569,29 +585,36 @@ def namespace_description(version: int = 5) -> Description:
     return model_description(CONTRACT_NAMESPACE_SELECTOR, "incan.checker-compiled-namespace/6", fields)
 
 
-def value_description() -> Description:
-    """Describe one compiled callable owner and its opaque checker and Body IR payloads."""
-    return model_description(
-        VALUE_SELECTOR,
-        "incan.checker-compiled-value/1",
-        [ModelField(identity=b"bodyir", name="body_ir", storage="binary"), ModelField(
-            identity=b"declar",
-            name="declaration",
-            storage="binary",
-        ), ModelField(identity=b"deps__", name="dependency_reads", storage="list<string>"), ModelField(
-            identity=b"final_",
-            name="final",
-            storage="binary",
-        ), ModelField(identity=b"ident_", name="identity", storage="string"), ModelField(
-            identity=b"local_",
-            name="local",
-            storage="binary",
-        ), ModelField(identity=b"module", name="module", storage="string"), ModelField(
-            identity=b"name__",
-            name="name",
-            storage="string",
-        )],
-    )
+def validate_scope_names(owner: str, names: &list[str]) -> Result[None, CodecFault]:
+    if owner not in names or len(names) > MAX_FIELDS:
+        return Err(CodecFault.Malformed)
+    mut previous = ""
+    for name in names:
+        if name <= previous or len(name) > MAX_METADATA_BYTES or name[0] in "0123456789":
+            return Err(CodecFault.Malformed)
+        for ch in name:
+            if ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789":
+                return Err(CodecFault.Malformed)
+        previous = name
+    return Ok(None)
+
+
+def value_description(scoped: bool = false) -> Description:
+    """A compiled owner, optionally with the names proved sufficient by the producing frontend."""
+    mut fields = [
+        ModelField(identity=b"bodyir", name="body_ir", storage="binary"),
+        ModelField(identity=b"declar", name="declaration", storage="binary"),
+        ModelField(identity=b"deps__", name="dependency_reads", storage="list<string>"),
+        ModelField(identity=b"final_", name="final", storage="binary"),
+        ModelField(identity=b"ident_", name="identity", storage="string"),
+        ModelField(identity=b"local_", name="local", storage="binary"),
+        ModelField(identity=b"module", name="module", storage="string"),
+        ModelField(identity=b"name__", name="name", storage="string"),
+    ]
+    if scoped:
+        fields.append(ModelField(identity=b"zscope", name="scope_names", storage="list<string>"))
+        return model_description(SCOPED_VALUE_SELECTOR, "incan.checker-compiled-value/2", fields)
+    return model_description(VALUE_SELECTOR, "incan.checker-compiled-value/1", fields)
 
 
 def fallback_description() -> Description:

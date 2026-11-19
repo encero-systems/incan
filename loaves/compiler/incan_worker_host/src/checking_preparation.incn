@@ -87,7 +87,7 @@ pub def prepare_checking(home: str, request: &Prepare) -> Result[Prepared, str]:
                     if supplier.key.identity != output.identity or output.family != "final":
                         return Err("checking preparation selected an unrelated local predecessor")
                     own_locals += 1
-                elif supplier.key.family not in ["declaration-slot", "owner-census", "declaration-signature"]:
+                elif supplier.key.family not in ["declaration-slot", "owner-census", "scope-name", "declaration-signature"]:
                     return Err("checking preparation requires compiler discovery for " + supplier.key.family)
                 match source.read(scope, supplier):
                     RecordRead.Found(current) =>
@@ -188,12 +188,17 @@ def prepare_closed_owner(resolved: &ResolvedSnapshot, request: &Prepare, keys: l
     source = resolved.record_source(scope)
     mut inputs: list[RecordRequest] = []
     mut families: set[str] = set()
+    mut scope_names: set[str] = set()
     for witness in basis.witnesses:
         match witness:
             ReadWitness.Found(previous, _) =>
                 mut supplier = previous.request
                 family = supplier.key.family
-                if family in families or family not in ["owner-source", "module-header", "owner-census", "declaration"]:
+                if family == "scope-name":
+                    if supplier.key.facet == "" or supplier.key.facet in scope_names:
+                        return Err("unsupported-closed-checking-inputs")
+                    scope_names.add(supplier.key.facet)
+                elif family in families or family not in ["owner-source", "module-header", "owner-census", "declaration"]:
                     return Err("unsupported-closed-checking-inputs")
                 families.add(family)
                 if supplier.selection != RecordSelection.Field("value") or supplier.key.origin != output.origin:
@@ -213,7 +218,7 @@ def prepare_closed_owner(resolved: &ResolvedSnapshot, request: &Prepare, keys: l
                     _ => return Err("closed owner lost its selected input")
                 inputs.append(supplier)
             _ => return Err("unsupported-closed-checking-inputs")
-    if len(families) != 4:
+    if len(families) != 4 or (len(scope_names) > 0 and output.facet not in scope_names):
         return Err("unsupported-closed-checking-inputs")
     for index in range(2, len(keys)):
         key = keys[index]

@@ -95,7 +95,7 @@ from pub::internal_models.graph_crumb_fields import KEY_TYPE, encode_graph_row
 from std.fs import Path
 from std.io import BytesIO
 from compiler_body_fallbacks import fallback_reasons
-from compiler_source_projection import project_source, publish_source_projection, signature_record
+from compiler_source_projection import project_source, publish_source_projection, scope_member, scope_members, signature_record
 from compiler_projection_cache import cached_editable_dependency_signature_record, editable_dependency_projection_key
 from publication import publish_binary
 from scratch import scratch_directory
@@ -519,6 +519,13 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
     wide = project_source("package", "src/main.incn", "# é\ndef main() -> int:\n    return 1\n")?
     narrow = project_source("package", "src/main.incn", "# x\ndef main() -> int:\n    return 1\n")?
     assert wide.placements["main"].text != narrow.placements["main"].text
+    earlier = scope_members("first\nsecond\n")
+    later = scope_members("first\nsecond\nother\n")
+    shadow = scope_members("first\nsecond\nmodel:str\n")
+    assert scope_member(before.census, earlier, "first").text == scope_member(before.census, later, "first").text
+    assert scope_member(before.census, earlier, "str").text == ""
+    assert scope_member(before.census, shadow, "str").text == "model:str"
+    assert scope_member(before.census, scope_members("first\nfirst\n"), "first").text == "first\nfirst"
     for key in published.keys:
         assert get(published.snapshot, key).map_err((error) => error.message())? is not None
 

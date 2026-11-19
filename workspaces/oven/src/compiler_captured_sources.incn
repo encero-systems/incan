@@ -4,7 +4,7 @@ from std.fs import Path
 from pub::incan_platform.store import Snapshot, Transaction, begin, commit, get, stage_put
 from pub::internal_models.records import RecordKey, encode_record_key
 from pub::internal_models.source_value_records import source_value
-from compiler_source_projection import SourceProjectionRecord, project_source, signature_record
+from compiler_source_projection import SourceProjectionRecord, project_source, scope_member, scope_members, signature_record
 from engine_capture import CapturedInput, InputRole
 from unit import UnitDescription, dependency_source_roots
 
@@ -61,6 +61,23 @@ pub def prepare_captured_source_inputs(
                 if get(selected, doc_slot).map_err((error) => error.message())? != Some(documentation):
                     changed.append(doc_key)
                     stage_put(prepared, doc_slot, documentation)
+                if let Some(old_census) = get(selected, encode_record_key(projection.census.key)?).map_err((error) => error.message())?:
+                    old_text = source_value(projection.census.key, old_census)?.decode().map_err((_) => "invalid declaration census")?
+                    if old_text != projection.census.text:
+                        old = scope_members(old_text)
+                        current = scope_members(projection.census.text)
+                        mut names: set[str] = set()
+                        for name in old.keys():
+                            names.add(name)
+                        for name in current.keys():
+                            names.add(name)
+                        for name in sorted([item for item in names]):
+                            if sorted(old.get(name, [])) != sorted(current.get(name, [])):
+                                binding = scope_member(projection.census, current, name)
+                                slot = encode_record_key(binding.key)?
+                                if get(selected, slot).map_err((error) => error.message())?.is_some():
+                                    stage_put(prepared, slot, binding.encoded()?)
+                                    changed.append(binding.key)
                 for record in [projection.header, projection.declarations, projection.census, projection.positioned]:
                     key = encode_record_key(record.key)?
                     if stage_changed_projection(selected, prepared, key, record, positioned)?:

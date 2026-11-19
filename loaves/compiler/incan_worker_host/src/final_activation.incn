@@ -85,7 +85,7 @@ pub def read_final_activation(activation: &ResolvedCheckingActivation) -> Result
                 environment.append(native_fields(record).map_err((_) => "final declaration fields are invalid")?)
                 environment_names.append(request.key.facet)
                 environment_identities.append(request.key.identity)
-        elif request.key.family in ["owner-census", "declaration-slot", "declaration-signature"]:
+        elif request.key.family in ["owner-census", "scope-name", "declaration-slot", "declaration-signature"]:
             # Preparation selected the typed declarations through these exact scalar inputs.
             pass
         else:

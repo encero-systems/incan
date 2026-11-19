@@ -23,6 +23,7 @@ pub(super) struct PendingBodyValue {
     pub(super) final_value: Vec<u8>,
     body_ir: Vec<u8>,
     dependency_reads: Vec<internal_models::CompiledBodyDependencyRead>,
+    scope_names: Vec<String>,
     /// Whether the checker restored this body from a selected record instead of checking its statements.
     restored: bool,
     restored_body_ir: bool,
@@ -99,6 +100,7 @@ pub(super) struct GraphBodyOutput {
     namespace_proofs: bool,
     owner_coordinates: bool,
     report_contracts: bool,
+    report_scopes: bool,
     import_closures: Option<BTreeMap<String, Vec<String>>>,
     project_root: PathBuf,
     values: Vec<PendingBodyValue>,
@@ -159,6 +161,10 @@ impl GraphBodyOutput {
             method_reads,
             namespace_proofs,
             owner_coordinates,
+            report_scopes: path.as_ref().and_then(|p| p.file_name()).is_some_and(|name| {
+                name.as_encoded_bytes()
+                    .ends_with(internal_models::scope_output_suffix().as_bytes())
+            }),
             report_contracts: path.as_ref().and_then(|p| p.file_name()).is_some_and(|name| {
                 name.as_encoded_bytes()
                     .ends_with(internal_models::contract_output_suffix().as_bytes())
@@ -281,6 +287,11 @@ impl GraphBodyOutput {
                 lowering_inputs: Vec::new(),
             });
         }
+        let mut scopes = if self.report_scopes {
+            incan_frontend::checker_records::closed_scalar_scopes(&module.ast, checker)
+        } else {
+            BTreeMap::new()
+        };
         for output in
             incan_frontend::checker_records::checked_graph_record_outputs(&module.ast, checker, &module.path_segments)?
         {
@@ -325,7 +336,13 @@ impl GraphBodyOutput {
                                 Some((digest, coordinates)) => (Some(digest), coordinates),
                                 None => (None, Vec::new()),
                             };
+                            let scope_names = if value.dependency_reads.is_empty() && !uses_methods {
+                                scopes.remove(&fields.span).unwrap_or_default()
+                            } else {
+                                Vec::new()
+                            };
                             self.values.push(PendingBodyValue {
+                                scope_names,
                                 physical_inputs,
                                 coordinates,
                                 restored,
@@ -672,6 +689,7 @@ impl GraphBodyOutput {
                 r#final: value.final_value,
                 body_ir: value.body_ir,
                 dependency_reads: value.dependency_reads,
+                scope_names: value.scope_names,
             })
             .collect();
         let fallbacks: Vec<internal_models::CompiledBodyFallback> = self
@@ -801,6 +819,7 @@ pub(super) fn encoded_body_value(
         final_value,
         body_ir: Vec::new(),
         dependency_reads,
+        scope_names: Vec::new(),
         restored: false,
         restored_body_ir: false,
         physical_inputs: None,

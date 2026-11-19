@@ -236,6 +236,18 @@ def compiled_output_controls(source: str) -> Result[None, str]:
     match decode_compiled_body_row(legacy[0]).map_err((_) => "legacy namespace decode")?:
         CompiledBodyOutput.Namespace(decoded) => assert decoded.call_contracts is None
         _ => return Err("legacy namespace row lost")
+    mut scoped = value
+    scoped.scope_names = ["main", "str"]
+    assert encode_compiled_body_rows(CompiledBodyOutputs(values=[scoped], fallbacks=[])).is_err()
+    scoped.dependency_reads = []
+    scoped_rows = encode_compiled_body_rows(CompiledBodyOutputs(values=[scoped], fallbacks=[])).map_err((_) => "scope name encode")?
+    match decode_compiled_body_row(scoped_rows[0]).map_err((_) => "scope name decode")?:
+        CompiledBodyOutput.Value(decoded) => assert decoded.scope_names == ["main", "str"]
+        _ => return Err("scoped scalar value lost")
+    scoped.scope_names = ["str", "main"]
+    assert encode_compiled_body_rows(CompiledBodyOutputs(values=[scoped], fallbacks=[])).is_err()
+    scoped.scope_names = ["main", "str\talias"]
+    assert encode_compiled_body_rows(CompiledBodyOutputs(values=[scoped], fallbacks=[])).is_err()
     mut supplied = namespace
     supplied.call_contracts = Some([SettledCallContract(target="provider", digest="sha256:" + "a" * 64, reader="supplier#1", owner="stable/supplier")])
     encoded = encode_compiled_body_rows(

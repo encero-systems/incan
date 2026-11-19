@@ -225,6 +225,26 @@ class SourceProjector:
         )
 
 
+pub def scope_members(census: str) -> Dict[str, list[str]]:
+    """Index the declaration kinds and multiplicity visible at each project spelling."""
+    mut by_name: Dict[str, list[str]] = {}
+    for facet in census.split("\n"):
+        if facet == "":
+            continue
+        parts = facet.split(":")
+        name = parts[len(parts) - 1]
+        if name not in by_name:
+            by_name[name] = []
+        by_name[name].append(facet)
+    return by_name
+
+
+pub def scope_member(census: &SourceProjectionRecord, members: &Dict[str, list[str]], name: str) -> SourceProjectionRecord:
+    """An empty selection proves that no declaration of this name exists in the captured module."""
+    key = source_key("scope-name", census.key.origin, census.key.identity, name)
+    return SourceProjectionRecord(key=key, text="\n".join(sorted(members.get(name, []))), start=0, end=0)
+
+
 def mark_placement(mut placements: Dict[str, SourceProjectionRecord], owner: &SourceProjectionRecord, offset: int, raw: str) -> None:
     """Bind an owner's physical source bytes and absolute UTF-8 offset, including every same-named overload."""
     key = source_key("owner-placement", owner.key.origin, owner.key.identity, owner.key.facet)

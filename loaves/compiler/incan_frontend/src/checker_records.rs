@@ -11,7 +11,7 @@ use incan_semantics_core::stable_identity::{StableDeclarationContext, StableDecl
 pub use crate::typechecker::canonical_nodes::NodeBindingError as RecordAdapterFault;
 
 /// Exact canonical checker profile carried by graph body values and any cache capable of supplying their owners.
-pub const GRAPH_BODY_RECORD_PROFILE: &str = "incan.checker-free-functions/20";
+pub const GRAPH_BODY_RECORD_PROFILE: &str = "incan.checker-free-functions/21";
 
 /// One graph-admitted body pair keyed by the compiler-owned stable declaration identity encoded in both records.
 #[derive(Debug, Clone)]
@@ -470,6 +470,77 @@ pub fn produce_local_record(
     crate::typechecker::body_check::records::produce_local_record(source, name, declaration, environment)
 }
 
+/// Project the lookup names of free scalar functions whose only expression is a literal or a parameter.
+/// A call, operator, decorator, default, generic or non-scalar type keeps ordinary namespace discovery.
+pub fn closed_scalar_scopes(
+    program: &crate::ast::Program,
+    checker: &crate::typechecker::TypeChecker,
+) -> BTreeMap<crate::ast::Span, Vec<String>> {
+    use crate::ast::{Declaration, Expr, ParamKind, Statement, Type};
+    use incan_lang::lang::types::{BuiltinTypeName, builtin_type_name};
+    let mut scopes = BTreeMap::new();
+    for item in &program.declarations {
+        let Declaration::Function(function) = &item.node else {
+            continue;
+        };
+        let [statement] = function.body.as_slice() else {
+            continue;
+        };
+        let Statement::Return(Some(expression)) = &statement.node else {
+            continue;
+        };
+        if !function.decorators.is_empty()
+            || !function.type_params.is_empty()
+            || !function.surface_modifiers.is_empty()
+            || function.result_source.is_some()
+            || function
+                .params
+                .iter()
+                .any(|p| p.node.kind != ParamKind::Normal || p.node.default.is_some() || p.node.is_mut)
+        {
+            continue;
+        }
+        if !matches!(&expression.node, Expr::Literal(_))
+            && !matches!(&expression.node, Expr::Ident(name) if function.params.iter().any(|p| p.node.name == *name))
+        {
+            continue;
+        }
+        let Some(binding) = checker.declaration_view().function(item.span) else {
+            continue;
+        };
+        if binding.params.len() != function.params.len() || !function.name.is_ascii() {
+            continue;
+        }
+        let mut actual = binding
+            .params
+            .iter()
+            .map(|p| &p.ty)
+            .chain(std::iter::once(&binding.return_type));
+        let mut names = BTreeSet::from([function.name.clone()]);
+        let mut types = function
+            .params
+            .iter()
+            .map(|p| &p.node.ty.node)
+            .chain(std::iter::once(&function.return_type.node));
+        if types.all(|ty| {
+            let Type::Simple(name) = ty else { return false };
+            let Some(kind @ (BuiltinTypeName::Numeric(_) | BuiltinTypeName::StringLike(_))) = builtin_type_name(name)
+            else {
+                return false;
+            };
+            if crate::symbols::ResolvedType::builtin_simple(name).as_ref() != actual.next() {
+                return false;
+            }
+            names.insert(name.clone());
+            names.insert(kind.canonical().to_owned());
+            true
+        }) {
+            scopes.insert(item.span, names.into_iter().collect());
+        }
+    }
+    scopes
+}
+
 /// Obtain a new declaration for a closed scalar owner using only its current source and previous stable identity.
 /// `None` requests ordinary compiler discovery for syntax or bindings outside this independently checked family.
 pub fn produce_closed_declaration(
@@ -923,6 +994,27 @@ mod tests {
     use crate::library_manifest::LibraryManifest;
     use crate::loaf_index::LoafIndex;
     use crate::typechecker::TypeChecker;
+
+    #[test]
+    fn scalar_scope_requires_checked_types_and_a_closed_return() -> Result<(), Box<dyn std::error::Error>> {
+        let parsed = program(
+            "def leaf() -> str:\n    return \"hello\"\n\ndef copy(value: int) -> int:\n    return value\n\ndef caller() -> str:\n    return leaf()\n\ndef add(value: int) -> int:\n    return value + 1\n",
+        )?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["main".into()]));
+        assert!(super::closed_scalar_scopes(&parsed, &checker).is_empty());
+        checker.check_program(&parsed).map_err(|errors| format!("{errors:?}"))?;
+        let scopes = super::closed_scalar_scopes(&parsed, &checker);
+        assert_eq!(scopes.len(), 2);
+        let has = |owner: &str, ty: &str| {
+            scopes
+                .values()
+                .any(|names| names.iter().any(|name| name == owner) && names.iter().any(|name| name == ty))
+        };
+        assert!(has("leaf", "str"));
+        assert!(has("copy", "int"));
+        Ok(())
+    }
 
     /// Parse one focused checker-record fixture through the ordinary source frontend.
     fn program(source: &str) -> Result<crate::ast::Program, Box<dyn std::error::Error>> {
