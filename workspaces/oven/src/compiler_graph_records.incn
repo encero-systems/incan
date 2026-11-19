@@ -469,7 +469,7 @@ def retire_edges(
     selected: Snapshot,
     mut transaction: Transaction,
     outgoing: str,
-    writing: &Dict[str, int],
+    writing: Dict[str, int],
     mut removed_scope_edges: set[str],
 ) -> Result[None, str]:
     """Remove a slot's earlier outgoing edges and their incoming entries, except those written again."""
