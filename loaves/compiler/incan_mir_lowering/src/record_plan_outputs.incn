@@ -6,7 +6,7 @@ from pub::internal_models.lowering_events import (
     ADMITTED_DEFINITIONS, AdmittedDefinition, encode_admitted_definitions,
     INTERFACE_REPORT, LoweringEvent, NativeInterface, decode_lowering_event, decode_lowering_refusal, encode_lowering_event, encode_native_interface,
 )
-from pub::internal_models.plan_function_records import decode_plan_function_record, encode_entry_record
+from pub::internal_models.plan_function_records import decode_plan_function_record, encode_entry_record, verify_entry_record
 from pub::incan_mir_plan import (
     Function,
     NominalKind,
@@ -79,16 +79,15 @@ pub def publish_plan_records(plan: &Plan, products: str, report: str) -> Result[
     inputs = ["incan.plan-entry/2", generation, main, selection, selected.key]
     key = semantic_digest(inputs).map_err((error) => str(error))?.replace("sha256:", "")
     path = Path(products).joinpath(key + ".incnentry")
-    entry_attempt = enter_producer("compiler", "plan-function", selected.identity, "entry")
-    value = encode_entry_record(main, inputs)?
-    finish_producer(entry_attempt, "produced")
-    mut reused = false
-    if path.is_file():
-        prior = path.read_bytes().map_err((error) => error.message())?
-        if prior != value:
-            return Err("selected plan-function(entry) disagrees with its complete inputs")
-        reused = true
+    reused = path.is_file()
+    mut value: bytes = b""
+    if reused:
+        value = path.read_bytes().map_err((error) => error.message())?
+        verify_entry_record(value, main, inputs)?
     else:
+        entry_attempt = enter_producer("compiler", "plan-function", selected.identity, "entry")
+        value = encode_entry_record(main, inputs)?
+        finish_producer(entry_attempt, "produced")
         path.write_bytes(value).map_err((error) => error.message())?
     entry = LoweringEvent(identity=selected.identity, key=key, function="entry", role="entry",
         module=selected.module, demand=selected.key, product=value, reused=reused)

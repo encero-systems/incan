@@ -109,14 +109,27 @@ def plan_function_description() -> Description:
     )
 
 
-pub def encode_entry_record(entry: str, inputs: list[str]) -> Result[bytes, str]:
-    """Retain the standalone entry and its ordered, complete producer inputs."""
-    selector: bytes = b"plnent\x00"
-    description = model_description(selector, "incan.plan-entry/2", [
+const ENTRY_SELECTOR: bytes = b"plnent\x00"
+
+
+def entry_description() -> Description:
+    return model_description(ENTRY_SELECTOR, "incan.plan-entry/2", [
         ModelField(identity=b"entry_", name="entry", storage="string"),
         ModelField(identity=b"inputs", name="inputs", storage="list<string>"),
     ])
-    return encode_graph_row(selector, description, [
+
+
+pub def verify_entry_record(encoded: bytes, entry: str, inputs: list[str]) -> Result[None, str]:
+    """Authenticate an admitted entry against its current selection, generation and complete ordered inputs."""
+    fields = decode_graph_row(encoded, ENTRY_SELECTOR, entry_description(), 2)?
+    if text_value(fields[0].value)? != entry or text_values(fields[1].value)? != inputs:
+        return Err("selected plan-function(entry) disagrees with its complete inputs")
+    return Ok(None)
+
+
+pub def encode_entry_record(entry: str, inputs: list[str]) -> Result[bytes, str]:
+    """Retain the standalone entry and its ordered, complete producer inputs."""
+    return encode_graph_row(ENTRY_SELECTOR, entry_description(), [
         required_value(b"entry_", Value.Text(entry)),
         required_value(b"inputs", Value.List(text_items(inputs))),
     ])
