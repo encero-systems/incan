@@ -103,6 +103,24 @@ const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT 
                      --check UNIT SYSROOT [--format text|json] [--certify PATH] [--checked-bodies PATH | --checked-body-counts PATH] [OPTIONS] | --explain CODE | --fmt UNIT PATH [--check] | --source-files PATH | --rust-imports UNIT [--source-graph] | --emit-model PATH MODEL incan|json [LABEL] | --codegraph UNIT SYSROOT OUTPUT [INTERFACE] | --read-codegraph GRAPH ROOT GROUP [FIELDS_JSON] | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-compile-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --resident SOCKET GENERATION READY HOME | --identity SYSROOT\n\
                      OPTIONS: --rustc-arg ARG, --library, --no-codegraph, --inspection, --shared-native DIR, --toolchain-root DIR, --bakery-root DIR, --graph-body-records PATH, --graph-body-output PATH (native artifacts and ABI caches come from UNIT)";
 
+/// Adapt a transient root name to the installed worker's generated ABI. The older worker consumes the
+/// string, while the newer worker borrows it. Both use the same allocation.
+trait DirectoryRootArgument<'a> {
+    fn from_root(root: &'a mut String) -> Self;
+}
+
+impl DirectoryRootArgument<'_> for String {
+    fn from_root(root: &mut String) -> Self {
+        std::mem::take(root)
+    }
+}
+
+impl<'a> DirectoryRootArgument<'a> for &'a String {
+    fn from_root(root: &'a mut String) -> Self {
+        root
+    }
+}
+
 /// Compile an Incan unit (`--unit`, or serially from a `--resident` worker, with rustc in a fresh driver process that
 /// reads the unit's handoff, `--rustc-handoff`) or check one (`--check`), each from the
 /// unit description Oven wrote, publish a checking-only source interface (`--source-interface`), report a unit's
@@ -142,9 +160,10 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
         },
     );
     incan_frontend::loaf_index::install_directory_reader(|path, top, seal, prefix, maximum| {
+        let mut root = top.to_owned();
         let answer = incan_worker_host::read_directory(
             path.to_owned(),
-            &top.to_owned(),
+            DirectoryRootArgument::from_root(&mut root),
             &seal.to_owned(),
             &prefix.to_owned(),
             i64::try_from(maximum).map_err(|e| e.to_string())?,
