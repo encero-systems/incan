@@ -19,6 +19,33 @@ use crate::{
 mod coverage;
 mod public_contexts;
 
+/// A coordinate attachment must be bounded, backed by a physical witness, and leave the following call row intact.
+#[test]
+fn graph_owner_coordinates_are_bounded_and_authenticated() -> Result<(), Box<dyn std::error::Error>> {
+    let owner = body("pick", 17);
+    let module = owner.decl_id.clone();
+    let stamped = super::encode_graph_owner(&module, "sample.incn", "pick", &owner, Some([17; 32]))?;
+    assert!(decode_owner(&stamped)?.coordinates.is_empty());
+    let mut encoded = stamped.clone();
+    super::append_owner_coordinates(&mut encoded, &[(1, 7), (9, 12)]);
+    assert!(decode_owner(&encoded[..encoded.len() - 1]).is_err());
+    let witness = b"CRMB\x01\x01\x00call";
+    encoded.extend_from_slice(witness);
+    let decoded = decode_owner(&encoded)?;
+    assert_eq!(decoded.coordinates, [(1, 7), (9, 12)]);
+    assert_eq!(decoded.call_witness.as_deref(), Some(witness.as_slice()));
+    let mut bare = encode_owner(&module, "sample.incn", "pick", &owner)?;
+    super::append_owner_coordinates(&mut bare, &[(1, 7)]);
+    assert!(decode_owner(&bare).is_err());
+    let mut invalid = stamped.clone();
+    super::append_owner_coordinates(&mut invalid, &[(7, 1)]);
+    assert!(decode_owner(&invalid).is_err());
+    let mut large = stamped.clone();
+    super::append_owner_coordinates(&mut large, &[(1, 7); super::MAX_OWNER_COORDINATES + 1]);
+    assert_eq!(large, stamped);
+    Ok(())
+}
+
 #[test]
 fn namespace_scopes_round_trip_and_restore_shared_bindings() -> Result<(), Box<dyn std::error::Error>> {
     use std::sync::Arc;

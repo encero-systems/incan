@@ -27,6 +27,7 @@ pub(super) struct PendingBodyValue {
     restored: bool,
     restored_body_ir: bool,
     physical_inputs: Option<[u8; 32]>,
+    coordinates: Vec<(u32, u32)>,
 }
 
 /// One complete namespace value awaiting its whole-module Body IR row.
@@ -95,6 +96,7 @@ pub(super) struct GraphBodyOutput {
     path: Option<PathBuf>,
     method_reads: Option<Vec<Vec<String>>>,
     namespace_proofs: bool,
+    owner_coordinates: bool,
     import_closures: Option<BTreeMap<String, Vec<String>>>,
     project_root: PathBuf,
     values: Vec<PendingBodyValue>,
@@ -142,10 +144,15 @@ impl GraphBodyOutput {
                     .ends_with(internal_models::method_lookup_suffix().as_bytes())
             })
             .map(|_| Vec::new());
+        let owner_coordinates = path.as_ref().and_then(|path| path.file_name()).is_some_and(|name| {
+            name.as_encoded_bytes()
+                .ends_with(internal_models::coordinate_output_suffix().as_bytes())
+        });
         Ok(Self {
             import_closures,
             method_reads,
             namespace_proofs,
+            owner_coordinates,
             path,
             project_root,
             values: Vec::new(),
@@ -301,12 +308,20 @@ impl GraphBodyOutput {
                         }
                     }
                     match record {
-                        Ok(value) => self.values.push(PendingBodyValue {
-                            physical_inputs: checker.graph_body_physical_inputs(&module.ast, fields.span),
-                            restored: checker.restored_body_record(fields.span),
-                            restored_body_ir: checker.type_info().selected_callable_body(fields.span).is_some(),
-                            ..value
-                        }),
+                        Ok(value) => {
+                            let inputs = checker.graph_body_inputs(&module.ast, fields.span, self.owner_coordinates);
+                            let (physical_inputs, coordinates) = match inputs {
+                                Some((digest, coordinates)) => (Some(digest), coordinates),
+                                None => (None, Vec::new()),
+                            };
+                            self.values.push(PendingBodyValue {
+                                physical_inputs,
+                                coordinates,
+                                restored,
+                                restored_body_ir: checker.type_info().selected_callable_body(fields.span).is_some(),
+                                ..value
+                            });
+                        }
                         Err(refusal) => self.fallbacks.push(PendingBodyFallback {
                             module: module_path.clone(),
                             name: fields.name,
@@ -421,6 +436,12 @@ impl GraphBodyOutput {
                     pending.physical_inputs,
                 )
                 .map_err(|error| format!("Body IR owner row output refused: {error}"))?;
+                if pending.physical_inputs.is_some() && TypeChecker::graph_body_has_scalar_placement(body) {
+                    incan_semantics_core::executable_representation::append_owner_coordinates(
+                        &mut pending.body_ir,
+                        &pending.coordinates,
+                    );
+                }
                 if call_reads.contains_key(&module_path) && incan_frontend::body_ir::needs_call_witness(body) {
                     let reader = body.direct_call_id.path();
                     let reads = by_reader.get(reader).unwrap_or(&no_reads);
@@ -700,6 +721,7 @@ pub(super) fn encoded_body_value(
         restored: false,
         restored_body_ir: false,
         physical_inputs: None,
+        coordinates: Vec::new(),
     })
 }
 

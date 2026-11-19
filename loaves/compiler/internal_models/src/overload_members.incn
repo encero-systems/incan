@@ -130,3 +130,8 @@ def member_names(key: RecordKey, encoded: bytes) -> Result[list[str], str]:
     if read_key(fields[0].value)? != key:
         return Err("overload member page belongs to a different receiver")
     return canonical_members(items(fields[1].value)?)
+
+
+pub def coordinate_output_suffix() -> str:
+    """Ask a native producer to retain bounded syntax coordinates alongside its exact physical input stamp."""
+    return ".placement" + method_lookup_suffix()

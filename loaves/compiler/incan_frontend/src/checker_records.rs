@@ -2007,6 +2007,99 @@ mod tests {
         Ok(())
     }
 
+    /// Rebinding source positions must reproduce the exact fresh native body for both the edited owner and its caller.
+    #[test]
+    fn selected_scalar_frames_rebind_comments_and_documentation() -> Result<(), Box<dyn std::error::Error>> {
+        use incan_semantics_core::executable_representation::{
+            append_owner_coordinates, decode_owner, encode_graph_owner,
+        };
+        let src = "def greeting() -> str:\n    return \"hello\"\n\n\ndef main() -> None:\n    println(greeting())\n";
+        let module = vec!["main".to_owned()];
+        let check = |parsed: &crate::ast::Program, records| -> Result<TypeChecker, String> {
+            let mut checker = TypeChecker::new();
+            checker.set_current_module_path(Some(module.clone()));
+            checker.set_graph_body_records(super::GraphBodyRecords::new(records).map_err(|error| error.to_string())?);
+            checker.check_program(parsed).map_err(|errors| format!("{errors:?}"))?;
+            Ok(checker)
+        };
+        let parsed = program(src)?;
+        let first = check(&parsed, Vec::new())?;
+        let mut native = lower_graph_test_module(&parsed, &first);
+        let access = crate::body_ir::SettledCallInputs::from_modules(std::slice::from_ref(&native))?;
+        let reads = access.reads(&mut native);
+        let mut records = Vec::new();
+        for output in checked_owner_record_outputs(&parsed, &first, &module)? {
+            let CheckedOwnerRecordOutput::Value(owner) = output else {
+                return Err("required scalar owner missing".into());
+            };
+            let body = native
+                .bodies
+                .iter()
+                .find(|body| body.name == owner.name)
+                .ok_or("missing native body")?;
+            let (proof, coordinates) = first
+                .graph_body_inputs(&parsed, owner.span, true)
+                .ok_or("missing checked placement")?;
+            assert!(!coordinates.is_empty());
+            let mut bytes = encode_graph_owner(&native.module_id, "main.incn", &owner.identity, body, Some(proof))?;
+            append_owner_coordinates(&mut bytes, &coordinates);
+            let reader = body.direct_call_id.path();
+            let calls = reads
+                .iter()
+                .filter(|read| read.reader == reader)
+                .map(|read| internal_models::SettledCallRead {
+                    reader: read.reader.clone(),
+                    target: read.target.clone(),
+                    digest: read.digest.clone(),
+                })
+                .collect::<Vec<_>>();
+            bytes.extend_from_slice(&internal_models::encode_owner_call_reads(
+                owner.identity.clone(),
+                reader.to_owned(),
+                "main.incn".to_owned(),
+                &calls,
+            )?);
+            let frame = decode_owner(&bytes)?;
+            assert_eq!(frame.coordinates, coordinates);
+            let mut record = selected_graph_record(owner)?;
+            record.body_ir = Some(frame);
+            records.push(record);
+        }
+        assert_eq!(records.len(), 2);
+        for changed in [
+            src.replace("def main()", "# a comment before main\ndef main()"),
+            src.replace("    return", "    \"\"\"New documentation.\"\"\"\n    return"),
+        ] {
+            let after = program(&changed)?;
+            let warm = check(&after, records.clone())?;
+            let fresh = check(&after, Vec::new())?;
+            for decl in &after.declarations {
+                assert!(
+                    warm.type_info().selected_callable_body(decl.span).is_some(),
+                    "decl {:?} in {changed}",
+                    decl.span
+                );
+            }
+            assert_eq!(
+                lower_graph_test_module(&after, &warm).bodies,
+                lower_graph_test_module(&after, &fresh).bodies
+            );
+            let mut corrupted = records.clone();
+            for record in &mut corrupted {
+                let frame = record.body_ir.as_mut().ok_or("no selected body")?;
+                frame.physical_inputs = Some([0x42; 32]);
+            }
+            let refused = check(&after, corrupted)?;
+            assert!(
+                after
+                    .declarations
+                    .iter()
+                    .all(|decl| refused.type_info().selected_callable_body(decl.span).is_none())
+            );
+        }
+        Ok(())
+    }
+
     /// Scalar products and graph pages can select the same untouched callable during an ordinary edit.
     /// Only its current checker bindings can authenticate the graph frame that will be published again.
     #[test]

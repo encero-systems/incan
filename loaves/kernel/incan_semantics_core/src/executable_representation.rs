@@ -145,6 +145,10 @@ pub struct EncodedOwnerRepresentation {
     /// Exact source coordinates and native binding handles from the producing activation, when authenticated.
     #[serde(skip)]
     pub physical_inputs: Option<[u8; 32]>,
+    /// Previous coordinates in the frontend's stable syntax-path order. Graph-only and bounded independently of the
+    /// body.
+    #[serde(skip)]
+    pub coordinates: Vec<(u32, u32)>,
     /// Optional graph-only Crumb publication. The compiler's shared owner schema authenticates it before reuse.
     #[serde(skip)]
     pub call_witness: Option<Vec<u8>>,
