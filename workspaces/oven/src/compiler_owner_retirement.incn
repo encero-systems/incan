@@ -84,8 +84,8 @@ pub def retire_missing_functions(
     if len(retired) == 0:
         return Ok(None)
     slots = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, included=Some(sorted([owner for owner in retired])))
-    for family, profile in [("local", CHECKER_PROFILE), ("final", CHECKER_PROFILE), ("body-ir", CHECKER_PROFILE),
-                            ("lowering-demand", LOWERING_PROFILE), ("plan-function", LOWERING_PROFILE)]:
+    for family in ["local", "final", "body-ir", "lowering-demand", "plan-function"]:
+        profile = LOWERING_PROFILE if family in ["lowering-demand", "plan-function"] else CHECKER_PROFILE
         for output in family_outputs(selected, family, profile, Some(slots))?:
             retire_output(transaction, profile, decode_record_key(output)?)?
     return Ok(None)
