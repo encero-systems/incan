@@ -205,6 +205,22 @@ mod tests {
     }
 
     #[test]
+    fn admitted_rows_share_the_exact_input_and_bound_a_prefix_to_its_envelope() {
+        let exact = request(bytes(ENUM_INLINE), true);
+        let whole = exact.admit();
+        assert!(whole.admitted());
+        assert_eq!(whole.data.as_ptr(), exact.data.as_ptr());
+        let mut with_tail = bytes(ENUM_INLINE);
+        let length = with_tail.len();
+        with_tail.resize(length * 8, 0);
+        let prefix = request(with_tail, false);
+        let first = prefix.admit();
+        assert!(first.admitted());
+        assert_eq!(first.data.len(), length);
+        assert_ne!(first.data.as_ptr(), prefix.data.as_ptr());
+    }
+
+    #[test]
     fn an_exact_read_refuses_trailing_bytes_and_a_prefix_read_reports_its_length() {
         let mut data = bytes(ENUM_INLINE);
         let length = data.len();
