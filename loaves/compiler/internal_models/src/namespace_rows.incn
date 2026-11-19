@@ -242,7 +242,7 @@ pub def identify_prepared_namespace(reader: &PreparedNamespaceReader, encoded: b
     return reader.identity(encoded, schema)
 
 
-pub def encode_namespace_interface(root: NamespaceAtom) -> Result[bytes, str]:
+pub def encode_namespace_interface(root: Owned[NamespaceAtom]) -> Result[bytes, str]:
     return write_wire(namespace_root(), namespace_descriptions(), logical(root)?)
 
 
@@ -280,7 +280,7 @@ pub model NamespacePublication:
     pub semantic_interface: bytes
 
 
-pub def publish_namespace_interface(root: NamespaceAtom) -> Result[NamespacePublication, str]:
+pub def publish_namespace_interface(root: Owned[NamespaceAtom]) -> Result[NamespacePublication, str]:
     """Hash the same checked rows the compiler emits; canonical field selection preserves expansion identity."""
     value = logical(root)?
     interface = write_wire(namespace_root(), namespace_descriptions(), value)?
@@ -289,7 +289,7 @@ pub def publish_namespace_interface(root: NamespaceAtom) -> Result[NamespacePubl
     return Ok(NamespacePublication(interface=interface, semantic_interface=semantic.digest))
 
 
-pub def encode_callable_inventory(root: NamespaceAtom) -> Result[bytes, str]:
+pub def encode_callable_inventory(root: Owned[NamespaceAtom]) -> Result[bytes, str]:
     """Keep the full checked product and its integrity witness in the same schema-bound Crumb row."""
     value = logical(root)?
     mut budget = operation_budget()?

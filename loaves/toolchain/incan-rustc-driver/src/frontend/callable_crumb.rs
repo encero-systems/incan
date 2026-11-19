@@ -43,7 +43,7 @@ pub(super) fn encode(
     module: &CompilerNodeId,
     source: &str,
 ) -> Result<Vec<u8>, String> {
-    internal_models::encode_callable_inventory(&to_atom(products.crumb_fields(module, source, &CheckerRows)?))
+    internal_models::encode_callable_inventory(to_atom(products.crumb_fields(module, source, &CheckerRows)?))
 }
 
 pub(super) fn decode(bytes: &[u8], source: &str) -> Result<CallableBodyProducts, String> {

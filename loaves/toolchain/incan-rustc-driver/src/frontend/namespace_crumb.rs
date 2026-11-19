@@ -20,7 +20,7 @@ fn namespace_reader() -> Result<&'static internal_models::PreparedNamespaceReade
 pub(super) fn publish(
     interface: &incan_frontend::typechecker::CheckedNamespaceInterface,
 ) -> Result<internal_models::NamespacePublication, String> {
-    internal_models::publish_namespace_interface(&to_atom(interface.wire_value()?))
+    internal_models::publish_namespace_interface(to_atom(interface.wire_value()?))
 }
 
 /// Resident builds can consume the same physical namespace the compiler just published. Its full Crumb
@@ -152,7 +152,7 @@ fn restore_digest(
 
 impl NamespaceCrumb for CheckedNamespaceCrumb {
     fn write(&self, root: Cell) -> Result<Vec<u8>, String> {
-        internal_models::encode_namespace_interface(&to_atom(root))
+        internal_models::encode_namespace_interface(to_atom(root))
     }
 
     fn read(&self, encoded: &[u8]) -> Result<Cell, String> {

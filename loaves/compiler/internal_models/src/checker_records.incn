@@ -382,7 +382,7 @@ def from_family_fields(rows: list[list[str]], family: CheckedFamily) -> Result[C
     return Ok(record)
 
 
-pub def native_fields(record: CheckedRecord) -> Result[list[list[str]], CodecFault]:
+pub def native_fields(record: &CheckedRecord) -> Result[list[list[str]], CodecFault]:
     """Project decoded canonical fields for the narrow rebinding adapter, retaining every field and ordered value."""
     validate(record)?
     mut rows = [["header", record.owner, record.root, family_name(record.family), record.profile]]
@@ -391,7 +391,7 @@ pub def native_fields(record: CheckedRecord) -> Result[list[list[str]], CodecFau
     return Ok(rows)
 
 
-pub def callable_checker_fields(record: CheckedRecord) -> Result[list[list[str]], CodecFault]:
+pub def callable_checker_fields(record: &CheckedRecord) -> Result[list[list[str]], CodecFault]:
     """Restore the scalar capture producer's original implicit local/final header after validating its typed family."""
     mut rows = native_fields(record)?
     if record.family != CheckedFamily.Declaration:

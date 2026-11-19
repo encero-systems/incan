@@ -26,7 +26,7 @@ def description() -> Description:
     ])
 
 
-def valid(value: CompilerContributors) -> bool:
+def valid(value: &CompilerContributors) -> bool:
     if value.profile not in ["release", "debug"] or len(value.scope) != 64:
         return false
     for names in [value.vocabulary, value.operations]:
@@ -35,7 +35,7 @@ def valid(value: CompilerContributors) -> bool:
     return true
 
 
-pub def encode_compiler_contributors(value: CompilerContributors) -> Result[bytes, str]:
+pub def encode_compiler_contributors(value: &CompilerContributors) -> Result[bytes, str]:
     if not valid(value):
         return Err("invalid compiler contributors")
     return encode_graph_row(ROW, description(), [

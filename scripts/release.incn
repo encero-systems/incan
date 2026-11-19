@@ -97,6 +97,11 @@ const SEED_ROW_BLOBS_WITH_ENTRY_VERIFICATION: FrozenList[str] = [
     "ce47c433bb20d5c3d8f836c16ee274875cab183a", "b65b24bc0a2352efb7c6ea58e39d69ab38dbedfb",
     "4db20dca287cb21e8b5eae59606db5e7dc8d6bf3", "eea255210422c60d32935990c55cd20456efc44c",
 ]
+const SEED_ROW_BLOBS_WITH_OWNED_ROOT: FrozenList[str] = [
+    "348b093ee46c438f8e2ddcd5bc931299bcd82bf1", "35b42a2864d4c11b76ab03efcdf7876c40072bc2",
+    "ce47c433bb20d5c3d8f836c16ee274875cab183a", "b65b24bc0a2352efb7c6ea58e39d69ab38dbedfb",
+    "4db20dca287cb21e8b5eae59606db5e7dc8d6bf3", "eea255210422c60d32935990c55cd20456efc44c",
+]
 const SEED_BRIDGE_SOURCE: str = "seed-bridge-source"
 const SEED_TOOL_SOURCE: str = "seed-tool-source"
 
@@ -625,7 +630,11 @@ pub def validate_seed_bridge(source: str, bridge: str, parents: list[str], paths
     if sorted(paths) == sorted(signatures) and len(row_blobs) == 0:
         return Ok(None)
     if sorted(paths) == sorted(signatures + [path for path in SEED_ROW_READERS]):
-        if row_blobs == [blob for blob in SEED_ROW_BLOBS] or row_blobs == [blob for blob in SEED_ROW_BLOBS_WITH_ENTRY_VERIFICATION]:
+        if (
+            row_blobs == [blob for blob in SEED_ROW_BLOBS]
+            or row_blobs == [blob for blob in SEED_ROW_BLOBS_WITH_ENTRY_VERIFICATION]
+            or row_blobs == [blob for blob in SEED_ROW_BLOBS_WITH_OWNED_ROOT]
+        ):
             return Ok(None)
         return Err("--seed-bridge contains an unrecognized bootstrap row reader")
     return Err(f"--seed-bridge changes unsupported paths: {", ".join(sorted(paths))}")

@@ -24,7 +24,7 @@ def description() -> Description:
     ])
 
 
-def binding(source: str, schema: u32, name: str, path: list[str], object_digest: bytes) -> Result[bytes, str]:
+def binding(source: &str, schema: u32, name: str, path: list[str], object_digest: bytes) -> Result[bytes, str]:
     """Each variable-width identity contributes one fixed-size SHA-256 input in declared order."""
     if source == "" or name == "" or schema == 0u32 or len(object_digest) != 32:
         return Err("missing checked namespace physical identity")
@@ -41,7 +41,7 @@ def binding(source: str, schema: u32, name: str, path: list[str], object_digest:
     return Ok(hasher.finalize_bytes())
 
 
-pub def encode_namespace_proof(source: str, schema: u32, name: str, path: list[str], object_digest: bytes) -> Result[bytes, str]:
+pub def encode_namespace_proof(source: &str, schema: u32, name: str, path: list[str], object_digest: bytes) -> Result[bytes, str]:
     """Bind a validated compiler declaration to the exact positioned bytes emitted by its writer."""
     digest = binding(source, schema, name, path, object_digest)?
     encoded = encode_graph_row(SELECTOR, description(), [
@@ -54,7 +54,7 @@ pub def encode_namespace_proof(source: str, schema: u32, name: str, path: list[s
     return Ok(encoded)
 
 
-pub def read_namespace_proof(encoded: bytes, source: str, schema: u32, object_digest: bytes) -> Result[NamespaceIdentity, str]:
+pub def read_namespace_proof(encoded: bytes, source: &str, schema: u32, object_digest: bytes) -> Result[NamespaceIdentity, str]:
     """Authenticate the compiler's recorded identity against the requested source, reader schema and physical object."""
     if len(encoded) > MAX_PROOF_BYTES:
         return Err("checked namespace physical identity exceeds its byte limit")

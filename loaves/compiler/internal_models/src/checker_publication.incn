@@ -39,7 +39,7 @@ def description(previous: bool) -> Description:
     return model_description(REPORT, "incan.checker-reuse/3", fields)
 
 
-def valid(counts: CheckerRecordCounts) -> bool:
+def valid(counts: &CheckerRecordCounts) -> bool:
     if counts.reusable_declarations < 0 or counts.reusable_declarations > counts.all_declarations:
         return false
     for owners in [counts.restored, counts.restored_body_ir]:
@@ -51,7 +51,7 @@ def valid(counts: CheckerRecordCounts) -> bool:
     return true
 
 
-pub def encode_checker_counts(counts: CheckerRecordCounts) -> Result[bytes, str]:
+pub def encode_checker_counts(counts: &CheckerRecordCounts) -> Result[bytes, str]:
     if not valid(counts):
         return Err("invalid checker publication counts")
     mut ordered: list[Value] = []

@@ -254,6 +254,9 @@ def test_seed_bridge_is_one_direct_child_with_only_the_authenticated_sources() -
                   "ce47c433bb20d5c3d8f836c16ee274875cab183a", "b65b24bc0a2352efb7c6ea58e39d69ab38dbedfb",
                   blobs[4], blobs[5]]
     validate_seed_bridge(SHA, bridge, [SHA], readers, with_entry)?
+    owned_root = ["348b093ee46c438f8e2ddcd5bc931299bcd82bf1"] + with_entry[1:]
+    validate_seed_bridge(SHA, bridge, [SHA], readers, owned_root)?
+    assert validate_seed_bridge(SHA, bridge, [SHA], readers, owned_root[:2] + blobs[2:]).is_err()
     assert validate_seed_bridge(SHA, bridge, [SHA], readers, with_entry[:2] + blobs[2:]).is_err()
     assert validate_seed_bridge(SHA, bridge, [SHA], readers).is_err()
     assert validate_seed_bridge(SHA, bridge, [SHA], readers, blobs[1:] + [blobs[0]]).is_err()
