@@ -321,7 +321,7 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     """
     scratch = scratch_directory()?
     root = scratch.path()
-    source = root.joinpath("hello.incn")
+    source = root.joinpath("main.incn")
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     store = root.joinpath("store")
     write(source, "def greeting() -> str:\n    return \"hello\"\n\n\ndef main() -> None:\n    println(greeting())\n")?
