@@ -17,34 +17,34 @@ fn namespace_reader() -> Result<&'static internal_models::PreparedNamespaceReade
     NAMESPACE_READER.as_ref().map_err(Clone::clone)
 }
 
-/// The dev.8 seed consumes the transient root while the current compiler borrows it. Both generated signatures
-/// receive the same newly built tree. Rust selects the call at compilation and never clones the root.
-pub(super) trait WriteRoot<Mode, T> {
-    fn write_root(self, root: Atom) -> T;
+/// Pass a freshly produced compiler record through the ownership convention chosen by the installed compiler.
+/// The dev.8 and dev.9 producers can infer different conventions for the same Incan declaration.
+pub(super) trait CallWithInput<Value, Mode, Output> {
+    fn call_with_input(self, value: Value) -> Output;
 }
 
-impl<F, T> WriteRoot<fn(Atom), T> for F
+impl<F, Value, Output> CallWithInput<Value, fn(Value), Output> for F
 where
-    F: FnOnce(Atom) -> T,
+    F: FnOnce(Value) -> Output,
 {
-    fn write_root(self, root: Atom) -> T {
-        self(root)
+    fn call_with_input(self, value: Value) -> Output {
+        self(value)
     }
 }
 
-impl<F, T> WriteRoot<fn(&Atom), T> for F
+impl<F, Value, Output> CallWithInput<Value, fn(&Value), Output> for F
 where
-    F: FnOnce(&Atom) -> T,
+    F: FnOnce(&Value) -> Output,
 {
-    fn write_root(self, root: Atom) -> T {
-        self(&root)
+    fn call_with_input(self, value: Value) -> Output {
+        self(&value)
     }
 }
 
 pub(super) fn publish(
     interface: &incan_frontend::typechecker::CheckedNamespaceInterface,
 ) -> Result<internal_models::NamespacePublication, String> {
-    internal_models::publish_namespace_interface.write_root(to_atom(interface.wire_value()?))
+    internal_models::publish_namespace_interface.call_with_input(to_atom(interface.wire_value()?))
 }
 
 /// Resident builds can consume the same physical namespace the compiler just published. Its full Crumb
@@ -176,7 +176,7 @@ fn restore_digest(
 
 impl NamespaceCrumb for CheckedNamespaceCrumb {
     fn write(&self, root: Cell) -> Result<Vec<u8>, String> {
-        internal_models::encode_namespace_interface.write_root(to_atom(root))
+        internal_models::encode_namespace_interface.call_with_input(to_atom(root))
     }
 
     fn read(&self, encoded: &[u8]) -> Result<Cell, String> {

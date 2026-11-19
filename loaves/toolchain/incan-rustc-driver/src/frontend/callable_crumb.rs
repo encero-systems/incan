@@ -1,6 +1,6 @@
 //! Incan owns the callable product schema and checker rows. The Rust frontend owns checked declarations and Body IR.
 
-use super::namespace_crumb::{WriteRoot, to_atom, to_cell};
+use super::namespace_crumb::{CallWithInput, to_atom, to_cell};
 use incan_frontend::declaration_interface::{CallableBodyProducts, CallableCheckerRows, CallableRowFamily};
 use incan_semantics_core::CompilerNodeId;
 use internal_models::CheckedFamily;
@@ -33,7 +33,7 @@ impl CallableCheckerRows for CheckerRows {
         if record.family != expected {
             return Err("callable checker row has a different family".into());
         }
-        internal_models::callable_checker_fields(&record)
+        internal_models::callable_checker_fields.call_with_input(record)
             .map_err(|error| format!("invalid callable checker fields: {error:?}"))
     }
 }
@@ -43,7 +43,7 @@ pub(super) fn encode(
     module: &CompilerNodeId,
     source: &str,
 ) -> Result<Vec<u8>, String> {
-    internal_models::encode_callable_inventory.write_root(to_atom(products.crumb_fields(
+    internal_models::encode_callable_inventory.call_with_input(to_atom(products.crumb_fields(
         module,
         source,
         &CheckerRows,
