@@ -245,7 +245,10 @@ pub def scope_members(census: str) -> Dict[str, list[str]]:
 pub def scope_member(census: &SourceProjectionRecord, members: &Dict[str, list[str]], name: str) -> SourceProjectionRecord:
     """An empty selection proves that no declaration of this name exists in the captured module."""
     key = source_key("scope-name", census.key.origin, census.key.identity, name)
-    return SourceProjectionRecord(key=key, text="\n".join(sorted(members.get(name, []))), start=0, end=0)
+    mut text = ""
+    if members.contains_key(name):
+        text = "\n".join(sorted(members[name]))
+    return SourceProjectionRecord(key=key, text=text, start=0, end=0)
 
 
 def mark_placement(mut placements: Dict[str, SourceProjectionRecord], owner: &SourceProjectionRecord, offset: int, raw: str) -> None:
