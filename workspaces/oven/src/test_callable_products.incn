@@ -48,6 +48,7 @@ pub def test_checked_context_keeps_features_while_lowering_keys_the_checked_body
     scratch = scratch_directory()?
     setup = fixture(scratch.path())?
     mut unit = setup.unit
+    unit.loaves = []
     unit.declared_features = ["optional"]
     unit.active_features = []
     initial = retain_callable_products(unit, setup.toolchain)?
