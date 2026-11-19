@@ -17,10 +17,34 @@ fn namespace_reader() -> Result<&'static internal_models::PreparedNamespaceReade
     NAMESPACE_READER.as_ref().map_err(Clone::clone)
 }
 
+/// The dev.8 seed consumes the transient root while the current compiler borrows it. Both generated signatures
+/// receive the same newly built tree. Rust selects the call at compilation and never clones the root.
+pub(super) trait WriteRoot<Mode, T> {
+    fn write_root(self, root: Atom) -> T;
+}
+
+impl<F, T> WriteRoot<fn(Atom), T> for F
+where
+    F: FnOnce(Atom) -> T,
+{
+    fn write_root(self, root: Atom) -> T {
+        self(root)
+    }
+}
+
+impl<F, T> WriteRoot<fn(&Atom), T> for F
+where
+    F: FnOnce(&Atom) -> T,
+{
+    fn write_root(self, root: Atom) -> T {
+        self(&root)
+    }
+}
+
 pub(super) fn publish(
     interface: &incan_frontend::typechecker::CheckedNamespaceInterface,
 ) -> Result<internal_models::NamespacePublication, String> {
-    internal_models::publish_namespace_interface(to_atom(interface.wire_value()?))
+    internal_models::publish_namespace_interface.write_root(to_atom(interface.wire_value()?))
 }
 
 /// Resident builds can consume the same physical namespace the compiler just published. Its full Crumb
@@ -152,7 +176,7 @@ fn restore_digest(
 
 impl NamespaceCrumb for CheckedNamespaceCrumb {
     fn write(&self, root: Cell) -> Result<Vec<u8>, String> {
-        internal_models::encode_namespace_interface(to_atom(root))
+        internal_models::encode_namespace_interface.write_root(to_atom(root))
     }
 
     fn read(&self, encoded: &[u8]) -> Result<Cell, String> {
