@@ -8,6 +8,7 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use super::namespace_crumb::CallWithInput;
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::typechecker::TypeChecker;
 use incan_semantics_core::body_ir::BodyIrModule;
@@ -590,7 +591,7 @@ impl GraphBodyOutput {
             .map(|value| {
                 let fields = |bytes: &Vec<u8>| {
                     internal_models::decode_owned_record(bytes, &profile, &value.identity)
-                        .and_then(|record| internal_models::native_fields(&record))
+                        .and_then(|record| internal_models::native_fields.call_with_input(record))
                         .map_err(|error| format!("current checker output refused: {error:?}"))
                 };
                 let frame = incan_semantics_core::executable_representation::decode_owner(&value.body_ir)
