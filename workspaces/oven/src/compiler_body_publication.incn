@@ -1201,12 +1201,14 @@ def prepare_native_interface(
         if module not in projections:
             projections[module] = source_projection(unit, origin, module)?
         projection = projections[module]
-        for binding in [projection.header] + projection.feature_inputs:
+        for binding in [projection.header, projection.census] + projection.feature_inputs:
             source.add(encode_record_key(binding.key)?, binding.encoded()?)
             reads.append(prepared_product_request(binding.key))
         for owner in projection.owners:
-            source.add(encode_record_key(owner.key)?, owner.encoded()?)
-            reads.append(prepared_product_request(owner.key))
+            placement = projection.placements[owner.key.facet]
+            for binding in [owner, placement]:
+                source.add(encode_record_key(binding.key)?, binding.encoded()?)
+                reads.append(prepared_product_request(binding.key))
     # Carried plan-module pages may supply an untouched module with no fresh scalar body.
     for plan in plans:
         if plan.family == "plan-module":

@@ -128,7 +128,7 @@ pub def write_selected_records(
         Some(value) => value
         None => return Err("records lowering requires the complete compiler context")
 
-    publish_binary(directory.joinpath("producer-profile"), generation.encode("utf-8"))?
+    publish_binary(directory.joinpath("producer-profile"), unit.lowering_context.unwrap_or(generation).encode("utf-8"))?
     for page in records:
         publish_binary(directory.joinpath(page.key), page.value)?
     return Ok(None)

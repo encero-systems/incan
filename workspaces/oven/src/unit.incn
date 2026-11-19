@@ -119,6 +119,8 @@ pub model UnitDescription:
     # Source-independent semantic context and private independently validated callable products.
     pub checked_context: Option[str] = None
     pub checked_products: Option[str] = None
+    # Lowering also validates each body and its checked feature witnesses. External compiler inputs stay in this key.
+    pub lowering_context: Option[str] = None
     # Oven retains the selected graph in memory; it is not part of the compiler's unit description.
     pub facets: list[LocalFacet] = []
     # The active features only `incan test --feature NAME` adds: testing features that `std.testing.feature(NAME)`
