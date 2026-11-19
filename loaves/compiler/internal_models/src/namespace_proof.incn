@@ -1,6 +1,7 @@
 """The compiler's physical checked namespace identity, retained with its engine-selected page."""
 
 from std.hash import sha256
+from std.primitives.text import encode_utf8
 from std.primitives.crumb.descriptions import Description
 from std.primitives.crumb.values import Value
 from crumb_rows import ModelField, model_description, required_value
@@ -30,7 +31,7 @@ def binding(source: &str, schema: u32, name: str, path: list[str], object_digest
         return Err("missing checked namespace physical identity")
     mut hasher = sha256.new()
     hasher.update(b"incan.checked-namespace-identity/1")
-    hasher.update(sha256.digest(source.encode()))
+    hasher.update(sha256.digest(encode_utf8(source)))
     hasher.update(sha256.digest(str(schema).encode()))
     hasher.update(sha256.digest(name.encode()))
     for segment in path:
