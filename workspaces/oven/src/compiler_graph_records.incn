@@ -227,16 +227,32 @@ pub def reusable_family_records(
     Select every witnessed value in one family/profile from the graph's engine-owned output index, reading only that
     family's range of it. The index holds one entry per slot, which names the slot's current record.
     """
+    mut verified: Dict[str, tuple[RecordRequest, str]] = {}
+    return select_family_records(selected, family, profile, slots, verified)
+
+
+pub def reusable_checker_records(selected: Snapshot, profile: str, slots: Option[OutputSlots]) -> Result[tuple[list[ReusableRecord], list[ReusableRecord], list[ReusableRecord]], str]:
+    """Validate the three checker families against one pinned snapshot, sharing their exact input reads."""
+    mut verified: Dict[str, tuple[RecordRequest, str]] = {}
+    locals = select_family_records(selected, "local", profile, slots, verified)?
+    finals = select_family_records(selected, "final", profile, slots, verified)?
+    bodies = select_family_records(selected, "body-ir", profile, slots, verified)?
+    return Ok((locals, finals, bodies))
+
+
+def select_family_records(
+    selected: Snapshot, family: str, profile: str, slots: Option[OutputSlots], mut verified: Dict[str, tuple[RecordRequest, str]],
+) -> Result[list[ReusableRecord], str]:
+    """Read one family under the snapshot and profile that own the verified selections."""
     mut excluded: set[str] = set()
     if let Some(scope) = slots:
         excluded = set(scope.excluded_outputs)
     mut records: list[ReusableRecord] = []
-    mut selected_witnesses: Dict[str, tuple[RecordRequest, str]] = {}
     for output in family_outputs(selected, family, profile, slots)?:
         if output in excluded:
             continue
         key = decode_record_key(output)?
-        match select_evaluation(selected, key, profile, selected_witnesses)?:
+        match select_evaluation(selected, key, profile, verified)?:
             Some(reused) => records.append(ReusableRecord(key=key, value=reused.value, receipt=reused.receipt, namespace=reused.namespace))
             None => pass
     return Ok(records)
@@ -640,7 +656,7 @@ def witnesses_validate(selected: Snapshot, receipt: ReadReceipt, mut verified: D
                     RecordRead.Found(found) =>
                         if found.evidence.semantic_digest != expected.semantic_digest:
                             return Ok(false)
-                        # This family selection retains its one leased snapshot and producer profile for the whole loop.
+                        # The selection retains its one leased snapshot and producer profile for the whole loop.
                         # Keep no selected bytes, and retry any different range, field or allowance through the owner.
                         if len(verified) < 8192 and len(key) <= 4096:
                             verified[key] = (request, found.evidence.semantic_digest)
