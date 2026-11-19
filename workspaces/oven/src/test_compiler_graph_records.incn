@@ -851,6 +851,22 @@ pub def test_prepared_opaque_products_use_their_bounded_selection() -> Result[No
     return Ok(None)
 
 
+pub def test_publication_reads_repeated_checked_inputs_once() -> Result[None, str]:
+    """Repeated references in one owner share an input. Distinct bounds retain their own authorization."""
+    key = body_key("local", "app", "function:app::read", "checked", "current")
+    scope = ReadScope(snapshot="prepared", profile=CHECKER_PROFILE)
+    mut staged = PreparedBodyRecordSource.open(scope)
+    staged.add(encode_record_key(key)?, b"data")
+    exact = RecordRequest(key=key, selection=RecordSelection.Field("value"), byte_limit=4)
+    ordinary = prepared_product_request(key)
+    receipt = staged.receipt(scope, key, [ordinary, exact, ordinary, exact])?
+    assert receipt.operations == 2 and receipt.response_bytes == 8
+    assert len(receipt.witnesses) == 2
+    short = RecordRequest(key=key, selection=RecordSelection.Field("value"), byte_limit=3)
+    assert staged.receipt(scope, key, [ordinary, short]).is_err()
+    return Ok(None)
+
+
 pub def test_prepared_checked_rows_bind_the_current_extent() -> Result[None, str]:
     """A checked predecessor may grow between revisions; its receipt records the selected bytes in each revision."""
     key = RecordKey(family="final", identity_profile="incan.stable-declaration/1", origin="fixture",

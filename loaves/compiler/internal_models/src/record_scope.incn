@@ -213,7 +213,10 @@ pub class RecordReads:
             self.fault = Some(ReadFault.InvalidEvidence)
             return RecordRead.Failed(ReadFault.InvalidEvidence)
 
-        if request not in self.allowed:
+        # Prepared producers normally consume their selections in order. Interactive readers can repeat or
+        # reorder a request, so a positional miss still checks the complete authorized envelope.
+        in_sequence = self.operations < len(self.allowed) and self.allowed[self.operations] == request
+        if not in_sequence and request not in self.allowed:
             self.fault = Some(ReadFault.OutsidePreparation)
             return RecordRead.Failed(ReadFault.OutsidePreparation)
 
