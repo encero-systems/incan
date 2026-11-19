@@ -57,6 +57,10 @@ pub def prepare_report(
         "store_frames_read": produced.store_frames_read,
         "store_frame_bytes": produced.store_frame_bytes,
         "store_decoded_bytes": produced.store_decoded_bytes,
+        "store_metadata_bytes_copied": produced.store_metadata_bytes_copied,
+        "store_index_bytes_checked": produced.store_index_bytes_checked,
+        "store_digest_only_payload_bytes": produced.store_digest_only_payload_bytes,
+        "store_digest_only_reads": produced.store_digest_only_reads,
     }
     selected = snapshot(store).map_err((error) => error.message())?
     mut transaction = begin(selected)

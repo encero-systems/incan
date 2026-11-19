@@ -304,10 +304,16 @@ pub def test_selected_checker_products_supply_later_witnesses_once() -> Result[N
     first_rank = ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=0)
     final_rank = ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=1)
     body_rank = ProducerRank(namespace=0, stage=ProducerStage.BodyIr, dependency=0)
-    graph = publish_evaluation(graph, "local", first_rank, b"local bytes", fixture_receipt_many(graph, local, [])?)?.snapshot
-    graph = publish_evaluation(graph, "final", final_rank, b"final bytes", fixture_receipt(graph, final, prepared_product_request(local))?)?.snapshot
+    scope = ReadScope(snapshot=graph.digest, profile="profile")
+    mut source = PreparedBodyRecordSource.open(scope)
+    local_value = b"local bytes"
+    final_value = b"final bytes"
+    source.add(encode_record_key(local)?, local_value)
+    source.add(encode_record_key(final)?, final_value)
+    graph = publish_evaluation(graph, "local", first_rank, local_value, source.receipt(scope, local, [])?)?.snapshot
+    graph = publish_evaluation(graph, "final", final_rank, final_value, source.receipt(scope, final, [prepared_product_request(local)])?)?.snapshot
     frame = encode_body_frame(body, "profile", b"native bytes")?
-    graph = publish_evaluation(graph, "body", body_rank, frame, fixture_receipt(graph, body, prepared_product_request(final))?)?.snapshot
+    graph = publish_evaluation(graph, "body", body_rank, frame, source.receipt(scope, body, [prepared_product_request(final)])?)?.snapshot
 
     measure_frame_reads(true)
     selected = select_body_inventory_except(graph, "profile", local.origin, [])?

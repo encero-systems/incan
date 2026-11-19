@@ -2,7 +2,7 @@
 
 from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
-from pub::incan_platform.store import BindingLookup, Snapshot, lookup_binding, lookup_members
+from pub::incan_platform.store import BindingLookup, Snapshot, lookup_binding, lookup_binding_metadata, lookup_members
 from overload_members import OVERLOAD_MEMBERS, read_method_members
 from source_value_records import SOURCE_PROFILE, source_value
 from record_scope import (
@@ -45,7 +45,11 @@ pub class StoreRecordSource with RecordSource:
 
         if not allowed(self.allowed_roots, key):
             return RecordRead.Failed(ReadFault.OutsidePreparation)
+        mut digest_only = false
         match request.selection:
+            RecordSelection.Payload(payload) =>
+                # Source projections must still decode their logical value to compute the semantic digest.
+                digest_only = request.key.identity_profile != SOURCE_PROFILE and payload.offset == 0 and payload.length == 0
             RecordSelection.Members(selection) =>
                 if request.key.family == OVERLOAD_MEMBERS:
                     match lookup_binding(self.snapshot, key):
@@ -67,7 +71,10 @@ pub class StoreRecordSource with RecordSource:
                     selection.continuation,
                 )
             _ => pass
-        match lookup_binding(self.snapshot, key):
+        selected = match digest_only:
+            true => lookup_binding_metadata(self.snapshot, key)
+            false => lookup_binding(self.snapshot, key)
+        match selected:
             Err(_) => return RecordRead.Failed(ReadFault.DamagedRecord)
             Ok(BindingLookup.Deleted(deleted)) =>
                 return RecordRead.Deleted(DeletedFact(scope=scope, request=request, revision=deleted.revision))

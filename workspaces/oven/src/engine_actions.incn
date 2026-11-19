@@ -107,6 +107,10 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
     produced.store_frames_read = read.records - reading.records
     produced.store_frame_bytes = read.bytes - reading.bytes
     produced.store_decoded_bytes = read.decoded - reading.decoded
+    produced.store_metadata_bytes_copied = read.copied - reading.copied
+    produced.store_index_bytes_checked = read.index_bytes_checked - reading.index_bytes_checked
+    produced.store_digest_only_payload_bytes = read.digest_only_payload_bytes - reading.digest_only_payload_bytes
+    produced.store_digest_only_reads = read.digest_only_reads - reading.digest_only_reads
     produced.frame_reads = frame_reads
     produced.graph_demands = graph_demands
     mut counters = pending.capture.counters
@@ -227,6 +231,10 @@ def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, 
             store_frames_read=read.records - reading.records,
             store_frame_bytes=read.bytes - reading.bytes,
             store_decoded_bytes=read.decoded - reading.decoded,
+            store_metadata_bytes_copied=read.copied - reading.copied,
+            store_index_bytes_checked=read.index_bytes_checked - reading.index_bytes_checked,
+            store_digest_only_payload_bytes=read.digest_only_payload_bytes - reading.digest_only_payload_bytes,
+            store_digest_only_reads=read.digest_only_reads - reading.digest_only_reads,
             frame_reads=frame_reads,
             graph_demands=graph_demands,
             body_evaluations=outcome.body_evaluations,

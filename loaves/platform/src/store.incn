@@ -52,7 +52,7 @@ from crate.store.index import first_stored_key as index_first_stored_key
 from crate.store.index import entries_for_keys as index_entries_for_keys
 from crate.store.index import entries_with_prefix as index_entries_with_prefix
 from crate.store.index import read_page as index_page, search as index_search
-from crate.store.index import copied_index_bytes, page_directory, page_path, page_reads, pages_checked, view_digest
+from crate.store.index import copied_index_bytes, page_directory, page_path, page_checked_bytes, page_reads, pages_checked, view_digest
 from crate.store.index import PageWriter, install_pack, installed_reference
 from crate.store.files import (
     StoreError,
@@ -93,7 +93,7 @@ pub enum Lookup:
 
 
 pub model PresentBinding:
-    """Owned value bytes and the authenticated revision, semantic value and selected index-path identities."""
+    """Selected value bytes and the authenticated revision, complete value digest and selected index path."""
 
     pub value: bytes
     pub revision: str
@@ -183,7 +183,9 @@ pub model ReadCounts:
     `records` frames found, `bytes` frame bytes checked in place, `pages` index pages read and `checked` the index pages
     mapped and hashed to check them against their digest; `copied` bytes copied out of mapped pages and frames by
     lookups (keys compared and locations decoded, never a value); `decoded` bytes of found values copied into owned
-    bytes by `owned`; `listed` keys returned by whole and prefix listings.
+    bytes by `owned`; `listed` keys returned by whole and prefix listings. `index_bytes_checked` counts the bytes
+    checked on first access to immutable index pages. `digest_only_payload_bytes` and `digest_only_reads` count
+    complete values hashed in place to answer payload-free binding queries.
     """
 
     pub records: int
@@ -193,6 +195,9 @@ pub model ReadCounts:
     pub decoded: int
     pub listed: int = 0
     pub checked: int = 0
+    pub index_bytes_checked: int = 0
+    pub digest_only_payload_bytes: int = 0
+    pub digest_only_reads: int = 0
 
 
 # Reads this process made, for measuring what a compile reads; nothing is cached by them.
@@ -290,6 +295,9 @@ pub def read_counts() -> ReadCounts:
         decoded=counted.get("decoded", 0),
         listed=counted.get("listed", 0),
         checked=pages_checked(),
+        index_bytes_checked=page_checked_bytes(),
+        digest_only_payload_bytes=counted.get("digest_only_payload_bytes", 0),
+        digest_only_reads=counted.get("digest_only_reads", 0),
     )
 
 
@@ -478,7 +486,17 @@ pub def lookup(view: Snapshot, key: str) -> Result[Lookup, StoreError]:
 
 
 pub def lookup_binding(view: Snapshot, key: str) -> Result[BindingLookup, StoreError]:
-    """Read one key with revision, semantic and authenticated search-path evidence from the selected snapshot."""
+    """Read one complete value with its authenticated binding evidence."""
+    return select_binding(view, key, true)
+
+
+pub def lookup_binding_metadata(view: Snapshot, key: str) -> Result[BindingLookup, StoreError]:
+    """Authenticate one exact binding and hash the complete value in place, returning an empty payload."""
+    return select_binding(view, key, false)
+
+
+def select_binding(view: Snapshot, key: str, materialize: bool) -> Result[BindingLookup, StoreError]:
+    """Use the same index, frame checks and binding identities for both exact selections."""
     searched = index_search(view.root, view.index, key).map_err(index_failure)?
     match searched.location:
         None => return Ok(BindingLookup.Absent(AbsentBinding(exclusion_digest=searched.path_digest)))
@@ -486,13 +504,19 @@ pub def lookup_binding(view: Snapshot, key: str) -> Result[BindingLookup, StoreE
             revision = hexlify(location.digest)
             match read_frame(view.root, key, location)?:
                 Lookup.Found(value) =>
-                    bytes = owned(value)
+                    semantic = hexlify(view_digest(value))
+                    mut selected_value: bytes = b""
+                    if materialize:
+                        selected_value = owned(value)
+                    else:
+                        counted["digest_only_payload_bytes"] = counted.get("digest_only_payload_bytes", 0) + value.len()
+                        counted["digest_only_reads"] = counted.get("digest_only_reads", 0) + 1
                     return Ok(
                         BindingLookup.Present(
                             PresentBinding(
-                                value=bytes,
+                                value=selected_value,
                                 revision=revision,
-                                semantic_digest=hexlify(sha256.digest(bytes)),
+                                semantic_digest=semantic,
                                 selection_digest=searched.path_digest,
                             ),
                         ),

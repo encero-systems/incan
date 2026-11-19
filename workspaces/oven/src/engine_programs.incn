@@ -101,6 +101,10 @@ pub model ProgramOutcome:
     pub store_frames_read: int = 0
     pub store_frame_bytes: int = 0
     pub store_decoded_bytes: int = 0
+    pub store_metadata_bytes_copied: int = 0
+    pub store_index_bytes_checked: int = 0
+    pub store_digest_only_payload_bytes: int = 0
+    pub store_digest_only_reads: int = 0
     pub frame_reads: list[FrameRead] = []
     pub graph_demands: list[GraphDemand] = []
     pub transaction: Option[Transaction] = None
