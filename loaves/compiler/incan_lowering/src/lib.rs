@@ -12,6 +12,20 @@ use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId};
 
 pub mod corpus;
 
+mod body_index;
+mod class_inheritance;
+mod compiler_record_adapters;
+mod continuation_context;
+mod enum_instances;
+mod native_type_identity;
+mod nominal_frames;
+mod nominal_instances;
+mod parallel_ranges;
+mod runtime_requirements;
+mod symbols;
+mod trace_channel;
+mod type_parameters;
+
 pub use incan_mir_lowering::{Plan, PlanType, SourceSpan};
 
 /// Source provenance, collected tests and the unit's integer overflow policy, aligned with the module list.
