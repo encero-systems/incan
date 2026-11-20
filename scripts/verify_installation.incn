@@ -175,7 +175,8 @@ def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tup
             ),
         )
     memory = shared_memory(host_memory())
-    failed = run_all_failures(verifier, invocations, len(invocations), memory)?
+    # Independent gates can each start compiler processes. Honor the requested concurrency at this boundary too.
+    failed = run_all_failures(verifier, invocations, verification_workers(installation.jobs), memory)?
     if len(failed) > 0:
         return Err(
             "installed verification phase failures: " + ", ".join(
