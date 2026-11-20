@@ -8,6 +8,10 @@ exiting returns a heavy compile's peak heap; when a request of another protocol 
 can reach it any more, because its socket path no longer leads to its socket or its home is gone; and when the process
 could not be restored after an activation. A contained compiler panic does not retire it.
 
+The first successful editor check establishes the retained-project baseline. Normal dependency preparation can run
+before an editor check and leaves a smaller state. Later editor and ordinary activations use the same growth monitor
+once that project baseline exists.
+
 What a worker retains is its heap in live allocations when the entry can read it, else its physical footprint. An
 allocator keeps the blocks a compile freed resident, so the footprint after a compile stays tens of megabytes over its
 start although the worker holds nothing more; counting those blocks retired every warm worker after its second compile.
@@ -32,6 +36,7 @@ from rust::std::time import Instant
 from protocol import Fault, Reply
 
 pub const IDLE_SECONDS: int = 10
+pub const EDITOR_IDLE_MILLIS: int = 900000
 pub const FOOTPRINT_MARGIN: int = 16777216
 pub const FOOTPRINT_STRIKES: int = 2
 # A compile of the lowering library through a worker passes 6.5 GB; a dev-loop harness of every subject peaks at
@@ -81,6 +86,7 @@ pub model Bounds:
     pub idle_millis: int
     pub margin: int
     pub ceiling: int
+    pub editor_idle_millis: int = EDITOR_IDLE_MILLIS
 
 
 pub class Lifecycle:
@@ -92,6 +98,8 @@ pub class Lifecycle:
     # Consecutive compiling activations that left more than the margin above the least the worker had retained.
     pub strikes: int = 0
     last_activity: Instant
+    last_editor_activity: Option[Instant] = None
+    editor_baseline_established: bool = false
     # The least bytes in live allocations after a compiling activation; negative before the first one measured.
     pub live_kept: int = -1
 
@@ -104,9 +112,26 @@ pub class Lifecycle:
         """A request was answered: the idle period starts again."""
         self.last_activity = Instant.now()
 
-    pub def idle(self) -> bool:
-        """Whether the worker has served nothing for its whole idle period."""
+    pub def note_editor_activity(mut self, succeeded: bool) -> None:
+        """Extend the idle period and count growth from the first successfully checked project."""
+        self.last_editor_activity = Some(Instant.now())
+        if succeeded and not self.editor_baseline_established:
+            self.kept = -1
+            self.live_kept = -1
+            self.strikes = 0
+            self.editor_baseline_established = true
+
+    pub def past_ordinary_idle(self) -> bool:
+        """Whether the ordinary request idle period has elapsed."""
         return int(self.last_activity.elapsed().as_millis()) >= self.bounds.idle_millis
+
+    pub def idle(self) -> bool:
+        """Retire once both the ordinary idle period and any editor idle period have elapsed."""
+        if not self.past_ordinary_idle():
+            return false
+        match self.last_editor_activity:
+            Some(last) => return int(last.elapsed().as_millis()) >= self.bounds.editor_idle_millis
+            None => return true
 
     pub def settle(
         mut self,

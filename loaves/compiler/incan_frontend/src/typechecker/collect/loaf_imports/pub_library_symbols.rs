@@ -254,16 +254,19 @@ impl TypeChecker {
         self.register_pub_library_declarations(library, manifest, &canonical_remapping);
         if let Some(api) = manifest.contract_metadata.api.as_ref() {
             for module in &api.modules {
+                let mut public_path = std::iter::once(manifest.name.clone())
+                    .chain(module.module_path.iter().cloned())
+                    .collect::<Vec<_>>();
                 for declaration in &module.declarations {
-                    let public_path = std::iter::once(manifest.name.clone())
-                        .chain(module.module_path.iter().cloned())
-                        .chain(std::iter::once(Self::api_declaration_name(declaration).to_string()))
-                        .collect::<Vec<_>>();
-                    let canonical = manifest
-                        .contract_metadata
-                        .identity_graph
-                        .canonical_for_public_path(&public_path);
-                    self.record_provider_type_param_bounds(declaration, canonical.as_ref());
+                    self.record_provider_type_param_bounds(declaration, || {
+                        public_path.push(Self::api_declaration_name(declaration).to_owned());
+                        let canonical = manifest
+                            .contract_metadata
+                            .identity_graph
+                            .canonical_for_public_path(&public_path);
+                        let _ = public_path.pop();
+                        canonical
+                    });
                 }
             }
         }

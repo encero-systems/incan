@@ -553,12 +553,14 @@ pub struct TypeChecker {
     callable_scope_layouts: std::collections::BTreeMap<Span, body_check::records::CallableScopeLayout>,
     local_record_refusals: std::collections::BTreeMap<Span, canonical_nodes::NodeBindingError>,
     /// Producer-validated local records selected for this source revision without counting them as evaluations.
-    selected_local_records: std::collections::BTreeMap<Span, body_check::records::Fields>,
+    selected_local_records: std::collections::BTreeMap<Span, Arc<body_check::records::Fields>>,
     /// Codec-validated settled values restored through the ordinary checked-body assembly and retained for graph
     /// publication without pretending the settlement producer ran in this invocation.
-    selected_final_records: std::collections::BTreeMap<Span, body_check::records::Fields>,
+    selected_final_records: std::collections::BTreeMap<Span, Arc<body_check::records::Fields>>,
     /// Frames whose physical inputs can be checked only after the complete module has settled.
     pending_graph_frames: Vec<(Span, [u8; 32], incan_semantics_core::body_ir::Body, Vec<(u32, u32)>)>,
+    /// Completed current owner inputs, shared between frame admission and graph publication for this check.
+    completed_graph_body_digests: std::collections::BTreeMap<Span, [u8; 32]>,
     /// Final-family records emitted by direct settlement, before any module observer.
     produced_final_records: std::collections::BTreeMap<Span, body_check::records::Fields>,
     /// Explicit capability refusals from direct final producers, retained for test and adapter reporting.
