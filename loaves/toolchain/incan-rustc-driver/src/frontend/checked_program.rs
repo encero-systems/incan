@@ -366,22 +366,22 @@ fn checked_attempt(
     let mut graph_body_output =
         graph_body_output::GraphBodyOutput::prepare(graph_body_output, unit.project_root.clone())?;
     let mut publication = library.then(|| PublicationFacts::new(package_identity).for_inspection(inspection));
-    let namespace_imports = graph_body_output.enabled().then(|| {
-        let path_indexes = modules
+    let imports = std::sync::Arc::new(incan_driver::modules::SourceModuleImports::new(
+        &modules,
+        session.own_standard_package(),
+    ));
+    let namespace_indexes = graph_body_output.enabled().then(|| {
+        modules
             .iter()
             .enumerate()
             .map(|(index, module)| (module.file_path.clone(), index))
-            .collect::<BTreeMap<_, _>>();
-        (
-            incan_driver::modules::SourceModuleImports::new(&modules, session.own_standard_package()),
-            path_indexes,
-        )
+            .collect::<BTreeMap<_, _>>()
     });
-    let project_dependencies = |imports: &incan_driver::modules::SourceModuleImports, index: usize| {
+    let project_dependencies = |index: usize| {
         let mut dependencies = imports
             .dependencies(index)
-            .into_iter()
-            .filter_map(|dependency| {
+            .iter()
+            .filter_map(|&dependency| {
                 modules[dependency]
                     .file_path
                     .strip_prefix(&unit.project_root)
@@ -396,22 +396,28 @@ fn checked_attempt(
     let mut analysis = {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::analyze_modules", modules = modules.len()).entered();
         session
-            .analyze_unit(&modules, library.then_some(package_identity), &mut |module, checker| {
-                callable_products.observe(module, checker);
-                if let Some((imports, indexes)) = &namespace_imports
-                    && let Some(&index) = indexes.get(module.file_path.as_path())
-                {
-                    let dependencies = project_dependencies(imports, index);
-                    graph_body_output.observe(module, checker, &dependencies, package_identity);
-                }
-                if let Some(publication) = publication.as_mut() {
-                    publication.visit(module, checker, module.file_path == path);
-                }
-            })
+            .analyze_unit_with_imports(
+                &modules,
+                library.then_some(package_identity),
+                std::sync::Arc::clone(&imports),
+                library && collect_codegraph,
+                &mut |module, checker| {
+                    callable_products.observe(module, checker);
+                    if let Some(indexes) = &namespace_indexes
+                        && let Some(&index) = indexes.get(module.file_path.as_path())
+                    {
+                        let dependencies = project_dependencies(index);
+                        graph_body_output.observe(module, checker, &dependencies, package_identity);
+                    }
+                    if let Some(publication) = publication.as_mut() {
+                        publication.visit(module, checker, module.file_path == path);
+                    }
+                },
+            )
             .map_err(|failure| receipt.diagnostic(failure))?
     };
-    if let Some((imports, indexes)) = &namespace_imports {
-        graph_body_output.include_restored_imports(&path, indexes, |index| project_dependencies(imports, index))?;
+    if let Some(indexes) = &namespace_indexes {
+        graph_body_output.include_restored_imports(&path, indexes, project_dependencies)?;
     }
     let entry = modules
         .iter()

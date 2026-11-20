@@ -1,15 +1,16 @@
 """Preserve generic reference binders before specialization erases their relationship in concrete frame types."""
 
-from rust::incan_semantics_core import IncanInputAccess, IncanType as RustType
+from rust::incan_semantics_core import CanonicalSymbolId, IncanInputAccess, IncanType as RustType
+from rust::std::collections import BTreeMap
 from rust::incan_semantics_core::body_ir import Body
 from pub::incan_mir_plan import GenericLoan, PlanType
-from type_parameters import source_nominal_owner, source_nominal_owners
+from type_parameters import source_nominal_owner
 
 
 pub def generic_loans(body: &Body, arguments: list[PlanType]) -> list[GenericLoan]:
     """1. Retain parameter occurrences. 2. Retain result occurrences under the same source type identities."""
     mut loans: list[GenericLoan] = []
-    source_nominals = source_nominal_owners(body)
+    source_nominals = body.named_type_identities.as_ref()
     # 1. A source type parameter keeps its identity at every structural occurrence in an input.
     for slot in range(len(body.params)):
         type_generic_loans(body.params[slot].ty, body.type_parameters, arguments, source_nominals, slot, [], loans)
@@ -30,7 +31,7 @@ def type_generic_loans(
     ty: &RustType,
     names: list[str],
     arguments: list[PlanType],
-    source_nominals: &dict[str, bool],
+    source_nominals: &BTreeMap[str, CanonicalSymbolId],
     slot: int,
     path: list[int],
     mut loans: list[GenericLoan],
@@ -57,7 +58,7 @@ def element_generic_loans(
     elements: &list[RustType],
     names: list[str],
     arguments: list[PlanType],
-    source_nominals: &dict[str, bool],
+    source_nominals: &BTreeMap[str, CanonicalSymbolId],
     slot: int,
     path: list[int],
     mut loans: list[GenericLoan],

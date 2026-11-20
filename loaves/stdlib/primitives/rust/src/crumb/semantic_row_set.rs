@@ -9,7 +9,7 @@
 use super::columns::{self, Budget};
 use super::hash::{self, Node, Value};
 use super::row_cells::{self, read_selected, select_field};
-use super::row_cursor::{Place, Positioned, Refusal, at};
+use super::row_cursor::{Place, Positioned, Refusal, Span, at};
 use super::row_entry::RowAdmission;
 use super::rows::{Meta, Stored, StoredField};
 
@@ -342,12 +342,51 @@ impl RowAdmission {
 
     /// One field's encoded cell, as `RowSet.field_view` does; a declared absence is not present.
     pub fn field_cell(&self, index: i64, identity: Vec<u8>, bytes: i64, elements: i64, depth: i64) -> RowRead {
+        self.encoded_field(index, &identity, false, bytes, elements, depth)
+    }
+
+    /// The number of fields in a logical record. Missing rows and enum values refuse record projection.
+    pub fn record_field_count(&self, index: i64) -> i64 {
+        match self.row(index).map(|(_, record)| &record.value) {
+            Ok(Value::Record(fields)) => i64::try_from(fields.len()).unwrap_or(i64::MAX),
+            _ => -1,
+        }
+    }
+
+    /// Select a required binary field's payload, excluding the typed cell's length framing.
+    pub fn binary_field_cell(&self, index: i64, identity: Vec<u8>, bytes: i64, elements: i64, depth: i64) -> RowRead {
+        self.encoded_field(index, &identity, true, bytes, elements, depth)
+    }
+
+    /// Select either the admitted encoded cell or a required binary cell's data under the remaining budget.
+    fn encoded_field(
+        &self,
+        index: i64,
+        identity: &[u8],
+        binary: bool,
+        bytes: i64,
+        elements: i64,
+        depth: i64,
+    ) -> RowRead {
         let (limits, mut budget) = allowance(bytes, elements, depth);
         let result = self.row(index).and_then(|(rows, record)| {
             let (entry, raw) = (&rows.dictionary[record.slot], self.raw(record));
-            let selected = select_field(entry, raw, record.origin, &identity, &mut budget)?;
+            let selected = select_field(entry, raw, record.origin, identity, &mut budget)?;
             let mut read = items(Vec::new());
-            if let Some((view, origin)) = selected.cell {
+            if let Some((mut view, mut origin)) = selected.cell {
+                if binary {
+                    if selected.field.absent != 'r'
+                        || !matches!(&selected.field.storage, Node::Scalar(kind) if kind == "binary")
+                    {
+                        return Err(at("invalid_cell", origin).in_field(identity));
+                    }
+                    let mut cursor = Span::new(view, origin);
+                    view = cursor
+                        .frame(&mut budget)
+                        .map_err(|refusal| refusal.in_field(identity))?;
+                    cursor.finished().map_err(|refusal| refusal.in_field(identity))?;
+                    origin = cursor.absolute() - view.len();
+                }
                 read.present = true;
                 read.origin = i64::try_from(origin).unwrap_or(i64::MAX);
                 read.length = i64::try_from(view.len()).unwrap_or(i64::MAX);
@@ -418,12 +457,12 @@ impl RowAdmission {
             .ok()
             .and_then(|index| rows.records.get(index))
             .ok_or_else(|| at("record_index", 0))?;
-        Ok((rows, record))
+        Ok((rows.as_ref(), record))
     }
 
     /// A record's row frame within the admitted bytes.
     fn raw(&self, record: &super::rows::Record) -> &[u8] {
-        &self.data[record.origin..record.origin + record.length]
+        &self.data.as_ref()[record.origin..record.origin + record.length]
     }
 
     /// Project the admitted value once the original row and key charges fit this read's allowance.
@@ -447,6 +486,7 @@ impl RowAdmission {
                 self.raw(record),
                 record.origin,
                 &rows.dictionary,
+                None,
                 budget,
             )?)
         };
@@ -571,7 +611,7 @@ fn scalar(kind: &str, value: &Value) -> Result<Item, &'static str> {
         }
         ("boolean", Value::Boolean(flag)) => Item::Boolean(*flag),
         ("string", Value::Text(text)) => Item::Text(text.clone()),
-        ("binary", Value::Binary(data)) => Item::Binary(data.clone()),
+        ("binary", Value::Binary(data)) => Item::Binary(data.as_ref().to_vec()),
         ("secret_string" | "secret_bytes", Value::Withheld) => Item::Withheld,
         ("reference", Value::Reference(target, identity)) => Item::Reference(target.clone(), identity.clone()),
         _ => return Err("invalid_cell"),
@@ -741,7 +781,7 @@ mod tests {
     }
 
     #[test]
-    fn a_field_is_selected_by_identity_and_a_record_is_read_under_the_callers_allowance() {
+    fn a_field_is_selected_by_identity_and_a_record_is_read_under_the_callers_allowance() -> Result<(), String> {
         let rows = admitted(BOOLEAN, "boolean");
         assert_eq!(rows.key(0), vec![0x1d, 0xdb, 0x0b, 0x3c, 0xe6, 0xd3, 0x00]);
         let cell = rows.field_cell(0, IDENTITY.to_vec(), 64, 64, 16);
@@ -777,5 +817,63 @@ mod tests {
         assert_eq!(description.supplied, 0);
         assert_eq!((description.items[0].code(), description.items.len()), (31, 24));
         assert_eq!(rows.description(0, 0, 65_536, 64).category, "limit_exceeded");
+
+        use super::super::row_request::RowWriteRequest;
+        use crate::mapping::MappedFile;
+
+        let payload = b"anchored bin";
+        let mut writer = RowWriteRequest::new(true);
+        let description = described("binary");
+        writer.description(description.clone(), false);
+        writer.record(rows.key(0));
+        writer.node(14, 1, false, 0, 0, 0, 0, Vec::new(), Vec::new(), String::new());
+        writer.node(
+            18,
+            0,
+            true,
+            0,
+            0,
+            0,
+            0,
+            IDENTITY.to_vec(),
+            Vec::new(),
+            "required".into(),
+        );
+        writer.node(8, 0, false, 0, 0, 0, 0, payload.to_vec(), Vec::new(), String::new());
+        writer.allow(1_048_576, 1_048_576, 64);
+        let encoded = writer.write();
+        assert!(encoded.category.is_empty(), "{}", encoded.category);
+
+        let extent = encoded.data.len() as i64;
+        let anchor = MappedFile::owned([b"prefix!".as_slice(), &encoded.data].concat())?;
+        let view = anchor.view(7, extent).ok_or("envelope extends past its owner")?;
+        let start = view.as_bytes().as_ptr();
+        let mut request = RowRequest::from_view(view, true, true);
+        request.supply(description);
+        request.allow(1_048_576, 1_048_576, 128);
+        let admitted = request.admit();
+        assert!(admitted.admitted() && admitted.sealed, "{}", admitted.category);
+        assert_eq!(admitted.record_field_count(0), 1);
+        let cell = admitted.binary_field_cell(0, IDENTITY.to_vec(), 256, 256, 128);
+        assert!(cell.succeeded() && cell.present, "{}", cell.category);
+        assert_eq!(cell.length, payload.len() as i64);
+        let (_, record) = admitted.row(0).map_err(|error| error.category.to_string())?;
+        let Value::Record(fields) = &record.value else {
+            return Err("binary fixture has no logical record".into());
+        };
+        let Value::Binary(hash::Binary::Mapped(view)) = &fields[0].value else {
+            return Err("admission materialized a mapped binary".into());
+        };
+        assert_eq!(view.as_bytes(), payload);
+        assert_eq!(view.as_bytes().as_ptr(), start.wrapping_add(cell.origin as usize));
+        assert_eq!(
+            admitted.read_field(0, IDENTITY.to_vec(), 256, 256, 128).items,
+            vec![Item::Binary(payload.to_vec())]
+        );
+        assert_eq!(
+            rows.binary_field_cell(0, IDENTITY.to_vec(), 256, 256, 128).category,
+            "invalid_cell"
+        );
+        Ok(())
     }
 }

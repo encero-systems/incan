@@ -19,6 +19,7 @@ from rust::incan_semantics_core::body_ir import (
     LocalDecl,
     CallableParam as RustParameter,
     nominal_carrier_key,
+    NOMINAL_CARRIER_KEY_PREFIX,
     TraitDefaultInstantiation,
 )
 from rust::std::collections import BTreeMap, VecDeque
@@ -282,7 +283,7 @@ pub def instantiate(body: &Body, arguments: list[RustType], owned_callable_slots
     mut result = retain_owned_callable_storage(body, owned_callable_slots, storage)?
     result.trait_default_instantiation = close_trait_environment(body.trait_default_instantiation, names, arguments)?
     body_name = str(body.name)
-    source_owners = source_nominal_owners(body)
+    source_owners = body.named_type_identities.as_ref()
     for index in range(len(result.locals)):
         concrete: RustType = substitute(result.locals[index].ty, names, storage).map_err(
             (reason) => f"{reason} in instantiated local of {body_name}",
@@ -386,7 +387,7 @@ pub def callable_storage_arguments(
     return Ok(storage)
 
 
-def source_nominal_storage(owners: &dict[str, bool], ty: &RustType) -> Result[RustType, str]:
+def source_nominal_storage(owners: &BTreeMap[str, CanonicalSymbolId], ty: &RustType) -> Result[RustType, str]:
     """
     Keep source nominal arguments semantic; their declared generic value fields already retain owning storage.
 
@@ -426,23 +427,20 @@ def source_nominal_storage(owners: &dict[str, bool], ty: &RustType) -> Result[Ru
         _ => return Ok(ty.clone())
 
 
-pub def source_nominal_owner(owners: &dict[str, bool], name: str) -> bool:
-    """Read the checked-origin index without cloning its keys or revisiting declaration metadata."""
+pub def source_nominal_owner(owners: &BTreeMap[str, CanonicalSymbolId], name: str) -> bool:
+    """Read the frame's checked scope, where a direct alias takes precedence over a computed carrier."""
     match owners.get(name):
-        Some(value) => return value.clone()
-        None => return false
-
-
-pub def source_nominal_owners(body: &Body) -> dict[str, bool]:
-    """Index checked source origins once per frame, preserving direct alias precedence over carrier spellings."""
-    mut owners: dict[str, bool] = {}
-    for identity in body.named_type_identities.values():
-        match nominal_carrier_key(identity):
-            Some(key) => owners[str(key)] = source_nominal_identity(identity)
-            None => pass
-    for key, identity in body.named_type_identities.iter():
-        owners[str(key)] = source_nominal_identity(identity)
-    return owners
+        Some(identity) => return source_nominal_identity(identity)
+        None => pass
+    # Older frames may retain the checked declaration under its source name only.
+    if name.startswith(NOMINAL_CARRIER_KEY_PREFIX):
+        for identity in owners.values():
+            match nominal_carrier_key(identity):
+                Some(key) =>
+                    if key == name:
+                        return source_nominal_identity(identity)
+                None => pass
+    return false
 
 
 def source_nominal_identity(identity: &CanonicalSymbolId) -> bool:

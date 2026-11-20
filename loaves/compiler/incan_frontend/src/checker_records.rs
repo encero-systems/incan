@@ -19,9 +19,9 @@ pub struct GraphBodyRecord {
     /// Stable declaration identity authenticated by the Incan checker-record codec.
     pub identity: String,
     /// Pending local-family field primitives retained for publication through the graph authority.
-    pub local: Vec<Vec<String>>,
+    pub local: Arc<Vec<Vec<String>>>,
     /// Settled final-family field primitives restored through the ordinary checked-body assembly.
-    pub final_value: Vec<Vec<String>>,
+    pub final_value: Arc<Vec<Vec<String>>>,
     /// Kernel-decoded v55 executable owner frame, when the graph selected a complete Body IR value with the checker
     /// pair. The checker validates its stable owner identity and declaration name before exposing it to Body IR.
     pub body_ir: Option<incan_semantics_core::executable_representation::EncodedOwnerRepresentation>,
@@ -1409,8 +1409,8 @@ mod tests {
         }
         Ok(super::GraphBodyRecord {
             identity: owner.identity,
-            local: owner.local,
-            final_value: owner.final_value,
+            local: owner.local.into(),
+            final_value: owner.final_value.into(),
             body_ir: None,
         })
     }
@@ -2021,8 +2021,7 @@ mod tests {
         );
 
         let mut bad = selected;
-        let layout = bad
-            .local
+        let layout = std::sync::Arc::make_mut(&mut bad.local)
             .iter_mut()
             .find(|row| row[0] == "scope")
             .ok_or("missing scope tree")?;
@@ -2171,6 +2170,10 @@ mod tests {
                     "decl {:?} in {changed}",
                     decl.span
                 );
+                assert_eq!(
+                    warm.completed_graph_body_digest(decl.span),
+                    warm.graph_body_physical_inputs(&after, decl.span)
+                );
             }
             assert_eq!(
                 lower_graph_test_module(&after, &warm).bodies,
@@ -2279,9 +2282,7 @@ mod tests {
             candidate.physical_inputs = proof;
             record.body_ir = Some(candidate);
             if corrupt_rows {
-                record
-                    .final_value
-                    .retain(|row| !row.first().is_some_and(|field| field == "scope"));
+                Arc::make_mut(&mut record.final_value).retain(|row| !row.first().is_some_and(|field| field == "scope"));
             }
             let warm = check(&parsed, vec![record], Some(selection))?;
             let fresh = check(&parsed, vec![], None)?;

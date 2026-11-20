@@ -19,7 +19,10 @@ from engine_capture import (
 from engine_messages import Submit
 from pub::incan_platform.store import Lookup, Snapshot, Transaction, begin_compared, commit, lookup, owned, put
 from store_path_conversion import snapshot
-from unit_freshness import fingerprint
+from features import FeatureRequest
+from observation import observe, trace
+from unit import describe, discovered_project
+from unit_freshness import collect_program_reach, fingerprint
 from unit_sources import SourceGraph, recorded_reach
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
@@ -53,7 +56,7 @@ pub def capture_submit(store: Path, submit: Submit) -> Result[CapturedRequest, s
     return Ok(captured)
 
 
-pub def prepare_submit(store: Path, submit: Submit) -> Result[CapturedRequest, str]:
+pub def prepare_submit(store: Path, submit: Submit, discover_standalone: bool = false) -> Result[CapturedRequest, str]:
     """
     Capture a file request and prepare its revision without publishing any part of the request.
 
@@ -82,11 +85,16 @@ pub def prepare_submit(store: Path, submit: Submit) -> Result[CapturedRequest, s
     # 2. Every engine request starts at its selected source, and build and run select the same program inputs: the verb
     #    is an execution action, not a compiled identity. The unit's recorded source graphs bound its reach once they
     #    exist.
+    mut reach = recorded_reach(source, submit.input_selection)
+    if reach is None and discover_standalone:
+        match first_standalone_reach(source, submit.input_selection, selected):
+            Ok(found) => reach = found
+            Err(reason) => trace(f"source graph unavailable for {source.0}: {reason}")
     request = CaptureRequest(
         roots=[source.0],
         selection=InputSelection(command="run", profile=submit.input_selection, features=diagnostic_features()),
         whole_unit=true,
-        reach=recorded_reach(source, submit.input_selection),
+        reach=reach,
     )
     # Complete nanosecond metadata guards this Unix request; no coarse timestamp grace delays unchanged reuse.
     checking = begin_work()
@@ -134,6 +142,18 @@ pub def prepare_submit(store: Path, submit: Submit) -> Result[CapturedRequest, s
                     reach=request.reach,
                 ),
             )
+
+
+def first_standalone_reach(source: Path, profile: str, selected: &SelectedHome) -> Result[Option[SourceGraph], str]:
+    """Use the compiler's collection before capturing an ordinary file beside unrelated standalone programs."""
+    if discovered_project(source)? is not None:
+        return Ok(None)
+    before = observe(source)?.stamp
+    unit = describe(source, profile, FeatureRequest(), direct=true, selected_standard=Some(selected.standard))?
+    collected = collect_program_reach(unit, selected.toolchain)?
+    if observe(source)?.stamp != before:
+        return Ok(None)
+    return Ok(collected)
 
 
 def diagnostic_features() -> list[str]:

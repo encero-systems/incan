@@ -95,7 +95,7 @@ fn block_context(document: &Json) -> Option<(CellType, char, Option<Vec<Value>>)
         for item in raw.as_array()? {
             let bytes = columns::hex(item.as_str()?)?;
             keys.push(match name {
-                "binary" => Value::Binary(bytes),
+                "binary" => Value::Binary(bytes.into()),
                 _ => Value::Text(String::from_utf8(bytes).ok()?),
             });
         }
@@ -504,7 +504,8 @@ fn cell(node: &CellType, raw: &[u8], dictionary: &[Stored], budget: &mut Budget)
                 .iter()
                 .find(|entry| entry.key == key)
                 .ok_or("invalid_selector")?;
-            return super::row_cells::read_root(entry, raw, 0, dictionary, budget).map_err(|refusal| refusal.category);
+            return super::row_cells::read_root(entry, raw, 0, dictionary, None, budget)
+                .map_err(|refusal| refusal.category);
         }
         CellType::Integer(signed, width) => {
             if raw.len() != *width {
@@ -524,7 +525,7 @@ fn cell(node: &CellType, raw: &[u8], dictionary: &[Stored], budget: &mut Budget)
             let data = cursor.frame(budget)?;
             Value::Text(String::from_utf8(data.to_vec()).map_err(|_| "invalid_utf8")?)
         }
-        CellType::Binary => Value::Binary(cursor.frame(budget)?.to_vec()),
+        CellType::Binary => Value::Binary(cursor.frame(budget)?.to_vec().into()),
         CellType::Decimal(precision, scale) => {
             let groups = cursor.groups(budget)?;
             let coefficient = columns::unzigzag(&groups).ok_or("integer_overflow")?;

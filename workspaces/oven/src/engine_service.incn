@@ -263,7 +263,7 @@ def accept(mut client: Client, mut state: ServiceState, request: bytes, submit: 
     state.accept(request, submit.requested_roots, token)?
     send(client.channel, request, Message.Accepted(Accepted(capture_token=token, interest_token=token)))?
     capturing = begin_work()
-    captured_request = prepare_submit(state.store, submit)
+    captured_request = prepare_submit(state.store, submit, discover_standalone=true)
     record_work(Operation.EngineCapture, submit.requested_roots, capturing)
     match captured_request:
         Err(reason) =>

@@ -3,6 +3,7 @@
 from pub::internal_models.lowering_events import (
     EventPosition, EventReference, LoweringEvent, LoweringRefusal, decode_lowering_event, encode_lowering_event, encode_lowering_refusal,
 )
+from pub::incan_platform.trace import enter_producer, finish_producer
 from rust::incan_semantics_core::semantic_digest import semantic_digest
 from rust::std::process import id as process_id
 from std.fs import Path
@@ -162,9 +163,9 @@ pub def finalized_plan_product(
     mapping = WirePositions(change=PositionChange.PlaceAt(list(positions), "", 0, str(function.span.file), function.span.line))
     current, demand, identities = positioned_product_requirements(record.function, mapping, references)?
     # 2. The same inputs now name the exact native function compiled for this declaration.
-    # A freshly captured product already passed the producer's position and schema round trips. Compare the
-    # canonical whole-plan bytes, including floating-point bits and helper frames, before reusing that proof.
-    if not reused and reported == encoded and matches_product(current, function, demand, identities, frames, references)?:
+    # Captured and restored products already passed schema and position admission. Compare the exact whole-plan
+    # bytes, including floating-point bits and helper frames, before keeping that proof under its original key.
+    if reported == encoded and matches_product(current, function, demand, identities, frames, references)?:
         if record.digest != plan_function_digest(record.function, record.requests)?:
             return Err("plan-function product digest disagrees with its capture")
         return Ok((encoded, references, current))
@@ -178,7 +179,9 @@ pub def finalized_plan_product(
         match named:
             Some(nominal) => nominals.append(nominal)
             None => return Err(f"plan-function {function.name} names a declaration its keyed product does not")
+    retried = enter_producer("compiler", "plan-function-reencode", function.name, key)
     final = encoded_record(record.inputs, function, demand, nominals, positions, frames, record.requests)?
+    finish_producer(retried, "produced")
     if final == encoded:
         return Ok((encoded, whole, current))
     # 3. A reused product was already final when retained, so any difference is a lowering defect, never a refresh.

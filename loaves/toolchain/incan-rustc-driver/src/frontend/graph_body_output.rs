@@ -331,7 +331,15 @@ impl GraphBodyOutput {
                     }
                     match record {
                         Ok(value) => {
-                            let inputs = checker.graph_body_inputs(&module.ast, fields.span, self.owner_coordinates);
+                            let retained = if self.owner_coordinates {
+                                None
+                            } else {
+                                checker.completed_graph_body_digest(fields.span)
+                            };
+                            let inputs = retained.map(|digest| {
+                                tracing::trace!(target: "incan::invocation", owner = fields.identity, "retained physical Body IR inputs");
+                                (digest, Vec::new())
+                            }).or_else(|| checker.graph_body_inputs(&module.ast, fields.span, self.owner_coordinates));
                             let (physical_inputs, coordinates) = match inputs {
                                 Some((digest, coordinates)) => (Some(digest), coordinates),
                                 None => (None, Vec::new()),
@@ -596,8 +604,8 @@ impl GraphBodyOutput {
                 let frame = incan_semantics_core::executable_representation::decode_owner(&value.body_ir)
                     .map_err(|error| format!("current executable owner refused: {error}"))?;
                 Ok(incan_frontend::checker_records::GraphBodyRecord {
-                    local: fields(&value.local)?,
-                    final_value: fields(&value.final_value)?,
+                    local: fields(&value.local)?.into(),
+                    final_value: fields(&value.final_value)?.into(),
                     identity: value.identity,
                     body_ir: Some(frame),
                 })

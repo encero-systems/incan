@@ -267,7 +267,7 @@ fn write_scalar_charged(kind: &str, value: &Value, budget: &mut Budget) -> Resul
             (0..4).try_for_each(|_| budget.bytes(text.len() as u64))?;
             frame_charged(text.as_bytes(), budget)
         }
-        ("binary", Value::Binary(data)) => frame_charged(data, budget),
+        ("binary", Value::Binary(data)) => frame_charged(data.as_ref(), budget),
         ("secret_string" | "secret_bytes", Value::Withheld) => {
             budget.bytes(1)?;
             Ok(vec![0])
@@ -767,7 +767,7 @@ fn write_scalar(kind: &str, value: &Value) -> Option<Vec<u8>> {
         }
         ("fp64", Value::Float(bits)) => output.extend(bits.iter().rev()),
         ("string", Value::Text(text)) => hash::frame(&mut output, text.as_bytes()),
-        ("binary", Value::Binary(data)) => hash::frame(&mut output, data),
+        ("binary", Value::Binary(data)) => hash::frame(&mut output, data.as_ref()),
         ("secret_string" | "secret_bytes", Value::Withheld) => output.push(0),
         ("reference", Value::Reference(target, identity)) => {
             hash::frame(&mut output, target);

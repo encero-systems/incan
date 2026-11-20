@@ -1,7 +1,7 @@
 //! Native projection of the compiler declarations in the checked editable namespace.
 //! Exhaustive patterns make an added field or alternative a compiler error until its Crumb contract is assigned.
 
-use super::super::{CheckedNamespaceInterface, NamespaceMemberIdentities};
+use super::super::{CheckedNamespaceInterface, NamespaceCompiledType, NamespaceMemberIdentities};
 use super::*;
 use crate::api_metadata::*;
 use crate::library_manifest::*;
