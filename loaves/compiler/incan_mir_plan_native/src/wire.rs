@@ -8,7 +8,8 @@
 
 use std::sync::OnceLock;
 
-use incan_std_primitives::crumb::{RowAdmission, RowRead, RowRequest, RowWriteRequest, encode_native_unsigned};
+// The standard library's native row codec, by the stable names the compiler bindings publish.
+use internal_models_bindings::{RowAdmission, RowRead, RowRequest, RowWriteRequest};
 
 /// The largest encoded plan or graph record, in bytes.
 pub(crate) const MAX_RECORD_BYTES: i64 = 67_108_864;
@@ -186,9 +187,18 @@ fn framed(data: &[u8], output: &mut Vec<u8>) {
     output.extend_from_slice(data);
 }
 
-/// A count in Crumb's shortest native unsigned form.
+/// A count in Crumb's shortest native unsigned form: little-endian base-128 groups, high bit set on all but the last.
 fn unsigned(count: usize, output: &mut Vec<u8>) {
-    output.extend_from_slice(&encode_native_unsigned(count as u128).data);
+    let mut value = count;
+    loop {
+        let group = (value & 0x7f) as u8;
+        value >>= 7;
+        if value == 0 {
+            output.push(group);
+            return;
+        }
+        output.push(group | 0x80);
+    }
 }
 
 // ---- Logical values ----
