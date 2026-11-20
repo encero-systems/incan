@@ -20,6 +20,8 @@ from rust::incan_semantics_core::semantic_digest import semantic_digest
 from record_plan_codec import encode_record_plan_products
 from record_positions import positioned_product
 from scalar_store import event_positions, event_references, finalized_plan_product, report_scalar_refusal
+from pub::internal_models.plan_module_records import REPOSITION_MODULE_PAGE
+from pub::internal_models.lowering_events import placed_admission
 from plan_modules import module_page, read_admitted
 from pub::internal_models.plan_module_records import decode_plan_module
 
@@ -243,9 +245,11 @@ def append_admitted_events(mut events: list[LoweringEvent], products: str, repor
         reported.add(event.function)
     # The native adapter fingerprints each definition by its product key and digest; it reads them from one list.
     mut definitions: list[AdmittedDefinition] = []
-    for note in read_admitted(report)?:
-        encoded = module_page(products, note.module)
-            .read_bytes()
+    for note in read_admitted(Path(products).joinpath("admissions"))?:
+        path = module_page(products, note.module)
+        if path.0.endswith(REPOSITION_MODULE_PAGE) and not note.inspected:
+            return Err("inspected module lacks its placement report")
+        encoded = path.read_bytes()
             .map_err((error) => f"cannot read admitted plan module {error.message()}")?
         page = decode_plan_module(encoded).map_err((error) => f"admitted plan module refused: {error:?}")?
         mut stored: Dict[str, bytes] = {}
@@ -256,14 +260,10 @@ def append_admitted_events(mut events: list[LoweringEvent], products: str, repor
                 continue
             if function.function not in stored:
                 return Err(f"admitted plan module {note.module} holds no event for {function.function}")
-            mut event = decode_lowering_event(stored[function.function])?
-            if event.function != function.function or event.module != note.module:
-                return Err("admitted lowering event names a different function or module")
+            mut event = placed_admission(decode_lowering_event(stored[function.function])?, note.module, function)?
             record = decode_plan_function_record(event.product)?
-            event.references = function.references
             event.reused = true
             event.admitted = true
-            event.identity = function.identity
             events.append(event)
             reported.add(function.function)
             definitions.append(AdmittedDefinition(function=function.function, identity=function.identity, key=event.key, digest=record.digest))

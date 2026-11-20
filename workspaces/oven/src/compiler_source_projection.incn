@@ -184,7 +184,7 @@ class SourceProjector:
             SourceProjection(
                 feature_inputs=feature_inputs,
                 positioned=SourceProjectionRecord(
-                    key=source_key("source-positioned", self.origin, self.path, "module"),
+                    key=positioned_source_key(self.origin, self.path),
                     text=hexlify(sha256.digest(self.source.encode("utf-8"))), start=0, end=len(self.source),
                 ),
                 header=SourceProjectionRecord(
@@ -616,3 +616,8 @@ def source_key(family: str, origin: str, path: str, facet: str) -> RecordKey:
         facet=facet,
         context="",
     )
+
+
+pub def positioned_source_key(origin: str, file: str) -> RecordKey:
+    """The positioned source projection recorded when an aggregate binds physical source geometry."""
+    return source_key("source-positioned", origin, file, "module")

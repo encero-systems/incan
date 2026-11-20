@@ -1,5 +1,6 @@
 """Dispatch Oven's public commands and report command syntax before accessing projects or the toolchain."""
 
+from compiler_reopened_peers import supply as supply_reopened_peers
 from rust::std::env import args
 from rust::std::io import Write, stderr
 from rust::std::process import exit
@@ -209,6 +210,11 @@ def dispatch(command: str, rest: list[str]) -> None:
                     Ok(document) =>
                         println(document)
                         return
+        return
+    if command == "--internal-reopened-peers":
+        match supply_reopened_peers(rest):
+            Err(reason) => fail("reopened peer selection: " + reason, 1)
+            Ok(_) => return
         return
     if command == "--internal-readmit":
         # A relink rewrote the installation it owns; this is its explicit re-admission, never a user command. Owners and

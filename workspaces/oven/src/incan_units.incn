@@ -217,6 +217,7 @@ pub def obtain_executable(
     defer_publication: bool = false,
     graph_body_records: Option[list[SelectedBodyPage]] = None,
     ranked: Option[RankedBuildInputs] = None,
+    records_directory: Option[Path] = None,
 ) -> Result[Made, str]:
     """
     Obtain the executable of `key` from the home bakery and make `output` a view of it.
@@ -236,7 +237,7 @@ pub def obtain_executable(
     shared = development_link(unit, development)
     # Inputs that cannot be named portably are compiled in place; nothing is baked or reused.
     if key.refusal != "":
-        code = compile_staged(unit, toolchain, output, key, key.refusal, shared, graph_body_records)?
+        code = compile_staged(unit, toolchain, output, key, key.refusal, shared, graph_body_records, records_directory)?
         return Ok(Made(code=code, launch=output, evaluations=1))
     selected = linkage_key(key, shared)?
     mut store = Path("")
@@ -278,6 +279,7 @@ pub def obtain_executable(
         bake_reason(store, unit),
         shared,
         selected_pages,
+        records_directory,
     )?
     if code != 0:
         _ = staged.remove_tree()
@@ -357,9 +359,10 @@ def compile_staged(
     reason: str,
     shared: bool,
     graph_body_records: Option[list[SelectedBodyPage]] = None,
+    records_directory: Option[Path] = None,
 ) -> Result[i32, str]:
     """Compile a unit to its staged name. Returns the compiler's exit code."""
-    return compile_prepared_unit(unit, toolchain, staged, Some(key), reason, shared, graph_body_records)
+    return compile_prepared_unit(unit, toolchain, staged, Some(key), reason, shared, graph_body_records, records_directory)
 
 
 pub def executable_outputs(kind: str, output: Path, shared: bool = false) -> list[Path]:

@@ -234,7 +234,7 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
     let mut inspection = false;
     let mut rustc_args = Vec::new();
     let mut shared_native = None;
-    let mut graph_body_records = incan_frontend::checker_records::GraphBodyRecords::default();
+    let mut graph_body_directory = None;
     let mut graph_body_output = None;
     let mut plan_record_report = None;
     let mut plan_record_products = None;
@@ -257,7 +257,7 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
         match option.as_str() {
             "--rustc-arg" => rustc_args.push(value.clone()),
             "--shared-native" => shared_native = Some(PathBuf::from(value)),
-            "--graph-body-records" => graph_body_records = read_graph_body_records(Path::new(value))?,
+            "--graph-body-records" => graph_body_directory = Some(Path::new(value)),
             "--graph-body-output" => graph_body_output = Some(PathBuf::from(value)),
             "--plan-record-report" => plan_record_report = Some(PathBuf::from(value)),
             "--plan-record-products" => plan_record_products = Some(PathBuf::from(value)),
@@ -273,6 +273,10 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
     if shared_native.is_some() && unit.toolchain_access.links_sysroot() {
         return Err("shared native linking cannot link the toolchain's own libraries".into());
     }
+    let graph_body_records = match graph_body_directory {
+        Some(path) => read_graph_body_records(path, anchors.bakery.clone())?,
+        None => incan_frontend::checker_records::GraphBodyRecords::default(),
+    };
     Ok(Dependencies {
         externs,
         directories: unit.search.clone(),
@@ -294,11 +298,20 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
 #[derive(Debug)]
 struct GraphBodyRecordPages {
     root: PathBuf,
+    bakery: Option<PathBuf>,
+    reopened: std::sync::OnceLock<Result<tempfile::TempDir, String>>,
 }
 
 impl GraphBodyRecordPages {
     fn owner_page(&self, identity: &str) -> PathBuf {
-        self.root.join(hex::encode(Sha256::digest(identity.as_bytes())))
+        let key = hex::encode(Sha256::digest(identity.as_bytes()));
+        if let Some(Ok(directory)) = self.reopened.get() {
+            let supplied = directory.path().join(&key);
+            if supplied.is_file() {
+                return supplied;
+            }
+        }
+        self.root.join(key)
     }
 }
 
@@ -381,6 +394,45 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
         };
         decoded_pages::remember(digest, &record);
         Ok(Some(record))
+    }
+
+    fn reopen_namespace_peers(&self, source: &str, changed: &std::collections::BTreeSet<String>) -> Result<(), String> {
+        let Some(bakery) = &self.bakery else { return Ok(()) };
+        if !self
+            .root
+            .join("reopen-snapshot.crumb")
+            .try_exists()
+            .map_err(|e| e.to_string())?
+        {
+            return Ok(());
+        }
+        let Some(oven) = std::env::var_os("INCAN_GRAPH_PEER_READER") else {
+            return Ok(());
+        };
+        let temporary = self
+            .reopened
+            .get_or_init(|| {
+                tempfile::Builder::new()
+                    .prefix("incan-reopened-peers-")
+                    .tempdir()
+                    .map_err(|e| e.to_string())
+            })
+            .as_ref()
+            .map_err(Clone::clone)?;
+        let _trace = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::reopen_namespace_peers", module = source).entered();
+        let status = std::process::Command::new(oven)
+            .arg("--internal-reopened-peers")
+            .arg(bakery)
+            .arg(&self.root)
+            .arg(temporary.path())
+            .arg(source)
+            .args(changed)
+            .status()
+            .map_err(|error| format!("cannot start the selected graph reader: {error}"))?;
+        if !status.success() {
+            return Err(format!("graph reader refused reopened namespace {source} ({status})"));
+        }
+        Ok(())
     }
 
     /// Read one engine-selected namespace page, admit its declaration root and decode its executable contribution.
@@ -505,7 +557,10 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
 }
 
 /// Bind the engine's keyed graph-record page directory without reading an aggregate inventory.
-fn read_graph_body_records(path: &Path) -> Result<incan_frontend::checker_records::GraphBodyRecords, String> {
+fn read_graph_body_records(
+    path: &Path,
+    bakery: Option<PathBuf>,
+) -> Result<incan_frontend::checker_records::GraphBodyRecords, String> {
     if !path.is_dir() {
         return Err(format!(
             "graph body record pages are not a directory: {}",
@@ -515,6 +570,8 @@ fn read_graph_body_records(path: &Path) -> Result<incan_frontend::checker_record
     Ok(incan_frontend::checker_records::GraphBodyRecords::from_source(
         std::sync::Arc::new(GraphBodyRecordPages {
             root: path.to_path_buf(),
+            bakery,
+            reopened: std::sync::OnceLock::new(),
         }),
     ))
 }
@@ -1219,7 +1276,11 @@ mod graph_body_page_tests {
         std::fs::create_dir_all(&root)?;
         let unrelated = root.join(hex::encode(Sha256::digest(b"unrelated-owner")));
         std::fs::write(&unrelated, b"malformed unrelated page")?;
-        let source = GraphBodyRecordPages { root: root.clone() };
+        let source = GraphBodyRecordPages {
+            root: root.clone(),
+            bakery: None,
+            reopened: Default::default(),
+        };
 
         assert!(source.read("requested-owner")?.is_none());
         assert!(source.read("unrelated-owner").is_err());

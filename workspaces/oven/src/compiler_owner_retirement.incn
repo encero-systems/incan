@@ -13,7 +13,7 @@ from compiler_source_projection import SourceProjection, owner_source_key
 
 pub def retire_missing_functions(
     selected: Snapshot, mut transaction: Transaction, origin: str,
-    changes: &list[RecordKey], projections: &Dict[str, SourceProjection], outputs: &CompiledBodyOutputs,
+    changes: &list[RecordKey], projections: &Dict[str, SourceProjection], rechecked: &list[str], outputs: &CompiledBodyOutputs,
 ) -> Result[None, str]:
     """Use changed source slots and the compiler's checked free-function census in the same source module."""
     mut changed: Dict[str, list[RecordKey]] = {}
@@ -25,8 +25,7 @@ pub def retire_missing_functions(
     if len(changed) == 0:
         return Ok(None)
     mut retired: set[str] = set()
-    for namespace in outputs.namespaces:
-        module = namespace.module
+    for module in rechecked:
         if module not in changed:
             continue
         changes_here = changed[module]

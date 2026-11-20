@@ -3,7 +3,7 @@
 from std.fs import Path
 from std.primitives.hash import sha256
 from std.encoding.hex import hexlify, unhexlify
-from pub::internal_models.lowering_events import AdmittedModule, LoweringEvent, decode_lowering_event, decode_module_note, encode_lowering_event
+from pub::internal_models.lowering_events import AdmittedFunction, AdmittedModule, LoweringEvent, decode_lowering_event, encode_lowering_event, placed_admission, read_module_admission
 from pub::incan_platform.store import Snapshot, Transaction
 from pub::internal_models import ProducerRank, ProducerStage
 from pub::internal_models.plan_module_records import (
@@ -15,7 +15,8 @@ from pub::internal_models.plan_module_records import (
     decode_plan_module,
     encode_plan_module,
 )
-from pub::internal_models.records import ReadScope, RecordKey, encode_record_key
+from pub::internal_models.records import ReadWitness, ReadScope, RecordRequest, RecordKey, encode_record_key
+from compiler_source_projection import positioned_source_key
 from compiler_body_keys import IDENTITY_PROFILE, body_key
 from compiler_lowering_order import LoweringOrder, LoweringOrders
 from compiler_graph_records import OutputSlots, family_outputs, prepare_evaluation, retire_output, reusable_evaluation
@@ -123,7 +124,7 @@ def admission_notes(report: Path, whole_only: bool = false) -> Result[Dict[str, 
         if name.endswith(suffix):
             octets = unhexlify(name[:len(name) - len(suffix)]).map_err((error) => error.message())?
             module = octets.decode().map_err((_) => "plan module note has a malformed name")?
-            note = decode_module_note(entry.read_bytes().map_err((error) => error.message())?)?
+            note = read_module_admission(entry)?
             if note.module != module or note.complete != (suffix == ADMITTED_MODULE_NOTE):
                 return Err("module admission note disagrees with its filename")
             if module in modules:
@@ -192,8 +193,9 @@ def restored_plans(
         output = encode_record_key(key)?
         if output not in current or event.key != function.key or event.module != note.module or event.function != function.function:
             return Err("restored function differs from its current graph slot or selected module event")
-        if event.identity != function.symbol or function.symbol != admitted.identity:
-            return Err("restored function changed canonical identity")
+        if event.identity != function.symbol or (function.symbol != admitted.identity and (function.identity == function.symbol or admitted.placement is None)):
+            return Err("restored function changed an uncertified canonical identity")
+        event = placed_admission(event, note.module, admitted)?
         selected = match reusable_evaluation(graph, key, LOWERING_PROFILE)?:
             Some(value) => value
             None => return Err("restored function lost its selected evaluation")
@@ -201,9 +203,67 @@ def restored_plans(
             return Err("restored module event differs from its selected function product")
         order = orders.retained(graph, module.key.identity, selected)?
         source.add(output, selected.value)
-        event.references = admitted.references
-        result.append(staged_plan(module.key.identity, event, function.identity, function.symbol, function.function, function.key, key, order)?)
+        result.append(staged_plan(module.key.identity, event, function.identity, admitted.identity, function.function, function.key, key, order)?)
     return Ok(result)
+
+
+def bind_source_position(source: PreparedBodyRecordSource, origin: str, file: str, mut requests: list[RecordRequest]) -> Result[None, str]:
+    """A future worker may use the old coordinates directly only while this exact positioned source still validates."""
+    positioned = positioned_source_key(origin, file)
+    if source.holds(encode_record_key(positioned)?):
+        requests.append(prepared_product_request(positioned))
+    return Ok(None)
+
+
+def rebind_complete_module(
+    mut prepared: Transaction, mut source: PreparedBodyRecordSource, scope: ReadScope, graph: Snapshot,
+    module: AdmittedPlanModule, note: AdmittedModule, order: LoweringOrder,
+) -> Result[Option[RecordKey], str]:
+    """Publish the current placement of selected immutable functions without reopening their normalized plans."""
+    if module.admitted_snapshot != graph.digest or prepared.root.value != graph.root.value or prepared.root.placement != graph.root.placement or prepared.base != graph.generation or prepared.view != graph.view:
+        return Err("admitted module belongs to a different snapshot")
+    mut changes: Dict[str, AdmittedFunction] = {}
+    for function in note.functions:
+        if function.placement is not None:
+            changes[function.function] = function
+    if len(changes) == 0 and module.placement_current:
+        return Ok(Some(module.key))
+    mut page = decode_plan_module(module.value).map_err((error) => f"selected plan module refused: {error:?}")?
+    if page.module != note.module:
+        return Err("restored module differs from its selected page")
+    mut proofs: Dict[str, str] = {}
+    for witness in module.receipt.witnesses:
+        if let ReadWitness.Found(prior, selection) = witness:
+            if prior.request.key.family == "plan-function" and prior.request == prepared_product_request(prior.request.key) and prior.semantic_digest == prior.revision and selection == prior.semantic_digest:
+                proofs[encode_record_key(prior.request.key)?] = prior.semantic_digest
+    mut requests: list[RecordRequest] = []
+    mut replaced = 0
+    for index in range(len(page.functions)):
+        function = page.functions[index]
+        key = body_key("plan-function", module.key.origin, function.identity, "body:" + function.function, function.key)
+        written = encode_record_key(key)?
+        if written not in proofs:
+            return Ok(None)
+        requests.append(prepared_product_request(key))
+        if function.function in changes:
+            current = changes[function.function]
+            previous = decode_lowering_event(function.event)?
+            if previous.identity != function.symbol or previous.key != function.key or (function.identity == function.symbol and current.identity != function.symbol):
+                return Err("position change is inconsistent with its admitted plan function")
+            placed = placed_admission(previous, note.module, current)?
+            page.functions[index].symbol = current.identity
+            page.functions[index].event = encode_lowering_event(placed)?
+            replaced += 1
+    if len(changes) != replaced or len(proofs) != len(requests):
+        return Err("admitted placement or scalar set differs from its selected module")
+    value = encode_plan_module(page).map_err((error) => f"positioned plan module refused: {error:?}")?
+    output = plan_module_key(module.key.origin, module.key.identity, value)
+    bind_source_position(source, module.key.origin, module.key.identity, requests)?
+    receipt = source.receipt(scope, output, requests, order.evidence, proofs)?
+    _ = prepare_evaluation(prepared, "plan-module-" + module.key.identity,
+        ProducerRank(namespace=order.rank, stage=ProducerStage.PlanFunction, dependency=1), value, receipt)?
+    source.add(encode_record_key(output)?, value)
+    return Ok(Some(output))
 
 
 pub def stage_plan_modules(
@@ -239,6 +299,8 @@ pub def stage_plan_modules(
             return Err("two selected pages for one admitted module")
         seen.add(module.module)
         note = notes[module.module]
+        if not module.placement_current and not note.inspected:
+            return Err("inspected module lacks its placement report")
         file = module.key.identity
         graph = match selected:
             Some(value) => value
@@ -246,11 +308,13 @@ pub def stage_plan_modules(
         if note.complete and len(note.functions) == module.function_count and file not in modules:
             position = orders.selected_order(graph, file, module.key.origin, module.namespace, module.certificate)?
             if position.evidence == module.certificate and orders.fresh(file).rank <= position.rank:
-                source.add(encode_record_key(module.key)?, module.value)
-                carried.append(module.key)
-                carried_namespace = max([carried_namespace, position.rank])
-                folded.append(file)
-                continue
+                if let Some(carried_key) = rebind_complete_module(prepared, source, scope, graph, module, note, position)?:
+                    if carried_key == module.key:
+                        source.add(encode_record_key(module.key)?, module.value)
+                    carried.append(carried_key)
+                    carried_namespace = max([carried_namespace, position.rank])
+                    folded.append(file)
+                    continue
         keyed = modules.get(file, [])
         retained = restored_plans(source, orders, graph, module, note, keyed)?
         modules[file] = keyed + retained
@@ -270,7 +334,9 @@ pub def stage_plan_modules(
             if plan.order.evidence != certificate:
                 certificate = LoweringOrder().evidence
                 break
-        receipt = source.receipt(scope, key, [prepared_product_request(plan.plan) for plan in plans], certificate)?
+        mut requests = [prepared_product_request(plan.plan) for plan in plans]
+        bind_source_position(source, origin, file, requests)?
+        receipt = source.receipt(scope, key, requests, certificate)?
         _ = prepare_evaluation(
             prepared,
             "plan-module-" + file,

@@ -78,7 +78,7 @@ pub def line_starts(source: str) -> list[int]:
     return starts
 
 
-pub def indexed_location(starts: list[int], span: RustSpan, file: str) -> SourceSpan:
+pub def indexed_location(starts: &list[int], span: RustSpan, file: str) -> SourceSpan:
     """Map a byte offset as `location` does, by binary search over the frame's line starts."""
     offset = int(span.start)
     mut low = 0

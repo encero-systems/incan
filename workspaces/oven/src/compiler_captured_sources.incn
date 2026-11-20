@@ -21,6 +21,7 @@ pub model PreparedSourceInputs:
 
     pub transaction: Transaction
     pub keys: list[RecordKey]
+    pub positioned: Dict[str, bytes] = {}
 
 
 pub def publish_captured_source_inputs(
@@ -43,6 +44,7 @@ pub def prepare_captured_source_inputs(
     """Stage captured source projections and report only keys whose semantic values differ from the selected view."""
     mut prepared = transaction
     mut changed: list[RecordKey] = []
+    mut positioned: Dict[str, bytes] = {}
     for input in inputs:
         if input.path.endswith(".incn") and input.role in [InputRole.Root, InputRole.Member, InputRole.Resolved]:
             if let Some(identity) = captured_source_identity(unit, input.path)?:
@@ -61,7 +63,7 @@ pub def prepare_captured_source_inputs(
                     stage_put(prepared, doc_slot, documentation)
                 for record in [projection.header, projection.declarations, projection.census, projection.positioned]:
                     key = encode_record_key(record.key)?
-                    if stage_changed_projection(selected, prepared, key, record)?:
+                    if stage_changed_projection(selected, prepared, key, record, positioned)?:
                         changed.append(record.key)
                 for feature in projection.feature_inputs:
                     key = encode_record_key(feature.key)?
@@ -72,17 +74,17 @@ pub def prepare_captured_source_inputs(
                         changed.append(projection.header.key)
                         changed.append(projection.census.key)
                         changed.append(feature.key)
-                    elif stage_changed_projection(selected, prepared, key, feature)?:
+                    elif stage_changed_projection(selected, prepared, key, feature, positioned)?:
                         changed.append(feature.key)
                 for owner in projection.owners:
                     for record in [owner, signature_record(owner)]:
                         key = encode_record_key(record.key)?
-                        if stage_changed_projection(selected, prepared, key, record)?:
+                        if stage_changed_projection(selected, prepared, key, record, positioned)?:
                             changed.append(record.key)
-    return Ok(PreparedSourceInputs(transaction=prepared, keys=changed))
+    return Ok(PreparedSourceInputs(transaction=prepared, keys=changed, positioned=positioned))
 
 
-def stage_changed_projection(selected: Snapshot, mut transaction: Transaction, key: str, record: SourceProjectionRecord) -> Result[bool, str]:
+def stage_changed_projection(selected: Snapshot, mut transaction: Transaction, key: str, record: SourceProjectionRecord, mut positioned: Dict[str, bytes]) -> Result[bool, str]:
     """An encoding upgrade preserves the logical source and its existing checker witnesses."""
     encoded = record.encoded()?
     changed = match get(selected, key).map_err((error) => error.message())?:
@@ -90,6 +92,8 @@ def stage_changed_projection(selected: Snapshot, mut transaction: Transaction, k
         Some(previous) => source_value(record.key, previous)? != record.text.encode("utf-8")
 
     stage_put(transaction, key, encoded)
+    if record.key.family == "source-positioned":
+        positioned[key] = encoded
     return Ok(changed)
 
 
