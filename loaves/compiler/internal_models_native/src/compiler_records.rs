@@ -18,11 +18,12 @@ pub enum SymbolNamespace {
 }
 
 /// Selected immutable package version.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageIdentity {
     pub name: String,
     pub version: String,
 }
+crate::incan_debug::incan_debug!(PackageIdentity { name, version });
 
 /// Semantic owner of a declaration.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,24 +64,31 @@ pub enum DeclarationKind {
 }
 
 /// Inclusive-exclusive byte range with optional expansion identity.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HirSourceSpan {
     pub file: String,
     pub start: i64,
     pub end: i64,
     pub expansion: Option<Vec<i64>>,
 }
+crate::incan_debug::incan_debug!(HirSourceSpan {
+    file,
+    start,
+    end,
+    expansion
+});
 
 /// Plan source position as it crosses the record boundary.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlanSourceSpanRecord {
     pub file: String,
     pub line: i64,
     pub column: i64,
 }
+crate::incan_debug::incan_debug!(PlanSourceSpanRecord { file, line, column });
 
 /// A declaration in one compilation, bound to its exact source origin.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CanonicalSymbolId {
     pub namespace: SymbolNamespace,
     pub origin: SymbolOrigin,
@@ -89,15 +97,24 @@ pub struct CanonicalSymbolId {
     pub scope_discriminant: Option<i64>,
     pub declaration_span: HirSourceSpan,
 }
+crate::incan_debug::incan_debug!(CanonicalSymbolId {
+    namespace,
+    origin,
+    declaration_name,
+    kind,
+    scope_discriminant,
+    declaration_span
+});
 
 /// Span-independent checked signature.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeclarationSignature {
     pub spelling: String,
 }
+crate::incan_debug::incan_debug!(DeclarationSignature { spelling });
 
 /// One element in a root-to-nearest-owner path.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StableDeclarationComponent {
     pub namespace: SymbolNamespace,
     pub origin: SymbolOrigin,
@@ -106,6 +123,14 @@ pub struct StableDeclarationComponent {
     pub binding_ordinal: Option<i64>,
     pub signature: Option<DeclarationSignature>,
 }
+crate::incan_debug::incan_debug!(StableDeclarationComponent {
+    namespace,
+    origin,
+    declaration_name,
+    kind,
+    binding_ordinal,
+    signature
+});
 
 /// Location relative to the semantic owner.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,7 +140,7 @@ pub enum StableDeclarationLocation {
 }
 
 /// Identity independent of source positions.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StableDeclarationId {
     pub namespace: SymbolNamespace,
     pub origin: SymbolOrigin,
@@ -124,6 +149,14 @@ pub struct StableDeclarationId {
     pub location: StableDeclarationLocation,
     pub signature: Option<DeclarationSignature>,
 }
+crate::incan_debug::incan_debug!(StableDeclarationId {
+    namespace,
+    origin,
+    declaration_name,
+    kind,
+    location,
+    signature
+});
 
 /// A span has an ordered nonnegative range and, when supplied, exactly 32 octets of expansion identity.
 pub fn valid_hir_source_span(span: &HirSourceSpan) -> bool {

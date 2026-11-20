@@ -20,36 +20,46 @@ pub const BODY_IR_ADAPTER_GENERATION: i64 = 1;
 pub const BODY_IR_ADAPTER_REMOVAL_GATE: &str = "remove native leaves only after their owning semantic families and every direct consumer accept the authored declarations";
 
 /// One immutable SharedIdentities entry; allocation and pointer identity are deliberately absent.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct NamedTypeIdentity {
     pub name: String,
     pub identity: CanonicalSymbolId,
 }
+crate::incan_debug::incan_debug!(NamedTypeIdentity { name, identity });
 
 /// One checked trait binder and its authored semantic argument.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct TraitTypeArgument {
     pub parameter: String,
     pub argument: CheckedType,
 }
+crate::incan_debug::incan_debug!(TraitTypeArgument { parameter, argument });
 
 /// The selected adoption receiver and trait binders, kept separate from method binders.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct TraitDefaultInstantiation {
     pub receiver_type: CheckedType,
     pub arguments: Vec<TraitTypeArgument>,
 }
+crate::incan_debug::incan_debug!(TraitDefaultInstantiation {
+    receiver_type,
+    arguments
+});
 
 /// One required trait field and the exact adopter field that checking selected.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct TraitFieldWitness {
     pub requirement: CanonicalSymbolId,
     pub implementation: CanonicalSymbolId,
 }
+crate::incan_debug::incan_debug!(TraitFieldWitness {
+    requirement,
+    implementation
+});
 
 /// A checked adoption owned by one concrete adopter.  `methods=None` means coverage is unavailable; `Some([])` proves
 /// an authenticated marker trait. Required-field witnesses live here rather than in a trailing side channel.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct CompilerTraitAdoption {
     pub adopter: CanonicalSymbolId,
     pub trait_identity: CanonicalSymbolId,
@@ -58,19 +68,32 @@ pub struct CompilerTraitAdoption {
     pub fields: Vec<TraitFieldWitness>,
     pub primitive_adapter: Option<PrimitiveTraitAdapter>,
 }
+crate::incan_debug::incan_debug!(CompilerTraitAdoption {
+    adopter,
+    trait_identity,
+    arguments,
+    methods,
+    fields,
+    primitive_adapter
+});
 
 /// The exact derived constructor, validator and ordered required-field slots for one checked model.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct CompilerValidatedConstructor {
     pub constructor: CanonicalSymbolId,
     pub validator: CanonicalSymbolId,
     pub required_fields: Vec<i64>,
 }
+crate::incan_debug::incan_debug!(CompilerValidatedConstructor {
+    constructor,
+    validator,
+    required_fields
+});
 
 /// A complete selected Body contract with all 24 live fields and explicit dispositions for the three skipped facts.
 /// The retired facade field is retained only for validation: a record with a nonempty tombstone is refused and no
 /// consumer may interpret it. Shared identities are copied as entries rather than sharing the native Arc map.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct CompilerBody {
     pub nominal_instantiation: Vec<TraitTypeArgument>,
     pub trait_default_instantiation: Option<TraitDefaultInstantiation>,
@@ -97,9 +120,35 @@ pub struct CompilerBody {
     pub retired_rust_facade_wire: Option<(String, String)>,
     pub native_attributes: Vec<NativeAttribute>,
 }
+crate::incan_debug::incan_debug!(CompilerBody {
+    nominal_instantiation,
+    trait_default_instantiation,
+    type_parameters,
+    declaration_id,
+    direct_call_id,
+    canonical,
+    name,
+    span,
+    return_type,
+    callable_representation,
+    checked_input_profile,
+    explicit_input_bindings,
+    returned_view,
+    named_type_identities,
+    locals,
+    params,
+    param_locals,
+    scopes,
+    block,
+    runtime_requirements,
+    panic_facts,
+    is_async,
+    retired_rust_facade_wire,
+    native_attributes
+});
 
 /// All 29 live NominalDeclaration fields, including validation, adoption and owned-callable facts.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct CompilerNominalDeclaration {
     pub trait_adoptions: Vec<CompilerTraitAdoption>,
     pub native_item: String,
@@ -131,9 +180,40 @@ pub struct CompilerNominalDeclaration {
     pub type_parameter_count: i64,
     pub record_package_identity: Option<RecordPackageIdentity>,
 }
+crate::incan_debug::incan_debug!(CompilerNominalDeclaration {
+    trait_adoptions,
+    native_item,
+    class_inheritance,
+    native_type_arguments,
+    direct_declaration_id,
+    canonical,
+    name,
+    fields,
+    field_identities,
+    field_types,
+    owned_callable_fields,
+    field_public,
+    field_aliases,
+    reflection_fields,
+    reflection_metadata,
+    comparison_equality,
+    public,
+    has_field_defaults,
+    field_default_body,
+    validated_constructor,
+    method_partial_defaults,
+    display_method,
+    newtype_deserialize,
+    newtype_string_conversion,
+    derives,
+    named_type_identities,
+    type_parameters,
+    type_parameter_count,
+    record_package_identity
+});
 
 /// All nine live LoafCallable fields, with an authenticated declaration-only frame rather than a second body.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct CompilerLoafCallable {
     pub canonical: CanonicalSymbolId,
     pub item: String,
@@ -145,6 +225,17 @@ pub struct CompilerLoafCallable {
     pub parameter_defaults: Vec<CallableParamDefault>,
     pub declaration_frame: Vec<CompilerBody>,
 }
+crate::incan_debug::incan_debug!(CompilerLoafCallable {
+    canonical,
+    item,
+    parameters,
+    return_type,
+    type_parameters,
+    native_type_arguments,
+    native_callable_parameters,
+    parameter_defaults,
+    declaration_frame
+});
 
 /// Declaration coverage that keeps a covered empty body set distinct from an uncovered declaration.
 #[derive(Clone, Debug)]
@@ -154,15 +245,19 @@ pub enum CompilerBodyCoverage {
 }
 
 /// Public roots and their private implementation dependencies remain distinct declaration inventories.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct CompilerDeclarationSet {
     pub public_roots: Vec<CanonicalSymbolId>,
     pub private_implementations: Vec<CompilerBody>,
 }
+crate::incan_debug::incan_debug!(CompilerDeclarationSet {
+    public_roots,
+    private_implementations
+});
 
 /// All live BodyIrModule fields, including invocation-only facts that publication must not import.
 /// `runtime_binding_scopes` defaults to empty.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct CompilerBodyIrModule {
     pub runtime_callable_bindings: Vec<RuntimeCallableBinding>,
     pub decorated_bindings: Vec<DecoratedBinding>,
@@ -184,6 +279,27 @@ pub struct CompilerBodyIrModule {
     pub bodies: Vec<CompilerBody>,
     pub runtime_binding_scopes: Vec<(String, Vec<String>)>,
 }
+crate::incan_debug::incan_debug!(CompilerBodyIrModule {
+    runtime_callable_bindings,
+    decorated_bindings,
+    entrypoint_effects,
+    program_entrypoints,
+    string_conversion_contract,
+    constant_declarations,
+    type_alias_declarations,
+    enum_declarations,
+    loaf_callables,
+    native_union_declarations,
+    static_declarations,
+    module_id,
+    nominal_declarations,
+    fieldless_enum_declarations,
+    value_enum_declarations,
+    trait_declarations,
+    trait_implementations,
+    bodies,
+    runtime_binding_scopes
+});
 
 /// A retired facade payload makes the body inadmissible.
 pub fn valid_compiler_body(body: &CompilerBody) -> bool {

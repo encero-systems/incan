@@ -5,13 +5,19 @@ use internal_models_bindings::Value;
 use std::collections::HashMap;
 
 /// The exact lowering inputs, native function payload, instance requests and payload digest.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PlanFunctionRecord {
     pub inputs: Vec<String>,
     pub function: Vec<u8>,
     pub requests: Vec<Vec<u8>>,
     pub digest: String,
 }
+crate::incan_debug::incan_debug!(PlanFunctionRecord {
+    inputs,
+    function,
+    requests,
+    digest
+});
 
 /// One publication's decoder and bounded cache of fully authenticated runtime signature lists. Starts empty.
 #[derive(Default)]

@@ -62,15 +62,17 @@ pub enum CompilerStatementKind {
 }
 
 /// One normalized statement and its owned source span.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct CompilerStatement {
     pub kind: CompilerStatementKind,
     pub span: HirSourceSpan,
 }
+crate::incan_debug::incan_debug!(CompilerStatement { kind, span });
 
 /// A scope-bound ordered statement block; nested control-flow stays in the same authored family.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct CompilerBlock {
     pub scope: i64,
     pub statements: Vec<CompilerStatement>,
 }
+crate::incan_debug::incan_debug!(CompilerBlock { scope, statements });

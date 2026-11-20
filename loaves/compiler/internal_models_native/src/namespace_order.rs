@@ -7,13 +7,19 @@ pub const IMPORT_ORDER_FILE: &str = "import-closures.crumb";
 ///
 /// Defaults: `rank` zero, `evidence` `"compiled-check"` (older and partial publications have no certificate for
 /// independent scheduling), `members` and `certificate` empty.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct NamespaceOrder {
     pub rank: i64,
     pub evidence: String,
     pub members: Vec<String>,
     pub certificate: Vec<u8>,
 }
+crate::incan_debug::incan_debug!(NamespaceOrder {
+    rank,
+    evidence,
+    members,
+    certificate
+});
 
 impl Default for NamespaceOrder {
     /// The reference model's field defaults.

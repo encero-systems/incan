@@ -22,40 +22,50 @@ pub enum ProducerStage {
 }
 
 /// An immutable store root's canonical digest, never a locator, table position or process pointer.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct RecordRoot {
     pub digest: String,
 }
+crate::incan_debug::incan_debug!(RecordRoot { digest });
 /// A captured input root protected by the caller's snapshot lease for the entire operation.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct InputSnapshot {
     pub root: RecordRoot,
 }
+crate::incan_debug::incan_debug!(InputSnapshot { root });
 /// Exact compiler generation, producer schema and semantic options, admitted before preparation.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ProducerProfile {
     pub identity: RecordRoot,
 }
+crate::incan_debug::incan_debug!(ProducerProfile { identity });
 /// A compiler-certified namespace order, phase and phase-local dependency order.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ProducerRank {
     pub namespace: i64,
     pub stage: ProducerStage,
     pub dependency: i64,
 }
+crate::incan_debug::incan_debug!(ProducerRank {
+    namespace,
+    stage,
+    dependency
+});
 /// One bounded page of logical output keys; continuation is handled before evaluation, never by a retry loop.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct DemandPage {
     pub keys: Vec<RecordKey>,
 }
+crate::incan_debug::incan_debug!(DemandPage { keys });
 /// The immutable evidence that every possible supplier is final before this producer's certified rank.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct RankCertificate {
     pub rank: ProducerRank,
     pub evidence: RecordRoot,
 }
+crate::incan_debug::incan_debug!(RankCertificate { rank, evidence });
 /// Final input envelope for one output, bound to the captured snapshot and exact producer profile.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PreparedInputs {
     pub output: RecordKey,
     pub snapshot: InputSnapshot,
@@ -64,18 +74,31 @@ pub struct PreparedInputs {
     pub rank_certificate: RankCertificate,
     pub selector_witnesses: RecordRoot,
 }
+crate::incan_debug::incan_debug!(PreparedInputs {
+    output,
+    snapshot,
+    profile,
+    required_reads,
+    rank_certificate,
+    selector_witnesses
+});
 /// Preparation needs these earlier-rank suppliers; this is scheduling information, never a source diagnostic.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct NeedPrerequisite {
     pub keys: Vec<RecordKey>,
     pub earlier_rank: ProducerRank,
 }
+crate::incan_debug::incan_debug!(NeedPrerequisite { keys, earlier_rank });
 /// Compiler-owned diagnostics and the exact reads supporting them, including failed speculative reads.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct SemanticRefusal {
     pub diagnostics: RecordRoot,
     pub read_witness_root: RecordRoot,
 }
+crate::incan_debug::incan_debug!(SemanticRefusal {
+    diagnostics,
+    read_witness_root
+});
 /// Typed contract or infrastructure failures; no variant is a language-level refusal.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CompilerFaultKind {
@@ -88,11 +111,12 @@ pub enum CompilerFaultKind {
     InvalidRecord(RecordKey),
 }
 /// A failed producer operation; details refer to structured evidence rather than a refusal string.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct CompilerFault {
     pub kind: CompilerFaultKind,
     pub details: RecordRoot,
 }
+crate::incan_debug::incan_debug!(CompilerFault { kind, details });
 /// Preparation either certifies final inputs, requests earlier work, refuses source or reports a fault.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Preparation {
@@ -102,27 +126,34 @@ pub enum Preparation {
     CompilerFault(CompilerFault),
 }
 /// One logical output selected for value evaluation after all preparation has settled.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ReadyWork {
     pub output: RecordKey,
     pub stage: ProducerStage,
     pub profile: ProducerProfile,
 }
+crate::incan_debug::incan_debug!(ReadyWork { output, stage, profile });
 /// The produced logical record and immutable value root, valid under the caller's staging ownership.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ValueReference {
     pub key: RecordKey,
     pub root: RecordRoot,
 }
+crate::incan_debug::incan_debug!(ValueReference { key, root });
 /// Work performed by this call, excluding reuse and native compilation owned by other components.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ProducerCounters {
     pub evaluations: i64,
     pub records_read: i64,
     pub bytes_read: i64,
 }
+crate::incan_debug::incan_debug!(ProducerCounters {
+    evaluations,
+    records_read,
+    bytes_read
+});
 /// A staged answer with semantic identity, exact read evidence, diagnostics and measured work.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Produced {
     pub value_ref: ValueReference,
     pub semantic_digest: RecordRoot,
@@ -130,6 +161,13 @@ pub struct Produced {
     pub diagnostic_root: RecordRoot,
     pub counters: ProducerCounters,
 }
+crate::incan_debug::incan_debug!(Produced {
+    value_ref,
+    semantic_digest,
+    read_witness_root,
+    diagnostic_root,
+    counters
+});
 /// A final value, semantic refusal or compiler fault; unfinished suppliers cannot masquerade as diagnostics.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Evaluation {

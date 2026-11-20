@@ -62,7 +62,7 @@ pub enum CheckedRuntimeBuiltin {
 }
 
 /// Every callable-parameter fact retained in a semantic function type.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckedCallableParam {
     pub name: Option<String>,
     pub ty: CheckedType,
@@ -73,6 +73,16 @@ pub struct CheckedCallableParam {
     pub native_owned: bool,
     pub input_access: CheckedInputAccess,
 }
+crate::incan_debug::incan_debug!(CheckedCallableParam {
+    name,
+    ty,
+    kind,
+    has_default,
+    is_partial_preset,
+    is_mut,
+    native_owned,
+    input_access
+});
 
 /// Recursive sequence arity is part of the record grammar. Malformed arities remain representable for validation.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

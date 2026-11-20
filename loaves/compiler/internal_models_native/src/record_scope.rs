@@ -6,7 +6,7 @@ pub const READ_SCHEMA: &str = "incan.compiler-fact-reads/1";
 
 /// Full logical identity; locations, revisions and invocation-local table slots are excluded. `context` defaults to
 /// empty.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct RecordKey {
     pub family: String,
     pub identity: String,
@@ -15,21 +15,35 @@ pub struct RecordKey {
     pub facet: String,
     pub context: String,
 }
+crate::incan_debug::incan_debug!(RecordKey {
+    family,
+    identity,
+    identity_profile,
+    origin,
+    facet,
+    context
+});
 /// Exact leased snapshot and producer profile, retained by the source for the activation's lifetime.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ReadScope {
     pub snapshot: String,
     pub profile: String,
 }
+crate::incan_debug::incan_debug!(ReadScope { snapshot, profile });
 /// A snapshot-bound payload reference and exact byte range, not a physical location.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct PayloadSelection {
     pub reference: String,
     pub offset: i64,
     pub length: i64,
 }
+crate::incan_debug::incan_debug!(PayloadSelection {
+    reference,
+    offset,
+    length
+});
 /// A schema-owned selector, ordering and bounded continuation, including empty-result evidence.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct MemberSelection {
     pub selector: String,
     pub order: String,
@@ -37,6 +51,13 @@ pub struct MemberSelection {
     pub upper: String,
     pub continuation: String,
 }
+crate::incan_debug::incan_debug!(MemberSelection {
+    selector,
+    order,
+    lower,
+    upper,
+    continuation
+});
 /// A field, exact payload range, or bounded ordered membership selector, including its continuation boundary.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum RecordSelection {
@@ -51,43 +72,69 @@ pub const DEFAULT_READ_BYTES: i64 = 65_536;
 
 /// One bounded selection; the source must return evidence for precisely this key and selection. `byte_limit`
 /// defaults to [`DEFAULT_READ_BYTES`].
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct RecordRequest {
     pub key: RecordKey,
     pub selection: RecordSelection,
     pub byte_limit: i64,
 }
+crate::incan_debug::incan_debug!(RecordRequest {
+    key,
+    selection,
+    byte_limit
+});
 /// Exact immutable binding and semantic value; payload and selector evidence remain separate.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct RevisionEvidence {
     pub scope: ReadScope,
     pub request: RecordRequest,
     pub revision: String,
     pub semantic_digest: String,
 }
+crate::incan_debug::incan_debug!(RevisionEvidence {
+    scope,
+    request,
+    revision,
+    semantic_digest
+});
 /// One selected encoded value and its authenticated source evidence, never a decoded dependency closure.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct SelectedFact {
     pub evidence: RevisionEvidence,
     pub value: Vec<u8>,
     pub selection_digest: String,
 }
+crate::incan_debug::incan_debug!(SelectedFact {
+    evidence,
+    value,
+    selection_digest
+});
 /// A proven semantic exclusion for the exact request, never an unloaded or unfinished supplier.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct AbsentFact {
     pub scope: ReadScope,
     pub request: RecordRequest,
     pub exclusion_digest: String,
 }
+crate::incan_debug::incan_debug!(AbsentFact {
+    scope,
+    request,
+    exclusion_digest
+});
 /// A witnessed tombstone for the exact request, retaining the immutable tombstone revision.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct DeletedFact {
     pub scope: ReadScope,
     pub request: RecordRequest,
     pub revision: String,
 }
+crate::incan_debug::incan_debug!(DeletedFact {
+    scope,
+    request,
+    revision
+});
 /// One bounded ordered member page and the authenticated digest and continuation of that exact selection.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct MemberFact {
     pub scope: ReadScope,
     pub request: RecordRequest,
@@ -95,6 +142,13 @@ pub struct MemberFact {
     pub membership_digest: String,
     pub continuation: String,
 }
+crate::incan_debug::incan_debug!(MemberFact {
+    scope,
+    request,
+    value,
+    membership_digest,
+    continuation
+});
 /// Infrastructure faults terminate the activation and cannot become source diagnostics or semantic absence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReadFault {
@@ -126,20 +180,29 @@ pub enum ReadWitness {
     Members(ReadScope, RecordRequest, String, String),
 }
 /// Source calls and encoded response bytes, including invalid replies; source I/O and decode costs are separate.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct ReadCounters {
     pub operations: i64,
     pub response_bytes: i64,
 }
+crate::incan_debug::incan_debug!(ReadCounters {
+    operations,
+    response_bytes
+});
 /// The certified output and earlier selector evidence remain dependencies even when no value is read.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PreparationEvidence {
     pub output: RecordKey,
     pub rank_certificate: String,
     pub selector_witnesses: String,
 }
+crate::incan_debug::incan_debug!(PreparationEvidence {
+    output,
+    rank_certificate,
+    selector_witnesses
+});
 /// Complete activation evidence, including empty reads, exact profile and measured response bytes.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ReadReceipt {
     pub schema: String,
     pub scope: ReadScope,
@@ -148,6 +211,14 @@ pub struct ReadReceipt {
     pub operations: i64,
     pub response_bytes: i64,
 }
+crate::incan_debug::incan_debug!(ReadReceipt {
+    schema,
+    scope,
+    preparation,
+    witnesses,
+    operations,
+    response_bytes
+});
 
 /// A source owns its value bytes and authenticates the evidence under the leased snapshot.
 pub trait RecordSource {

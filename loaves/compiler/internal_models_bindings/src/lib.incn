@@ -4,23 +4,22 @@ pub from rust::incan_std_primitives::collections import list_get
 pub from rust::incan_std_primitives::crumb import RowAdmission, RowRead, RowRequest, RowWriteRequest
 pub from rust::incan_std_primitives::errors import json_decode_error_string
 pub from rust::incan_std_data::json import JsonValue as NativeJsonValue
-pub from pub::incan_platform.store import BindingLookup, Snapshot, lookup_binding, lookup_members
+pub from pub::incan_platform.store import BindingLookup, Snapshot, lookup_binding, lookup_binding_metadata, lookup_members
 pub from std.primitives.crumb import Budget
 pub from std.primitives.crumb.descriptions import Description, DescriptionMode
 pub from std.primitives.crumb.records import RowRecord
 pub from std.primitives.crumb.registrations import KindRegistry
-pub from std.primitives.crumb.row_reader import read_rows
+pub from std.primitives.crumb.row_reader import RowSet, read_rows
 pub from std.primitives.crumb.row_writer import write_rows
+pub from std.primitives.crumb.row_values import build_value, refusal, settle
 pub from std.primitives.crumb.types import AbsentPolicy
-pub from std.primitives.crumb.values import Metadata, MetadataEntry, Value, ValueField
-pub from std.primitives.views import MappedFile
-pub from std.primitives.crumb.hashes import description_hash, value_hash
+pub from std.primitives.crumb.values import IntegerValue, MapEntry, Metadata, MetadataEntry, Value, ValueField
+pub from std.primitives.views import MappedFile, MappedView
+pub from std.primitives.crumb.hashes import HashResult, description_hash, value_hash
 pub from std.primitives.crumb.metadata_values import encode as encode_metadata
 pub from std.primitives.crumb.values import Projection
-from std.primitives.crumb.encoding_errors import BinaryError
-from std.primitives.crumb.errors import CrumbError
-from std.primitives.crumb.row_reader import RowSet
-pub from std.primitives.views import MappedView
+pub from std.primitives.crumb.encoding_errors import BinaryError
+pub from std.primitives.crumb.errors import CrumbError
 
 
 pub def create_budget(octets: int, elements: int, depth: int) -> Result[Budget, CrumbError]:
@@ -33,6 +32,26 @@ pub def empty_registry(mut budget: Budget) -> Result[KindRegistry, CrumbError]:
     return KindRegistry.create([], budget)
 
 
+pub def codec_allowance(budget: Budget) -> tuple[int, int]:
+    """Return the remaining byte and element allowance for a native codec helper."""
+    return budget.codec_allowance()
+
+
+pub def depth_allowance(budget: Budget) -> int:
+    """Return the nesting depth still available to a native codec helper."""
+    return budget.depth_allowance()
+
+
+pub def charge_bytes(mut budget: Budget, count: int) -> Result[None, CrumbError]:
+    """Charge bytes a native helper already used."""
+    return budget.charge_bytes(count)
+
+
+pub def charge_elements(mut budget: Budget, count: int) -> Result[None, CrumbError]:
+    """Charge elements a native helper already used."""
+    return budget.charge_elements(count)
+
+
 pub def mapped_bytes(data: bytes) -> Result[MappedFile, str]:
     """Pass owned bytes to the standard immutable mapping constructor."""
     return MappedFile.owned(data)
@@ -43,14 +62,54 @@ pub def complete_view(owner: MappedFile) -> Option[MappedView]:
     return owner.view(0, owner.len())
 
 
+pub def view_len(view: MappedView) -> int:
+    """Return the length of a mapped view."""
+    return view.len()
+
+
+pub def view_bytes(view: MappedView) -> bytes:
+    """Copy a mapped view into independently owned bytes."""
+    return view.to_bytes()
+
+
+pub def view_request(view: MappedView, sealed: bool, strict: bool) -> RowRequest:
+    """Start a native row request over the view's immutable backing without copying it."""
+    return RowRequest.from_view(view.0, sealed, strict)
+
+
 pub def row_count(rows: RowSet) -> int:
     """Return the number of rows the reader already admitted."""
     return rows.len()
 
 
+pub def row_key(rows: RowSet, index: int) -> bytes:
+    """Return one admitted row's key."""
+    return rows.key(index)
+
+
+pub def row_field_count(rows: RowSet, index: int) -> int:
+    """Return one admitted record row's field count."""
+    return rows.record_field_count(index)
+
+
+pub def row_descriptions(rows: RowSet, mut budget: Budget) -> Result[list[Description], BinaryError]:
+    """Return the admitted envelope's description dictionary."""
+    return rows.descriptions(budget)
+
+
 pub def read_record_at(rows: RowSet, index: int, mut budget: Budget) -> Result[RowRecord, BinaryError]:
     """Materialize the selected original Crumb row under its shared budget."""
     return rows.read_record(index, budget)
+
+
+pub def read_field_at(rows: RowSet, index: int, identity: bytes, mut budget: Budget) -> Result[Value, BinaryError]:
+    """Materialize one field of an admitted row under its shared budget."""
+    return rows.read_field(index, identity, budget)
+
+
+pub def binary_field_at(rows: RowSet, index: int, identity: bytes, mut budget: Budget) -> Result[MappedView, BinaryError]:
+    """Return one binary field of an admitted row as a view of the envelope."""
+    return rows.binary_field_view(index, identity, budget)
 
 
 pub def crumb_message(error: CrumbError) -> str:

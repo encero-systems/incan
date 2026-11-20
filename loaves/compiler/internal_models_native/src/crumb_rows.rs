@@ -1,75 +1,86 @@
-//! Public compiler row helpers retaining the standard library's general logical model.
+//! Bounded public-Crumb row setup shared by the compiler's record models.
 use internal_models_bindings::{
-    AbsentPolicy, Budget, Description, DescriptionMode, KindRegistry, Metadata, MetadataEntry, RowRecord, Value,
-    ValueField, binary_message, complete_view, create_budget, crumb_message, empty_registry, mapped_bytes,
-    read_record_at, read_rows, row_count, write_rows,
+    AbsentPolicy, Budget, Description, DescriptionMode, KindRegistry, MappedView, Metadata, MetadataEntry, RowRecord,
+    RowSet, Value, ValueField, binary_message, complete_view, create_budget, crumb_message, empty_registry,
+    mapped_bytes, read_record_at, read_rows, row_count, view_len, write_rows,
 };
 
-/// A required model field with its stable identity and canonical projection policy.
-#[derive(Clone, Debug, PartialEq, Eq)]
+const OPERATION_BYTES: i64 = 67_108_864;
+const OPERATION_ELEMENTS: i64 = 4_194_304;
+const OPERATION_DEPTH: i64 = 128;
+
+/// One required Crumb model field with its stable identity and canonical projection policy. `canonical` defaults to
+/// true.
+#[derive(Clone, PartialEq, Eq)]
 pub struct ModelField {
     pub identity: Vec<u8>,
     pub name: String,
     pub storage: String,
     pub canonical: bool,
 }
+crate::incan_debug::incan_debug!(ModelField {
+    identity,
+    name,
+    storage,
+    canonical
+});
 
-/// Create the shared bound for one compiler-record operation.
-pub fn operation_budget() -> Result<Budget, String> {
-    create_budget(67_108_864, 4_194_304, 128).map_err(|error| crumb_message(&error))
+impl ModelField {
+    /// A canonical field, the reference default.
+    pub fn new(identity: &[u8], name: &str, storage: &str) -> Self {
+        Self {
+            identity: identity.to_vec(),
+            name: name.to_owned(),
+            storage: storage.to_owned(),
+            canonical: true,
+        }
+    }
+
+    /// A field excluded from the canonical projection.
+    pub fn non_canonical(identity: &[u8], name: &str, storage: &str) -> Self {
+        Self {
+            canonical: false,
+            ..Self::new(identity, name, storage)
+        }
+    }
+}
+
+/// Bound cumulative Crumb work, including repeated passes over the same logical fields. Pass zero for the reference
+/// default minimum.
+pub fn operation_budget(minimum_bytes: i64) -> Result<Budget, String> {
+    create_budget(OPERATION_BYTES.max(minimum_bytes), OPERATION_ELEMENTS, OPERATION_DEPTH)
+        .map_err(|error| crumb_message(&error))
 }
 
 /// Keep metadata keys and values in the original declaration order.
-fn entry(key: &str, value: Metadata) -> MetadataEntry {
+pub(crate) fn entry(key: &str, value: Metadata) -> MetadataEntry {
     MetadataEntry {
         key: key.to_owned(),
         value,
     }
 }
 
-/// Construct one logical description from either general fields or static compiler schema fields.
-pub(crate) fn description_from_fields<'a>(
-    selector: &[u8],
-    path: &str,
-    fields: impl Iterator<Item = (&'a [u8], &'a str, &'a str, bool)>,
-) -> Description {
-    let metadata = fields
-        .map(|(identity, name, storage, canonical)| {
-            Metadata::Map(vec![
-                entry("id", Metadata::Binary(identity.to_vec())),
-                entry("name", Metadata::Text(name.to_owned())),
-                entry("type", Metadata::Text(storage.to_owned())),
-                entry("canonical", Metadata::Boolean(canonical)),
-                entry("absent", Metadata::Text("required".into())),
-                entry("properties", Metadata::Map(Vec::new())),
-            ])
-        })
-        .collect();
+/// Build one complete referenced Crumb model description in declaration order.
+pub fn model_description(selector: &[u8], path: &str, fields: &[ModelField]) -> Description {
     Description {
         metadata: Metadata::Map(vec![
             entry("kind", Metadata::Text("Record".into())),
             entry("nominal", Metadata::Binary(selector.to_vec())),
             entry("path", Metadata::Text(path.to_owned())),
             entry("properties", Metadata::Map(Vec::new())),
-            entry("fields", Metadata::List(metadata)),
+            entry("fields", Metadata::List(fields.iter().map(description_field).collect())),
         ]),
         mode: DescriptionMode::Reference,
     }
 }
 
-/// Build a referenced Crumb description in declaration order.
-pub fn model_description(selector: &[u8], path: &str, fields: &[ModelField]) -> Description {
-    description_from_fields(
-        selector,
-        path,
-        fields
-            .iter()
-            .map(|f| (f.identity.as_slice(), f.name.as_str(), f.storage.as_str(), f.canonical)),
-    )
+/// Bind one present logical value to a required field contract.
+pub fn required_value(identity: &[u8], value: Value) -> ValueField {
+    field_value(identity, value, true)
 }
 
-/// Move an already owned compiler value directly into its required field.
-pub(crate) fn owned_field(identity: &[u8], value: Value, canonical: bool) -> ValueField {
+/// Bind one present logical value to a required field contract with an explicit canonical projection policy.
+pub fn field_value(identity: &[u8], value: Value, canonical: bool) -> ValueField {
     ValueField {
         identity: identity.to_vec(),
         canonical,
@@ -78,47 +89,74 @@ pub(crate) fn owned_field(identity: &[u8], value: Value, canonical: bool) -> Val
     }
 }
 
-/// Bind a borrowed logical value to a present, required field.
-pub fn required_value(identity: &[u8], value: &Value, canonical: bool) -> ValueField {
-    // The returned field must retain the logical value after this borrow ends.
-    owned_field(identity, value.clone(), canonical)
-}
-
-/// Use the original byte and element limits and create the empty local kind registry.
-fn row_budget(maximum: i64) -> Result<(Budget, KindRegistry), String> {
-    let mut budget = create_budget(maximum.wrapping_mul(4), 4_194_304, 128).map_err(|error| crumb_message(&error))?;
+/// Encode one model's rows through the public Crumb API and enforce the caller's byte boundary.
+pub fn encode_rows(description: &Description, records: Vec<RowRecord>, maximum: i64) -> Result<Vec<u8>, String> {
+    let mut budget = operation_budget(maximum * 4)?;
     let registry = empty_registry(&mut budget).map_err(|error| crumb_message(&error))?;
-    Ok((budget, registry))
-}
-
-/// Encode one model's rows under the public Crumb budget and caller's final byte limit.
-pub fn encode_rows(description: &Description, records: &Vec<RowRecord>, maximum: i64) -> Result<Vec<u8>, String> {
-    let (mut budget, registry) = row_budget(maximum)?;
-    let encoded = write_rows(
-        // The existing Incan row writer requires a borrowed Vec of owned descriptions.
-        &vec![description.clone()],
-        records,
-        &registry,
-        false,
-        &mut budget,
-    )
-    .map_err(|error| crumb_message(&error))?;
-    if i64::try_from(encoded.len()).map_or(true, |size| size > maximum) {
-        return Err("encoded Crumb rows exceed their byte boundary".into());
+    // The standard row writer takes its description list by reference.
+    let descriptions = vec![description.clone()];
+    let encoded =
+        write_rows(&descriptions, &records, &registry, false, &mut budget).map_err(|error| crumb_message(&error))?;
+    if encoded.len() as i64 > maximum {
+        return Err(format!(
+            "encoded Crumb rows need {} bytes, limit {maximum}",
+            encoded.len()
+        ));
     }
     Ok(encoded)
 }
 
-/// Restore each logical row in order under the same allowance used for admission.
-pub fn decode_rows(encoded: &Vec<u8>, descriptions: &Vec<Description>, maximum: i64) -> Result<Vec<RowRecord>, String> {
-    if i64::try_from(encoded.len()).map_or(true, |size| size > maximum) {
+/// Admit one complete envelope and materialize only its bounded logical rows.
+pub fn decode_rows(encoded: &[u8], descriptions: &Vec<Description>, maximum: i64) -> Result<Vec<RowRecord>, String> {
+    let mut budget = operation_budget(maximum * 4)?;
+    let rows = admit_rows(encoded, descriptions, maximum, &mut budget)?;
+    materialize_rows(&rows, &mut budget)
+}
+
+/// Project each admitted row under the original remaining budget.
+fn materialize_rows(rows: &RowSet, budget: &mut Budget) -> Result<Vec<RowRecord>, String> {
+    (0..row_count(rows))
+        .map(|index| read_record_at(rows, index, budget).map_err(|error| binary_message(&error)))
+        .collect()
+}
+
+/// Encode one required field's complete metadata.
+pub fn description_field(field: &ModelField) -> Metadata {
+    Metadata::Map(vec![
+        entry("id", Metadata::Binary(field.identity.clone())),
+        entry("name", Metadata::Text(field.name.clone())),
+        entry("type", Metadata::Text(field.storage.clone())),
+        entry("canonical", Metadata::Boolean(field.canonical)),
+        entry("absent", Metadata::Text("required".into())),
+        entry("properties", Metadata::Map(Vec::new())),
+    ])
+}
+
+/// Retain the validated logical row view so callers may read a field without decoding its siblings.
+pub fn admit_rows(
+    encoded: &[u8],
+    descriptions: &Vec<Description>,
+    maximum: i64,
+    budget: &mut Budget,
+) -> Result<RowSet, String> {
+    if encoded.len() as i64 > maximum {
         return Err("encoded Crumb rows exceed their byte boundary".into());
     }
-    let (mut budget, registry) = row_budget(maximum)?;
-    let owner = mapped_bytes(encoded)?;
+    let owner = mapped_bytes(&encoded.to_vec())?;
     let view = complete_view(&owner).ok_or("Crumb row envelope has no complete view")?;
-    let rows = read_rows(&view, descriptions, &registry, false, &mut budget).map_err(|error| binary_message(&error))?;
-    (0..row_count(&rows))
-        .map(|index| read_record_at(&rows, index, &mut budget).map_err(|error| binary_message(&error)))
-        .collect()
+    admit_rows_view(&view, descriptions, maximum, budget)
+}
+
+/// Admit a borrowed store range with the same envelope and budget checks as owned input.
+pub fn admit_rows_view(
+    view: &MappedView,
+    descriptions: &Vec<Description>,
+    maximum: i64,
+    budget: &mut Budget,
+) -> Result<RowSet, String> {
+    if view_len(view) > maximum {
+        return Err("encoded Crumb rows exceed their byte boundary".into());
+    }
+    let registry: KindRegistry = empty_registry(budget).map_err(|error| crumb_message(&error))?;
+    read_rows(view, descriptions, &registry, false, budget).map_err(|error| binary_message(&error))
 }
