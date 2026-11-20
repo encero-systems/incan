@@ -745,15 +745,19 @@ impl Positions {
         // The checked record codecs read persisted handles from complete cells. Type payloads also carry lexical
         // spellings, so bind their current checked aliases where present. The read sets are derived from the owner
         // records, independent of other declarations the checker happened to load in this activation.
+        // A nominal can also be listed as an ordinary declaration. Witness an equal binding only once.
         let mut handles = BTreeMap::new();
         let mut type_handles = BTreeMap::new();
         let mut type_names = BTreeMap::new();
         for cell in records.iter().flat_map(|fields| fields.iter()).flatten() {
             let name = cell.as_str();
-            if let Some(identity) = self.identities.get(name) {
+            let type_identity = self.type_identities.get(name);
+            if let Some(identity) = self.identities.get(name)
+                && Some(identity) != type_identity
+            {
                 handles.insert(name, target(identity));
             }
-            if let Some(identity) = self.type_identities.get(name) {
+            if let Some(identity) = type_identity {
                 type_handles.insert(name, target(identity));
             }
             if let Some(resolved) = facts
@@ -770,6 +774,16 @@ impl Positions {
                 })
             {
                 type_names.insert(name, target(resolved));
+            }
+        }
+        // A contextual reference already binds the stable member to its checked nominal and physical declaration.
+        // A matching entry from the ambient symbol table adds no input. Keep a differing binding in the witness.
+        for (here, context) in &local.references.stable_declaration_contexts {
+            if let Some(member) = local.references.resolved_identities.get(here)
+                && let Ok(key) = self.contextual_identity(member, context)
+                && self.identities.get(key.as_str()) == Some(member)
+            {
+                handles.remove(key.as_str());
             }
         }
         // The store adds the family's selector to each native header and can return canonical rows in codec order.
@@ -1438,4 +1452,64 @@ struct RestoredOwner {
 struct FinalTypes {
     expressions: BTreeMap<Span, crate::symbols::ResolvedType>,
     bindings: BTreeMap<CanonicalSymbolId, crate::symbols::ResolvedType>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn physical_inputs_ignore_duplicate_nominal_and_member_bindings() -> Result<(), Box<dyn std::error::Error>> {
+        let (program, checker, owner) = fixture(
+            "model Record:\n    value: int\n\ndef take(item: Record) -> int:\n    return item.value\n",
+            "take",
+        )?;
+        let local = &checker.checked_body(owner).ok_or("missing checked body")?.local;
+        let records = [
+            checker
+                .available_declaration_record(owner)
+                .ok_or("missing declaration record")?,
+            checker.available_local_record(owner).ok_or("missing local record")?,
+            checker.available_final_record(owner).ok_or("missing final record")?,
+        ];
+        let mut positions = Positions::for_local(&checker, &program, owner, local)?;
+        let (&here, context) = local
+            .references
+            .stable_declaration_contexts
+            .iter()
+            .next()
+            .ok_or("missing checked member context")?;
+        let member = local
+            .references
+            .resolved_identities
+            .get(&here)
+            .ok_or("missing checked member")?;
+        let member_key = positions.contextual_identity(member, context)?;
+        let nominal_key = StableDeclarationId::from_canonical(&context.owner, None, None)
+            .ok_or("missing nominal identity")?
+            .render_compact();
+        assert_eq!(positions.type_identities.get(&nominal_key), Some(&context.owner));
+
+        positions.identities.remove(&nominal_key);
+        positions.identities.remove(&member_key);
+        let before = positions
+            .physical_inputs_in(checker.type_info(), local, records, None)
+            .ok_or("missing witness")?;
+        for (key, identity) in [(nominal_key, &context.owner), (member_key, member)] {
+            positions.identities.insert(key.clone(), identity.clone());
+            let duplicate = positions.physical_inputs_in(checker.type_info(), local, records, None);
+            assert_eq!(duplicate, Some(before), "{key}");
+            positions
+                .identities
+                .get_mut(&key)
+                .ok_or("missing duplicate")?
+                .declaration_span
+                .start += 1;
+            let conflict = positions.physical_inputs_in(checker.type_info(), local, records, None);
+            assert!(conflict.is_some());
+            assert_ne!(conflict, Some(before), "{key}");
+            positions.identities.remove(&key);
+        }
+        Ok(())
+    }
 }
