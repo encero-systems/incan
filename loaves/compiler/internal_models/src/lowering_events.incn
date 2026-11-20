@@ -1,5 +1,6 @@
 """Request-local transport for named lowering products, explicit refusals and the complete native interface."""
 
+from std.fs import Path
 from std.primitives.crumb.descriptions import Description
 from std.primitives.crumb.values import Value
 from crumb_rows import ModelField, model_description, required_value
@@ -16,6 +17,7 @@ pub def native_interface_filename() -> str:
     return INTERFACE_REPORT
 
 
+@derive(Eq)
 pub model EventReference:
     """A named ordinal's position in the current model or enum table."""
 
@@ -24,6 +26,7 @@ pub model EventReference:
     pub name: str
 
 
+@derive(Eq)
 pub model EventPosition:
     """A Body IR node's current source coordinates."""
 
@@ -226,11 +229,18 @@ pub def decode_admitted_definitions(encoded: bytes) -> Result[list[AdmittedDefin
     return Ok(definitions)
 
 
+pub model AdmittedPlacement:
+    """Current Body IR node coordinates for an admitted scalar in a physically edited file."""
+    pub key: str
+    pub positions: list[EventPosition]
+
+
 pub model AdmittedFunction:
     """A restored function's identity and native declaration positions in this request."""
     pub function: str
     pub identity: str
     pub references: list[EventReference]
+    pub placement: Option[AdmittedPlacement] = None
 
 
 pub model AdmittedModule:
@@ -238,6 +248,7 @@ pub model AdmittedModule:
     pub module: str
     pub complete: bool
     pub functions: list[AdmittedFunction]
+    pub inspected: bool = false
 
 
 def note_description() -> Description:
@@ -288,3 +299,73 @@ pub def decode_module_note(encoded: bytes) -> Result[AdmittedModule, str]:
     if module == "" or len(functions) == 0:
         return Err("module admission lacks its module or restored function")
     return Ok(AdmittedModule(module=module, complete=complete, functions=functions))
+
+def placement_description() -> Description:
+    """Supplement a module admission without changing the existing admission or plan-module formats."""
+    return model_description(b"admgeo\x00", "incan.module-admission-placement/1", [
+        ModelField(identity=b"funct_", name="functions", storage="list<tuple<string,string,string,list<tuple<i64,i64>>>>"),
+        ModelField(identity=b"module", name="module", storage="string"),
+    ])
+
+
+pub def write_module_placement(path: Path, note: AdmittedModule) -> Result[None, str]:
+    """Store only changed placements. Refuse a stale companion if it cannot be removed."""
+    mut functions: list[Value] = []
+    for function in note.functions:
+        if let Some(placement) = function.placement:
+            nodes = [Value.Tuple([integer(p.line), integer(p.column)]) for p in placement.positions]
+            functions.append(Value.Tuple([Value.Text(function.function), Value.Text(function.identity), Value.Text(placement.key), Value.List(nodes)]))
+    if len(functions) == 0 and not note.inspected:
+        if path.is_file():
+            path.unlink().map_err((error) => error.message())?
+        return Ok(None)
+    encoded = encode_graph_row(b"admgeo\x00", placement_description(), [
+        required_value(b"funct_", Value.List(functions)),
+        required_value(b"module", Value.Text(note.module)),
+    ])?
+    path.write_bytes(encoded).map_err((error) => error.message())?
+    return Ok(None)
+
+
+pub def read_module_admission(path: Path) -> Result[AdmittedModule, str]:
+    """Bind a sparse coordinates companion to the exact functions and identities in this admission."""
+    mut note = decode_module_note(path.read_bytes().map_err((error) => error.message())?)?
+    companion = Path(path.0 + ".placement")
+    if not companion.is_file():
+        return Ok(note)
+    encoded = companion.read_bytes().map_err((error) => error.message())?
+    fields = decode_graph_row(encoded, b"admgeo\x00", placement_description(), 2)?
+    if text(fields[1].value)? != note.module:
+        return Err("placement belongs to a different admitted module")
+    note.inspected = true
+    mut index: Dict[str, int] = {}
+    for i in range(len(note.functions)):
+        index[note.functions[i].function] = i
+    for value in items(fields[0].value)?:
+        parts = tuple_items(value, 4)?
+        name = text(parts[0])?
+        if name not in index:
+            return Err("placement names an unreported function")
+        i = index[name]
+        if note.functions[i].placement is not None or note.functions[i].identity != text(parts[1])?:
+            return Err("placement repeats or changes an admitted function")
+        mut nodes: list[EventPosition] = []
+        for item in items(parts[3])?:
+            pair = tuple_items(item, 2)?
+            nodes.append(EventPosition(line=number(pair[0])?, column=number(pair[1])?))
+        note.functions[i].placement = Some(AdmittedPlacement(key=text(parts[2])?, positions=nodes))
+    return Ok(note)
+
+
+pub def placed_admission(original: LoweringEvent, module: str, function: AdmittedFunction) -> Result[LoweringEvent, str]:
+    """Move only physical placement fields of a product already admitted under its original scalar key."""
+    mut event = original
+    if event.function != function.function or event.module != module:
+        return Err("admitted lowering event names a different function or module")
+    if let Some(placement) = function.placement:
+        if placement.key != event.key or len(placement.positions) != len(event.positions):
+            return Err("admitted position map disagrees with its normalized scalar")
+        event.positions = placement.positions
+    event.identity = function.identity
+    event.references = function.references
+    return Ok(event)

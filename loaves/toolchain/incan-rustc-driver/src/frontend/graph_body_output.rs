@@ -94,6 +94,7 @@ fn fallback_identity(identity: Option<String>) -> Option<String> {
 pub(super) struct GraphBodyOutput {
     path: Option<PathBuf>,
     namespace_proofs: bool,
+    import_closures: Option<BTreeMap<String, Vec<String>>>,
     project_root: PathBuf,
     values: Vec<PendingBodyValue>,
     namespaces: Vec<PendingNamespaceValue>,
@@ -124,7 +125,13 @@ impl GraphBodyOutput {
             name.as_encoded_bytes()
                 .ends_with(internal_models::namespace_proof_output_suffix().as_bytes())
         });
+        let import_closures = path
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .filter(|name| name.as_encoded_bytes().ends_with(internal_models::ranked_output_suffix().as_bytes()))
+            .map(|_| BTreeMap::new());
         Ok(Self {
+            import_closures,
             namespace_proofs,
             path,
             project_root,
@@ -152,6 +159,23 @@ impl GraphBodyOutput {
         }
     }
 
+    /// Complete checked modules' certificates with their suppliers, including suppliers restored from records.
+    pub(super) fn include_restored_imports(
+        &mut self,
+        indexes: &BTreeMap<PathBuf, usize>,
+        dependencies: impl Fn(usize) -> Vec<String>,
+    ) -> Result<(), String> {
+        let Some(closures) = &mut self.import_closures else { return Ok(()) };
+        let missing = closures.values().flatten().filter(|path| !closures.contains_key(*path))
+            .cloned().collect::<std::collections::BTreeSet<_>>();
+        for module in missing {
+            let index = indexes.get(&self.project_root.join(&module))
+                .ok_or_else(|| format!("ranked import {module} has no collected source"))?;
+            closures.insert(module, dependencies(*index));
+        }
+        Ok(())
+    }
+
     /// Capture one project-owned module while keeping dependency modules as inputs rather than publication owners.
     ///
     /// Analysis visits authored modules and dependency modules together. Only paths beneath `project_root` belong to
@@ -168,6 +192,9 @@ impl GraphBodyOutput {
             return Ok(());
         };
         let module_path = module_path.to_string_lossy().into_owned();
+        if let Some(closures) = &mut self.import_closures {
+            closures.insert(module_path.clone(), dependencies.to_vec());
+        }
         if let Some(interface) = incan_frontend::typechecker::CheckedNamespaceInterface::from_checked(
             &module.name,
             &module.path_segments,
@@ -517,7 +544,13 @@ impl GraphBodyOutput {
                 "compiled graph output refused: {error:?} ({body_count} owner rows, {body_ir_bytes} raw Body IR bytes)"
             )
         })?;
-        publish_rows(&path, rows)?;
+        let import_order = self.import_closures.map(|closures| {
+            let rows = closures.into_iter().map(|(module, imports)| {
+                std::iter::once(module).chain(imports).collect()
+            }).collect::<Vec<Vec<String>>>();
+            internal_models::encode_import_closures(&rows)
+        }).transpose()?;
+        publish_rows(&path, rows, import_order)?;
         publish(&checker_report_path(&path), vec![report])
     }
 }
@@ -678,13 +711,18 @@ fn publish(path: &Path, frames: Vec<Vec<u8>>) -> Result<(), String> {
 }
 
 /// Replace one compiler sidecar with a directory holding one independently bounded Crumb row per file.
-fn publish_rows(path: &Path, rows: Vec<Vec<u8>>) -> Result<(), String> {
+fn publish_rows(path: &Path, rows: Vec<Vec<u8>>, import_order: Option<Vec<u8>>) -> Result<(), String> {
     let parent = path.parent().ok_or("compiled graph output has no parent directory")?;
     std::fs::create_dir_all(parent)
         .map_err(|error| format!("cannot create compiled graph output {}: {error}", parent.display()))?;
     let temporary = path.with_extension(format!("pending-{}", std::process::id()));
     std::fs::create_dir(&temporary)
         .map_err(|error| format!("cannot create compiled graph output {}: {error}", temporary.display()))?;
+    if let Some(bytes) = import_order {
+        let page = temporary.join("import-closures.crumb");
+        std::fs::write(&page, bytes)
+            .map_err(|error| format!("cannot write compiler import closure {}: {error}", page.display()))?;
+    }
     for (index, row) in rows.into_iter().enumerate() {
         let page = temporary.join(format!("{index:08}.crumb"));
         std::fs::write(&page, row)

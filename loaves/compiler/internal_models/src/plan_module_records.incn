@@ -10,6 +10,8 @@ from crumb_rows import ModelField, decode_rows, encode_rows, model_description, 
 pub const PLAN_MODULE_FAMILY: str = "plan-module"
 # The extension of the page a compiler worker reads an admitted module's record from, named by the module's hex path.
 pub const PLAN_MODULE_PAGE: str = ".incnmodule"
+pub const POSITIONED_MODULE_PAGE: str = ".incnmodule.positioned"
+pub const REPOSITION_MODULE_PAGE: str = ".incnmodule.reposition"
 pub const ADMITTED_MODULE_NOTE: str = ".admitted"
 pub const PARTIAL_MODULE_NOTE: str = ".partially-admitted"
 const PLAN_MODULE_SELECTOR: bytes = b"plnmod\x00"

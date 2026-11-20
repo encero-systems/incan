@@ -1,6 +1,6 @@
 """Generated call-artifact rows validate by the grammar of the codec that wrote them."""
 
-from checker_records import CHECKER_PROFILE, CodecFault, from_native_final_fields
+from checker_records import from_native_fields, CHECKER_PROFILE, CodecFault, from_native_final_fields
 
 
 pub def test_call_artifact_rows_validate_by_their_codec() -> None:
@@ -55,3 +55,16 @@ def refused_on_node(node: str, selector: str, values: list[str]) -> str:
         Err(CodecFault.Unsupported(name)) => return name
         Err(CodecFault.Malformed) => return "malformed"
         Err(_) => return "other"
+
+
+pub def test_named_generic_requires_an_arity_before_its_arguments() -> None:
+    """The type reader returns the record grammar's malformed fault when a named generic has no argument count."""
+    assert refused("inferred_call_result_types", ["generic", "Container"]) == "malformed"
+    assert refused("inferred_call_result_types", ["list", "generic", "Container"]) == "malformed"
+    assert accepted("inferred_call_result_types", ["generic", "Container", "1", "int"])
+
+    root = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    header = ["header", "owner", root, "local", CHECKER_PROFILE]
+    match from_native_fields([header, ["type", "node", "expr", "generic", "T"]]):
+        Err(CodecFault.Malformed) => pass
+        _ => assert false

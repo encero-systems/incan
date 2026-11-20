@@ -1047,7 +1047,6 @@ def main() -> Result[None, str]:
     Ok(())
 }
 
-
 #[test]
 fn classified_index_read_covers_the_loop_index_before_the_element() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"def emit(value: bytes) -> Result[None, str]:

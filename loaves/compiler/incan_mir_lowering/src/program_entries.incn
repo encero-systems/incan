@@ -8,6 +8,8 @@ from pub::incan_mir_plan import (
     ModelDeclaration,
     EnumDeclaration,
     PlanExport,
+    NominalReference,
+    SourceSpan,
     GenericModelDeclaration,
     GenericEnumDeclaration,
     PlanType,
@@ -32,6 +34,7 @@ from rust::std::sync import Arc
 from rust::std::thread import JoinHandle, spawn
 from scalar_store import (
     admitted_function,
+    event_nodes,
     admitted_payload,
     retained_scalar,
     report_scalar,
@@ -57,10 +60,12 @@ from frame_instances import (
     named_functions,
 )
 from function_frames import lower_function
-from checked_values import location
+from checked_values import indexed_location, line_starts, location
 from plan_product_inputs import ordinary_product_inputs
 from instance_products import encode_requests, restore_requests
-from plan_modules import AdmittedFunction, admitted_page, admitted_reference, report_admitted
+from body_positions import indexed_body_positions
+from pub::internal_models.plan_module_records import PlanModuleFunction
+from plan_modules import AdmittedFunction, AdmittedPlacement, admitted_page, admitted_reference, report_admitted
 from parallel_ranges import balanced_module_ranges
 
 
@@ -297,6 +302,7 @@ def lower_selected_module(
     # The module's admitted plan record, read once at its first ordinary body, and the functions restored from it.
     mut module = ""
     mut admitted = admitted_page(None, "")
+    mut placement_lines: list[int] = []
     mut restored: list[AdmittedFunction] = []
     mut ordinary = 0
     for position in positions:
@@ -307,9 +313,11 @@ def lower_selected_module(
         if module == "":
             module = body_module_identity(body)?
             admitted = admitted_page(scalar_products, module)
+            if len(admitted.events) > 0 and admitted.inspect_placement:
+                placement_lines = line_starts(source)
         diagnostic_owner = f" in {body.name} at {file}"
         restored_before = len(restored)
-        mut module_event: Option[bytes] = None
+        mut module_event: Option[PlanModuleFunction] = None
         if len(admitted.events) > 0:
             module_event = admitted.event(evaluator_name(context, body))
         function, runtime, pending, synthesized = lower_ordinary_frame(
@@ -325,6 +333,7 @@ def lower_selected_module(
             record_report,
             nominals,
             module_event,
+            placement_lines,
             admitted.generation,
             restored,
         ).map_err((reason) => reason + diagnostic_owner)?
@@ -354,7 +363,7 @@ def lower_selected_module(
         append_generator_constructor(program.constructors.as_ref(), functions, context, body, source, file, intrinsics)?
         merge_indexed(externals, signatures, runtime)?
     if module != "":
-        report_admitted(record_report, module, restored, ordinary)?
+        report_admitted(record_report, module, restored, ordinary, admitted.inspect_placement, scalar_products)?
     return Ok(
         ModuleFrames(
             functions=functions,
@@ -411,6 +420,9 @@ pub def lower_ordinary_bodies_serial(
         # The module's admitted plan record and the functions restored from it, as in `lower_selected_module`.
         module = str(checked_owner)
         admitted = admitted_page(scalar_products, module)
+        mut placement_lines: list[int] = []
+        if len(admitted.events) > 0 and admitted.inspect_placement:
+            placement_lines = line_starts(sources[index])
         mut restored: list[AdmittedFunction] = []
         mut ordinary = 0
         for position in positions:
@@ -420,7 +432,7 @@ pub def lower_ordinary_bodies_serial(
             ordinary += 1
             diagnostic_owner = f" in {body.name} at {files[index]}"
             restored_before = len(restored)
-            mut module_event: Option[bytes] = None
+            mut module_event: Option[PlanModuleFunction] = None
             if len(admitted.events) > 0:
                 module_event = admitted.event(evaluator_name(context, body))
             function, runtime, pending, synthesized = lower_ordinary_frame(
@@ -436,6 +448,7 @@ pub def lower_ordinary_bodies_serial(
                 record_report,
                 nominals,
                 module_event,
+                placement_lines,
                 admitted.generation,
                 restored,
             ).map_err((reason) => reason + diagnostic_owner)?
@@ -472,8 +485,15 @@ pub def lower_ordinary_bodies_serial(
                 intrinsics,
             )?
             merge_indexed(externals, signatures, runtime)?
-        report_admitted(record_report, module, restored, ordinary)?
+        report_admitted(record_report, module, restored, ordinary, admitted.inspect_placement, scalar_products)?
     return Ok(None)
+
+
+def admitted_body_location(starts: &list[int], body: &RustBody, source: str, file: str) -> SourceSpan:
+    """Borrow the worker's line index when this activation inspects physical placement."""
+    if len(starts) > 0:
+        return indexed_location(starts, body.span, file)
+    return location(body.span, source, file)
 
 
 def lower_ordinary_frame(
@@ -488,7 +508,8 @@ def lower_ordinary_frame(
     admitted: &BTreeMap[CompilerNodeId, str],
     record_report: Option[str],
     mut nominals: UnitNominals,
-    module_event: Option[bytes],
+    module_event: Option[PlanModuleFunction],
+    placement_lines: &list[int],
     generation: str,
     mut restored: list[AdmittedFunction],
 ) -> Result[tuple[Function, list[ExternalFunction], list[Instance], list[Function]], str]:
@@ -502,31 +523,54 @@ def lower_ordinary_frame(
     requests come from the event, and `restored` receives it for the module's note. An event that does not restore
     leaves the body on the keyed route below.
     """
-    if let Some(event) = module_event:
-        if let Some(reads) = admitted.get(body.direct_call_id):
+    if let Some(selected_event) = module_event:
+        mut current_identity = ""
+        if let Some(canonical) = body.canonical:
+            current_identity = encode_incan_symbol_identity(canonical)
+        # A physical-symbol fallback has no independent stable owner to carry across a rename or move.
+        valid_owner = selected_event.identity != selected_event.symbol or selected_event.symbol == current_identity
+        mut witnessed: Option[str] = None
+        if valid_owner:
+            if let Some(found) = admitted.get(body.direct_call_id):
+                witnessed = Some(str(found))
+        if let Some(reads) = witnessed:
+            span = admitted_body_location(placement_lines, body, source, file)
+            mut current: Option[list[tuple[int, int]]] = None
+            if len(placement_lines) > 0:
+                current = Some(indexed_body_positions(body, placement_lines, file, span))
             sync_carriers(nominals, program, intrinsics)
             stored = admitted_payload(
-                event,
-                location(body.span, source, file),
+                selected_event.event,
+                span,
                 evaluator_name(context, body),
                 program.overflow_checks,
                 str(reads),
                 generation,
+                current,
             )
             if let Some(found) = stored:
-                payload, identities, encoded = found
-                if let Some(resolved) = resolve_nominals(identities, nominals):
+                payload, identities, encoded, previous = found
+                valid_event = previous.key == selected_event.key and previous.function == selected_event.function and previous.identity == selected_event.symbol
+                mut bindings: Option[list[NominalReference]] = None
+                if valid_event:
+                    bindings = resolve_nominals(identities, nominals)
+                if let Some(resolved) = bindings:
                     if let Some(product) = admitted_function(payload, resolved):
                         function, runtime, frames = product
                         if let Some(requests) = restore_requests(encoded, context):
-                            mut restored_identity = ""
-                            if let Some(canonical) = body.canonical:
-                                restored_identity = encode_incan_symbol_identity(canonical)
+                            references = [admitted_reference(reference) for reference in resolved]
+                            mut placement: Option[AdmittedPlacement] = None
+                            mut nodes = previous.positions
+                            if let Some(positions) = current:
+                                nodes = event_nodes(positions)
+                            if current_identity != previous.identity or references != previous.references or nodes != previous.positions:
+                                placement = Some(AdmittedPlacement(key=previous.key, positions=nodes))
                             restored.append(
                                 AdmittedFunction(
                                     function=function.name,
-                                    identity=restored_identity,
-                                    references=[admitted_reference(reference) for reference in resolved],
+                                    identity=current_identity,
+                                    references=references,
+                                    placement=placement,
                                 ),
                             )
                             return Ok((function, runtime, requests, frames))

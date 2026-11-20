@@ -78,10 +78,13 @@ pub(crate) fn export(arguments: &[String]) -> Result<(), Box<dyn std::error::Err
     }
     records.sort_by(|left, right| left.key.cmp(&right.key));
     if typed {
-        let members = records.into_iter().map(|record| internal_models::CompilerExportMember {
-            key: record.key,
-            revision: record.revision,
-        }).collect();
+        let members = records
+            .into_iter()
+            .map(|record| internal_models::CompilerExportMember {
+                key: record.key,
+                revision: record.revision,
+            })
+            .collect();
         let encoded = internal_models::encode_compiler_export(&members)?;
         fs::write(output.join("index.crumb"), encoded)?;
     } else {

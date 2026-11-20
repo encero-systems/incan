@@ -8,7 +8,7 @@ pub from pub::internal_models.checked_body_counts import CheckedBodyCounts
 from pub::internal_models.checked_body_counts import decode_checked_body_counts
 pub from pub::internal_models.checker_publication import CheckerRecordCounts
 from pub::internal_models.checker_publication import checker_report_suffix, decode_checker_counts
-from pub::internal_models.namespace_proof import namespace_proof_output_suffix
+from pub::internal_models.namespace_order import ranked_output_suffix
 from std.fs import Path
 from std.json import parse
 from driver_command import driver_command
@@ -53,6 +53,7 @@ pub def compile_prepared_unit(
     reason: str = "no stored build",
     development: bool = false,
     graph_body_records: Option[list[SelectedBodyPage]] = None,
+    records_directory: Option[Path] = None,
 ) -> Result[i32, str]:
     """
     Compile one prepared unit without dependency selection or recursive preparation.
@@ -89,7 +90,7 @@ pub def compile_prepared_unit(
     if toolchain.codegraph_on_request:
         native.append("--no-codegraph")
     if let Some(records) = graph_body_records:
-        records_path = Path(f"{path.0}.graph-body-records")
+        records_path = records_directory.unwrap_or(Path(f"{path.0}.graph-body-records"))
         write_selected_records(records_path, unit, records)?
         native += ["--graph-body-records", records_path.0]
         native += ["--plan-record-products", records_path.0]
@@ -165,7 +166,7 @@ pub def graph_body_output_path(unit: UnitDescription, key: Key, typed: bool) -> 
     directory = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath("units")
     description = descriptor_path(directory, described_by(key), typed)
     if typed:
-        return Path(description.0 + namespace_proof_output_suffix())
+        return Path(description.0 + ranked_output_suffix())
     return Path(f"{description.0}.graph-body-output")
 
 

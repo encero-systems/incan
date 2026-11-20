@@ -94,6 +94,17 @@ pub model NamespaceOrder:
     pub members: list[str] = []
     pub certificate: bytes = b""
 
+    pub def covers(self, sources: &set[str]) -> Result[bool, str]:
+        """Whether this authenticated namespace includes every source consumed by a unit-level producer."""
+        if len(sources) == 0 or len(sources) > self.rank + len(self.members) or len(self.certificate) == 0:
+            return Ok(false)
+        fields = decode_graph_row(self.certificate, ORDER_SELECTOR, order_description(), 3)?
+        closure = set(namespace_names(fields[0].value)?)
+        for source in sources:
+            if source not in closure:
+                return Ok(false)
+        return Ok(true)
+
 
 def encoded_order(origin: str, members: list[str], closure: list[str]) -> Result[bytes, str]:
     """Emit the canonical typed Crumb value used for both publication and verification."""
@@ -177,4 +188,53 @@ pub def certified_namespace_order(
                 members=members,
                 certificate=certificate,
             )
+    return Ok(result)
+
+
+pub const IMPORT_ORDER_FILE: str = "import-closures.crumb"
+const IMPORT_ORDER_ROW: bytes = b"imprnk\x00"
+
+
+pub def ranked_output_suffix() -> str:
+    """Keep the existing checked-namespace proof suffix recognizable to predecessor compilers."""
+    return ".ranked.cmpns5.graph-body-output"
+
+
+def import_order_description() -> Description:
+    return model_description(IMPORT_ORDER_ROW, "incan.compiler.import-closures/1", [
+        ModelField(identity=b"closed", name="module_and_imports", storage="list<list<string>>"),
+    ])
+
+
+pub def encode_import_closures(rows: list[list[str]]) -> Result[bytes, str]:
+    """Each row starts with its project source and lists the other project sources transitively imported."""
+    return encode_graph_row(IMPORT_ORDER_ROW, import_order_description(), [
+        required_value(b"closed", Value.List([Value.List([Value.Text(name) for name in row]) for row in rows])),
+    ])
+
+
+pub def read_import_closures(encoded: bytes) -> Result[Dict[str, list[str]], str]:
+    """Require sorted, unique project-relative source names and a closed inventory from the collected unit."""
+    fields = decode_graph_row(encoded, IMPORT_ORDER_ROW, import_order_description(), 1)?
+    mut result: Dict[str, list[str]] = {}
+    mut previous = ""
+    for value in items(fields[0].value)?:
+        cells = items(value)?
+        if len(cells) == 0:
+            return Err("empty compiler import closure")
+        module = text(cells[0])?
+        if module <= previous or module.startswith("/") or ".." in module.split("/") or "" in module.split("/"):
+            return Err("noncanonical compiler import source")
+        previous = module
+        mut dependencies: list[str] = []
+        for item in cells[1:]:
+            name = text(item)?
+            if name == "" or name == module or (len(dependencies) > 0 and name <= dependencies[len(dependencies) - 1]):
+                return Err("noncanonical compiler import dependency")
+            dependencies.append(name)
+        result[module] = dependencies
+    for module in result.keys():
+        for dependency in result[module]:
+            if dependency not in result:
+                return Err("compiler import closure lacks its supplier")
     return Ok(result)

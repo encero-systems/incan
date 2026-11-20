@@ -49,7 +49,7 @@ pub def checked_type_end(values: list[str], offset: int, depth: int) -> Result[i
             return Err(CodecFault.Malformed)
         mut end = offset + 1
         if tag == "generic":
-            if values[end] == "":
+            if end + 1 >= len(values) or values[end] == "":
                 return Err(CodecFault.Malformed)
             end += 1
         count = canonical_decimal(values[end])?
