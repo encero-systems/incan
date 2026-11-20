@@ -30,7 +30,9 @@ from pub::incan_platform.store import (
     commit_pinned,
     delete,
     get,
+    first_stored_key,
     keys,
+    keys_with_prefix,
     lookup,
     owned,
     put,
@@ -875,6 +877,17 @@ pub def test_a_lookup_checks_no_index_page_an_earlier_lookup_checked() -> Result
     assert second.pages > first.pages, "the later lookups read no index page"
     again = second.checked - first.checked
     assert again == 0, f"lookups on a path already checked checked {again} pages again"
+    # Warm both leaves the ten-key prefix can occupy, then measure only index copies of the range and successor.
+    assert text(lookup(latest, prefix + "-1509")) == "value 509"
+    before_range = read_counts()
+    copied_before_range = copied_index_bytes()
+    matches = keys_with_prefix(latest, prefix + "-150").map_err((error) => error.message())?
+    assert matches == [f"{prefix}-{1500 + index}" for index in range(10)]
+    successor = first_stored_key(latest, prefix + "-1502-next").map_err((error) => error.message())?
+    assert successor == Some(prefix + "-1503")
+    range_copies = copied_index_bytes() - copied_before_range
+    assert range_copies < 15 * len(prefix.encode("utf-8")), f"range selection copied {range_copies} index bytes"
+    assert read_counts().records == before_range.records
     return Ok(None)
 
 

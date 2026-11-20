@@ -147,7 +147,7 @@ impl TypeChecker {
     pub(crate) fn available_local_record(&self, owner: Span) -> Option<&Fields> {
         self.produced_local_records
             .get(&owner)
-            .or_else(|| self.selected_local_records.get(&owner))
+            .or_else(|| self.selected_local_records.get(&owner).map(Arc::as_ref))
     }
 
     /// Clone the explicit refusal returned by this activation's direct local producer.
@@ -176,7 +176,7 @@ impl TypeChecker {
 
     /// Retain one selected local value for republishing without treating selection as producer execution.
     pub(crate) fn retain_local_record(&mut self, owner: Span, fields: Fields) {
-        self.selected_local_records.insert(owner, fields);
+        self.selected_local_records.insert(owner, Arc::new(fields));
     }
 
     /// Borrow the final record emitted directly by this activation's settlement producer.
@@ -188,7 +188,7 @@ impl TypeChecker {
     pub(crate) fn available_final_record(&self, owner: Span) -> Option<&Fields> {
         self.produced_final_records
             .get(&owner)
-            .or_else(|| self.selected_final_records.get(&owner))
+            .or_else(|| self.selected_final_records.get(&owner).map(Arc::as_ref))
     }
 
     /// Stage one scalar product's settled value until its body passes the current physical-scope check.
@@ -199,7 +199,7 @@ impl TypeChecker {
     /// Publish the staged final value only after the matching scalar body is accepted for this activation.
     pub(in crate::typechecker) fn select_callable_final_record(&mut self, owner: Span) {
         if let Some(fields) = self.callable_final_record_reuse.remove(&owner) {
-            self.selected_final_records.insert(owner, fields);
+            self.selected_final_records.insert(owner, Arc::new(fields));
         }
     }
 
@@ -221,6 +221,12 @@ impl TypeChecker {
     /// Fingerprint the current callable coordinates and checked native bindings before publishing its executable frame.
     pub fn graph_body_physical_inputs(&self, program: &Program, owner: Span) -> Option<[u8; 32]> {
         self.graph_body_inputs(program, owner, false).map(|value| value.0)
+    }
+
+    /// Borrow the physical proof already computed during admission for this check's completed owner.
+    /// The caller must be observing the checked program in the same activation.
+    pub fn completed_graph_body_digest(&self, owner: Span) -> Option<[u8; 32]> {
+        self.completed_graph_body_digests.get(&owner).copied()
     }
 
     /// The same native proof and its optional syntax-path-ordered coordinate map, built from one checkout of the facts.
@@ -286,10 +292,9 @@ impl TypeChecker {
         let Some(selected) = self.graph_body_records.get(&identity)? else {
             return Ok(false);
         };
-        // The checker owns selected rows after this boundary so its publication view cannot outlive the invocation
-        // transport. This is the one deliberate copy from immutable transport into checker-owned selected output.
-        let local_fields = selected.local.clone();
-        let final_fields = selected.final_value.clone();
+        // The invocation and the checker share the same authenticated row fields without copying the selected facts.
+        let local_fields = selected.local;
+        let final_fields = selected.final_value;
         let positions = Positions::for_decoded_local(self, program, owner, nodes, &local_fields, true)?;
         if !final_fields
             .iter()
@@ -378,18 +383,22 @@ impl TypeChecker {
                 continue;
             };
             let rows = [declaration, local_fields, final_value];
+            let current = positions.physical_inputs_in(local, rows, None);
             let exact = body.span == owner
                 && body.canonical.as_ref()
                     == self
                         .declaration_view()
                         .callable(owner)
                         .and_then(|v| v.identity.as_ref())
-                && positions.physical_inputs_in(local, rows, None) == Some(expected);
+                && current == Some(expected);
             if exact
                 || (!coordinates.is_empty()
                     && placement::relocate(&positions, local, rows, expected, &coordinates, &mut body).is_some())
             {
                 self.type_info.reused_callable_bodies.insert(owner, body);
+            }
+            if let Some(digest) = current {
+                self.completed_graph_body_digests.insert(owner, digest);
             }
         }
     }

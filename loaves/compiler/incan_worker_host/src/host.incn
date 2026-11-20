@@ -14,7 +14,7 @@ dials the worker to wake it, so a removed socket path or home cannot keep it ali
 from rust::std::env import set_current_dir
 from rust::std::process import id
 from rust::std::thread import sleep
-from rust::std::time import Duration
+from rust::std::time import Duration, Instant
 from std.primitives.environ import read as read_environment
 from pub::incan_platform.trace import Clock, Emitter, Operation, begin as trace_begin, flush as flush_trace
 from pub::incan_platform.ipc import Connection, Listener, SocketFile, dial, listen, reachable, socket_file, withdraw
@@ -29,7 +29,7 @@ from lifecycle import (
     Retirement,
     lifecycle,
 )
-from protocol import Admission, CompileRequest, MISMATCH, Reply, admit, ready_frame, reply_frame
+from protocol import Admission, CompileRequest, MISMATCH, Reply, WorkerCommand, admit, ready_frame, reply_frame
 from record_protocol import (
     RecordAdmission,
     RecordMessage,
@@ -46,8 +46,9 @@ const WRITE_SECONDS: u64 = 10
 const FOOTPRINT_SETTING: str = "INCAN_WORKER_FOOTPRINT_BOUND"
 # How long a waiting worker sleeps before it looks for a caller again, which bounds the delay a caller sees.
 const POLL_MILLIS: u64 = 2
-# How many empty polls pass between checks that the worker is still reachable: about a second.
-const CHECK_POLLS: int = 500
+# Wait more quietly after ordinary idleness while an editor still owns the warm state.
+const RETAINED_POLL_MILLIS: u64 = 32
+const REACHABILITY_MILLIS: int = 1000
 
 
 pub model HostSettings:
@@ -97,6 +98,8 @@ pub class WorkerHost:
     retire_after: bool = false
     # Whether the open activation only reads sources, which the footprint policy holds only to its ceiling.
     active_light: bool = false
+    active_editor: bool = false
+    active_record_build: bool = false
     observer: Option[Emitter] = None
     activation_clock: Option[Clock] = None
 
@@ -177,6 +180,12 @@ pub class WorkerHost:
         is sent, then send the reply and close the activation.
         """
         self.finish_observation()
+        if self.active_editor or self.active_record_build:
+            match outcome:
+                ActivationOutcome.Exited(code) =>
+                    if self.active_editor or code == 0:
+                        self.policy.note_retained_activity(code == 0)
+                _ => pass
         settled = self.policy.settle(outcome, footprint, self.active_light, live)
         match settled.retirement:
             Some(reason) => self.retire(reason)
@@ -242,7 +251,7 @@ pub class WorkerHost:
         2. A retirement that drains still answers the callers that connected before it.
         """
         # 1. The worker's own clock and file checks decide; nothing has to dial the socket for that.
-        mut polls = 0
+        mut reachability = Instant.now()
         while self.phase == Phase.Serving:
             match self.listener.poll():
                 Ok(Some(found)) => return Some(found)
@@ -251,12 +260,14 @@ pub class WorkerHost:
                     # A listener that cannot accept serves nobody; retiring lets the next request start a worker.
                     self.retire(Retirement.Unsafe)
                     return None
-            sleep(Duration.from_millis(POLL_MILLIS))
-            polls += 1
+            if self.policy.past_ordinary_idle():
+                sleep(Duration.from_millis(RETAINED_POLL_MILLIS))
+            else:
+                sleep(Duration.from_millis(POLL_MILLIS))
             if self.policy.idle():
                 self.retire(Retirement.Idle)
-            elif polls >= CHECK_POLLS:
-                polls = 0
+            elif int(reachability.elapsed().as_millis()) >= REACHABILITY_MILLIS:
+                reachability = Instant.now()
                 if not reachable(self.socket):
                     self.retire(Retirement.Unreachable)
         # 2. Only callers already queued are taken once the socket is withdrawn.
@@ -321,6 +332,12 @@ pub class WorkerHost:
                                 self.active = Some(caller)
                                 self.retire_after = request.retire_after
                                 self.active_light = request.command.light()
+                                self.active_editor = request.command == WorkerCommand.Check and "--retain-checked-modules" in request.arguments
+                                self.active_record_build = (
+                                    request.command == WorkerCommand.Unit
+                                    and "--graph-body-output" in request.arguments
+                                    and "--plan-record-products" in request.arguments
+                                )
                                 return Some(WorkerActivation.Compile(request))
 
     def served_peer(self, caller: Connection) -> bool:

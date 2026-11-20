@@ -31,6 +31,7 @@ const ROOTS_NAMESPACE_SELECTOR: bytes = b"cmpns3\x00"
 const CALLS_NAMESPACE_SELECTOR: bytes = b"cmpns4\x00"
 const NAMESPACE_SELECTOR: bytes = b"cmpns5\x00"
 const CONTRACT_NAMESPACE_SELECTOR: bytes = b"cmpns6\x00"
+const PUBLISHED_NAMESPACE_SELECTOR: bytes = b"cmpns7\x00"
 const SCOPED_VALUE_SELECTOR: bytes = b"cmpscp\x00"
 const VALUE_SELECTOR: bytes = b"cmpval\x00"
 const FALLBACK_SELECTOR: bytes = b"cmpfbk\x00"
@@ -88,11 +89,13 @@ pub def decode_compiled_body_row(encoded: bytes) -> Result[CompiledBodyOutput, C
     """Decode one complete Crumb row without consulting or buffering any peer row."""
     if len(encoded) == 0 or len(encoded) > MAX_ROW_BYTES:
         return Err(CodecFault.Limit)
-    rows = decode_rows(encoded, [namespace_description(6), namespace_description(), namespace_description(4), namespace_description(3), namespace_description(2), value_description(true), value_description(), fallback_description()], MAX_ROW_BYTES).map_err(
+    rows = decode_rows(encoded, [published_namespace_description(), namespace_description(6), namespace_description(), namespace_description(4), namespace_description(3), namespace_description(2), value_description(true), value_description(), fallback_description()], MAX_ROW_BYTES).map_err(
         (_) => CodecFault.Malformed,
     )?
     if len(rows) != 1:
         return Err(CodecFault.Malformed)
+    if rows[0].key == copy_frozen_bytes(PUBLISHED_NAMESPACE_SELECTOR):
+        return Ok(CompiledBodyOutput.Namespace(decode_published_namespace(rows[0].value)?))
     if rows[0].key == copy_frozen_bytes(CONTRACT_NAMESPACE_SELECTOR):
         return Ok(CompiledBodyOutput.Namespace(decode_compiled_namespace_value(rows[0].value, 6)?))
     if rows[0].key == copy_frozen_bytes(NAMESPACE_SELECTOR):
@@ -116,6 +119,8 @@ pub def decode_compiled_body_row(encoded: bytes) -> Result[CompiledBodyOutput, C
 
 def encode_compiled_namespace_value(value: CompiledNamespaceValue) -> Result[bytes, CodecFault]:
     """Encode one complete namespace Crumb row without interpreting compiler-owned payloads or witnesses."""
+    if len(value.published_record) > 0:
+        return encode_published_namespace(value)
     if (value.module == "" or len(value.interface) == 0 or len(value.body_ir) == 0 or len(value.dependencies) > MAX_FIELDS or len(
         value.lowering_inputs,
     ) > MAX_FIELDS):
@@ -177,6 +182,74 @@ def encode_compiled_namespace_value(value: CompiledNamespaceValue) -> Result[byt
         fields.append(required_value(b"zsupp_", Value.List(contract_values(contracts)?)))
         return encoded_row(namespace_description(6), RowRecord(key=CONTRACT_NAMESPACE_SELECTOR, value=Value.Record(fields)))
     return encoded_row(namespace_description(), RowRecord(key=NAMESPACE_SELECTOR, value=Value.Record(fields)))
+
+
+def published_namespace_description() -> Description:
+    return model_description(PUBLISHED_NAMESPACE_SELECTOR, "incan.checker-compiled-namespace/7", [
+        ModelField(identity=b"deps__", name="dependencies", storage="list<string>"),
+        ModelField(identity=b"member", name="members", storage="list<string>"),
+        ModelField(identity=b"module", name="module", storage="string"),
+        ModelField(identity=b"record", name="namespace_record", storage="binary"),
+        ModelField(identity=b"semant", name="semantic_interface", storage="binary"),
+        ModelField(identity=b"wreads", name="call_reads", storage="list<tuple<string,string,string>>"),
+        ModelField(identity=b"zsupp_", name="contracts", storage="list<tuple<string,string,string,string>>"),
+    ])
+
+
+def encode_published_namespace(value: CompiledNamespaceValue) -> Result[bytes, CodecFault]:
+    """Pass the durable record through unchanged alongside the facts Oven uses to publish it."""
+    if value.module == "" or len(value.semantic_interface) != 32 or len(value.published_record) > MAX_ROW_BYTES:
+        return Err(CodecFault.Malformed)
+    if len(value.interface) + len(value.body_ir) + len(value.lowering_inputs) + len(value.package_roots) + len(value.identity_proof) != 0:
+        return Err(CodecFault.Malformed)
+    if len(value.member_witnesses) > MAX_FIELDS or len(value.dependencies) > MAX_FIELDS:
+        return Err(CodecFault.Limit)
+    mut previous = ""
+    for dependency in value.dependencies:
+        if dependency == "" or dependency <= previous:
+            return Err(CodecFault.Malformed)
+        previous = dependency
+    contracts = match value.call_contracts:
+        Some(value) => value
+        None => return Err(CodecFault.Malformed)
+    if len(contracts) > MAX_FIELDS:
+        return Err(CodecFault.Limit)
+    fields = [
+        required_value(b"deps__", Value.List([Value.Text(dependency) for dependency in value.dependencies])),
+        required_value(b"member", Value.List(member_values(value.member_witnesses)?)),
+        required_value(b"module", Value.Text(value.module)),
+        required_value(b"record", Value.Binary(value.published_record)),
+        required_value(b"semant", Value.Binary(value.semantic_interface)),
+        required_value(b"wreads", Value.List(call_read_values(value.call_reads)?)),
+        required_value(b"zsupp_", Value.List(contract_values(contracts)?)),
+    ]
+    return encoded_row(published_namespace_description(), RowRecord(key=PUBLISHED_NAMESPACE_SELECTOR, value=Value.Record(fields)))
+
+
+def decode_published_namespace(value: Value) -> Result[CompiledNamespaceValue, CodecFault]:
+    """Restore publishing metadata without copying the record's Body IR into a second object."""
+    fields = record_fields(value, 7)?
+    dependencies = text_values(fields[0].value)?
+    flattened = text_values(fields[1].value)?
+    if len(dependencies) > MAX_FIELDS or len(flattened) % 3 != 0 or len(flattened) / 3 > MAX_FIELDS:
+        return Err(CodecFault.Limit)
+    mut previous = ""
+    for dependency in dependencies:
+        if dependency == "" or dependency <= previous:
+            return Err(CodecFault.Malformed)
+        previous = dependency
+    members = [flattened[at:at + 3] for at in range(0, len(flattened), 3)]
+    member_values(members)?
+    module = text_value(fields[2].value)?
+    record = binary_value(fields[3].value)?
+    semantic = binary_value(fields[4].value)?
+    if module == "" or len(record) == 0 or len(semantic) != 32:
+        return Err(CodecFault.Malformed)
+    return Ok(CompiledNamespaceValue(
+        module=module, dependencies=dependencies, member_witnesses=members, published_record=record,
+        semantic_interface=semantic, call_reads=decoded_call_reads(fields[5].value)?,
+        call_contracts=Some(read_contracts(fields[6].value)?), interface=b"", body_ir=b"",
+    ))
 
 
 def encode_compiled_body_value(value: CompiledBodyValue) -> Result[bytes, CodecFault]:

@@ -94,7 +94,7 @@ pub class PreparedBodyRecordSource with RecordSource:
         plans = AdmittedPlanDigests.open(scope, validated_plans)
         for item in bounded:
             mut retained = false
-            if len(validated_plans) > 0 and item.key.family == "plan-function":
+            if len(validated_plans) > 0 and plan_product(item.key):
                 written = encode_record_key(item.key)?
                 retained = written in validated_plans and written not in self.values
             result = match retained:
@@ -138,7 +138,7 @@ pub class PreparedBodyRecordSource with RecordSource:
 
 
 class AdmittedPlanDigests with RecordSource:
-    """Only the validated zero-byte selections of one complete admitted module during its placement-only publication."""
+    """Validated digests of plan products already admitted from this publication's graph snapshot."""
     scope: ReadScope
     digests: Dict[str, str]
 
@@ -147,17 +147,22 @@ class AdmittedPlanDigests with RecordSource:
         return AdmittedPlanDigests(scope=scope, digests=digests)
 
     def read(self, scope: ReadScope, request: RecordRequest) -> RecordRead:
-        if scope != self.scope or request.key.family != "plan-function" or request != prepared_product_request(request.key):
+        if scope != self.scope or not plan_product(request.key) or request != prepared_product_request(request.key):
             return RecordRead.Failed(ReadFault.InvalidEvidence)
         key = match encode_record_key(request.key):
             Ok(value) => value
             Err(_) => return RecordRead.Failed(ReadFault.InvalidEvidence)
         if key not in self.digests:
             return RecordRead.Failed(ReadFault.OutsidePreparation)
-        # A plan-function is opaque: its two prepared digests are the hash of the exact same bytes.
+        # An opaque plan product uses its verified payload digest for both witnesses.
         digest = self.digests[key]
         proof = RevisionEvidence(scope=scope, request=request, revision=digest, semantic_digest=digest)
         return RecordRead.Found(SelectedFact(evidence=proof, value=b"", selection_digest=digest))
+
+
+def plan_product(key: RecordKey) -> bool:
+    """The plan products whose complete digest can witness an already admitted value."""
+    return key.family == "plan-function" or key.family == "plan-module"
 
 
 pub def prepared_product_request(key: RecordKey) -> RecordRequest:

@@ -200,7 +200,7 @@ pub def check_program(
     reading = body_reading(store, view, ready, epoch.inputs)?
     directory = check_page_directory(store, view, ready)
     pages = keep_check_pages(reading.graph, source_origin(ready), reading.invalid, ready, directory)?
-    checked = check_prepared(ready, toolchain, format, Some(pages.directory))?
+    checked = check_prepared(ready, toolchain, format, Some(pages.directory), is_editor_view(view))?
     return Ok(
         CheckOutcome(
             code=checked.code,
@@ -346,7 +346,9 @@ pub def obtain(
     invalid = selection.invalid
     origin = source_origin(ready)
     invalid_namespaces = invalid_namespace_modules(graph, projected.keys, CHECKER_PROFILE)?
-    namespaces = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, invalid_namespaces)?
+    namespaces = select_namespace_inventory_except(
+        graph, CHECKER_PROFILE, origin, invalid_namespaces, toolchain.namespace_references and toolchain.closure_anchors,
+    )?
     # A checked owner travels once when its exact plan slot and its whole checked namespace are both admitted.
     plan_reads = plan_reads_changed(graph, projected.keys)?
     invalid_plans = sorted([owner for owner in plan_reads.keys()])
