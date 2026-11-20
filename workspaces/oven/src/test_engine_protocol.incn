@@ -717,6 +717,8 @@ def check_frozen_installation_reads(directory: Path) -> Result[None, str]:
     mut completed: Dict[str, int] = {}
     mut counts = InstallationReadCounts()
     for file in directory.iterdir().map_err((error) => error.message())?:
+        # The events just before a refused access name the work that reached for the frozen input.
+        mut recent: list[str] = []
         for line in file.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
             if line == "":
                 continue
@@ -729,7 +731,11 @@ def check_frozen_installation_reads(directory: Path) -> Result[None, str]:
                 input = trace_text(event, "input")?
                 if (input.startswith(prefix) or "/.rustup/" in input) and completed.get(process, 0) > 0:
                     frozen_accesses += 1
-                    return Err(f"service process {process} {category} touched frozen input {input}: {line}")
+                    before = " | ".join(recent)
+                    return Err(f"service process {process} {category} touched frozen input {input} after: {before}")
+            recent.append(category + " " + trace_text(event, "input").unwrap_or(""))
+            if len(recent) > 8:
+                recent = recent[1:]
             if category == "file_read":
                 reads += 1
             if category == "engine_unit":
