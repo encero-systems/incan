@@ -1,0 +1,135 @@
+"""Pinned store frame references offered by Oven to one compiler request."""
+
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from checker_field_grammar import full_digest
+from crumb_rows import ModelField, model_description, required_value
+from graph_crumb_fields import (
+    KEY_TYPE,
+    decode_graph_row,
+    encode_graph_row,
+    integer,
+    items,
+    key_value,
+    number,
+    read_key,
+    text,
+    tuple_items,
+)
+from record_scope import MAX_CHECKER_ROW_BYTES, RecordKey
+from store_record_source import encode_record_key
+
+const NAMESPACE_REFERENCE_PAGE: str = "namespace-references.crumb"
+pub const NAMESPACE_IDENTITY_PROFILE: str = "incan.editable-namespace-crumb/6"
+const ROW: bytes = b"nsrefs\x00"
+
+
+pub model NamespaceReference:
+    """An evaluated namespace in an immutable segment under the request's bakery anchor."""
+
+    pub key: RecordKey
+    pub segment: str
+    pub offset: int
+    pub length: int
+    pub frame_digest: bytes
+    pub value_digest: str
+
+
+pub def namespace_reference_filename() -> str:
+    """Name the one frame inventory in the compiler request directory."""
+    return NAMESPACE_REFERENCE_PAGE
+
+
+pub def namespace_key(origin: str, module: str) -> RecordKey:
+    """Name one composite editable namespace under its logical source projection."""
+    return RecordKey(
+        family="namespace",
+        identity_profile=NAMESPACE_IDENTITY_PROFILE,
+        origin=origin,
+        identity=module,
+        facet="checked",
+        context="interface-body-ir-plan",
+    )
+
+
+def description() -> Description:
+    """One bounded inventory of frame addresses, with both the store and evaluation digests."""
+    return model_description(
+        ROW,
+        "incan.compiler.namespace-references/1",
+        [
+            ModelField(
+                identity=b"frames",
+                name="frames",
+                storage="list<tuple<" + KEY_TYPE + ",string,i64,i64,binary,string>>",
+            ),
+        ],
+    )
+
+
+def validate(reference: &NamespaceReference) -> Result[None, str]:
+    """Admit only the canonical namespace key and a bounded frame in a content-named segment."""
+    expected = namespace_key(reference.key.origin, reference.key.identity)
+    key = encode_record_key(reference.key)?
+    if (
+        reference.key != expected
+        or not full_digest("sha256:" + reference.segment)
+        or not full_digest("sha256:" + reference.value_digest)
+    ):
+        return Err("invalid namespace frame authority")
+    maximum = MAX_CHECKER_ROW_BYTES + len(key.encode("utf-8")) + 8
+    if (
+        reference.offset < 0
+        or reference.length <= maximum - MAX_CHECKER_ROW_BYTES
+        or reference.length > maximum
+        or len(reference.frame_digest) != 32
+    ):
+        return Err("invalid namespace frame extent or digest")
+    return Ok(None)
+
+
+pub def encode_namespace_references(references: &list[NamespaceReference]) -> Result[bytes, str]:
+    """Stage one compact Crumb page. Frame payloads remain leased in their bakery segments."""
+    mut rows: list[Value] = []
+    for reference in references:
+        validate(reference)?
+        rows.append(
+            Value.Tuple(
+                [
+                    key_value(reference.key),
+                    Value.Text(reference.segment),
+                    integer(reference.offset),
+                    integer(reference.length),
+                    Value.Binary(reference.frame_digest),
+                    Value.Text(reference.value_digest),
+                ],
+            ),
+        )
+    return encode_graph_row(ROW, description(), [required_value(b"frames", Value.List(rows))])
+
+
+pub def decode_namespace_references(encoded: bytes) -> Result[list[NamespaceReference], str]:
+    """Recover unique module addresses before any requested frame can be read."""
+    row = decode_graph_row(encoded, ROW, description(), 1)?
+    mut seen: set[str] = set()
+    mut references: list[NamespaceReference] = []
+    for encoded_reference in items(row[0].value)?:
+        fields = tuple_items(encoded_reference, 6)?
+        digest = match fields[4]:
+            Value.Binary(value) => value
+            _ => return Err("namespace frame has no binary digest")
+
+        reference = NamespaceReference(
+            key=read_key(fields[0])?,
+            segment=text(fields[1])?,
+            offset=number(fields[2])?,
+            length=number(fields[3])?,
+            frame_digest=digest,
+            value_digest=text(fields[5])?,
+        )
+        validate(reference)?
+        if reference.key.identity in seen:
+            return Err("duplicate selected namespace frame")
+        seen.add(reference.key.identity)
+        references.append(reference)
+    return Ok(references)
