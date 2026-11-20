@@ -12,6 +12,7 @@ edition = "2024"
 
 [dependencies]
 incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
+internal_models_native = { loaf = "internal_models_native", path = "../internal_models_native" }
 incan_std_primitives = { loaf = "incan_stdlib_primitives", path = "../../stdlib/primitives" }
 serde = { features = ["derive"], loaf = "crates-io/serde", version = "1" }
 serde_json = { loaf = "crates-io/serde_json", version = "1" }
