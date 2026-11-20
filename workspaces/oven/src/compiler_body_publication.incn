@@ -1,5 +1,6 @@
 """Publish successful compiler body outputs into the ranked record graph."""
 
+from pub::incan_platform.trace import enter_producer, finish_producer
 from std.fs import Path
 from std.environ import get_or
 from pub::internal_models.lowering_events import INTERFACE_REPORT, LoweringEvent, decode_lowering_event, decode_lowering_refusal, decode_native_interface
@@ -1008,7 +1009,9 @@ def prepare_lowering_records(
         if position.rank > interface_namespace:
             interface_namespace = position.rank
         demand_key = body_key("lowering-demand", origin, identity, function, key)
+        attempt = enter_producer("oven", "lowering-demand", identity, key)
         demand_value = lowering_demand(product)?
+        finish_producer(attempt, "produced")
         demand_receipt = source.receipt(scope, demand_key, body_reads, position.evidence)?
         check_reused_output(selected, event, demand_key, demand_value)?
         _ = prepare_evaluation(

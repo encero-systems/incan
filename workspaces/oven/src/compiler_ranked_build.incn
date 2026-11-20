@@ -1,5 +1,6 @@
 """Execute ranked checking work for changed, independently certified project owners before native compilation."""
 
+from pub::incan_platform.trace import enter_producer, finish_producer
 from std.encoding.hex import hexlify
 from std.fs import Path
 from pub::internal_models.source_value_records import source_value
@@ -206,9 +207,13 @@ def evaluate(store: Path, view: str, toolchain: Toolchain, pending: BuildOwner, 
     output = job.activation.ready.output
     request = RecordMessage.Evaluate(Evaluate(work_root=job.work_root, snapshot=job.selected.digest,
         prepared_root=job.prepared_root, reservation=job.prepared_root, cancellation_generation=0))
+    attempt = enter_producer("oven", output.family, output.identity, job.work_root)
     produced = match activate_record(toolchain, request, job.selected.authority)?:
-        RecordMessage.Produced(value) => value
+        RecordMessage.Produced(value) =>
+            finish_producer(attempt, "produced")
+            value
         RecordMessage.CompilerFault(fault) =>
+            finish_producer(attempt, "refused")
             if output.family == "declaration" and fault.fault_root == "unsupported-closed-checking-inputs":
                 owner.refused = true
                 return Ok(owner)
