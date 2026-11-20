@@ -516,24 +516,27 @@ pub fn produce_local_record(
     crate::typechecker::body_check::records::produce_local_record(source, name, declaration, environment)
 }
 
-/// Project the lookup names of free scalar functions whose only expression is a literal or a parameter.
-/// A call, operator, decorator, default, generic or non-scalar type keeps ordinary namespace discovery.
+/// Project the lookup names of a straight-line scalar owner from its checked bindings.
+/// An unsupported expression or declaration keeps the broader namespace witness.
 pub fn closed_scalar_scopes(
     program: &crate::ast::Program,
     checker: &crate::typechecker::TypeChecker,
 ) -> BTreeMap<crate::ast::Span, Vec<String>> {
-    use crate::ast::{Declaration, Expr, ParamKind, Statement, Type};
+    use crate::ast::{Declaration, ParamKind, Statement, Type};
+    use crate::symbols::ResolvedType;
     use incan_lang::lang::types::{BuiltinTypeName, builtin_type_name};
     let mut scopes = BTreeMap::new();
     for item in &program.declarations {
         let Declaration::Function(function) = &item.node else {
             continue;
         };
-        let [statement] = function.body.as_slice() else {
+        let documentation = crate::documentation::leading_documentation(&function.body);
+        let [statement] = &function.body[documentation..] else {
             continue;
         };
-        let Statement::Return(Some(expression)) = &statement.node else {
-            continue;
+        let expression = match &statement.node {
+            Statement::Return(Some(value)) | Statement::Expr(value) => value,
+            _ => continue,
         };
         if !function.decorators.is_empty()
             || !function.type_params.is_empty()
@@ -546,45 +549,101 @@ pub fn closed_scalar_scopes(
         {
             continue;
         }
-        if !matches!(&expression.node, Expr::Literal(_))
-            && !matches!(&expression.node, Expr::Ident(name) if function.params.iter().any(|p| p.node.name == *name))
-        {
-            continue;
-        }
         let Some(binding) = checker.declaration_view().function(item.span) else {
             continue;
         };
-        if binding.params.len() != function.params.len() || !function.name.is_ascii() {
+        let Some(identity) = &binding.identity else { continue };
+        if binding.is_async || binding.params.len() != function.params.len() || !function.name.is_ascii() {
             continue;
         }
-        let mut actual = binding
+        let actual = binding
             .params
             .iter()
             .map(|p| &p.ty)
             .chain(std::iter::once(&binding.return_type));
         let mut names = BTreeSet::from([function.name.clone()]);
-        let mut types = function
+        let types = function
             .params
             .iter()
             .map(|p| &p.node.ty.node)
             .chain(std::iter::once(&function.return_type.node));
-        if types.all(|ty| {
+        let scalar = types.zip(actual).all(|(ty, resolved)| {
+            if matches!(ty, Type::Unit) {
+                return *resolved == ResolvedType::Unit;
+            }
             let Type::Simple(name) = ty else { return false };
+            if ResolvedType::builtin_simple(name).as_ref() != Some(resolved) {
+                return false;
+            }
+            if *resolved == ResolvedType::Unit {
+                names.insert(name.clone());
+                return true;
+            }
             let Some(kind @ (BuiltinTypeName::Numeric(_) | BuiltinTypeName::StringLike(_))) = builtin_type_name(name)
             else {
                 return false;
             };
-            if crate::symbols::ResolvedType::builtin_simple(name).as_ref() != actual.next() {
-                return false;
-            }
             names.insert(name.clone());
             names.insert(kind.canonical().to_owned());
             true
-        }) {
+        });
+        if scalar
+            && collect_scalar_lookup_names(expression, function, &identity.origin, checker.type_info(), &mut names)
+        {
             scopes.insert(item.span, names.into_iter().collect());
         }
     }
     scopes
+}
+
+/// Record plain scalar calls through checked declarations. Primitive printing needs no display implementation lookup.
+fn collect_scalar_lookup_names(
+    value: &crate::ast::Spanned<crate::ast::Expr>,
+    function: &crate::ast::FunctionDecl,
+    origin: &incan_semantics_core::SymbolOrigin,
+    facts: &crate::typechecker::TypeCheckInfo,
+    names: &mut BTreeSet<String>,
+) -> bool {
+    use crate::ast::{CallArg, Expr};
+    use crate::symbols::ResolvedType;
+    use incan_lang::lang::builtins::BuiltinFnId;
+    use incan_semantics_core::SemanticSourceTargetKind;
+    if !matches!(
+        facts.expr_type(value.span),
+        Some(
+            ResolvedType::Int
+                | ResolvedType::Float
+                | ResolvedType::Bool
+                | ResolvedType::Numeric(_)
+                | ResolvedType::Str
+                | ResolvedType::FrozenStr
+                | ResolvedType::Unit
+        )
+    ) {
+        return false;
+    }
+    match &value.node {
+        Expr::Literal(_) => true,
+        Expr::Ident(name) => function.params.iter().any(|p| p.node.name == *name),
+        Expr::Call(callee, type_args, args) if type_args.is_empty() => {
+            let Expr::Ident(name) = &callee.node else { return false };
+            let print = facts.resolved_builtin_call(value.span) == Some(BuiltinFnId::Print);
+            let local = facts.resolved_identity(callee.span).is_some_and(|target| {
+                target.kind == SemanticSourceTargetKind::Function
+                    && &target.origin == origin
+                    && target.declaration_name == *name
+                    && facts.declarations.source_identities.contains_key(target)
+            });
+            if !print && !local {
+                return false;
+            }
+            names.insert(name.clone());
+            args.iter().all(|arg| {
+                matches!(arg, CallArg::Positional(value) if collect_scalar_lookup_names(value, function, origin, facts, names))
+            })
+        }
+        _ => false,
+    }
 }
 
 /// Obtain a new declaration for a closed scalar owner using only its current source and previous stable identity.
@@ -1044,21 +1103,32 @@ mod tests {
     #[test]
     fn scalar_scope_requires_checked_types_and_a_closed_return() -> Result<(), Box<dyn std::error::Error>> {
         let parsed = program(
-            "def leaf() -> str:\n    return \"hello\"\n\ndef copy(value: int) -> int:\n    return value\n\ndef caller() -> str:\n    return leaf()\n\ndef add(value: int) -> int:\n    return value + 1\n",
+            "def leaf() -> str:\n    \"\"\"Keeps documentation out of the lookup scope.\"\"\"\n    return \"hello\"\n\ndef copy(value: int) -> int:\n    return value\n\ndef caller() -> str:\n    return leaf()\n\ndef printed() -> None:\n    println(leaf())\n\ndef add(value: int) -> int:\n    return value + 1\n",
         )?;
         let mut checker = TypeChecker::new();
         checker.set_current_module_path(Some(vec!["main".into()]));
         assert!(super::closed_scalar_scopes(&parsed, &checker).is_empty());
         checker.check_program(&parsed).map_err(|errors| format!("{errors:?}"))?;
         let scopes = super::closed_scalar_scopes(&parsed, &checker);
-        assert_eq!(scopes.len(), 2);
-        let has = |owner: &str, ty: &str| {
-            scopes
-                .values()
-                .any(|names| names.iter().any(|name| name == owner) && names.iter().any(|name| name == ty))
-        };
-        assert!(has("leaf", "str"));
-        assert!(has("copy", "int"));
+        let slots = parsed
+            .declarations
+            .iter()
+            .map(|item| {
+                scopes
+                    .get(&item.span)
+                    .map(|names| names.iter().map(String::as_str).collect::<Vec<_>>())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            slots,
+            vec![
+                Some(vec!["leaf", "str"]),
+                Some(vec!["copy", "i64", "int"]),
+                Some(vec!["caller", "leaf", "str"]),
+                Some(vec!["None", "leaf", "printed", "println"]),
+                None,
+            ]
+        );
         Ok(())
     }
 
@@ -2409,6 +2479,37 @@ mod tests {
             lower_graph_test_module(&edited, &warm).bodies,
             lower_graph_test_module(&edited, &fresh).bodies
         );
+        Ok(())
+    }
+
+    /// Frame admission tracks a named type the owner uses and ignores a physically moved ambient type.
+    #[test]
+    fn physical_owner_frames_follow_selected_nominal_reads() -> Result<(), Box<dyn std::error::Error>> {
+        let parsed = program(concat!(
+            "model Selected:\n    value: int\n\n",
+            "model Unused:\n    value: int\n\n",
+            "def take(item: Selected) -> int:\n    return item.value\n",
+        ))?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["main".to_owned()]));
+        checker.check_program(&parsed).map_err(|errors| format!("{errors:?}"))?;
+        let owner = parsed.declarations[2].span;
+        let before = checker
+            .graph_body_physical_inputs(&parsed, owner)
+            .ok_or("missing initial proof")?;
+        for (name, same) in [("Unused", true), ("Selected", false)] {
+            let binding = checker
+                .type_info
+                .declarations
+                .named_type_identities
+                .get_mut(name)
+                .ok_or("missing declared type binding")?;
+            binding.declaration_span.start += 1;
+            let current = checker
+                .graph_body_physical_inputs(&parsed, owner)
+                .ok_or("missing updated proof")?;
+            assert_eq!(current == before, same, "{name}");
+        }
         Ok(())
     }
 

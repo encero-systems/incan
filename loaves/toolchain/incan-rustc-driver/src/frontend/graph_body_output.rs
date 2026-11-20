@@ -363,11 +363,16 @@ impl GraphBodyOutput {
                                 Some((digest, coordinates)) => (Some(digest), coordinates),
                                 None => (None, Vec::new()),
                             };
-                            let scope_names = if value.dependency_reads.is_empty() && !uses_methods {
-                                scopes.remove(&fields.span).unwrap_or_default()
-                            } else {
-                                Vec::new()
-                            };
+                            let scope_names = scopes
+                                .remove(&fields.span)
+                                .filter(|names| {
+                                    !uses_methods
+                                        && value
+                                            .dependency_reads
+                                            .iter()
+                                            .all(|read| names.binary_search(&read.name).is_ok())
+                                })
+                                .unwrap_or_default();
                             self.values.push(PendingBodyValue {
                                 scope_names,
                                 physical_inputs,

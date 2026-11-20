@@ -174,6 +174,7 @@ pub fn scalar_frame(body: &ir::Body) -> bool {
 /// Restore an eligible native frame and authenticate its historical coordinates against the full input digest.
 pub(super) fn relocate(
     positions: &Positions,
+    facts: &crate::typechecker::TypeCheckInfo,
     local: &BodyLocal,
     records: [&Fields; 3],
     expected: [u8; 32],
@@ -230,5 +231,5 @@ pub(super) fn relocate(
         }
         layout.symbol(target, resolved)?;
     }
-    (positions.physical_inputs_in(local, records, Some(&layout))? == expected).then_some(())
+    (positions.physical_inputs_in(facts, local, records, Some(&layout))? == expected).then_some(())
 }

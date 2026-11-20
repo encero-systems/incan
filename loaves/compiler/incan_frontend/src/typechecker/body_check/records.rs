@@ -243,7 +243,7 @@ impl TypeChecker {
             self.available_final_record(owner)?,
         ];
         let positions = Positions::for_local(self, program, owner, local).ok()?;
-        let digest = positions.physical_inputs_in(local, records, None)?;
+        let digest = positions.physical_inputs_in(&self.type_info, local, records, None)?;
         let nodes = positions.nodes.physical_nodes();
         let geometry =
             if coordinates && nodes.len() <= incan_semantics_core::executable_representation::MAX_OWNER_COORDINATES {
@@ -383,7 +383,7 @@ impl TypeChecker {
                 continue;
             };
             let rows = [declaration, local_fields, final_value];
-            let current = positions.physical_inputs_in(local, rows, None);
+            let current = positions.physical_inputs_in(&self.type_info, local, rows, None);
             let exact = body.span == owner
                 && body.canonical.as_ref()
                     == self
@@ -393,7 +393,16 @@ impl TypeChecker {
                 && current == Some(expected);
             if exact
                 || (!coordinates.is_empty()
-                    && placement::relocate(&positions, local, rows, expected, &coordinates, &mut body).is_some())
+                    && placement::relocate(
+                        &positions,
+                        &self.type_info,
+                        local,
+                        rows,
+                        expected,
+                        &coordinates,
+                        &mut body,
+                    )
+                    .is_some())
             {
                 self.type_info.reused_callable_bodies.insert(owner, body);
             }
@@ -695,6 +704,7 @@ impl Positions {
     /// reference, nested, and write handles settled for that owner. Hash ordered typed bytes, including scope IDs.
     fn physical_inputs_in(
         &self,
+        facts: &crate::typechecker::TypeCheckInfo,
         local: &BodyLocal,
         records: [&Fields; 3],
         placement: Option<&placement::Placement>,
@@ -732,25 +742,36 @@ impl Positions {
             .iter()
             .map(|(here, context)| Some((span(here)?, (target(&context.owner), context.binding_ordinal))))
             .collect::<Option<BTreeMap<_, _>>>()?;
-        // Every persistent canonical handle read by the declaration/local/final decoders occupies a complete
-        // field. Resolve those cells against this activation's actual bindings. A coinciding scalar can retain
-        // an extra handle, but cannot exclude a read. The same rule applies to local and imported top-level functions.
-        let used = records
-            .into_iter()
-            .flatten()
-            .flatten()
-            .filter_map(|field| self.identities.get(field))
-            .collect::<std::collections::BTreeSet<_>>();
-        let handles = self
-            .identities
-            .iter()
-            .filter(|(_, target)| {
-                target.kind != SemanticSourceTargetKind::Function
-                    || target.scope_discriminant.is_some()
-                    || used.contains(*target)
-            })
-            .map(|(name, id)| (name, target(id)))
-            .collect::<BTreeMap<_, _>>();
+        // The checked record codecs read persisted handles from complete cells. Type payloads also carry lexical
+        // spellings, so bind their current checked aliases where present. The read sets are derived from the owner
+        // records, independent of other declarations the checker happened to load in this activation.
+        let mut handles = BTreeMap::new();
+        let mut type_handles = BTreeMap::new();
+        let mut type_names = BTreeMap::new();
+        for cell in records.iter().flat_map(|fields| fields.iter()).flatten() {
+            let name = cell.as_str();
+            if let Some(identity) = self.identities.get(name) {
+                handles.insert(name, target(identity));
+            }
+            if let Some(identity) = self.type_identities.get(name) {
+                type_handles.insert(name, target(identity));
+            }
+            if let Some(resolved) = facts
+                .declarations
+                .named_type_identities
+                .get(name)
+                .or_else(|| facts.declarations.body_ir_native_type_identities.get(name))
+                .or_else(|| {
+                    facts
+                        .declarations
+                        .qualified_type_references
+                        .get(name)
+                        .map(|entry| &entry.identity)
+                })
+            {
+                type_names.insert(name, target(resolved));
+            }
+        }
         // The store adds the family's selector to each native header and can return canonical rows in codec order.
         // Hash the completed products' logical rows in their fixed declaration/local/final order.
         let values = records.map(|fields| {
@@ -763,7 +784,8 @@ impl Positions {
             placement.map_or_else(|| self.nodes.physical_nodes(), |layout| layout.nodes()),
             values,
             handles,
-            &self.type_identities,
+            type_handles,
+            type_names,
             &local.nested,
             references,
             writes,
