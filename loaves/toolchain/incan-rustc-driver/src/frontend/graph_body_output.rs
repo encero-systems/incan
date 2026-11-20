@@ -27,6 +27,7 @@ pub(super) struct PendingBodyValue {
     restored: bool,
     restored_body_ir: bool,
     physical_inputs: Option<[u8; 32]>,
+    coordinates: Vec<(u32, u32)>,
 }
 
 /// One complete namespace value awaiting its whole-module Body IR row.
@@ -94,6 +95,7 @@ fn fallback_identity(identity: Option<String>) -> Option<String> {
 pub(super) struct GraphBodyOutput {
     path: Option<PathBuf>,
     namespace_proofs: bool,
+    owner_coordinates: bool,
     import_closures: Option<BTreeMap<String, Vec<String>>>,
     project_root: PathBuf,
     values: Vec<PendingBodyValue>,
@@ -128,11 +130,19 @@ impl GraphBodyOutput {
         let import_closures = path
             .as_ref()
             .and_then(|path| path.file_name())
-            .filter(|name| name.as_encoded_bytes().ends_with(internal_models::ranked_output_suffix().as_bytes()))
+            .filter(|name| {
+                name.as_encoded_bytes()
+                    .ends_with(internal_models::ranked_output_suffix().as_bytes())
+            })
             .map(|_| BTreeMap::new());
+        let owner_coordinates = path.as_ref().and_then(|path| path.file_name()).is_some_and(|name| {
+            name.as_encoded_bytes()
+                .ends_with(internal_models::coordinate_output_suffix().as_bytes())
+        });
         Ok(Self {
             import_closures,
             namespace_proofs,
+            owner_coordinates,
             path,
             project_root,
             values: Vec::new(),
@@ -165,11 +175,18 @@ impl GraphBodyOutput {
         indexes: &BTreeMap<PathBuf, usize>,
         dependencies: impl Fn(usize) -> Vec<String>,
     ) -> Result<(), String> {
-        let Some(closures) = &mut self.import_closures else { return Ok(()) };
-        let missing = closures.values().flatten().filter(|path| !closures.contains_key(*path))
-            .cloned().collect::<std::collections::BTreeSet<_>>();
+        let Some(closures) = &mut self.import_closures else {
+            return Ok(());
+        };
+        let missing = closures
+            .values()
+            .flatten()
+            .filter(|path| !closures.contains_key(*path))
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
         for module in missing {
-            let index = indexes.get(&self.project_root.join(&module))
+            let index = indexes
+                .get(&self.project_root.join(&module))
                 .ok_or_else(|| format!("ranked import {module} has no collected source"))?;
             closures.insert(module, dependencies(*index));
         }
@@ -237,12 +254,20 @@ impl GraphBodyOutput {
             match output {
                 incan_frontend::checker_records::CheckedOwnerRecordOutput::Value(fields) => {
                     match encoded_body_value(&module_path, &fields) {
-                        Ok(value) => self.values.push(PendingBodyValue {
-                            physical_inputs: checker.graph_body_physical_inputs(&module.ast, fields.span),
-                            restored: checker.restored_body_record(fields.span),
-                            restored_body_ir: checker.type_info().selected_callable_body(fields.span).is_some(),
-                            ..value
-                        }),
+                        Ok(value) => {
+                            let inputs = checker.graph_body_inputs(&module.ast, fields.span, self.owner_coordinates);
+                            let (physical_inputs, coordinates) = match inputs {
+                                Some((digest, coordinates)) => (Some(digest), coordinates),
+                                None => (None, Vec::new()),
+                            };
+                            self.values.push(PendingBodyValue {
+                                physical_inputs,
+                                coordinates,
+                                restored: checker.restored_body_record(fields.span),
+                                restored_body_ir: checker.type_info().selected_callable_body(fields.span).is_some(),
+                                ..value
+                            });
+                        }
                         Err(refusal) => self.fallbacks.push(PendingBodyFallback {
                             module: module_path.clone(),
                             name: fields.name,
@@ -357,6 +382,12 @@ impl GraphBodyOutput {
                     pending.physical_inputs,
                 )
                 .map_err(|error| format!("Body IR owner row output refused: {error}"))?;
+                if pending.physical_inputs.is_some() && TypeChecker::graph_body_has_scalar_placement(body) {
+                    incan_semantics_core::executable_representation::append_owner_coordinates(
+                        &mut pending.body_ir,
+                        &pending.coordinates,
+                    );
+                }
                 if call_reads.contains_key(&module_path) && incan_frontend::body_ir::needs_call_witness(body) {
                     let reader = body.direct_call_id.path();
                     let reads = by_reader.get(reader).unwrap_or(&no_reads);
@@ -544,12 +575,16 @@ impl GraphBodyOutput {
                 "compiled graph output refused: {error:?} ({body_count} owner rows, {body_ir_bytes} raw Body IR bytes)"
             )
         })?;
-        let import_order = self.import_closures.map(|closures| {
-            let rows = closures.into_iter().map(|(module, imports)| {
-                std::iter::once(module).chain(imports).collect()
-            }).collect::<Vec<Vec<String>>>();
-            internal_models::encode_import_closures(&rows)
-        }).transpose()?;
+        let import_order = self
+            .import_closures
+            .map(|closures| {
+                let rows = closures
+                    .into_iter()
+                    .map(|(module, imports)| std::iter::once(module).chain(imports).collect())
+                    .collect::<Vec<Vec<String>>>();
+                internal_models::encode_import_closures(&rows)
+            })
+            .transpose()?;
         publish_rows(&path, rows, import_order)?;
         publish(&checker_report_path(&path), vec![report])
     }
@@ -616,6 +651,7 @@ pub(super) fn encoded_body_value(
         restored: false,
         restored_body_ir: false,
         physical_inputs: None,
+        coordinates: Vec::new(),
     })
 }
 

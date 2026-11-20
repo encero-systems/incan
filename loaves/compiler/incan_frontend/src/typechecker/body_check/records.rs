@@ -11,6 +11,7 @@ mod local_restore;
 mod mutation;
 mod native_types;
 mod ownership;
+mod placement;
 mod protocol_artifacts_generated;
 mod rust_artifact_admission;
 mod scope_layout;
@@ -219,15 +220,46 @@ impl TypeChecker {
 
     /// Fingerprint the current callable coordinates and checked native bindings before publishing its executable frame.
     pub fn graph_body_physical_inputs(&self, program: &Program, owner: Span) -> Option<[u8; 32]> {
+        self.graph_body_inputs(program, owner, false).map(|value| value.0)
+    }
+
+    /// The same native proof and its optional syntax-path-ordered coordinate map, built from one checkout of the facts.
+    pub fn graph_body_inputs(
+        &self,
+        program: &Program,
+        owner: Span,
+        coordinates: bool,
+    ) -> Option<([u8; 32], Vec<(u32, u32)>)> {
         let local = &self.checked_body(owner)?.local;
         let records = [
             self.available_declaration_record(owner)?,
             self.available_local_record(owner)?,
             self.available_final_record(owner)?,
         ];
-        Positions::for_local(self, program, owner, local)
-            .ok()?
-            .physical_inputs(local, records)
+        let positions = Positions::for_local(self, program, owner, local).ok()?;
+        let digest = positions.physical_inputs_in(local, records, None)?;
+        let nodes = positions.nodes.physical_nodes();
+        let geometry =
+            if coordinates && nodes.len() <= incan_semantics_core::executable_representation::MAX_OWNER_COORDINATES {
+                nodes
+                    .values()
+                    .map(|span| {
+                        if span.expansion.is_some() {
+                            return None;
+                        }
+                        Some((u32::try_from(span.start).ok()?, u32::try_from(span.end).ok()?))
+                    })
+                    .collect::<Option<Vec<_>>>()
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+        Some((digest, geometry))
+    }
+
+    /// Wider executable forms use the exact unmodified native guard, without carrying unused coordinates.
+    pub fn graph_body_has_scalar_placement(body: &incan_semantics_core::body_ir::Body) -> bool {
+        placement::scalar_frame(body)
     }
 
     /// Check the exact current owner before a ranked activation enters this function's statements.
@@ -281,13 +313,18 @@ impl TypeChecker {
             .ok_or(NodeBindingError::MissingOwner)?;
         let frame = selected.body_ir.as_ref().and_then(|frame| {
             if frame.identity != identity
-                || frame.body.canonical.as_ref() != Some(&canonical)
-                || frame.body.span != owner
+                || (frame.coordinates.is_empty()
+                    && (frame.body.canonical.as_ref() != Some(&canonical) || frame.body.span != owner))
                 || frame.body.name != canonical.declaration_name
             {
                 return None;
             }
-            Some((owner, frame.physical_inputs?, frame.body.clone()))
+            Some((
+                owner,
+                frame.physical_inputs?,
+                frame.body.clone(),
+                frame.coordinates.clone(),
+            ))
         });
         let mut diagnostic_positions = DiagnosticPositions::new(program, self.symbols.declaration_origin());
         self.reuse_checked_body(Arc::new(restored.view), &mut diagnostic_positions)
@@ -326,8 +363,32 @@ impl TypeChecker {
     /// Compare in the same completed module phase that produced the frame. Earlier callables have not seen the
     /// declaration and scope identities of their later siblings during statement admission.
     pub(in crate::typechecker) fn finish_graph_body_frames(&mut self, program: &Program) {
-        for (owner, expected, body) in std::mem::take(&mut self.pending_graph_frames) {
-            if self.graph_body_physical_inputs(program, owner) == Some(expected) {
+        for (owner, expected, mut body, coordinates) in std::mem::take(&mut self.pending_graph_frames) {
+            let Some(local) = self.checked_body(owner).map(|view| &view.local) else {
+                continue;
+            };
+            let (Some(declaration), Some(local_fields), Some(final_value)) = (
+                self.available_declaration_record(owner),
+                self.available_local_record(owner),
+                self.available_final_record(owner),
+            ) else {
+                continue;
+            };
+            let Ok(positions) = Positions::for_local(self, program, owner, local) else {
+                continue;
+            };
+            let rows = [declaration, local_fields, final_value];
+            let exact = body.span == owner
+                && body.canonical.as_ref()
+                    == self
+                        .declaration_view()
+                        .callable(owner)
+                        .and_then(|v| v.identity.as_ref())
+                && positions.physical_inputs_in(local, rows, None) == Some(expected);
+            if exact
+                || (!coordinates.is_empty()
+                    && placement::relocate(&positions, local, rows, expected, &coordinates, &mut body).is_some())
+            {
                 self.type_info.reused_callable_bodies.insert(owner, body);
             }
         }
@@ -623,25 +684,45 @@ impl Positions {
     /// A position-free checker result can remain reusable after its native executable references have moved.
     /// Bind the native frame to the current owner's entire syntax geometry, checked type providers, and the exact
     /// reference, nested, and write handles settled for that owner. Hash ordered typed bytes, including scope IDs.
-    fn physical_inputs(&self, local: &BodyLocal, records: [&Fields; 3]) -> Option<[u8; 32]> {
+    fn physical_inputs_in(
+        &self,
+        local: &BodyLocal,
+        records: [&Fields; 3],
+        placement: Option<&placement::Placement>,
+    ) -> Option<[u8; 32]> {
         use sha2::{Digest, Sha256};
-        let references = local.references.resolved_identities.iter().collect::<BTreeMap<_, _>>();
+        let span = |current: &Span| match placement {
+            Some(layout) => layout.prior_span(*current),
+            None => Some(*current),
+        };
+        let target = |current| match placement {
+            Some(layout) => layout.prior_target(current),
+            None => current,
+        };
+        let references = local
+            .references
+            .resolved_identities
+            .iter()
+            .map(|(here, id)| Some((span(here)?, target(id))))
+            .collect::<Option<BTreeMap<_, _>>>()?;
         let writes = local
             .references
             .resolved_write_identities
             .iter()
-            .collect::<BTreeMap<_, _>>();
+            .map(|((here, name), id)| Some(((span(here)?, name), target(id))))
+            .collect::<Option<BTreeMap<_, _>>>()?;
         let types = local
             .expressions
             .expression_type_identities
             .iter()
-            .collect::<BTreeMap<_, _>>();
+            .map(|(here, ty)| Some((span(here)?, ty)))
+            .collect::<Option<BTreeMap<_, _>>>()?;
         let contexts = local
             .references
             .stable_declaration_contexts
             .iter()
-            .map(|(span, context)| (span, (&context.owner, context.binding_ordinal)))
-            .collect::<BTreeMap<_, _>>();
+            .map(|(here, context)| Some((span(here)?, (target(&context.owner), context.binding_ordinal))))
+            .collect::<Option<BTreeMap<_, _>>>()?;
         // Every persistent canonical handle read by the declaration/local/final decoders occupies a complete
         // field. Resolve those cells against this activation's actual bindings. A coinciding scalar can retain
         // an extra handle, but cannot exclude a read. The same rule applies to local and imported top-level functions.
@@ -659,6 +740,7 @@ impl Positions {
                     || target.scope_discriminant.is_some()
                     || used.contains(*target)
             })
+            .map(|(name, id)| (name, target(id)))
             .collect::<BTreeMap<_, _>>();
         // The store adds the family's selector to each native header and can return canonical rows in codec order.
         // Hash the completed products' logical rows in their fixed declaration/local/final order.
@@ -669,7 +751,7 @@ impl Positions {
         });
         let bytes = postcard::to_allocvec(&(
             self.nodes.root(),
-            self.nodes.physical_nodes(),
+            placement.map_or_else(|| self.nodes.physical_nodes(), |layout| layout.nodes()),
             values,
             handles,
             &self.type_identities,

@@ -200,6 +200,11 @@ pub def ranked_output_suffix() -> str:
     return ".ranked.cmpns5.graph-body-output"
 
 
+pub def coordinate_output_suffix() -> str:
+    """Ask a native producer to retain bounded syntax coordinates alongside its exact physical input stamp."""
+    return ".placement" + ranked_output_suffix()
+
+
 def import_order_description() -> Description:
     return model_description(IMPORT_ORDER_ROW, "incan.compiler.import-closures/1", [
         ModelField(identity=b"closed", name="module_and_imports", storage="list<list<string>>"),

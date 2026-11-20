@@ -73,6 +73,23 @@ pub fn encode_owner(
 
 const PHYSICAL_INPUTS: &[u8] = b"incan.physical-body/1\0";
 
+const OWNER_COORDINATES: &[u8] = b"incan.body-coordinates/1\0";
+/// Bound optional relocation work independently of an executable owner's supported size.
+pub const MAX_OWNER_COORDINATES: usize = 128;
+
+/// Append a bounded coordinate map to the native physical input stamp. The graph's optional call receipt follows it.
+pub fn append_owner_coordinates(encoded: &mut Vec<u8>, coordinates: &[(u32, u32)]) {
+    if coordinates.is_empty() || coordinates.len() > MAX_OWNER_COORDINATES {
+        return;
+    }
+    encoded.extend_from_slice(OWNER_COORDINATES);
+    encoded.push(coordinates.len() as u8);
+    for &(start, end) in coordinates {
+        encoded.extend_from_slice(&start.to_le_bytes());
+        encoded.extend_from_slice(&end.to_le_bytes());
+    }
+}
+
 /// Encode a checked graph owner together with the producing frontend's exact physical-input witness.
 pub fn encode_graph_owner(
     module: &CompilerNodeId,
@@ -111,6 +128,27 @@ pub fn decode_owner(bytes: &[u8]) -> Result<EncodedOwnerRepresentation, Executab
                     reason: "executable owner has a truncated physical input frame".into(),
                 })?;
         framed.physical_inputs = Some(*digest);
+        trailing = rest;
+    }
+    if let Some(encoded) = trailing.strip_prefix(OWNER_COORDINATES) {
+        let invalid = || ExecutableRepresentationError::Malformed {
+            reason: "invalid native body coordinates".into(),
+        };
+        let (&count, bytes) = encoded.split_first().ok_or_else(invalid)?;
+        let count = usize::from(count);
+        if framed.physical_inputs.is_none() || count == 0 || count > MAX_OWNER_COORDINATES {
+            return Err(invalid());
+        }
+        let (coordinates, rest) = bytes.split_at_checked(count * 8).ok_or_else(invalid)?;
+        for pair in coordinates.chunks_exact(8) {
+            let (start, end) = pair.split_at(4);
+            let start = u32::from_le_bytes(start.try_into().map_err(|_| invalid())?);
+            let end = u32::from_le_bytes(end.try_into().map_err(|_| invalid())?);
+            if start > end {
+                return Err(invalid());
+            }
+            framed.coordinates.push((start, end));
+        }
         trailing = rest;
     }
     if !trailing.is_empty() {
