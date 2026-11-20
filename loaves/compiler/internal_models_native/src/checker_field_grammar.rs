@@ -1,18 +1,9 @@
 //! Primitive grammars retained by canonical checker rows.
 
 use crate::call_artifact_codecs::{CallArtifactCodec, call_artifact_codec};
-pub use crate::codec_fault::CodecFault;
+pub use crate::checker_record_models::{CanonicalField, CodecFault};
 use crate::input_fields::input_field_end;
 use CodecFault::Malformed;
-
-/// A schema-owned field: node is a structural role or stable binding reference; values follow its typed grammar.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CanonicalField {
-    pub family: String,
-    pub node: String,
-    pub selector: String,
-    pub values: Vec<String>,
-}
 
 /// Parse the canonical unsigned decimal grammar of up to five digits.
 pub fn decimal(text: &str) -> Result<i64, CodecFault> {

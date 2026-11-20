@@ -160,7 +160,8 @@ pub struct CompilerDeclarationSet {
     pub private_implementations: Vec<CompilerBody>,
 }
 
-/// All 18 live BodyIrModule fields, including invocation-only facts that publication must not import.
+/// All live BodyIrModule fields, including invocation-only facts that publication must not import.
+/// `runtime_binding_scopes` defaults to empty.
 #[derive(Clone, Debug)]
 pub struct CompilerBodyIrModule {
     pub runtime_callable_bindings: Vec<RuntimeCallableBinding>,
@@ -181,6 +182,7 @@ pub struct CompilerBodyIrModule {
     pub trait_declarations: Vec<CanonicalSymbolId>,
     pub trait_implementations: Vec<TraitImplementation>,
     pub bodies: Vec<CompilerBody>,
+    pub runtime_binding_scopes: Vec<(String, Vec<String>)>,
 }
 
 /// A retired facade payload makes the body inadmissible.
@@ -228,9 +230,11 @@ pub fn covered_body_count(coverage: &CompilerBodyCoverage) -> Option<i64> {
     }
 }
 
-/// Invocation-only facts are present if either binding inventory is nonempty.
+/// Invocation-only facts are present if any binding inventory is nonempty.
 pub fn valid_invocation_view(module: &CompilerBodyIrModule) -> bool {
-    !module.runtime_callable_bindings.is_empty() || !module.program_entrypoints.is_empty()
+    !module.runtime_callable_bindings.is_empty()
+        || !module.runtime_binding_scopes.is_empty()
+        || !module.program_entrypoints.is_empty()
 }
 
 /// A published expanded body cannot carry native macro inputs or a retired facade payload.

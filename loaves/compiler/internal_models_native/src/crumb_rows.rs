@@ -1,201 +1,124 @@
-//! Compiler row transport through the standard library's native Crumb request interface.
-
-pub use crate::general_rows::{
-    ModelField, decode_rows, encode_rows, model_description, operation_budget, required_value,
+//! Public compiler row helpers retaining the standard library's general logical model.
+use internal_models_bindings::{
+    AbsentPolicy, Budget, Description, DescriptionMode, KindRegistry, Metadata, MetadataEntry, RowRecord, Value,
+    ValueField, binary_message, complete_view, create_budget, crumb_message, empty_registry, mapped_bytes,
+    read_record_at, read_rows, row_count, write_rows,
 };
 
-use crate::{CodecFault, row_shapes::Shape};
-use CodecFault::{Limit, Malformed};
-use internal_models_bindings::{RowAdmission, RowRead, RowRequest, RowWriteRequest};
-
-const ELEMENTS: i64 = 4_194_304;
-const DEPTH: i64 = 128;
-
-pub(crate) struct Writer {
-    request: RowWriteRequest,
-    shape: &'static Shape,
-    maximum: i64,
+/// A required model field with its stable identity and canonical projection policy.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModelField {
+    pub identity: Vec<u8>,
+    pub name: String,
+    pub storage: String,
+    pub canonical: bool,
 }
 
-impl Writer {
-    /// Start an unsealed writer for one referenced compiler schema.
-    pub fn new(shape: &'static Shape, maximum: i64) -> Result<Self, CodecFault> {
-        let mut request = RowWriteRequest::new(false);
-        request.description(shape.metadata().ok_or(Limit)?.to_vec(), false);
-        request.allow(maximum * 4, ELEMENTS, DEPTH);
-        Ok(Self {
-            request,
-            shape,
-            maximum,
+/// Create the shared bound for one compiler-record operation.
+pub fn operation_budget() -> Result<Budget, String> {
+    create_budget(67_108_864, 4_194_304, 128).map_err(|error| crumb_message(&error))
+}
+
+/// Keep metadata keys and values in the original declaration order.
+fn entry(key: &str, value: Metadata) -> MetadataEntry {
+    MetadataEntry {
+        key: key.to_owned(),
+        value,
+    }
+}
+
+/// Construct one logical description from either general fields or static compiler schema fields.
+pub(crate) fn description_from_fields<'a>(
+    selector: &[u8],
+    path: &str,
+    fields: impl Iterator<Item = (&'a [u8], &'a str, &'a str, bool)>,
+) -> Description {
+    let metadata = fields
+        .map(|(identity, name, storage, canonical)| {
+            Metadata::Map(vec![
+                entry("id", Metadata::Binary(identity.to_vec())),
+                entry("name", Metadata::Text(name.to_owned())),
+                entry("type", Metadata::Text(storage.to_owned())),
+                entry("canonical", Metadata::Boolean(canonical)),
+                entry("absent", Metadata::Text("required".into())),
+                entry("properties", Metadata::Map(Vec::new())),
+            ])
         })
-    }
-    /// Start the next record of the selected model.
-    pub fn record(&mut self) {
-        self.request.record(self.shape.selector.to_vec());
-        self.node(14, self.shape.fields.len() as i64);
-    }
-    /// Append a collection or option tag and its node count.
-    fn node(&mut self, code: i64, count: i64) {
-        self.request
-            .node(code, count, false, 0, 0, 0, 0, Vec::new(), Vec::new(), String::new());
-    }
-    /// Introduce a present canonical field by its required six-byte identity.
-    fn field(&mut self, id: &[u8]) {
-        self.request
-            .node(18, 0, true, 0, 0, 0, 0, id.to_vec(), Vec::new(), "required".into());
-    }
-    /// Move an owned string into the native row request.
-    pub fn text_node(&mut self, value: String) {
-        self.request
-            .node(7, 0, false, 0, 0, 0, 0, Vec::new(), Vec::new(), value);
-    }
-    /// Write a present string field.
-    pub fn text(&mut self, id: &[u8], value: &str) {
-        self.field(id);
-        self.text_node(value.to_owned());
-    }
-    /// Write the presence marker and optional string payload.
-    pub fn optional_text(&mut self, id: &[u8], value: Option<&str>) {
-        self.field(id);
-        if let Some(s) = value {
-            self.node(1, 1);
-            self.text_node(s.to_owned());
-        } else {
-            self.node(0, 0);
-        }
-    }
-    /// Write a byte field owned by the encoding request.
-    pub fn binary(&mut self, id: &[u8], value: &[u8]) {
-        self.field(id);
-        self.request
-            .node(8, 0, false, 0, 0, 0, 0, value.to_vec(), Vec::new(), String::new());
-    }
-    /// Start a text list of the declared length.
-    pub fn list(&mut self, id: &[u8], len: usize) -> Result<(), CodecFault> {
-        self.field(id);
-        self.node(10, i64::try_from(len).map_err(|_| Limit)?);
-        Ok(())
-    }
-    /// Return complete encoded rows within the caller’s byte boundary.
-    pub fn finish(self) -> Result<Vec<u8>, CodecFault> {
-        let result = self.request.write();
-        if !result.category.is_empty() || result.data.len() as u64 > self.maximum as u64 {
-            return Err(Limit);
-        }
-        Ok(result.data)
+        .collect();
+    Description {
+        metadata: Metadata::Map(vec![
+            entry("kind", Metadata::Text("Record".into())),
+            entry("nominal", Metadata::Binary(selector.to_vec())),
+            entry("path", Metadata::Text(path.to_owned())),
+            entry("properties", Metadata::Map(Vec::new())),
+            entry("fields", Metadata::List(metadata)),
+        ]),
+        mode: DescriptionMode::Reference,
     }
 }
 
-pub(crate) struct Rows {
-    admitted: RowAdmission,
-    bytes_left: i64,
-    elements_left: i64,
+/// Build a referenced Crumb description in declaration order.
+pub fn model_description(selector: &[u8], path: &str, fields: &[ModelField]) -> Description {
+    description_from_fields(
+        selector,
+        path,
+        fields
+            .iter()
+            .map(|f| (f.identity.as_slice(), f.name.as_str(), f.storage.as_str(), f.canonical)),
+    )
 }
 
-impl Rows {
-    /// Admit an exact envelope with the permitted schemas and retain the remaining read allowance.
-    pub fn admit(data: &[u8], shapes: &[&Shape], maximum: i64) -> Result<Self, CodecFault> {
-        if data.len() as u64 > maximum as u64 {
-            return Err(Malformed);
-        }
-        let mut request = RowRequest::new(data.to_vec(), false, true);
-        for shape in shapes {
-            request.supply(shape.metadata().ok_or(Malformed)?.to_vec())
-        }
-        request.allow(maximum * 4, ELEMENTS, DEPTH);
-        let admitted = request.admit();
-        if !admitted.admitted() {
-            return Err(Malformed);
-        }
-        Ok(Self {
-            bytes_left: maximum * 4 - admitted.bytes_charged,
-            elements_left: ELEMENTS - admitted.elements_charged,
-            admitted,
-        })
-    }
-    /// Return the number of rows authenticated by admission.
-    pub fn len(&self) -> i64 {
-        self.admitted.records
-    }
-    /// Read and charge one logical row before interpreting it as a compiler model.
-    fn read_native(&mut self, index: i64) -> Result<RowRead, CodecFault> {
-        let read = self
-            .admitted
-            .read_record(index, self.bytes_left, self.elements_left, DEPTH);
-        if !read.succeeded() {
-            return Err(Malformed);
-        }
-        self.bytes_left -= read.bytes_charged;
-        self.elements_left -= read.elements_charged;
-        Ok(read)
-    }
-
-    /// The original admits every row before authenticating owner data. A later native read refusal takes precedence.
-    pub fn remaining_reads(&mut self, start: i64) -> Result<(), CodecFault> {
-        for index in start..self.len() {
-            self.read_native(index)?;
-        }
-        Ok(())
-    }
-
-    /// Materialize one native row under the remaining shared budget.
-    pub fn row(&mut self, index: i64) -> Result<(Vec<u8>, Fields), CodecFault> {
-        let mut read = self.read_native(index)?;
-        if read.next() != 14 {
-            return Err(Malformed);
-        }
-        Ok((self.admitted.key(index), Fields(read)))
+/// Move an already owned compiler value directly into its required field.
+pub(crate) fn owned_field(identity: &[u8], value: Value, canonical: bool) -> ValueField {
+    ValueField {
+        identity: identity.to_vec(),
+        canonical,
+        absent: AbsentPolicy::Required,
+        value,
     }
 }
 
-pub(crate) struct Fields(RowRead);
-impl Fields {
-    /// Check the exact declared field count before consuming the record.
-    pub fn count(&self, expected: i64) -> Result<(), CodecFault> {
-        if self.0.count() == expected {
-            Ok(())
-        } else {
-            Err(Malformed)
-        }
+/// Bind a borrowed logical value to a present, required field.
+pub fn required_value(identity: &[u8], value: &Value, canonical: bool) -> ValueField {
+    // The returned field must retain the logical value after this borrow ends.
+    owned_field(identity, value.clone(), canonical)
+}
+
+/// Use the original byte and element limits and create the empty local kind registry.
+fn row_budget(maximum: i64) -> Result<(Budget, KindRegistry), String> {
+    let mut budget = create_budget(maximum.wrapping_mul(4), 4_194_304, 128).map_err(|error| crumb_message(&error))?;
+    let registry = empty_registry(&mut budget).map_err(|error| crumb_message(&error))?;
+    Ok((budget, registry))
+}
+
+/// Encode one model's rows under the public Crumb budget and caller's final byte limit.
+pub fn encode_rows(description: &Description, records: &Vec<RowRecord>, maximum: i64) -> Result<Vec<u8>, String> {
+    let (mut budget, registry) = row_budget(maximum)?;
+    let encoded = write_rows(
+        // The existing Incan row writer requires a borrowed Vec of owned descriptions.
+        &vec![description.clone()],
+        records,
+        &registry,
+        false,
+        &mut budget,
+    )
+    .map_err(|error| crumb_message(&error))?;
+    if i64::try_from(encoded.len()).map_or(true, |size| size > maximum) {
+        return Err("encoded Crumb rows exceed their byte boundary".into());
     }
-    /// Advance one node and require its expected semantic tag.
-    fn tagged(&mut self, tag: i64) -> Result<(), CodecFault> {
-        if self.0.next() == tag { Ok(()) } else { Err(Malformed) }
+    Ok(encoded)
+}
+
+/// Restore each logical row in order under the same allowance used for admission.
+pub fn decode_rows(encoded: &Vec<u8>, descriptions: &Vec<Description>, maximum: i64) -> Result<Vec<RowRecord>, String> {
+    if i64::try_from(encoded.len()).map_or(true, |size| size > maximum) {
+        return Err("encoded Crumb rows exceed their byte boundary".into());
     }
-    /// Read a single string field from the current row.
-    pub fn text(&mut self) -> Result<String, CodecFault> {
-        self.tagged(18)?;
-        self.tagged(7)?;
-        Ok(self.0.text())
-    }
-    /// Read a single byte-string field from the current row.
-    pub fn binary(&mut self) -> Result<Vec<u8>, CodecFault> {
-        self.tagged(18)?;
-        self.tagged(8)?;
-        Ok(self.0.bytes())
-    }
-    /// Read an absent or nonempty identity from its option field.
-    pub fn optional_text(&mut self) -> Result<Option<String>, CodecFault> {
-        self.tagged(18)?;
-        match self.0.next() {
-            0 => Ok(None),
-            1 => {
-                self.tagged(7)?;
-                let s = self.0.text();
-                if s.is_empty() { Err(Malformed) } else { Ok(Some(s)) }
-            }
-            _ => Err(Malformed),
-        }
-    }
-    /// Read every string from a declared list in wire order.
-    pub fn texts(&mut self) -> Result<Vec<String>, CodecFault> {
-        self.tagged(18)?;
-        self.tagged(10)?;
-        (0..self.0.count())
-            .map(|_| {
-                self.tagged(7)?;
-                Ok(self.0.text())
-            })
-            .collect()
-    }
+    let (mut budget, registry) = row_budget(maximum)?;
+    let owner = mapped_bytes(encoded)?;
+    let view = complete_view(&owner).ok_or("Crumb row envelope has no complete view")?;
+    let rows = read_rows(&view, descriptions, &registry, false, &mut budget).map_err(|error| binary_message(&error))?;
+    (0..row_count(&rows))
+        .map(|index| read_record_at(&rows, index, &mut budget).map_err(|error| binary_message(&error)))
+        .collect()
 }

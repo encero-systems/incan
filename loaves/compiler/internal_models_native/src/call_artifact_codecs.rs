@@ -1,13 +1,14 @@
 //! Grammar for plain values emitted by generated checker call-artifact projections.
 
 /// A generated call-artifact row's grammar: one checked type, one `true` flag, one checked identity, or one resolved
-/// operator call.
+/// operator call. Method rows use their own grammar, so the method codec admits no plain values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CallArtifactCodec {
     SpanType,
     SpanSet,
     SpanIdentity,
     Operator,
+    Method,
 }
 
 impl CallArtifactCodec {
@@ -18,6 +19,7 @@ impl CallArtifactCodec {
             Self::SpanSet => "span-set",
             Self::SpanIdentity => "span-identity",
             Self::Operator => "operator",
+            Self::Method => "method",
         }
         .to_owned()
     }
@@ -29,6 +31,7 @@ impl CallArtifactCodec {
             "span-set" => Some(Self::SpanSet),
             "span-identity" => Some(Self::SpanIdentity),
             "operator" => Some(Self::Operator),
+            "method" => Some(Self::Method),
             _ => None,
         }
     }
@@ -87,6 +90,7 @@ pub fn call_artifact_codec(selector: &str) -> Option<CallArtifactCodec> {
         | "body_ir_native_argument_identities"
         | "body_ir_native_codec_members"
         | "source_display_methods" => Some(CallArtifactCodec::SpanIdentity),
+        "resolved_method_calls" => Some(CallArtifactCodec::Method),
         "resolved_operator_calls" => Some(CallArtifactCodec::Operator),
         _ => None,
     }

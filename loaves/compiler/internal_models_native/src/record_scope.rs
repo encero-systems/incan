@@ -4,7 +4,8 @@ use std::collections::HashSet;
 
 pub const READ_SCHEMA: &str = "incan.compiler-fact-reads/1";
 
-/// Full logical identity; locations, revisions and invocation-local table slots are excluded.
+/// Full logical identity; locations, revisions and invocation-local table slots are excluded. `context` defaults to
+/// empty.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct RecordKey {
     pub family: String,
@@ -43,7 +44,13 @@ pub enum RecordSelection {
     Payload(PayloadSelection),
     Members(MemberSelection),
 }
-/// One bounded selection; the source must return evidence for precisely this key and selection.
+/// A native checker graph page and the compiled output carrying it each admit at most 64 MiB.
+pub const MAX_CHECKER_ROW_BYTES: i64 = 67_108_864;
+/// Other selected responses and individual range reads keep the record protocol's 64 KiB page bound.
+pub const DEFAULT_READ_BYTES: i64 = 65_536;
+
+/// One bounded selection; the source must return evidence for precisely this key and selection. `byte_limit`
+/// defaults to [`DEFAULT_READ_BYTES`].
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct RecordRequest {
     pub key: RecordKey,
@@ -260,15 +267,41 @@ pub fn valid_key(key: &RecordKey) -> bool {
         && !key.facet.is_empty()
 }
 
-/// Admit exactly the envelope shapes supported by the source lookup.
+/// The ranked worker's prior-declaration is a snapshot copy of the same typed declaration row.
+pub fn checked_row_family(family: &str) -> bool {
+    matches!(family, "declaration" | "prior-declaration" | "local" | "final")
+}
+
+/// Read one typed checker owner's complete authenticated row. An oversized reply needs its known encoded extent.
+pub fn checked_row_request(key: &RecordKey, encoded_bytes: i64) -> Result<RecordRequest, String> {
+    if !checked_row_family(&key.family) || encoded_bytes <= 0 || encoded_bytes > MAX_CHECKER_ROW_BYTES {
+        return Err("checked field lies outside its bounded compiler graph page".to_owned());
+    }
+    Ok(RecordRequest {
+        key: key.clone(),
+        selection: RecordSelection::Field("value".to_owned()),
+        byte_limit: DEFAULT_READ_BYTES.max(encoded_bytes),
+    })
+}
+
+/// Reject incomplete full keys and invalid range requests before the source can observe them.
 pub fn valid_request(request: &RecordRequest) -> bool {
-    if !(1..=65536).contains(&request.byte_limit) || !valid_key(&request.key) {
+    if request.byte_limit <= 0 || request.byte_limit > MAX_CHECKER_ROW_BYTES {
+        return false;
+    }
+    if request.byte_limit > DEFAULT_READ_BYTES
+        && (!checked_row_family(&request.key.family)
+            || !matches!(&request.selection, RecordSelection::Field(name) if name == "value"))
+    {
+        return false;
+    }
+    if !valid_key(&request.key) {
         return false;
     }
     match &request.selection {
         RecordSelection::Field(name) => !name.is_empty(),
         RecordSelection::Payload(p) => {
-            !p.reference.is_empty() && p.offset >= 0 && (0..=request.byte_limit).contains(&p.length)
+            !p.reference.is_empty() && p.offset >= 0 && p.length >= 0 && p.length <= request.byte_limit
         }
         RecordSelection::Members(m) => !m.selector.is_empty() && !m.order.is_empty(),
     }

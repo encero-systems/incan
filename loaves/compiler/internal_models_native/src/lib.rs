@@ -1,31 +1,57 @@
-//! Shared compiler declarations and canonical checker record contracts.
+//! The compiler's shared record contracts, one module per contract; none names Oven, a worker or a native compiler
+//! object.
+//!
+//! `records` reads keyed compiler facts through one revision-bound scope, `record_service` is the producer interface
+//! and `checker_records` the canonical checker record codec. Each module keeps the name and public items of the
+//! reference Incan module of the same name; the root re-exports the reference facade.
 
 pub mod activation_envelopes;
 pub mod body_ir_declarations;
 pub mod body_ir_values;
 pub mod call_artifact_codecs;
+pub mod callable_schema;
+pub mod checked_body_counts;
 pub mod checked_types;
 pub mod checker_field_grammar;
+pub mod checker_publication;
+pub mod checker_record_models;
 pub mod checker_records;
-mod codec_fault;
-pub mod compiled_body_frames;
+pub mod compiled_body_rows;
+pub mod compiler_contributors;
+pub mod compiler_export;
 pub mod compiler_records;
 pub mod crumb_rows;
-mod frame_prefix;
-mod general_rows;
-mod graph_records;
+pub mod graph_crumb_fields;
 mod input_fields;
+pub mod lowering_events;
+pub mod manifest_cache;
+pub mod namespace_order;
+pub mod namespace_references;
+pub mod namespace_rows;
+pub mod namespace_schema;
+pub mod overload_members;
+pub mod plan_function_records;
+pub mod plan_module_records;
+pub mod plan_wire_rows;
 pub mod read_receipts;
 pub mod record_scope;
 pub mod record_service;
-mod row_shapes;
-mod semantic_digest;
+pub mod source_value_records;
 pub mod store_record_source;
+pub mod unit_admission;
+
+/// The public read boundary over `record_scope`.
+pub mod records {
+    pub use crate::record_scope::{
+        AbsentFact, DeletedFact, MemberFact, MemberSelection, PayloadSelection, PreparationEvidence, READ_SCHEMA,
+        ReadCounters, ReadFault, ReadReceipt, ReadScope, ReadWitness, RecordKey, RecordRead, RecordReads,
+        RecordRequest, RecordSelection, RecordSource, RevisionEvidence, SelectedFact,
+    };
+    pub use crate::store_record_source::{StoreRecordSource, encode_record_key, selected_record_bytes};
+}
 
 pub use activation_envelopes::{
-    DEMAND_FAMILY, DEMAND_SCHEMA, PREPARED_FAMILY, PREPARED_SCHEMA, WORK_FAMILY, WORK_SCHEMA, decode_demand_page,
-    decode_prepared_inputs, decode_ready_work, encode_demand_page, encode_prepared_inputs, encode_ready_work,
-    envelope_key, stage_name,
+    DEMAND_FAMILY, DEMAND_SCHEMA, PREPARED_FAMILY, PREPARED_SCHEMA, WORK_FAMILY, WORK_SCHEMA,
 };
 pub use body_ir_declarations::{
     BODY_IR_ADAPTER_GENERATION, BODY_IR_ADAPTER_PROFILE, BODY_IR_ADAPTER_REMOVAL_GATE, BODY_IR_ADAPTER_SOURCE,
@@ -36,29 +62,36 @@ pub use body_ir_declarations::{
     valid_published_expanded_body,
 };
 pub use body_ir_values::{CompilerBlock, CompilerCallee, CompilerRvalue, CompilerStatement, CompilerStatementKind};
+pub use checked_body_counts::CheckedBodyCounts;
 pub use checked_types::{
     CheckedCallableParam, CheckedCallableParamKind, CheckedInputAccess, CheckedNumericType, CheckedPrimitiveType,
     CheckedRuntimeBuiltin, CheckedType, valid_checked_type,
 };
-pub use checker_records::{
-    GraphBodyFields, GraphBodyValue, GraphNamespaceValue, content_digest, decode_graph_body_page,
-    decode_graph_body_values, decode_graph_namespace_value, encode_graph_body_values, encode_graph_namespace_value,
-    encode_record, from_native_fields, from_native_final_fields, from_native_local_fields, record_root,
-    semantic_digest,
+pub use checker_publication::CheckerRecordCounts;
+pub use checker_record_models::{
+    CheckedFamily, CodecFault, CompiledBodyDependencyRead, CompiledBodyFallback, CompiledBodyOutputs,
+    CompiledBodyValue, CompiledNamespaceValue, GraphBodyFields, GraphBodyValue, GraphNamespaceValue,
+    GraphNamespaceView, SettledCallContract, SettledCallRead,
 };
-pub use codec_fault::CodecFault;
-pub use compiled_body_frames::{
-    CompiledBodyDependencyRead, CompiledBodyFallback, CompiledBodyOutput, CompiledBodyOutputs, CompiledBodyValue,
-    CompiledNamespaceValue, decode_compiled_body_frame, decode_compiled_body_payload, encode_compiled_body_outputs,
-};
+pub use compiled_body_rows::CompiledBodyOutput;
+pub use compiler_contributors::CompilerContributors;
+pub use compiler_export::CompilerExportMember;
 pub use compiler_records::{
     CanonicalSymbolId, DeclarationKind, DeclarationSignature, HirSourceSpan, IDENTITY_ADAPTER_GENERATION,
     IDENTITY_ADAPTER_PROFILE, IDENTITY_ADAPTER_REMOVAL_GATE, IDENTITY_ADAPTER_SOURCE, PackageIdentity,
     PlanSourceSpanRecord, StableDeclarationComponent, StableDeclarationId, StableDeclarationLocation, SymbolNamespace,
     SymbolOrigin, valid_canonical_symbol_id, valid_hir_source_span, valid_stable_declaration_id,
 };
-pub use frame_prefix::compiled_body_frame_size;
-pub use read_receipts::{RECEIPT_SCHEMA, decode_read_receipt, encode_read_receipt};
+pub use internal_models_bindings::MappedView;
+pub use lowering_events::{ADMITTED_DEFINITIONS, INTERFACE_REPORT};
+pub use manifest_cache::{ManifestCacheValue, ManifestInventory};
+pub use namespace_order::NamespaceOrder;
+pub use namespace_references::NamespaceReference;
+pub use namespace_rows::{
+    NamespaceAtom, NamespaceEntry, NamespaceField, NamespaceIdentity, NamespacePublication, PreparedNamespaceReader,
+};
+pub use plan_function_records::PlanFunctionRecord;
+pub use read_receipts::RECEIPT_SCHEMA;
 pub use record_service::{
     CompilerFault, CompilerFaultKind, CompilerRecordService, DemandPage, Evaluation, InputSnapshot, NeedPrerequisite,
     Preparation, PreparedInputs, Produced, ProducerCounters, ProducerProfile, ProducerRank, ProducerStage,
@@ -70,73 +103,19 @@ pub use records::{
     RecordSelection, RecordSource, RevisionEvidence, SelectedFact, StoreRecordSource, encode_record_key,
     selected_record_bytes,
 };
-
-pub mod records {
-    pub use crate::record_scope::{
-        AbsentFact, DeletedFact, MemberFact, MemberSelection, PayloadSelection, PreparationEvidence, READ_SCHEMA,
-        ReadCounters, ReadFault, ReadReceipt, ReadScope, ReadWitness, RecordKey, RecordRead, RecordReads,
-        RecordRequest, RecordSelection, RecordSource, RevisionEvidence, SelectedFact,
-    };
-    pub use crate::store_record_source::{StoreRecordSource, encode_record_key, selected_record_bytes};
-}
+pub use source_value_records::SOURCE_PROFILE;
+pub use unit_admission::PayloadAdmission;
 
 #[cfg(test)]
 mod surface_tests;
 
 #[cfg(test)]
 mod tests {
-    use super::{CodecFault, compiled_body_frame_size};
-
     /// Callers importing the concrete store source can read through it with no trait import.
     #[test]
     fn concrete_store_source_exposes_read() {
         use super::{ReadScope, RecordRead, RecordRequest, StoreRecordSource};
 
         let _: fn(&StoreRecordSource, &ReadScope, &RecordRequest) -> RecordRead = StoreRecordSource::read;
-    }
-
-    /// A later malformed fallback cannot hide the earlier namespace size diagnostic.
-    #[test]
-    fn namespace_limit_precedes_malformed_fallback() {
-        use super::{CompiledBodyFallback, CompiledBodyOutputs, CompiledNamespaceValue, encode_compiled_body_outputs};
-
-        let limit = 67_108_864;
-        let outputs = CompiledBodyOutputs {
-            namespaces: vec![CompiledNamespaceValue {
-                module: "m".into(),
-                interface: vec![0; limit],
-                body_ir: vec![0],
-                dependencies: vec![],
-                lowering_inputs: vec![],
-            }],
-            values: vec![],
-            fallbacks: vec![CompiledBodyFallback {
-                module: "m".into(),
-                name: "f".into(),
-                identity: None,
-                reason: String::new(),
-            }],
-        };
-        assert_eq!(
-            encode_compiled_body_outputs(&outputs),
-            Err(CodecFault::LimitExceeded(
-                "compiled-output-frame-bytes".into(),
-                limit as i64 + 2,
-                limit as i64
-            ))
-        );
-    }
-
-    /// Oven reads exactly eight little-endian bytes before allocating a compiled body frame.
-    #[test]
-    fn compiled_body_frame_size_keeps_wire_limits() {
-        assert_eq!(compiled_body_frame_size(&[1, 0, 0, 0, 0, 0, 0, 0]), Ok(1));
-        assert_eq!(compiled_body_frame_size(&[0, 0, 0, 4, 0, 0, 0, 0]), Ok(67_108_864));
-        for prefix in [&[][..], &[1; 7][..], &[1; 9][..]] {
-            assert_eq!(compiled_body_frame_size(prefix), Err(CodecFault::Malformed));
-        }
-        for prefix in [[0; 8], [1, 0, 0, 4, 0, 0, 0, 0], [0xff; 8]] {
-            assert_eq!(compiled_body_frame_size(&prefix), Err(CodecFault::Limit));
-        }
     }
 }

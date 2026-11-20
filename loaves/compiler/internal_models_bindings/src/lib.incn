@@ -20,7 +20,7 @@ pub from std.primitives.crumb.values import Projection
 from std.primitives.crumb.encoding_errors import BinaryError
 from std.primitives.crumb.errors import CrumbError
 from std.primitives.crumb.row_reader import RowSet
-from std.primitives.views import MappedView
+pub from std.primitives.views import MappedView
 
 
 pub def create_budget(octets: int, elements: int, depth: int) -> Result[Budget, CrumbError]:
