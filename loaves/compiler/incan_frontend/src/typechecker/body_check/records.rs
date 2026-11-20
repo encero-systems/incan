@@ -225,11 +225,9 @@ impl TypeChecker {
             self.available_local_record(owner)?,
             self.available_final_record(owner)?,
         ];
-        Positions::for_local(self, program, owner, local).ok()?.physical_inputs(
-            local,
-            records,
-            &self.symbols.declaration_origin(),
-        )
+        Positions::for_local(self, program, owner, local)
+            .ok()?
+            .physical_inputs(local, records)
     }
 
     /// Check the exact current owner before a ranked activation enters this function's statements.
@@ -618,12 +616,7 @@ impl Positions {
     /// A position-free checker result can remain reusable after its native executable references have moved.
     /// Bind the native frame to the current owner's entire syntax geometry, checked type providers, and the exact
     /// reference, nested, and write handles settled for that owner. Hash ordered typed bytes, including scope IDs.
-    fn physical_inputs(
-        &self,
-        local: &BodyLocal,
-        records: [&Fields; 3],
-        origin: &incan_semantics_core::SymbolOrigin,
-    ) -> Option<[u8; 32]> {
+    fn physical_inputs(&self, local: &BodyLocal, records: [&Fields; 3]) -> Option<[u8; 32]> {
         use sha2::{Digest, Sha256};
         let references = local.references.resolved_identities.iter().collect::<BTreeMap<_, _>>();
         let writes = local
@@ -644,7 +637,7 @@ impl Positions {
             .collect::<BTreeMap<_, _>>();
         // Every persistent canonical handle read by the declaration/local/final decoders occupies a complete
         // field. Resolve those cells against this activation's actual bindings. A coinciding scalar can retain
-        // an extra handle, but cannot exclude a read. Include all non-callable and foreign inputs as before.
+        // an extra handle, but cannot exclude a read. The same rule applies to local and imported top-level functions.
         let used = records
             .into_iter()
             .flatten()
@@ -656,7 +649,6 @@ impl Positions {
             .iter()
             .filter(|(_, target)| {
                 target.kind != SemanticSourceTargetKind::Function
-                    || &target.origin != origin
                     || target.scope_discriminant.is_some()
                     || used.contains(*target)
             })

@@ -2070,6 +2070,65 @@ mod tests {
         Ok(())
     }
 
+    /// Moving an imported function changes the executable handles for its direct and first-class users.
+    /// A separate function in the consumer keeps the same authenticated executable inputs.
+    #[test]
+    fn physical_owner_frames_follow_foreign_callable_reads() -> Result<(), Box<dyn std::error::Error>> {
+        let consumer = program(concat!(
+            "from provider import value\n\n",
+            "def unrelated() -> int:\n    return 1\n\n",
+            "def direct() -> int:\n    return value()\n\n",
+            "def indirect() -> int:\n    callback = value\n    return callback()\n",
+        ))?;
+        let fingerprints = |provider: &crate::ast::Program| -> Result<BTreeMap<String, [u8; 32]>, String> {
+            let path = vec!["provider".to_owned()];
+            let mut declarations = TypeChecker::new();
+            declarations.set_current_module_path(Some(path.clone()));
+            declarations.register_dependency_module_path_segments("provider", path.clone());
+            let interface = declarations
+                .build_dependency_interface_component(
+                    &[(
+                        "provider",
+                        provider,
+                        Arc::from(crate::module::exported_symbols(provider)),
+                    )],
+                    &[],
+                    true,
+                )
+                .pop()
+                .ok_or("provider interface missing")?;
+            let mut checker = TypeChecker::new();
+            checker.set_current_module_path(Some(vec!["main".to_owned()]));
+            checker.register_dependency_module_path_segments("provider", path);
+            checker.select_dependency_interfaces(vec![interface]);
+            checker
+                .check_with_imports(&consumer, &[("provider", provider)])
+                .map_err(|errors| format!("{errors:?}"))?;
+            consumer
+                .declarations
+                .iter()
+                .filter_map(|decl| match &decl.node {
+                    crate::ast::Declaration::Function(function) => Some((function.name.clone(), decl.span)),
+                    _ => None,
+                })
+                .map(|(name, span)| {
+                    checker
+                        .graph_body_physical_inputs(&consumer, span)
+                        .map(|fingerprint| (name.clone(), fingerprint))
+                        .ok_or_else(|| format!("missing physical proof for {name}"))
+                })
+                .collect()
+        };
+        let provider = "pub def value() -> int:\n    return 20\n";
+        let original = fingerprints(&program(provider)?)?;
+        let moved = fingerprints(&program(&format!("# moved\n{provider}"))?)?;
+        assert_eq!(original.len(), 3);
+        assert_ne!(original["direct"], moved["direct"]);
+        assert_ne!(original["indirect"], moved["indirect"]);
+        assert_eq!(original["unrelated"], moved["unrelated"]);
+        Ok(())
+    }
+
     /// A loan-free match scrutinee is retained as a reusable owner fact instead of forcing a source fallback.
     #[test]
     fn loan_free_match_owner_publishes_reusable_value() -> Result<(), Box<dyn std::error::Error>> {
