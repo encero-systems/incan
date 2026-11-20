@@ -412,6 +412,12 @@ impl Positions {
         declaration: bool,
         nodes: SemanticNodeBindings,
     ) -> Result<Self, NodeBindingError> {
+        let parameters = callable_params(program, owner)?;
+        let origin = checker.symbols.declaration_origin();
+        let mut parameter_handles = parameters
+            .iter()
+            .map(|parameter| (parameter.span, None))
+            .collect::<std::collections::HashMap<_, _>>();
         let mut identities = checker
             .type_info
             .declarations
@@ -431,6 +437,13 @@ impl Positions {
             let Some(canonical) = checker.symbols.identity_of(index) else {
                 continue;
             };
+            if canonical.kind == SemanticSourceTargetKind::Parameter
+                && canonical.origin == origin
+                && let Some(slot) = parameter_handles.get_mut(&canonical.declaration_span)
+            {
+                // The earliest handle wins when a span was registered more than once.
+                slot.get_or_insert(canonical);
+            }
             if matches!(canonical.origin, incan_semantics_core::SymbolOrigin::RustCrate(_)) {
                 // The checked import owns this lexical read. Equal leaf spellings from different crates retain
                 // different full paths. A stable key with conflicting physical handles cannot be rebound.
@@ -462,7 +475,7 @@ impl Positions {
         }
         // Restore imported member references against the current physical declaration in the checked nominal table.
         identities.extend(imported_members::identities(checker));
-        let type_identities = admitted_type_identities(checker);
+        let type_identities = admitted_type_identities(checker, &origin);
         let nested = checker
             .checked_body(owner)
             .into_iter()
@@ -478,20 +491,14 @@ impl Positions {
         // Declaration records are restored before the function scope is entered. Mint the current activation's
         // parameter handles from the symbol table's next scope index so stored nested identities bind without
         // running annotation/default checking or creating the scope early.
-        let declaration_bindings = callable_params(program, owner)?
+        let declaration_bindings = parameters
             .iter()
             .map(|parameter| {
-                (0..checker.symbols.all_symbols().len())
-                    .filter_map(|index| checker.symbols.identity_of(index))
-                    .find(|canonical| {
-                        canonical.kind == SemanticSourceTargetKind::Parameter
-                            && canonical.origin == checker.symbols.declaration_origin()
-                            && canonical.declaration_span == parameter.span
-                    })
+                parameter_handles[&parameter.span]
                     .cloned()
                     .unwrap_or_else(|| CanonicalSymbolId {
                         namespace: SymbolNamespace::OrdinaryLexical,
-                        origin: checker.symbols.declaration_origin(),
+                        origin: origin.clone(),
                         declaration_name: parameter.node.name.clone(),
                         kind: SemanticSourceTargetKind::Parameter,
                         scope_discriminant: Some(ScopeDiscriminant(checker.symbols.next_scope_index())),
@@ -789,7 +796,10 @@ fn persisted_nested_binding(
 }
 
 /// Collect every active nominal owner that the checker already authenticated independently of one lexical spelling.
-fn admitted_type_identities(checker: &TypeChecker) -> BTreeMap<String, CanonicalSymbolId> {
+fn admitted_type_identities(
+    checker: &TypeChecker,
+    origin: &incan_semantics_core::SymbolOrigin,
+) -> BTreeMap<String, CanonicalSymbolId> {
     let mut identities = checker
         .symbols
         .all_symbols()
@@ -798,7 +808,7 @@ fn admitted_type_identities(checker: &TypeChecker) -> BTreeMap<String, Canonical
         .filter_map(|(index, _)| checker.symbols.identity_of(index))
         .filter(|canonical| {
             canonical.scope_discriminant.is_none()
-                && ((canonical.origin == checker.symbols.declaration_origin()
+                && ((&canonical.origin == origin
                     && matches!(
                         canonical.kind,
                         SemanticSourceTargetKind::Model
