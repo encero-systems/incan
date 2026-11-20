@@ -47,7 +47,10 @@ mod scalars {
 
     #[test]
     fn assertion_failures_carry_the_language_payload() {
-        assert_eq!(panic_message(|| assert_failure(String::new())).as_deref(), Some("AssertionError"));
+        assert_eq!(
+            panic_message(|| assert_failure(String::new())).as_deref(),
+            Some("AssertionError")
+        );
         assert_eq!(
             panic_message(|| assert_failure(text("numbers differ"))).as_deref(),
             Some("AssertionError: numbers differ")
@@ -138,7 +141,10 @@ mod scalars {
         let missing = directory.join("missing.txt").to_string_lossy().into_owned();
         assert_eq!(
             read_file_text(&missing),
-            Err(std::fs::read_to_string(&missing).err().map(|error| error.to_string()).unwrap_or_default())
+            Err(std::fs::read_to_string(&missing)
+                .err()
+                .map(|error| error.to_string())
+                .unwrap_or_default())
         );
         let _ = std::fs::remove_dir_all(&directory);
     }
@@ -287,7 +293,10 @@ mod texts {
         assert_eq!(split_text(&text("a,b,,c"), &text(",")), vec!["a", "b", "", "c"]);
         assert_eq!(split_default_text(&text("a b  c")), vec!["a b  c"]);
         assert_eq!(split_whitespace_text(&text(" a b\u{3000}c ")), vec!["a", "b", "c"]);
-        assert_eq!(join_text(&text(", "), &vec![text("x"), text("y"), text("z")]), "x, y, z");
+        assert_eq!(
+            join_text(&text(", "), &vec![text("x"), text("y"), text("z")]),
+            "x, y, z"
+        );
     }
 
     #[test]
@@ -296,7 +305,10 @@ mod texts {
         assert_eq!(text_items(&String::new()), Vec::<String>::new());
         assert_eq!(enumerate_text(&text("hé")), vec![(0, text("h")), (1, text("é"))]);
         assert_eq!(enumerate_bytes(&vec![7_u8, 255]), vec![(0, 7), (1, 255)]);
-        assert_eq!(enumerate_list(&vec![text("p"), text("q")]), vec![(0, text("p")), (1, text("q"))]);
+        assert_eq!(
+            enumerate_list(&vec![text("p"), text("q")]),
+            vec![(0, text("p")), (1, text("q"))]
+        );
     }
 
     #[test]
@@ -304,10 +316,22 @@ mod texts {
         assert!(text_codec_encoding_valid(&text(" UTF_8 ")));
         assert!(!text_codec_encoding_valid(&text("latin-1")));
         assert!(text_codec_errors_valid(&text("replace")) && !text_codec_errors_valid(&text("ignore")));
-        assert_eq!(decode_replacement_policy(&text("utf-8"), &text("replace")), (true, true));
-        assert_eq!(decode_replacement_policy(&text("utf-8"), &text("strict")), (true, false));
-        assert_eq!(decode_replacement_policy(&text("utf-8"), &text("ignore")), (false, false));
-        assert_eq!(decode_replacement_policy(&text("latin-1"), &text("strict")), (false, false));
+        assert_eq!(
+            decode_replacement_policy(&text("utf-8"), &text("replace")),
+            (true, true)
+        );
+        assert_eq!(
+            decode_replacement_policy(&text("utf-8"), &text("strict")),
+            (true, false)
+        );
+        assert_eq!(
+            decode_replacement_policy(&text("utf-8"), &text("ignore")),
+            (false, false)
+        );
+        assert_eq!(
+            decode_replacement_policy(&text("latin-1"), &text("strict")),
+            (false, false)
+        );
         assert_eq!(
             invalid_decoder_options(&text("Latin_1"), &text("strict")).to_string(),
             "unknown-encoding: bytes.decode() supports only utf-8 in this release, got encoding 'latin-1'"
@@ -469,7 +493,10 @@ mod statics_and_names {
         write_static_int_set(9006, HashSet::from([2]));
         assert_eq!(read_static_int_set(9006, HashSet::new()), HashSet::from([2]));
         write_static_text_int_dict(9007, HashMap::from([(text("k"), 1)]));
-        assert_eq!(read_static_text_int_dict(9007, HashMap::new()), HashMap::from([(text("k"), 1)]));
+        assert_eq!(
+            read_static_text_int_dict(9007, HashMap::new()),
+            HashMap::from([(text("k"), 1)])
+        );
     }
 
     #[test]
@@ -504,11 +531,25 @@ mod statics_and_names {
     #[test]
     fn recursive_decorated_binding_is_refused() {
         fn reenter() {
-            initialize_binding(text("m2"), text("loop"), reenter, reenter as fn() as usize, 2, text("loop"));
+            initialize_binding(
+                text("m2"),
+                text("loop"),
+                reenter,
+                reenter as fn() as usize,
+                2,
+                text("loop"),
+            );
         }
         assert_eq!(
             panic_message(|| {
-                initialize_binding(text("m2"), text("loop"), reenter, reenter as fn() as usize, 2, text("loop"))
+                initialize_binding(
+                    text("m2"),
+                    text("loop"),
+                    reenter,
+                    reenter as fn() as usize,
+                    2,
+                    text("loop"),
+                )
             })
             .as_deref(),
             Some("ValueError: recursive initialization of decorated callable 'loop'")
@@ -537,8 +578,14 @@ mod failures {
             panic_message(missing_some).as_deref(),
             Some("assertion failed: expected Some, got None")
         );
-        assert_eq!(panic_message(missing_ok).as_deref(), Some("assertion failed: expected Ok, got Err"));
-        assert_eq!(panic_message(missing_err).as_deref(), Some("assertion failed: expected Err, got Ok"));
+        assert_eq!(
+            panic_message(missing_ok).as_deref(),
+            Some("assertion failed: expected Ok, got Err")
+        );
+        assert_eq!(
+            panic_message(missing_err).as_deref(),
+            Some("assertion failed: expected Err, got Ok")
+        );
         assert_eq!(
             panic_message(unexpected_some).as_deref(),
             Some("assertion failed: expected None, got Some")
@@ -581,7 +628,10 @@ mod failures {
         validate_newtype_constraint(true, text("Port"), text("ge=1"));
         assert_eq!(checked_json_result::<i64, String>(Err(text("bad"))), Err(text("bad")));
         assert_eq!(format_validation_error(&make_validation_error(text("m"))), "m");
-        assert_eq!(format_validation_error(&make_coded_validation_error(text("m"), text("c"))), "c: m");
+        assert_eq!(
+            format_validation_error(&make_coded_validation_error(text("m"), text("c"))),
+            "c: m"
+        );
     }
 
     #[test]
@@ -635,7 +685,10 @@ mod frozen {
         assert_eq!(frozen_list_length(list), 2);
         assert_eq!(frozen_list_length_ref(&list), 2);
         assert_eq!(frozen_list_items(list), vec![text("b"), text("a")]);
-        assert_eq!(frozen_list_text_items(freeze_list(vec![1, 2])), vec![text("1"), text("2")]);
+        assert_eq!(
+            frozen_list_text_items(freeze_list(vec![1, 2])),
+            vec![text("1"), text("2")]
+        );
         let bytes: incan_std_primitives::frozen::FrozenList<&'static [u8]> =
             incan_std_primitives::frozen::FrozenList::new(&[b"ab", b"c"]);
         assert_eq!(frozen_list_byte_items(bytes), vec![b"ab".to_vec(), b"c".to_vec()]);
@@ -656,7 +709,7 @@ mod frozen {
         assert_eq!(frozen_dict_text_keys(dict), vec![text("a"), text("b"), text("a")]);
         assert_eq!(frozen_dict_text_get(dict, &text("b")), 2);
         assert!(frozen_dict_text_contains(dict, &text("a")) && !frozen_dict_text_contains(dict, &text("z")));
-        let numbers = incan_std_primitives::frozen::FrozenDict::new(&[(1_i64, text_static("one")), (2, "two")]);
+        let numbers = incan_std_primitives::frozen::FrozenDict::new(&NUMBERS);
         assert_eq!(frozen_dict_get(numbers, 2), "two");
         assert!(frozen_dict_contains(numbers, 1) && !frozen_dict_contains(numbers, 3));
         assert_eq!(
@@ -669,9 +722,7 @@ mod frozen {
         );
     }
 
-    const fn text_static(value: &'static str) -> &'static str {
-        value
-    }
+    static NUMBERS: [(i64, &str); 2] = [(1, "one"), (2, "two")];
 }
 
 mod generator_chains {
@@ -707,28 +758,73 @@ mod generator_chains {
         assert_eq!(collect(take_generator(ints(vec![1, 2, 3]), 2)), vec![1, 2]);
         assert_eq!(collect(take_generator(ints(vec![1, 2, 3]), -1)), Vec::<i64>::new());
         assert_eq!(collect(skip_generator(ints(vec![1, 2, 3]), 1)), vec![2, 3]);
-        assert_eq!(collect(batch_generator(ints(vec![1, 2, 3]), 2)), vec![vec![1, 2], vec![3]]);
+        assert_eq!(
+            collect(batch_generator(ints(vec![1, 2, 3]), 2)),
+            vec![vec![1, 2], vec![3]]
+        );
         assert_eq!(collect(chain_generators(ints(vec![1]), ints(vec![2]))), vec![1, 2]);
         assert_eq!(collect(enumerate_generator(ints(vec![7, 8]))), vec![(0, 7), (1, 8)]);
-        assert_eq!(collect(zip_generators(ints(vec![1, 2, 3]), ints(vec![4, 5]))), vec![(1, 4), (2, 5)]);
-        assert_eq!(collect(take_while_int_generator(ints(vec![1, 2, 5, 1]), |v| v < 3)), vec![1, 2]);
-        assert_eq!(collect(skip_while_int_generator(ints(vec![1, 2, 5, 1]), |v| v < 3)), vec![5, 1]);
-        assert_eq!(collect(filter_int_generator(ints(vec![1, 2, 3, 4]), |v| v % 2 == 0)), vec![2, 4]);
-        assert_eq!(collect(filter_float_generator(list_generator(vec![1.0, -1.0]), |v| v > 0.0)), vec![1.0]);
-        assert_eq!(collect(filter_bool_generator(list_generator(vec![true, false]), |v| v)), vec![true]);
+        assert_eq!(
+            collect(zip_generators(ints(vec![1, 2, 3]), ints(vec![4, 5]))),
+            vec![(1, 4), (2, 5)]
+        );
+        assert_eq!(
+            collect(take_while_int_generator(ints(vec![1, 2, 5, 1]), |v| v < 3)),
+            vec![1, 2]
+        );
+        assert_eq!(
+            collect(skip_while_int_generator(ints(vec![1, 2, 5, 1]), |v| v < 3)),
+            vec![5, 1]
+        );
+        assert_eq!(
+            collect(filter_int_generator(ints(vec![1, 2, 3, 4]), |v| v % 2 == 0)),
+            vec![2, 4]
+        );
+        assert_eq!(
+            collect(filter_float_generator(list_generator(vec![1.0, -1.0]), |v| v > 0.0)),
+            vec![1.0]
+        );
+        assert_eq!(
+            collect(filter_bool_generator(list_generator(vec![true, false]), |v| v)),
+            vec![true]
+        );
         assert_eq!(collect(map_int_generator(ints(vec![1, 2]), |v| v * 10)), vec![10, 20]);
-        assert_eq!(collect(map_float_generator(list_generator(vec![1.5]), |v| v * 2.0)), vec![3.0]);
-        assert_eq!(collect(map_bool_generator(list_generator(vec![true]), |v| !v)), vec![false]);
+        assert_eq!(
+            collect(map_float_generator(list_generator(vec![1.5]), |v| v * 2.0)),
+            vec![3.0]
+        );
+        assert_eq!(
+            collect(map_bool_generator(list_generator(vec![true]), |v| !v)),
+            vec![false]
+        );
     }
 
     #[test]
     fn expansions_draw_each_step_when_polled() {
-        assert_eq!(collect(int_step_generator(ints(vec![1, 2]), |v| ints(vec![v, v]))), vec![1, 1, 2, 2]);
-        assert_eq!(collect(float_step_generator(list_generator(vec![1.0]), once_generator)), vec![1.0]);
-        assert_eq!(collect(bool_step_generator(list_generator(vec![true]), once_generator)), vec![true]);
-        assert_eq!(collect(flat_map_int_generator(ints(vec![1, 2]), |v| vec![v; 2])), vec![1, 1, 2, 2]);
-        assert_eq!(collect(flat_map_int_generators(ints(vec![2]), |v| ints(vec![v, v + 1]))), vec![2, 3]);
-        assert_eq!(collect(flat_map_int_set_generator(ints(vec![4]), |v| HashSet::from([v]))), vec![4]);
+        assert_eq!(
+            collect(int_step_generator(ints(vec![1, 2]), |v| ints(vec![v, v]))),
+            vec![1, 1, 2, 2]
+        );
+        assert_eq!(
+            collect(float_step_generator(list_generator(vec![1.0]), once_generator)),
+            vec![1.0]
+        );
+        assert_eq!(
+            collect(bool_step_generator(list_generator(vec![true]), once_generator)),
+            vec![true]
+        );
+        assert_eq!(
+            collect(flat_map_int_generator(ints(vec![1, 2]), |v| vec![v; 2])),
+            vec![1, 1, 2, 2]
+        );
+        assert_eq!(
+            collect(flat_map_int_generators(ints(vec![2]), |v| ints(vec![v, v + 1]))),
+            vec![2, 3]
+        );
+        assert_eq!(
+            collect(flat_map_int_set_generator(ints(vec![4]), |v| HashSet::from([v]))),
+            vec![4]
+        );
         let step: fn(i64) -> Generator<i64> = |v| ints(vec![v * 2]);
         assert_eq!(collect(int_callable_step_generator(ints(vec![1, 2]), step)), vec![2, 4]);
         let text_step: fn(String) -> Generator<usize> = |v| once_generator(v.len());
@@ -737,16 +833,31 @@ mod generator_chains {
             vec![2]
         );
         let float_step: fn(f64) -> Generator<f64> = once_generator;
-        assert_eq!(collect(float_callable_step_generator(list_generator(vec![2.5]), float_step)), vec![2.5]);
+        assert_eq!(
+            collect(float_callable_step_generator(list_generator(vec![2.5]), float_step)),
+            vec![2.5]
+        );
         let bool_step: fn(bool) -> Generator<bool> = once_generator;
-        assert_eq!(collect(bool_callable_step_generator(list_generator(vec![false]), bool_step)), vec![false]);
+        assert_eq!(
+            collect(bool_callable_step_generator(list_generator(vec![false]), bool_step)),
+            vec![false]
+        );
         let item_step: fn((i64, i64)) -> Generator<i64> = |(a, b)| ints(vec![a + b]);
-        assert_eq!(collect(item_callable_step_generator(list_generator(vec![(1, 2)]), item_step)), vec![3]);
+        assert_eq!(
+            collect(item_callable_step_generator(list_generator(vec![(1, 2)]), item_step)),
+            vec![3]
+        );
         let map: fn(String) -> usize = |v| v.len();
-        assert_eq!(collect(map_text_callable_generator(list_generator(vec![text("abc")]), map)), vec![3]);
+        assert_eq!(
+            collect(map_text_callable_generator(list_generator(vec![text("abc")]), map)),
+            vec![3]
+        );
         let expand: fn(String) -> Vec<char> = |v| v.chars().collect();
         assert_eq!(
-            collect(flat_map_text_callable_generator(list_generator(vec![text("ab")]), expand)),
+            collect(flat_map_text_callable_generator(
+                list_generator(vec![text("ab")]),
+                expand
+            )),
             vec!['a', 'b']
         );
     }
@@ -762,7 +873,10 @@ mod generator_chains {
         assert_eq!(find_int_generator(ints(vec![1, 2, 3]), |v| v > 1), Some(2));
         assert_eq!(find_int_generator(ints(vec![1]), |v| v > 1), None);
         let check: fn(String) -> bool = |v| v == "b";
-        assert!(any_text_callable_generator(list_generator(vec![text("a"), text("b")]), check));
+        assert!(any_text_callable_generator(
+            list_generator(vec![text("a"), text("b")]),
+            check
+        ));
         for_each_int_generator(ints(vec![9100, 9101]), |slot| write_static_int(slot, slot));
         assert_eq!(read_static_int(9101, 0), 9101);
     }
@@ -775,7 +889,10 @@ mod async_entries {
     fn future_entries_run_on_the_canonical_executor() {
         run_future_entry(async {});
         assert_eq!(run_result_future_entry::<String, _>(async { Ok(()) }), Ok(()));
-        assert_eq!(run_result_future_entry(async { Err(text("failed")) }), Err(text("failed")));
+        assert_eq!(
+            run_result_future_entry(async { Err(text("failed")) }),
+            Err(text("failed"))
+        );
         fn entry() {
             write_static_int(9200, 1);
         }
