@@ -3,6 +3,7 @@
 from std.fs import Path
 from std.primitives.locking import LockGuard
 from rust::std::rc import Rc
+from rust::std::mem import take
 from std.encoding.hex import hexlify
 from engine_messages import BindingOutcome, Complete, CompletionStatus
 from request_directory import serve_from, served
@@ -139,16 +140,16 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
         Some(unit) =>
             # 3. A completed native descriptor is selected independently for each caller.
             selecting = begin()
-            captured = after_projection(pending.capture)?
-            selection = prepare_selection(store, pending.view, unit, pending.handle)?
+            mut captured = after_projection(pending.capture)?
+            mut selection = prepare_selection(store, pending.view, unit, pending.handle)?
             mut group: list[Transaction] = []
-            if let Some(transaction) = captured.transaction:
+            if let Some(transaction) = take(captured.transaction):
                 group.append(transaction)
-            if let Some(transaction) = produced.transaction:
+            if let Some(transaction) = take(produced.transaction):
                 group.append(transaction)
-            if let Some(transaction) = produced.view_transaction:
+            if let Some(transaction) = take(produced.view_transaction):
                 group.append(transaction)
-            if let Some(transaction) = selection.transaction:
+            if let Some(transaction) = take(selection.transaction):
                 group.append(transaction)
             if pending.proofs:
                 group.append(prepare_report(store, run, counters, produced)?)

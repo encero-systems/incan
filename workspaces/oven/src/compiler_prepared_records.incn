@@ -42,6 +42,10 @@ pub class PreparedBodyRecordSource with RecordSource:
         """Whether a value is already available under one encoded record key."""
         return key in self.values
 
+    pub def bind_profile(mut self, profile: str) -> None:
+        """Transfer this transaction's staged values to its next producer phase after the previous phase finishes."""
+        self.scope = ReadScope(snapshot=self.scope.snapshot, profile=profile)
+
     pub def for_profile(self, profile: str) -> PreparedBodyRecordSource:
         """Bind the same staged values to the next producer profile without weakening its read-scope check."""
         scope = ReadScope(snapshot=self.scope.snapshot, profile=profile)

@@ -13,7 +13,7 @@ from pub::incan_platform.store import Transaction, begin, commit, get, put
 from store_path_conversion import snapshot
 
 
-pub def retain(store: Path, run: str, capture: CaptureCounters, produced: ProgramOutcome) -> Result[str, str]:
+pub def retain(store: Path, run: str, capture: CaptureCounters, produced: &ProgramOutcome) -> Result[str, str]:
     """Retain one requested report; ordinary unchanged requests never write a report or grow the store."""
     _ = commit(prepare_report(store, run, capture, produced)?).map_err((error) => error.message())?
     return Ok(run)
@@ -23,7 +23,7 @@ pub def prepare_report(
     store: Path,
     run: str,
     capture: CaptureCounters,
-    produced: ProgramOutcome,
+    produced: &ProgramOutcome,
 ) -> Result[Transaction, str]:
     """Prepare an explicitly requested report for the same request publication boundary."""
     editable = capture.in_reach

@@ -250,51 +250,44 @@ pub def prepare_compiled_bodies(
     """
     # 1. The sidecar is invocation output, not an authority until this graph publication succeeds.
     authenticated = authenticate_compiled_bodies(unit, output, retained, restored, restored_body_ir)?
-    outputs = authenticated.outputs
     origin = authenticated.origin
     owner_evaluations = authenticated.owner_evaluations
     owner_reuses = authenticated.owner_reuses
 
     # 2. The prepared source authenticates only values carried by this exact request transaction.
     staging = begin_work()
-    staged = stage_compiled_body_sources(transaction, unit, origin, outputs)?
-    mut prepared = staged.transaction
-    mut source = staged.source
-    scope = staged.scope
-    projections = staged.projections
-    editable_packages = staged.editable_packages
-    rechecked = staged.rechecked
+    mut staged = stage_compiled_body_sources(transaction, unit, origin, authenticated.outputs)?
 
     # 3. A cold whole check stages the same graph values later edited activations replace independently.
     mut closures: Dict[str, list[str]] = {}
-    for namespace in outputs.namespaces:
+    for namespace in authenticated.outputs.namespaces:
         closures[namespace.module] = namespace.dependencies
     order = certified_namespace_order(origin, closures)?
     if let Some(prior) = selected:
-        retire_missing_functions(prior, prepared, origin, changed_sources, projections, outputs)?
-    stage_compiled_namespaces(prepared, source, scope, projections, outputs.namespaces, origin, order)?
+        retire_missing_functions(prior, staged.transaction, origin, changed_sources, staged.projections, authenticated.outputs)?
+    stage_compiled_namespaces(staged.transaction, staged.source, staged.scope, staged.projections, authenticated.outputs.namespaces, origin, order)?
     published = stage_compiled_body_values(
-        prepared,
-        source,
-        scope,
-        projections,
-        outputs.values,
+        staged.transaction,
+        staged.source,
+        staged.scope,
+        staged.projections,
+        authenticated.outputs.values,
         unit,
         origin,
-        editable_packages,
+        staged.editable_packages,
         order,
     )?
-    prepared = prepare_optional_lowering_records(
-        prepared,
-        source,
-        projections,
-        outputs,
+    prepare_optional_lowering_records(
+        staged.transaction,
+        staged.source,
+        staged.projections,
+        authenticated.outputs,
         LoweringOrders.new(origin, order),
         retained,
         selected,
         unit,
         origin,
-        rechecked,
+        staged.rechecked,
         plan_output,
         plan_modules,
         covered,
@@ -302,9 +295,9 @@ pub def prepare_compiled_bodies(
     record_work(Operation.EngineGraphStaging, output.0, staging)
     return Ok(
         PreparedCompiledBodies(
-            transaction=prepared,
+            transaction=staged.transaction,
             bodies=published,
-            fallbacks=len(outputs.fallbacks),
+            fallbacks=len(authenticated.outputs.fallbacks),
             checking_evaluations=owner_evaluations,
             body_ir_evaluations=authenticated.body_ir_evaluations,
             body_reuses=owner_reuses,
@@ -467,9 +460,9 @@ def stage_compiled_namespaces(
 
 
 def prepare_optional_lowering_records(
-    prepared: Transaction,
+    mut prepared: Transaction,
     mut source: PreparedBodyRecordSource,
-    projections: &Dict[str, SourceProjection],
+    mut projections: Dict[str, SourceProjection],
     outputs: CompiledBodyOutputs,
     mut orders: LoweringOrders,
     retained: list[SelectedBodyRecord],
@@ -480,7 +473,7 @@ def prepare_optional_lowering_records(
     plan_output: Option[Path],
     plan_modules: list[AdmittedPlanModule] = [],
     covered: CoveredBodyOwners = CoveredBodyOwners(),
-) -> Result[Transaction, str]:
+) -> Result[None, str]:
     """Stage lowering records only when this compiler activation requested a plan report."""
     if let Some(report) = plan_output:
         events = lowering_events(report)?
@@ -500,6 +493,7 @@ def prepare_optional_lowering_records(
             return Err("partially restored plan did not retain its demanded checked owner")
         witnesses = lowering_witnesses(projections, outputs.values, retained + rescued, source, selected, unit, origin, orders)?
         return prepare_lowering_records(
+            projections,
             prepared,
             source,
             orders,
@@ -515,7 +509,7 @@ def prepare_optional_lowering_records(
             plan_modules,
             [module for module in covered.module_owners.keys()],
         )
-    return Ok(prepared)
+    return Ok(None)
 
 
 def stage_compiled_body_sources(
@@ -777,7 +771,7 @@ def body_projection_refusal(reason: str, value: CompiledBodyValue) -> str:
 
 
 def lowering_witnesses(
-    projections: &Dict[str, SourceProjection],
+    mut projections: Dict[str, SourceProjection],
     fresh: list[CompiledBodyValue],
     retained: list[SelectedBodyRecord],
     mut source: PreparedBodyRecordSource,
@@ -788,6 +782,7 @@ def lowering_witnesses(
 ) -> Result[list[LoweringBody], str]:
     """Carry only graph-selected inputs with unchanged current owner/header bytes; never invent fresh checker facts."""
     mut witnesses: list[LoweringBody] = []
+    mut witnessed: set[str] = set()
     editable_packages = [dependency[0] for dependency in dependency_source_roots(unit)]
     for value in fresh:
         mut signatures = [
@@ -816,8 +811,9 @@ def lowering_witnesses(
                 signature_reads=signatures,
             ),
         )
+        witnessed.add(value.identity)
     for record in retained:
-        if record.identity in [value.identity for value in witnesses]:
+        if record.identity in witnessed:
             continue
         if len(record.body_ir) == 0:
             continue
@@ -838,7 +834,9 @@ def lowering_witnesses(
             None => return Err("retained Body IR has no selected evaluation")
         if read_body_frame(key, CHECKER_PROFILE, body.value)? != record.body_ir:
             return Err("retained Body IR differs from the selected graph")
-        projection = source_projection(unit, origin, decoded.source)?
+        if decoded.source not in projections:
+            projections[decoded.source] = source_projection(unit, origin, decoded.source)?
+        projection = projections[decoded.source]
         owner = match compiled_owner_source(projection, decoded.source, str(decoded.body.name), record.identity):
             Ok(value) => value
             Err(reason) =>
@@ -897,6 +895,7 @@ def lowering_witnesses(
                 signature_reads=signatures,
             ),
         )
+        witnessed.add(record.identity)
     return Ok(witnesses)
 
 
@@ -915,7 +914,8 @@ def lowering_events(report: Path) -> Result[list[LoweringEvent], str]:
 
 
 def prepare_lowering_records(
-    transaction: Transaction,
+    mut projections: Dict[str, SourceProjection],
+    mut prepared: Transaction,
     mut source: PreparedBodyRecordSource,
     mut orders: LoweringOrders,
     values: list[LoweringBody],
@@ -929,7 +929,7 @@ def prepare_lowering_records(
     namespaces: list[CompiledNamespaceValue] = [],
     admitted: list[AdmittedPlanModule] = [],
     covered_modules: list[str] = [],
-) -> Result[Transaction, str]:
+) -> Result[None, str]:
     """
     Stage evaluated lowering-demand and plan-function values through their exact Body IR witnesses.
 
@@ -937,9 +937,8 @@ def prepare_lowering_records(
     Earlier compilers and members without a stable identity retain the full namespace witness. A member whose module
     staged no namespace record has no authoritative plan input.
     """
-    scope = ReadScope(snapshot=transaction.id, profile=LOWERING_PROFILE)
-    mut staged_source = source.for_profile(LOWERING_PROFILE)
-    mut prepared = transaction
+    scope = ReadScope(snapshot=prepared.id, profile=LOWERING_PROFILE)
+    source.bind_profile(LOWERING_PROFILE)
     mut bodies: Dict[str, LoweringBody] = {}
     for value in values:
         if value.symbol == "":
@@ -1000,7 +999,7 @@ def prepare_lowering_records(
             interface_namespace = position.rank
         demand_key = body_key("lowering-demand", origin, identity, function, key)
         demand_value = lowering_demand(product)?
-        demand_receipt = staged_source.receipt(scope, demand_key, body_reads, position.evidence)?
+        demand_receipt = source.receipt(scope, demand_key, body_reads, position.evidence)?
         check_reused_output(selected, event, demand_key, demand_value)?
         _ = prepare_evaluation(
             prepared,
@@ -1009,10 +1008,10 @@ def prepare_lowering_records(
             demand_value,
             demand_receipt,
         )?
-        staged_source.add(encode_record_key(demand_key)?, demand_value)
+        source.add(encode_record_key(demand_key)?, demand_value)
         plan_key = body_key("plan-function", origin, identity, "body:" + function, key)
         check_reused_output(selected, event, plan_key, product)?
-        plan_receipt = staged_source.receipt(scope, plan_key, [prepared_product_request(demand_key)] + signature_reads, position.evidence)?
+        plan_receipt = source.receipt(scope, plan_key, [prepared_product_request(demand_key)] + signature_reads, position.evidence)?
         _ = prepare_evaluation(
             prepared,
             "plan-function-" + identity,
@@ -1020,7 +1019,7 @@ def prepare_lowering_records(
             product,
             plan_receipt,
         )?
-        staged_source.add(encode_record_key(plan_key)?, product)
+        source.add(encode_record_key(plan_key)?, product)
         plan_keys.append(plan_key)
         staged.append(staged_plan(module_file, event, identity, event_identity, function, key, plan_key, position)?)
     for event in events:
@@ -1039,7 +1038,7 @@ def prepare_lowering_records(
         # A request that restored main's module from its plan record staged no demand for main; the graph holds it.
         mut position = body.order
         written = encode_record_key(demand_key)?
-        if not staged_source.holds(written):
+        if not source.holds(written):
             graph = match selected:
                 Some(value) => value
                 None => return Err("a carried entry demand has no selected graph")
@@ -1047,10 +1046,10 @@ def prepare_lowering_records(
                 Some(value) => value
                 None => return Err("a carried entry demand has no selected evaluation")
             position = orders.retained(graph, body.module, demand)?
-            staged_source.add(written, demand.value)
+            source.add(written, demand.value)
         if position.rank > interface_namespace:
             interface_namespace = position.rank
-        receipt = staged_source.receipt(scope, key, [prepared_product_request(demand_key)], position.evidence)?
+        receipt = source.receipt(scope, key, [prepared_product_request(demand_key)], position.evidence)?
         _ = prepare_evaluation(
             prepared,
             "plan-entry-" + body.identity,
@@ -1058,18 +1057,18 @@ def prepare_lowering_records(
             product,
             receipt,
         )?
-        staged_source.add(encode_record_key(key)?, product)
+        source.add(encode_record_key(key)?, product)
         plan_keys.append(key)
     # Each module's plan functions fold into its module record; a restored module's record joins the interface's reads.
-    carried, carried_namespace = stage_plan_modules(prepared, staged_source, orders, scope, selected, origin, rechecked, staged, report, admitted)?
+    carried, carried_namespace = stage_plan_modules(prepared, source, orders, scope, selected, origin, rechecked, staged, report, admitted)?
     if not report.joinpath(INTERFACE_REPORT).is_file():
         require_plan_refusal(report)?
-        return Ok(prepared)
+        return Ok(None)
     prepare_native_interface(
-        prepared, staged_source, scope, unit, origin, values, report, plan_keys + carried, covered_modules,
+        projections, prepared, source, scope, unit, origin, values, report, plan_keys + carried, covered_modules,
         max([interface_namespace, carried_namespace]),
     )?
-    return Ok(prepared)
+    return Ok(None)
 
 
 def require_plan_refusal(report: Path) -> Result[None, str]:
@@ -1105,6 +1104,7 @@ def check_reused_output(
 
 
 def prepare_native_interface(
+    mut projections: Dict[str, SourceProjection],
     mut transaction: Transaction,
     mut source: PreparedBodyRecordSource,
     scope: ReadScope,
@@ -1124,7 +1124,9 @@ def prepare_native_interface(
     mut reads = [prepared_product_request(plan) for plan in plans]
     modules = set(covered_modules + [body.module for body in bodies])
     for module in sorted([file for file in modules]):
-        projection = source_projection(unit, origin, module)?
+        if module not in projections:
+            projections[module] = source_projection(unit, origin, module)?
+        projection = projections[module]
         for binding in [projection.header] + projection.feature_inputs:
             source.add(encode_record_key(binding.key)?, binding.encoded()?)
             reads.append(prepared_product_request(binding.key))

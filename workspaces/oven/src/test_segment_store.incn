@@ -233,7 +233,9 @@ pub def test_concurrent_disjoint_writes_both_land_and_conflicting_writes_are_ref
     segment_files = count_files(root.joinpath("segments"))
     retained = retained_inventory(root)?
     size_before = retained_bytes(root)?
+    decoded_before = read_counts().decoded
     unchanged = commit(same).map_err((error) => error.message())?
+    assert read_counts().decoded == decoded_before, "equal writes must compare the existing mapped value in place"
     assert unchanged.generation == landed.generation
     assert count_files(root.joinpath("segments")) == segment_files
     assert retained_inventory(root)? == retained

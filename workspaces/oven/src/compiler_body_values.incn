@@ -4,7 +4,7 @@ from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
 from pub::incan_platform.store import Snapshot, get
 from pub::internal_models import GraphBodyValue, ProducerRank, encode_graph_body_values, encode_graph_checking_pair
-from pub::internal_models.records import ReadReceipt, RecordKey
+from pub::internal_models.records import ReadReceipt, RecordKey, encode_record_key
 from pub::internal_models.lowering_events import LoweringEvent
 from pub::internal_models.namespace_order import NamespaceOrder, decode_namespace_order
 from compiler_body_keys import IDENTITY_PROFILE, NAMESPACE_IDENTITY_PROFILE
@@ -205,19 +205,22 @@ def paired_records(
     mint_body_ir: bool = false,
 ) -> Result[list[SelectedBodyRecord], str]:
     """Each local value whose final value and Body IR frame were selected too, as one owner's complete record."""
+    final_positions = owner_positions(finals)?
+    body_positions = owner_positions(bodies)?
     mut selected_records: list[SelectedBodyRecord] = []
     for local in locals:
-        match matching_record(finals, local):
-            Some(final) =>
-                mut frame = b""
-                if let Some(body) = matching_record(bodies, local):
-                    # Prior installations stored an unwrapped kernel payload. Reissue it under the current graph authority.
-                    if body.value[:4] == b"CRMB":
-                        frame = read_body_frame(body.key, profile, body.value)?
-                if len(frame) > 0 or mint_body_ir:
-                    selected_records.append(SelectedBodyRecord(identity=local.key.identity, local=local.value,
-                        final=final.value, body_ir=frame))
-            None => pass
+        owner = encode_record_key(local.key)?
+        if owner not in final_positions:
+            continue
+        mut frame = b""
+        if owner in body_positions:
+            index = body_positions[owner]
+            # An older installation can carry an unwrapped kernel payload. Mint the frame under the current authority.
+            if bodies[index].value[:4] == b"CRMB":
+                frame = read_body_frame(bodies[index].key, profile, bodies[index].value)?
+        if len(frame) > 0 or mint_body_ir:
+            selected_records.append(SelectedBodyRecord(identity=local.key.identity, local=local.value,
+                final=finals[final_positions[owner]].value, body_ir=frame))
     return Ok(selected_records)
 
 
@@ -275,15 +278,13 @@ pub def publish_body_values(
     return Ok(PublishedBodyValues(snapshot=final.snapshot, local=local, final=final))
 
 
-def matching_record(records: list[ReusableRecord], local: ReusableRecord) -> Option[ReusableRecord]:
-    """Find the final value whose complete logical owner key differs from the local key only by family."""
-    for record in records:
-        if (
-            record.key.identity == local.key.identity
-            and record.key.identity_profile == local.key.identity_profile
-            and record.key.origin == local.key.origin
-            and record.key.facet == local.key.facet
-            and record.key.context == local.key.context
-        ):
-            return Some(record)
-    return None
+def owner_positions(records: &list[ReusableRecord]) -> Result[Dict[str, int], str]:
+    """Index the first selection for each complete owner key using the local checker family for comparison."""
+    mut positions: Dict[str, int] = {}
+    for index in range(len(records)):
+        mut key = records[index].key
+        key.family = "local"
+        owner = encode_record_key(key)?
+        if owner not in positions:
+            positions[owner] = index
+    return Ok(positions)
