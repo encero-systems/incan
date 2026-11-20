@@ -1,0 +1,8 @@
+{
+  "tar_sha256": "3b9f04a2e6e710a3be389b96a3cc00729520cd16247f8aeb323fd510e3c36b8d",
+  "archive_sha256": "6f247503dfa1b24c4766d207fd6df74991c692a34b90580a14d54c6fd0171389",
+  "compressed_bytes": 157965481,
+  "root": "target",
+  "relative_path": "integrated/loaves/compiler/internal_models/target",
+  "reconstructed_tar_sha256": "3b9f04a2e6e710a3be389b96a3cc00729520cd16247f8aeb323fd510e3c36b8d"
+}
