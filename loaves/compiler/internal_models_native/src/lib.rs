@@ -15,6 +15,8 @@ pub mod checked_types;
 pub mod checker_field_grammar;
 pub mod checker_publication;
 pub mod checker_record_models;
+pub mod checker_record_rust_calls;
+pub mod checker_record_types;
 pub mod checker_records;
 pub mod compiled_body_rows;
 pub mod compiler_contributors;
@@ -33,7 +35,6 @@ pub mod namespace_references;
 pub mod namespace_rows;
 pub mod namespace_schema;
 pub mod overload_members;
-pub mod plan_function_records;
 pub mod plan_module_records;
 pub mod plan_wire_rows;
 pub mod read_receipts;
@@ -45,6 +46,7 @@ pub mod source_value_records;
 pub mod store_record_source;
 pub mod toolchain_search;
 pub mod unit_admission;
+pub mod unit_document;
 
 /// The public read boundary over `record_scope`.
 pub mod records {
@@ -57,7 +59,9 @@ pub mod records {
 }
 
 pub use activation_envelopes::{
-    DEMAND_FAMILY, DEMAND_SCHEMA, PREPARED_FAMILY, PREPARED_SCHEMA, WORK_FAMILY, WORK_SCHEMA,
+    DEMAND_FAMILY, DEMAND_SCHEMA, PREPARED_FAMILY, PREPARED_SCHEMA, WORK_FAMILY, WORK_SCHEMA, decode_demand_page,
+    decode_prepared_inputs, decode_ready_work, encode_demand_page, encode_prepared_inputs, encode_ready_work,
+    envelope_key, stage_name,
 };
 pub use body_ir_declarations::{
     BODY_IR_ADAPTER_GENERATION, BODY_IR_ADAPTER_PROFILE, BODY_IR_ADAPTER_REMOVAL_GATE, BODY_IR_ADAPTER_SOURCE,
@@ -81,7 +85,14 @@ pub use checker_record_models::{
     CompiledBodyValue, CompiledNamespaceValue, GraphBodyFields, GraphBodyValue, GraphNamespaceValue,
     GraphNamespaceView, SettledCallContract, SettledCallRead,
 };
-pub use compiled_body_rows::CompiledBodyOutput;
+pub use checker_records::{
+    callable_checker_fields, content_digest, decode_graph_body_page, decode_graph_body_values,
+    decode_graph_checking_inputs, decode_graph_namespace_value, decode_graph_namespace_view,
+    decode_owned_namespace_view, decode_owned_record, encode_graph_body_values, encode_graph_checking_pair,
+    encode_graph_namespace_value, encode_record, from_native_fields, from_native_final_fields,
+    from_native_local_fields, native_fields, record_root, semantic_digest,
+};
+pub use compiled_body_rows::{CompiledBodyOutput, decode_compiled_body_row, encode_compiled_body_rows};
 pub use compiler_contributors::{CompilerContributors, decode_compiler_contributors, encode_compiler_contributors};
 pub use compiler_export::{CompilerExportMember, decode_compiler_export, encode_compiler_export};
 pub use compiler_records::{
@@ -91,21 +102,32 @@ pub use compiler_records::{
     SymbolOrigin, valid_canonical_symbol_id, valid_hir_source_span, valid_stable_declaration_id,
 };
 pub use internal_models_bindings::MappedView;
-pub use lowering_events::{ADMITTED_DEFINITIONS, INTERFACE_REPORT};
+pub use lowering_events::{
+    ADMITTED_DEFINITIONS, INTERFACE_REPORT, admitted_definitions_filename, decode_admitted_definitions,
+    decode_lowering_event, decode_native_interface, native_interface_filename,
+};
 pub use manifest_cache::{
     ManifestCacheValue, ManifestInventory, decode_manifest_cache, decode_manifest_inventory, encode_manifest_cache,
     encode_manifest_inventory,
 };
-pub use namespace_order::NamespaceOrder;
+pub use namespace_order::{
+    NamespaceOrder, certified_namespace_order, checking_basis_key, checking_completion_receipt, decode_namespace_order,
+    encode_checking_completion, encode_import_closures, ranked_output_suffix,
+};
 pub use namespace_proof::{encode_namespace_proof, namespace_proof_output_suffix, read_namespace_proof};
 pub use namespace_references::{
     NamespaceReference, decode_namespace_references, encode_namespace_references, namespace_reference_filename,
 };
 pub use namespace_rows::{
     NamespaceAtom, NamespaceEntry, NamespaceField, NamespaceIdentity, NamespacePublication, PreparedNamespaceReader,
+    decode_callable_inventory, decode_namespace_interface, decode_prepared_namespace, decode_prepared_namespace_view,
+    encode_callable_inventory, encode_namespace_interface, identify_prepared_namespace,
+    identify_prepared_namespace_view, namespace_identity, prepare_namespace_reader, publish_namespace_interface,
 };
-pub use plan_function_records::PlanFunctionRecord;
-pub use read_receipts::RECEIPT_SCHEMA;
+pub use overload_members::{
+    contract_output_suffix, coordinate_output_suffix, encode_method_lookups, method_lookup_suffix, scope_output_suffix,
+};
+pub use read_receipts::{RECEIPT_SCHEMA, decode_read_receipt, encode_read_receipt};
 pub use record_service::{
     CompilerFault, CompilerFaultKind, CompilerRecordService, DemandPage, Evaluation, InputSnapshot, NeedPrerequisite,
     Preparation, PreparedInputs, Produced, ProducerCounters, ProducerProfile, ProducerRank, ProducerStage,
@@ -122,6 +144,7 @@ pub use settled_call_reads::{decode_owner_call_reads, encode_owner_call_reads};
 pub use source_value_records::{SOURCE_PROFILE, encode_source_text, source_value};
 pub use toolchain_search::{decode_search_paths, encode_search_paths};
 pub use unit_admission::{PayloadAdmission, decode_unit_admission, encode_unit_admission};
+pub use unit_document::{decode_unit_document, encode_unit_document};
 
 #[cfg(test)]
 mod surface_tests;

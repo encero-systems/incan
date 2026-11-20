@@ -133,7 +133,7 @@ impl<'a> Reader<'a> {
         Ok(())
     }
     /// Decode per-argument fields and the dispatch and completion dependencies of this call.
-    fn invocation(&mut self, loans: usize, receivers: bool, results: bool) -> Checked<()> {
+    fn invocation(&mut self, loans: usize, receivers: bool, results: bool, observers: bool) -> Checked<()> {
         self.handle()?;
         if results && self.present()? {
             self.value_type()?;
@@ -152,10 +152,13 @@ impl<'a> Reader<'a> {
             self.handle()?;
             self.number()?;
             self.number()?;
-            self.tag(&["inferred", "shared", "exclusive", "owned"])?;
+            self.tag(&["inferred", "inferred_shared", "shared", "exclusive", "owned"])?;
             self.optional_index(loans)?;
             if self.present()? {
                 self.place()?;
+            }
+            if observers {
+                self.flag()?;
             }
             self.evaluation()?;
         }
@@ -169,7 +172,7 @@ impl<'a> Reader<'a> {
         Ok(())
     }
     /// Read the complete ownership graph, preserving version-specific validation.
-    fn graph(&mut self, strict: bool, receivers: bool, results: bool) -> Checked<()> {
+    fn graph(&mut self, strict: bool, receivers: bool, results: bool, observers: bool) -> Checked<()> {
         self.strict = strict;
         self.handle()?;
         self.node()?;
@@ -222,7 +225,7 @@ impl<'a> Reader<'a> {
             }
             Ok(())
         })?;
-        self.map(Self::handle, |r| r.invocation(loans, receivers, results))?;
+        self.map(Self::handle, |r| r.invocation(loans, receivers, results, observers))?;
         self.map(Self::handle, |r| {
             r.handle()?;
             for _ in 0..r.count()? {
@@ -298,9 +301,14 @@ pub(crate) fn input_field_end(field: &CanonicalField) -> Checked<usize> {
         strict: true,
         max_node: 0,
     };
-    let version = r.tag(&["1", "2", "3"])?;
+    let version = r.tag(&["1", "2", "5"])?;
     let family = (field.family.as_str(), field.selector.as_str());
-    if version != "1" && family != ("input-flow", "graph") {
+    let input_flow = family == ("input-flow", "graph");
+    let input_copy = family == ("input-copy", "types");
+    if (input_copy && version != "2") || (input_flow && version != "5") {
+        return Err(Malformed);
+    }
+    if !input_copy && !input_flow && version != "1" {
         return Err(Malformed);
     }
     match family {
@@ -309,7 +317,7 @@ pub(crate) fn input_field_end(field: &CanonicalField) -> Checked<usize> {
             r.map(Reader::value_type, Reader::flag)?;
         }
         ("input-call", "contract") => {
-            r.tag(&["explicit", "ordinary"])?;
+            r.tag(&["explicit", "ordinary", "indirect"])?;
             if r.present()? {
                 r.handle()?;
             }
@@ -332,7 +340,7 @@ pub(crate) fn input_field_end(field: &CanonicalField) -> Checked<usize> {
                 r.handle()?;
             }
             state => {
-                r.graph(state == "checked", version != "1", version == "3")?;
+                r.graph(state == "checked", true, true, true)?;
                 if state == "invalid" {
                     r.handle()?;
                 }
@@ -340,5 +348,42 @@ pub(crate) fn input_field_end(field: &CanonicalField) -> Checked<usize> {
         },
         _ => return Err(Malformed),
     }
+    Ok(r.pos)
+}
+
+/// Read the selected method, its trait dispatch and all implementation-bound associated types.
+pub(crate) fn method_call_end(values: &[String]) -> Checked<usize> {
+    let mut r = Reader {
+        tokens: values,
+        pos: 0,
+        strict: true,
+        max_node: 0,
+    };
+    r.handle()?;
+    r.tag(&["trait"])?;
+    r.handle()?;
+    if r.tag(&["some", "none"])? == "some" {
+        for _ in 0..r.count()? {
+            r.handle()?;
+        }
+    }
+    for _ in 0..r.count()? {
+        r.value_type()?;
+    }
+    for _ in 0..r.count()? {
+        r.handle()?;
+        for _ in 0..r.count()? {
+            r.handle()?;
+            for _ in 0..r.count()? {
+                r.value_type()?;
+            }
+            for _ in 0..r.count()? {
+                r.handle()?;
+                r.value_type()?;
+            }
+            r.tag(&["standard", "rust-capability", "source-callable"])?;
+        }
+    }
+    r.flag()?;
     Ok(r.pos)
 }

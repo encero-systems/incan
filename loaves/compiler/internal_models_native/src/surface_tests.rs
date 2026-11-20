@@ -11,7 +11,7 @@ use crate::{
     CompiledBodyOutputs, CompiledBodyValue, CompiledNamespaceValue, CompilerContributors, CompilerExportMember,
     GraphBodyFields, GraphBodyValue, GraphNamespaceValue, ManifestCacheValue, ManifestInventory, NamespaceAtom,
     NamespaceEntry, NamespaceField, NamespaceIdentity, NamespaceOrder, NamespacePublication, NamespaceReference,
-    PayloadAdmission, PlanFunctionRecord, RecordKey, SettledCallContract, SettledCallRead,
+    PayloadAdmission, RecordKey, SettledCallContract, SettledCallRead,
 };
 
 /// A complete key whose context keeps its reference default.
@@ -192,12 +192,6 @@ fn lowering_plan_and_namespace_records_carry_every_reference_field() {
         functions: vec![function],
         inspected: false,
     };
-    let record = PlanFunctionRecord {
-        inputs: vec![],
-        function: vec![],
-        requests: vec![],
-        digest: "d".into(),
-    };
     let plan = PlanModuleValue {
         module: "m".into(),
         functions: vec![PlanModuleFunction {
@@ -239,7 +233,7 @@ fn lowering_plan_and_namespace_records_carry_every_reference_field() {
         value_digest: "v".into(),
     };
     assert!(event.references.len() == 1 && module.functions.len() == 1 && plan.functions.len() == 1);
-    assert!(refusal.refusal == "r" && interface.entry == "e" && definition.digest == "d" && record.digest == "d");
+    assert!(refusal.refusal == "r" && interface.entry == "e" && definition.digest == "d");
     assert!(lookup.candidates.is_empty() && identity.path.is_empty() && publication.interface.is_empty());
     assert!(matches!(atom, NamespaceAtom::Fields(_)) && reference.offset == 0);
 }
