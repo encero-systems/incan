@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
 
 use incan_frontend::typechecker::{CheckedNamespaceInterface, NamespaceCell as Cell, NamespaceCrumb};
-use internal_models::{NamespaceAtom as Atom, NamespaceEntry, NamespaceField};
+use internal_models::{MappedView, NamespaceAtom as Atom, NamespaceEntry, NamespaceField};
 use sha2::{Digest, Sha256};
 
 pub(super) struct CheckedNamespaceCrumb;
@@ -84,7 +84,7 @@ fn published(digest: &[u8; 32]) -> Option<Arc<CheckedNamespaceInterface>> {
 struct EncodedInterface {
     name: String,
     path: Vec<String>,
-    bytes: Vec<u8>,
+    bytes: MappedView,
     digest: [u8; 32],
 }
 
@@ -94,11 +94,12 @@ impl incan_frontend::checker_records::GraphNamespaceInterface for EncodedInterfa
     }
 
     fn installable(&self) -> Result<Arc<incan_frontend::typechecker::ModuleDependencyInterface>, String> {
-        let checked = restore_digest(self.bytes.len(), self.digest, || {
-            if self.bytes.len() > 64 * 1024 * 1024 {
+        let byte_count = self.bytes.0.as_bytes().len();
+        let checked = restore_digest(byte_count, self.digest, || {
+            if byte_count > 64 * 1024 * 1024 {
                 return Err("checked namespace exceeds its byte limit".into());
             }
-            let root = internal_models::decode_prepared_namespace(namespace_reader()?, &self.bytes)?;
+            let root = internal_models::decode_prepared_namespace_view(namespace_reader()?, &self.bytes)?;
             CheckedNamespaceInterface::from_wire_value(to_cell(root)?)
         })?;
         if checked.module_name() != self.name || checked.module_path() != self.path {
@@ -113,14 +114,18 @@ impl incan_frontend::checker_records::GraphNamespaceInterface for EncodedInterfa
 pub(super) fn admit(
     source: &str,
     proof: &[u8],
-    bytes: Vec<u8>,
+    bytes: MappedView,
 ) -> Result<Arc<dyn incan_frontend::checker_records::GraphNamespaceInterface>, String> {
-    let digest = Sha256::digest(&bytes).into();
+    let digest = Sha256::digest(bytes.0.as_bytes()).into();
     let root = if proof.is_empty() {
         if let Some(hit) = published(&digest) {
             return Ok(hit);
         }
-        internal_models::identify_prepared_namespace(namespace_reader()?, &bytes, CheckedNamespaceInterface::SCHEMA)?
+        internal_models::identify_prepared_namespace_view(
+            namespace_reader()?,
+            &bytes,
+            CheckedNamespaceInterface::SCHEMA,
+        )?
     } else {
         internal_models::read_namespace_proof(
             &proof.to_vec(),

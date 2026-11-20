@@ -45,7 +45,9 @@ pub fn encode_namespace_module(module: &mut BodyIrModule) -> Result<Vec<u8>, Exe
 /// Recover exactly one identity environment for each body. Earlier snapshots carry their maps inline.
 pub fn decode_namespace_module(bytes: &[u8]) -> Result<BodyIrModule, ExecutableRepresentationError> {
     let Some(bytes) = bytes.strip_prefix(MAGIC) else {
-        return decode_module(bytes);
+        let mut module = decode_module(bytes)?;
+        share_equal_identity_maps(&mut module.bodies);
+        return Ok(module);
     };
     type ScopeDirectory = (Vec<BTreeMap<String, CanonicalSymbolId>>, Vec<usize>);
     let ((maps, slots), frame) = postcard::take_from_bytes::<ScopeDirectory>(bytes)

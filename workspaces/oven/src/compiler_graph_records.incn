@@ -13,12 +13,13 @@ from pub::incan_platform.store import (
     get,
     first_stored_key,
     keys_with_prefix,
+    locate_value,
     revisions_with_prefix,
     stage_delete,
     stage_put,
 )
 from pub::incan_platform.store.codec import KIND_TOMBSTONE, matches_value_frame
-from pub::incan_platform.store.index import entries_with_prefix
+from pub::incan_platform.store.index import Location, entries_with_prefix
 from pub::internal_models import (
     ProducerRank,
     ProducerStage,
@@ -72,6 +73,7 @@ pub model ReusableEvaluation:
     pub value_digest: str
     pub receipt: ReadReceipt
     pub namespace: int
+    pub location: Option[Location] = None
 
 
 pub model ReusableRecord:
@@ -82,6 +84,7 @@ pub model ReusableRecord:
     pub value_digest: str
     pub receipt: ReadReceipt
     pub namespace: int
+    pub location: Option[Location] = None
 
 
 model EdgeFact:
@@ -187,6 +190,7 @@ def select_evaluation(
     output: RecordKey,
     profile: str,
     mut selected_witnesses: Dict[str, tuple[RecordRequest, str]],
+    defer_payload: bool = false,
 ) -> Result[Option[ReusableEvaluation], str]:
     """Validate an output and share only successful selections of the same pinned family read."""
     if profile == "":
@@ -209,17 +213,26 @@ def select_evaluation(
     receipt = decode_read_receipt(receipt_bytes)?
     if receipt.scope.profile != profile or encode_record_key(receipt.preparation.output)? != value_key:
         return Err("selected compiler receipt does not describe its evaluation")
-    value = required_value(selected, value_key)?
-    if digest(value) != value_digest:
-        return Err("selected compiler value differs from its evaluation digest")
+    mut value: bytes = b""
+    mut location: Option[Location] = None
+    if defer_payload:
+        note_graph_demand("evaluation-frame", selected, value_key)
+        location = locate_value(selected, value_key).map_err((error) => error.message())?
+        match location:
+            Some(_) => pass
+            None => return Err("selected compiler evaluation is incomplete")
+    else:
+        value = required_value(selected, value_key)?
+        if digest(value) != value_digest:
+            return Err("selected compiler value differs from its evaluation digest")
     if not witnesses_validate(selected, receipt, selected_witnesses)?:
         return Ok(None)
     # A checked row is already authenticated by this snapshot and the evaluation digest. Its complete
     # contents have the same digest as the canonical whole-row witness used by the next checker phase.
-    if output.identity_profile != SOURCE_PROFILE and checked_row_family(output.family) and len(selected_witnesses) < 8192 and len(value_key) <= 4096:
+    if not defer_payload and output.identity_profile != SOURCE_PROFILE and checked_row_family(output.family) and len(selected_witnesses) < 8192 and len(value_key) <= 4096:
         if let Ok(request) = checked_row_request(output, len(value)):
             selected_witnesses[value_key] = (request, value_digest)
-    return Ok(Some(ReusableEvaluation(value=value, value_digest=value_digest, receipt=receipt, namespace=evaluation.namespace)))
+    return Ok(Some(ReusableEvaluation(value=value, value_digest=value_digest, receipt=receipt, namespace=evaluation.namespace, location=location)))
 
 
 pub model OutputSlots:
@@ -233,14 +246,14 @@ pub model OutputSlots:
 
 
 pub def reusable_family_records(
-    selected: Snapshot, family: str, profile: str, slots: Option[OutputSlots] = None,
+    selected: Snapshot, family: str, profile: str, slots: Option[OutputSlots] = None, defer_payload: bool = false,
 ) -> Result[list[ReusableRecord], str]:
     """
     Select every witnessed value in one family/profile from the graph's engine-owned output index, reading only that
     family's range of it. The index holds one entry per slot, which names the slot's current record.
     """
     mut verified: Dict[str, tuple[RecordRequest, str]] = {}
-    return select_family_records(selected, family, profile, slots, verified)
+    return select_family_records(selected, family, profile, slots, verified, defer_payload)
 
 
 pub def reusable_checker_records(selected: Snapshot, profile: str, slots: Option[OutputSlots]) -> Result[tuple[list[ReusableRecord], list[ReusableRecord], list[ReusableRecord]], str]:
@@ -254,6 +267,7 @@ pub def reusable_checker_records(selected: Snapshot, profile: str, slots: Option
 
 def select_family_records(
     selected: Snapshot, family: str, profile: str, slots: Option[OutputSlots], mut verified: Dict[str, tuple[RecordRequest, str]],
+    defer_payload: bool = false,
 ) -> Result[list[ReusableRecord], str]:
     """Read one family under the snapshot and profile that own the verified selections."""
     mut excluded: set[str] = set()
@@ -264,10 +278,10 @@ def select_family_records(
         if output in excluded:
             continue
         key = decode_record_key(output)?
-        match select_evaluation(selected, key, profile, verified)?:
+        match select_evaluation(selected, key, profile, verified, defer_payload)?:
             Some(reused) =>
                 records.append(ReusableRecord(key=key, value=reused.value, value_digest=reused.value_digest,
-                    receipt=reused.receipt, namespace=reused.namespace))
+                    receipt=reused.receipt, namespace=reused.namespace, location=reused.location))
             None => pass
     return Ok(records)
 

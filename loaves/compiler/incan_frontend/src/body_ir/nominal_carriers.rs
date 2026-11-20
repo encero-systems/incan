@@ -183,7 +183,7 @@ fn retain_body(body: &mut bir::Body, facts: &TypeCheckInfo, constructors: &Const
     retain_constructor_results(
         &body.block.stmts,
         &mut body.locals,
-        std::sync::Arc::make_mut(&mut body.named_type_identities),
+        &mut body.named_type_identities,
         constructors,
     );
     for parameter in &body.params {
@@ -191,7 +191,7 @@ fn retain_body(body: &mut bir::Body, facts: &TypeCheckInfo, constructors: &Const
             retain_constructor_results(
                 &default.stmts,
                 &mut body.locals,
-                std::sync::Arc::make_mut(&mut body.named_type_identities),
+                &mut body.named_type_identities,
                 constructors,
             );
         }
@@ -202,15 +202,19 @@ fn retain_body(body: &mut bir::Body, facts: &TypeCheckInfo, constructors: &Const
 /// Project authenticated published types through their retained bindings, including pre-carrier-key enum bodies.
 /// This consumes declaration-owned identities only; no consumer spelling, source lookup or inference participates.
 pub(crate) fn retain_published_frame(body: &mut bir::Body) {
-    let keys: Vec<_> = body
-        .named_type_identities
+    let identities = &mut body.named_type_identities;
+    let additions: Vec<_> = identities
         .values()
-        .filter_map(|identity| nominal_carrier_key(identity).map(|key| (key, identity.clone())))
+        .filter_map(|identity| {
+            let key = nominal_carrier_key(identity)?;
+            (!identities.contains_key(&key)).then(|| (key, identity.clone()))
+        })
         .collect();
-    for (key, identity) in keys {
-        std::sync::Arc::make_mut(&mut body.named_type_identities)
-            .entry(key)
-            .or_insert(identity);
+    if !additions.is_empty() {
+        let owned = std::sync::Arc::make_mut(identities);
+        for (key, identity) in additions {
+            owned.entry(key).or_insert(identity);
+        }
     }
     retain_body_types(body, None);
 }
@@ -303,7 +307,7 @@ fn retain_body_types(body: &mut bir::Body, facts: Option<&TypeCheckInfo>) {
 fn retain_constructor_results(
     statements: &[bir::Statement],
     locals: &mut [bir::LocalDecl],
-    identities: &mut Identities,
+    identities: &mut bir::SharedIdentities,
     constructors: &ConstructorCarriers,
 ) {
     for statement in statements {
@@ -397,7 +401,7 @@ fn retain_constructed_local(
     place: &bir::Place,
     target: &bir::ConstructorTarget,
     locals: &mut [bir::LocalDecl],
-    identities: &mut Identities,
+    identities: &mut bir::SharedIdentities,
 ) {
     if !place.projection.is_empty() || target.direct_declaration_id.is_none() {
         return;
@@ -413,8 +417,15 @@ fn retain_constructed_local(
     if *name != identity.declaration_name && *name != target.name && identities.get(name) != Some(identity) {
         return;
     }
-    *name = key.clone();
-    identities.insert(key, identity.clone());
+    retain_binding(identities, &key, identity);
+    *name = key;
+}
+
+/// Keep the original shared table when the carrier is already present. Only a changed checked fact owns a copy.
+pub(super) fn retain_binding(bindings: &mut bir::SharedIdentities, name: &str, identity: &CanonicalSymbolId) {
+    if bindings.get(name) != Some(identity) {
+        std::sync::Arc::make_mut(bindings).insert(name.to_owned(), identity.clone());
+    }
 }
 
 /// Deferred computations carry the declaring frame's canonical type map and never read a caller's namespace.
@@ -777,7 +788,7 @@ fn retain_body_return_owners(body: &mut bir::Body, returns: &ReturnCarriers) {
     retain_selected_returns(
         &body.block.stmts,
         &mut body.locals,
-        std::sync::Arc::make_mut(&mut body.named_type_identities),
+        &mut body.named_type_identities,
         returns,
     );
     for parameter in &body.params {
@@ -785,7 +796,7 @@ fn retain_body_return_owners(body: &mut bir::Body, returns: &ReturnCarriers) {
             retain_selected_returns(
                 &default.stmts,
                 &mut body.locals,
-                std::sync::Arc::make_mut(&mut body.named_type_identities),
+                &mut body.named_type_identities,
                 returns,
             );
         }
@@ -823,18 +834,19 @@ fn return_type_identities(ty: &IncanType, source: &Identities) -> Identities {
     selected
 }
 
-/// Retain each return leaf under its checked spelling and canonical carrier key.
+/// Retain exactly the spellings read by contextual type qualification, without inventing carrier bindings.
 fn retain_return_type_identities(ty: &IncanType, source: &Identities, selected: &mut Identities) {
-    match ty {
-        IncanType::Named(name) => {
-            let Some(identity) = source.get(name) else { return };
-            selected.insert(name.clone(), identity.clone());
-            if let Some(key) = nominal_carrier_key(identity) {
-                selected.insert(key, identity.clone());
-            }
+    let mut select = |name: &str| {
+        if !selected.contains_key(name)
+            && let Some(identity) = source.get(name)
+        {
+            selected.insert(name.to_owned(), identity.clone());
         }
+    };
+    match ty {
+        IncanType::Named(name) => select(name),
         IncanType::Generic { base, args } => {
-            retain_return_type_identities(&IncanType::Named(base.clone()), source, selected);
+            select(base);
             for argument in args {
                 retain_return_type_identities(argument, source, selected);
             }
@@ -880,7 +892,7 @@ pub(super) fn return_index_keeps_identity_maps_borrowed(module: &bir::BodyIrModu
 fn retain_selected_returns(
     statements: &[bir::Statement],
     locals: &mut [bir::LocalDecl],
-    identities: &mut Identities,
+    identities: &mut bir::SharedIdentities,
     returns: &ReturnCarriers,
 ) {
     for statement in statements {
@@ -1062,7 +1074,7 @@ pub(super) fn retain_declared_return_type(
     ty: &mut IncanType,
     declared: &IncanType,
     source: &Identities,
-    destination: &mut Identities,
+    destination: &mut bir::SharedIdentities,
 ) {
     match (ty, declared) {
         (IncanType::Named(name), IncanType::Named(declared)) => {
@@ -1072,8 +1084,8 @@ pub(super) fn retain_declared_return_type(
             }
             let key = nominal_carrier_key(identity).unwrap_or_else(|| name.clone());
             if *name == *declared || *name == identity.declaration_name || destination.get(name) == Some(identity) {
-                *name = key.clone();
-                destination.insert(key, identity.clone());
+                retain_binding(destination, &key, identity);
+                *name = key;
             }
         }
         (
