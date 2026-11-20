@@ -2,7 +2,10 @@
 
 from std.hash import sha256
 from checker_record_models import SettledCallContract
-from checker_records import CHECKER_PROFILE, CheckedFamily, CheckedRecord, CompiledBodyDependencyRead, CompiledBodyOutputs, CompiledBodyValue, CompiledNamespaceValue, encode_record
+from checker_records import (
+    CHECKER_PROFILE, CheckedFamily, CheckedRecord, CompiledBodyDependencyRead, CompiledBodyOutputs, CompiledBodyValue,
+    CompiledNamespaceValue, GraphNamespaceValue, decode_graph_namespace_value, encode_graph_namespace_value, encode_record,
+)
 from compiled_body_rows import CompiledBodyOutput, decode_compiled_body_row, encode_compiled_body_rows
 from namespace_proof import encode_namespace_proof
 
@@ -50,4 +53,26 @@ pub def test_namespace_wire_preserves_absent_empty_and_supplied_call_contracts()
         match decode_compiled_body_row(rows[0]).map_err((_) => "decode namespace")?:
             CompiledBodyOutput.Namespace(decoded) => assert decoded.call_contracts == contracts
             _ => return Err("wrong output kind")
+    return Ok(None)
+
+
+pub def test_namespace_wire_carries_the_exact_published_record() -> Result[None, str]:
+    source = "main.incn"
+    durable = encode_graph_namespace_value(
+        GraphNamespaceValue(module=source, interface=b"checked declarations", body_ir=b"lowered body", lowering_inputs=[]),
+    ).map_err((_) => "encode durable namespace")?
+    empty: list[SettledCallContract] = []
+    transport = CompiledNamespaceValue(
+        module=source, interface=b"", body_ir=b"", dependencies=["support.incn"],
+        semantic_interface=sha256.digest(b"declarations"), call_contracts=Some(empty), published_record=durable,
+    )
+    rows = wire_rows(CompiledBodyOutputs(namespaces=[transport], values=[], fallbacks=[]))?
+    match decode_compiled_body_row(rows[0]).map_err((_) => "decode published namespace output")?:
+        CompiledBodyOutput.Namespace(decoded) =>
+            assert decoded.published_record == durable
+            assert decoded.dependencies == ["support.incn"]
+            assert decoded.call_contracts == Some(empty)
+            value = decode_graph_namespace_value(decoded.published_record).map_err((_) => "read durable namespace")?
+            assert value.module == source and value.body_ir == b"lowered body"
+        _ => return Err("wrong output kind")
     return Ok(None)

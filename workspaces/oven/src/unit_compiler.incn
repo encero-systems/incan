@@ -169,7 +169,7 @@ pub def graph_body_output_path(unit: UnitDescription, key: Key, typed: bool) -> 
     directory = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath("units")
     description = descriptor_path(directory, described_by(key), typed)
     if typed:
-        return Path(description.0 + scope_output_suffix())
+        return Path(description.0 + ".published" + scope_output_suffix())
     return Path(f"{description.0}.graph-body-output")
 
 

@@ -23,8 +23,8 @@ fn graph_body_records_restore_through_checked_body_assembly() -> Result<(), Box<
     let identity = local.first().ok_or("missing local header")?[1].clone();
     let records = crate::checker_records::GraphBodyRecords::new(vec![crate::checker_records::GraphBodyRecord {
         identity,
-        local: local.clone(),
-        final_value: final_value.clone(),
+        local: local.clone().into(),
+        final_value: final_value.clone().into(),
         body_ir: None,
     }])?;
 

@@ -7,10 +7,14 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use incan_frontend::checker_records::{GraphBodyRecords, GraphNamespaceHeader, GraphNamespaceInterface};
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::typechecker::TypeChecker;
 use incan_semantics_core::body_ir::BodyIrModule;
+use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId};
+use sha2::{Digest, Sha256};
 
 /// One output awaiting canonical ordering and Incan-owned encoding.
 pub(super) struct PendingBodyValue {
@@ -37,7 +41,9 @@ struct PendingNamespaceValue {
     interface: Vec<u8>,
     semantic_interface: Vec<u8>,
     identity_proof: Vec<u8>,
-    package_roots: Vec<String>,
+    package_roots: Vec<CanonicalSymbolId>,
+    interface_owner: Arc<dyn GraphNamespaceInterface>,
+    settled_inputs: Vec<(CompilerNodeId, String)>,
     member_owners: std::collections::BTreeMap<incan_semantics_core::CanonicalSymbolId, String>,
     member_witnesses: Vec<Vec<String>>,
     call_reads: Vec<internal_models::SettledCallRead>,
@@ -66,14 +72,14 @@ pub(super) struct BodyValueRefusal {
 fn canonical_lowering_inputs(inputs: Vec<Vec<String>>) -> Result<Vec<Vec<String>>, String> {
     let mut canonical = std::collections::BTreeMap::new();
     for input in inputs {
-        let [identity, witness] = input.as_slice() else {
-            return Err("compiled graph output contains a malformed lowering witness".to_owned());
-        };
-        match canonical.entry(identity.clone()) {
+        let [identity, witness]: [String; 2] = input
+            .try_into()
+            .map_err(|_| "compiled graph output contains a malformed lowering witness".to_owned())?;
+        match canonical.entry(identity) {
             std::collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert(witness.clone());
+                entry.insert(witness);
             }
-            std::collections::btree_map::Entry::Occupied(entry) if entry.get() != witness => {
+            std::collections::btree_map::Entry::Occupied(entry) if entry.get() != &witness => {
                 return Err(format!(
                     "conflicting lowering witnesses for Body IR owner {}",
                     entry.key()
@@ -98,6 +104,7 @@ pub(super) struct GraphBodyOutput {
     path: Option<PathBuf>,
     method_reads: Option<Vec<Vec<String>>>,
     namespace_proofs: bool,
+    published_namespaces: bool,
     owner_coordinates: bool,
     report_contracts: bool,
     report_scopes: bool,
@@ -136,6 +143,12 @@ impl GraphBodyOutput {
             name.as_encoded_bytes()
                 .ends_with(internal_models::namespace_proof_output_suffix().as_bytes())
         });
+        // Keep the existing trailing capabilities readable to older compilers.
+        let publication_marker = format!(".published{}", internal_models::scope_output_suffix());
+        let published_namespaces = path
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .is_some_and(|name| name.as_encoded_bytes().ends_with(publication_marker.as_bytes()));
         let import_closures = path
             .as_ref()
             .and_then(|path| path.file_name())
@@ -160,6 +173,7 @@ impl GraphBodyOutput {
             import_closures,
             method_reads,
             namespace_proofs,
+            published_namespaces,
             owner_coordinates,
             report_scopes: path.as_ref().and_then(|p| p.file_name()).is_some_and(|name| {
                 name.as_encoded_bytes()
@@ -183,13 +197,14 @@ impl GraphBodyOutput {
         &mut self,
         module: &ParsedModule,
         checker: &TypeChecker,
+        provider: Option<&incan_frontend::typechecker::ModuleDependencyInterface>,
         dependencies: &[String],
         package_identity: &str,
     ) {
         if self.path.is_none() || self.error.is_some() {
             return;
         }
-        let result = self.capture(module, checker, dependencies, package_identity);
+        let result = self.capture(module, checker, provider, dependencies, package_identity);
         if let Err(error) = result {
             self.error = Some(error);
         }
@@ -240,6 +255,7 @@ impl GraphBodyOutput {
         &mut self,
         module: &ParsedModule,
         checker: &TypeChecker,
+        provider: Option<&incan_frontend::typechecker::ModuleDependencyInterface>,
         dependencies: &[String],
         package_identity: &str,
     ) -> Result<(), String> {
@@ -250,30 +266,33 @@ impl GraphBodyOutput {
         if let Some(closures) = &mut self.import_closures {
             closures.insert(module_path.clone(), dependencies.to_vec());
         }
-        if let Some(interface) = incan_frontend::typechecker::CheckedNamespaceInterface::from_checked(
-            &module.name,
-            &module.path_segments,
-            &module.ast,
-            checker,
-        )? {
+        if let Some(provider) = provider
+            && let Some(mut interface) = incan_frontend::typechecker::CheckedNamespaceInterface::from_checked(
+                &module.name,
+                &module.path_segments,
+                &module.ast,
+                checker,
+            )?
+        {
+            interface.bind_provider_carriers(provider)?;
             let published = super::namespace_crumb::publish(&interface)?;
             let member_owners = interface.lowering_member_owners();
-            let identity_proof = super::namespace_crumb::remember_published(
+            let (identity_proof, interface_owner) = super::namespace_crumb::remember_published(
                 &module_path,
                 &published.interface,
                 interface,
                 self.namespace_proofs,
             )?;
-            let mut package_roots = incan_driver::body_ir::checked_package_roots(
+            let package_roots = incan_driver::body_ir::checked_package_roots(
                 &[(module.path_segments.as_slice(), checker.type_info())],
                 package_identity,
             )
-            .iter()
-            .map(incan_semantics_core::encode_incan_symbol_identity)
-            .collect::<Vec<_>>();
-            package_roots.sort_unstable();
+            .into_iter()
+            .collect();
             self.namespaces.push(PendingNamespaceValue {
                 package_roots,
+                interface_owner,
+                settled_inputs: Vec::new(),
                 module: module_path.clone(),
                 identity_proof,
                 interface: published.interface,
@@ -331,7 +350,15 @@ impl GraphBodyOutput {
                     }
                     match record {
                         Ok(value) => {
-                            let inputs = checker.graph_body_inputs(&module.ast, fields.span, self.owner_coordinates);
+                            let retained = if self.owner_coordinates {
+                                None
+                            } else {
+                                checker.completed_graph_body_digest(fields.span)
+                            };
+                            let inputs = retained.map(|digest| {
+                                tracing::trace!(target: "incan::invocation", owner = fields.identity, "retained physical Body IR inputs");
+                                (digest, Vec::new())
+                            }).or_else(|| checker.graph_body_inputs(&module.ast, fields.span, self.owner_coordinates));
                             let (physical_inputs, coordinates) = match inputs {
                                 Some((digest, coordinates)) => (Some(digest), coordinates),
                                 None => (None, Vec::new()),
@@ -428,19 +455,27 @@ impl GraphBodyOutput {
                     .collect();
                 namespace.body_ir = incan_semantics_core::executable_representation::encode_namespace_module(lowered)
                     .map_err(|error| format!("Body IR namespace row output refused: {error}"))?;
+                let mut inputs = Vec::new();
+                let retain = self.published_namespaces && access.is_some();
                 for body in &lowered.bodies {
-                    let Some(canonical) = &body.canonical else { continue };
-                    let Some(stable) = namespace.member_owners.get(canonical) else {
-                        continue;
-                    };
                     let Some(&witness) = lowering.get(&body.direct_call_id) else {
                         continue;
                     };
-                    namespace.member_witnesses.push(vec![
-                        incan_semantics_core::encode_incan_symbol_identity(canonical),
-                        stable.clone(),
-                        witness.clone(),
-                    ]);
+                    if retain {
+                        namespace
+                            .settled_inputs
+                            .push((body.direct_call_id.clone(), witness.clone()));
+                    }
+                    inputs.push(vec![body.direct_call_id.path().to_owned(), witness.clone()]);
+                    if let Some(canonical) = &body.canonical
+                        && let Some(stable) = namespace.member_owners.get(canonical)
+                    {
+                        namespace.member_witnesses.push(vec![
+                            incan_semantics_core::encode_incan_symbol_identity(canonical),
+                            stable.clone(),
+                            witness.clone(),
+                        ]);
+                    }
                 }
                 if let Some(access) = access {
                     let mut contracts = BTreeMap::new();
@@ -489,16 +524,10 @@ impl GraphBodyOutput {
                     namespace.call_contracts = Some(contracts.into_values().collect());
                 }
                 namespace.member_witnesses.sort();
-                namespace.lowering_inputs = canonical_lowering_inputs(
-                    lowered
-                        .bodies
-                        .iter()
-                        .filter_map(|body| {
-                            let witness = lowering.get(&body.direct_call_id)?;
-                            Some(vec![body.direct_call_id.path().to_owned(), (*witness).clone()])
-                        })
-                        .collect(),
-                )?;
+                namespace
+                    .settled_inputs
+                    .sort_unstable_by(|a, b| a.0.path().cmp(b.0.path()));
+                namespace.lowering_inputs = canonical_lowering_inputs(inputs)?;
             }
             let mut by_reader = BTreeMap::<&str, Vec<internal_models::SettledCallRead>>::new();
             if let Some(reads) = call_reads.get(&module_path) {
@@ -596,8 +625,8 @@ impl GraphBodyOutput {
                 let frame = incan_semantics_core::executable_representation::decode_owner(&value.body_ir)
                     .map_err(|error| format!("current executable owner refused: {error}"))?;
                 Ok(incan_frontend::checker_records::GraphBodyRecord {
-                    local: fields(&value.local)?,
-                    final_value: fields(&value.final_value)?,
+                    local: fields(&value.local)?.into(),
+                    final_value: fields(&value.final_value)?.into(),
                     identity: value.identity,
                     body_ir: Some(frame),
                 })
@@ -702,23 +731,12 @@ impl GraphBodyOutput {
                 reason: fallback.reason,
             })
             .collect();
-        let namespaces: Vec<internal_models::CompiledNamespaceValue> = self
+        let framed = self.published_namespaces;
+        let namespaces = self
             .namespaces
             .into_iter()
-            .map(|value| internal_models::CompiledNamespaceValue {
-                module: value.module,
-                interface: value.interface,
-                identity_proof: value.identity_proof,
-                semantic_interface: value.semantic_interface,
-                member_witnesses: value.member_witnesses,
-                call_contracts: value.call_contracts,
-                call_reads: value.call_reads,
-                package_roots: value.package_roots,
-                body_ir: value.body_ir,
-                dependencies: value.dependencies,
-                lowering_inputs: value.lowering_inputs,
-            })
-            .collect();
+            .map(|value| value.encode(framed, selected))
+            .collect::<Result<Vec<_>, _>>()?;
         let body_count = values.len();
         let outputs = internal_models::CompiledBodyOutputs {
             namespaces,
@@ -750,6 +768,73 @@ impl GraphBodyOutput {
             .transpose()?;
         publish_rows(&path, rows, import_order, methods)?;
         publish(&checker_report_path(&path), vec![report])
+    }
+}
+
+impl PendingNamespaceValue {
+    /// Prepare the one durable namespace value and register its exact decoded counterpart before Oven commits it.
+    /// Earlier clients receive the same unframed transport fields that they already know how to publish.
+    fn encode(
+        mut self,
+        framed: bool,
+        selected: &GraphBodyRecords,
+    ) -> Result<internal_models::CompiledNamespaceValue, String> {
+        let mut package_roots = self
+            .package_roots
+            .iter()
+            .map(incan_semantics_core::encode_incan_symbol_identity)
+            .collect::<Vec<_>>();
+        package_roots.sort_unstable();
+        let mut published_record = Vec::new();
+        if framed && self.call_contracts.is_some() {
+            let value = internal_models::GraphNamespaceValue {
+                module: self.module.clone(),
+                interface: std::mem::take(&mut self.interface),
+                identity_proof: std::mem::take(&mut self.identity_proof),
+                body_ir: std::mem::take(&mut self.body_ir),
+                lowering_inputs: std::mem::take(&mut self.lowering_inputs),
+                package_roots: std::mem::take(&mut package_roots),
+                call_reads: self.call_reads.clone(),
+                call_reads_known: true,
+            };
+            published_record = internal_models::encode_graph_namespace_value(&value)
+                .map_err(|error| format!("compiled namespace output refused: {error:?}"))?;
+            let call_reads = self
+                .call_reads
+                .iter()
+                .map(|read| incan_frontend::body_ir::SettledCallRead {
+                    reader: read.reader.clone(),
+                    target: read.target.clone(),
+                    digest: read.digest.clone(),
+                })
+                .collect();
+            let header = Arc::new(GraphNamespaceHeader {
+                source: self.module.clone(),
+                interface: self.interface_owner,
+                package_roots: self.package_roots.into(),
+                call_reads,
+                lowering_inputs: self.settled_inputs.into(),
+            });
+            let owners = &header.lowering_inputs;
+            if !owners.windows(2).any(|pair| pair[0].0.path() == pair[1].0.path()) {
+                let value_digest = hex::encode(Sha256::digest(&published_record));
+                selected.publish_namespace(header, value_digest, value.body_ir);
+            }
+        }
+        Ok(internal_models::CompiledNamespaceValue {
+            module: self.module,
+            interface: self.interface,
+            identity_proof: self.identity_proof,
+            semantic_interface: self.semantic_interface,
+            member_witnesses: self.member_witnesses,
+            call_contracts: self.call_contracts,
+            call_reads: self.call_reads,
+            package_roots,
+            body_ir: self.body_ir,
+            dependencies: self.dependencies,
+            lowering_inputs: self.lowering_inputs,
+            published_record,
+        })
     }
 }
 

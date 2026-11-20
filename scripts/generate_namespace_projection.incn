@@ -63,8 +63,19 @@ pub def generate(source: str) -> Result[str, str]:
     mut owner = ""
     mut is_record = false
     mut tuple_id = ""
+    mut named_fields: dict[str, str] = {}
     for raw in source.split("\n"):
-        line = raw.strip()
+        mut line = raw.strip()
+        if line.startswith("pub const NAMESPACE_"):
+            declaration = line.split(": bytes = ")
+            if len(declaration) != 2:
+                return Err("invalid namespace selector constant: " + line)
+            name = declaration[0][10:]
+            named_fields[name] = declaration[1]
+            continue
+        if line.startswith("ModelField(identity=copy_frozen_bytes("):
+            for name in named_fields:
+                line = line.replace(f"copy_frozen_bytes({name})", named_fields[name])
         if line.startswith("return model_description(") or line.startswith("return enum_schema("):
             pieces = line.split("\"")
             if owner != "" or len(pieces) != 5 or not pieces[3].startswith("checked_namespace."):

@@ -74,8 +74,9 @@ from compiler_source_projection import (
     owner_source_key,
     project_source,
     signature_record,
+    scope_key,
     scope_member,
-    scope_members,
+    signature_scope_key,
 )
 from compiler_projection_cache import (
     cached_editable_dependency_signature_record,
@@ -368,7 +369,6 @@ def stage_compiled_body_values(
     """Stage each compiler-produced local, final and Body IR value with its exact source and dependency witnesses."""
     mut published = 0
     mut declarations: Dict[str, RecordKey] = {}
-    mut bindings: Dict[str, Dict[str, list[str]]] = {}
     for value in values:
         declarations[value.identity] = body_key("declaration", origin, value.identity, value.name, root(value.declaration)?)
     for value in values:
@@ -386,10 +386,8 @@ def stage_compiled_body_values(
         if len(value.scope_names) == 0:
             local_reads.append(prepared_product_request(projection.census.key))
         else:
-            if value.module not in bindings:
-                bindings[value.module] = scope_members(projection.census.text)
             for name in value.scope_names:
-                selection = scope_member(projection.census, bindings[value.module], name)
+                selection = scope_member(projection.census, projection.bindings, name)
                 slot = encode_record_key(selection.key)?
                 if not source.holds(slot):
                     stage_source_record(prepared, source, selection)?
@@ -410,11 +408,10 @@ def stage_compiled_body_values(
             match dependency_read_key(projections, unit, origin, dependency, editable_packages)?:
                 Some(key) => local_reads.append(prepared_product_request(key))
                 None => pass
-            match dependency_invalidation_key(unit, origin, dependency)?:
-                Some(key) => local_reads.append(prepared_product_request(key))
-                None => pass
             match dependency_signature_key(projections, unit, origin, dependency, editable_packages)?:
-                Some(key) => local_reads.append(prepared_product_request(key))
+                Some(key) =>
+                    local_reads.append(prepared_product_request(key))
+                    local_reads.append(prepared_product_request(signature_scope_key(key)))
                 None => pass
         local_receipt = source.receipt(scope, local_key, local_reads, position.evidence)?
         local = prepare_evaluation(
@@ -493,17 +490,6 @@ def stage_compiled_namespaces(
         for dependency in namespace.dependencies:
             reads.append(prepared_product_request(declaration_index_key(origin, dependency)))
             reads.append(prepared_product_request(owner_census_key(origin, dependency)))
-        value = encode_graph_namespace_value(
-            GraphNamespaceValue(
-                module=namespace.module,
-                interface=namespace.interface,
-                identity_proof=namespace.identity_proof,
-                body_ir=namespace.body_ir,
-                lowering_inputs=namespace.lowering_inputs,
-                package_roots=namespace.package_roots,
-                call_reads=namespace.call_reads,
-            ),
-        ).map_err((error) => f"compiled namespace output refused: {error:?}")?
         mut position = NamespaceOrder()
         if order.contains_key(namespace.module):
             position = order[namespace.module]
@@ -514,6 +500,7 @@ def stage_compiled_namespaces(
         if namespace.module in executable.modules:
             reads.extend([prepared_product_request(target) for target in executable.modules[namespace.module]])
         receipt = source.receipt(scope, key, reads, position.evidence)?
+        value = namespace_record(namespace)?
         _ = prepare_evaluation(
             prepared,
             "compiled-namespace-" + namespace.module,
@@ -524,6 +511,19 @@ def stage_compiled_namespaces(
         # A member body's plan reads this row: it carries the member's Body IR, which has no owner record of its own.
         source.add(encode_record_key(key)?, value)
     return Ok(None)
+
+
+def namespace_record(namespace: CompiledNamespaceValue) -> Result[bytes, str]:
+    """Use the durable record the compiler produced or seal a predecessor's unframed fields."""
+    if len(namespace.published_record) > 0:
+        return Ok(namespace.published_record)
+    return encode_graph_namespace_value(
+        GraphNamespaceValue(
+            module=namespace.module, interface=namespace.interface, identity_proof=namespace.identity_proof,
+            body_ir=namespace.body_ir, lowering_inputs=namespace.lowering_inputs, package_roots=namespace.package_roots,
+            call_reads=namespace.call_reads,
+        ),
+    ).map_err((error) => f"compiled namespace output refused: {error:?}")
 
 
 def prepare_optional_lowering_records(
@@ -741,15 +741,16 @@ def stage_project_dependency_source(
     if slot_key in slots:
         if slots[slot_key] != dependency.identity:
             return Err(f"two checked declarations claim the same project slot: {slot_key}")
-        # The same supplier's projection, census and signature were staged with its binding.
+        # The same supplier's projection, name and signature were staged with its binding.
         return Ok(None)
     slots[slot_key] = dependency.identity
     slot_value = encode_binding(slot_key, dependency.identity)?
     stage_put(prepared, slot_key, slot_value)
     source.add(slot_key, slot_value)
     projection = projections[project_dependency_module(unit, dependency.module)?]
-    stage_source_record(prepared, source, projection.declarations)?
-    stage_source_record(prepared, source, projection.census)?
+    for record in [projection.declarations, projection.census]:
+        if not source.holds(encode_record_key(record.key)?):
+            stage_source_record(prepared, source, record)?
     signature = cached_project_signature_record(
         projections,
         unit,
@@ -757,6 +758,9 @@ def stage_project_dependency_source(
         dependency.name,
         dependency.identity,
     ).map_err((error) => dependency_projection_refusal(error, value.module, value.name, value.identity, dependency))?
+    binding = signature_scope_key(signature.key)
+    if not source.holds(encode_record_key(binding)?):
+        stage_source_record(prepared, source, scope_member(projection.census, projection.bindings, binding.facet))?
     return stage_source_record(prepared, source, signature)
 
 
@@ -872,10 +876,13 @@ def lowering_witnesses(
     mut witnessed: set[str] = set()
     editable_packages = [dependency[0] for dependency in dependency_source_roots(unit)]
     for value in fresh:
-        mut signatures = [
-            projections[value.module].census.key,
-            body_key("declaration", origin, value.identity, value.name, root(value.declaration)?),
-        ]
+        projection = projections[value.module]
+        mut signatures = [body_key("declaration", origin, value.identity, value.name, root(value.declaration)?)]
+        if len(value.scope_names) == 0:
+            signatures.append(projection.census.key)
+        else:
+            for name in value.scope_names:
+                signatures.append(scope_key(projection.census, name))
         for feature in projections[value.module].feature_inputs:
             signatures.append(feature.key)
         for dependency in value.dependency_reads:
@@ -883,10 +890,9 @@ def lowering_witnesses(
                 Some(key) => signatures.append(key)
                 None => pass
             match dependency_signature_key(projections, unit, origin, dependency, editable_packages)?:
-                Some(key) => signatures.append(key)
-                None => pass
-            match dependency_invalidation_key(unit, origin, dependency)?:
-                Some(key) => signatures.append(key)
+                Some(key) =>
+                    signatures.append(key)
+                    signatures.append(signature_scope_key(key))
                 None => pass
         witnesses.append(
             LoweringBody(
@@ -959,6 +965,7 @@ def lowering_witnesses(
                         "module-feature-selection",
                         "declaration-index",
                         "owner-census",
+                        "scope-name",
                     ]:
                         encoded = encode_record_key(input)?
                         value = match get(prior, encoded).map_err((error) => error.message())?:
@@ -1135,25 +1142,42 @@ def prepare_lowering_records(
         if event_identity not in bodies and retained_namespace_event(unit, rechecked, event_identity)?:
             continue
         body = body_value(bodies, fallbacks, event_identity)?
-        demand_key = body_key("lowering-demand", origin, body.identity, "main", event.demand)
         key = body_key("plan-function", origin, body.identity, "entry", event.key)
         product = event.product
         check_reused_output(selected, event, key, product)?
-        # A request that restored main's module from its plan record staged no demand for main; the graph holds it.
+        # The current entry producer admits one synchronous unit function named `main`.
+        supplier = body_key("plan-function", origin, body.identity, "body:main", event.demand)
+        request = prepared_product_request(supplier)
+        # The entry consumes the selected scalar plan's key. A placement-only change can move Body IR while this exact
+        # normalized product and the entry binding remain valid.
         mut position = body.order
-        written = encode_record_key(demand_key)?
+        mut witnessed: Dict[str, str] = {}
+        written = encode_record_key(supplier)?
         if not source.holds(written):
             graph = match selected:
                 Some(value) => value
-                None => return Err("a carried entry demand has no selected graph")
-            demand = match reusable_evaluation(graph, demand_key, LOWERING_PROFILE)?:
-                Some(value) => value
-                None => return Err("a carried entry demand has no selected evaluation")
-            position = orders.retained(graph, body.module, demand)?
-            source.add(written, demand.value)
+                None => return Err("a carried entry function has no selected graph")
+            for module in admitted:
+                if module.key.identity != body.module or module.plan.module != event.module:
+                    continue
+                if module.admitted_snapshot != graph.digest or prepared.root.value != graph.root.value or prepared.root.placement != graph.root.placement or prepared.base != graph.generation or prepared.view != graph.view:
+                    return Err("the carried entry function belongs to a different snapshot")
+                for witness in module.receipt.witnesses:
+                    if let ReadWitness.Found(prior, selection) = witness:
+                        if prior.request == request and prior.semantic_digest == prior.revision and selection == prior.semantic_digest:
+                            witnessed[written] = prior.semantic_digest
+                if written in witnessed:
+                    position = orders.selected_order(graph, body.module, origin, module.namespace, module.certificate)?
+                break
+            if written not in witnessed:
+                prior = match reusable_evaluation(graph, supplier, LOWERING_PROFILE)?:
+                    Some(value) => value
+                    None => return Err("a carried entry function has no selected evaluation")
+                witnessed[written] = prior.value_digest
+                position = orders.retained(graph, body.module, prior)?
         if position.rank > interface_namespace:
             interface_namespace = position.rank
-        receipt = source.receipt(scope, key, [prepared_product_request(demand_key)], position.evidence)?
+        receipt = source.receipt(scope, key, [request], position.evidence, witnessed)?
         _ = prepare_evaluation(
             prepared,
             "plan-entry-" + body.identity,
@@ -1164,13 +1188,13 @@ def prepare_lowering_records(
         source.add(encode_record_key(key)?, product)
         plan_keys.append(key)
     # Each module's plan functions fold into its module record; a restored module's record joins the interface's reads.
-    carried, carried_namespace = stage_plan_modules(prepared, source, orders, scope, selected, origin, rechecked, staged, admission_report.unwrap_or(report), admitted)?
+    carried, carried_namespace, carried_digests = stage_plan_modules(prepared, source, orders, scope, selected, origin, rechecked, staged, admission_report.unwrap_or(report), admitted)?
     if not report.joinpath(INTERFACE_REPORT).is_file():
         require_plan_refusal(report)?
         return Ok(work)
     prepare_native_interface(
         projections, prepared, source, scope, unit, origin, values, report, plan_keys + carried, covered_modules,
-        max([interface_namespace, carried_namespace]), orders,
+        max([interface_namespace, carried_namespace]), orders, carried_digests,
     )?
     return Ok(work)
 
@@ -1214,6 +1238,7 @@ def prepare_native_interface(
     covered_modules: list[str],
     namespace: int,
     orders: &LoweringOrders,
+    carried_digests: Dict[str, str],
 ) -> Result[None, str]:
     """Witness the complete loss-checked native plan against its exact function members and current source positions."""
     path = report.joinpath(INTERFACE_REPORT)
@@ -1239,7 +1264,7 @@ def prepare_native_interface(
         if plan.family == "plan-module":
             modules.add(plan.identity)
     certificate = orders.covering_certificate(modules, namespace)?
-    receipt = source.receipt(scope, key, reads, certificate)?
+    receipt = source.receipt(scope, key, reads, certificate, carried_digests)?
     _ = prepare_evaluation(
         transaction,
         "native-interface-" + origin,
@@ -1417,17 +1442,6 @@ def dependency_signature_key(
                 ),
             )
         Some(_) => return Ok(None)
-
-
-def dependency_invalidation_key(
-    unit: UnitDescription,
-    origin: str,
-    dependency: CompiledBodyDependencyRead,
-) -> Result[Option[RecordKey], str]:
-    """Select the captured project owner census that makes removal edits visible without sibling signature fan-out."""
-    if dependency.package is not None:
-        return Ok(None)
-    return Ok(Some(owner_census_key(origin, project_dependency_module(unit, dependency.module)?)))
 
 
 def root(encoded: bytes) -> Result[str, str]:

@@ -108,12 +108,12 @@ pub struct ModuleDependencyInterface {
 }
 
 impl ModuleDependencyInterface {
-    /// Render the shadow-comparison receipt only when a caller requests it. A restored namespace already
-    /// has the immutable lookup tables needed by ordinary checking.
+    /// Render the shadow-comparison receipt only when a caller requests it.
+    /// Both fresh and restored providers already have the immutable lookup tables used by ordinary checking.
     pub fn snapshot(&self) -> &ModuleDependencyInterfaceSnapshot {
         self.snapshot.get_or_init(|| {
             let mut installed = TypeChecker::new();
-            installed.install_dependency_interfaces_directly(&[Arc::new(self.clone())]);
+            installed.install_dependency_interface(self);
             installed.dependency_interface_snapshot_for(
                 &self.module_name,
                 Some(self.symbol_rows.as_ref()),
@@ -377,7 +377,7 @@ impl TypeChecker {
         module_ast: &Program,
         exports: Arc<[ExportedSymbol]>,
         public_only: bool,
-        collection: Option<ProviderCollectionReceipt>,
+        mut collection: Option<ProviderCollectionReceipt>,
         rebuild_provider_cache: bool,
     ) -> Arc<ModuleDependencyInterface> {
         self.dependency_exports
@@ -420,13 +420,13 @@ impl TypeChecker {
             .unwrap_or_default();
         let (transitive_public_types, transitive_public_traits) =
             provider_transitive_semantics(&direct_member_symbols, &direct_member_identities);
-        let public_library_type_identities = if let Some(receipt) = &collection {
-            receipt.public_library_type_identities.clone()
-        } else {
-            self.public_library_type_identities
+        let public_library_type_identities = match &mut collection {
+            Some(receipt) => std::mem::take(&mut receipt.public_library_type_identities),
+            None => self
+                .public_library_type_identities
                 .iter()
                 .map(|(name, identity)| (name.clone(), identity.clone()))
-                .collect()
+                .collect(),
         };
         let compiled_libraries = collection
             .as_ref()
@@ -566,11 +566,9 @@ impl TypeChecker {
             transitive_public_types: Arc::new(transitive_public_types),
             transitive_public_traits: Arc::new(transitive_public_traits),
             compiled_libraries: Arc::from(compiled_libraries),
-            public_library_type_identities: Arc::new(public_library_type_identities.clone()),
-            symbol_rows: Arc::from(symbol_rows.clone()),
-            snapshot: self
-                .dependency_interface_snapshot_for(module_name, Some(&symbol_rows), &public_library_type_identities)
-                .into(),
+            public_library_type_identities: Arc::new(public_library_type_identities),
+            symbol_rows: Arc::from(symbol_rows),
+            snapshot: std::sync::OnceLock::new(),
         })
     }
 

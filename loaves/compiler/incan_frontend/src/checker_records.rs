@@ -19,9 +19,9 @@ pub struct GraphBodyRecord {
     /// Stable declaration identity authenticated by the Incan checker-record codec.
     pub identity: String,
     /// Pending local-family field primitives retained for publication through the graph authority.
-    pub local: Vec<Vec<String>>,
+    pub local: Arc<Vec<Vec<String>>>,
     /// Settled final-family field primitives restored through the ordinary checked-body assembly.
-    pub final_value: Vec<Vec<String>>,
+    pub final_value: Arc<Vec<Vec<String>>>,
     /// Kernel-decoded v55 executable owner frame, when the graph selected a complete Body IR value with the checker
     /// pair. The checker validates its stable owner identity and declaration name before exposing it to Body IR.
     pub body_ir: Option<incan_semantics_core::executable_representation::EncodedOwnerRepresentation>,
@@ -47,22 +47,26 @@ impl GraphNamespaceInterface for crate::typechecker::CheckedNamespaceInterface {
     }
 }
 
-/// One graph-admitted editable namespace with an admitted declaration surface and kernel-decoded Body IR.
+/// Immutable metadata shared by checking and a resident compiler's verified namespace body.
 #[derive(Debug, Clone)]
-pub struct GraphNamespaceRecord {
+pub struct GraphNamespaceHeader {
     /// Project-relative logical source path used by the source-projection record.
     pub source: String,
     /// Settled argument accesses imported by this namespace at publication.
-    pub call_reads: Vec<SettledCallRead>,
+    pub call_reads: Arc<[SettledCallRead]>,
     /// Authenticated declaration surface. A downstream source check materializes its lookup tables on demand.
     pub interface: Arc<dyn GraphNamespaceInterface>,
     /// Exact external declarations the ordinary checker selected for executable dependency resolution.
-    pub package_roots: Vec<incan_semantics_core::CanonicalSymbolId>,
-    /// Complete checked Body IR contribution used instead of this module's transient
-    /// [`crate::typechecker::TypeCheckInfo`].
-    pub body_ir: incan_semantics_core::body_ir::BodyIrModule,
+    pub package_roots: Arc<[incan_semantics_core::CanonicalSymbolId]>,
     /// Stable Body IR owner ids paired with the lowering witnesses authenticated by this namespace's cold check.
-    pub lowering_inputs: Vec<(incan_semantics_core::CompilerNodeId, String)>,
+    pub lowering_inputs: Arc<[(incan_semantics_core::CompilerNodeId, String)]>,
+}
+
+/// A verified header with one movable, decoded Body IR contribution.
+#[derive(Debug)]
+pub struct GraphNamespaceRecord {
+    pub header: Arc<GraphNamespaceHeader>,
+    pub body_ir: incan_semantics_core::body_ir::BodyIrModule,
 }
 
 /// Keyed source of independently bounded graph body pages.
@@ -82,6 +86,20 @@ pub trait GraphBodyRecordSource: std::fmt::Debug + Send + Sync {
 
     /// Read and authenticate one complete editable namespace page by its project-relative source projection.
     fn read_namespace(&self, source: &str) -> Result<Option<GraphNamespaceRecord>, RecordAdapterFault>;
+
+    /// Register a freshly published namespace's exact durable value and owned checked metadata.
+    fn publish_namespace(&self, _header: Arc<GraphNamespaceHeader>, _value: String, _body_ir: Vec<u8>) {}
+
+    /// Whether this activation already owns the exact header needed to keep a decoded body.
+    fn retains_namespace(&self, _source: &str) -> bool {
+        false
+    }
+
+    /// Keep an unchanged body at the end of this activation if this source owns its verified header.
+    fn retain_namespace(&self, _source: &str, _body: &mut incan_semantics_core::body_ir::BodyIrModule) {}
+
+    /// Retain exact authored bytes for namespaces whose decoded state was consumed by native preparation.
+    fn settle_namespace_retention(&self) {}
 }
 
 /// Immutable eager fixtures or a keyed page source shared by module checkers in one compilation session.
@@ -91,7 +109,7 @@ pub struct GraphBodyRecords {
     current: Arc<BTreeMap<String, GraphBodyRecord>>,
     source: Option<Arc<dyn GraphBodyRecordSource>>,
     ranked_owner: Option<Arc<RankedOwner>>,
-    call_reads: Arc<Mutex<BTreeMap<String, Vec<SettledCallRead>>>>,
+    call_reads: Arc<Mutex<BTreeMap<String, Arc<[SettledCallRead]>>>>,
     changed_callers: BTreeMap<String, BTreeSet<String>>,
     selected_calls: Arc<Mutex<BTreeMap<String, BTreeMap<String, Vec<SettledCallRead>>>>>,
 }
@@ -345,7 +363,7 @@ impl GraphBodyRecords {
             self.call_reads
                 .lock()
                 .map_err(|_| RecordAdapterFault::InvalidField("settled call witness lock poisoned".into()))?
-                .insert(source.to_owned(), row.call_reads.clone());
+                .insert(source.to_owned(), Arc::clone(&row.header.call_reads));
         }
         Ok(record)
     }
@@ -356,8 +374,36 @@ impl GraphBodyRecords {
             .lock()
             .map_err(|_| "settled call witness lock poisoned".to_owned())?
             .get(source)
-            .cloned()
+            .map(|reads| reads.to_vec())
             .ok_or_else(|| format!("restored namespace has no settled call witness: {source}"))
+    }
+
+    /// Register new complete output so the next saved activation can recognize it by its selected value digest.
+    pub fn publish_namespace(&self, header: Arc<GraphNamespaceHeader>, value: String, body_ir: Vec<u8>) {
+        if let Some(reader) = &self.source {
+            reader.publish_namespace(header, value, body_ir);
+        }
+    }
+
+    /// Settle the exact encoded products left over once native preparation returns each available decoded body.
+    pub fn settle_namespace_retention(&self) {
+        if let Some(reader) = &self.source {
+            reader.settle_namespace_retention();
+        }
+    }
+
+    /// Whether this request can put the checked body back beside a selected namespace.
+    pub fn retains_namespace(&self, source: &str) -> bool {
+        self.source
+            .as_ref()
+            .is_some_and(|reader| reader.retains_namespace(source))
+    }
+
+    /// Return one unchanged namespace body after the native consumer finishes using it.
+    pub fn retain_namespace(&self, source: &str, body: &mut incan_semantics_core::body_ir::BodyIrModule) {
+        if let Some(reader) = &self.source {
+            reader.retain_namespace(source, body);
+        }
     }
 
     /// Per-owner admissions inside a module that was rebuilt. The complete checked namespace did not supply these
@@ -1409,8 +1455,8 @@ mod tests {
         }
         Ok(super::GraphBodyRecord {
             identity: owner.identity,
-            local: owner.local,
-            final_value: owner.final_value,
+            local: owner.local.into(),
+            final_value: owner.final_value.into(),
             body_ir: None,
         })
     }
@@ -2021,8 +2067,7 @@ mod tests {
         );
 
         let mut bad = selected;
-        let layout = bad
-            .local
+        let layout = std::sync::Arc::make_mut(&mut bad.local)
             .iter_mut()
             .find(|row| row[0] == "scope")
             .ok_or("missing scope tree")?;
@@ -2171,6 +2216,10 @@ mod tests {
                     "decl {:?} in {changed}",
                     decl.span
                 );
+                assert_eq!(
+                    warm.completed_graph_body_digest(decl.span),
+                    warm.graph_body_physical_inputs(&after, decl.span)
+                );
             }
             assert_eq!(
                 lower_graph_test_module(&after, &warm).bodies,
@@ -2279,9 +2328,7 @@ mod tests {
             candidate.physical_inputs = proof;
             record.body_ir = Some(candidate);
             if corrupt_rows {
-                record
-                    .final_value
-                    .retain(|row| !row.first().is_some_and(|field| field == "scope"));
+                Arc::make_mut(&mut record.final_value).retain(|row| !row.first().is_some_and(|field| field == "scope"));
             }
             let warm = check(&parsed, vec![record], Some(selection))?;
             let fresh = check(&parsed, vec![], None)?;
