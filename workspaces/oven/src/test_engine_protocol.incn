@@ -729,7 +729,7 @@ def check_frozen_installation_reads(directory: Path) -> Result[None, str]:
                 input = trace_text(event, "input")?
                 if (input.startswith(prefix) or "/.rustup/" in input) and completed.get(process, 0) > 0:
                     frozen_accesses += 1
-                    return Err(f"service process {process} {category} touched frozen input {input}")
+                    return Err(f"service process {process} {category} touched frozen input {input}: {line}")
             if category == "file_read":
                 reads += 1
             if category == "engine_unit":
@@ -1091,7 +1091,11 @@ def process_lifecycle() -> Result[None, str]:
     write(copied_source, source.read_text("utf-8", "strict").map_err((error) => error.message())?)?
     for turn in range(50):
         check_service_reuse(idle_channel, root, copied_source, turn)?
-    assert not another.joinpath("target/incan/observations").exists(), "a native hit repeated unit preparation"
+    observations = another.joinpath("target/incan/observations")
+    mut ledgers: list[str] = []
+    if observations.is_dir():
+        ledgers = sorted([entry.name() for entry in observations.iterdir().map_err((error) => error.message())?])
+    assert not observations.exists(), f"a native hit repeated unit preparation: {ledgers:?}"
     idle_channel.transport.close()?
     await_exit(idle, true)?
     return Ok(None)
