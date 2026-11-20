@@ -191,3 +191,5 @@ pub from unit_document import encode_unit_document, decode_unit_document
 pub from compiler_export import CompilerExportMember, decode_compiler_export, encode_compiler_export
 
 pub from settled_call_reads import encode_owner_call_reads, decode_owner_call_reads
+
+pub from overload_members import encode_method_lookups, method_lookup_suffix

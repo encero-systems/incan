@@ -11,6 +11,7 @@ pub enum CallArtifactCodec(str):
     SpanSet = "span-set"
     SpanIdentity = "span-identity"
     Operator = "operator"
+    Method = "method"
 
     pub def admits_plain_values(self, values: list[str]) -> bool:
         """
@@ -20,6 +21,7 @@ pub enum CallArtifactCodec(str):
         """
         match self:
             CallArtifactCodec.SpanType => return false
+            CallArtifactCodec.Method => return false
             CallArtifactCodec.SpanSet => return values == ["true"]
             CallArtifactCodec.SpanIdentity => return len(values) == 1 and values[0] != ""
             CallArtifactCodec.Operator =>
@@ -71,6 +73,8 @@ pub def call_artifact_codec(selector: str) -> Option[CallArtifactCodec]:
         "source_display_methods",
     ]:
         return Some(CallArtifactCodec.SpanIdentity)
+    if selector == "resolved_method_calls":
+        return Some(CallArtifactCodec.Method)
     if selector == "resolved_operator_calls":
         return Some(CallArtifactCodec.Operator)
     return None

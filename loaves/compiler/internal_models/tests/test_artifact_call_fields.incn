@@ -28,7 +28,7 @@ pub def test_call_artifact_operator_rows_keep_their_kind_and_method() -> None:
 
 pub def test_call_artifact_rows_without_a_grammar_stay_unsupported() -> None:
     """A row this schema has no grammar for, or on no node, is refused rather than accepted unchecked."""
-    assert refused("resolved_method_calls", ["function:main::value"]) == "resolved_method_calls"
+    assert refused("unsupported_call_artifact", ["function:main::value"]) == "unsupported_call_artifact"
     assert refused_on_node("", "inferred_call_result_types", ["int"]) == "malformed"
 
 
@@ -55,3 +55,15 @@ def refused_on_node(node: str, selector: str, values: list[str]) -> str:
         Err(CodecFault.Unsupported(name)) => return name
         Err(CodecFault.Malformed) => return "malformed"
         Err(_) => return "other"
+
+
+pub def test_method_call_dispatch_preserves_generic_bounds_and_refuses_truncation() -> None:
+    """Use the native dispatch field order, including its optional module, implementation bounds and receiver."""
+    dispatch = ["describe", "trait", "Describe", "some", "1", "helpers", "1", "str", "1", "T", "1",
+                "Readable", "1", "str", "1", "Item", "bool", "source-callable", "false"]
+    assert accepted("resolved_method_calls", dispatch)
+    assert accepted("resolved_method_calls", ["describe", "trait", "Describe", "none", "0", "0", "true"])
+    for end in range(len(dispatch)):
+        assert refused("resolved_method_calls", dispatch[:end]) == "malformed"
+    assert refused("resolved_method_calls", dispatch + ["extra"]) == "malformed"
+    assert refused("resolved_method_calls", dispatch[:-2] + ["bad-origin", "true"]) == "malformed"

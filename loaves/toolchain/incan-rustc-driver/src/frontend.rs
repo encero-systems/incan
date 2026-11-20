@@ -556,6 +556,12 @@ pub(crate) fn check_ranked_reader(arguments: &[String]) -> Result<(), Box<dyn st
         std::fs::write(Path::new(output).join("unavailable"), b"missing-settled-peer")?;
         return Ok(());
     };
+    if graph_body_output::uses_method_dispatch(&fields) {
+        // The standalone protocol currently carries only checker products. The ordinary compile also returns
+        // the resolver's candidate set and can authenticate the caller and its membership together.
+        std::fs::write(Path::new(output).join("unavailable"), b"missing-settled-peer")?;
+        return Ok(());
+    }
     let records = graph_body_output::encoded_body_value(&owner.facet, &fields).map_err(|refusal| refusal.reason)?;
     let output = Path::new(output);
     std::fs::write(output.join("declaration.crumb"), &records.declaration)?;

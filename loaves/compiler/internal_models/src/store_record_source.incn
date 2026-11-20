@@ -3,6 +3,7 @@
 from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
 from pub::incan_platform.store import BindingLookup, Snapshot, lookup_binding, lookup_members
+from overload_members import OVERLOAD_MEMBERS, read_method_members
 from source_value_records import SOURCE_PROFILE, source_value
 from record_scope import (
     AbsentFact,
@@ -46,6 +47,14 @@ pub class StoreRecordSource with RecordSource:
             return RecordRead.Failed(ReadFault.OutsidePreparation)
         match request.selection:
             RecordSelection.Members(selection) =>
+                if request.key.family == OVERLOAD_MEMBERS:
+                    match lookup_binding(self.snapshot, key):
+                        Ok(BindingLookup.Present(present)) => return read_method_members(scope, request, present.value)
+                        Ok(BindingLookup.Absent(absent)) =>
+                            return RecordRead.Absent(AbsentFact(scope=scope, request=request, exclusion_digest=absent.exclusion_digest))
+                        Ok(BindingLookup.Deleted(deleted)) =>
+                            return RecordRead.Deleted(DeletedFact(scope=scope, request=request, revision=deleted.revision))
+                        Err(_) => return RecordRead.Failed(ReadFault.DamagedRecord)
                 return members_read(
                     self.snapshot,
                     scope,

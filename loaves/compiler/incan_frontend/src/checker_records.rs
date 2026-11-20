@@ -118,8 +118,19 @@ pub struct CheckedOwnerRecordFields {
     pub local: Vec<Vec<String>>,
     /// Settled final-family field primitives.
     pub final_value: Vec<Vec<String>>,
+    /// Exact overload families the checked owner enumerated before selecting its dispatch.
+    pub method_lookups: Option<Vec<CheckedMethodLookup>>,
     /// Exact project and package declaration records read by this owner, derived from checked semantic facts.
     pub dependency_reads: Vec<CheckedOwnerDependencyRead>,
+}
+
+/// One same-project instance-method lookup and its signature-addressed candidate members.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CheckedMethodLookup {
+    pub module: Vec<String>,
+    pub receiver: String,
+    pub method: String,
+    pub candidates: Vec<String>,
 }
 
 /// Project or package declaration source read by one checked owner.
@@ -687,6 +698,7 @@ fn checked_callable_record_outputs<'a>(
                 local: local_record,
                 final_value: final_record,
                 dependency_reads,
+                method_lookups: checker.checked_method_lookups(span),
             }))
         })
         .collect()
@@ -708,6 +720,41 @@ fn projectable_source_dependency(dependency: &incan_semantics_core::CanonicalSym
 }
 
 impl crate::typechecker::TypeChecker {
+    /// Attribute enumerations to the selected body view, after speculative method choices have been discarded.
+    fn checked_method_lookups(&self, owner: crate::ast::Span) -> Option<Vec<CheckedMethodLookup>> {
+        let body = self.checked_body(owner)?;
+        let mut result = BTreeSet::new();
+        for call in body.calls().resolved_method_calls.values() {
+            let lookup = call.lookup.as_ref()?;
+            let incan_semantics_core::SymbolOrigin::Module(module) = &lookup.receiver.origin else { return None };
+            let mut members = Vec::with_capacity(lookup.candidates.len());
+            for candidate in &lookup.candidates {
+                let stable = self.type_info().declarations.source_identities.get(candidate)?;
+                let incan_semantics_core::stable_identity::StableDeclarationLocation::Nested { owner, .. } = &stable.location else {
+                    return None;
+                };
+                // This graph format witnesses one declared receiver. Inherited implementations require the
+                // source scopes of all their declaring receivers before they can use the same preparation.
+                if owner.origin != lookup.receiver.origin || owner.declaration_name != lookup.receiver.declaration_name
+                    || owner.kind != lookup.receiver.kind || stable.signature.is_none()
+                {
+                    return None;
+                }
+                members.push(stable.render_compact());
+            }
+            members.sort();
+            members.dedup();
+            if members.len() != lookup.candidates.len() { return None; }
+            result.insert(CheckedMethodLookup {
+                module: module.clone(),
+                receiver: lookup.receiver.declaration_name.clone(),
+                method: call.method.clone(),
+                candidates: members,
+            });
+        }
+        Some(result.into_iter().collect())
+    }
+
     /// Resolve the checked stable identity used by one editable dependency read.
     fn stable_dependency_identity(
         &self,
@@ -1192,6 +1239,32 @@ mod tests {
         assert_eq!(reads.get("leaf"), Some(&Vec::new()));
         assert_eq!(reads.get("middle"), Some(&vec!["leaf".into()]));
         assert_eq!(reads.get("main"), Some(&vec!["middle".into()]));
+        Ok(())
+    }
+
+    /// Adding a third specialization changes the exact receiver membership while preserving the two prior members.
+    #[test]
+    fn checked_overload_reader_names_the_candidates_it_consulted() -> Result<(), Box<dyn std::error::Error>> {
+        let first = "trait Describe[T]:\n    def describe(self, value: T) -> str\n\nmodel Describable with Describe[str], Describe[int]:\n    def describe(self, value: str) -> str:\n        return \"item\"\n    def describe(self, value: int) -> str:\n        return \"integer\"\n";
+        let third = "    def describe(self, value: FrozenStr) -> str:\n        return \"frozen\"\n";
+        let reader = "\ndef read_description(item: Describable, message: str) -> str:\n    return item.describe(message)\n";
+        let mut prior = Vec::new();
+        for (source, count) in [(format!("{first}{reader}"), 2), (format!("{}{third}{reader}", first.replace("Describe[int]:","Describe[int], Describe[FrozenStr]:")), 3)] {
+            let parsed = program(&source)?;
+            let mut checker = TypeChecker::new();
+            checker.set_current_module_path(Some(vec!["main".to_owned()]));
+            checker.check_program(&parsed).map_err(|errors| format!("{errors:?}"))?;
+            let span = parsed.declarations.last().ok_or("missing reader")?.span;
+            let reads = checker.checked_method_lookups(span).ok_or("incomplete method-membership evidence")?;
+            assert_eq!(reads.len(), 1, "missing read for {count} declarations");
+            let read = reads.first().ok_or("missing overload set")?;
+            assert_eq!(read.receiver, "Describable");
+            assert_eq!(read.method, "describe");
+            assert_eq!(read.module, ["main"]);
+            assert_eq!(read.candidates.len(), count);
+            assert!(prior.iter().all(|member| read.candidates.contains(member)));
+            prior = read.candidates.clone();
+        }
         Ok(())
     }
 
