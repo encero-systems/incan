@@ -862,6 +862,7 @@ def installed_verification(run: ReleaseRun, candidate: Candidate) -> Result[Path
     mut environment = build_environment(run, home, home.joinpath("bin/incan"))
     environment["RUSTUP_HOME"] = rustup_home.0
     environment["INCAN_LSP"] = home.joinpath("bin/incan-lsp").0
+    environment["INCAN_BAKERY"] = home.joinpath("bakery").0
     require_release_step(
         run,
         release_step(

@@ -416,6 +416,21 @@ def test_joined_log_keeps_invocation_order_whatever_the_schedule() -> Result[Non
     return Ok(None)
 
 
+def test_concurrent_invocations_have_distinct_compiler_worker_scopes() -> Result[None, str]:
+    """Each child receives its own compiler worker identity before the scheduler manages its lifetime."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    mut planned: list[Invocation] = []
+    for name in ["first", "second"]:
+        log = root.joinpath(name + ".log")
+        planned.append(Invocation(arguments=["INCAN_RELEASE_INVOCATION"], directory=root.0, reservation=GIB, log=log))
+    assert run_all("/usr/bin/printenv", planned, 2, 2 * GIB)?
+    for item in planned:
+        found = item.log.read_text("utf-8", "strict").map_err((error) => error.message())?
+        assert found == item.log.0 + "\n"
+    return Ok(None)
+
+
 def test_first_failure_stops_later_admission_and_cancels_a_running_child_tree() -> Result[None, str]:
     """One real failure prevents queued work and stops a concurrently running shell plus its child."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?

@@ -700,6 +700,9 @@ def start(oven: str, planned: Invocation, worker: str = "") -> Result[Child, str
         command.current_dir(planned.directory)
     for name in sorted([name for name in planned.environment.keys()]):
         command.env(name, planned.environment[name])
+    # The scheduler drains each child's descendants when the invocation settles. Keep its resident compiler
+    # workers in that same lifetime while allowing artifact reuse through the selected Bakery.
+    command.env("INCAN_RELEASE_INVOCATION", planned.log.0)
     command.stdin(Stdio.null()).process_group(0)
     command.stdout(log)
     command.stderr(errors)
