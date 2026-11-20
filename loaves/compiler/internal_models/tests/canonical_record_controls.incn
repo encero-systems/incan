@@ -50,9 +50,24 @@ from rust::incan_frontend::checker_records import (
 )
 
 
+def encoded_record(record: CheckedRecord) -> Result[bytes, CodecFault]:
+    """
+    Encode one record through the production codec.
+
+    The codec borrows its record, so a body that calls it is proven whole. The controls build their records with
+    ordinary Incan and call this body, which only lends the record it was given.
+    """
+    return encode_record(record)
+
+
+def encoded_body_rows(outputs: CompiledBodyOutputs) -> Result[list[bytes], CodecFault]:
+    """Encode compiled body outputs through the production codec, lending the outputs this body was given."""
+    return encode_compiled_body_rows(outputs)
+
+
 def scalar_wire_boundary() -> Result[None, str]:
     """An exact wire limit admits repeated logical fields and refuses a one-byte overflow."""
-    selector = b"limits"
+    selector = b"limits\x00"
     description = model_description(selector, "test/limits", [ModelField(identity=b"fields", name="fields", storage="list<string>")])
     fields = [Value.Text("node/Function/body/statement/" + str(index)) for index in range(1000)]
     value = Value.Record([required_value(b"fields", Value.List(fields))])
@@ -79,7 +94,7 @@ def checked_row_capacity() -> Result[None, str]:
     root = "sha256:2329b00af39be222014e75f38ed1f5ef7c1cbbff58ad059d4b3007ccaa90003e"
     record = CheckedRecord(profile=CHECKER_PROFILE, family=CheckedFamily.Final, root=root, owner=key.identity,
         fields=[CanonicalField(family="identifier", node=node, selector="kind", values=["value"])])
-    wire = encode_record(record).map_err((_) => "large checked row encoding failed")?
+    wire = encoded_record(record).map_err((_) => "large checked row encoding failed")?
     assert len(wire) > 65536 and len(wire) <= MAX_CHECKER_ROW_BYTES
     assert decode_record(wire, CHECKER_PROFILE, key.identity, root).map_err((_) => "large checked row decoding failed")? == record
     request = checked_row_request(key, len(wire))?
@@ -114,7 +129,7 @@ def invalid_scope_fixture(layout: list[str]) -> bool:
 def lexical_scope_rows() -> Result[None, str]:
     """Scope parents precede their children and a retained binding must refer to an allocated scope."""
     record = scope_fixture(["scope", "", "allocation", "2", "0", "block", "1", "function"]).map_err((_) => "valid scope tree")?
-    wire = encode_record(record).map_err((_) => "scope tree encoding")?
+    wire = encoded_record(record).map_err((_) => "scope tree encoding")?
     assert len(wire) > 0
     assert invalid_scope_fixture(["scope", "", "allocation", "1", "1", "block"])
     assert invalid_scope_fixture(["scope", "", "allocation", "2", "0", "block"])
@@ -125,16 +140,16 @@ def lexical_scope_rows() -> Result[None, str]:
 
 pub def canonical_record_controls() -> Result[None, str]:
     """Keep the existing scoped-reader case responsible for canonical bytes, native teardown and stale bindings."""
-    scalar_wire_boundary()?
-    lexical_scope_rows()?
-    checked_row_capacity()?
+    scalar_wire_boundary().map_err((reason) => f"scalar_wire_boundary: {reason}")?
+    lexical_scope_rows().map_err((reason) => f"lexical_scope_rows: {reason}")?
+    checked_row_capacity().map_err((reason) => f"checked_row_capacity: {reason}")?
     source = "def main() -> None:\n    println(\"hello\")\n"
     moved = "# changed-length comment\n\ndef main() -> None:\n    # inside comment\n    println(\"hello\")\n"
     for declaration in [true, false]:
         base = checked_fixture(source, "main", declaration)?
         changed = checked_fixture(moved, "main", declaration)?
-        before = encode_record(base).map_err((_) => "encode")?
-        after = encode_record(changed).map_err((_) => "moved encode")?
+        before = encoded_record(base).map_err((_) => "encode")?
+        after = encoded_record(changed).map_err((_) => "moved encode")?
         assert before[:4] == b"CRMB"
         assert before == after
         assert content_digest(base).map_err((_) => "content digest")? == content_digest(changed).map_err(
@@ -150,7 +165,7 @@ pub def canonical_record_controls() -> Result[None, str]:
             verify_fixture(moved, "main", rows).map_err((error) => "hello: " + error.to_string())?
         println(f"canonical-record declaration={declaration} fields={len(base.fields)} bytes={len(before)} stable=true")
         codec_fault_controls(before, base)
-    local_record_controls(source, moved)?
+    local_record_controls(source, moved).map_err((reason) => f"local_record_controls: {reason}")?
     member_source = "model LockDependency:\n    key: str\n    loaf: str\n    version: str\n    domain: str\n    target: str\n    entry: str\n\ndef edge_order(edge: LockDependency) -> str:\n    return edge.key + edge.domain + edge.target + edge.loaf + edge.version + edge.entry\n"
     member_rows = fixture_record(member_source, "edge_order", false).map_err((error) => error.to_string())?
     member_record = match from_native_final_fields(member_rows):
@@ -162,22 +177,22 @@ pub def canonical_record_controls() -> Result[None, str]:
     verify_fixture(member_source, "edge_order", native_fields(member_record).map_err((_) => "member context fields")?).map_err(
         (error) => "member context restore: " + error.to_string(),
     )?
-    compiled_output_controls(source)?
-    projected_owner_controls()?
-    edited_owner_controls()?
-    diagnostic_record_controls()?
-    default_record_controls()?
-    final_value_controls()?
-    ownership_record_controls()?
-    input_protocol_controls()?
-    graph_namespace_controls()?
+    compiled_output_controls(source).map_err((reason) => f"compiled_output_controls: {reason}")?
+    projected_owner_controls().map_err((reason) => f"projected_owner_controls: {reason}")?
+    edited_owner_controls().map_err((reason) => f"edited_owner_controls: {reason}")?
+    diagnostic_record_controls().map_err((reason) => f"diagnostic_record_controls: {reason}")?
+    default_record_controls().map_err((reason) => f"default_record_controls: {reason}")?
+    final_value_controls().map_err((reason) => f"final_value_controls: {reason}")?
+    ownership_record_controls().map_err((reason) => f"ownership_record_controls: {reason}")?
+    input_protocol_controls().map_err((reason) => f"input_protocol_controls: {reason}")?
+    graph_namespace_controls().map_err((reason) => f"graph_namespace_controls: {reason}")?
     return Ok(None)
 
 
 def compiled_output_controls(source: str) -> Result[None, str]:
     """The successful-check sidecar preserves one authenticated declaration/local/final producer triple."""
     declaration = checked_fixture(source, "main", true)?
-    declaration_bytes = encode_record(declaration).map_err((_) => "compiled declaration encode")?
+    declaration_bytes = encoded_record(declaration).map_err((_) => "compiled declaration encode")?
     local_rows = produce_local_record(
         source,
         "main",
@@ -185,11 +200,11 @@ def compiled_output_controls(source: str) -> Result[None, str]:
         [],
     ).map_err((error) => error.to_string())?
     local = from_native_local_fields(local_rows).map_err((_) => "compiled local record")?
-    local_bytes = encode_record(local).map_err((_) => "compiled local encode")?
+    local_bytes = encoded_record(local).map_err((_) => "compiled local encode")?
     final_rows = produce_final_record(source, "main", native_fields(local).map_err((_) => "compiled local fields")?, []).map_err(
         (error) => error.to_string(),
     )?
-    final_bytes = encode_record(from_native_final_fields(final_rows).map_err((_) => "compiled final record")?).map_err(
+    final_bytes = encoded_record(from_native_final_fields(final_rows).map_err((_) => "compiled final record")?).map_err(
         (_) => "compiled final encode",
     )?
     value = CompiledBodyValue(
@@ -232,25 +247,25 @@ def compiled_output_controls(source: str) -> Result[None, str]:
         package_roots=["alpha", "provider"],
         call_reads=[SettledCallRead(reader="invoke", target="provider", digest="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")],
     )
-    legacy = encode_compiled_body_rows(CompiledBodyOutputs(namespaces=[namespace], values=[], fallbacks=[])).map_err((_) => "legacy namespace encode")?
+    legacy = encoded_body_rows(CompiledBodyOutputs(namespaces=[namespace], values=[], fallbacks=[])).map_err((_) => "legacy namespace encode")?
     match decode_compiled_body_row(legacy[0]).map_err((_) => "legacy namespace decode")?:
         CompiledBodyOutput.Namespace(decoded) => assert decoded.call_contracts is None
         _ => return Err("legacy namespace row lost")
     mut scoped = value
     scoped.scope_names = ["main", "str"]
-    assert encode_compiled_body_rows(CompiledBodyOutputs(values=[scoped], fallbacks=[])).is_err()
+    assert encoded_body_rows(CompiledBodyOutputs(values=[scoped], fallbacks=[])).is_err()
     scoped.dependency_reads = []
-    scoped_rows = encode_compiled_body_rows(CompiledBodyOutputs(values=[scoped], fallbacks=[])).map_err((_) => "scope name encode")?
+    scoped_rows = encoded_body_rows(CompiledBodyOutputs(values=[scoped], fallbacks=[])).map_err((_) => "scope name encode")?
     match decode_compiled_body_row(scoped_rows[0]).map_err((_) => "scope name decode")?:
         CompiledBodyOutput.Value(decoded) => assert decoded.scope_names == ["main", "str"]
         _ => return Err("scoped scalar value lost")
     scoped.scope_names = ["str", "main"]
-    assert encode_compiled_body_rows(CompiledBodyOutputs(values=[scoped], fallbacks=[])).is_err()
+    assert encoded_body_rows(CompiledBodyOutputs(values=[scoped], fallbacks=[])).is_err()
     scoped.scope_names = ["main", "str\talias"]
-    assert encode_compiled_body_rows(CompiledBodyOutputs(values=[scoped], fallbacks=[])).is_err()
+    assert encoded_body_rows(CompiledBodyOutputs(values=[scoped], fallbacks=[])).is_err()
     mut supplied = namespace
     supplied.call_contracts = Some([SettledCallContract(target="provider", digest="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", reader="supplier#1", owner="stable/supplier")])
-    encoded = encode_compiled_body_rows(
+    encoded = encoded_body_rows(
         CompiledBodyOutputs(namespaces=[supplied], values=[value], fallbacks=[fallback, identityless]),
     ).map_err((_) => "compiled output encode")?
     assert len(encoded) == 4
@@ -314,7 +329,7 @@ def compiled_output_size_controls(
                 body_ir=body_ir,
             ),
         )
-    rows = encode_compiled_body_rows(CompiledBodyOutputs(values=values, fallbacks=[])).map_err(
+    rows = encoded_body_rows(CompiledBodyOutputs(values=values, fallbacks=[])).map_err(
         (_) => "many-owner compiled output encode",
     )?
     assert len(rows) == 70
@@ -327,7 +342,7 @@ def compiled_output_size_controls(
         body_ir=large_body_ir,
         dependencies=[],
     )
-    large_rows = encode_compiled_body_rows(CompiledBodyOutputs(namespaces=[large_namespace], values=[], fallbacks=[])).map_err(
+    large_rows = encoded_body_rows(CompiledBodyOutputs(namespaces=[large_namespace], values=[], fallbacks=[])).map_err(
         (_) => "large compiled namespace encode",
     )?
     match decode_compiled_body_row(large_rows[0]).map_err((_) => "large compiled namespace decode")?:
@@ -337,7 +352,7 @@ def compiled_output_size_controls(
 
     mut oversized_value = values[0]
     oversized_value.body_ir = "".join(["x" for _ in range(67108864)]).encode()
-    match encode_compiled_body_rows(CompiledBodyOutputs(values=[oversized_value], fallbacks=[])):
+    match encoded_body_rows(CompiledBodyOutputs(values=[oversized_value], fallbacks=[])):
         Err(CodecFault.LimitExceeded(bound, observed, maximum)) =>
             assert bound == "compiled-output-row-bytes"
             assert observed > maximum and maximum == 67108864
@@ -353,7 +368,7 @@ def compiled_output_size_controls(
                 reason="fixture",
             ),
         )
-    match encode_compiled_body_rows(CompiledBodyOutputs(values=[], fallbacks=fallbacks)):
+    match encoded_body_rows(CompiledBodyOutputs(values=[], fallbacks=fallbacks)):
         Err(CodecFault.LimitExceeded(bound, observed, maximum)) =>
             assert bound == "compiled-output-row-count"
             assert observed == 4097 and maximum == 4096
@@ -363,7 +378,7 @@ def compiled_output_size_controls(
 
 def owner_record(record: CheckedRecord, identity: str) -> Result[bytes, str]:
     """Rebind one fixture record to a stable owner for aggregate-independent transport coverage."""
-    return encode_record(
+    return encoded_record(
         CheckedRecord(
             profile=record.profile,
             owner=identity,
@@ -385,7 +400,7 @@ def compiled_fallback_reason_controls() -> Result[None, str]:
         identity=Some("function:main::dispatch|incan.source-signature/2:sha256:fixture"),
         reason=long_reason,
     )
-    rows = encode_compiled_body_rows(CompiledBodyOutputs(values=[], fallbacks=[fallback])).map_err(
+    rows = encoded_body_rows(CompiledBodyOutputs(values=[], fallbacks=[fallback])).map_err(
         (_) => "a fallback with a long reason refused the compiled output",
     )?
     assert len(rows) == 1
@@ -424,7 +439,7 @@ def projected_owner_controls() -> Result[None, str]:
     ).map_err((error) => "projected final: " + error.to_string())?
     projected = from_native_final_fields(final_rows).map_err((_) => "projected final producer")?
     direct = checked_fixture(complete, "first", false)?
-    assert encode_record(projected).map_err((_) => "projected final encode")? == encode_record(direct).map_err(
+    assert encoded_record(projected).map_err((_) => "projected final encode")? == encoded_record(direct).map_err(
         (_) => "direct projected final encode",
     )?
     return Ok(None)
@@ -459,7 +474,7 @@ def codec_fault_controls(encoded: bytes, record: CheckedRecord) -> None:
         family=record.family,
         fields=[CanonicalField(family="future", node="", selector="", values=[])],
     )
-    match encode_record(unsupported):
+    match encoded_record(unsupported):
         Err(CodecFault.Unsupported(name)) =>
             assert name == "future"
         _ =>
@@ -471,7 +486,7 @@ def codec_fault_controls(encoded: bytes, record: CheckedRecord) -> None:
         family=record.family,
         fields=[CanonicalField(family="artifact-rust", node="root", selector="checked_constants", values=["1"])],
     )
-    match encode_record(rust_artifact):
+    match encoded_record(rust_artifact):
         Ok(_) => pass
         _ => assert false
     constructor = CheckedRecord(
@@ -481,7 +496,7 @@ def codec_fault_controls(encoded: bytes, record: CheckedRecord) -> None:
         family=record.family,
         fields=[CanonicalField(family="constructor", node="root", selector="field-binding", values=["1", "1", "0", "0"])],
     )
-    match encode_record(constructor):
+    match encoded_record(constructor):
         Ok(_) => pass
         _ => assert false
     for kind in ["value", "static", "type-name", "variant", "module", "rust-import", "rust-value", "trait"]:
@@ -492,7 +507,7 @@ def codec_fault_controls(encoded: bytes, record: CheckedRecord) -> None:
             family=record.family,
             fields=[CanonicalField(family="identifier", node="root", selector="kind", values=[kind])],
         )
-        match encode_record(identifier):
+        match encoded_record(identifier):
             Ok(_) => pass
             _ => assert false
     for field in [
@@ -509,7 +524,7 @@ def codec_fault_controls(encoded: bytes, record: CheckedRecord) -> None:
             family=record.family,
             fields=[field],
         )
-        match encode_record(retained):
+        match encoded_record(retained):
             Ok(_) => pass
             _ => assert false
 
@@ -522,7 +537,7 @@ def codec_fault_controls(encoded: bytes, record: CheckedRecord) -> None:
         invalid = CheckedRecord(
             profile=record.profile, owner=record.owner, root=record.root, family=record.family, fields=[field],
         )
-        match encode_record(invalid):
+        match encoded_record(invalid):
             Err(_) => pass
             _ => assert false
 
@@ -537,8 +552,8 @@ def local_record_controls(source: str, moved: str) -> Result[None, str]:
     after = from_native_local_fields(
         produce_local_record(moved, "main", moved_declaration, []).map_err((error) => error.to_string())?,
     ).map_err((_) => "moved local producer")?
-    encoded = encode_record(before).map_err((_) => "local encode")?
-    assert encoded == encode_record(after).map_err((_) => "moved local encode")?
+    encoded = encoded_record(before).map_err((_) => "local encode")?
+    assert encoded == encoded_record(after).map_err((_) => "moved local encode")?
     decoded = decode_record(encoded, CHECKER_PROFILE, after.owner, after.root).map_err((_) => "local decode")?
     assert decoded.family == CheckedFamily.Local
     assert native_fields(decoded).map_err((_) => "local fields")? == native_fields(before).map_err((_) => "local fields")?
@@ -547,7 +562,7 @@ def local_record_controls(source: str, moved: str) -> Result[None, str]:
     )?
     final_record = from_native_final_fields(final_rows).map_err((_) => "final producer")?
     direct = checked_fixture(source, "main", false)?
-    assert encode_record(final_record).map_err((_) => "final encode")? == encode_record(direct).map_err(
+    assert encoded_record(final_record).map_err((_) => "final encode")? == encoded_record(direct).map_err(
         (_) => "direct final encode",
     )?
     graph_transport_controls(before, final_record)?
@@ -557,8 +572,8 @@ def local_record_controls(source: str, moved: str) -> Result[None, str]:
 
 def graph_transport_controls(local: CheckedRecord, final: CheckedRecord) -> Result[None, str]:
     """The separate graph transport admits only a same-owner, same-root local/final pair in canonical owner order."""
-    local_bytes = encode_record(local).map_err((_) => "graph local encode")?
-    final_bytes = encode_record(final).map_err((_) => "graph final encode")?
+    local_bytes = encoded_record(local).map_err((_) => "graph local encode")?
+    final_bytes = encoded_record(final).map_err((_) => "graph final encode")?
     transport = encode_graph_body_values(
         [GraphBodyValue(identity=local.owner, local=local_bytes, final=final_bytes, body_ir=b"owner-frame")],
     ).map_err((_) => "graph transport encode")?
@@ -584,8 +599,8 @@ def graph_transport_controls(local: CheckedRecord, final: CheckedRecord) -> Resu
     assert large_selected[0].body_ir == large_body_ir
     selected_local = from_native_local_fields(selected[0].local).map_err((_) => "selected local re-encode")?
     selected_final = from_native_final_fields(selected[0].final_fields).map_err((_) => "selected final re-encode")?
-    assert encode_record(selected_local).map_err((_) => "selected local bytes")? == local_bytes
-    assert encode_record(selected_final).map_err((_) => "selected final bytes")? == final_bytes
+    assert encoded_record(selected_local).map_err((_) => "selected local bytes")? == local_bytes
+    assert encoded_record(selected_final).map_err((_) => "selected final bytes")? == final_bytes
     match encode_graph_body_values(
         [GraphBodyValue(identity="wrong", local=local_bytes, final=final_bytes, body_ir=b"owner-frame")],
     ):
@@ -658,8 +673,8 @@ def edited_owner_controls() -> Result[None, str]:
                 continue
             before = checked_fixture(source, name, declaration)?
             after = checked_fixture(moved, name, declaration)?
-            encoded = encode_record(before).map_err((_) => "sibling encode")?
-            assert encoded == encode_record(after).map_err((_) => "sibling moved encode")?
+            encoded = encoded_record(before).map_err((_) => "sibling encode")?
+            assert encoded == encoded_record(after).map_err((_) => "sibling moved encode")?
             decoded = decode_record(encoded, CHECKER_PROFILE, after.owner, after.root).map_err((_) => "sibling decode")?
             verify_fixture(moved, name, native_fields(decoded).map_err((_) => "sibling fields")?).map_err(
                 (error) => f"sibling {name} declaration={declaration}: " + error.to_string(),
@@ -675,8 +690,8 @@ def diagnostic_record_controls() -> Result[None, str]:
         moved = "# a moved diagnostic\n" + source
         before = checked_fixture(source, "main", false)?
         after = checked_fixture(moved, "main", false)?
-        encoded = encode_record(before).map_err((_) => "diagnostic encode")?
-        assert encoded == encode_record(after).map_err((_) => "diagnostic moved encode")?
+        encoded = encoded_record(before).map_err((_) => "diagnostic encode")?
+        assert encoded == encoded_record(after).map_err((_) => "diagnostic moved encode")?
         assert semantic_digest(before).map_err((_) => "diagnostic digest")? == semantic_digest(after).map_err(
             (_) => "diagnostic moved digest",
         )?
@@ -696,8 +711,8 @@ def default_record_controls() -> Result[None, str]:
     for declaration in [true, false]:
         before = checked_fixture(source, "value", declaration)?
         after = checked_fixture(moved, "value", declaration)?
-        encoded = encode_record(before).map_err((_) => "default encode")?
-        assert encoded == encode_record(after).map_err((_) => "default moved encode")?
+        encoded = encoded_record(before).map_err((_) => "default encode")?
+        assert encoded == encoded_record(after).map_err((_) => "default moved encode")?
         decoded = decode_record(encoded, CHECKER_PROFILE, after.owner, after.root).map_err((_) => "default decode")?
         verify_fixture(moved, "value", native_fields(decoded).map_err((_) => "default fields")?).map_err(
             (error) => "default: " + error.to_string(),
@@ -721,8 +736,8 @@ def final_value_controls() -> Result[None, str]:
     moved = "# moved empty-list owner\n" + source
     before = checked_fixture(source, "values", false)?
     after = checked_fixture(moved, "values", false)?
-    encoded = encode_record(before).map_err((_) => "empty-list encode")?
-    assert encoded == encode_record(after).map_err((_) => "empty-list moved encode")?
+    encoded = encoded_record(before).map_err((_) => "empty-list encode")?
+    assert encoded == encoded_record(after).map_err((_) => "empty-list moved encode")?
     decoded = decode_record(encoded, CHECKER_PROFILE, after.owner, after.root).map_err((_) => "empty-list decode")?
     verify_fixture(moved, "values", native_fields(decoded).map_err((_) => "empty-list fields")?).map_err(
         (error) => "empty-list: " + error.to_string(),
@@ -736,7 +751,7 @@ def ownership_record_controls() -> Result[None, str]:
     moved = "# source moved\n" + source
     for declaration in [true, false]:
         record = checked_fixture(source, "view", declaration)?
-        encoded = encode_record(record).map_err((_) => "ownership encode")?
+        encoded = encoded_record(record).map_err((_) => "ownership encode")?
         decoded = decode_record(encoded, CHECKER_PROFILE, record.owner, record.root).map_err((_) => "ownership decode")?
         verify_fixture(moved, "view", native_fields(decoded).map_err((_) => "ownership native fields")?).map_err(
             (error) => error.to_string(),
@@ -748,7 +763,7 @@ def ownership_record_controls() -> Result[None, str]:
             family=record.family,
             fields=record.fields,
         )
-        match encode_record(obsolete):
+        match encoded_record(obsolete):
             Err(CodecFault.ProfileMismatch) => pass
             _ => return Err("old ownership profile accepted")
     return Ok(None)
@@ -761,7 +776,7 @@ def input_protocol_controls() -> Result[None, str]:
         moved = "# ownership anchors moved\n" + source
         rows = fixture_record(source, owner, false).map_err((error) => error.to_string())?
         record = input_record(rows, owner)?
-        encoded = encode_record(record).map_err((_) => "input encode")?
+        encoded = encoded_record(record).map_err((_) => "input encode")?
         decoded = decode_record(encoded, CHECKER_PROFILE, record.owner, record.root).map_err((_) => "input decode")?
         assert decoded == record
         owned_initializer_grammar(record)?
@@ -774,7 +789,7 @@ def input_protocol_controls() -> Result[None, str]:
         input_copy_grammar(record)?
         input_graph_refusals(record)?
         current = checked_fixture(moved, owner, false)?
-        assert encoded == encode_record(current).map_err((_) => "input moved encode")?
+        assert encoded == encoded_record(current).map_err((_) => "input moved encode")?
         verify_fixture(moved, owner, native_fields(decoded).map_err((_) => "input native fields")?).map_err(
             (error) => error.to_string(),
         )?
@@ -788,7 +803,7 @@ def input_protocol_controls() -> Result[None, str]:
             family=record.family,
             fields=record.fields,
         )
-        match encode_record(obsolete):
+        match encoded_record(obsolete):
             Err(CodecFault.ProfileMismatch) => pass
             _ => return Err("profile 7 accepted ordinary call facts")
     return Ok(None)
@@ -823,11 +838,11 @@ def input_call_classification(record: CheckedRecord, source: str, owner: str) ->
                 fields=fields,
             )
             if replacement == "missing":
-                match encode_record(changed):
+                match encoded_record(changed):
                     Err(_) => pass
                     Ok(_) => return Err("unknown input call classification accepted")
             else:
-                encoded = encode_record(changed).map_err((_) => "classification encode")?
+                encoded = encoded_record(changed).map_err((_) => "classification encode")?
                 decoded = decode_record(encoded, CHECKER_PROFILE, record.owner, record.root).map_err(
                     (_) => "classification decode",
                 )?
@@ -855,7 +870,7 @@ def parameter_requirement_grammar(record: CheckedRecord) -> Result[None, str]:
             family=record.family,
             fields=[conflict],
         )
-        encoded = encode_record(changed).map_err((_) => "parameter conflict encode")?
+        encoded = encoded_record(changed).map_err((_) => "parameter conflict encode")?
         decoded = decode_record(encoded, CHECKER_PROFILE, record.owner, record.root).map_err(
             (_) => "parameter conflict decode",
         )?
@@ -869,7 +884,7 @@ def parameter_requirement_grammar(record: CheckedRecord) -> Result[None, str]:
                 family=record.family,
                 fields=[broken],
             )
-            match encode_record(malformed):
+            match encoded_record(malformed):
                 Err(_) => pass
                 Ok(_) => return Err("malformed parameter requirement accepted")
         duplicate = CheckedRecord(
@@ -879,7 +894,7 @@ def parameter_requirement_grammar(record: CheckedRecord) -> Result[None, str]:
             family=record.family,
             fields=[conflict, conflict],
         )
-        match encode_record(duplicate):
+        match encoded_record(duplicate):
             Err(_) => pass
             Ok(_) => return Err("duplicate parameter requirement accepted")
     return Ok(None)
@@ -897,7 +912,7 @@ def input_field_refusals(record: CheckedRecord, field: CanonicalField) -> Result
             family=record.family,
             fields=[broken],
         )
-        match encode_record(changed):
+        match encoded_record(changed):
             Err(_) => pass
             Ok(_) => return Err("malformed ownership field accepted")
     duplicate = CheckedRecord(
@@ -907,7 +922,7 @@ def input_field_refusals(record: CheckedRecord, field: CanonicalField) -> Result
         family=record.family,
         fields=[field, field],
     )
-    match encode_record(duplicate):
+    match encoded_record(duplicate):
         Err(CodecFault.Malformed) => pass
         _ => return Err("duplicate ownership field accepted")
     mut legacy_versions: list[str] = []
@@ -929,7 +944,7 @@ def input_field_refusals(record: CheckedRecord, field: CanonicalField) -> Result
             family=record.family,
             fields=[legacy],
         )
-        match encode_record(changed):
+        match encoded_record(changed):
             Err(CodecFault.Malformed) => pass
             _ => return Err("legacy ownership schema accepted")
     return Ok(None)
@@ -950,7 +965,7 @@ def owned_initializer_grammar(record: CheckedRecord) -> Result[None, str]:
         family=record.family,
         fields=[field],
     )
-    encoded = encode_record(retained).map_err((_) => "owned initializer grammar encode")?
+    encoded = encoded_record(retained).map_err((_) => "owned initializer grammar encode")?
     decoded = decode_record(encoded, CHECKER_PROFILE, retained.owner, retained.root).map_err(
         (_) => "owned initializer grammar decode",
     )?
@@ -964,7 +979,7 @@ def owned_initializer_grammar(record: CheckedRecord) -> Result[None, str]:
             family=record.family,
             fields=[CanonicalField(family="input-flow", node="owner-node", selector="graph", values=values)],
         )
-        match encode_record(broken):
+        match encoded_record(broken):
             Err(CodecFault.Malformed) => pass
             _ => return Err("malformed checked owned initializer accepted")
     return Ok(None)
@@ -994,7 +1009,7 @@ def operation_dependency_grammar(record: CheckedRecord) -> Result[None, str]:
         family=record.family,
         fields=[field],
     )
-    encoded = encode_record(retained).map_err((_) => "operation dependency grammar encode")?
+    encoded = encoded_record(retained).map_err((_) => "operation dependency grammar encode")?
     decoded = decode_record(encoded, CHECKER_PROFILE, retained.owner, retained.root).map_err(
         (_) => "operation dependency grammar decode",
     )?
@@ -1008,7 +1023,7 @@ def operation_dependency_grammar(record: CheckedRecord) -> Result[None, str]:
             family=record.family,
             fields=[CanonicalField(family="input-flow", node="owner-node", selector="graph", values=values)],
         )
-        match encode_record(broken):
+        match encoded_record(broken):
             Err(CodecFault.Malformed) => pass
             _ => return Err("malformed checked operation dependency accepted")
     return Ok(None)
@@ -1028,7 +1043,7 @@ def input_graph_refusals(record: CheckedRecord) -> Result[None, str]:
             family=record.family,
             fields=[field],
         )
-        match encode_record(broken):
+        match encoded_record(broken):
             Err(CodecFault.Malformed) => pass
             _ => return Err("invalid checked graph reference accepted")
     first = ["binding", "a", "false", "false", "false"]
@@ -1043,7 +1058,7 @@ def input_graph_refusals(record: CheckedRecord) -> Result[None, str]:
             family=record.family,
             fields=[field],
         )
-        match encode_record(broken):
+        match encoded_record(broken):
             Err(CodecFault.Malformed) => pass
             _ => return Err("noncanonical ownership map accepted")
     # The native adapter must recompute and verify this exact refusal before restoring InputFlow.Invalid.
@@ -1060,7 +1075,7 @@ def input_graph_refusals(record: CheckedRecord) -> Result[None, str]:
         family=record.family,
         fields=[invalid],
     )
-    encoded = encode_record(refusal).map_err((_) => "invalid graph refusal encode")?
+    encoded = encoded_record(refusal).map_err((_) => "invalid graph refusal encode")?
     decoded = decode_record(encoded, CHECKER_PROFILE, refusal.owner, refusal.root).map_err(
         (_) => "invalid graph refusal decode",
     )?
@@ -1096,7 +1111,7 @@ def invocation_evaluation_grammar(record: CheckedRecord) -> Result[None, str]:
         family=record.family,
         fields=[CanonicalField(family="input-flow", node="owner-node", selector="graph", values=valid)],
     )
-    encoded = encode_record(retained).map_err((_) => "invocation evaluation grammar encode")?
+    encoded = encoded_record(retained).map_err((_) => "invocation evaluation grammar encode")?
     decoded = decode_record(encoded, CHECKER_PROFILE, retained.owner, retained.root).map_err(
         (_) => "invocation evaluation grammar decode",
     )?
@@ -1110,7 +1125,7 @@ def invocation_evaluation_grammar(record: CheckedRecord) -> Result[None, str]:
             family=record.family,
             fields=[CanonicalField(family="input-flow", node="owner-node", selector="graph", values=values)],
         )
-        match encode_record(broken):
+        match encoded_record(broken):
             Err(CodecFault.Malformed) => pass
             _ => return Err("malformed checked invocation evaluation accepted")
     mut invalid_values = ["5", "invalid"] + prefix[2:] + call + ["5", "3", "some", "2", "none", "4", "0"] + nodes
@@ -1122,7 +1137,7 @@ def invocation_evaluation_grammar(record: CheckedRecord) -> Result[None, str]:
         family=record.family,
         fields=[CanonicalField(family="input-flow", node="owner-node", selector="graph", values=invalid_values)],
     )
-    encoded_invalid = encode_record(invalid).map_err((_) => "invalid invocation grammar encode")?
+    encoded_invalid = encoded_record(invalid).map_err((_) => "invalid invocation grammar encode")?
     decoded_invalid = decode_record(encoded_invalid, CHECKER_PROFILE, invalid.owner, invalid.root).map_err(
         (_) => "invalid invocation grammar decode",
     )?
@@ -1152,7 +1167,7 @@ def invocation_receiver_grammar(record: CheckedRecord) -> Result[None, str]:
         family=record.family,
         fields=[CanonicalField(family="input-flow", node="owner-node", selector="graph", values=values)],
     )
-    encoded = encode_record(retained).map_err((_) => "invocation receiver grammar encode")?
+    encoded = encoded_record(retained).map_err((_) => "invocation receiver grammar encode")?
     decoded = decode_record(encoded, CHECKER_PROFILE, retained.owner, retained.root).map_err(
         (_) => "invocation receiver grammar decode",
     )?
@@ -1180,7 +1195,7 @@ def closure_capture_grammar(record: CheckedRecord) -> Result[None, str]:
             values=prefix + ["1"] + closure + nodes,
         )],
     )
-    encoded = encode_record(retained).map_err((_) => "closure capture grammar encode")?
+    encoded = encoded_record(retained).map_err((_) => "closure capture grammar encode")?
     decoded = decode_record(encoded, CHECKER_PROFILE, retained.owner, retained.root).map_err(
         (_) => "closure capture grammar decode",
     )?
@@ -1194,7 +1209,7 @@ def closure_capture_grammar(record: CheckedRecord) -> Result[None, str]:
             family=record.family,
             fields=[CanonicalField(family="input-flow", node="owner-node", selector="graph", values=values)],
         )
-        match encode_record(broken):
+        match encoded_record(broken):
             Err(CodecFault.Malformed) => pass
             _ => return Err("malformed checked closure capture accepted")
     return Ok(None)
@@ -1210,7 +1225,7 @@ def input_copy_grammar(record: CheckedRecord) -> Result[None, str]:
         family=record.family,
         fields=[CanonicalField(family="input-copy", node="owner-node", selector="types", values=values)],
     )
-    encoded = encode_record(retained).map_err((_) => "checked Copy grammar encode")?
+    encoded = encoded_record(retained).map_err((_) => "checked Copy grammar encode")?
     decoded = decode_record(encoded, CHECKER_PROFILE, retained.owner, retained.root).map_err(
         (_) => "checked Copy grammar decode",
     )?
@@ -1224,7 +1239,7 @@ def input_copy_grammar(record: CheckedRecord) -> Result[None, str]:
             family=record.family,
             fields=[CanonicalField(family="input-copy", node="owner-node", selector="types", values=payload)],
         )
-        match encode_record(broken):
+        match encoded_record(broken):
             Err(CodecFault.Malformed) => pass
             _ => return Err("malformed checked Copy decisions accepted")
     return Ok(None)
