@@ -10,90 +10,94 @@ from table_views import borrowed_at
 class BodyPositions:
     """The line index is shared by every span in one body, including nested defaults and closure frames."""
 
-    starts: list[int]
     file: str
     owner_line: int
     nodes: list[tuple[int, int]]
 
-    def add(mut self, span: HirSourceSpan) -> None:
-        current = indexed_location(self.starts, span, self.file)
+    def add(mut self, starts: &list[int], span: HirSourceSpan) -> None:
+        current = indexed_location(starts, span, self.file)
         self.nodes.append((current.line - self.owner_line, current.column))
 
-    def parameters(mut self, values: &list[CallableParam]) -> None:
+    def parameters(mut self, starts: &list[int], values: &list[CallableParam]) -> None:
         for index in range(len(values)):
             parameter = borrowed_at(values, index)
-            self.default(parameter.default)
-            self.add(parameter.span)
+            self.default(starts, parameter.default)
+            self.add(starts, parameter.span)
 
-    def default(mut self, value: &CallableParamDefault) -> None:
+    def default(mut self, starts: &list[int], value: &CallableParamDefault) -> None:
         match value:
             CallableParamDefault.Source(computation) =>
-                self.add(computation.span)
-                self.statements(computation.stmts)
-            CallableParamDefault.Unsupported(span=span, description=_description) => self.add(span)
+                self.add(starts, computation.span)
+                self.statements(starts, computation.stmts)
+            CallableParamDefault.Unsupported(span=span, description=_description) => self.add(starts, span)
             _ => pass
 
-    def calls(mut self, callee: &Callee) -> None:
+    def calls(mut self, starts: &list[int], callee: &Callee) -> None:
         match callee:
             Callee.Method(target) =>
                 if let Some(delegation) = target.native_trait_delegation:
                     for index in range(len(delegation.parameter_defaults)):
-                        self.default(borrowed_at(delegation.parameter_defaults, index))
+                        self.default(starts, borrowed_at(delegation.parameter_defaults, index))
             Callee.ProviderOperation(plan) =>
                 for index in range(len(plan.inputs)):
-                    self.add(borrowed_at(plan.inputs, index).span)
+                    self.add(starts, borrowed_at(plan.inputs, index).span)
             _ => pass
 
-    def assignment(mut self, value: &Rvalue) -> None:
+    def assignment(mut self, starts: &list[int], value: &Rvalue) -> None:
         match value:
-            Rvalue.IsInstance(payload) => self.add(payload.target.span)
+            Rvalue.IsInstance(payload) => self.add(starts, payload.target.span)
             Rvalue.Closure(params=parameters, captured_operands=_captured, body=body) =>
-                self.statements(body.stmts)
-                self.parameters(parameters)
-            Rvalue.Generator(source=_source, captured_operands=_captured, body=body) => self.statements(body.stmts)
+                self.statements(starts, body.stmts)
+                self.parameters(starts, parameters)
+            Rvalue.Generator(source=_source, captured_operands=_captured, body=body) => self.statements(starts, body.stmts)
             Rvalue.Match(scrutinee=_scrutinee, arms=arms) =>
                 for index in range(len(arms)):
                     arm = borrowed_at(arms, index)
-                    self.statements(arm.body_stmts)
-                    self.statements(arm.guard_stmts)
+                    self.statements(starts, arm.body_stmts)
+                    self.statements(starts, arm.guard_stmts)
             _ => pass
 
-    def statements(mut self, values: &list[Statement]) -> None:
+    def statements(mut self, starts: &list[int], values: &list[Statement]) -> None:
         for index in range(len(values)):
             statement = borrowed_at(values, index)
             match statement.kind:
                 StatementKind.UnsafeRegion(acknowledgment=acknowledgment, body=body) =>
-                    self.add(acknowledgment.span)
-                    self.statements(body.stmts)
-                StatementKind.Assign(place=_place, rvalue=value) => self.assignment(value)
-                StatementKind.Call(destination=_dest, callee=callee, args=_args, may_panic=_panic) => self.calls(callee)
+                    self.add(starts, acknowledgment.span)
+                    self.statements(starts, body.stmts)
+                StatementKind.Assign(place=_place, rvalue=value) => self.assignment(starts, value)
+                StatementKind.Call(destination=_dest, callee=callee, args=_args, may_panic=_panic) => self.calls(starts, callee)
                 StatementKind.If(cond=_cond, then_block=yes, else_block=no) =>
                     if let Some(other) = no:
-                        self.statements(other.stmts)
-                    self.statements(yes.stmts)
-                StatementKind.Loop(body=body) => self.statements(body.stmts)
+                        self.statements(starts, other.stmts)
+                    self.statements(starts, yes.stmts)
+                StatementKind.Loop(body=body) => self.statements(starts, body.stmts)
                 StatementKind.Race(destination=_dest, arms=arms) =>
                     for arm in arms:
-                        self.statements(arm.body.stmts)
+                        self.statements(starts, arm.body.stmts)
                 _ => pass
-            self.add(statement.span)
+            self.add(starts, statement.span)
 
 
     @staticmethod
-    pub def collect(body: &Body, source: str, file: str, owner: SourceSpan) -> list[tuple[int, int]]:
+    pub def collect(body: &Body, starts: &list[int], file: str, owner: SourceSpan) -> list[tuple[int, int]]:
         """Collect only native span-bearing fields; declarations and identity tables never supply diagnostic positions."""
-        mut map = BodyPositions(starts=line_starts(source), file=file, owner_line=owner.line, nodes=[])
-        map.statements(body.block.stmts)
+        mut map = BodyPositions(file=file, owner_line=owner.line, nodes=[])
+        map.statements(starts, body.block.stmts)
         for index in range(len(body.locals)):
-            map.add(borrowed_at(body.locals, index).span)
+            map.add(starts, borrowed_at(body.locals, index).span)
         for index in range(len(body.panic_facts)):
-            map.add(borrowed_at(body.panic_facts, index).span)
-        map.parameters(body.params)
+            map.add(starts, borrowed_at(body.panic_facts, index).span)
+        map.parameters(starts, body.params)
         for index in range(len(body.scopes)):
-            map.add(borrowed_at(body.scopes, index).span)
-        map.add(body.span)
+            map.add(starts, borrowed_at(body.scopes, index).span)
+        map.add(starts, body.span)
         return map.nodes
 
 
 pub def body_position_map(body: &Body, source: str, file: str, owner: SourceSpan) -> list[tuple[int, int]]:
-    return BodyPositions.collect(body, source, file, owner)
+    return BodyPositions.collect(body, line_starts(source), file, owner)
+
+
+pub def indexed_body_positions(body: &Body, starts: &list[int], file: str, owner: SourceSpan) -> list[tuple[int, int]]:
+    """Use a module worker's one UTF-8 line index to place each admitted body in the edited file."""
+    return BodyPositions.collect(body, starts, file, owner)

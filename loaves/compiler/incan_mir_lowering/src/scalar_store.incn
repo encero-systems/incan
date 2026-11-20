@@ -385,7 +385,7 @@ def publish_record(directory: str, inputs: list[str], encoded: bytes) -> Result[
     return Ok(None)
 
 
-def event_nodes(positions: list[tuple[int, int]]) -> list[EventPosition]:
+pub def event_nodes(positions: list[tuple[int, int]]) -> list[EventPosition]:
     """Carry a body's node positions in a request-local event."""
     mut nodes: list[EventPosition] = []
     for position in positions:
@@ -411,14 +411,15 @@ pub def admitted_payload(
     overflow: bool,
     reads: str,
     generation: str,
-) -> Option[tuple[bytes, list[ProductNominal], list[bytes]]]:
+    current: Option[list[tuple[int, int]]],
+) -> Option[tuple[bytes, list[ProductNominal], list[bytes], LoweringEvent]]:
     """
     Read the product of a body from the final event of its module's admitted plan record.
 
     Bakery admitted the module because every witness of it still validates, so the product is not looked up by a key
     computed from the body: the body is neither serialized nor digested. Every input of the product but the checked
     meaning is compared with what the body has now: its producer, overflow policy, frame name, file, checker witness
-    and node count. The product's node ordinals take the positions the event recorded for the unchanged body.
+    and node count. Only an unchanged physical source can use the recorded ordinal positions directly.
 
     Returns the placed payload, the declarations it names and the generic instance requests its lowering made. A
     product that does not fit is a miss: the body takes the keyed route.
@@ -433,18 +434,22 @@ pub def admitted_payload(
 
     if len(record.inputs) < 2:
         return None
-    expected = record_scalar_inputs(record.inputs[1], name, span, overflow, reads, len(decoded.positions)) + [
+    mut positions = event_positions(decoded)
+    if let Some(nodes) = current:
+        positions = nodes
+    expected = record_scalar_inputs(record.inputs[1], name, span, overflow, reads, len(positions)) + [
         generation,
     ]
     if record.inputs != expected:
         return None
-    positions = [(position.line, position.column) for position in decoded.positions]
+    if len(positions) != len(decoded.positions):
+        return None
     payload = match positioned_product(record.function, positions, str(span.file), span.line):
         Ok(value) => value
         Err(_) => return None
 
     match product_identities(payload):
-        Ok(identities) => return Some((payload, identities, record.requests))
+        Ok(identities) => return Some((payload, identities, record.requests, decoded))
         Err(_) => return None
 
 

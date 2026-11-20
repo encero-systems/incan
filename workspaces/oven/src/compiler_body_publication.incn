@@ -236,6 +236,8 @@ pub def prepare_compiled_bodies(
     restored_body_ir: list[str] = [],
     covered: CoveredBodyOwners = CoveredBodyOwners(),
     changed_sources: list[RecordKey] = [],
+    captured_positions: Dict[str, bytes] = {},
+    admission_report: Option[Path] = None,
 ) -> Result[PreparedCompiledBodies, str]:
     """
     Stage one successful compiler sidecar through source projections and witnessed checker evaluations.
@@ -260,6 +262,8 @@ pub def prepare_compiled_bodies(
     staged = stage_compiled_body_sources(transaction, unit, origin, outputs)?
     mut prepared = staged.transaction
     mut source = staged.source
+    for positioned in captured_positions.keys():
+        source.add(positioned, captured_positions[positioned])
     scope = staged.scope
     projections = staged.projections
     editable_packages = staged.editable_packages
@@ -298,6 +302,7 @@ pub def prepare_compiled_bodies(
         plan_output,
         plan_modules,
         covered,
+        admission_report,
     )?
     record_work(Operation.EngineGraphStaging, output.0, staging)
     return Ok(
@@ -480,12 +485,14 @@ def prepare_optional_lowering_records(
     plan_output: Option[Path],
     plan_modules: list[AdmittedPlanModule] = [],
     covered: CoveredBodyOwners = CoveredBodyOwners(),
+    admission_report: Option[Path] = None,
 ) -> Result[Transaction, str]:
     """Stage lowering records only when this compiler activation requested a plan report."""
     if let Some(report) = plan_output:
         events = lowering_events(report)?
         mut fresh = set([value.identity for value in outputs.values])
-        complete = set(restored_modules(report, whole_only=true)?)
+        notes = admission_report.unwrap_or(report)
+        complete = set(restored_modules(notes, whole_only=true)?)
         for fallback in outputs.fallbacks:
             if let Some(owner) = fallback.identity:
                 fresh.add(owner)
@@ -514,6 +521,7 @@ def prepare_optional_lowering_records(
             outputs.namespaces,
             plan_modules,
             [module for module in covered.module_owners.keys()],
+            Some(notes),
         )
     return Ok(prepared)
 
@@ -929,6 +937,7 @@ def prepare_lowering_records(
     namespaces: list[CompiledNamespaceValue] = [],
     admitted: list[AdmittedPlanModule] = [],
     covered_modules: list[str] = [],
+    admission_report: Option[Path] = None,
 ) -> Result[Transaction, str]:
     """
     Stage evaluated lowering-demand and plan-function values through their exact Body IR witnesses.
@@ -1061,7 +1070,7 @@ def prepare_lowering_records(
         staged_source.add(encode_record_key(key)?, product)
         plan_keys.append(key)
     # Each module's plan functions fold into its module record; a restored module's record joins the interface's reads.
-    carried, carried_namespace = stage_plan_modules(prepared, staged_source, orders, scope, selected, origin, rechecked, staged, report, admitted)?
+    carried, carried_namespace = stage_plan_modules(prepared, staged_source, orders, scope, selected, origin, rechecked, staged, admission_report.unwrap_or(report), admitted)?
     if not report.joinpath(INTERFACE_REPORT).is_file():
         require_plan_refusal(report)?
         return Ok(prepared)
