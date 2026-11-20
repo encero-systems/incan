@@ -833,8 +833,20 @@ def command_step(
 
 
 def command_environment(installation: Installation) -> Dict[str, str]:
-    """Return the explicit environment selected for every installed-verification child."""
-    return {"INCAN_HOME": installation.home.0, "INCAN_STDLIB": "", "INCAN_NO_BANNER": "1", "OVEN_OWNER": "off", "RUSTUP_TOOLCHAIN": "1.98.0"}
+    """
+    Return the explicit environment selected for every installed-verification child.
+
+    The engine binary is the installed one whatever the caller's environment names, so a development lane's own
+    engine never answers for the installation under test.
+    """
+    return {
+        "INCAN_HOME": installation.home.0,
+        "INCAN_STDLIB": "",
+        "INCAN_NO_BANNER": "1",
+        "OVEN_OWNER": "off",
+        "OVEN_ENGINE_BINARY": installation.oven.0,
+        "RUSTUP_TOOLCHAIN": "1.98.0",
+    }
 
 
 def owns_rust_facet(manifest: str) -> bool:
