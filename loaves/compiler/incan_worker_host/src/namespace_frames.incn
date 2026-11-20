@@ -1,0 +1,57 @@
+"""Resolve a leased namespace frame through the store and authenticate the evaluation's exact payload."""
+
+from std.encoding.hex import hexlify
+from std.primitives.views import MappedFile, MappedView
+from pub::incan_platform.store import Lookup, read_frame_cached
+from pub::incan_platform.store.disk import root as disk_root
+from pub::incan_platform.store.index import Location, view_digest
+from pub::internal_models import NamespaceReference
+from pub::internal_models.records import encode_record_key
+
+
+pub model NamespaceFrameReader:
+    """One compiler request's Bakery anchor and its retained segment mappings."""
+
+    directory: str
+    mappings: Dict[str, MappedFile] = {}
+
+
+    @staticmethod
+    pub def create(directory: str) -> Self:
+        """Create an initially unmapped reader for an Oven-leased Bakery root."""
+        return NamespaceFrameReader(directory=directory)
+
+    pub def read(mut self, reference: &NamespaceReference) -> Result[MappedView, str]:
+        """Open one previously admitted frame reference beneath the compiler's Bakery anchor."""
+        key = encode_record_key(reference.key)?
+        if len(reference.segment) != 64:
+            return Err("namespace frame segment has an invalid length")
+        for digit in reference.segment:
+            if digit not in "0123456789abcdef":
+                return Err("namespace frame segment has an invalid name")
+        location = Location(
+            segment=reference.segment,
+            offset=reference.offset,
+            length=reference.length,
+            digest=reference.frame_digest,
+            tombstone=false,
+        )
+        selected = read_frame_cached(disk_root(self.directory), key, location, self.mappings).map_err(
+            (error) => error.message(),
+        )?
+        match selected:
+            Lookup.Found(view) =>
+                if hexlify(view_digest(view)) != reference.value_digest:
+                    return Err("selected namespace payload differs from its evaluation digest")
+                return Ok(view)
+            _ => return Err("selected namespace frame is missing")
+
+
+pub def namespace_frame_reader(directory: str) -> NamespaceFrameReader:
+    """Create the request-local native reader."""
+    return NamespaceFrameReader.create(directory)
+
+
+pub def read_namespace_frame(mut reader: NamespaceFrameReader, reference: &NamespaceReference) -> Result[MappedView, str]:
+    """Read one frame through the native reader's existing segment mappings."""
+    return reader.read(reference)
