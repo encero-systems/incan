@@ -32,6 +32,7 @@ from rust::std::time import Instant
 from protocol import Fault, Reply
 
 pub const IDLE_SECONDS: int = 10
+pub const EDITOR_IDLE_MILLIS: int = 900000
 pub const FOOTPRINT_MARGIN: int = 16777216
 pub const FOOTPRINT_STRIKES: int = 2
 # A compile of the lowering library through a worker passes 6.5 GB; a dev-loop harness of every subject peaks at
@@ -81,6 +82,7 @@ pub model Bounds:
     pub idle_millis: int
     pub margin: int
     pub ceiling: int
+    pub editor_idle_millis: int = EDITOR_IDLE_MILLIS
 
 
 pub class Lifecycle:
@@ -92,6 +94,7 @@ pub class Lifecycle:
     # Consecutive compiling activations that left more than the margin above the least the worker had retained.
     pub strikes: int = 0
     last_activity: Instant
+    last_editor_activity: Option[Instant] = None
     # The least bytes in live allocations after a compiling activation; negative before the first one measured.
     pub live_kept: int = -1
 
@@ -104,9 +107,21 @@ pub class Lifecycle:
         """A request was answered: the idle period starts again."""
         self.last_activity = Instant.now()
 
-    pub def idle(self) -> bool:
-        """Whether the worker has served nothing for its whole idle period."""
+    pub def note_editor_activity(mut self) -> None:
+        """Keep the last answered editor check warm for the editor's idle period."""
+        self.last_editor_activity = Some(Instant.now())
+
+    pub def past_ordinary_idle(self) -> bool:
+        """Whether the ordinary request idle period has elapsed."""
         return int(self.last_activity.elapsed().as_millis()) >= self.bounds.idle_millis
+
+    pub def idle(self) -> bool:
+        """Retire once both the ordinary idle period and any editor idle period have elapsed."""
+        if not self.past_ordinary_idle():
+            return false
+        match self.last_editor_activity:
+            Some(last) => return int(last.elapsed().as_millis()) >= self.bounds.editor_idle_millis
+            None => return true
 
     pub def settle(
         mut self,

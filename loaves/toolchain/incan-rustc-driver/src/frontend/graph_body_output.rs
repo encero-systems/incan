@@ -596,8 +596,8 @@ impl GraphBodyOutput {
                 let frame = incan_semantics_core::executable_representation::decode_owner(&value.body_ir)
                     .map_err(|error| format!("current executable owner refused: {error}"))?;
                 Ok(incan_frontend::checker_records::GraphBodyRecord {
-                    local: fields(&value.local)?,
-                    final_value: fields(&value.final_value)?,
+                    local: fields(&value.local)?.into(),
+                    final_value: fields(&value.final_value)?.into(),
                     identity: value.identity,
                     body_ir: Some(frame),
                 })

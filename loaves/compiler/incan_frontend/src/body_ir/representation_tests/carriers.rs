@@ -149,13 +149,21 @@ pub(super) fn assert_nominal_carrier_maps_stay_shared() -> Result<(), Box<dyn st
         super::nominal_carriers::return_index_keeps_identity_maps_borrowed(&module),
         "the return index retained a whole canonical map per callable"
     );
+    super::nominal_carriers::retain_return_owners(&mut module, crate::body_ir::ContextModules::default(), &selected);
+    super::nominal_carriers::retain(
+        &mut module,
+        &facts,
+        crate::body_ir::ContextModules::default(),
+        &selected,
+    );
+    // Keep the original maps shared throughout a second pass that has no new identities to add.
     let identities = module
         .bodies
         .iter()
         .map(|body| {
             Ok((
                 body.canonical.clone().ok_or("missing callable identity")?,
-                std::sync::Arc::as_ptr(&body.named_type_identities),
+                std::sync::Arc::clone(&body.named_type_identities),
             ))
         })
         .collect::<Result<std::collections::BTreeMap<_, _>, &'static str>>()?;
@@ -171,7 +179,7 @@ pub(super) fn assert_nominal_carrier_maps_stay_shared() -> Result<(), Box<dyn st
         let canonical = body.canonical.as_ref().ok_or("missing retained callable identity")?;
         let original = identities.get(canonical).ok_or("missing original canonical map")?;
         assert!(
-            std::ptr::eq(*original, std::sync::Arc::as_ptr(&body.named_type_identities)),
+            std::sync::Arc::ptr_eq(original, &body.named_type_identities),
             "nominal retention replaced the shared canonical map for {}",
             body.name
         );
@@ -302,7 +310,7 @@ pub(super) fn assert_package_provider_declaration_retains_own_carrier() -> Resul
         .ok_or("missing conflict provider")?;
     let mut foreign = declaration.canonical.clone();
     foreign.declaration_name = "ForeignValue".to_owned();
-    declaration.named_type_identities.insert(key.clone(), foreign.clone());
+    std::sync::Arc::make_mut(&mut declaration.named_type_identities).insert(key.clone(), foreign.clone());
     super::nominal_carriers::retain(
         &mut conflict,
         &provider_facts,
@@ -476,7 +484,7 @@ pub model MetadataFacts:
             let key = bir::nominal_carrier_key(&declaration.canonical).ok_or("missing source carrier key")?;
             let mut published = seed.clone();
             for value in &mut published.nominal_declarations {
-                value.named_type_identities.remove(&key);
+                std::sync::Arc::make_mut(&mut value.named_type_identities).remove(&key);
             }
             super::nominal_carriers::retain_published_module(&mut published);
             let retained = published

@@ -63,6 +63,8 @@ pub model Toolchain:
     pub worker_protocol_crumb: bool = false
     pub unit_descriptor_crumb: bool = false
     pub compiler_record_export_crumb: bool = false
+    pub namespace_references: bool = false
+    pub retain_checked_modules: bool = false
 
     pub def installed(self) -> InstalledCompiler:
         """Project frozen compiler facts without retaining any request-local readers or console selection."""
@@ -81,6 +83,8 @@ pub model Toolchain:
             worker_protocol_crumb=self.worker_protocol_crumb,
             unit_descriptor_crumb=self.unit_descriptor_crumb,
             compiler_record_export_crumb=self.compiler_record_export_crumb,
+            namespace_references=self.namespace_references,
+            retain_checked_modules=self.retain_checked_modules,
             registry_lock=self.registry_lock,
             c_compiler=self.c_compiler,
             target=self.target,
@@ -112,6 +116,8 @@ pub model InstalledCompiler:
     pub worker_protocol_crumb: bool = false
     pub unit_descriptor_crumb: bool = false
     pub compiler_record_export_crumb: bool = false
+    pub namespace_references: bool = false
+    pub retain_checked_modules: bool = false
     pub registry_lock: str
     pub c_compiler: str
     pub target: str
@@ -142,6 +148,8 @@ pub model InstalledCompiler:
             worker_protocol_crumb=self.worker_protocol_crumb,
             unit_descriptor_crumb=self.unit_descriptor_crumb,
             compiler_record_export_crumb=self.compiler_record_export_crumb,
+            namespace_references=self.namespace_references,
+            retain_checked_modules=self.retain_checked_modules,
             console="",
             worker_generation="",
             native_closures=NativeClosureInput(),

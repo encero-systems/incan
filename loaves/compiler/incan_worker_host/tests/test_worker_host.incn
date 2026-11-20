@@ -562,6 +562,29 @@ pub def test_an_idle_worker_retires_and_withdraws_its_socket() -> Result[None, s
     return Ok(None)
 
 
+pub def test_editor_check_keeps_the_worker_through_ordinary_idleness() -> Result[None, str]:
+    """An editor check extends the idle deadline. An ordinary follow-up still answers under that deadline."""
+    socket = socket_path("editor-idle")
+    mut configuration = settings(socket, 40, 16777216, None)
+    configuration.bounds = Bounds(idle_millis=40, margin=16777216, ceiling=FOOTPRINT_CEILING, editor_idle_millis=300)
+    mut host = host_for(configuration)?
+    editor = check_text(GENERATION).replace("\"/p/sysroot\"]", "\"/p/sysroot\",\"--retain-checked-modules\"]")
+    mut initial = caller(socket, editor)?
+    assert is_check(served(host)?)
+    complete(host, ActivationOutcome.Exited(0), 1000)
+    assert not retired(reply(initial)?)
+    started = Instant.now()
+    sleep(Duration.from_millis(90))
+    mut next = caller(socket, check_text(GENERATION))?
+    assert is_check(served(host)?)
+    complete(host, ActivationOutcome.Exited(0), 1000)
+    assert not retired(reply(next)?)
+    assert ended(host)
+    assert int(started.elapsed().as_millis()) >= 300
+    assert withdrawn(socket)
+    return Ok(None)
+
+
 pub def test_a_worker_retires_once_its_socket_or_home_is_gone() -> Result[None, str]:
     """
     A worker whose socket path is removed, replaced or whose home is deleted retires within about a second, long

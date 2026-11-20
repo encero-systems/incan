@@ -122,7 +122,7 @@ def source_enum(name: str, fields: list[RustType]) -> EnumDeclaration:
             ),
         ],
         derives=[],
-        named_type_identities=identities,
+        named_type_identities=Arc.new(identities),
     )
 
 
@@ -215,8 +215,9 @@ pub def test_result_requirements_use_exact_owned_source_declaration_closure() ->
     foreign.canonical = CanonicalSymbolId.module_declaration(
         ["other"], "Value", SemanticSourceTargetKind.Enum, HirSourceSpan.new(0, 10),
     )
-    foreign.named_type_identities.clear()
-    _ = foreign.named_type_identities.insert("Value", foreign.canonical.clone())
+    mut foreign_scope: BTreeMap[str, CanonicalSymbolId] = BTreeMap.new()
+    _ = foreign_scope.insert("Value", foreign.canonical.clone())
+    foreign.named_type_identities = Arc.new(foreign_scope)
     mut repointed = identities.clone()
     _ = repointed.insert("Value", foreign.canonical.clone())
     assert not checked_requirement(
@@ -231,7 +232,9 @@ pub def test_result_requirements_use_exact_owned_source_declaration_closure() ->
     )
     mut alias_cycle = value.clone()
     alias_cycle.variants[0].fields = [RustType.Named("Wrong")]
-    _ = alias_cycle.named_type_identities.insert("Wrong", alias_cycle.canonical.clone())
+    mut alias_cycle_scope = alias_cycle.named_type_identities.as_ref().clone()
+    _ = alias_cycle_scope.insert("Wrong", alias_cycle.canonical.clone())
+    alias_cycle.named_type_identities = Arc.new(alias_cycle_scope)
     assert not checked_requirement(
         generic("Result", [RustType.Named("Value"), RustType.Named("CodecFault")]),
         identities,
@@ -258,8 +261,9 @@ pub def test_result_requirements_use_exact_owned_source_declaration_closure() ->
         wrapped.canonical = source_identity(
             "result_requirements", f"{wrapper}Payload", SemanticSourceTargetKind.Enum,
         )
-        wrapped.named_type_identities.clear()
-        _ = wrapped.named_type_identities.insert(f"{wrapper}Payload", wrapped.canonical.clone())
+        mut wrapped_scope: BTreeMap[str, CanonicalSymbolId] = BTreeMap.new()
+        _ = wrapped_scope.insert(f"{wrapper}Payload", wrapped.canonical.clone())
+        wrapped.named_type_identities = Arc.new(wrapped_scope)
         wrapped.variants[0].fields = [generic(wrapper, [text.clone()])]
         mut wrapped_ids: BTreeMap[str, CanonicalSymbolId] = BTreeMap.new()
         _ = wrapped_ids.insert(f"{wrapper}Payload", wrapped.canonical.clone())
@@ -269,8 +273,9 @@ pub def test_result_requirements_use_exact_owned_source_declaration_closure() ->
     mut hidden = borrowed.clone()
     hidden.name = "HiddenBorrow"
     hidden.canonical = source_identity("result_requirements", "HiddenBorrow", SemanticSourceTargetKind.Enum)
-    hidden.named_type_identities.clear()
-    _ = hidden.named_type_identities.insert("HiddenBorrow", hidden.canonical.clone())
+    mut hidden_scope: BTreeMap[str, CanonicalSymbolId] = BTreeMap.new()
+    _ = hidden_scope.insert("HiddenBorrow", hidden.canonical.clone())
+    hidden.named_type_identities = Arc.new(hidden_scope)
     hidden.variants[0].fields = [generic("List", [RustType.Ref(text.clone())])]
     mut hidden_ids: BTreeMap[str, CanonicalSymbolId] = BTreeMap.new()
     _ = hidden_ids.insert("HiddenBorrow", hidden.canonical.clone())
@@ -280,8 +285,12 @@ pub def test_result_requirements_use_exact_owned_source_declaration_closure() ->
 
     mut left = source_enum("Left", [RustType.Named("Right")])
     mut right = source_enum("Right", [RustType.Named("Left"), RustType.Ref(text.clone())])
-    _ = left.named_type_identities.insert("Right", right.canonical.clone())
-    _ = right.named_type_identities.insert("Left", left.canonical.clone())
+    mut left_scope = left.named_type_identities.as_ref().clone()
+    _ = left_scope.insert("Right", right.canonical.clone())
+    left.named_type_identities = Arc.new(left_scope)
+    mut right_scope = right.named_type_identities.as_ref().clone()
+    _ = right_scope.insert("Left", left.canonical.clone())
+    right.named_type_identities = Arc.new(right_scope)
     mut cycle_ids: BTreeMap[str, CanonicalSymbolId] = BTreeMap.new()
     _ = cycle_ids.insert("Left", left.canonical.clone())
     borrow_cycle_enums = [left.clone(), right.clone()]
