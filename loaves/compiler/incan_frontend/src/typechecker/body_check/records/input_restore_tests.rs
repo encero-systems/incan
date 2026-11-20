@@ -55,7 +55,7 @@ fn restored_native_result_requires_the_same_checked_call() -> Result<(), Box<dyn
         .render_compact();
     let row = vec!["type-identity".into(), path, "root".into(), stable];
     let mut identities = BTreeMap::new();
-    assert!(super::super::restore_local(&positions, &mut local, &mut identities, &row).is_err());
+    assert!(super::super::restore_local(&checker, &positions, &mut local, &mut identities, &row).is_err());
     local.rust.checked_calls.insert(
         owner,
         crate::typechecker::type_info::RustCheckedCall {
@@ -73,14 +73,82 @@ fn restored_native_result_requires_the_same_checked_call() -> Result<(), Box<dyn
     );
     let mut wrong = row.clone();
     wrong[3] = wrong[3].replace("Args", "Other");
-    assert!(super::super::restore_local(&positions, &mut local, &mut identities, &wrong).is_err());
-    super::super::restore_local(&positions, &mut local, &mut identities, &row)?;
+    assert!(super::super::restore_local(&checker, &positions, &mut local, &mut identities, &wrong).is_err());
+    super::super::restore_local(&checker, &positions, &mut local, &mut identities, &row)?;
     assert_eq!(
         local
             .expressions
             .expression_type_identities
             .get(&owner)
             .and_then(|identities| identities.get(&Vec::new())),
+        Some(&canonical)
+    );
+    Ok(())
+}
+
+/// A nested Rust result component must match both the checked expression type and the current ABI item.
+#[test]
+fn restored_native_result_component_keeps_its_checked_abi_identity() -> Result<(), Box<dyn std::error::Error>> {
+    use crate::loaf_index::LoafIndex;
+    use crate::symbols::ResolvedType;
+    use incan_lang::interop::{RustItemKind, RustItemMetadata, RustTypeInfo, RustVisibility};
+
+    let (program, mut checker, owner) = fixture("def entry() -> int:\n    return 1\n", "entry")?;
+    let native = "std::fs::File";
+    let mut loaves = LoafIndex::default();
+    loaves.add_rust_facts(
+        &Default::default(),
+        BTreeMap::from([(
+            native.into(),
+            RustItemMetadata {
+                canonical_path: native.into(),
+                definition_path: None,
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo::default()),
+            },
+        )]),
+    );
+    checker.set_loaves(std::sync::Arc::new(loaves));
+    let positions = Positions::new(&checker, &program, owner, false)?;
+    let path = positions.nodes.anchor(owner)?.path;
+    let mut local = BodyLocal {
+        owner,
+        ..BodyLocal::default()
+    };
+    local.expressions.expr_types.insert(
+        owner,
+        ResolvedType::Generic(
+            "Result".into(),
+            vec![ResolvedType::RustPath(native.into()), ResolvedType::Str],
+        ),
+    );
+    let canonical = incan_semantics_core::body_ir::rust_item_identity(native).ok_or("missing native identity")?;
+    let stable = incan_semantics_core::stable_identity::StableDeclarationId::from_canonical(&canonical, None, None)
+        .ok_or("missing stable native identity")?
+        .render_compact();
+    let row =
+        |selector: &str, identity: &str| vec!["type-identity".into(), path.clone(), selector.into(), identity.into()];
+    let mut identities = BTreeMap::new();
+    assert!(
+        super::super::restore_local(&checker, &positions, &mut local, &mut identities, &row("1", &stable)).is_err()
+    );
+    assert!(
+        super::super::restore_local(
+            &checker,
+            &positions,
+            &mut local,
+            &mut identities,
+            &row("0", &stable.replace("File", "Other"))
+        )
+        .is_err()
+    );
+    super::super::restore_local(&checker, &positions, &mut local, &mut identities, &row("0", &stable))?;
+    assert_eq!(
+        local
+            .expressions
+            .expression_type_identities
+            .get(&owner)
+            .and_then(|owners| owners.get(&vec![0])),
         Some(&canonical)
     );
     Ok(())
@@ -144,7 +212,7 @@ fn native_call_refinement_types_roundtrip() -> Result<(), Box<dyn std::error::Er
         ..BodyLocal::default()
     };
     for row in rows {
-        super::super::restore_local(&positions, &mut restored, &mut BTreeMap::new(), row)?;
+        super::super::restore_local(&checker, &positions, &mut restored, &mut BTreeMap::new(), row)?;
     }
     assert_eq!(restored.calls.body_ir_call_result_types.get(&span), Some(&native));
     assert_eq!(restored.calls.body_ir_native_argument_types.get(&span), Some(&native));
@@ -181,7 +249,7 @@ fn native_value_types_roundtrip_by_local_identity() -> Result<(), Box<dyn std::e
         owner,
         ..BodyLocal::default()
     };
-    super::super::restore_local(&positions, &mut restored, &mut BTreeMap::new(), row)?;
+    super::super::restore_local(&checker, &positions, &mut restored, &mut BTreeMap::new(), row)?;
     assert_eq!(restored.rust.value_native_types.get(&identity), Some(&native));
     Ok(())
 }
@@ -622,7 +690,7 @@ fn parameter_requirements_preserve_conflicts_and_identity() -> Result<(), Box<dy
             owner,
             ..BodyLocal::default()
         };
-        super::super::restore_local(&positions, &mut local, &mut BTreeMap::new(), &row)?;
+        super::super::restore_local(&checker, &positions, &mut local, &mut BTreeMap::new(), &row)?;
         let requirement = local
             .expressions
             .body_ir_parameter_requirements
@@ -633,7 +701,7 @@ fn parameter_requirements_preserve_conflicts_and_identity() -> Result<(), Box<dy
         let mut restored = Vec::new();
         super::super::project_expressions(&positions, &local, &mut restored)?;
         assert_eq!(restored, vec![row.clone()]);
-        assert!(super::super::restore_local(&positions, &mut local, &mut BTreeMap::new(), &row).is_err());
+        assert!(super::super::restore_local(&checker, &positions, &mut local, &mut BTreeMap::new(), &row).is_err());
     }
     let mut wrong = row.clone();
     let body = checker.checked_body(owner).ok_or("missing checked owner")?;
@@ -650,7 +718,7 @@ fn parameter_requirements_preserve_conflicts_and_identity() -> Result<(), Box<dy
         owner,
         ..BodyLocal::default()
     };
-    assert!(super::super::restore_local(&positions, &mut local, &mut BTreeMap::new(), &wrong).is_err());
+    assert!(super::super::restore_local(&checker, &positions, &mut local, &mut BTreeMap::new(), &wrong).is_err());
     assert!(local.expressions.body_ir_parameter_requirements.is_empty());
     Ok(())
 }

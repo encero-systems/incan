@@ -82,8 +82,12 @@ fn verify_checked_fixture(
         .and_then(|binding| binding.identity.as_ref())
         .and_then(|identity| checker.type_info.declarations.ownership_contracts.get(identity))
         .cloned();
+    let loaves = std::sync::Arc::clone(&checker.loaves);
     drop(checker);
-    let restored = restore(&positions, &program, owner, fields)?;
+    // The restore oracle can consult admitted provider metadata, but no checked facts from its baseline.
+    let mut authority = TypeChecker::new();
+    authority.set_loaves(loaves);
+    let restored = restore(&authority, &positions, &program, owner, fields)?;
     compare_checked_body(&expected, &restored.view)?;
     if restored.ownership != expected_ownership {
         return Err(NodeBindingError::BaselineDifference("ownership contract".into()));
