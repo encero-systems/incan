@@ -8,6 +8,7 @@ from std.primitives.crumb.hashes import description_hash, value_hash
 from std.primitives.crumb.records import RowRecord
 from std.primitives.crumb.values import Projection, Value
 from std.primitives.text import copy_frozen_bytes
+from std.primitives.views import MappedView
 pub from checker_field_grammar import CanonicalField, CodecFault
 from checker_field_grammar import allocated_scope_index, decimal, full_digest, validate_field
 pub from checker_record_models import (
@@ -23,7 +24,7 @@ pub from checker_record_models import (
     GraphNamespaceValue,
     SettledCallRead,
 )
-from crumb_rows import ModelField, decode_rows, encode_rows, model_description, operation_budget, required_value
+from crumb_rows import ModelField, decode_rows, decode_rows_view, encode_rows, model_description, operation_budget, required_value
 from graph_crumb_fields import decode_graph_row, encode_graph_row
 from record_scope import MAX_CHECKER_ROW_BYTES
 
@@ -555,9 +556,23 @@ pub def encode_graph_namespace_value(value: GraphNamespaceValue) -> Result[bytes
 
 pub def decode_graph_namespace_value(encoded: bytes) -> Result[GraphNamespaceValue, CodecFault]:
     """Decode one complete namespace row and refuse unordered, empty or trailing lowering witnesses."""
-    rows = decode_rows(encoded, [graph_namespace_description(), graph_namespace_description(3), graph_namespace_description(2)], MAX_CHECKER_ROW_BYTES).map_err(
-        (_) => CodecFault.Malformed,
-    )?
+    rows = decode_rows(encoded, graph_namespace_descriptions(), MAX_CHECKER_ROW_BYTES).map_err((_) => CodecFault.Malformed)?
+    return decoded_graph_namespace(rows)
+
+
+pub def decode_graph_namespace_view(view: MappedView) -> Result[GraphNamespaceValue, CodecFault]:
+    """Decode a validated store frame without copying the envelope out of its mapping."""
+    rows = decode_rows_view(view, graph_namespace_descriptions(), MAX_CHECKER_ROW_BYTES).map_err((_) => CodecFault.Malformed)?
+    return decoded_graph_namespace(rows)
+
+
+def graph_namespace_descriptions() -> list[Description]:
+    """The current graph namespace schema and earlier rows with explicit compatibility rules."""
+    return [graph_namespace_description(), graph_namespace_description(3), graph_namespace_description(2)]
+
+
+def decoded_graph_namespace(rows: list[RowRecord]) -> Result[GraphNamespaceValue, CodecFault]:
+    """Recover one complete namespace from the admitted logical row, with optional call proofs."""
     if len(rows) != 1:
         return Err(CodecFault.Malformed)
     has_proof = rows[0].key == copy_frozen_bytes(GRAPH_NAMESPACE_SELECTOR)

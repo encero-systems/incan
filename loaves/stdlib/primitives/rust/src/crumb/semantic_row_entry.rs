@@ -8,9 +8,27 @@
 
 use std::sync::Arc;
 
+use crate::mapping::MappedView;
+
 use super::columns::Budget;
 use super::row_cursor::{Refusal, at};
 use super::rows::{self, Meta, ReadInputs, Rows};
+
+/// One immutable envelope already held by the caller.
+#[derive(Clone, Debug)]
+pub(super) enum RowData {
+    Owned(Arc<Vec<u8>>),
+    Mapped(MappedView),
+}
+
+impl AsRef<[u8]> for RowData {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Owned(bytes) => bytes.as_slice(),
+            Self::Mapped(view) => view.as_bytes(),
+        }
+    }
+}
 
 /// One native row-envelope admission: a positioned refusal or the admitted envelope's facts, and the allowance used.
 #[derive(Clone)]
@@ -36,7 +54,7 @@ pub struct RowAdmission {
     /// Elements of the allowance this admission used, admitted or refused.
     pub elements_charged: i64,
     /// The admitted envelope's bytes and decoded rows, which `semantic_row_set.rs` reads on request.
-    pub(super) data: Arc<Vec<u8>>,
+    pub(super) data: RowData,
     pub(super) rows: Option<Rows>,
 }
 
@@ -62,7 +80,7 @@ impl RowAdmission {
 /// The inputs of one public row read, gathered by the Incan caller before it asks for the admission.
 #[derive(Clone, Debug)]
 pub struct RowRequest {
-    data: Arc<Vec<u8>>,
+    data: RowData,
     supplied: Vec<Vec<u8>>,
     kinds: Vec<(String, bool)>,
     require_sealed: bool,
@@ -74,8 +92,18 @@ impl RowRequest {
     /// A request to admit one envelope from `data`. An exact read refuses any bytes after it, as `read_rows` does; a
     /// prefix read, as `read_prefix` does, reports how many bytes it occupies. The allowance starts empty.
     pub fn new(data: Vec<u8>, require_sealed: bool, exact: bool) -> Self {
+        Self::from_data(RowData::Owned(Arc::new(data)), require_sealed, exact)
+    }
+
+    /// Admit an immutable mapped region without copying the envelope into an intermediate byte vector.
+    pub fn from_view(data: MappedView, require_sealed: bool, exact: bool) -> Self {
+        Self::from_data(RowData::Mapped(data), require_sealed, exact)
+    }
+
+    /// Record common admission inputs before receiving any caller-owned schema or budget.
+    fn from_data(data: RowData, require_sealed: bool, exact: bool) -> Self {
         Self {
-            data: Arc::new(data),
+            data,
             supplied: Vec::new(),
             kinds: Vec::new(),
             require_sealed,
@@ -118,7 +146,7 @@ impl RowRequest {
                     require_sealed: self.require_sealed,
                     exact: self.exact,
                 };
-                rows::read_rows(&self.data, &inputs, &mut budget)
+                rows::read_rows(self.data.as_ref(), &inputs, &mut budget)
             }
             None => Err(at("invalid_description", 0)),
         };
@@ -148,7 +176,7 @@ impl RowRequest {
 /// The admission's facts from a read result and the allowance it used.
 fn admission(
     result: Result<Rows, Refusal>,
-    data: &Arc<Vec<u8>>,
+    data: &RowData,
     bytes: u64,
     elements: u64,
     cause: Option<&str>,
@@ -158,9 +186,9 @@ fn admission(
     // An exact admission and the request share the same immutable bytes. A prefix read retains only its envelope,
     // so it cannot keep unrelated trailing bytes alive.
     let admitted_bytes = match &result {
-        Ok(rows) if rows.consumed == data.len() => Arc::clone(data),
-        Ok(rows) => Arc::new(data[..rows.consumed].to_vec()),
-        Err(_) => Arc::default(),
+        Ok(rows) if rows.consumed == data.as_ref().len() => data.clone(),
+        Ok(rows) => RowData::Owned(Arc::new(data.as_ref()[..rows.consumed].to_vec())),
+        Err(_) => RowData::Owned(Arc::default()),
     };
     let mut admission = RowAdmission {
         category: String::new(),
@@ -267,8 +295,20 @@ mod tests {
         reference.supply(encoded);
         let first = reference.admit();
         let second = reference.admit();
-        assert!(Arc::ptr_eq(&reference.data, &first.data));
-        assert!(Arc::ptr_eq(&first.data, &second.data));
+        let owner = crate::mapping::MappedFile::owned(bytes(EMPTY_REFERENCE))?;
+        let view = owner.view(0, owner.len()).ok_or("missing complete input view")?;
+        let mut mapped = RowRequest::from_view(view.clone(), false, true);
+        mapped.allow(i64::MAX, i64::MAX, i64::MAX);
+        for supplied in &reference.supplied {
+            mapped.supply(supplied.clone());
+        }
+        let admitted = mapped.admit();
+        assert!(admitted.admitted(), "mapped row refused: {}", admitted.category);
+        assert_eq!(admitted.data.as_ref().as_ptr(), view.as_bytes().as_ptr());
+        assert_eq!(admitted.bytes_charged, first.bytes_charged);
+        assert_eq!(admitted.elements_charged, first.elements_charged);
+        assert_eq!(reference.data.as_ref().as_ptr(), first.data.as_ref().as_ptr());
+        assert_eq!(first.data.as_ref().as_ptr(), second.data.as_ref().as_ptr());
         assert_eq!(second.reference_index(0), 0);
         assert_eq!(second.reference_index(1), -1);
         assert!(rows::cached_reference_metadata(&reference.supplied).is_some());
@@ -306,15 +346,19 @@ mod tests {
         require_seal.require_sealed = true;
         assert_eq!(compare(&require_seal).category, "seal_required");
         let mut damaged_row = reference.clone();
-        if let Some(last) = Arc::make_mut(&mut damaged_row.data).last_mut() {
+        let mut damaged = damaged_row.data.as_ref().to_vec();
+        if let Some(last) = damaged.last_mut() {
             *last = 255;
         }
+        damaged_row.data = RowData::Owned(Arc::new(damaged));
         assert!(!compare(&damaged_row).admitted());
         let mut malformed_supply = reference.clone();
         malformed_supply.supplied[1] = vec![9];
         assert_eq!(compare(&malformed_supply).category, "invalid_description");
         let mut changed_dictionary = reference.clone();
-        Arc::make_mut(&mut changed_dictionary.data)[20] ^= 1;
+        let mut changed = changed_dictionary.data.as_ref().to_vec();
+        changed[20] ^= 1;
+        changed_dictionary.data = RowData::Owned(Arc::new(changed));
         assert_eq!(compare(&changed_dictionary).category, "description_mismatch");
         let mut registered = reference.clone();
         registered.register("Another".to_string(), false);

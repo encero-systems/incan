@@ -22,7 +22,7 @@ pub class RowSet:
 
     @staticmethod
     pub def create(native: RowAdmission, supplied: list[Description], backing: MappedView) -> Self:
-        """Retain one natively admitted envelope, the descriptions supplied for it, and its owned backing view."""
+        """Retain one natively admitted envelope, the descriptions supplied for it, and its shared backing view."""
         return RowSet(native=native, supplied=supplied, backing=backing)
 
     pub def len(self) -> int:
@@ -109,7 +109,7 @@ def admit(
     mut budget: Budget,
 ) -> Result[tuple[RowSet, int], BinaryError]:
     """Hand the native codec the view's bytes, each supplied description D-encoded, and the registered kinds."""
-    mut request = RowRequest.new(view.to_bytes(), require_sealed, exact)
+    mut request = RowRequest.from_view(view.0, require_sealed, exact)
     # Encoding the caller's own descriptions is boundary work, not the request's, so it has its own allowance.
     mut boundary = Budget
         .create(bytes=9223372036854775807, elements=9223372036854775807, depth=9223372036854775807)

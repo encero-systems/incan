@@ -4,6 +4,7 @@ from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
 from pub::incan_platform.store import Snapshot, get
 from pub::internal_models import GraphBodyValue, ProducerRank, encode_graph_body_values, encode_graph_checking_pair
+from pub::internal_models.namespace_references import NamespaceReference, encode_namespace_references, namespace_reference_filename
 from pub::internal_models.records import ReadReceipt, RecordKey, encode_record_key
 from pub::internal_models.lowering_events import LoweringEvent
 from pub::internal_models.namespace_order import NamespaceOrder, decode_namespace_order
@@ -65,16 +66,25 @@ pub def select_namespace_inventory_except(
     profile: str,
     origin: str,
     invalid: list[str],
+    use_references: bool = false,
 ) -> Result[NamespaceInventory, str]:
     """Select namespace pages and certify which scoped checker peers may travel exclusively in a whole module."""
     mut inventory = NamespaceInventory()
     slots = OutputSlots(origin=origin, identity_profile=NAMESPACE_IDENTITY_PROFILE, excluded=invalid)
     mut orders: Dict[str, NamespaceOrder] = {}
     mut modules: Dict[str, str] = {}
-    for record in reusable_family_records(selected, "namespace", profile, Some(slots))?:
+    mut references: list[NamespaceReference] = []
+    for record in reusable_family_records(selected, "namespace", profile, Some(slots), use_references)?:
         module = record.key.identity
-        key = "namespace-" + hexlify(sha256.digest(module.encode("utf-8")))
-        inventory.pages.append(SelectedBodyPage(key=key, value=record.value))
+        match record.location:
+            Some(location) =>
+                references.append(NamespaceReference(
+                    key=record.key, segment=location.segment, offset=location.offset, length=location.length,
+                    frame_digest=location.digest, value_digest=record.value_digest,
+                ))
+            None =>
+                key = "namespace-" + hexlify(sha256.digest(module.encode("utf-8")))
+                inventory.pages.append(SelectedBodyPage(key=key, value=record.value))
         certificate = record.receipt.preparation.rank_certificate
         if certificate == "compiled-check":
             continue
@@ -90,6 +100,8 @@ pub def select_namespace_inventory_except(
         if module not in orders[certificate].members:
             return Err("namespace selection is outside its certified cycle")
         modules[module] = certificate
+    if len(references) > 0:
+        inventory.pages.append(SelectedBodyPage(key=namespace_reference_filename(), value=encode_namespace_references(references)?))
     for module in modules.keys():
         certificate = modules[module]
         mut complete = true

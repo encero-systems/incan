@@ -423,7 +423,7 @@ impl RowAdmission {
 
     /// A record's row frame within the admitted bytes.
     fn raw(&self, record: &super::rows::Record) -> &[u8] {
-        &self.data[record.origin..record.origin + record.length]
+        &self.data.as_ref()[record.origin..record.origin + record.length]
     }
 
     /// Project the admitted value once the original row and key charges fit this read's allowance.

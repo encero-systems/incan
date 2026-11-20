@@ -191,6 +191,8 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
         description = replaced(description, "unit_descriptor_crumb", JsonValue.bool(true))?
     if toolchain.compiler_record_export_crumb:
         description = replaced(description, "compiler_record_export_crumb", JsonValue.bool(true))?
+    if toolchain.namespace_references:
+        description = replaced(description, "namespace_references", JsonValue.bool(true))?
     write_json(stage.joinpath("toolchain.json"), description)?
     # The release signer the installation carries travels inside the archive (DD-0016).
     _ = ship(directory, stage)?

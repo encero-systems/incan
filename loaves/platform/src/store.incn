@@ -485,6 +485,15 @@ pub def lookup(view: Snapshot, key: str) -> Result[Lookup, StoreError]:
             return read_frame(view.root, key, location)
 
 
+pub def locate_value(view: Snapshot, key: str) -> Result[Option[Location], StoreError]:
+    """Select a live frame address from a pinned index. The consumer authenticates the frame when it opens it."""
+    found = index_find(view.root, view.index, key).map_err(index_failure)?
+    if let Some(location) = found:
+        if not location.tombstone:
+            return Ok(found)
+    return Ok(None)
+
+
 pub def lookup_binding(view: Snapshot, key: str) -> Result[BindingLookup, StoreError]:
     """Read one complete value with its authenticated binding evidence."""
     return select_binding(view, key, true)
