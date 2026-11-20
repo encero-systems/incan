@@ -8,7 +8,7 @@ pub from pub::internal_models.checked_body_counts import CheckedBodyCounts
 from pub::internal_models.checked_body_counts import decode_checked_body_counts
 pub from pub::internal_models.checker_publication import CheckerRecordCounts
 from pub::internal_models.checker_publication import checker_report_suffix, decode_checker_counts
-from pub::internal_models.namespace_proof import namespace_proof_output_suffix
+from pub::internal_models.namespace_order import ranked_output_suffix
 from std.fs import Path
 from std.json import parse
 from driver_command import driver_command
@@ -165,7 +165,7 @@ pub def graph_body_output_path(unit: UnitDescription, key: Key, typed: bool) -> 
     directory = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath("units")
     description = descriptor_path(directory, described_by(key), typed)
     if typed:
-        return Path(description.0 + namespace_proof_output_suffix())
+        return Path(description.0 + ranked_output_suffix())
     return Path(f"{description.0}.graph-body-output")
 
 

@@ -376,6 +376,22 @@ fn checked_attempt(
             path_indexes,
         )
     });
+    let project_dependencies = |imports: &incan_driver::modules::SourceModuleImports, index: usize| {
+        let mut dependencies = imports
+            .dependencies(index)
+            .into_iter()
+            .filter_map(|dependency| {
+                modules[dependency]
+                    .file_path
+                    .strip_prefix(&unit.project_root)
+                    .ok()
+                    .map(|path| path.to_string_lossy().into_owned())
+            })
+            .collect::<Vec<_>>();
+        dependencies.sort();
+        dependencies.dedup();
+        dependencies
+    };
     let mut analysis = {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::analyze_modules", modules = modules.len()).entered();
         session
@@ -384,19 +400,7 @@ fn checked_attempt(
                 if let Some((imports, indexes)) = &namespace_imports
                     && let Some(&index) = indexes.get(module.file_path.as_path())
                 {
-                    let mut dependencies = imports
-                        .dependencies(index)
-                        .into_iter()
-                        .filter_map(|dependency| {
-                            modules[dependency]
-                                .file_path
-                                .strip_prefix(&unit.project_root)
-                                .ok()
-                                .map(|path| path.to_string_lossy().into_owned())
-                        })
-                        .collect::<Vec<_>>();
-                    dependencies.sort();
-                    dependencies.dedup();
+                    let dependencies = project_dependencies(imports, index);
                     graph_body_output.observe(module, checker, &dependencies, package_identity);
                 }
                 if let Some(publication) = publication.as_mut() {
@@ -405,6 +409,9 @@ fn checked_attempt(
             })
             .map_err(|failure| receipt.diagnostic(failure))?
     };
+    if let Some((imports, indexes)) = &namespace_imports {
+        graph_body_output.include_restored_imports(indexes, |index| project_dependencies(imports, index))?;
+    }
     let entry = modules
         .iter()
         .position(|module| module.file_path == path)
