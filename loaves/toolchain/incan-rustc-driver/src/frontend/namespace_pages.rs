@@ -1,0 +1,195 @@
+//! Restore editable namespaces from request-local pages or the pinned store selected by Oven.
+
+use std::path::Path;
+
+use incan_frontend::checker_records::{GraphNamespaceRecord, RecordAdapterFault};
+use incan_semantics_core::SymbolOrigin;
+use internal_models::{GraphNamespaceValue, NamespaceReference};
+use sha2::{Digest, Sha256};
+
+use super::namespace_crumb;
+
+/// Sorted frame addresses owned by one request. Oven keeps the producing snapshot leased until the request ends.
+#[derive(Debug, Default)]
+pub(super) struct NamespacePages {
+    references: Vec<NamespaceReference>,
+}
+
+impl NamespacePages {
+    /// Read the bounded transport once. Older installations write ordinary keyed namespace files.
+    pub(super) fn open(directory: &Path, bakery: Option<&Path>) -> Result<Self, String> {
+        let path = directory.join(internal_models::namespace_reference_filename());
+        let metadata = match std::fs::metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(error) => return Err(format!("cannot inspect namespace frame references: {error}")),
+        };
+        if bakery.is_none() || !metadata.is_file() || metadata.len() > 64 * 1024 * 1024 {
+            return Err("namespace frame references require a bakery and a bounded regular page".into());
+        }
+        let bytes = std::fs::read(path).map_err(|error| format!("cannot read namespace frame references: {error}"))?;
+        let mut references = internal_models::decode_namespace_references(&bytes)?;
+        references.sort_unstable_by(|left, right| left.key.identity.cmp(&right.key.identity));
+        Ok(Self { references })
+    }
+
+    /// Recover an admitted namespace through the selected address, verifying both frame and evaluation digests.
+    pub(super) fn read(
+        &self,
+        directory: &Path,
+        bakery: Option<&Path>,
+        source: &str,
+    ) -> Result<Option<GraphNamespaceRecord>, RecordAdapterFault> {
+        let Ok(index) = self
+            .references
+            .binary_search_by(|reference| reference.key.identity.as_str().cmp(source))
+        else {
+            return read_legacy_namespace(directory, source);
+        };
+        let reference = &self.references[index];
+        let bakery = bakery
+            .and_then(Path::to_str)
+            .ok_or_else(|| RecordAdapterFault::InvalidField("namespace frame has no UTF-8 bakery anchor".into()))?;
+        let bytes = reference.length
+            - reference.key.family.len() as i64
+            - reference.key.identity_profile.len() as i64
+            - reference.key.origin.len() as i64
+            - reference.key.identity.len() as i64
+            - reference.key.facet.len() as i64
+            - reference.key.context.len() as i64
+            - 8 // frame key length prefix
+            - 5; // separators in the six-field record key
+        let _page = tracing::trace_span!(
+            target: "incan::invocation", "incan_rustc_driver::restore_namespace",
+            module = source, bytes, backing = "bakery"
+        )
+        .entered();
+        let view = incan_worker_host::read_namespace_frame(bakery.to_owned(), reference)
+            .map_err(RecordAdapterFault::InvalidField)?;
+        let record = internal_models::decode_graph_namespace_view(&view).map_err(namespace_codec_error)?;
+        admit_namespace(source, record)
+    }
+}
+
+/// Report a schema refusal identically for both namespace transports.
+fn namespace_codec_error(error: internal_models::CodecFault) -> RecordAdapterFault {
+    RecordAdapterFault::InvalidField(format!("graph namespace page refused: {error:?}"))
+}
+
+/// Read a complete namespace page staged by an Oven that did not offer store references.
+fn read_legacy_namespace(root: &Path, source: &str) -> Result<Option<GraphNamespaceRecord>, RecordAdapterFault> {
+    const MAX_PAGE_BYTES: u64 = 64 * 1024 * 1024;
+    let key = format!("namespace-{}", hex::encode(Sha256::digest(source.as_bytes())));
+    let path = root.join(key);
+    let metadata = match std::fs::metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                format!("cannot inspect graph namespace page {}: {error}", path.display()),
+            ));
+        }
+    };
+    if !metadata.is_file() || metadata.len() > MAX_PAGE_BYTES {
+        return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+            "graph namespace page is not a bounded regular file".into(),
+        ));
+    }
+    let _page = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::restore_namespace", module = source, bytes = metadata.len()).entered();
+    let encoded = std::fs::read(&path).map_err(|error| {
+        incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
+            "cannot read graph namespace page {}: {error}",
+            path.display()
+        ))
+    })?;
+    let record = internal_models::decode_graph_namespace_value(&encoded).map_err(namespace_codec_error)?;
+    admit_namespace(source, record)
+}
+
+/// Bind compiler-owned namespace metadata and Body IR to the source whose graph record was opened.
+fn admit_namespace(
+    source: &str,
+    record: GraphNamespaceValue,
+) -> Result<Option<GraphNamespaceRecord>, RecordAdapterFault> {
+    if record.module != source {
+        return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+            "graph namespace page disagrees with its requested source".into(),
+        ));
+    }
+    if !record.call_reads_known {
+        return Ok(None);
+    }
+    let interface_span = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::decode_namespace_interface", module = source, bytes = record.interface.len()).entered();
+    let checked = namespace_crumb::admit(source, &record.identity_proof, record.interface)
+        .map_err(incan_frontend::checker_records::RecordAdapterFault::InvalidField)?;
+    drop(interface_span);
+    let body_span = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::decode_namespace_body_ir", module = source, bytes = record.body_ir.len()).entered();
+    let body_ir =
+        incan_semantics_core::executable_representation::decode_namespace_module(&record.body_ir).map_err(|error| {
+            incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
+                "graph namespace Body IR refused: {error}"
+            ))
+        })?;
+    drop(body_span);
+    // Join witnesses by exact kernel owner path once per namespace. Duplicate declarations stay ambiguous.
+    let mut owners = std::collections::HashMap::new();
+    if !record.lowering_inputs.is_empty() {
+        for body in &body_ir.bodies {
+            owners
+                .entry(body.direct_call_id.path())
+                .and_modify(|found| *found = None)
+                .or_insert(Some(&body.direct_call_id));
+        }
+    }
+    let mut lowering_inputs = Vec::with_capacity(record.lowering_inputs.len());
+    for input in record.lowering_inputs {
+        let [owner, witness]: [String; 2] = input.try_into().map_err(|_| {
+            incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                "graph namespace lowering witness has the wrong field count".into(),
+            )
+        })?;
+        let id = match owners.get(owner.as_str()) {
+            Some(Some(id)) => *id,
+            Some(None) => {
+                return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                    "graph namespace lowering witness names multiple Body IR owners".into(),
+                ));
+            }
+            None => {
+                return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                    "graph namespace lowering witness names no Body IR owner".into(),
+                ));
+            }
+        };
+        lowering_inputs.push((id.clone(), witness));
+    }
+    let mut package_roots = Vec::with_capacity(record.package_roots.len());
+    for encoded in record.package_roots {
+        let identity = incan_semantics_core::decode_incan_symbol_identity(&encoded)
+            .ok()
+            .flatten()
+            .filter(|identity| matches!(identity.origin, SymbolOrigin::Package { .. }))
+            .ok_or_else(|| {
+                incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                    "graph namespace has an invalid package declaration root".into(),
+                )
+            })?;
+        package_roots.push(identity);
+    }
+    Ok(Some(incan_frontend::checker_records::GraphNamespaceRecord {
+        source: record.module,
+        call_reads: record
+            .call_reads
+            .into_iter()
+            .map(|r| incan_frontend::body_ir::SettledCallRead {
+                reader: r.reader,
+                target: r.target,
+                digest: r.digest,
+            })
+            .collect(),
+        interface: checked,
+        package_roots,
+        body_ir,
+        lowering_inputs,
+    }))
+}
