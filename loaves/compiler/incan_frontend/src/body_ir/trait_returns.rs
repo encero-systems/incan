@@ -116,7 +116,7 @@ pub(super) fn refine_body(body: &mut bir::Body, context: &ReturnContext<'_>) -> 
     refine_block(
         &mut body.block.stmts,
         &mut body.locals,
-        std::sync::Arc::make_mut(&mut body.named_type_identities),
+        &mut body.named_type_identities,
         context,
     );
     let retained = context.signatures.get(body.canonical.as_ref()?)?;
@@ -164,7 +164,7 @@ fn retain_return_annotation(body: &mut bir::Body, program: &ast::Program, facts:
     let Some(name) = type_base(&declared) else {
         return;
     };
-    std::sync::Arc::make_mut(&mut body.named_type_identities).insert(name.to_owned(), identity.clone());
+    super::nominal_carriers::retain_binding(&mut body.named_type_identities, name, identity);
 }
 
 /// Find the physical return annotation for one frame; nested method spans must match exactly within their owner.
@@ -226,7 +226,7 @@ pub(super) fn signature(body: &bir::Body) -> ReturnSignature {
 fn refine_block(
     statements: &mut [bir::Statement],
     locals: &mut [bir::LocalDecl],
-    identities: &mut BTreeMap<String, CanonicalSymbolId>,
+    identities: &mut bir::SharedIdentities,
     context: &ReturnContext<'_>,
 ) {
     let ReturnContext {
@@ -337,7 +337,7 @@ fn method_return_witness(
     target: &bir::MethodTarget,
     args: &[bir::ArgumentElement],
     locals: &[bir::LocalDecl],
-    identities: &mut BTreeMap<String, CanonicalSymbolId>,
+    identities: &mut bir::SharedIdentities,
     nominals: &[&bir::NominalDeclaration],
     implementations: &[&bir::TraitImplementation],
     signatures: &HashMap<CanonicalSymbolId, ReturnSignature>,
@@ -443,7 +443,7 @@ fn async_call_carrier(is_async: bool, carrier: IncanType) -> IncanType {
 fn retain_witness_identities(
     ty: &IncanType,
     source: &BTreeMap<String, CanonicalSymbolId>,
-    destination: &mut BTreeMap<String, CanonicalSymbolId>,
+    destination: &mut bir::SharedIdentities,
 ) -> bool {
     let name = match ty {
         IncanType::Named(name) | IncanType::Generic { base: name, .. } => Some(name),
@@ -453,7 +453,7 @@ fn retain_witness_identities(
         if destination.get(name).is_some_and(|previous| previous != identity) {
             return false;
         }
-        destination.insert(name.clone(), identity.clone());
+        super::nominal_carriers::retain_binding(destination, name, identity);
     }
     match ty {
         IncanType::Generic { args, .. } | IncanType::Tuple(args) => args

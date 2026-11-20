@@ -32,6 +32,7 @@ pub from record_protocol import (
     encode_record_message,
     decode_record_message,
 )
+pub from namespace_frames import NamespaceFrameReader, namespace_frame_reader, read_namespace_frame
 pub from record_directory import DirectoryMember, DirectoryAnswer, directory_member_key, read_directory
 pub from lifecycle import ActivationOutcome
 pub from record_snapshot import (

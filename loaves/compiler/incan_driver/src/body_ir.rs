@@ -8,6 +8,7 @@ use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::typechecker::TypeCheckInfo;
 use incan_semantics_core::body_ir::BodyIrModule;
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
+use std::borrow::Cow;
 use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 use std::thread;
@@ -20,9 +21,9 @@ use std::thread;
 const MAX_BODY_IR_WORKERS: usize = 4;
 
 /// One strongly connected source component and the completed source modules it imports.
-struct AuthoredComponent {
+struct AuthoredComponent<'graph> {
     members: Vec<usize>,
-    dependencies: Vec<usize>,
+    dependencies: Cow<'graph, [usize]>,
 }
 
 /// Build authored modules in collection order against one provider catalog and the preceding dependency context.
@@ -75,7 +76,7 @@ fn lower_with_namespaces(
     let provider_operations = ProviderOperationCatalog::from_loaves(session.loaves())?;
     let unit = session.unit();
     let library_package = (unit.kind == UnitKind::Library).then_some(unit.package.as_str());
-    let imports = crate::modules::SourceModuleImports::new(modules, session.own_standard_package());
+    let imports = &analysis.imports;
     let cycle_peers = imports.cycle_peers();
     let type_infos = modules
         .iter()
@@ -85,7 +86,7 @@ fn lower_with_namespaces(
                 .ok_or("module analysis is missing")
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let components = authored_components(&imports, &cycle_peers);
+    let components = authored_components(imports, cycle_peers);
     let waves = component_waves(&components, modules.len())?;
     let mut authored = (0..modules.len()).map(|_| None).collect::<Vec<Option<BodyIrModule>>>();
     for wave in waves {
@@ -95,7 +96,7 @@ fn lower_with_namespaces(
             modules,
             &type_infos,
             &mut namespace_bodies,
-            &cycle_peers,
+            cycle_peers,
             bodies,
             &authored,
             &provider_operations,
@@ -104,8 +105,11 @@ fn lower_with_namespaces(
             unit.kind == UnitKind::Test,
         )?;
         for (index, mut module) in lowered {
-            // A module's bodies carry equal module-wide identity maps; keep one shared map per distinct content.
-            incan_semantics_core::body_ir::share_equal_identity_maps(&mut module.bodies);
+            // The namespace codec has already restored shared nominal scopes. Only newly built bodies require
+            // interning.
+            if !restored[index] {
+                incan_semantics_core::body_ir::share_equal_identity_maps(&mut module.bodies);
+            }
             if authored[index].replace(module).is_some() {
                 return Err("Body IR source component produced a module twice".to_string());
             }
@@ -127,10 +131,10 @@ fn lower_with_namespaces(
 }
 
 /// Group source modules into import-cycle components and retain their external dependency closures.
-fn authored_components(
-    imports: &crate::modules::SourceModuleImports,
+fn authored_components<'graph>(
+    imports: &'graph crate::modules::SourceModuleImports,
     cycle_peers: &[Vec<usize>],
-) -> Vec<AuthoredComponent> {
+) -> Vec<AuthoredComponent<'graph>> {
     let mut claimed = vec![false; cycle_peers.len()];
     let mut components = Vec::new();
     for index in 0..cycle_peers.len() {
@@ -145,14 +149,20 @@ fn authored_components(
         for &member in &members {
             claimed[member] = true;
         }
-        let member_set = members.iter().copied().collect::<BTreeSet<_>>();
-        let dependencies = members
-            .iter()
-            .flat_map(|&member| imports.dependencies(member))
-            .filter(|dependency| !member_set.contains(dependency))
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
+        let dependencies = if members.len() == 1 {
+            Cow::Borrowed(imports.dependencies(index))
+        } else {
+            let member_set = members.iter().copied().collect::<BTreeSet<_>>();
+            Cow::Owned(
+                members
+                    .iter()
+                    .flat_map(|&member| imports.dependencies(member).iter().copied())
+                    .filter(|dependency| !member_set.contains(dependency))
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect(),
+            )
+        };
         components.push(AuthoredComponent { members, dependencies });
     }
     components
@@ -162,7 +172,7 @@ fn authored_components(
 ///
 /// Parsed module order is an output-order contract, not a topological-order contract. Standard packages can collect a
 /// consumer before its imported provider, so readiness is derived from the component graph itself.
-fn component_waves(components: &[AuthoredComponent], module_count: usize) -> Result<Vec<Vec<usize>>, String> {
+fn component_waves(components: &[AuthoredComponent<'_>], module_count: usize) -> Result<Vec<Vec<usize>>, String> {
     let mut component_by_module = vec![usize::MAX; module_count];
     for (component_index, component) in components.iter().enumerate() {
         for &member in &component.members {
@@ -208,11 +218,11 @@ mod tests {
         let components = vec![
             AuthoredComponent {
                 members: vec![0],
-                dependencies: vec![1],
+                dependencies: Cow::Borrowed(&[1]),
             },
             AuthoredComponent {
                 members: vec![1],
-                dependencies: Vec::new(),
+                dependencies: Cow::Borrowed(&[]),
             },
         ];
         assert_eq!(component_waves(&components, 2)?, vec![vec![1], vec![0]]);
@@ -227,7 +237,7 @@ mod tests {
         ];
         let component = AuthoredComponent {
             members: vec![1],
-            dependencies: vec![0],
+            dependencies: Cow::Borrowed(&[0]),
         };
         let imported = imported_modules(&component, &authored)?;
         let read: &BodyIrModule = &imported[0];
@@ -247,7 +257,7 @@ mod tests {
 )]
 fn lower_component_wave(
     wave: &[usize],
-    components: &[AuthoredComponent],
+    components: &[AuthoredComponent<'_>],
     modules: &[ParsedModule],
     type_infos: &[&TypeCheckInfo],
     namespace_bodies: &mut [Option<Arc<BodyIrModule>>],
@@ -321,7 +331,7 @@ fn lower_component_wave(
     reason = "the worker boundary carries one immutable compilation context"
 )]
 fn lower_component(
-    component: &AuthoredComponent,
+    component: &AuthoredComponent<'_>,
     modules: &[ParsedModule],
     type_infos: &[&TypeCheckInfo],
     retained: Vec<Option<Arc<BodyIrModule>>>,
@@ -414,7 +424,7 @@ fn lower_component(
 
 /// The completed source modules `component` imports, in import order, read where `authored` keeps them.
 fn imported_modules<'a>(
-    component: &AuthoredComponent,
+    component: &AuthoredComponent<'_>,
     authored: &'a [Option<BodyIrModule>],
 ) -> Result<Vec<&'a BodyIrModule>, String> {
     component
@@ -452,6 +462,7 @@ pub fn required_loaf_identities(
 ) -> Result<BTreeSet<CanonicalSymbolId>, String> {
     let checked = modules
         .iter()
+        .filter(|module| analysis.namespace_body_for_path(&module.file_path).is_none())
         .map(|module| {
             let info = analysis
                 .type_info_for_path(&module.file_path)

@@ -21,7 +21,7 @@ from rust::std::fs import remove_dir_all
 from pub::incan_platform.store import Snapshot
 from pub::internal_models.checker_records import CHECKER_PROFILE
 from compiler_body_keys import IDENTITY_PROFILE
-from compiler_body_values import encode_body_inventory, select_body_inventory_except, select_body_inventory_of
+from compiler_body_values import encode_body_inventory, select_checking_pairs
 from compiler_graph_records import family_listing, owner_evaluations
 from files import discard_file
 from observation import trace
@@ -29,8 +29,8 @@ from publication import place, publish_binary
 from unit import UnitDescription
 from unit_compiler import write_selected_records
 
-# The checker families one page carries; a new output in any of them selects the view's pages again.
-const PAGE_FAMILIES: FrozenList[str] = ["local", "final", "body-ir"]
+# These are checking pages. Native code generation selects its executable frames independently.
+const PAGE_FAMILIES: FrozenList[str] = ["local", "final"]
 
 
 model KeptPages:
@@ -41,6 +41,7 @@ model KeptPages:
 
     pub source: str
     pub context: str = ""
+    pub index: str = ""
     pub pages: Dict[str, str] = {}
     pub owners: Dict[str, str] = {}
     pub parked: list[str] = []
@@ -82,38 +83,43 @@ pub def keep_check_pages(
        context, or without a directory, select, encode and write every owner's page.
     3. Park the page of each owner this request invalidates, and return each page it no longer does.
     """
-    # 1. The output index names each current evaluation without reading or validating it.
-    source = selection_source(graph, unit, origin)?
+    # 1. The selected view's index is immutable. It already names the same evaluations when its root agrees.
+    context = checked_context(unit)?
     mut state = recorded_selection(directory)
     mut written = 0
-    # 2. A new evaluation in the view selects its owners again; another compiler context or a removed directory, all.
-    if state.source != source or not directory.is_dir():
-        context = checked_context(unit)?
-        if state.context == context and directory.is_dir() and parked_directory(directory).is_dir():
-            refreshed = refresh_pages(graph, origin, directory, state, source)?
-            state = refreshed.state
-            written = refreshed.written
-        else:
-            trace(f"check pages {directory.0}: selected again; recorded source '{state.source}', current '{source}'")
-            state = select_pages(graph, origin, unit, directory, source)?
-            written = len(state.pages)
-    # 3. Each move is one rename: no page is selected, encoded or written again.
+    mut updated = false
     parked = parked_directory(directory)
-    mut resting: list[str] = []
-    mut offered = 0
-    for identity in sorted([owner for owner in state.pages.keys()]):
-        key = state.pages[identity]
-        was_parked = identity in state.parked
-        if identity in invalid:
-            if not was_parked:
-                place(directory.joinpath(key), parked.joinpath(key))?
-            resting.append(identity)
-        else:
-            if was_parked:
-                place(parked.joinpath(key), directory.joinpath(key))?
-            offered += 1
-    state.parked = resting
-    record_selection(directory, state)?
+    directories_ready = directory.is_dir() and parked.is_dir()
+    if state.index != graph.index or state.context != context or not directories_ready:
+        source = selection_source(graph, context, origin)?
+        updated = true
+        # 2. A different view root may contain unrelated publications. Compare only the families a check consumes.
+        if state.source != source or not directories_ready:
+            if state.context == context and directories_ready:
+                refreshed = refresh_pages(graph, origin, directory, state, source)?
+                state = refreshed.state
+                written = refreshed.written
+            else:
+                trace(f"check pages {directory.0}: selected again; recorded source '{state.source}', current '{source}'")
+                state = select_pages(graph, origin, unit, directory, source)?
+                written = len(state.pages)
+        state.index = graph.index
+    # 3. Only owners entering or leaving invalidation need a rename. Unchanged offered pages stay in place.
+    resting = set([owner for owner in invalid if owner in state.pages])
+    previously_parked = set(state.parked)
+    for identity in state.parked:
+        if identity not in resting:
+            key = state.pages[identity]
+            place(parked.joinpath(key), directory.joinpath(key))?
+    current = sorted([identity for identity in resting])
+    for identity in current:
+        if identity not in previously_parked:
+            key = state.pages[identity]
+            place(directory.joinpath(key), parked.joinpath(key))?
+    offered = len(state.pages) - len(current)
+    state.parked = current
+    if updated:
+        record_selection(directory, state)?
     return Ok(CheckPages(directory=directory, offered=offered, written=written))
 
 
@@ -145,7 +151,7 @@ def refresh_pages(
         else:
             discard_file(directory.joinpath(key))
             discard_file(parked.joinpath(key))
-    records = select_body_inventory_of(graph, CHECKER_PROFILE, origin, changed)?
+    records = select_checking_pairs(graph, CHECKER_PROFILE, origin, Some(changed))?
     written = encode_body_inventory(records)?
     for index in range(len(records)):
         publish_binary(directory.joinpath(written[index].key), written[index].value)?
@@ -168,22 +174,27 @@ def read_selection(directory: Path) -> Result[KeptPages, str]:
     if not file.is_file():
         return Ok(KeptPages(source=""))
     encoded = file.read_bytes().map_err((error) => error.message())?
-    fields = decode_graph_row(encoded, b"chksel\x00", selection_description(), 4)?
+    fields = decode_graph_row(encoded, b"chksel\x00", selection_description(), 5)?
     context = text(fields[0].value)?
-    owners = named_digests(fields[1].value)?
-    pages = named_digests(fields[2].value)?
-    source = text(fields[3].value)?
+    index = text(fields[1].value)?
+    owners = named_digests(fields[2].value)?
+    pages = named_digests(fields[3].value)?
+    source = text(fields[4].value)?
+    parking = parked_directory(directory)
     mut parked: list[str] = []
-    for identity in sorted([owner for owner in pages.keys()]):
-        if parked_directory(directory).joinpath(pages[identity]).is_file():
-            parked.append(identity)
-    return Ok(KeptPages(source=source, context=context, pages=pages, owners=owners, parked=parked))
+    if parking.is_dir():
+        entries = parking.iterdir().map_err((error) => error.message())?
+        names = set([entry.name() for entry in entries if entry.is_file()])
+        if len(names) > 0:
+            parked = sorted([owner for owner in pages.keys() if pages[owner] in names])
+    return Ok(KeptPages(source=source, context=context, index=index, pages=pages, owners=owners, parked=parked))
 
 
 def selection_description() -> Description:
     """The context and source revision authenticate sorted owner and page digest mappings."""
-    return model_description(b"chksel\x00", "incan.check-page-selection/2", [
+    return model_description(b"chksel\x00", "incan.check-page-selection/3", [
         ModelField(identity=b"contex", name="context", storage="string"),
+        ModelField(identity=b"index_", name="index", storage="string"),
         ModelField(identity=b"owners", name="owners", storage="list<tuple<string,string>>"),
         ModelField(identity=b"pages_", name="pages", storage="list<tuple<string,string>>"),
         ModelField(identity=b"source", name="source", storage="string"),
@@ -215,6 +226,7 @@ def record_selection(directory: Path, state: KeptPages) -> Result[None, str]:
     """Atomically retain the selected context, revision and named page bindings."""
     encoded = encode_graph_row(b"chksel\x00", selection_description(), [
         required_value(b"contex", Value.Text(state.context)),
+        required_value(b"index_", Value.Text(state.index)),
         required_value(b"owners", digest_bindings(state.owners)),
         required_value(b"pages_", digest_bindings(state.pages)),
         required_value(b"source", Value.Text(state.source)),
@@ -229,9 +241,9 @@ def checked_context(unit: UnitDescription) -> Result[str, str]:
         None => return Err("checked-body pages require the complete compiler context")
 
 
-def selection_source(graph: Snapshot, unit: UnitDescription, origin: str) -> Result[str, str]:
-    """The compiler context and the revision of each checked-body output index entry in the view, as one digest."""
-    mut parts = [checked_context(unit)?]
+def selection_source(graph: Snapshot, context: str, origin: str) -> Result[str, str]:
+    """The compiler context and the checked-body family revisions in the view, as one digest."""
+    mut parts = [context]
     for family in PAGE_FAMILIES:
         parts.extend(family_listing(graph, family, CHECKER_PROFILE, IDENTITY_PROFILE, origin)?)
     return Ok(hexlify(sha256.digest("\n".join(parts).encode("utf-8"))))
@@ -245,7 +257,7 @@ def select_pages(
     source: str,
 ) -> Result[KeptPages, str]:
     """Select, encode and write every reusable owner's page into a fresh directory, with no owner parked."""
-    records = select_body_inventory_except(graph, CHECKER_PROFILE, origin, [])?
+    records = select_checking_pairs(graph, CHECKER_PROFILE, origin)?
     pages = encode_body_inventory(records)?
     write_selected_records(directory, unit, pages)?
     parked = parked_directory(directory)

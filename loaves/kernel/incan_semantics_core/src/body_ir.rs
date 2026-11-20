@@ -289,7 +289,7 @@ impl BodyIrModule {
 #[cfg(test)]
 mod tests;
 
-/// A body's checked nominal bindings, shared between clones of the body.
+/// Checked nominal bindings shared by executable bodies and declaration layouts.
 pub type SharedIdentities = std::sync::Arc<std::collections::BTreeMap<String, CanonicalSymbolId>>;
 
 /// Point bodies whose identity maps are equal at one shared map. A module's bodies are built from the same

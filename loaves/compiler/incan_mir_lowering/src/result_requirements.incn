@@ -26,12 +26,9 @@ pub def validate_result_requirements(
                     return Err("generic result profile lost its dependency requirements")
                 return Ok(None)
             mut layouts = ViewLifetimeLayout.start(declarations, enums)
-            mut identities: BTreeMap[str, CanonicalSymbolId] = BTreeMap.new()
-            for name, identity in body.named_type_identities.iter():
-                _ = identities.insert(str(name), identity.clone())
             for requirement in profile.result_requirements:
                 anchor, ty = requirement
-                if not independent_result_with_layout(ty, identities, declarations, enums, layouts):
+                if not independent_result_with_layout(ty, body.named_type_identities.as_ref(), declarations, enums, layouts):
                     return Err(f"generic result needs retained dependency facts in {body.name} at {anchor.start}")
     return Ok(None)
 
@@ -199,7 +196,7 @@ def independent_named(
             for field in declaration.field_types:
                 if not independent_payload(
                     field,
-                    declaration.named_type_identities,
+                    declaration.named_type_identities.as_ref(),
                     declarations,
                     enums,
                     layouts,
@@ -216,7 +213,7 @@ def independent_named(
                 for field in variant.fields:
                     if not independent_payload(
                         field,
-                        declaration.named_type_identities,
+                        declaration.named_type_identities.as_ref(),
                         declarations,
                         enums,
                         layouts,

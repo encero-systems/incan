@@ -10,6 +10,7 @@ from std.primitives.crumb.records import RowRecord
 from std.primitives.crumb.registrations import KindRegistry
 from std.primitives.crumb.row_writer import write_rows
 from std.primitives.crumb.values import IntegerValue, Metadata, MetadataEntry, Value, ValueField
+from std.primitives.views import MappedView
 from crumb_rows import ModelField, admit_rows, description_field, operation_budget
 from graph_crumb_fields import graph_read_budget
 
@@ -54,10 +55,22 @@ pub model PreparedWireReader:
     name: str
 
     pub def admit(self, encoded: bytes, mut budget: Budget, mut slots: list[int] = []) -> Result[RowAdmission, str]:
-        """Authenticate the complete bounded envelope against the compiler's closed reference dictionary."""
+        """Authenticate complete owned bytes against the compiler's closed reference dictionary."""
         if len(encoded) > 67108864:
             return Err(self.name + " exceeds its byte limit")
         mut request = RowRequest.new(encoded, false, true)
+        return self.admit_request(request, budget, slots)
+
+    pub def admit_view(self, view: MappedView, mut budget: Budget) -> Result[RowAdmission, str]:
+        """Authenticate one bounded envelope already anchored in immutable storage."""
+        if view.len() > 67108864:
+            return Err(self.name + " exceeds its byte limit")
+        mut slots: list[int] = []
+        mut request = RowRequest.from_view(view.0, false, true)
+        return self.admit_request(request, budget, slots)
+
+    def admit_request(self, mut request: RowRequest, mut budget: Budget, mut slots: list[int]) -> Result[RowAdmission, str]:
+        """Apply the same closed reference dictionary and budget to either backing."""
         for entry in self.dictionary:
             request.supply(entry)
         remaining_bytes, remaining_elements = budget.codec_allowance()
