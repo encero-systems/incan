@@ -311,6 +311,25 @@ mod tests {
         incan_frontend::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))
     }
 
+    /// Carry interface bytes through a graph namespace record, as a selected page does, and return the anchored view
+    /// that admission reads in place.
+    fn view(bytes: &[u8]) -> Result<super::MappedView, String> {
+        let value = internal_models::GraphNamespaceValue {
+            module: "domain".into(),
+            interface: bytes.to_vec(),
+            identity_proof: Vec::new(),
+            body_ir: vec![0],
+            lowering_inputs: Vec::new(),
+            package_roots: Vec::new(),
+            call_reads: Vec::new(),
+            call_reads_known: true,
+        };
+        let encoded = internal_models::encode_graph_namespace_value(&value).map_err(|error| format!("{error:?}"))?;
+        internal_models::decode_owned_namespace_view(&encoded)
+            .map(|record| record.interface)
+            .map_err(|error| format!("{error:?}"))
+    }
+
     #[test]
     fn documentation_changes_the_hover_product_and_preserves_checked_meaning() -> Result<(), String> {
         fn publication(
@@ -376,15 +395,17 @@ mod tests {
         let (without_proof, _) = super::remember_published("domain.incn", &bytes, original.clone(), false)?;
         assert!(without_proof.is_empty());
         let (proof, _) = super::remember_published("domain.incn", &bytes, original, true)?;
-        let selected = super::admit("domain.incn", &proof, bytes.clone())?;
-        assert!(super::admit("renamed.incn", &proof, bytes.clone()).is_err());
-        assert!(super::admit("domain.incn", &proof, bytes[..bytes.len() - 1].to_vec()).is_err());
-        assert!(super::admit("domain.incn", &proof[..proof.len() - 1], bytes.clone()).is_err());
-        assert!(super::admit("domain.incn", &[], bytes.clone())?.belongs_to("domain", &path));
+        let truncated = &bytes[..bytes.len() - 1];
+        let (selected, _) = super::admit("domain.incn", &proof, view(&bytes)?)?;
+        assert!(super::admit("renamed.incn", &proof, view(&bytes)?).is_err());
+        assert!(super::admit("domain.incn", &proof, view(truncated)?).is_err());
+        assert!(super::admit("domain.incn", &proof[..proof.len() - 1], view(&bytes)?).is_err());
+        let (unproved, _) = super::admit("domain.incn", &[], view(&bytes)?)?;
+        assert!(unproved.belongs_to("domain", &path));
         assert!(selected.belongs_to("domain", &path));
         assert!(!selected.belongs_to("domain", &["other".into()]));
         assert!(!selected.belongs_to("other", &path));
-        assert!(super::admit("domain.incn", &[], bytes[..bytes.len() - 1].to_vec()).is_err());
+        assert!(super::admit("domain.incn", &[], view(truncated)?).is_err());
         let restored = CheckedNamespaceInterface::from_bytes(&bytes, &codec)?;
         assert_eq!(restored.to_bytes(&codec)?, bytes);
         assert!(CheckedNamespaceInterface::from_bytes(&bytes[..bytes.len() - 1], &codec).is_err());

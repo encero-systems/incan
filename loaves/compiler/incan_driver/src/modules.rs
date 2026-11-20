@@ -991,8 +991,11 @@ mod retained_namespace_tests {
     #[test]
     fn source_checker_demands_transitive_providers_and_partial_cycles_only() {
         // 0 and 1 import one another, 2 imports 1, and 3 is an unrelated source module.
+        let direct = vec![vec![1], vec![0], vec![1], vec![]];
         let imports = SourceModuleImports {
-            direct: vec![vec![1], vec![0], vec![1], vec![]],
+            closures: direct.iter().map(|_| std::sync::OnceLock::new()).collect(),
+            peers: std::sync::OnceLock::new(),
+            direct,
         };
         let (closures, needed) = imports.checker_dependencies(&[true, true, false, true]);
         assert_eq!(closures, [vec![], vec![], vec![0, 1], vec![]]);
@@ -1001,7 +1004,7 @@ mod retained_namespace_tests {
         assert_eq!(closures, [vec![1], vec![0], vec![], vec![]]);
         assert_eq!(needed, [true, true, false, false]);
         let (closures, needed) = imports.checker_dependencies(&[true; 4]);
-        assert!(closures.iter().all(Vec::is_empty));
+        assert!(closures.iter().all(|closure| closure.is_empty()));
         assert_eq!(needed, [false; 4]);
     }
 }
