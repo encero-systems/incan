@@ -20,7 +20,7 @@ from engine_messages import Submit
 from pub::incan_platform.store import Lookup, Snapshot, Transaction, begin_compared, commit, lookup, owned, put
 from store_path_conversion import snapshot
 from features import FeatureRequest
-from observation import observe, trace
+from observation import children, observe, trace
 from unit import describe, discovered_project
 from unit_freshness import collect_program_reach, fingerprint
 from unit_sources import SourceGraph, recorded_reach
@@ -146,8 +146,16 @@ pub def prepare_submit(store: Path, submit: Submit, discover_standalone: bool = 
 
 
 def first_standalone_reach(source: Path, profile: str, selected: &SelectedHome) -> Result[Option[SourceGraph], str]:
-    """Use the compiler's collection before capturing an ordinary file beside unrelated standalone programs."""
+    """
+    Use the compiler's collection before capturing an ordinary file beside unrelated standalone programs.
+
+    A file with no other source and no directory beside it can import no local module: its reach is the file, so no
+    collection runs and the request touches no frozen input and prepares no unit.
+    """
     if discovered_project(source)? is not None:
+        return Ok(None)
+    beside = children(source.parent(), ".incn")?
+    if len(beside.directories) == 0 and beside.files == [source.name()]:
         return Ok(None)
     before = observe(source)?.stamp
     unit = describe(source, profile, FeatureRequest(), direct=true, selected_standard=Some(selected.standard))?
