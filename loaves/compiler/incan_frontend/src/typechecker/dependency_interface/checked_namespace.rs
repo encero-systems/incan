@@ -655,9 +655,14 @@ mod tests {
         let mut checker = TypeChecker::new();
         checker.set_current_module_path(Some(path.clone()));
         checker.check_program(&program).map_err(|e| format!("{e:?}"))?;
-        let expected = checker.type_info().declarations.ownership_contracts.iter()
+        let expected = checker
+            .type_info()
+            .declarations
+            .ownership_contracts
+            .iter()
             .filter(|(identity, _)| provider_input_contract(identity, &path))
-            .map(|(id, contract)| (id.clone(), contract.clone())).collect::<std::collections::BTreeMap<_, _>>();
+            .map(|(id, contract)| (id.clone(), contract.clone()))
+            .collect::<std::collections::BTreeMap<_, _>>();
         assert_eq!(expected.len(), 2);
         let selected = CheckedNamespaceInterface::from_checked("parcels", &path, &program, &checker)?
             .ok_or("provider was not captured")?;
