@@ -93,9 +93,15 @@ fn encoded_frames() -> Result<Vec<(String, String)>, String> {
             }
         }
         frames.push((format!("{generation}\tready\t0"), hex(&ready_frame(generation, 42)?)));
-        frames.push((format!("{generation}\tready\t1"), hex(&ready_frame(generation, 9_007_199_254_740_993)?)));
+        frames.push((
+            format!("{generation}\tready\t1"),
+            hex(&ready_frame(generation, 9_007_199_254_740_993)?),
+        ));
         for (index, message) in messages().iter().enumerate() {
-            frames.push((format!("{generation}\trecord\t{index}"), hex(&record_frame(message, generation)?)));
+            frames.push((
+                format!("{generation}\trecord\t{index}"),
+                hex(&record_frame(message, generation)?),
+            ));
         }
     }
     Ok(frames)
@@ -116,9 +122,16 @@ fn every_frame_is_byte_identical_to_the_reference() -> Result<(), String> {
 fn every_reference_frame_decodes_back_to_its_input() -> Result<(), String> {
     for generation in [JSON_GEN, CW3_GEN] {
         for message in messages() {
-            assert_eq!(decode_record_message(&record_frame(&message, generation)?, generation)?, message);
+            assert_eq!(
+                decode_record_message(&record_frame(&message, generation)?, generation)?,
+                message
+            );
         }
-        for (retirement, reply) in replies().iter().enumerate().map(|(index, reply)| (index % 2 == 0, reply)) {
+        for (retirement, reply) in replies()
+            .iter()
+            .enumerate()
+            .map(|(index, reply)| (index % 2 == 0, reply))
+        {
             let completion = read_completion(&reply_frame(reply, retirement, generation)?, generation);
             match reply {
                 Reply::Refused(reason) if !generation.starts_with("cw3-") => {
@@ -147,7 +160,10 @@ fn described(outcome: Admission) -> String {
                 cwd,
                 retire_after,
             } = request;
-            format!("admitted\t{}\t{arguments:?}\t{stdout}\t{stderr}\t{cwd}\t{retire_after}", command.light())
+            format!(
+                "admitted\t{}\t{arguments:?}\t{stdout}\t{stderr}\t{cwd}\t{retire_after}",
+                command.light()
+            )
         }
         Admission::Refused(reason) => format!("refused\t{reason}"),
         Admission::Incompatible => "incompatible".to_owned(),
@@ -162,14 +178,34 @@ fn head(generation: &str) -> String {
 fn json_compile_requests_keep_their_admission_and_refusals() {
     let cases: Vec<(&str, Vec<u8>, &str)> = vec![
         ("a01", vec![0xff, 0x00], "refused\tthe frame is not UTF-8"),
-        ("a02", b"not json".to_vec(), "refused\tJSONDecodeError: expected ident at line 1 column 2"),
+        (
+            "a02",
+            b"not json".to_vec(),
+            "refused\tJSONDecodeError: expected ident at line 1 column 2",
+        ),
         ("a03", b"{}".to_vec(), "incompatible"),
-        ("a04", b"{\"schema\":\"incan.compiler-worker/1\",\"generation\":\"other\"}".to_vec(), "incompatible"),
-        ("a05", format!("{{{}}}", head(JSON_GEN)).into_bytes(), "refused\tmissing `arguments`"),
+        (
+            "a04",
+            b"{\"schema\":\"incan.compiler-worker/1\",\"generation\":\"other\"}".to_vec(),
+            "incompatible",
+        ),
+        (
+            "a05",
+            format!("{{{}}}", head(JSON_GEN)).into_bytes(),
+            "refused\tmissing `arguments`",
+        ),
     ];
     let more: Vec<(&str, &str, &str)> = vec![
-        ("a06", ",\"arguments\":\"x\"", "refused\t`arguments` is not an array of strings"),
-        ("a07", ",\"arguments\":[1]", "refused\t`arguments` is not an array of strings"),
+        (
+            "a06",
+            ",\"arguments\":\"x\"",
+            "refused\t`arguments` is not an array of strings",
+        ),
+        (
+            "a07",
+            ",\"arguments\":[1]",
+            "refused\t`arguments` is not an array of strings",
+        ),
         (
             "a08",
             ",\"arguments\":[]",
@@ -180,13 +216,21 @@ fn json_compile_requests_keep_their_admission_and_refusals() {
             ",\"arguments\":[\"--run\"]",
             "refused\ta compiler worker accepts only --unit, --check, --fmt, --source-files and --rust-imports requests",
         ),
-        ("a10", ",\"arguments\":[\"--unit\",\"/u\"]", "refused\ta compiler worker --unit request is incomplete"),
+        (
+            "a10",
+            ",\"arguments\":[\"--unit\",\"/u\"]",
+            "refused\ta compiler worker --unit request is incomplete",
+        ),
         (
             "a11",
             ",\"arguments\":[\"--unit\",\"u\",\"c\",\"/o\",\"/s\"]",
             "refused\tcompiler worker unit, output and sysroot paths must be absolute",
         ),
-        ("a12", ",\"arguments\":[\"--check\",\"/u\",\"/s\"]", "refused\tmissing `stdout`"),
+        (
+            "a12",
+            ",\"arguments\":[\"--check\",\"/u\",\"/s\"]",
+            "refused\tmissing `stdout`",
+        ),
         (
             "a13",
             ",\"arguments\":[\"--check\",\"/u\",\"/s\"],\"cwd\":\"rel\",\"stdout\":\"/o\",\"stderr\":\"/e\"",
@@ -234,13 +278,25 @@ fn json_compile_requests_keep_their_admission_and_refusals() {
 
 #[test]
 fn typed_compile_frames_keep_their_admission_and_refusals() -> Result<(), String> {
-    assert_eq!(described(admit(&[0xff, 0x00], CW3_GEN)), "refused\tCrumb binary truncated at byte 2");
-    assert_eq!(described(admit(b"{}", CW3_GEN)), "refused\tCrumb binary truncated at byte 2");
+    assert_eq!(
+        described(admit(&[0xff, 0x00], CW3_GEN)),
+        "refused\tCrumb binary truncated at byte 2"
+    );
+    assert_eq!(
+        described(admit(b"{}", CW3_GEN)),
+        "refused\tCrumb binary truncated at byte 2"
+    );
     let check = strings(&["--check", "/u", "/s"]);
     let frame = compile_frame(CW3_GEN, &check, "/c", "/o", "/e", false)?;
-    assert_eq!(described(admit(&frame, CW3_GEN)), "admitted\tfalse\t[\"/u\", \"/s\"]\t/o\t/e\t/c\tfalse");
+    assert_eq!(
+        described(admit(&frame, CW3_GEN)),
+        "admitted\tfalse\t[\"/u\", \"/s\"]\t/o\t/e\t/c\tfalse"
+    );
     assert_eq!(described(admit(&frame, "cw3-ffffffffffffffff")), "incompatible");
-    assert!(matches!(admit_record(&frame, CW3_GEN), RecordAdmission::NotRecordProtocol));
+    assert!(matches!(
+        admit_record(&frame, CW3_GEN),
+        RecordAdmission::NotRecordProtocol
+    ));
     assert_eq!(
         decode_record_message(&frame, CW3_GEN).err().as_deref(),
         Some("unexpected compiler worker record packet")
@@ -261,10 +317,16 @@ fn typed_compile_frames_keep_their_admission_and_refusals() -> Result<(), String
     );
     let reply = reply_frame(&Reply::Completed(3), false, CW3_GEN)?;
     let completed = read_completion(&reply, CW3_GEN)?;
-    assert_eq!((completed.status, completed.reason.as_str(), completed.handoff.as_str()), (3, "", ""));
+    assert_eq!(
+        (completed.status, completed.reason.as_str(), completed.handoff.as_str()),
+        (3, "", "")
+    );
     assert!(!completed.retired);
     assert_eq!(described(admit(&reply, CW3_GEN)), "incompatible");
-    assert!(matches!(admit_record(&reply, CW3_GEN), RecordAdmission::NotRecordProtocol));
+    assert!(matches!(
+        admit_record(&reply, CW3_GEN),
+        RecordAdmission::NotRecordProtocol
+    ));
     assert_eq!(
         read_ready(&reply, CW3_GEN, 42).err().as_deref(),
         Some("compiler worker readiness protocol, generation or PID mismatch")
@@ -278,7 +340,10 @@ fn record_outcome(outcome: RecordAdmission) -> String {
             format!("admitted prepare\t{}\t{}", value.stage, value.snapshot)
         }
         RecordAdmission::Admitted(RecordMessage::Evaluate(value)) => {
-            format!("admitted evaluate\t{}\t{}", value.work_root, value.cancellation_generation)
+            format!(
+                "admitted evaluate\t{}\t{}",
+                value.work_root, value.cancellation_generation
+            )
         }
         RecordAdmission::Admitted(_) => "admitted other".to_owned(),
         RecordAdmission::NotRecordProtocol => "not-record".to_owned(),
@@ -294,8 +359,16 @@ fn record_requests_keep_their_admission() -> Result<(), String> {
         ("c01", "x".into(), "not-record"),
         ("c02", "{\"schema\":\"other\"}".into(), "not-record"),
         ("c03", "{\"schema\":\"incan.compiler-worker/2\"}".into(), "incompatible"),
-        ("c04", "{\"schema\":\"incan.compiler-worker/2\",\"generation\":\"x\"}".into(), "incompatible"),
-        ("c05", format!("{base},\"kind\":\"prepared\",\"prepared_root\":\"p\"}}"), "protocol-fault"),
+        (
+            "c04",
+            "{\"schema\":\"incan.compiler-worker/2\",\"generation\":\"x\"}".into(),
+            "incompatible",
+        ),
+        (
+            "c05",
+            format!("{base},\"kind\":\"prepared\",\"prepared_root\":\"p\"}}"),
+            "protocol-fault",
+        ),
         (
             "c06",
             format!(
@@ -313,7 +386,11 @@ fn record_requests_keep_their_admission() -> Result<(), String> {
         ("c08", format!("{base},\"kind\":\"bogus\"}}"), "protocol-fault"),
     ];
     for (label, payload, expected) in cases {
-        assert_eq!(record_outcome(admit_record(payload.as_bytes(), JSON_GEN)), expected, "{label}");
+        assert_eq!(
+            record_outcome(admit_record(payload.as_bytes(), JSON_GEN)),
+            expected,
+            "{label}"
+        );
     }
     let prepare = RecordMessage::Prepare(Prepare {
         stage: "s".into(),
@@ -323,7 +400,10 @@ fn record_requests_keep_their_admission() -> Result<(), String> {
     });
     let frame = record_frame(&prepare, CW3_GEN)?;
     assert_eq!(record_outcome(admit_record(&frame, CW3_GEN)), "admitted prepare\ts\tn");
-    assert_eq!(record_outcome(admit_record(&frame, "cw3-ffffffffffffffff")), "incompatible");
+    assert_eq!(
+        record_outcome(admit_record(&frame, "cw3-ffffffffffffffff")),
+        "incompatible"
+    );
     assert_eq!(described(admit(&frame, CW3_GEN)), "incompatible");
     assert_eq!(
         decode_record_message(&frame, "cw3-ffffffffffffffff").err().as_deref(),
@@ -341,12 +421,27 @@ fn record_decoding_keeps_its_refusal_texts() {
     let base = "{\"schema\":\"incan.compiler-worker/2\",\"generation\":\"0123abcd\"";
     let need = format!("{base},\"kind\":\"need-prerequisite\",\"keys_root\":\"k\"");
     let cases: Vec<(&str, Vec<u8>, &str, &str)> = vec![
-        ("d01", b"x".to_vec(), JSON_GEN, "JSONDecodeError: expected value at line 1 column 1"),
+        (
+            "d01",
+            b"x".to_vec(),
+            JSON_GEN,
+            "JSONDecodeError: expected value at line 1 column 1",
+        ),
         ("d02", b"{}".to_vec(), JSON_GEN, "missing `schema`"),
         ("d03", b"{\"schema\":1}".to_vec(), JSON_GEN, "`schema` must be text"),
         ("d04", format!("{base}}}").into_bytes(), JSON_GEN, "missing `kind`"),
-        ("d05", format!("{need},\"earlier_rank\":-1}}").into_bytes(), JSON_GEN, "`earlier_rank` exceeds u32"),
-        ("d06", format!("{need},\"earlier_rank\":1.5}}").into_bytes(), JSON_GEN, "`earlier_rank` must be an integer"),
+        (
+            "d05",
+            format!("{need},\"earlier_rank\":-1}}").into_bytes(),
+            JSON_GEN,
+            "`earlier_rank` exceeds u32",
+        ),
+        (
+            "d06",
+            format!("{need},\"earlier_rank\":1.5}}").into_bytes(),
+            JSON_GEN,
+            "`earlier_rank` must be an integer",
+        ),
         (
             "d07",
             format!("{base},\"kind\":\"need-prerequisite\",\"keys_root\":2}}").into_bytes(),
@@ -357,7 +452,11 @@ fn record_decoding_keeps_its_refusal_texts() {
         ("d09", b"CRMB".to_vec(), CW3_GEN, "Crumb binary truncated at byte 4"),
     ];
     for (label, payload, generation, expected) in cases {
-        assert_eq!(decode_record_message(&payload, generation).err().as_deref(), Some(expected), "{label}");
+        assert_eq!(
+            decode_record_message(&payload, generation).err().as_deref(),
+            Some(expected),
+            "{label}"
+        );
     }
 }
 
@@ -370,7 +469,12 @@ fn json_completions_and_readiness_keep_their_texts() -> Result<(), String> {
             Err("KeyError: missing JSON object key `schema`"),
             Err("KeyError: missing JSON object key `schema`"),
         ),
-        ("e02", "{\"schema\":2}", Err("TypeError: expected JSON string"), Err("TypeError: expected JSON string")),
+        (
+            "e02",
+            "{\"schema\":2}",
+            Err("TypeError: expected JSON string"),
+            Err("TypeError: expected JSON string"),
+        ),
         (
             "e03",
             "{\"schema\":\"incan.compiler-worker/1\",\"reason\":\"why\"}",
@@ -416,7 +520,11 @@ fn json_completions_and_readiness_keep_their_texts() -> Result<(), String> {
     ];
     for (label, text, code, readiness) in cases {
         let document = parse_document(text)?;
-        assert_eq!(completion(&document).map_err(|error| error.to_string()), code.map_err(str::to_owned), "{label}");
+        assert_eq!(
+            completion(&document).map_err(|error| error.to_string()),
+            code.map_err(str::to_owned),
+            "{label}"
+        );
         assert_eq!(
             ready(&document, JSON_GEN, 42).map_err(|error| error.to_string()),
             readiness.map_err(str::to_owned),
@@ -436,8 +544,12 @@ fn replies_keep_the_protocol_bytes() -> Result<(), String> {
     let completed = format!("{{\"exit\":0,\"reason\":\"\",\"schema\":\"{SCHEMA}\"}}");
     assert_eq!(encode_reply(&Reply::Completed(0), false), completed.as_bytes());
     let refused = format!("{{\"exit\":1,\"reason\":\"missing `cwd`\",\"retired\":true,\"schema\":\"{SCHEMA}\"}}");
-    assert_eq!(encode_reply(&Reply::Refused("missing `cwd`".into()), true), refused.as_bytes());
-    let ready_text = format!("{{\"generation\":\"{generation}\",\"pid\":42,\"schema\":\"{SCHEMA}\",\"status\":\"ready\"}}");
+    assert_eq!(
+        encode_reply(&Reply::Refused("missing `cwd`".into()), true),
+        refused.as_bytes()
+    );
+    let ready_text =
+        format!("{{\"generation\":\"{generation}\",\"pid\":42,\"schema\":\"{SCHEMA}\",\"status\":\"ready\"}}");
     assert_eq!(encode_ready(generation, 42), ready_text.as_bytes());
     assert_eq!(completion(&parse_document(&completed)?)?, 0);
     let refused_document = parse_document(&refused)?;
@@ -465,9 +577,15 @@ fn replies_keep_the_protocol_bytes() -> Result<(), String> {
     let expected = format!(
         "{{\"arguments\":[\"--fmt\",\"/p/unit.json\",\"src/main.incn\",\"--check\"],\"cwd\":\"/p\",\"generation\":\"{generation}\",\"schema\":\"{SCHEMA}\",\"stderr\":\"/p/r.err\",\"stdout\":\"/p/r.out\"}}"
     );
-    assert_eq!(request_document(generation, &arguments, "/p", "/p/r.out", "/p/r.err", false), expected);
+    assert_eq!(
+        request_document(generation, &arguments, "/p", "/p/r.out", "/p/r.err", false),
+        expected
+    );
     let retiring = expected.replace(",\"schema\"", ",\"retire_after\":true,\"schema\"");
-    assert_eq!(request_document(generation, &arguments, "/p", "/p/r.out", "/p/r.err", true), retiring);
+    assert_eq!(
+        request_document(generation, &arguments, "/p", "/p/r.out", "/p/r.err", true),
+        retiring
+    );
     assert!(!WorkerCommand::Unit.light() && !WorkerCommand::Check.light() && WorkerCommand::Format.light());
     Ok(())
 }
@@ -484,9 +602,18 @@ fn record_request_reply_sets_are_closed() -> Result<(), String> {
         accept_record_reply(&evaluate, all[index].clone())?;
     }
     let mismatch = "compiler worker record reply does not match its request";
-    assert_eq!(accept_record_reply(&prepare, all[4].clone()).err().as_deref(), Some(mismatch));
-    assert_eq!(accept_record_reply(&evaluate, all[1].clone()).err().as_deref(), Some(mismatch));
-    assert_eq!(accept_record_reply(&all[1], all[1].clone()).err().as_deref(), Some(mismatch));
+    assert_eq!(
+        accept_record_reply(&prepare, all[4].clone()).err().as_deref(),
+        Some(mismatch)
+    );
+    assert_eq!(
+        accept_record_reply(&evaluate, all[1].clone()).err().as_deref(),
+        Some(mismatch)
+    );
+    assert_eq!(
+        accept_record_reply(&all[1], all[1].clone()).err().as_deref(),
+        Some(mismatch)
+    );
     let wrong = format!("{{\"generation\":\"{JSON_GEN}\",\"kind\":\"prepare\",\"schema\":\"incan.engine/1\"}}");
     assert!(decode_record_message(wrong.as_bytes(), JSON_GEN).is_err());
     assert_eq!(RECORD_SCHEMA, "incan.compiler-worker/2");
