@@ -1,0 +1,15 @@
+[project]
+name = "incan_worker_host_native"
+version = "0.6.0-dev.9"
+description = "Side-by-side Rust implementation of the compiler worker host"
+private = true
+
+[rust]
+name = "incan_worker_host_native"
+type = "lib"
+edition = "2024"
+
+[dependencies]
+internal_models_native = { path = "../internal_models_native" }
+internal_models_bindings = { path = "../internal_models_bindings" }
+serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
