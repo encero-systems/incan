@@ -75,6 +75,11 @@ pub trait GraphBodyRecordSource: std::fmt::Debug + Send + Sync {
     /// Read and authenticate the page for one exact stable owner identity, returning absence without scanning peers.
     fn read(&self, identity: &str) -> Result<Option<GraphBodyRecord>, RecordAdapterFault>;
 
+    /// Ask the graph owner for the checked peers of an admitted namespace reopened by a settled call change.
+    fn reopen_namespace_peers(&self, _source: &str, _changed: &BTreeSet<String>) -> Result<(), String> {
+        Ok(())
+    }
+
     /// Read and authenticate one complete editable namespace page by its project-relative source projection.
     fn read_namespace(&self, source: &str) -> Result<Option<GraphNamespaceRecord>, RecordAdapterFault>;
 }
@@ -383,10 +388,22 @@ impl GraphBodyRecords {
     pub fn reopen_callers(&mut self, changes: BTreeMap<String, BTreeSet<String>>) -> Result<(), String> {
         let mut added = false;
         for (source, owners) in changes {
-            let current = self.changed_callers.entry(source).or_default();
+            let current = self.changed_callers.entry(source.clone()).or_default();
             let before = current.len();
             current.extend(owners);
-            added |= current.len() != before;
+            if current.len() != before {
+                added = true;
+                let admitted = self
+                    .call_reads
+                    .lock()
+                    .map_err(|_| "settled call witness lock poisoned".to_owned())?
+                    .contains_key(&source);
+                if let Some(records) = &self.source
+                    && admitted
+                {
+                    records.reopen_namespace_peers(&source, current)?;
+                }
+            }
         }
         if !added {
             return Err("settled call ABI frontier made no progress".into());

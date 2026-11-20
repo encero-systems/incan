@@ -160,6 +160,7 @@ def authenticate_compiled_bodies(
     retained: list[SelectedBodyRecord],
     restored: list[str],
     restored_body_ir: list[str],
+    covered: &CoveredBodyOwners,
 ) -> Result[AuthenticatedCompiledBodies, str]:
     """Authenticate one compiler row directory, consume it and count the owners checked or restored this activation."""
     authenticating = begin_work()
@@ -173,7 +174,8 @@ def authenticate_compiled_bodies(
     for owner in restored_body_ir:
         if owner not in published:
             return Err("compiler reported a restored Body IR frame outside its published owners")
-    restored_identities = set([owner for owner in restored if owner in chosen])
+    # A settled-call retry may obtain an originally covered owner directly from this pinned graph.
+    restored_identities = set([owner for owner in restored if owner in chosen or owner in covered.owners])
     mut owner_evaluations = len(outputs.fallbacks)
     mut owner_reuses = 0
     mut body_ir_evaluations = len(outputs.fallbacks)
@@ -249,7 +251,7 @@ pub def prepare_compiled_bodies(
     3. Stage local, final and Body IR evaluations in the caller's request transaction.
     """
     # 1. The sidecar is invocation output, not an authority until this graph publication succeeds.
-    authenticated = authenticate_compiled_bodies(unit, output, retained, restored, restored_body_ir)?
+    authenticated = authenticate_compiled_bodies(unit, output, retained, restored, restored_body_ir, covered)?
     outputs = authenticated.outputs
     origin = authenticated.origin
     owner_evaluations = authenticated.owner_evaluations

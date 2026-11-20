@@ -56,6 +56,7 @@ from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 from pub::internal_models.checker_records import CHECKER_PROFILE
 from compiler_ranked_build import RankedBuildInputs
+from compiler_reopened_peers import selection as reopen_selection
 
 pub model SealedProgram:
     """A baked executable's fact, the path of its view and whether it was linked against shared carriers."""
@@ -351,6 +352,8 @@ pub def obtain(
     mut checking: Option[RankedBuildInputs] = None
     if not listing_refusals and len(invalid) > 0:
         checking = Some(RankedBuildInputs(graph=graph, projected=projected.transaction, origin=origin, invalid=invalid, covered=covered, plan_reads=plan_reads))
+    if len(covered.owners) > 0:
+        selected_bodies.append(reopen_selection(graph, origin)?)
     selected_bodies.extend(namespaces.pages)
     selected_bodies.extend(select_plan_inventory_except(graph, origin, invalid_plans, plan_modules.outputs)?)
     selected_bodies.extend(plan_modules.pages)
