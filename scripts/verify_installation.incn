@@ -487,6 +487,8 @@ def run_oven_tests(installation: Installation) -> Result[None, str]:
                 installation.run.0,
                 "--jobs",
                 str(installation.jobs),
+                # A release names every failing test in one run, so no later failure hides behind the first.
+                "--keep-going",
             ],
             installation.root,
             installation.run.joinpath("oven-tests-command.log"),

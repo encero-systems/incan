@@ -1,9 +1,10 @@
 """
 Run installed CI's Oven test step through an installed Oven, with isolated projects tested concurrently.
 
-Run `incan run scripts/oven_tests.incn -- OVEN EVIDENCE [--jobs N] [--memory GIB]` from a checkout. OVEN is the
-installed command; EVIDENCE is the run's evidence directory. The step runs, one source per invocation so a source can
-be excluded on its own:
+Run `incan run scripts/oven_tests.incn -- OVEN EVIDENCE [--jobs N] [--memory GIB] [--keep-going]` from a checkout.
+OVEN is the installed command; EVIDENCE is the run's evidence directory. Without `--keep-going` the first failure stops
+the step; with it every planned invocation runs, so one run names every failure. The step runs, one source per
+invocation so a source can be excluded on its own:
 
 1. `OVEN test` for every `workspaces/oven/src/test_*.incn`, from `workspaces/oven`.
 2. `OVEN test --profile release` for every `loaves/*/*/tests/test_*.incn`, from its Loaf.
@@ -58,7 +59,7 @@ const FAILED: str = "^test_[A-Za-z0-9_]+[.]incn::test_[A-Za-z0-9_]+ (FAILED|XPAS
 # These read the installed toolchain and require it unchanged, which another invocation's first use of a native crate can
 # break, so they run after the others have finished; only their compilation runs beside the others.
 const NEEDS_SETTLED_INSTALLATION: FrozenList[str] = ["test_engine_protocol.incn"]
-const USAGE: str = "usage: oven_tests.incn OVEN EVIDENCE [--jobs N] [--memory GIB]"
+const USAGE: str = "usage: oven_tests.incn OVEN EVIDENCE [--jobs N] [--memory GIB] [--keep-going]"
 # The step reports failures under the installed-verification program's name.
 const REPORTER: str = "verify-installation"
 
@@ -71,6 +72,8 @@ pub model Options:
     pub jobs: int
     # Bytes the reservations may take together; zero when physical memory is unknown, which bounds nothing.
     pub memory: int
+    # Whether a failure leaves the remaining invocations running, so one run reports every failure.
+    pub keep_going: bool = false
 
 
 pub model Invocation:
@@ -169,12 +172,13 @@ def main() -> None:
 
 pub def parse_options(arguments: list[str], configured: str, cores: int, physical: int) -> Result[Options, str]:
     """
-    OVEN and EVIDENCE, then optional `--jobs N` and `--memory GIB`. Without them `configured` or `cores` selects the
-    count, and `physical` bytes less the headroom the shared memory.
+    OVEN and EVIDENCE, then optional `--jobs N`, `--memory GIB` and `--keep-going`. Without the first two, `configured`
+    or `cores` selects the count, and `physical` bytes less the headroom the shared memory.
     """
     mut operands: list[str] = []
     mut jobs = default_jobs(configured, cores)
     mut memory = shared_memory(physical)
+    mut keep_going = false
     mut pending = ""
     for argument in arguments:
         if pending != "":
@@ -187,6 +191,8 @@ pub def parse_options(arguments: list[str], configured: str, cores: int, physica
             pending = ""
         elif argument == "--jobs" or argument == "--memory":
             pending = argument
+        elif argument == "--keep-going":
+            keep_going = true
         elif argument.startswith("-"):
             return Err(f"unknown option `{argument}`")
         else:
@@ -196,7 +202,7 @@ pub def parse_options(arguments: list[str], configured: str, cores: int, physica
     if len(operands) != 2:
         return Err("OVEN and EVIDENCE are required")
     evidence = Path(operands[1]).absolute().map_err((error) => error.message())?
-    return Ok(Options(oven=operands[0], evidence=evidence, jobs=jobs, memory=memory))
+    return Ok(Options(oven=operands[0], evidence=evidence, jobs=jobs, memory=memory, keep_going=keep_going))
 
 
 pub def default_jobs(configured: str, cores: int) -> int:
@@ -232,7 +238,7 @@ def run(options: Options) -> Result[str, str]:
     logs.mkdir(true, true).map_err((error) => error.message())?
     bakery = selected_builder_bakery(get_or("INCAN_BUILDER_HOME", ""))
     planned = invocations(root, options.evidence, logs, options.jobs, bakery)?
-    outcome = planned_outcome(options.oven, planned, options.jobs, options.memory)?
+    outcome = planned_outcome(options.oven, planned, options.jobs, options.memory, options.keep_going)?
     remove_worker_projects(planned)?
     log = options.evidence.joinpath("oven-tests.log")
     joined = join_logs(outcome.started, log)?
@@ -298,26 +304,39 @@ pub def run_planned(oven: str, planned: list[Invocation], jobs: int, memory: int
     return Ok(planned_outcome(oven, planned, jobs, memory)?.succeeded)
 
 
-pub def planned_outcome(oven: str, planned: list[Invocation], jobs: int, memory: int) -> Result[PlannedOutcome, str]:
+pub def planned_outcome(
+    oven: str,
+    planned: list[Invocation],
+    jobs: int,
+    memory: int,
+    keep_going: bool = false,
+) -> Result[PlannedOutcome, str]:
     """
     Run the pooled invocations beside each settled source's compile-ahead, then each settled source alone.
 
     1. The compile-ahead invocations start first in the pool, so a settled source's compilation overlaps the others.
     2. Each settled source then runs alone and reuses its compiled unit when its inputs are unchanged.
     3. Only the planned invocations decide the outcome: a compile-ahead failure repeats in the settled run itself.
+    4. With `keep_going` no failure stops admission, so every planned invocation runs and the outcome covers them all.
     """
     # 1. The compile-ahead invocations lead the pool, so their failed positions are the lowest ones.
     early = compile_ahead(planned)
     pooled = early + [item for item in planned if not item.alone]
-    first = run_pool(oven, pooled, jobs, memory, len(early))?
+    mut pooled_ignored = len(early)
+    if keep_going:
+        pooled_ignored = len(pooled)
+    first = run_pool(oven, pooled, jobs, memory, pooled_ignored)?
     mut logs = [pooled[index].log.0 for index in first.started if index >= len(early)]
     mut succeeded = len([index for index in first.failed if index >= len(early)]) == 0
-    if succeeded:
+    if succeeded or keep_going:
         settled = [item for item in planned if item.alone]
-        second = run_pool(oven, settled, 1, memory, 0)?
+        mut settled_ignored = 0
+        if keep_going:
+            settled_ignored = len(settled)
+        second = run_pool(oven, settled, 1, memory, settled_ignored)?
         for index in second.started:
             logs.append(settled[index].log.0)
-        succeeded = len(second.failed) == 0
+        succeeded = succeeded and len(second.failed) == 0
     return Ok(PlannedOutcome(started=[item for item in planned if item.log.0 in logs], succeeded=succeeded))
 
 
