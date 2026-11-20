@@ -212,6 +212,9 @@ impl TypeChecker {
     /// traversal ordinals restore legacy mutation and dictionary diagnostic order independently of completion order.
     /// `program` is the checked syntax; it binds stored diagnostics to this revision and is never checked again.
     pub(in crate::typechecker) fn settle_body_checks(&mut self, program: &Program) {
+        let _trace = tracing::trace_span!(target: "incan::invocation",
+            "incan_frontend::settle_body_checks", owners = self.body_checks.len())
+        .entered();
         let mut positions = DiagnosticPositions::new(program, self.symbols.declaration_origin());
         // ---- Final callee effects ----
         let locals = std::mem::take(&mut self.body_checks);

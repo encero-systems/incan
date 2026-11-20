@@ -33,6 +33,7 @@ use crate::ast::{Program, Span};
 use incan_semantics_core::stable_identity::StableDeclarationContext;
 use incan_semantics_core::stable_identity::{StableDeclarationId, StableDeclarationLocation};
 use incan_semantics_core::{CanonicalSymbolId, ScopeDiscriminant, SemanticSourceTargetKind, SymbolNamespace};
+use sha2::{Digest, Sha256};
 use types::{next, parameter_fields, read_parameters, read_type, type_fields};
 
 mod fixtures;
@@ -508,12 +509,21 @@ impl Positions {
             identities.insert(nodes.owner().render_compact(), canonical.clone());
         }
         let mut rust_reads: BTreeMap<String, Option<CanonicalSymbolId>> = BTreeMap::new();
+        let mut type_identities = BTreeMap::new();
+        let mut imported_members = Vec::new();
+        let _trace = tracing::trace_span!(target: "incan::invocation",
+            "incan_frontend::bind_checker_record_identities", symbols = checker.symbols.all_symbols().len())
+        .entered();
         // Imported package and sibling-module bindings are authenticated by their declaration records. Retain those
         // exact canonical identities alongside builtins so a body record can name the dependency declaration it read.
-        for index in 0..checker.symbols.all_symbols().len() {
+        for (index, symbol) in checker.symbols.all_symbols().iter().enumerate() {
             let Some(canonical) = checker.symbols.identity_of(index) else {
                 continue;
             };
+            imported_members::append(canonical, &symbol.kind, &mut imported_members);
+            if is_record_type(canonical, &origin) {
+                bind_record_type(&mut type_identities, canonical);
+            }
             if canonical.kind == SemanticSourceTargetKind::Parameter
                 && canonical.origin == origin
                 && let Some(slot) = parameter_handles.get_mut(&canonical.declaration_span)
@@ -551,8 +561,8 @@ impl Positions {
             }
         }
         // Restore imported member references against the current physical declaration in the checked nominal table.
-        identities.extend(imported_members::identities(checker));
-        let type_identities = admitted_type_identities(checker, &origin);
+        identities.extend(imported_members);
+        bind_active_record_types(checker, &mut type_identities);
         let nested = checker
             .checked_body(owner)
             .into_iter()
@@ -709,7 +719,6 @@ impl Positions {
         records: [&Fields; 3],
         placement: Option<&placement::Placement>,
     ) -> Option<[u8; 32]> {
-        use sha2::{Digest, Sha256};
         let span = |current: &Span| match placement {
             Some(layout) => layout.prior_span(*current),
             None => Some(*current),
@@ -793,21 +802,23 @@ impl Positions {
             rows.sort_unstable();
             rows
         });
-        let bytes = postcard::to_allocvec(&(
-            self.nodes.root(),
-            placement.map_or_else(|| self.nodes.physical_nodes(), |layout| layout.nodes()),
-            values,
-            handles,
-            type_handles,
-            type_names,
-            &local.nested,
-            references,
-            writes,
-            types,
-            contexts,
-        ))
-        .ok()?;
-        Some(Sha256::digest(bytes).into())
+        postcard::serialize_with_flavor(
+            &(
+                self.nodes.root(),
+                placement.map_or_else(|| self.nodes.physical_nodes(), |layout| layout.nodes()),
+                values,
+                handles,
+                type_handles,
+                type_names,
+                &local.nested,
+                references,
+                writes,
+                types,
+                contexts,
+            ),
+            WitnessHash::default(),
+        )
+        .ok()
     }
 
     /// Only a checked declaration or an explicitly admitted builtin can become a persistent reference.
@@ -890,6 +901,59 @@ impl Positions {
     }
 }
 
+/// Hash the exact postcard writer bytes with only its bounded SHA-256 state.
+#[derive(Default)]
+struct WitnessHash {
+    hash: Sha256,
+    bytes: usize,
+}
+
+impl postcard::ser_flavors::Flavor for WitnessHash {
+    type Output = [u8; 32];
+
+    /// Feed a single encoded byte into the same stream as bulk fields.
+    fn try_push(&mut self, byte: u8) -> postcard::Result<()> {
+        self.try_extend(&[byte])
+    }
+
+    /// Feed the serializer's borrowed byte range without materializing the whole witness.
+    fn try_extend(&mut self, bytes: &[u8]) -> postcard::Result<()> {
+        self.hash.update(bytes);
+        self.bytes += bytes.len();
+        Ok(())
+    }
+
+    /// Finish the independent physical-input witness and report the bytes that passed through the writer.
+    fn finalize(self) -> postcard::Result<Self::Output> {
+        tracing::trace!(target: "incan::invocation", bytes = self.bytes, "hashed physical body inputs");
+        Ok(self.hash.finalize().into())
+    }
+}
+
+#[cfg(test)]
+mod witness_tests {
+    use super::*;
+
+    /// The streaming writer gives exactly the old digest over the ordinary encoded bytes.
+    #[test]
+    fn physical_witness_stream_matches_the_previous_buffer() -> postcard::Result<()> {
+        let sample = (
+            u64::MAX,
+            true,
+            "nominal::reader",
+            vec![9_u8; 4097],
+            [Some(-3_i32), None, Some(123456)],
+        );
+        let buffered = postcard::to_allocvec(&sample)?;
+        let expected: [u8; 32] = Sha256::digest(buffered).into();
+        assert_eq!(
+            postcard::serialize_with_flavor(&sample, WitnessHash::default())?,
+            expected
+        );
+        Ok(())
+    }
+}
+
 /// Recover the lexical spelling and kind for a decoded binding. The caller verifies the complete stable identity
 /// against the writer's current structural binding order before installing the handle.
 fn persisted_nested_binding(
@@ -914,38 +978,33 @@ fn persisted_nested_binding(
     Ok((template.kind, name.to_owned()))
 }
 
-/// Collect every active nominal owner that the checker already authenticated independently of one lexical spelling.
-fn admitted_type_identities(
-    checker: &TypeChecker,
-    origin: &incan_semantics_core::SymbolOrigin,
-) -> BTreeMap<String, CanonicalSymbolId> {
-    let mut identities = checker
-        .symbols
-        .all_symbols()
-        .iter()
-        .enumerate()
-        .filter_map(|(index, _)| checker.symbols.identity_of(index))
-        .filter(|canonical| {
-            canonical.scope_discriminant.is_none()
-                && ((&canonical.origin == origin
-                    && matches!(
-                        canonical.kind,
-                        SemanticSourceTargetKind::Model
-                            | SemanticSourceTargetKind::Class
-                            | SemanticSourceTargetKind::Newtype
-                            | SemanticSourceTargetKind::Rusttype
-                            | SemanticSourceTargetKind::Enum
-                            | SemanticSourceTargetKind::TypeAlias
-                            | SemanticSourceTargetKind::Trait
-                    ))
-                    || (canonical.kind == SemanticSourceTargetKind::RustItem
-                        && matches!(canonical.origin, incan_semantics_core::SymbolOrigin::RustCrate(_))))
-        })
-        .filter_map(|canonical| {
-            StableDeclarationId::from_canonical(canonical, None, None)
-                .map(|stable| (stable.render_compact(), canonical.clone()))
-        })
-        .collect::<BTreeMap<_, _>>();
+/// Whether a symbol-arena entry can supply a module-owned type or a checked Rust import.
+fn is_record_type(canonical: &CanonicalSymbolId, origin: &incan_semantics_core::SymbolOrigin) -> bool {
+    canonical.scope_discriminant.is_none()
+        && ((&canonical.origin == origin
+            && matches!(
+                canonical.kind,
+                SemanticSourceTargetKind::Model
+                    | SemanticSourceTargetKind::Class
+                    | SemanticSourceTargetKind::Newtype
+                    | SemanticSourceTargetKind::Rusttype
+                    | SemanticSourceTargetKind::Enum
+                    | SemanticSourceTargetKind::TypeAlias
+                    | SemanticSourceTargetKind::Trait
+            ))
+            || (canonical.kind == SemanticSourceTargetKind::RustItem
+                && matches!(canonical.origin, incan_semantics_core::SymbolOrigin::RustCrate(_))))
+}
+
+/// Bind an authenticated type by its stable key, keeping the current physical handle.
+fn bind_record_type(identities: &mut BTreeMap<String, CanonicalSymbolId>, canonical: &CanonicalSymbolId) {
+    if let Some(stable) = StableDeclarationId::from_canonical(canonical, None, None) {
+        identities.insert(stable.render_compact(), canonical.clone());
+    }
+}
+
+/// Bind active type declarations after arena entries, in the same resolution order as the checker.
+fn bind_active_record_types(checker: &TypeChecker, identities: &mut BTreeMap<String, CanonicalSymbolId>) {
     let active = checker
         .type_info
         .declarations
@@ -967,11 +1026,8 @@ fn admitted_type_identities(
                 .filter_map(|identity| identity.canonical.as_ref()),
         );
     for canonical in active {
-        if let Some(stable) = StableDeclarationId::from_canonical(canonical, None, None) {
-            identities.insert(stable.render_compact(), canonical.clone());
-        }
+        bind_record_type(identities, canonical);
     }
-    identities
 }
 
 /// Rebuild a selected owner solely from canonical fields and current position/identity bindings. The independently

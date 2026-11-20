@@ -4,25 +4,22 @@ use super::*;
 use crate::symbols::{SymbolKind, TraitInfo, TypeInfo};
 use incan_semantics_core::SymbolOrigin;
 
-/// Resolve recorded member references to the current declaration anchors carried by their imported nominal.
+/// Add an encountered imported nominal's member anchors during the checker record's symbol-arena pass.
 /// Package methods and variants have their own executable anchors, distinct from the enclosing nominal.
-pub(super) fn identities(checker: &TypeChecker) -> Vec<(String, CanonicalSymbolId)> {
-    let mut identities = Vec::new();
-    for (index, symbol) in checker.symbols.all_symbols().iter().enumerate() {
-        let Some(owner) = checker.symbols.identity_of(index) else {
-            continue;
-        };
-        if !matches!(owner.origin, SymbolOrigin::Module(_) | SymbolOrigin::Package { .. }) {
-            continue;
-        }
-        let nominal = match &symbol.kind {
-            SymbolKind::Type(info) => Nominal::Type(info),
-            SymbolKind::Trait(info) => Nominal::Trait(info),
-            _ => continue,
-        };
-        collect(owner, nominal, &mut identities);
+pub(super) fn append(
+    owner: &CanonicalSymbolId,
+    symbol: &SymbolKind,
+    identities: &mut Vec<(String, CanonicalSymbolId)>,
+) {
+    if !matches!(owner.origin, SymbolOrigin::Module(_) | SymbolOrigin::Package { .. }) {
+        return;
     }
-    identities
+    let nominal = match symbol {
+        SymbolKind::Type(info) => Nominal::Type(info),
+        SymbolKind::Trait(info) => Nominal::Trait(info),
+        _ => return,
+    };
+    collect(owner, nominal, identities);
 }
 
 enum Nominal<'a> {
