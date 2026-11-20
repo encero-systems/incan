@@ -13,6 +13,7 @@ from std.fs import Path
 from std.hash import file_digest, sha256
 from std.json import JsonValue
 from std.regex import Regex
+from std.tempfile import TemporaryDirectory
 from pub::incan_platform.probes import ProcessResource, process_table
 
 pub const TOOLCHAIN_VERSION: str = "0.6.0-dev.9"
@@ -520,10 +521,13 @@ pub def reference_cache_root(seed_home: Path) -> Path:
 
 
 pub def store_reference_log(log: Path, cached: Path) -> Result[None, str]:
-    """Move one complete census log into its cache entry, then clone it back for the release receipt."""
-    cached.parent().mkdir(true, true).map_err((error) => error.message())?
-    _ = log.move(cached).map_err((error) => error.message())?
-    _ = cached.copy(log, true, true).map_err((error) => error.message())?
+    """Publish a complete census from the cache filesystem while keeping the release's evidence in place."""
+    directory = cached.parent()
+    directory.mkdir(true, true).map_err((error) => error.message())?
+    temporary = TemporaryDirectory.try_new_with("reference.", "", Some(directory)).map_err((error) => error.message())?
+    staged = temporary.path().joinpath("contracts.log")
+    _ = log.copy(staged, true, true).map_err((error) => error.message())?
+    _ = staged.move(cached).map_err((error) => error.message())?
     return Ok(None)
 
 

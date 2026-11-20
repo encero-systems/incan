@@ -218,48 +218,23 @@ pub def build_standard_packages(
     return Ok(None)
 
 
-pub def start_candidate_lsp(context: NativeContext) -> Result[Option[PendingToolBuild], str]:
-    """Start the Rust-only language server once candidate relinking has selected its complete compiler closure."""
-    if overlapping_project_capacity(context.jobs, context.memory) is None:
-        return Ok(None)
-    lsp = tool_build_plan(context, "lsp", false, "lsp-build")?
-    return Ok(Some(PendingToolBuild(plan=lsp, worker=start_background_step(lsp.child)?)))
-
-
 pub def build_candidate_standard_with_lsp(
     context: NativeContext,
     helper: Path,
     phase_prefix: str,
-    pending: Option[PendingToolBuild],
 ) -> Result[tuple[Path, Option[PendingToolBuild]], str]:
     """
-    Build candidate release providers while the independent Rust-only language server builds.
+    Publish release providers before starting the release language server.
 
-    The language-server project contains no Incan source and reads the selected driver, sysroot, compiler Loaves, and
-    Rust dependency closure that already exist after candidate relinking. It does not consume the standard providers
-    being produced here. One project slot and its memory reservation remain unavailable to standard-package waves until
-    the language-server child finishes.
+    Its Rust dependency closure builds mixed Loaves that import the current compiler's standard providers.
+    Once those release profiles settle, the language server can run beside the debug profiles and Oven.
     """
-    match pending:
-        None =>
-            build_standard_packages(context, helper, phase_prefix, [StandardProfile.Release])?
-            lsp = tool_build_plan(context, "lsp", false, "lsp-build")?
-            run_build_plans(context, [lsp])?
-            return Ok((complete_build_plan(lsp)?, None))
-        Some(started) =>
-            jobs, memory = match overlapping_project_capacity(context.jobs, context.memory):
-                Some(capacity) => capacity
-                None =>
-                    _ = cancel_background_step(started.worker)
-                    return Err("project capacity disappeared before candidate standard production")
-
-            reserved = reserve_project_capacity(context, jobs, memory)
-            match build_standard_packages(reserved, helper, phase_prefix, [StandardProfile.Release]):
-                Ok(_) => pass
-                Err(message) =>
-                    _ = cancel_background_step(started.worker)
-                    return Err(message)
-            return Ok((Path(""), Some(started)))
+    build_standard_packages(context, helper, phase_prefix, [StandardProfile.Release])?
+    lsp = tool_build_plan(context, "lsp", false, "lsp-build")?
+    if overlapping_project_capacity(context.jobs, context.memory) is not None:
+        return Ok((Path(""), Some(PendingToolBuild(plan=lsp, worker=start_background_step(lsp.child)?))))
+    run_build_plans(context, [lsp])?
+    return Ok((complete_build_plan(lsp)?, None))
 
 
 pub def finish_tool_build(context: NativeContext, pending: PendingToolBuild) -> Result[Path, str]:

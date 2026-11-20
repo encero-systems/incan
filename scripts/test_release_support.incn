@@ -476,7 +476,7 @@ def test_driver_evidence_retains_qualified_unit_identities_and_dependency_scans(
     return Ok(None)
 
 
-def test_reference_cache_store_moves_then_reuses_complete_evidence() -> Result[None, str]:
+def test_reference_cache_publication_keeps_complete_release_evidence() -> Result[None, str]:
     """Cache publication retains the release log, and reuse materializes the same complete bytes."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     log = temporary.path().joinpath("release/reference-contracts.log")

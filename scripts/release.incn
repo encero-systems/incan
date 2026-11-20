@@ -27,7 +27,6 @@ from native_build import (
     require_unique_runtime_root,
     share_seed_generations,
     standard_profiles,
-    start_candidate_lsp,
 )
 from oven_tests import host_memory, shared_memory
 from release_support import (
@@ -655,11 +654,8 @@ def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Ca
     retain_driver_build_evidence(run)?
     context = native_context(run, candidate.oven, run.paths.home)
     helper = run.paths.lane.joinpath("out/native-builds/toolchain-native")
-    # The language server records the compiler identity in its lock when it starts, and the readmit of the relinked
-    # driver changes that identity; it starts once the candidate interfaces and runtime are published.
     build_candidate_providers(context, helper)?
-    pending_lsp = start_candidate_lsp(context)?
-    lsp, pending = build_candidate_standard_with_lsp(context, helper, "candidate-", pending_lsp)?
+    lsp, pending = build_candidate_standard_with_lsp(context, helper, "candidate-")?
     return Ok(Candidate(context=context, oven=candidate.oven, lsp=lsp, pending_lsp=pending))
 
 
