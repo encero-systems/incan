@@ -480,6 +480,42 @@ def test_first_failure_stops_later_admission_and_cancels_a_running_child_tree() 
     return Ok(None)
 
 
+def test_keep_going_runs_every_planned_invocation_after_a_failure() -> Result[None, str]:
+    """With `--keep-going` a failure stops nothing: later pooled and settled invocations still run and are reported."""
+    assert parse_options(["oven", "evidence", "--keep-going"], "", 2, 4 * GIB)?.keep_going
+    assert not parse_options(["oven", "evidence"], "", 2, 4 * GIB)?.keep_going
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    logs = root.joinpath("logs")
+    logs.mkdir(true, true).map_err((error) => error.message())?
+    failure = Invocation(
+        arguments=["-c", "echo failure-message; exit 1"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("000-failure.log"),
+    )
+    queued = Invocation(
+        arguments=["-c", "touch queued; echo queued-message"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("001-queued.log"),
+    )
+    settled = Invocation(
+        arguments=["-c", "touch settled; echo settled-message"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("002-settled.log"),
+        alone=true,
+    )
+    outcome = planned_outcome("/bin/sh", [failure, queued, settled], 1, 0, true)?
+    assert not outcome.succeeded
+    assert [item.log.0 for item in outcome.started] == [failure.log.0, queued.log.0, settled.log.0]
+    assert root.joinpath("queued").exists() and root.joinpath("settled").exists()
+    joined = join_logs(outcome.started, root.joinpath("joined.log"))?
+    assert joined == "failure-message\nqueued-message\nsettled-message\n"
+    return Ok(None)
+
+
 def test_completed_slot_is_settled_before_queued_admission() -> Result[None, str]:
     """A failure raised during another child's cleanup is observed before its freed slot admits queued work."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
