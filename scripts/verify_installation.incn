@@ -474,26 +474,27 @@ def build_runner(installation: Installation) -> Result[Path, str]:
 
 def run_oven_tests(installation: Installation) -> Result[None, str]:
     """Run the stable Oven and Loaf Incan-test inventory through the installed toolchain."""
-    return require_step(
-        command_step(
-            installation,
-            "oven-tests",
+    mut step = command_step(
+        installation,
+        "oven-tests",
+        installation.oven.0,
+        [
+            "run",
+            installation.root.joinpath("scripts/oven_tests.incn").0,
+            "--",
             installation.oven.0,
-            [
-                "run",
-                installation.root.joinpath("scripts/oven_tests.incn").0,
-                "--",
-                installation.oven.0,
-                installation.run.0,
-                "--jobs",
-                str(installation.jobs),
-                # A release names every failing test in one run, so no later failure hides behind the first.
-                "--keep-going",
-            ],
-            installation.root,
-            installation.run.joinpath("oven-tests-command.log"),
-        ),
+            installation.run.0,
+            "--jobs",
+            str(installation.jobs),
+            # A release names every failing test in one run, so no later failure hides behind the first.
+            "--keep-going",
+        ],
+        installation.root,
+        installation.run.joinpath("oven-tests-command.log"),
     )
+    # This one step runs the whole inventory, failures included, so it gets the inventory's deadline, not one command's.
+    step.timeout_seconds = installation.timeout_seconds * 4
+    return require_step(step)
 
 
 def run_rust_facets(installation: Installation) -> Result[int, str]:
