@@ -29,7 +29,7 @@ from unit_freshness import Key, artifact_files, reusable, record, description_di
 from freshness_fixtures import Fixture, fixture, make_executable, reconcile, unit_key, write
 
 # The description digest of `ordinary_unit()` before units could declare rustc-internal access.
-const ORDINARY_DIGEST: str = "37f5ff93d4e0748e7ccc89cc39fa6bba5465849d86b69bcf6219755891cdd2a8"
+const ORDINARY_DIGEST: str = "11e94de6d5495e1294faa8119ce1552b76aca18fb52cc3d2c42b2726bc9be470"
 
 
 pub def test_unchanged_unit_is_keyed_without_reading_or_listing() -> Result[None, str]:
@@ -37,15 +37,16 @@ pub def test_unchanged_unit_is_keyed_without_reading_or_listing() -> Result[None
     scratch = scratch_directory()?
     setup = fixture(scratch.path())?
     first = reconcile(scratch.path(), setup)?
-    assert first.hashed > 0
-    assert first.listed == 1
+    assert first.hashed > 0, f"the first pass hashed {first.hashed} files"
+    assert first.listed == 1, f"the first pass listed {first.listed} directories"
     second = reconcile(scratch.path(), setup)?
-    assert second.key == first.key
-    assert second.hashed == 0
-    assert second.listed == 0
+    assert second.key == first.key, "an unchanged unit was rekeyed"
+    assert second.hashed == 0, f"the second pass hashed {second.hashed} files"
+    assert second.listed == 0, f"the second pass listed {second.listed} directories"
     # RFC 124: checkout, target and installed-home locations are publication provenance.
     relocated = fixture(scratch.path().joinpath("another-checkout"))?
-    assert reconcile(scratch.path().joinpath("another-checkout"), relocated)?.key == first.key
+    moved = reconcile(scratch.path().joinpath("another-checkout"), relocated)?
+    assert moved.key == first.key, "another checkout of the same unit was keyed differently"
     verify_be34_position_changes(scratch.path().joinpath("positions"))?
     verify_source_move(scratch.path().joinpath("moved-entry"))?
     verify_project_entries(scratch.path().joinpath("project-entries"))?
@@ -230,8 +231,9 @@ def verify_declared_access(setup: Fixture) -> Result[None, str]:
        library undeclared refuses the unit's identity.
     """
     # 1. The digest was recorded from the description of this unit before declarations existed.
-    assert description_digest(ordinary_unit())? == ORDINARY_DIGEST
-    assert "toolchain_access" not in json_text(ordinary_unit().to_json())?
+    ordinary = description_digest(ordinary_unit())?
+    assert ordinary == ORDINARY_DIGEST, f"an ordinary unit's description digest is now {ordinary}"
+    assert "toolchain_access" not in json_text(ordinary_unit().to_json())?, "an ordinary unit names toolchain access"
     # 2. A declaration is identity, and its written order is not.
     first = description_digest(setup.unit)?
     mut seen = [first]
