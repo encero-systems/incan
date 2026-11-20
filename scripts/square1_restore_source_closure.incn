@@ -1,0 +1,23 @@
+"""Build this private restore trial's release providers through the existing native producers."""
+
+from rust::std::env import args
+from std.fs import Path
+from native_build import NativeContext, StandardProfile, build_source_interfaces, build_runtime, build_standard_packages, require_unique_runtime_root
+from oven_tests import host_memory, shared_memory
+
+def main() -> Result[None, str]:
+    """Build the exact source interface, runtime and standard closure under the unchanged driver."""
+    values = [value for value in args()]
+    if len(values) != 7:
+        return Err("expected repository, lane, home, builder, helper and evidence")
+    repo = Path(values[1])
+    evidence = Path(values[6])
+    evidence.mkdir(true, true).map_err((error) => error.message())?
+    context = NativeContext(repo=repo, lane=Path(values[2]), home=Path(values[3]), builder=values[4],
+        stdlib=repo.joinpath("loaves/stdlib").0, evidence=evidence, timings=evidence.joinpath("timings.tsv"),
+        jobs=1, memory=shared_memory(host_memory()), timeout_seconds=900)
+    helper = Path(values[5])
+    interfaces = build_source_interfaces(context, helper)?
+    _ = build_runtime(context, helper, Some(interfaces), true)?
+    require_unique_runtime_root(context)?
+    return build_standard_packages(context, helper, "restore-", [StandardProfile.Release])
