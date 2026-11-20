@@ -1,0 +1,104 @@
+"""Bind production method resolution to its receiver source and the exact overloads the checker enumerated."""
+
+from std.fs import Path
+from std.encoding.hex import hexlify
+from std.hash import sha256
+from pub::incan_platform.store import Snapshot, Transaction, get, stage_put
+from pub::internal_models.checker_records import CHECKER_PROFILE
+from pub::internal_models.overload_members import MethodReads, OVERLOAD_MEMBERS, encode_method_members, method_member_request
+from pub::internal_models.records import ReadWitness, RecordKey, RecordRequest, encode_record_key
+from pub::internal_models.source_value_records import source_value
+from compiler_body_keys import body_key
+from compiler_graph_records import reusable_evaluation
+from compiler_prepared_records import PreparedBodyRecordSource, prepared_product_request
+from compiler_projection_cache import project_dependency_module
+from compiler_source_projection import SourceProjection, SourceProjectionRecord, owner_source_key, project_source
+from unit import UnitDescription
+
+
+def bind_members(mut prepared: Transaction, mut source: PreparedBodyRecordSource, key: RecordKey, page: bytes) -> Result[None, str]:
+    encoded = encode_record_key(key)?
+    if source.holds(encoded):
+        if not source.matches(encoded, page):
+            return Err("method lookups disagree on the members of one receiver")
+        return Ok(None)
+    stage_put(prepared, encoded, page)
+    source.add(encoded, page)
+    return Ok(None)
+
+
+def receiver_source(projection: &SourceProjection, receiver: str) -> Result[SourceProjectionRecord, str]:
+    for owner in projection.owners:
+        if owner.key.facet in ["model:" + receiver, "class:" + receiver, "enum:" + receiver, "newtype:" + receiver, "trait:" + receiver]:
+            return Ok(owner)
+    return Err("method lookup has no declared receiver source: " + receiver)
+
+
+pub def method_inputs(
+    mut prepared: Transaction, mut source: PreparedBodyRecordSource, selected: Option[Snapshot],
+    methods: &MethodReads, local: RecordKey, value: &bytes, mut projections: Dict[str, SourceProjection],
+    unit: UnitDescription,
+) -> Result[list[RecordRequest], str]:
+    mut reads: list[RecordRequest] = []
+    if local.identity in methods.groups:
+        for lookup in methods.groups[local.identity]:
+            module = project_dependency_module(unit, lookup.module)?
+            guard = receiver_source(projections[module], lookup.receiver)?
+            key = body_key(OVERLOAD_MEMBERS, local.origin, module, lookup.receiver + "." + lookup.method, guard.key.facet)
+            bind_members(prepared, source, key, encode_method_members(key, lookup.candidates)?)?
+            encoded = encode_record_key(guard.key)?
+            guarded = guard.encoded()?
+            stage_put(prepared, encoded, guarded)
+            source.add(encoded, guarded)
+            for request in [prepared_product_request(guard.key), method_member_request(key)]:
+                if request not in reads:
+                    reads.append(request)
+    elif local.identity in methods.retained:
+        prior = match selected:
+            Some(graph) => graph
+            None => return Err("restored method lookup has no selected snapshot")
+        previous = match reusable_evaluation(prior, local, CHECKER_PROFILE)?:
+            Some(record) => record
+            None => return Err("restored method lookup has no valid caller receipt")
+        if len(previous.value) != len(value) or not previous.value.as_slice().starts_with(value.as_slice()):
+            return Err("restored method lookup caller differs from its receipt")
+        for witness in previous.receipt.witnesses:
+            if let ReadWitness.Members(_, request, _, _) = witness:
+                key = request.key
+                if key.family != OVERLOAD_MEMBERS:
+                    continue
+                if key.origin != local.origin or request != method_member_request(key):
+                    return Err("restored method lookup scope differs")
+                if key.identity not in projections:
+                    root = Path(unit.project_root).resolve().map_err((error) => error.message())?
+                    path = root.joinpath(key.identity).resolve().map_err((error) => error.message())?
+                    if path.0 != root.0 + "/" + key.identity or not path.is_file():
+                        return Err("restored method receiver is outside the current project")
+                    text = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+                    projections[key.identity] = project_source(local.origin, key.identity, text, unit.declared_features, Some(unit.active_features))?
+                guard = owner_source_key(key.origin, key.identity, key.context)
+                guarded = prepared_product_request(guard)
+                mut verified = false
+                for dependency in previous.receipt.witnesses:
+                    if let ReadWitness.Found(evidence, _) = dependency:
+                        if evidence.request == guarded:
+                            for candidate in projections[key.identity].owners:
+                                if candidate.key == guard:
+                                    current = candidate.encoded()?
+                                    if hexlify(sha256.digest(source_value(guard, current)?)) == evidence.semantic_digest:
+                                        encoded = encode_record_key(guard)?
+                                        stage_put(prepared, encoded, current)
+                                        source.add(encoded, current)
+                                        verified = true
+                if not verified:
+                    return Err("restored method receiver source changed")
+                page = match get(prior, encode_record_key(key)?).map_err((error) => error.message())?:
+                    Some(bytes_value) => bytes_value
+                    None => return Err("restored method membership is unavailable")
+                bind_members(prepared, source, key, page)?
+                for item in [guarded, request]:
+                    if item not in reads:
+                        reads.append(item)
+        if len(reads) == 0:
+            return Err("restored method lookup has no authenticated membership")
+    return Ok(reads)
