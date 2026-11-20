@@ -271,7 +271,7 @@ pub def prepare_compiled_bodies(
         closures[namespace.module] = namespace.dependencies
     order = certified_namespace_order(origin, closures)?
     if let Some(prior) = selected:
-        retire_missing_functions(prior, prepared, origin, changed_sources, projections, outputs)?
+        retire_missing_functions(prior, prepared, origin, changed_sources, projections, rechecked, outputs)?
     stage_compiled_namespaces(prepared, source, scope, projections, outputs.namespaces, origin, order)?
     published = stage_compiled_body_values(
         prepared,

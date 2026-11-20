@@ -53,7 +53,7 @@ from pub::internal_models import (
 )
 from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily
 from compiler_namespace_products import interface_key, member_key, member_plan_inputs, prepare_namespace_products
-from compiler_graph_records import OutputSlots, PublishedEvaluation, family_outputs, publish_evaluation, readers_of, reusable_evaluation, supersede_outputs
+from compiler_graph_records import OutputSlots, PublishedEvaluation, family_outputs, publish_evaluation, readers_of, reusable_evaluation, reusable_family_records, supersede_outputs
 from compiler_owner_retirement import retire_missing_functions
 from compiler_prepared_records import PreparedBodyRecordSource
 from compiler_record_envelopes import RankedActivation, RankedCheckingSweep, persist_activation
@@ -816,7 +816,10 @@ pub def test_prepared_opaque_products_use_their_bounded_selection() -> Result[No
     request = prepared_product_request(output)
     source.add(demand_key, oversized)
     first = source.for_profile(LOWERING_PROFILE).receipt(lowering_scope, plan, [request])?
-    source.add(demand_key, oversized + b"!")
+    extended = BytesIO(oversized)
+    extended.seek(0, 2).map_err((error) => error.message())?
+    extended.write_bytes(b"!").map_err((error) => error.message())?
+    source.add(demand_key, extended.getvalue())
     changed = source.for_profile(LOWERING_PROFILE).receipt(lowering_scope, plan, [request])?
     assert first.response_bytes == 0 and changed.response_bytes == 0
     match first.witnesses[0]:
@@ -1618,17 +1621,24 @@ pub def test_removed_and_replaced_functions_leave_only_their_historical_graph_sl
             output = body_key(family, origin, owner, "owned", "prior")
             receipt = source.receipt(scope, output, [prepared_product_request(row.key)])?
             graph = publish_evaluation(graph, owner + family, rank, b"prior-value", receipt)?.snapshot
+    # A checked program can publish individual owner values without a reusable whole-namespace interface.
     current = CompiledBodyOutputs(
-        namespaces=[CompiledNamespaceValue(module=module, interface=b"iface", body_ir=b"ir", dependencies=[], lowering_inputs=[])],
+        namespaces=[],
         values=[CompiledBodyValue(module=module, name="same", identity="function:main::same|new",
             declaration=b"d", local=b"l", final=b"f", body_ir=b"ir")],
         fallbacks=[CompiledBodyFallback(module=module, name="unknown", identity=None, reason="no stable identity")],
     )
     changes = [after.census.key, signature_record(after.owners[0]).key, signature_record(after.owners[1]).key]
     mut next = begin(graph)
-    retire_missing_functions(graph, next, origin, changes, {module: after}, current)?
+    retire_missing_functions(graph, next, origin, changes, {module: after}, [module], current)?
     supersede_outputs(graph, next)?
     edited = commit(next).map_err((error) => error.message())?
+    for row in before.owners:
+        for key in [row.key, signature_record(row).key]:
+            present_before = get(graph, encode_record_key(key)?).map_err((error) => error.message())?
+            present_after = get(edited, encode_record_key(key)?).map_err((error) => error.message())?
+            assert present_before is not None
+            assert (present_after is None) == (row.key.facet == "gone")
     for row in before.owners:
         owner = "function:main::" + row.key.facet + "|old"
         scope = Some(OutputSlots(origin=origin, identity_profile="incan.stable-declaration/1", included=Some([owner])))
