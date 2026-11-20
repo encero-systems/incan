@@ -1191,13 +1191,16 @@ mod tests {
                     .map(|names| names.iter().map(String::as_str).collect::<Vec<_>>())
             })
             .collect::<Vec<_>>();
+        let none = incan_lang::lang::surface::constructors::as_str(
+            incan_lang::lang::surface::constructors::ConstructorId::None,
+        );
         assert_eq!(
             slots,
             vec![
                 Some(vec!["leaf", "str"]),
                 Some(vec!["copy", "i64", "int"]),
                 Some(vec!["caller", "leaf", "str"]),
-                Some(vec!["None", "leaf", "printed", "println"]),
+                Some(vec![none, "leaf", "printed", "println"]),
                 None,
             ]
         );
