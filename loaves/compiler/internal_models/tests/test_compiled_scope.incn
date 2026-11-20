@@ -22,7 +22,7 @@ def frame(family: CheckedFamily) -> Result[bytes, str]:
     return encode_record(record).map_err((_) => "checker frame")
 
 
-pub def test_scoped_value_wire_binds_names_and_excludes_dependency_reads() -> Result[None, str]:
+pub def test_scoped_value_wire_binds_names_and_exact_dependency_reads() -> Result[None, str]:
     mut owner = CompiledBodyValue(module="main.incn", name="greeting", identity=OWNER, declaration=frame(CheckedFamily.Declaration)?,
         local=frame(CheckedFamily.Local)?, final=frame(CheckedFamily.Final)?, body_ir=b"body")
     empty_names: list[str] = []
@@ -36,8 +36,19 @@ pub def test_scoped_value_wire_binds_names_and_excludes_dependency_reads() -> Re
         owner.scope_names = invalid
         assert wire_rows(CompiledBodyOutputs(values=[owner], fallbacks=[])).is_err()
     owner.scope_names = ["greeting", "str"]
-    owner.dependency_reads = [CompiledBodyDependencyRead(package=None, module="other", name="name", identity="other::name", reference_subject="expr:main#1..5")]
+    read = CompiledBodyDependencyRead(
+        package=None, module="main", name="callee", identity="main::callee", reference_subject="expr:main#1..5",
+    )
+    owner.dependency_reads = [read]
     assert wire_rows(CompiledBodyOutputs(values=[owner], fallbacks=[])).is_err()
+
+    owner.scope_names = ["callee", "greeting", "str"]
+    rows = wire_rows(CompiledBodyOutputs(values=[owner], fallbacks=[]))?
+    match decode_compiled_body_row(rows[0]).map_err((_) => "decode scoped call")?:
+        CompiledBodyOutput.Value(decoded) =>
+            assert decoded.scope_names == ["callee", "greeting", "str"]
+            assert decoded.dependency_reads == [read]
+        _ => return Err("wrong output kind")
     return Ok(None)
 
 

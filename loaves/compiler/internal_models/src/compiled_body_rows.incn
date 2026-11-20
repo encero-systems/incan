@@ -299,9 +299,7 @@ def encode_compiled_body_value(value: CompiledBodyValue) -> Result[bytes, CodecF
                 Value.Binary(value.local),
             ), required_value(b"module", Value.Text(value.module)), required_value(b"name__", Value.Text(value.name))]
     if len(value.scope_names) > 0:
-        if len(value.dependency_reads) > 0:
-            return Err(CodecFault.Malformed)
-        validate_scope_names(value.name, value.scope_names)?
+        validate_scope_names(value.name, value.scope_names, value.dependency_reads)?
         fields.append(required_value(b"zscope", Value.List([Value.Text(name) for name in value.scope_names])))
         return encoded_row(value_description(true), RowRecord(key=SCOPED_VALUE_SELECTOR, value=Value.Record(fields)))
     return encoded_row(value_description(), RowRecord(key=VALUE_SELECTOR, value=Value.Record(fields)))
@@ -374,10 +372,8 @@ def decode_compiled_body_value(value: Value, scoped: bool = false) -> Result[Com
         offset += 6
     mut scope_names: list[str] = []
     if scoped:
-        if len(dependency_reads) > 0:
-            return Err(CodecFault.Malformed)
         scope_names = text_values(fields[8].value)?
-        validate_scope_names(text_value(fields[7].value)?, scope_names)?
+        validate_scope_names(text_value(fields[7].value)?, scope_names, dependency_reads)?
     restored = CompiledBodyValue(
         module=text_value(fields[6].value)?,
         name=text_value(fields[7].value)?,
@@ -658,7 +654,8 @@ def namespace_description(version: int = 5) -> Description:
     return model_description(CONTRACT_NAMESPACE_SELECTOR, "incan.checker-compiled-namespace/6", fields)
 
 
-def validate_scope_names(owner: str, names: &list[str]) -> Result[None, CodecFault]:
+def validate_scope_names(owner: str, names: &list[str], reads: &list[CompiledBodyDependencyRead]) -> Result[None, CodecFault]:
+    """Require the owner and every exact declaration read to be covered by the proved name scope."""
     if len(names) > MAX_FIELDS:
         return Err(CodecFault.Malformed)
     mut previous = ""
@@ -674,7 +671,25 @@ def validate_scope_names(owner: str, names: &list[str]) -> Result[None, CodecFau
         previous = name
     if not found:
         return Err(CodecFault.Malformed)
+    for read in reads:
+        if not scope_includes(names, read.name):
+            return Err(CodecFault.Malformed)
     return Ok(None)
+
+
+def scope_includes(names: &list[str], target: &str) -> bool:
+    """Check one declaration name in the validated order without allocating a second name table."""
+    mut start = 0
+    mut stop = len(names)
+    while start < stop:
+        center = start + (stop - start) // 2
+        if names[center] < target:
+            start = center + 1
+        elif names[center] == target:
+            return true
+        else:
+            stop = center
+    return false
 
 
 def value_description(scoped: bool = false) -> Description:
