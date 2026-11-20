@@ -238,7 +238,17 @@ impl CheckedNamespaceInterface {
     pub fn installable(&self) -> Result<Arc<ModuleDependencyInterface>, String> {
         self.validate()?;
         let mut converter = TypeChecker::new();
-        let mut remapping = TypeChecker::dependency_nominal_remapping(&self.nominal_scope);
+        converter.retain_nominal_scope_carriers(&self.nominal_scope);
+        let mut remapping: HashMap<_, _> = self
+            .nominal_scope
+            .iter()
+            .filter_map(|(name, identity)| {
+                converter
+                    .retained_nominal_carriers
+                    .get(identity)
+                    .map(|carrier| (name.clone(), carrier.clone()))
+            })
+            .collect();
         remapping.extend(checked_namespace_foreign_nominal_remapping(&self.api));
         let mut symbols = HashMap::new();
         let mut reexports = HashMap::new();
@@ -301,7 +311,6 @@ impl CheckedNamespaceInterface {
                 converter.retain_declaration_nominal_scope(identity, kind, nominal_scope);
             }
         }
-        converter.retain_nominal_scope_carriers(nominal_scope);
         let (transitive_public_types, transitive_public_traits) = provider_transitive_semantics(&symbols, &identities);
         let symbols = Arc::new(symbols);
         let identities = Arc::new(identities);

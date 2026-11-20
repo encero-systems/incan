@@ -589,6 +589,15 @@ impl TypeChecker {
         for interface in interfaces {
             self.install_dependency_interface(interface);
         }
+        // Several providers export the same canonical carrier. Reverse order gives the last provider
+        // precedence while copying each selected identity and its long native spelling only once.
+        for interface in interfaces.iter().rev() {
+            for (identity, carrier) in interface.retained_nominal_carriers.iter() {
+                if !self.retained_nominal_carriers.contains_key(identity) {
+                    self.retained_nominal_carriers.insert(identity.clone(), carrier.clone());
+                }
+            }
+        }
         self.refresh_installed_dependency_reexports();
     }
 
@@ -697,12 +706,6 @@ impl TypeChecker {
                 .declaration_nominal_scopes
                 .iter()
                 .map(|(key, value)| (key.clone(), Arc::clone(value))),
-        );
-        self.retained_nominal_carriers.extend(
-            interface
-                .retained_nominal_carriers
-                .iter()
-                .map(|(key, value)| (key.clone(), value.clone())),
         );
         self.declaration_callables.extend(
             interface
