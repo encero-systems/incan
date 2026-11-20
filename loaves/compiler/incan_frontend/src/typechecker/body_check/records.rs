@@ -668,6 +668,21 @@ impl Positions {
             rows.sort_unstable();
             rows
         });
+        let owner = self.nodes.owner().render_compact();
+        if owner.starts_with("function:selector::read_choice|") {
+            eprintln!("square1-input {} self.nodes.root() {:x}", owner, Sha256::digest(postcard::to_allocvec(&self.nodes.root()).ok()?));
+            eprintln!("square1-input {} self.nodes.physical_nodes() {:x}", owner, Sha256::digest(postcard::to_allocvec(&self.nodes.physical_nodes()).ok()?));
+            eprintln!("square1-input {} values {:x}", owner, Sha256::digest(postcard::to_allocvec(&values).ok()?));
+            eprintln!("square1-input {} handles {:x}", owner, Sha256::digest(postcard::to_allocvec(&handles).ok()?));
+            eprintln!("square1-input {} self.type_identities {:x}", owner, Sha256::digest(postcard::to_allocvec(&self.type_identities).ok()?));
+            eprintln!("square1-input {} local.nested {:x}", owner, Sha256::digest(postcard::to_allocvec(&local.nested).ok()?));
+            eprintln!("square1-input {} references {:x}", owner, Sha256::digest(postcard::to_allocvec(&references).ok()?));
+            eprintln!("square1-input {} writes {:x}", owner, Sha256::digest(postcard::to_allocvec(&writes).ok()?));
+            eprintln!("square1-input {} types {:x}", owner, Sha256::digest(postcard::to_allocvec(&types).ok()?));
+            eprintln!("square1-input {} contexts {:x}", owner, Sha256::digest(postcard::to_allocvec(&contexts).ok()?));
+            eprintln!("square1-handles {:?}", handles);
+            eprintln!("square1-types {:?}", self.type_identities);
+        }
         let bytes = postcard::to_allocvec(&(
             self.nodes.root(),
             self.nodes.physical_nodes(),
