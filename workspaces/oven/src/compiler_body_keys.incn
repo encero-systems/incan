@@ -7,15 +7,22 @@ pub const NAMESPACE_IDENTITY_PROFILE: str = "incan.editable-namespace-crumb/5"
 pub const IDENTITY_PROFILE: str = "incan.stable-declaration/1"
 
 
-pub def project_declaration_slot(origin: str, module: str, name: str) -> RecordKey:
-    """Name one project declaration slot whose value is the producer's checked stable identity."""
+pub def project_declaration_slot(origin: str, module: str, name: str, identity: str) -> RecordKey:
+    """Distinguish selected members and symbolic reads even when their module and spelling agree."""
+    marker = "|incan.source-signature/2:sha256:"
+    mut context = "symbol:" + identity
+    # A compact checked identity ends with this fixed-size signature only when this particular read selected one.
+    # A nominal owner's signature inside #in(...) remains part of the address.
+    prefix = len(identity) - len(marker) - 64
+    if prefix >= 0 and identity[prefix:prefix + len(marker)] == marker:
+        context = "checked-signature:" + identity[:prefix]
     return RecordKey(
         family="declaration-slot",
         identity_profile=IDENTITY_PROFILE,
         origin=origin,
         identity=module,
         facet=name,
-        context="checked-signature",
+        context=context,
     )
 
 

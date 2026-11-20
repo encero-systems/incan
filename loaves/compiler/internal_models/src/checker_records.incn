@@ -28,7 +28,7 @@ from graph_crumb_fields import decode_graph_row, encode_graph_row
 from record_scope import MAX_CHECKER_ROW_BYTES
 
 pub const CHECKER_SCHEMA: str = "incan.checker-fields/11"
-pub const CHECKER_PROFILE: str = "incan.checker-free-functions/18"
+pub const CHECKER_PROFILE: str = "incan.checker-free-functions/19"
 const MAX_FIELDS: int = 4096
 const CHECKER_SELECTOR: bytes = b"checkr\x00"
 const GRAPH_BODY_SELECTOR: bytes = b"grbody\x00"

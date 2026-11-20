@@ -635,6 +635,7 @@ def stage_compiled_dependency_sources(
     unit: UnitDescription,
 ) -> Result[None, str]:
     """Stage the exact editable-package or same-project declaration records each compiled owner reports reading."""
+    mut slots: Dict[str, str] = {}
     for value in values:
         for dependency in value.dependency_reads:
             match dependency.package:
@@ -656,13 +657,14 @@ def stage_compiled_dependency_sources(
                             ),
                         )?
                         stage_source_record(prepared, source, owner)?
-                None => stage_project_dependency_source(prepared, source, projections, value, dependency, origin, unit)?
+                None => stage_project_dependency_source(prepared, source, slots, projections, value, dependency, origin, unit)?
     return Ok(None)
 
 
 def stage_project_dependency_source(
     mut prepared: Transaction,
     mut source: PreparedBodyRecordSource,
+    mut slots: Dict[str, str],
     projections: &Dict[str, SourceProjection],
     value: CompiledBodyValue,
     dependency: CompiledBodyDependencyRead,
@@ -670,8 +672,14 @@ def stage_project_dependency_source(
     unit: UnitDescription,
 ) -> Result[None, str]:
     """Stage one same-project declaration slot, module index and exact checked signature."""
-    slot = project_declaration_slot(origin, dependency.module, dependency.name)
+    slot = project_declaration_slot(origin, dependency.module, dependency.name, dependency.identity)
     slot_key = encode_record_key(slot)?
+    if slot_key in slots:
+        if slots[slot_key] != dependency.identity:
+            return Err(f"two checked declarations claim the same project slot: {slot_key}")
+        # The same supplier's projection, census and signature were staged with its binding.
+        return Ok(None)
+    slots[slot_key] = dependency.identity
     slot_value = encode_binding(slot_key, dependency.identity)?
     stage_put(prepared, slot_key, slot_value)
     source.add(slot_key, slot_value)
@@ -1276,7 +1284,7 @@ def dependency_read_key(
                     ),
                 )
             return Ok(None)
-        None => return Ok(Some(project_declaration_slot(origin, dependency.module, dependency.name)))
+        None => return Ok(Some(project_declaration_slot(origin, dependency.module, dependency.name, dependency.identity)))
 
 
 def dependency_projection_refusal(
