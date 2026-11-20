@@ -27,6 +27,11 @@ struct Tally {
     plans_identical: usize,
     functions: usize,
     functions_identical: usize,
+    /// Per-declaration product files the reference wrote, and how many this lowering wrote identically.
+    products: usize,
+    products_identical: usize,
+    reports: usize,
+    reports_identical: usize,
     by_call: BTreeMap<String, (usize, usize)>,
     mismatches: Vec<String>,
 }
@@ -85,6 +90,19 @@ fn compare_functions(expected: &[u8], actual: &[u8], tally: &mut Tally) {
             tally.functions_identical += 1;
         }
     }
+}
+
+/// Count the captured files of a directory and how many exist here with identical bytes.
+fn compare_directory(corpus: &Corpus, expected: &[(String, String)], directory: &Path) -> (usize, usize) {
+    let mut same = 0;
+    for (name, digest) in expected {
+        if let (Ok(want), Ok(have)) = (corpus.blob(digest), std::fs::read(directory.join(name))) {
+            if want == have {
+                same += 1;
+            }
+        }
+    }
+    (expected.len(), same)
 }
 
 /// A private directory holding one step's restored products and its fresh report.
@@ -289,6 +307,16 @@ fn replay_case(
             replay_step(corpus, step, &directories, &mut continuation)?
         };
         let identical = actual == step.outcome && unions == step.unions;
+        if step.scalar_products.is_some() {
+            let (expected, same) = compare_directory(corpus, &step.products_after, &directories.products);
+            tally.products += expected;
+            tally.products_identical += same;
+        }
+        if step.record_report.is_some() {
+            let (expected, same) = compare_directory(corpus, &step.report_after, &directories.report);
+            tally.reports += expected;
+            tally.reports_identical += same;
+        }
         let entry = tally.by_call.entry(step.call.clone()).or_default();
         entry.0 += 1;
         if identical {
@@ -318,6 +346,69 @@ fn replay_case(
     Ok(())
 }
 
+/// Print one case's calls and the shape of each answer without lowering anything.
+fn describe_case(corpus: &Corpus, name: &str, case: &Case) {
+    println!(
+        "case {name}: layout file {}; {} layout requests; {} calls",
+        case.layout_file,
+        case.layout.len(),
+        case.steps.len()
+    );
+    for (index, step) in case.steps.iter().enumerate() {
+        let functions = match &step.outcome {
+            Outcome::Complete(Some(bytes)) => postcard::from_bytes::<Plan>(bytes)
+                .map(|plan| {
+                    format!(
+                        "{} functions, {} models, {} enums, {} externals",
+                        plan.functions.len(),
+                        plan.models.len(),
+                        plan.enums.len(),
+                        plan.externals.len()
+                    )
+                })
+                .unwrap_or_else(|error| format!("undecodable plan: {error}")),
+            _ => String::new(),
+        };
+        let bodies: usize = corpus
+            .modules(&step.modules)
+            .map(|modules| modules.iter().map(|module| module.bodies.len()).sum())
+            .unwrap_or(0);
+        println!(
+            "  {index} {} kind {} entry {} modules {} bodies {} products {} before {} after; report {} files; scalar bodies {}: {} {}",
+            step.call,
+            step.kind,
+            step.entry,
+            step.modules.len(),
+            bodies,
+            step.products_before.len(),
+            step.products_after.len(),
+            step.report_after.len(),
+            step.scalar_bodies.len(),
+            short(&step.outcome),
+            functions
+        );
+    }
+}
+
+/// Write one case's reference plans and input modules as JSON files into `directory`, for reading by hand.
+fn dump_case(corpus: &Corpus, case: &Case, directory: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    for (index, step) in case.steps.iter().enumerate() {
+        if let Outcome::Complete(Some(bytes)) = &step.outcome {
+            let plan: Plan = postcard::from_bytes(bytes).map_err(|error| error.to_string())?;
+            let text = serde_json::to_string_pretty(&plan).map_err(|error| error.to_string())?;
+            std::fs::write(directory.join(format!("step-{index}-plan.json")), text)
+                .map_err(|error| error.to_string())?;
+        }
+        for (position, module) in corpus.modules(&step.modules)?.iter().enumerate() {
+            let text = serde_json::to_string_pretty(module).map_err(|error| error.to_string())?;
+            std::fs::write(directory.join(format!("step-{index}-module-{position}.json")), text)
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(())
+}
+
 fn main() {
     let arguments: Vec<String> = std::env::args().collect();
     let Some(root) = arguments.get(1) else {
@@ -327,15 +418,22 @@ fn main() {
     let mut prefix = String::new();
     let mut show = 20usize;
     let mut oracle = false;
+    let mut describe = false;
+    let mut dump: Option<PathBuf> = None;
     let mut options = arguments[2..].iter();
     while let Some(option) = options.next() {
         if option == "--oracle" {
             oracle = true;
             continue;
         }
+        if option == "--describe" {
+            describe = true;
+            continue;
+        }
         match (option.as_str(), options.next()) {
             ("--case", Some(value)) => prefix = value.clone(),
             ("--show", Some(value)) => show = value.parse().unwrap_or(20),
+            ("--dump", Some(value)) => dump = Some(PathBuf::from(value)),
             _ => {
                 eprintln!("unknown option {option}");
                 std::process::exit(2);
@@ -360,6 +458,21 @@ fn main() {
         if !name.starts_with(&prefix) {
             continue;
         }
+        if let Some(directory) = &dump {
+            if let Err(error) = corpus
+                .case(&path)
+                .and_then(|case| dump_case(&corpus, &case, &directory.join(&name)))
+            {
+                eprintln!("{name}: {error}");
+            }
+            continue;
+        }
+        if describe {
+            if let Ok(case) = corpus.case(&path) {
+                describe_case(&corpus, &name, &case);
+            }
+            continue;
+        }
         let result = corpus
             .case(&path)
             .and_then(|case| replay_case(&corpus, &name, &case, &scratch, oracle, &mut tally));
@@ -375,7 +488,7 @@ fn main() {
         println!("call {call}: {identical} of {count} identical");
     }
     println!(
-        "cases {} (capture faults {}); layouts {}/{}; steps {}/{}; plans {}/{}; functions {}/{}",
+        "cases {} (capture faults {}); layouts {}/{}; steps {}/{}; plans {}/{}; functions {}/{}; products {}/{}; report files {}/{}",
         tally.cases,
         tally.case_faults,
         tally.layouts_identical,
@@ -385,8 +498,14 @@ fn main() {
         tally.plans_identical,
         tally.plans,
         tally.functions_identical,
-        tally.functions
+        tally.functions,
+        tally.products_identical,
+        tally.products,
+        tally.reports_identical,
+        tally.reports
     );
-    let complete = tally.mismatches.is_empty();
+    let complete = tally.mismatches.is_empty()
+        && tally.products_identical == tally.products
+        && tally.reports_identical == tally.reports;
     std::process::exit(if complete { 0 } else { 1 });
 }

@@ -24,4 +24,5 @@ incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/inc
 internal_models = { loaf = "internal_models", path = "../internal_models" }
 postcard = { default-features = false, features = ["use-std"], loaf = "crates-io/postcard", version = "1.1" }
 serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
+serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
 sha2 = { loaf = "crates-io/sha2", version = "0.10.9" }
