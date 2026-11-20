@@ -3,8 +3,9 @@
 from std.fs import Path
 from std.tempfile import TemporaryDirectory
 from pub::internal_models.plan_function_records import decode_plan_function_record
-from record_positions import place_positions, positioned_product, relocate_product
+from record_positions import index_positions, indexed_product, place_positions, positioned_product, relocate_product
 from pub::incan_mir_plan import (
+    encode_product,
     BasicBlock,
     ExternalFunction,
     Function,
@@ -57,6 +58,21 @@ pub def test_moved_body_lines_keep_the_plan_product() -> Result[None, str]:
             assert function == after, "the reused product kept the lines of the body it was captured from"
     retain_scalar(products.0, inputs, after, empty_runtime, empty_nominals, after_nodes)?
     assert only_product(products)? == stored, "moved lines changed the plan product's bytes"
+    return Ok(None)
+
+
+pub def test_indexed_product_matches_both_position_passes_and_refusals() -> Result[None, str]:
+    owner = source_span(file="positions.incn", line=10, column=1)
+    function = positioned("relay", owner, 11, 12)
+    helper = positioned("helper", owner, 12, 11)
+    empty_runtime: list[ExternalFunction] = []
+    empty_nominals: list[ProductNominal] = []
+    wire = encode_product(function, empty_runtime, empty_nominals, [helper])?
+    nodes = [(0, 1), (1, 5), (2, 5), (1, 5)]
+    relative = relocate_product(wire, "<owner>", 1)?
+    assert indexed_product(wire, nodes, "positions.incn", 10)? == index_positions(relative, nodes)?
+    assert indexed_product(wire, [(0, 1)], "positions.incn", 10).is_err()
+    assert indexed_product(wire, nodes, "other.incn", 10).is_err()
     return Ok(None)
 
 

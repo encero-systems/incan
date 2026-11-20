@@ -62,6 +62,7 @@ pub enum PositionChange:
     Preserve
     Relocate(str, int, str, int)
     Index(dict[str, int])
+    IndexFrom(dict[str, int], str, int)
     Place(list[tuple[int, int]])
     PlaceAt(list[tuple[int, int]], str, int, str, int)
 
@@ -76,12 +77,10 @@ pub model WirePositions:
             PositionChange.Relocate(old_file, origin, new_file, start) =>
                 return relocate_span(file, line, column, old_file, origin, new_file, start)
             PositionChange.Index(ordinals) =>
-                if file == "<owner>":
-                    key = f"{line - 1}:{column}"
-                    if key in ordinals:
-                        return Ok((file, 0, ordinals[key] + 1))
-                    if line > 1:
-                        return Err("plan-function span locates no Body IR node")
+                return index_span(file, line, column, ordinals)
+            PositionChange.IndexFrom(ordinals, source, origin) =>
+                relative_file, relative_line, relative_column = relocate_span(file, line, column, source, origin, "<owner>", 1)?
+                return index_span(relative_file, relative_line, relative_column, ordinals)
             PositionChange.Place(positions) =>
                 return place_span(file, line, column, positions)
             PositionChange.PlaceAt(positions, old_file, origin, new_file, start) =>
@@ -89,6 +88,16 @@ pub model WirePositions:
                 return relocate_span(placed_file, placed_line, placed_column, old_file, origin, new_file, start)
         return Ok((file, line, column))
 
+
+
+def index_span(file: str, line: int, column: int, ordinals: &Dict[str, int]) -> Result[tuple[str, int, int], str]:
+    if file == "<owner>":
+        key = f"{line - 1}:{column}"
+        if ordinals.contains_key(key):
+            return Ok((file, 0, ordinals[key] + 1))
+        if line > 1:
+            return Err("plan-function span locates no Body IR node")
+    return Ok((file, line, column))
 
 
 def place_span(file: str, line: int, column: int, positions: &list[tuple[int, int]]) -> Result[tuple[str, int, int], str]:

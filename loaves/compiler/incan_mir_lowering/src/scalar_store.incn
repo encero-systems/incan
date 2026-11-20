@@ -28,7 +28,7 @@ from pub::incan_mir_plan import (
     resolve_nominals,
 )
 from scalar_products import encode_product, decode_product
-from record_positions import index_positions, place_positions, positioned_product, relocate_product
+from record_positions import indexed_product, index_positions, place_positions, positioned_product, relocate_product
 
 
 # A record whose key is its checked meaning; its spans name Body IR nodes by ordinal through a request-local position map.
@@ -298,17 +298,22 @@ def encoded_record(
     """
     mut payload = encode_product(function, runtime, nominals, frames)?
     if inputs[0] == RECORD_FUNCTION:
-        relative = relocate_product(payload, "<owner>", 1)?
-        restored = relocate_product(relative, str(function.span.file), function.span.line)?
-        # The producer already restored every native field from payload. Identical canonical bytes carry that proof.
+        file = str(function.span.file)
+        line = function.span.line
+        indexed = indexed_product(payload, positions, file, line)?
+        restored = positioned_product(indexed, positions, file, line)?
         if restored != payload:
-            references = product_nominals(function, runtime, frames)?
-            restored_function, restored_runtime, restored_frames, _identities = decode_product_parts(restored, references)?
-            if encode_product(restored_function, restored_runtime, nominals, restored_frames)? != payload:
-                return Err("plan-function position round trip changed native facts")
-        payload = index_positions(relative, positions)?
-        if place_positions(payload, positions)? != relative:
-            return Err("plan-function position map changed native facts")
+            # A noncanonical spelling must still have the original codec's independent relocation and index proofs.
+            relative = relocate_product(payload, "<owner>", 1)?
+            original = relocate_product(relative, file, line)?
+            if original != payload:
+                references = product_nominals(function, runtime, frames)?
+                restored_function, restored_runtime, restored_frames, _identities = decode_product_parts(original, references)?
+                if encode_product(restored_function, restored_runtime, nominals, restored_frames)? != payload:
+                    return Err("plan-function position round trip changed native facts")
+            if place_positions(indexed, positions)? != relative or indexed != index_positions(relative, positions)?:
+                return Err("plan-function position map changed native facts")
+        payload = indexed
     digest = plan_function_digest(payload, requests)?
     record = PlanFunctionRecord(inputs=inputs, function=payload, requests=requests, digest=digest)
     return encode_plan_function_record(record)
