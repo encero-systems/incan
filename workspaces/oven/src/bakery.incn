@@ -35,7 +35,7 @@ pub from home_paths import bakery
 from pub::incan_platform.trace import Operation
 from jec import begin as begin_work, record as record_work
 from json_fields import required_text
-from observation import observe, trace
+from observation import SETTLE_SECONDS, file_metadata, observe, trace
 from unit_publication import record_path, record_verified_payload, source_origins
 from storage_admission import extend, release, reserve, tree_bytes
 from pub::incan_platform.store import (
@@ -69,7 +69,9 @@ from bakery_records import Fact, FactFile, claim_file, decode_fact, encode_fact,
 from bakery_roots import collect, preview_collection
 
 pub from bakery_views import forget_view
-from bakery_views import ViewSelection, layout_identity, read_view, write_view
+from bakery_views import (
+    ViewSelection, layout_identity, observed_file_digest, read_view, remember_file_digest, write_view,
+)
 
 const VERIFY: int = -2
 const OPEN_FILE: u32 = 420
@@ -361,8 +363,8 @@ def view_unit_file(store: Path, fact: Fact, relative: str, destination: Path) ->
     Make `destination` a view of one payload file of `fact` that its user may run, edit or strip.
 
     The view is a copy-on-write clone where the filesystem has one (APFS `clonefile`; reflinking `copy_file_range` on
-    Linux) and a full copy otherwise, renamed into place so the destination is never half written. A view that still
-    has its payload's size and modification time is current and is not cloned again.
+    Linux) and a full copy otherwise, renamed into place so the destination is never half written. An unchanged view
+    with a verified digest keeps its file generation.
     """
     for file in fact.files:
         if file.path == relative:
@@ -377,7 +379,7 @@ def view_unit_file(store: Path, fact: Fact, relative: str, destination: Path) ->
 def view_file(store: Path, file: FactFile, destination: Path) -> Result[None, str]:
     """Clone one payload file to `destination` unless a current view is already there."""
     source = payload_path(store, file.digest)
-    if same_file(source, destination):
+    if same_file(source, destination, file.digest):
         return Ok(None)
     make_directory(destination.parent())?
     staged = Path(f"{destination.0}.view-{id()}")
@@ -477,19 +479,31 @@ def swap_in(staged: Path, destination: Path, store: Path, files: list[FactFile],
             return Err(f"{destination.0}: {error}")
 
 
-def same_file(source: Path, view: Path) -> bool:
-    """Whether a view still has its payload's size and modification time; a clone keeps both, an edit does not."""
-    match metadata(source.0):
+def same_file(source: Path, view: Path, digest: str) -> bool:
+    """Require a verified payload digest after the metadata rules out a stale clone."""
+    original = match file_metadata(source):
+        Ok(Some(found)) => found
+        _ => return false
+    copied = match file_metadata(view):
+        Ok(Some(found)) => found
+        _ => return false
+    if not original.is_file() or not copied.is_file() or original.size != copied.size or original.modified_ns != copied.modified_ns:
+        return false
+    if original.device == copied.device and original.inode == copied.inode:
+        return true
+    settled = copied.settled(SETTLE_SECONDS)
+    stamp = copied.stamp()
+    if settled:
+        if let Ok(Some(known)) = observed_file_digest(view, stamp):
+            return known == digest
+    content = match file_digest(view, "sha256"):
+        Ok(found) => hexlify(found)
         Err(_) => return false
-        Ok(original) =>
-            match metadata(view.0):
-                Err(_) => return false
-                Ok(copied) =>
-                    return (
-                        original.len() == copied.len()
-                        and original.mtime() == copied.mtime()
-                        and original.mtime_nsec() == copied.mtime_nsec()
-                    )
+    if content != digest or file_metadata(view) != Ok(Some(copied)):
+        return false
+    if settled:
+        _ = remember_file_digest(view, stamp, digest)
+    return true
 
 
 def all_same(store: Path, files: list[FactFile], view: Path, prefix: str) -> bool:
@@ -499,7 +513,7 @@ def all_same(store: Path, files: list[FactFile], view: Path, prefix: str) -> boo
         if is_record(file):
             if not target.is_file():
                 return false
-        elif not same_file(payload_path(store, file.digest), target):
+        elif not same_file(payload_path(store, file.digest), target, file.digest):
             return false
     return true
 
@@ -645,7 +659,7 @@ pub def restore_recorded_view(artifact: Path) -> Result[bool, str]:
     source = payload_path(store, digest)
     if not payload_intact(store, digest):
         return Err(StoreError(kind="integrity", object=source.0, detail="unit payload is damaged").message())
-    if same_file(source, artifact):
+    if same_file(source, artifact, digest):
         return Ok(true)
     staged = Path(f"{artifact.0}.view-{id()}")
     clone(source, staged, false)?

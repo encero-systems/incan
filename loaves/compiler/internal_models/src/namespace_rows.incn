@@ -1,9 +1,11 @@
 """The native frontend's typed checked namespace projection, framed by the public Crumb row codec."""
 
 from rust::std::primitive import f64 as RustF64
+from rust::incan_std_primitives::crumb import RowAdmission
 from std.primitives.crumb.budget import Budget
 from std.primitives.crumb.row_values import Nodes, settle
 from std.primitives.text import copy_frozen_bytes
+from std.primitives.views import MappedView
 from std.primitives.crumb.hashes import value_hash
 from std.primitives.crumb.types import AbsentPolicy
 from std.primitives.crumb.values import Projection, IntegerValue, MapEntry, Value, ValueField
@@ -204,6 +206,16 @@ pub model PreparedNamespaceReader:
     pub def decode(self, encoded: bytes) -> Result[NamespaceAtom, str]:
         mut budget = graph_read_budget()?
         row = self.reader.admit(encoded, budget)?
+        return self.decode_admitted(row, budget)
+
+    pub def decode_view(self, view: MappedView) -> Result[NamespaceAtom, str]:
+        """Decode the namespace in place through the same referenced dictionary."""
+        mut budget = graph_read_budget()?
+        row = self.reader.admit_view(view, budget)?
+        return self.decode_admitted(row, budget)
+
+    def decode_admitted(self, row: &RowAdmission, mut budget: Budget) -> Result[NamespaceAtom, str]:
+        """Project the admitted namespace into the frontend's cells under the remaining allowance."""
         remaining_bytes, remaining_elements = budget.codec_allowance()
         decoded = row.read_record(0, remaining_bytes, remaining_elements, budget.depth_allowance())
         settle(decoded, budget).map_err((error) => error.message())?
@@ -216,6 +228,16 @@ pub model PreparedNamespaceReader:
     pub def identity(self, encoded: bytes, schema: u32) -> Result[NamespaceIdentity, str]:
         mut budget = graph_read_budget()?
         row = self.reader.admit(encoded, budget)?
+        return self.identity_admitted(row, schema, budget)
+
+    pub def identity_view(self, view: MappedView, schema: u32) -> Result[NamespaceIdentity, str]:
+        """Recover the exact identity from an older namespace envelope already held by a mapped view."""
+        mut budget = graph_read_budget()?
+        row = self.reader.admit_view(view, budget)?
+        return self.identity_admitted(row, schema, budget)
+
+    def identity_admitted(self, row: &RowAdmission, schema: u32, mut budget: Budget) -> Result[NamespaceIdentity, str]:
+        """Read only the advertised identity fields and verify the frontend schema."""
         name = text(wire_field(row, copy_frozen_bytes(NAMESPACE_MODULE_NAME), budget)?)?
         version = wire_field(row, copy_frozen_bytes(NAMESPACE_SCHEMA), budget)?
         match version:
@@ -240,6 +262,16 @@ pub def decode_prepared_namespace(reader: &PreparedNamespaceReader, encoded: byt
 
 pub def identify_prepared_namespace(reader: &PreparedNamespaceReader, encoded: bytes, schema: u32) -> Result[NamespaceIdentity, str]:
     return reader.identity(encoded, schema)
+
+
+pub def decode_prepared_namespace_view(reader: &PreparedNamespaceReader, view: MappedView) -> Result[NamespaceAtom, str]:
+    """Decode a bounded interface directly from an immutable view."""
+    return reader.decode_view(view)
+
+
+pub def identify_prepared_namespace_view(reader: &PreparedNamespaceReader, view: MappedView, schema: u32) -> Result[NamespaceIdentity, str]:
+    """Read the identity from a mapped interface when the caller has no separate proof."""
+    return reader.identity_view(view, schema)
 
 
 pub def encode_namespace_interface(root: NamespaceAtom) -> Result[bytes, str]:

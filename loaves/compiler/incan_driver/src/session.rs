@@ -14,6 +14,7 @@ use incan_lang::lang::stdlib;
 
 use crate::diagnostics::CliDiagnosticFailure;
 use crate::error::{CliError, CliResult};
+use crate::modules::SourceModuleImports;
 use crate::typecheck::{TypecheckedModules, typecheck_modules};
 use crate::unit::UnitDescription;
 use incan_frontend::ast::{Program, Span};
@@ -32,6 +33,7 @@ use incan_frontend::{diagnostics, lexer, parser, vocab_desugar_pass};
 /// lowers from, and its portable semantic snapshot, which tooling reads.
 #[derive(Debug, Clone)]
 pub struct CompilationAnalysis {
+    pub(crate) imports: Arc<SourceModuleImports>,
     type_info_by_path: BTreeMap<PathBuf, Arc<TypeCheckInfo>>,
     type_info_by_module_path: BTreeMap<Vec<String>, Arc<TypeCheckInfo>>,
     semantic_snapshots_by_path: BTreeMap<PathBuf, incan_semantics_core::SemanticModuleSnapshot>,
@@ -265,6 +267,11 @@ impl CompilationSession {
     /// refused. Without a source, an uncovered path keeps no facts and its uses refuse where checked. Manifest
     /// inventory determines coverage before the caches and source are consulted.
     pub fn resolve_rust_facts(&mut self, modules: &[ParsedModule]) -> CliResult<()> {
+        self.resolve_rust_facts_for(&imported_rust_paths(modules))
+    }
+
+    /// Resolve the already collected exact Rust import paths for this activation.
+    pub(crate) fn resolve_rust_facts_for(&mut self, paths: &BTreeSet<String>) -> CliResult<()> {
         let _invocation = tracing::trace_span!(
             target: "incan::invocation",
             "incan_driver::resolve_rust_facts"
@@ -273,8 +280,9 @@ impl CompilationSession {
         let Some(source) = self.rust_facts_source.clone() else {
             return Ok(());
         };
-        let uncovered = imported_rust_paths(modules)
-            .into_iter()
+        let uncovered = paths
+            .iter()
+            .cloned()
             .chain(self.loaves.stale_shipped_rust_paths())
             .filter(|path| self.loaves.rust_abi_item(path).is_none())
             .collect::<BTreeSet<_>>();
@@ -309,8 +317,28 @@ impl CompilationSession {
         package: Option<&str>,
         visit: &mut dyn FnMut(&ParsedModule, &TypeChecker),
     ) -> Result<CompilationAnalysis, CliDiagnosticFailure> {
-        let checked = self.typecheck_unit(modules, package, visit)?;
-        let namespace_lowering_inputs = checked.namespace_lowering_inputs.clone();
+        let imports = Arc::new(SourceModuleImports::new(modules, self.own_standard_package()));
+        self.analyze_unit_with_imports(modules, package, imports, true, visit)
+    }
+
+    /// Analyze the same collected modules and source import graph used by record publication and Body IR.
+    /// Only codegraph consumers require a projection of the checked facts into semantic snapshots.
+    pub fn analyze_unit_with_imports(
+        &self,
+        modules: &[ParsedModule],
+        package: Option<&str>,
+        imports: Arc<SourceModuleImports>,
+        collect_semantic_snapshots: bool,
+        visit: &mut dyn FnMut(&ParsedModule, &TypeChecker),
+    ) -> Result<CompilationAnalysis, CliDiagnosticFailure> {
+        let checked = self.typecheck_unit(
+            modules,
+            package,
+            &imports,
+            visit,
+            crate::typecheck::TypecheckOutput::Full,
+        )?;
+        let namespace_lowering_inputs = checked.namespace_lowering_inputs;
         let mut type_info_by_path = BTreeMap::new();
         let mut type_info_by_module_path = BTreeMap::new();
         let mut semantic_snapshots_by_path = BTreeMap::new();
@@ -318,16 +346,19 @@ impl CompilationSession {
         for ((module, type_info), namespace_body) in
             modules.iter().zip(checked.type_infos).zip(checked.namespace_bodies)
         {
-            let snapshot = build_semantic_module_snapshot_v0(&module.ast, &module.path_segments, &type_info);
+            if collect_semantic_snapshots {
+                let snapshot = build_semantic_module_snapshot_v0(&module.ast, &module.path_segments, &type_info);
+                semantic_snapshots_by_path.insert(module.file_path.clone(), snapshot);
+            }
             let type_info = Arc::new(type_info);
             type_info_by_path.insert(module.file_path.clone(), Arc::clone(&type_info));
             type_info_by_module_path.insert(module.path_segments.clone(), type_info);
-            semantic_snapshots_by_path.insert(module.file_path.clone(), snapshot);
             if let Some(body) = namespace_body {
                 namespace_body_by_path.insert(module.file_path.clone(), Arc::new(body));
             }
         }
         Ok(CompilationAnalysis {
+            imports,
             type_info_by_path,
             type_info_by_module_path,
             semantic_snapshots_by_path,
@@ -344,10 +375,13 @@ impl CompilationSession {
         &self,
         modules: &[ParsedModule],
         package: Option<&str>,
+        imports: &SourceModuleImports,
         visit: &mut dyn FnMut(&ParsedModule, &TypeChecker),
+        output: crate::typecheck::TypecheckOutput<'_>,
     ) -> Result<TypecheckedModules, CliDiagnosticFailure> {
         let checked = typecheck_modules(
             modules,
+            imports,
             &self.unit,
             &self.loaves,
             self.own_standard_package,
@@ -356,6 +390,7 @@ impl CompilationSession {
             visit,
             self.callable_body_reuse.as_ref(),
             &self.graph_body_records,
+            output,
         );
         let mut expansion_errors = self.expansion_failures(modules);
         match checked {
@@ -574,7 +609,7 @@ impl CompilationSession {
 }
 
 /// The Rust paths a unit imports directly or names through `@rust.derive`.
-fn imported_rust_paths(modules: &[ParsedModule]) -> BTreeSet<String> {
+pub(crate) fn imported_rust_paths(modules: &[ParsedModule]) -> BTreeSet<String> {
     use incan_frontend::ast::{Declaration, DecoratorArg, Expr, ImportKind, Literal};
     let mut paths = BTreeSet::new();
     for module in modules {

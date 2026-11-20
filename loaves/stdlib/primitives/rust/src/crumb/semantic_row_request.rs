@@ -258,7 +258,7 @@ impl NodeCursor<'_> {
             5 => Value::Float(float64_bits(node.number, &node.data)?),
             6 => Value::Decimal(node.signed, node.number),
             7 => Value::Text(node.text),
-            8 => Value::Binary(node.data),
+            8 => Value::Binary(node.data.into()),
             9 => Value::Withheld,
             10 => Value::List(self.values(node.count)?),
             11 => Value::Tuple(self.values(node.count)?),

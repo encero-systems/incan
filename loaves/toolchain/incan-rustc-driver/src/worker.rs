@@ -43,7 +43,16 @@ pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Erro
                     incan_platform::release_free_heap();
                     timing.mark("worker_heap_released");
                 }
-                incan_worker_host::complete(&mut host, &outcome, footprint(), live_heap());
+                let resident_bytes = footprint();
+                let live_bytes = live_heap();
+                tracing::trace!(
+                    target: "incan::invocation",
+                    physical_bytes = resident_bytes,
+                    live_bytes,
+                    one_activation = request.retire_after,
+                    "compiler worker settlement"
+                );
+                incan_worker_host::complete(&mut host, &outcome, resident_bytes, live_bytes);
                 timing.mark("worker_completed");
             }
             WorkerActivation::Record(request) => {
