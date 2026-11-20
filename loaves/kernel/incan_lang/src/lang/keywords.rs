@@ -875,6 +875,36 @@ const fn info_surface(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // const table constructor mirrors `info()` — a struct param would be awkward here
+/// Build metadata for an import-activated soft keyword.
+const fn info_soft(
+    id: KeywordId,
+    canonical: &'static str,
+    activation_namespaces: &'static [&'static str],
+    surface_kind: KeywordSurfaceKind,
+    category: KeywordCategory,
+    usage: &'static [KeywordUsage],
+    introduced_in_rfc: RfcId,
+    since: Since,
+    stability: Stability,
+) -> KeywordDescriptor {
+    KeywordDescriptor {
+        id,
+        canonical,
+        aliases: &[],
+        activation: KeywordActivation::Soft {
+            namespaces: activation_namespaces,
+        },
+        surface_kind: Some(surface_kind),
+        category,
+        usage,
+        introduced_in_rfc,
+        since,
+        stability,
+        examples: &[],
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // const table constructor mirrors the keyword metadata shape
 /// Build metadata for an always-available contextual keyword.
 const fn info_contextual(

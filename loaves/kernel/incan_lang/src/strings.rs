@@ -41,7 +41,7 @@ pub fn str_contains(haystack: &str, needle: &str) -> bool {
 /// Count the Unicode scalar values in a string.
 ///
 /// This is intentionally a scalar count rather than a UTF-8 byte count or a user-perceived grapheme count. It is the
-/// canonical policy named by the Incan string-method registry and shared by every consumer.
+/// canonical policy named by the Incan string-method registry and shared by direct execution and generated Rust.
 ///
 /// ## Parameters
 /// - `s`: String to measure.
@@ -179,10 +179,12 @@ pub fn str_slice(
             return Ok(out);
         }
         let stride = step.unsigned_abs();
-        for (distance, character) in s[start_byte..end_byte].chars().enumerate() {
-            if (distance as u64).is_multiple_of(stride) {
+        let mut distance = 0_u64;
+        for character in s[start_byte..end_byte].chars() {
+            if distance % stride == 0 {
                 out.push(character);
             }
+            distance += 1;
         }
         return Ok(out);
     }
@@ -194,10 +196,12 @@ pub fn str_slice(
         return Ok(out);
     }
     let stride = step.unsigned_abs();
-    for (distance, character) in s[end_byte..start_byte].chars().rev().enumerate() {
-        if (distance as u64).is_multiple_of(stride) {
+    let mut distance = 0_u64;
+    for character in s[end_byte..start_byte].chars().rev() {
+        if distance % stride == 0 {
             out.push(character);
         }
+        distance += 1;
     }
 
     Ok(out)
