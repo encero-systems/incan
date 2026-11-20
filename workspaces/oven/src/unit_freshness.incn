@@ -197,6 +197,15 @@ def identified_unit(unit: UnitDescription, toolchain: Toolchain, compiler: str) 
     return Ok(key)
 
 
+pub def collect_program_reach(unit: UnitDescription, toolchain: Toolchain) -> Result[Option[SourceGraph], str]:
+    """Collect the ordinary unit-key graph before a standalone program has a recorded capture."""
+    mut project = load_ledger(unit_ledger(unit.project_root, ledger_name(unit)), SETTLE_SECONDS)
+    compiler = selected_unit_compiler(unit, toolchain, compiler_fingerprint(toolchain)?)?
+    graph = source_graph(unit, toolchain, f"{compiler} {description_digest(unit)?}", project)?
+    project.save()?
+    return Ok(graph)
+
+
 pub def graph_imports(unit: UnitDescription, toolchain: Toolchain) -> Result[Option[list[JsonValue]], str]:
     """
     The Rust crate requests recorded with the unit's current source graph under the scope `unit_key` reads, when the

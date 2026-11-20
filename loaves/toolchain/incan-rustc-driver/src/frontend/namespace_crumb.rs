@@ -1,10 +1,13 @@
 //! Bind frontend declaration values to the Incan Crumb codec at the existing compiler graph boundary.
 
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
-use incan_frontend::typechecker::{CheckedNamespaceInterface, NamespaceCell as Cell, NamespaceCrumb};
-use internal_models::{NamespaceAtom as Atom, NamespaceEntry, NamespaceField};
+use incan_frontend::checker_records::GraphNamespaceInterface;
+use incan_frontend::typechecker::{
+    CheckedNamespaceInterface, ModuleDependencyInterface, NamespaceCell as Cell, NamespaceCrumb,
+};
+use internal_models::{MappedView, NamespaceAtom as Atom, NamespaceEntry, NamespaceField};
 use sha2::{Digest, Sha256};
 
 pub(super) struct CheckedNamespaceCrumb;
@@ -23,11 +26,48 @@ pub(super) fn publish(
     internal_models::publish_namespace_interface(&to_atom(interface.wire_value()?))
 }
 
+/// One resident declaration's immutable checked product and its installed dependency lookup tables.
+#[derive(Debug)]
+struct RetainedInterface {
+    checked: CheckedNamespaceInterface,
+    installed: OnceLock<Result<Arc<ModuleDependencyInterface>, String>>,
+}
+
+impl RetainedInterface {
+    /// Keep the wire-level declaration and prepare the lookup tables only when a consumer needs them.
+    fn new(checked: CheckedNamespaceInterface) -> Self {
+        Self {
+            checked,
+            installed: OnceLock::new(),
+        }
+    }
+}
+
+impl GraphNamespaceInterface for RetainedInterface {
+    /// Recognize the logical module before letting a checker observe its declarations.
+    fn belongs_to(&self, name: &str, path: &[String]) -> bool {
+        self.checked.belongs_to(name, path)
+    }
+
+    /// Share the same completed immutable tables for each consumer of the exact same checked namespace.
+    fn installable(&self) -> Result<Arc<ModuleDependencyInterface>, String> {
+        self.installed
+            .get_or_init(|| {
+                let _trace =
+                    tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::prepare_retained_interface",
+                module = self.checked.module_name())
+                    .entered();
+                self.checked.installable()
+            })
+            .clone()
+    }
+}
+
 /// Resident builds can consume the same physical namespace the compiler just published. Its full Crumb
 /// digest includes documentation and positions as well as the semantic projection.
 #[derive(Default)]
 struct PublishedInterfaces {
-    entries: HashMap<[u8; 32], Arc<CheckedNamespaceInterface>>,
+    entries: HashMap<[u8; 32], Arc<RetainedInterface>>,
     wire_bytes: usize,
 }
 
@@ -35,7 +75,7 @@ const MAX_WIRE_BYTES: usize = 96 * 1024 * 1024;
 const MAX_INTERFACES: usize = 512;
 static PUBLISHED: LazyLock<Mutex<PublishedInterfaces>> = LazyLock::new(Mutex::default);
 
-fn insert(digest: [u8; 32], size: usize, interface: Arc<CheckedNamespaceInterface>) {
+fn insert(digest: [u8; 32], size: usize, interface: Arc<RetainedInterface>) {
     if size > MAX_WIRE_BYTES {
         return;
     }
@@ -72,11 +112,11 @@ pub(super) fn remember_published(
     } else {
         Vec::new()
     };
-    insert(digest, bytes.len(), Arc::new(interface));
+    insert(digest, bytes.len(), Arc::new(RetainedInterface::new(interface)));
     Ok(proof)
 }
 
-fn published(digest: &[u8; 32]) -> Option<Arc<CheckedNamespaceInterface>> {
+fn published(digest: &[u8; 32]) -> Option<Arc<RetainedInterface>> {
     PUBLISHED.lock().ok()?.entries.get(digest).cloned()
 }
 
@@ -84,24 +124,25 @@ fn published(digest: &[u8; 32]) -> Option<Arc<CheckedNamespaceInterface>> {
 struct EncodedInterface {
     name: String,
     path: Vec<String>,
-    bytes: Vec<u8>,
+    bytes: MappedView,
     digest: [u8; 32],
 }
 
-impl incan_frontend::checker_records::GraphNamespaceInterface for EncodedInterface {
+impl GraphNamespaceInterface for EncodedInterface {
     fn belongs_to(&self, name: &str, path: &[String]) -> bool {
         self.name == name && self.path == path
     }
 
     fn installable(&self) -> Result<Arc<incan_frontend::typechecker::ModuleDependencyInterface>, String> {
-        let checked = restore_digest(self.bytes.len(), self.digest, || {
-            if self.bytes.len() > 64 * 1024 * 1024 {
+        let byte_count = self.bytes.0.as_bytes().len();
+        let checked = restore_digest(byte_count, self.digest, || {
+            if byte_count > 64 * 1024 * 1024 {
                 return Err("checked namespace exceeds its byte limit".into());
             }
-            let root = internal_models::decode_prepared_namespace(namespace_reader()?, &self.bytes)?;
+            let root = internal_models::decode_prepared_namespace_view(namespace_reader()?, &self.bytes)?;
             CheckedNamespaceInterface::from_wire_value(to_cell(root)?)
         })?;
-        if checked.module_name() != self.name || checked.module_path() != self.path {
+        if !checked.belongs_to(&self.name, &self.path) {
             return Err("checked namespace identity disagrees with the admitted root".into());
         }
         checked.installable()
@@ -113,14 +154,18 @@ impl incan_frontend::checker_records::GraphNamespaceInterface for EncodedInterfa
 pub(super) fn admit(
     source: &str,
     proof: &[u8],
-    bytes: Vec<u8>,
+    bytes: MappedView,
 ) -> Result<Arc<dyn incan_frontend::checker_records::GraphNamespaceInterface>, String> {
-    let digest = Sha256::digest(&bytes).into();
+    let digest = Sha256::digest(bytes.0.as_bytes()).into();
     let root = if proof.is_empty() {
         if let Some(hit) = published(&digest) {
             return Ok(hit);
         }
-        internal_models::identify_prepared_namespace(namespace_reader()?, &bytes, CheckedNamespaceInterface::SCHEMA)?
+        internal_models::identify_prepared_namespace_view(
+            namespace_reader()?,
+            &bytes,
+            CheckedNamespaceInterface::SCHEMA,
+        )?
     } else {
         internal_models::read_namespace_proof(
             &proof.to_vec(),
@@ -141,11 +186,11 @@ fn restore_digest(
     size: usize,
     digest: [u8; 32],
     decode: impl FnOnce() -> Result<CheckedNamespaceInterface, String>,
-) -> Result<Arc<CheckedNamespaceInterface>, String> {
+) -> Result<Arc<RetainedInterface>, String> {
     if let Some(hit) = published(&digest) {
         return Ok(hit);
     }
-    let interface = Arc::new(decode()?);
+    let interface = Arc::new(RetainedInterface::new(decode()?));
     insert(digest, size, Arc::clone(&interface));
     Ok(interface)
 }
@@ -235,7 +280,7 @@ pub(super) fn to_cell(value: Atom) -> Result<Cell, String> {
 }
 
 #[cfg(test)]
-fn restore(bytes: &[u8]) -> Result<Arc<CheckedNamespaceInterface>, String> {
+fn restore(bytes: &[u8]) -> Result<Arc<RetainedInterface>, String> {
     restore_digest(bytes.len(), Sha256::digest(bytes).into(), || {
         CheckedNamespaceInterface::from_bytes(bytes, &CheckedNamespaceCrumb)
     })
@@ -243,7 +288,7 @@ fn restore(bytes: &[u8]) -> Result<Arc<CheckedNamespaceInterface>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::CheckedNamespaceCrumb;
+    use super::{CheckedNamespaceCrumb, GraphNamespaceInterface};
     use incan_frontend::typechecker::{CheckedNamespaceInterface, TypeChecker};
 
     fn program(source: &str) -> Result<incan_frontend::ast::Program, String> {
@@ -286,9 +331,12 @@ mod tests {
         let original = super::restore(&before.interface)?;
         let moved_value = super::restore(&moved.interface)?;
         assert!(!std::sync::Arc::ptr_eq(&original, &moved_value));
-        assert_eq!(original.to_bytes(&CheckedNamespaceCrumb)?, before.interface);
-        assert_eq!(moved_value.to_bytes(&CheckedNamespaceCrumb)?, moved.interface);
+        assert_eq!(original.checked.to_bytes(&CheckedNamespaceCrumb)?, before.interface);
+        assert_eq!(moved_value.checked.to_bytes(&CheckedNamespaceCrumb)?, moved.interface);
         assert!(std::sync::Arc::ptr_eq(&moved_value, &super::restore(&moved.interface)?));
+        let installed = moved_value.installable()?;
+        let second = super::restore(&moved.interface)?.installable()?;
+        assert!(std::sync::Arc::ptr_eq(&installed, &second));
         assert!(super::restore(&moved.interface[..moved.interface.len() - 1]).is_err());
         Ok(())
     }

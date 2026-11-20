@@ -10,10 +10,12 @@ from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_gra
 from bakery_records import Fact, encode_fact, layout_fact_text
 from files import read_json
 from json_fields import required_text
+from observation import file_metadata
 from publication import publish_binary
 from unit_freshness import fingerprint
 
 const VIEW_ROW: bytes = b"bakvie\x00"
+const FILE_VIEW_ROW: bytes = b"bakfil\x00"
 pub const VIEW_RECORD: str = "fact.crumb"
 pub const LEGACY_VIEW: str = "fact.json"
 
@@ -93,6 +95,48 @@ pub def read_view(directory: Path) -> Result[Option[ViewSelection], str]:
         return Err("invalid library layout")
     snapshot = required_text(document, "fact")?.encode("utf-8")
     return Ok(Some(ViewSelection(identity=identity, layout=layout, snapshot=snapshot, legacy=true)))
+
+
+def file_view_path(path: Path) -> Path:
+    """Name the private receipt for a single editable payload view."""
+    return Path(f"{path.0}.oven-view")
+
+
+def file_view_description() -> Description:
+    """Bind one observed physical view generation to its verified content."""
+    return model_description(
+        FILE_VIEW_ROW,
+        "incan.bakery.file-view/1",
+        [
+            ModelField(identity=b"digest", name="digest", storage="string"),
+            ModelField(identity=b"stamp_", name="observation", storage="string"),
+        ],
+    )
+
+
+pub def observed_file_digest(path: Path, stamp: str) -> Result[Option[str], str]:
+    """Read a view's digest only for the filesystem generation whose bytes were verified."""
+    receipt = file_view_path(path)
+    match file_metadata(receipt)?:
+        Some(info) =>
+            if not info.is_file() or info.size > 4096:
+                return Ok(None)
+        None => return Ok(None)
+    data = receipt.read_bytes().map_err((error) => error.message())?
+    fields = decode_graph_row(data, FILE_VIEW_ROW, file_view_description(), 2)?
+    if text(fields[1].value)? != stamp:
+        return Ok(None)
+    return Ok(Some(text(fields[0].value)?))
+
+
+pub def remember_file_digest(path: Path, stamp: str, digest: str) -> Result[None, str]:
+    """Save the digest observed around a completed read of this settled file generation."""
+    data = encode_graph_row(
+        FILE_VIEW_ROW,
+        file_view_description(),
+        [required_value(b"digest", Value.Text(digest)), required_value(b"stamp_", Value.Text(stamp))],
+    )?
+    return publish_binary(file_view_path(path), data)
 
 
 pub def forget_view(directory: Path) -> Result[None, str]:

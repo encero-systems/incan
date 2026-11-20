@@ -85,6 +85,7 @@ pub def check_prepared(
     toolchain: Toolchain,
     format: str,
     pages: Option[Path] = None,
+    editor: bool = false,
 ) -> Result[CheckedUnit, str]:
     """
     Check a prepared unit. With a directory of the engine's selected checked-body pages, the compiler restores each
@@ -107,7 +108,10 @@ pub def check_prepared(
             report = Path(f"{path.0}.checked-bodies.crumb")
             flag = "--checked-body-counts"
         discard_file(report)
-        options = [flag, report.0, "--graph-body-records", directory.0]
+        options = [flag, report.0]
+        if editor and toolchain.retain_checked_modules:
+            options.append("--retain-checked-modules")
+        options.extend(["--graph-body-records", directory.0])
         sidecar = Some(report)
     # 3. The record's identity covers the key and the report format, so text and JSON reports are kept apart.
     code = check_or_replay(ready, toolchain, path, format, bakery()?, key, options)?

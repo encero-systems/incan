@@ -396,6 +396,8 @@ def toolchain_of(document: JsonValue, directory: Path) -> Result[Toolchain, list
             worker_protocol_crumb=optional_flag(document, "worker_protocol_crumb")?,
             unit_descriptor_crumb=optional_flag(document, "unit_descriptor_crumb")?,
             compiler_record_export_crumb=optional_flag(document, "compiler_record_export_crumb")?,
+            namespace_references=optional_flag(document, "namespace_references")?,
+            retain_checked_modules=optional_flag(document, "retain_checked_modules")?,
             console="",
             worker_generation="",
             native_closures=NativeClosureInput(),

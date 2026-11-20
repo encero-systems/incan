@@ -13,7 +13,6 @@ from pub::internal_models.plan_module_records import (
     PLAN_MODULE_FAMILY,
     PlanModuleFunction,
     PlanModuleValue,
-    decode_plan_module,
     encode_plan_module,
 )
 from pub::internal_models.records import ReadWitness, ReadScope, RecordRequest, RecordKey, encode_record_key
@@ -163,32 +162,33 @@ pub def staged_plan(
 
 def restored_plans(
     mut source: PreparedBodyRecordSource, mut orders: LoweringOrders, graph: Snapshot,
-    module: AdmittedPlanModule, note: AdmittedModule, keyed: list[StagedPlan],
+    module: &AdmittedPlanModule, note: AdmittedModule, keyed: list[StagedPlan],
 ) -> Result[list[StagedPlan], str]:
     """Rebind only the functions restored in this compile to their selected scalar products and rank evidence."""
-    page = decode_plan_module(module.value).map_err((error) => f"selected plan module refused: {error:?}")?
+    page = module.plan
     if page.module != note.module:
         return Err("admitted module differs from its selected plan page")
     reported = set([plan.function.function for plan in keyed])
-    mut stored: Dict[str, PlanModuleFunction] = {}
-    for function in page.functions:
-        if function.function in stored:
+    mut stored: Dict[str, int] = {}
+    for index in range(len(page.functions)):
+        name = page.functions[index].function
+        if name in stored:
             return Err("two module functions have the same native name")
-        stored[function.function] = function
+        stored[name] = index
     mut owners: list[str] = []
     for admitted in note.functions:
         if admitted.function in reported:
             continue
         if admitted.function not in stored:
             return Err("admitted function has no selected module event")
-        owners.append(stored[admitted.function].identity)
+        owners.append(page.functions[stored[admitted.function]].identity)
     slots = OutputSlots(origin=module.key.origin, identity_profile=IDENTITY_PROFILE, included=Some(owners))
     current = set(family_outputs(graph, "plan-function", LOWERING_PROFILE, Some(slots))?)
     mut result: list[StagedPlan] = []
     for admitted in note.functions:
         if admitted.function in reported:
             continue
-        function = stored[admitted.function]
+        function = page.functions[stored[admitted.function]]
         mut event = decode_lowering_event(function.event)?
         key = body_key("plan-function", module.key.origin, function.identity, "body:" + function.function, function.key)
         output = encode_record_key(key)?
@@ -218,7 +218,7 @@ def bind_source_position(source: PreparedBodyRecordSource, origin: str, file: st
 
 def rebind_complete_module(
     mut prepared: Transaction, mut source: PreparedBodyRecordSource, scope: ReadScope, graph: Snapshot,
-    module: AdmittedPlanModule, note: AdmittedModule, order: LoweringOrder,
+    module: &AdmittedPlanModule, note: AdmittedModule, order: LoweringOrder,
 ) -> Result[Option[RecordKey], str]:
     """Publish the current placement of selected immutable functions without reopening their normalized plans."""
     if module.admitted_snapshot != graph.digest or prepared.root.value != graph.root.value or prepared.root.placement != graph.root.placement or prepared.base != graph.generation or prepared.view != graph.view:
@@ -229,7 +229,7 @@ def rebind_complete_module(
             changes[function.function] = function
     if len(changes) == 0 and module.placement_current:
         return Ok(Some(module.key))
-    mut page = decode_plan_module(module.value).map_err((error) => f"selected plan module refused: {error:?}")?
+    mut page = module.plan.clone()
     if page.module != note.module:
         return Err("restored module differs from its selected page")
     mut proofs: Dict[str, str] = {}
@@ -280,7 +280,7 @@ pub def stage_plan_modules(
     staged: list[StagedPlan],
     report: Path,
     admitted: list[AdmittedPlanModule],
-) -> Result[tuple[list[RecordKey], int], str]:
+) -> Result[tuple[list[RecordKey], int, Dict[str, str]], str]:
     """
     Keep one plan record per module current, and return the records of the modules the compiler restored.
 
@@ -292,28 +292,30 @@ pub def stage_plan_modules(
     mut modules = folded_modules(staged)
     mut folded: list[str] = []
     mut carried: list[RecordKey] = []
+    mut carried_digests: Dict[str, str] = {}
     mut carried_namespace = 0
     mut rebuilt: set[str] = set()
     mut seen: set[str] = set()
     for module in admitted:
-        if module.module not in notes:
+        name = module.plan.module
+        if name not in notes:
             continue
-        if module.module in seen:
+        if name in seen:
             return Err("two selected pages for one admitted module")
-        seen.add(module.module)
-        note = notes[module.module]
+        seen.add(name)
+        note = notes[name]
         if not module.placement_current and not note.inspected:
             return Err("inspected module lacks its placement report")
         file = module.key.identity
         graph = match selected:
             Some(value) => value
             None => return Err("a restored module has no selected graph")
-        if note.complete and len(note.functions) == module.function_count and file not in modules:
+        if note.complete and len(note.functions) == len(module.plan.functions) and file not in modules:
             position = orders.selected_order(graph, file, module.key.origin, module.namespace, module.certificate)?
             if position.evidence == module.certificate and orders.fresh(file).rank <= position.rank:
                 if let Some(carried_key) = rebind_complete_module(prepared, source, scope, graph, module, note, position)?:
                     if carried_key == module.key:
-                        source.add(encode_record_key(module.key)?, module.value)
+                        carried_digests[encode_record_key(module.key)?] = module.value_digest
                     carried.append(carried_key)
                     carried_namespace = max([carried_namespace, position.rank])
                     folded.append(file)
@@ -356,4 +358,4 @@ pub def stage_plan_modules(
             carried_namespace = max([carried_namespace, namespace])
     # 2. Every other rechecked module's earlier record describes bodies that no longer have those products.
     retire_unfolded(prepared, selected, origin, rechecked, folded)?
-    return Ok((carried, carried_namespace))
+    return Ok((carried, carried_namespace, carried_digests))

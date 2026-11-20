@@ -1135,25 +1135,42 @@ def prepare_lowering_records(
         if event_identity not in bodies and retained_namespace_event(unit, rechecked, event_identity)?:
             continue
         body = body_value(bodies, fallbacks, event_identity)?
-        demand_key = body_key("lowering-demand", origin, body.identity, "main", event.demand)
         key = body_key("plan-function", origin, body.identity, "entry", event.key)
         product = event.product
         check_reused_output(selected, event, key, product)?
-        # A request that restored main's module from its plan record staged no demand for main; the graph holds it.
+        # The current entry producer admits one synchronous unit function named `main`.
+        supplier = body_key("plan-function", origin, body.identity, "body:main", event.demand)
+        request = prepared_product_request(supplier)
+        # The entry consumes the selected scalar plan's key. A placement-only change can move Body IR while this exact
+        # normalized product and the entry binding remain valid.
         mut position = body.order
-        written = encode_record_key(demand_key)?
+        mut witnessed: Dict[str, str] = {}
+        written = encode_record_key(supplier)?
         if not source.holds(written):
             graph = match selected:
                 Some(value) => value
-                None => return Err("a carried entry demand has no selected graph")
-            demand = match reusable_evaluation(graph, demand_key, LOWERING_PROFILE)?:
-                Some(value) => value
-                None => return Err("a carried entry demand has no selected evaluation")
-            position = orders.retained(graph, body.module, demand)?
-            source.add(written, demand.value)
+                None => return Err("a carried entry function has no selected graph")
+            for module in admitted:
+                if module.key.identity != body.module or module.plan.module != event.module:
+                    continue
+                if module.admitted_snapshot != graph.digest or prepared.root.value != graph.root.value or prepared.root.placement != graph.root.placement or prepared.base != graph.generation or prepared.view != graph.view:
+                    return Err("the carried entry function belongs to a different snapshot")
+                for witness in module.receipt.witnesses:
+                    if let ReadWitness.Found(prior, selection) = witness:
+                        if prior.request == request and prior.semantic_digest == prior.revision and selection == prior.semantic_digest:
+                            witnessed[written] = prior.semantic_digest
+                if written in witnessed:
+                    position = orders.selected_order(graph, body.module, origin, module.namespace, module.certificate)?
+                break
+            if written not in witnessed:
+                prior = match reusable_evaluation(graph, supplier, LOWERING_PROFILE)?:
+                    Some(value) => value
+                    None => return Err("a carried entry function has no selected evaluation")
+                witnessed[written] = prior.value_digest
+                position = orders.retained(graph, body.module, prior)?
         if position.rank > interface_namespace:
             interface_namespace = position.rank
-        receipt = source.receipt(scope, key, [prepared_product_request(demand_key)], position.evidence)?
+        receipt = source.receipt(scope, key, [request], position.evidence, witnessed)?
         _ = prepare_evaluation(
             prepared,
             "plan-entry-" + body.identity,
@@ -1164,13 +1181,13 @@ def prepare_lowering_records(
         source.add(encode_record_key(key)?, product)
         plan_keys.append(key)
     # Each module's plan functions fold into its module record; a restored module's record joins the interface's reads.
-    carried, carried_namespace = stage_plan_modules(prepared, source, orders, scope, selected, origin, rechecked, staged, admission_report.unwrap_or(report), admitted)?
+    carried, carried_namespace, carried_digests = stage_plan_modules(prepared, source, orders, scope, selected, origin, rechecked, staged, admission_report.unwrap_or(report), admitted)?
     if not report.joinpath(INTERFACE_REPORT).is_file():
         require_plan_refusal(report)?
         return Ok(work)
     prepare_native_interface(
         projections, prepared, source, scope, unit, origin, values, report, plan_keys + carried, covered_modules,
-        max([interface_namespace, carried_namespace]), orders,
+        max([interface_namespace, carried_namespace]), orders, carried_digests,
     )?
     return Ok(work)
 
@@ -1214,6 +1231,7 @@ def prepare_native_interface(
     covered_modules: list[str],
     namespace: int,
     orders: &LoweringOrders,
+    carried_digests: Dict[str, str],
 ) -> Result[None, str]:
     """Witness the complete loss-checked native plan against its exact function members and current source positions."""
     path = report.joinpath(INTERFACE_REPORT)
@@ -1239,7 +1257,7 @@ def prepare_native_interface(
         if plan.family == "plan-module":
             modules.add(plan.identity)
     certificate = orders.covering_certificate(modules, namespace)?
-    receipt = source.receipt(scope, key, reads, certificate)?
+    receipt = source.receipt(scope, key, reads, certificate, carried_digests)?
     _ = prepare_evaluation(
         transaction,
         "native-interface-" + origin,
