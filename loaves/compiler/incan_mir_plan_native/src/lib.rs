@@ -34,3 +34,6 @@ pub use types::{
     ListLeaf, PlanType, SizedNumeric, SourceSpan, TupleElement, list_leaf_type, range_field_types, sized_plan_type,
     source_span, tuple_element_type,
 };
+
+#[cfg(test)]
+mod tests;
