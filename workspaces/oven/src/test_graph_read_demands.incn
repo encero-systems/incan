@@ -18,12 +18,12 @@ pub def test_graph_oracle_selects_a_past_revision_without_read_counters() -> Res
     transaction = put(transaction, "wanted", b"a")
     transaction = put(transaction, "other", b"b")
     selected = commit(transaction).map_err((error) => error.message())?
-    old = match find(selected.root, selected.index, "wanted").map_err((error) => str(error))?:
+    old = match find(selected.root, selected.index, "wanted").map_err((error) => f"{error.object}: {error.detail}")?:
         Some(found) => found
         None => return Err("missing selected test frame")
 
     begin_graph_demands(true)
-    note_graph_demand("capture-mode", selected, "a" * 64)
+    note_graph_demand("capture-mode", selected, "".join(list.repeat("a", 64)))
     note_graph_demand("baked-unit", selected, "wanted")
     note_graph_demand("baked-unit", selected, "wanted")
     note_graph_demand("baked-unit", selected, "missing")
