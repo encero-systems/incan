@@ -72,8 +72,17 @@ fn restored_rust_field_requires_an_admitted_field_and_occurrence() -> Result<(),
     let mut forged = row.clone();
     forged[3] = forged[3].replace("::stderr", "::private");
     assert!(super::super::restore_local(&checker, &positions, &mut restored, &mut identities, &forged).is_err());
+    assert!(restored.rust.checked_layouts.is_empty());
     super::super::restore_local(&checker, &positions, &mut restored, &mut identities, row)?;
     assert_eq!(restored.references.resolved_identities.get(&owner), Some(&selected));
+    let layout = restored
+        .rust
+        .checked_layouts
+        .get(path)
+        .ok_or("missing Rust owner layout")?;
+    assert_eq!(layout.field_public, [true, false]);
+    assert_eq!(layout.field_identities.len(), 2);
+    assert_eq!(layout.field_identities.first(), Some(&selected));
     Ok(())
 }
 

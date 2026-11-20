@@ -306,15 +306,26 @@ impl TypeChecker {
     /// storage for adapter validation; source reads and construction require their own metadata authority.
     pub(in crate::typechecker::check_expr) fn retain_rust_layout(&mut self, path: &str, info: &RustTypeInfo) {
         let path = Self::rust_generic_base_and_args(path).map_or(path, |(base, _)| base);
-        // A layout already retained for this owner, with the same field count and type parameters, is the same one.
-        if self.type_info.rust.checked_layouts.get(path).is_some_and(|layout| {
+        let existing = self.type_info.rust.checked_layouts.get(path);
+        if let Some(layout) = self.rust_layout_from_metadata(path, info, existing) {
+            self.type_info.rust.checked_layouts.insert(path.to_owned(), layout);
+        }
+    }
+
+    /// Build a shared native layout from admitted metadata when the retained definition needs its fields.
+    pub(in crate::typechecker) fn rust_layout_from_metadata(
+        &self,
+        path: &str,
+        info: &RustTypeInfo,
+        existing: Option<&RustCheckedLayout>,
+    ) -> Option<RustCheckedLayout> {
+        // An opaque Copy layout can be upgraded when a later field access admits the complete definition.
+        if existing.is_some_and(|layout| {
             layout.fields.len() == info.fields.len() && layout.type_parameters == info.type_params
         }) {
-            return;
+            return None;
         }
-        let Some(owner) = body_ir::rust_item_identity(path) else {
-            return;
-        };
+        let owner = body_ir::rust_item_identity(path)?;
         let fields = info
             .fields
             .iter()
@@ -334,23 +345,20 @@ impl TypeChecker {
             .iter()
             .map(|field| Self::synthetic_member_identity(&owner, &field.name, SemanticSourceTargetKind::Field))
             .collect();
-        self.type_info.rust.checked_layouts.insert(
-            path.to_owned(),
-            RustCheckedLayout {
-                field_public: info
-                    .fields
-                    .iter()
-                    .map(|field| info.metadata_completeness.field_is_public(&field.name))
-                    .collect(),
-                is_copy: self.derive_support(
-                    &ResolvedType::RustPath(path.into()),
-                    incan_lang::lang::derives::DeriveId::Copy,
-                ) == crate::typechecker::derive_requirements::DeriveSupport::Supported,
-                type_parameters: info.type_params.clone(),
-                fields,
-                field_identities,
-            },
-        );
+        Some(RustCheckedLayout {
+            field_public: info
+                .fields
+                .iter()
+                .map(|field| info.metadata_completeness.field_is_public(&field.name))
+                .collect(),
+            is_copy: self.derive_support(
+                &ResolvedType::RustPath(path.into()),
+                incan_lang::lang::derives::DeriveId::Copy,
+            ) == crate::typechecker::derive_requirements::DeriveSupport::Supported,
+            type_parameters: info.type_params.clone(),
+            fields,
+            field_identities,
+        })
     }
 
     /// Close the native owner from the already checked field arguments and retain the ordinary constructor slots.

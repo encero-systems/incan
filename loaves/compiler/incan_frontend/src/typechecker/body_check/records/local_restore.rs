@@ -113,8 +113,10 @@ pub(super) fn restore_local(
         }
         "reference" if row[2] == "read" => {
             let identity = next(&mut values)?;
-            let canonical = restored_identity(positions, record_identities, identity)
-                .or_else(|error| restore_rust_field_reference(checker, local, span, identity).ok_or(error))?;
+            let canonical = match restore_rust_field_reference(checker, local, span, identity) {
+                Some(canonical) => canonical,
+                None => restored_identity(positions, record_identities, identity)?,
+            };
             local.references.resolved_identities.insert(span, canonical);
         }
         "write" => {
@@ -286,17 +288,17 @@ pub(super) fn restore_local(
 }
 
 /// Rebind one checked field occurrence against the public field of its currently admitted Rust ABI owner.
-/// The decoded field value supplies the occurrence; this lookup establishes the declaration identity only.
+/// Keep its native owner layout in the pending restoration until the entire record is admitted.
 fn restore_rust_field_reference(
     checker: &TypeChecker,
-    local: &BodyLocal,
+    local: &mut BodyLocal,
     span: Span,
     identity: &str,
 ) -> Option<CanonicalSymbolId> {
     use incan_lang::interop::RustItemKind;
 
-    local.rust.field_values.get(&span)?;
     let (path, name) = identity.strip_prefix("member/field:rust::")?.rsplit_once("::")?;
+    local.rust.field_values.get(&span)?;
     let owner = incan_semantics_core::body_ir::rust_item_identity(path)?;
     let metadata = checker.rust_item_metadata_for_path(path)?;
     let RustItemKind::Type(info) = &metadata.kind else {
@@ -305,7 +307,18 @@ fn restore_rust_field_reference(
     let field = TypeChecker::rust_field_for_source_name(info, name)?;
     let canonical = owner.generated_member(&field.name, SemanticSourceTargetKind::Field);
     let stable = StableDeclarationId::from_canonical(&canonical, None, None)?;
-    (stable.render_compact() == identity).then_some(canonical)
+    if stable.render_compact() != identity {
+        return None;
+    }
+    let existing = local
+        .rust
+        .checked_layouts
+        .get(path)
+        .or_else(|| checker.type_info.rust.checked_layouts.get(path));
+    if let Some(layout) = checker.rust_layout_from_metadata(path, info, existing) {
+        local.rust.checked_layouts.insert(path.to_owned(), layout);
+    }
+    Some(canonical)
 }
 
 /// Restore an unbound Rust item only at the decoded expression's exact type component. The current ABI must

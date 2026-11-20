@@ -22,11 +22,12 @@ use diagnostics::{project_diagnostics, read_diagnostic};
 use local_restore::restore_local;
 mod unsupported;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use super::super::canonical_nodes::{NodeBindingError, SemanticNodeAnchor, SemanticNodeBindings, callable_params};
 use super::super::diagnostic_values::DiagnosticPositions;
+use super::super::type_info::RustCheckedLayout;
 use super::{BodyCheckInput, BodyLocal, CheckedBodyView, LocalOwnerKind, TypeChecker};
 use crate::ast::{Program, Span};
 
@@ -345,6 +346,7 @@ impl TypeChecker {
         let mut diagnostic_positions = DiagnosticPositions::new(program, self.symbols.declaration_origin());
         self.reuse_checked_body(Arc::new(restored.view), &mut diagnostic_positions)
             .map_err(|_| NodeBindingError::ChangedBody)?;
+        self.type_info.rust.checked_layouts.extend(restored.rust_layouts);
         match restored.ownership {
             Some(contract) => {
                 self.type_info
@@ -445,6 +447,7 @@ impl TypeChecker {
         let mut diagnostic_positions = DiagnosticPositions::new(program, self.symbols.declaration_origin());
         self.reuse_checked_declaration(Arc::new(restored.view), &mut diagnostic_positions)
             .map_err(|_| NodeBindingError::ChangedBody)?;
+        self.type_info.rust.checked_layouts.extend(restored.rust_layouts);
         match restored.ownership {
             Some(contract) => {
                 self.type_info
@@ -1139,6 +1142,11 @@ fn restore_pending(
     }
     local.mutation.restore_flow_graphs(&mut local.protocols);
     function_calls::restore(positions, &mut local)?;
+    checker
+        .type_info
+        .rust
+        .checked_layouts
+        .extend(std::mem::take(&mut local.rust.checked_layouts));
     Ok(local)
 }
 
@@ -1268,6 +1276,7 @@ impl Rebinding {
         self.local.mutation.restore_flow_graphs(&mut self.local.protocols);
         let diagnostics = ordered_diagnostics(self.diagnostics, "error")?;
         let warnings = ordered_diagnostics(self.warnings, "warning")?;
+        let rust_layouts = std::mem::take(&mut self.local.rust.checked_layouts);
         let view = CheckedBodyView {
             local: Arc::new(self.local),
             effect_reads: Default::default(),
@@ -1282,6 +1291,7 @@ impl Rebinding {
         }
         Ok(RestoredOwner {
             view,
+            rust_layouts,
             binding: self.binding,
             defaults: self.defaults,
             final_types: self.final_types,
@@ -1465,6 +1475,7 @@ fn compare_native(expected: &impl std::fmt::Debug, restored: &impl std::fmt::Deb
 /// Reconstructed semantic native values and default-writer references, separate from the current position bindings.
 struct RestoredOwner {
     view: CheckedBodyView,
+    rust_layouts: HashMap<String, RustCheckedLayout>,
     binding: Option<super::super::type_info::FunctionBindingInfo>,
     defaults: BTreeMap<Span, (Span, String)>,
     final_types: FinalTypes,
