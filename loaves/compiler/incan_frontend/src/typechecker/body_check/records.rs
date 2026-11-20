@@ -147,7 +147,7 @@ impl TypeChecker {
     pub(crate) fn available_local_record(&self, owner: Span) -> Option<&Fields> {
         self.produced_local_records
             .get(&owner)
-            .or_else(|| self.selected_local_records.get(&owner))
+            .or_else(|| self.selected_local_records.get(&owner).map(Arc::as_ref))
     }
 
     /// Clone the explicit refusal returned by this activation's direct local producer.
@@ -176,7 +176,7 @@ impl TypeChecker {
 
     /// Retain one selected local value for republishing without treating selection as producer execution.
     pub(crate) fn retain_local_record(&mut self, owner: Span, fields: Fields) {
-        self.selected_local_records.insert(owner, fields);
+        self.selected_local_records.insert(owner, Arc::new(fields));
     }
 
     /// Borrow the final record emitted directly by this activation's settlement producer.
@@ -188,7 +188,7 @@ impl TypeChecker {
     pub(crate) fn available_final_record(&self, owner: Span) -> Option<&Fields> {
         self.produced_final_records
             .get(&owner)
-            .or_else(|| self.selected_final_records.get(&owner))
+            .or_else(|| self.selected_final_records.get(&owner).map(Arc::as_ref))
     }
 
     /// Stage one scalar product's settled value until its body passes the current physical-scope check.
@@ -199,7 +199,7 @@ impl TypeChecker {
     /// Publish the staged final value only after the matching scalar body is accepted for this activation.
     pub(in crate::typechecker) fn select_callable_final_record(&mut self, owner: Span) {
         if let Some(fields) = self.callable_final_record_reuse.remove(&owner) {
-            self.selected_final_records.insert(owner, fields);
+            self.selected_final_records.insert(owner, Arc::new(fields));
         }
     }
 
@@ -286,10 +286,9 @@ impl TypeChecker {
         let Some(selected) = self.graph_body_records.get(&identity)? else {
             return Ok(false);
         };
-        // The checker owns selected rows after this boundary so its publication view cannot outlive the invocation
-        // transport. This is the one deliberate copy from immutable transport into checker-owned selected output.
-        let local_fields = selected.local.clone();
-        let final_fields = selected.final_value.clone();
+        // The invocation and the checker share the same authenticated row fields without copying the selected facts.
+        let local_fields = selected.local;
+        let final_fields = selected.final_value;
         let positions = Positions::for_decoded_local(self, program, owner, nodes, &local_fields, true)?;
         if !final_fields
             .iter()

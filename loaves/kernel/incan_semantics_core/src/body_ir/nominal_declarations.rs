@@ -243,7 +243,8 @@ pub struct NominalDeclaration {
     pub derives: Vec<String>,
     /// Checked nominal bindings needed by those field types; serialized publications retain only referenced entries.
     /// Project carrier keys name a complete canonical identity here, independently of the diagnostic source name.
-    pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
+    #[serde(with = "shared_identities")]
+    pub named_type_identities: SharedIdentities,
     /// Ordered checker-retained declaration parameters used to close nominal layouts at checked uses.
     #[serde(default)]
     pub type_parameters: Vec<String>,

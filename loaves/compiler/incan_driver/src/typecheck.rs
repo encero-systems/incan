@@ -51,6 +51,7 @@ pub struct TypecheckedModules {
 /// share a source file path.
 pub fn typecheck_modules(
     modules: &[ParsedModule],
+    imports: &SourceModuleImports,
     unit: &UnitDescription,
     loaves: &Arc<LoafIndex>,
     own_standard_package: Option<&'static StandardPackageNamespacePolicy>,
@@ -66,7 +67,6 @@ pub fn typecheck_modules(
         .iter()
         .cloned()
         .collect::<std::collections::HashSet<_>>();
-    let imports = SourceModuleImports::new(modules, own_standard_package);
     // The ordinary checker is the only consumer of source exports. Fully restored modules outside
     // every checked dependency closure contribute no lookup table or copied export declaration.
     let dependency_exports = modules

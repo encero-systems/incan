@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::diagnostics::{CliDiagnostic, CliDiagnosticFailure};
 use crate::error::{CliError, CliResult};
-use crate::modules::collect_modules_detailed_with_session;
+use crate::modules::{SourceModuleImports, collect_modules_detailed_with_session};
 use crate::session::{CompilationSession, RustFactsSetup};
 use crate::unit::UnitDescription;
 
@@ -206,7 +206,8 @@ fn check_report_observed(
     let mut roots = vec![unit.project_root.as_path()];
     roots.extend(resolved_root.as_deref());
     let mut bodies = CheckedBodies::default();
-    let typecheck = session.typecheck_unit(&modules, None, &mut |module, checker| {
+    let imports = SourceModuleImports::new(&modules, session.own_standard_package());
+    let typecheck = session.typecheck_unit(&modules, None, &imports, &mut |module, checker| {
         bodies.observe(&roots, module, checker);
         observe(module, checker);
     });

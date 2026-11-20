@@ -245,7 +245,7 @@ pub(super) fn encode(document: &Json) -> Option<Vec<u8>> {
         for item in raw.as_array()? {
             let bytes = hex(item.as_str()?)?;
             keys.push(match name {
-                "binary" => Value::Binary(bytes),
+                "binary" => Value::Binary(bytes.into()),
                 "string" => Value::Text(String::from_utf8(bytes).ok()?),
                 _ => return None,
             });
@@ -417,7 +417,7 @@ fn next_key(
     }
     let before: Vec<u8> = match (index % 16, previous) {
         (0, _) | (_, None) => Vec::new(),
-        (_, Some(Value::Binary(raw))) => raw.clone(),
+        (_, Some(Value::Binary(raw))) => raw.as_ref().to_vec(),
         (_, Some(Value::Text(text))) => text.as_bytes().to_vec(),
         _ => return Err("encoding_type"),
     };
@@ -439,7 +439,7 @@ fn next_key(
         }
     }
     match node {
-        KeyType::Binary => Ok(Value::Binary(raw)),
+        KeyType::Binary => Ok(Value::Binary(raw.into())),
         _ => String::from_utf8(raw).map(Value::Text).map_err(|_| "invalid_utf8"),
     }
 }
@@ -670,7 +670,7 @@ pub(super) fn key_cell(node: KeyType, value: &Value) -> Option<Vec<u8>> {
 pub(super) fn raw_key(value: &Value) -> Option<Vec<u8>> {
     match value {
         Value::Text(text) => Some(text.as_bytes().to_vec()),
-        Value::Binary(data) => Some(data.clone()),
+        Value::Binary(data) => Some(data.as_ref().to_vec()),
         _ => None,
     }
 }

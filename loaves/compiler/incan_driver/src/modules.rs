@@ -604,13 +604,18 @@ pub fn import_cycle_peers(
     modules: &[ParsedModule],
     own_standard_package: Option<&'static StandardPackageNamespacePolicy>,
 ) -> Vec<Vec<usize>> {
-    SourceModuleImports::new(modules, own_standard_package).cycle_peers()
+    SourceModuleImports::new(modules, own_standard_package)
+        .cycle_peers()
+        .to_vec()
 }
 
 /// Direct local imports in the exact order of a collected module graph. Resolve syntax once before walking more
 /// than one dependency closure; a consumer's transitive imports must not repeatedly revisit its providers' ASTs.
+#[derive(Debug)]
 pub struct SourceModuleImports {
     direct: Vec<Vec<usize>>,
+    closures: Vec<std::sync::OnceLock<Vec<usize>>>,
+    peers: std::sync::OnceLock<Vec<Vec<usize>>>,
 }
 
 impl SourceModuleImports {
@@ -619,6 +624,10 @@ impl SourceModuleImports {
         modules: &[ParsedModule],
         own_standard_package: Option<&'static StandardPackageNamespacePolicy>,
     ) -> Self {
+        let _span = tracing::trace_span!(
+            target: "incan::invocation", "incan_driver::resolve_source_imports", modules = modules.len(),
+        )
+        .entered();
         let keys = module_key_index(modules);
         let direct = (0..modules.len())
             .map(|index| {
@@ -627,35 +636,41 @@ impl SourceModuleImports {
                     .collect()
             })
             .collect();
-        Self { direct }
+        Self {
+            direct,
+            closures: (0..modules.len()).map(|_| std::sync::OnceLock::new()).collect(),
+            peers: std::sync::OnceLock::new(),
+        }
     }
 
-    /// Every other member of each module's strongly connected component, in stable module order.
-    pub fn cycle_peers(&self) -> Vec<Vec<usize>> {
-        let mut peers = vec![Vec::new(); self.direct.len()];
-        for component in strongly_connected_components(&self.direct) {
-            for &member in &component {
-                let mut others: Vec<usize> = component.iter().copied().filter(|&peer| peer != member).collect();
-                others.sort_unstable();
-                peers[member] = others;
+    /// Borrow the computed import-cycle peers in stable module order.
+    pub fn cycle_peers(&self) -> &[Vec<usize>] {
+        self.peers.get_or_init(|| {
+            let mut peers = vec![Vec::new(); self.direct.len()];
+            for component in strongly_connected_components(&self.direct) {
+                for &member in &component {
+                    let mut others: Vec<usize> = component.iter().copied().filter(|&peer| peer != member).collect();
+                    others.sort_unstable();
+                    peers[member] = others;
+                }
             }
-        }
-        peers
+            peers
+        })
     }
 
     /// Resolve each checked module's full import closure once. Only providers reachable from one of those
     /// modules need checker lookup tables when their authenticated namespace supplies the compiled body.
-    pub(crate) fn checker_dependencies(&self, restored: &[bool]) -> (Vec<Vec<usize>>, Vec<bool>) {
+    pub(crate) fn checker_dependencies(&self, restored: &[bool]) -> (Vec<&[usize]>, Vec<bool>) {
         let mut needed = vec![false; self.direct.len()];
         let closures = restored
             .iter()
             .enumerate()
-            .map(|(index, &restore)| {
+            .map(|(index, &restore)| -> &[usize] {
                 if restore {
-                    return Vec::new();
+                    return &[];
                 }
                 let dependencies = self.dependencies(index);
-                for &provider in &dependencies {
+                for &provider in dependencies {
                     needed[provider] = true;
                 }
                 dependencies
@@ -664,9 +679,18 @@ impl SourceModuleImports {
         (closures, needed)
     }
 
-    /// Transitive local imports in collected order, excluding the requesting module on cycle back edges.
-    pub fn dependencies(&self, index: usize) -> Vec<usize> {
-        reachable_imports(self.direct.len(), index, |module| self.direct[module].iter().copied())
+    /// Borrow one module's transitive local imports in collected order, excluding the requesting module on back edges.
+    pub fn dependencies(&self, index: usize) -> &[usize] {
+        let Some(cache) = self.closures.get(index) else {
+            return &[];
+        };
+        cache.get_or_init(|| {
+            let _span = tracing::trace_span!(
+                target: "incan::invocation", "incan_driver::walk_source_imports", module = index,
+            )
+            .entered();
+            reachable_imports(self.direct.len(), index, |module| self.direct[module].iter().copied())
+        })
     }
 }
 
