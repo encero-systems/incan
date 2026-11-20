@@ -14,10 +14,8 @@ from native_build import (
     PendingToolBuild,
     StandardGeneration,
     StandardProfile,
-    build_runtime,
     build_candidate_standard_with_lsp,
     build_oven_with_standard_profile,
-    build_source_interfaces,
     build_source_tools,
     build_standard_packages,
     cancel_tool_build,
@@ -510,21 +508,13 @@ def apply_release_trust(source: Path, toolchain: Path) -> Result[None, str]:
 
 
 def build_source_closure(run: ReleaseRun) -> Result[Candidate, str]:
-    """Build the conductor and fresh support/runtime/standard source closure with the released seed."""
+    """Build the conductor and the fresh support (the Rust runtime included) and standard source closure with the seed."""
     seed_context = seed_tool_context(run)?
     conductor, helper = build_source_tools(seed_context, run.seed_home)?
     context = native_context(run, conductor, run.paths.home)
     withdraw_seed_providers(run)?
     readmit_build_home(context, helper, "source-home-readmit")?
     publish_support(context, helper)?
-    interfaces_started = Instant.now()
-    interfaces = build_source_interfaces(context, helper)?
-    append_timing(
-        run.paths.output.joinpath("timings.tsv"),
-        "source-interfaces",
-        interfaces_started.elapsed().as_secs_f64(),
-    )?
-    _ = build_runtime(context, helper, Some(interfaces), true, "candidate-")?
     require_unique_runtime_root(context)?
     build_standard_packages(context, helper, "", standard_profiles(StandardGeneration.SourceClosure))?
     return Ok(Candidate(context=context, oven=conductor, lsp=Path(""), pending_lsp=None))
@@ -686,12 +676,8 @@ def build_bridge_compiler(run: ReleaseRun, candidate: Candidate) -> Result[None,
 
 
 def build_candidate_providers(context: NativeContext, helper: Path) -> Result[None, str]:
-    """Readmit the relinked compiler, then produce the candidate interfaces and runtime the providers link."""
+    """Readmit the relinked compiler for the candidate providers; the Rust runtime they link is native support."""
     readmit_build_home(context, helper, "candidate-driver-readmit")?
-    interfaces_started = Instant.now()
-    interfaces = build_source_interfaces(context, helper, "candidate-")?
-    append_timing(context.timings, "candidate-source-interfaces", interfaces_started.elapsed().as_secs_f64())?
-    _ = build_runtime(context, helper, Some(interfaces), true)?
     require_unique_runtime_root(context)?
     return Ok(None)
 
