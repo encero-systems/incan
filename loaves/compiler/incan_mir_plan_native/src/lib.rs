@@ -9,9 +9,12 @@ pub mod body;
 pub mod carriers;
 pub mod nominal;
 pub mod plan;
+pub mod positions;
 pub mod record_types;
+pub mod records;
 pub mod span_file;
 pub mod types;
+mod wire;
 
 pub use body::{
     BasicBlock, BinaryOp, Callee, CalleeKind, Constant, FieldLifecycle, FieldMetadata, FieldProjection,
@@ -28,6 +31,23 @@ pub use plan::{
     FallibleIteratorMethods, Function, GenericEnumDeclaration, GenericEnumVariant, GenericLayoutField,
     GenericLayoutType, GenericLoan, GenericModelDeclaration, IteratorMethods, ModelDeclaration, NativeAttribute,
     NativeTraitAdoption, NativeTraitMethod, Plan, PlanExport, StaticCell, ZipCarrier, semantic_type_matches,
+};
+pub use positions::{PositionChange, WirePositions};
+pub use records::codec::{
+    decode_record_plan, encode_entry_binding, encode_record_plan, encode_record_plan_products, record_plan_products,
+};
+pub use records::function::{
+    NamedProduct, ProductParts, decode_frames, decode_product, decode_product_parts, decode_runtime, decode_scalar,
+    encode_product, encode_runtime, encode_scalar, matches_product, positioned_product_requirements,
+    product_frame_names, product_identities, product_nominals, restore_named_product, transform_product_positions,
+    valid_ordinal_product,
+};
+pub use records::layout::{
+    decode_enums, decode_instance_request, decode_models, decode_zip_carriers, encode_checked_layout, encode_enums,
+    encode_instance_request, encode_models, encode_zip_carriers,
+};
+pub use records::plan_function::{
+    PlanFunctionRecord, decode_plan_function_record, encode_plan_function_record, plan_function_digest,
 };
 pub use span_file::SpanFile;
 pub use types::{
