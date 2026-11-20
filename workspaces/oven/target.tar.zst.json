@@ -1,0 +1,8 @@
+{
+  "tar_sha256": "7abd4a7a6746fc5bd3a20f4aad21ae49435e66eb073ffa6ed53ecddc613d8206",
+  "archive_sha256": "85ed1ffeb87811eaf555bef9cc5efff33736a84a2281fe5f6d7a807d88eefa35",
+  "compressed_bytes": 159069979,
+  "root": "target",
+  "relative_path": "scoped-owners/workspaces/oven/target",
+  "reconstructed_tar_sha256": "7abd4a7a6746fc5bd3a20f4aad21ae49435e66eb073ffa6ed53ecddc613d8206"
+}
