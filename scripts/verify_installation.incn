@@ -8,7 +8,7 @@ from std.environ import args, get_or
 from std.fs import Path
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
-from check_support import repository_root, write_stderr
+from check_support import repository_above, repository_root, write_stderr
 from oven_tests import (
     LOWERING_RESERVATION_BYTES,
     PROJECT_RESERVATION_BYTES as OVEN_PROJECT_RESERVATION_BYTES,
@@ -151,7 +151,8 @@ def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tup
     """Run independent installed gates through this built verifier and recover their typed results."""
     plans = verification_phase_plans(installation.jobs)
     mut invocations: list[Invocation] = []
-    verifier = current_exe().map_err((error) => error.to_string())?.to_string_lossy().into_owned()
+    executable = current_exe().map_err((error) => error.to_string())?
+    verifier = pin_phase_verifier(Path(executable.to_string_lossy().into_owned()), installation.run)?
     retain_traces = verification_traces_requested()
     for plan in plans:
         name = verification_phase_name(plan.phase)
@@ -176,7 +177,7 @@ def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tup
         )
     memory = shared_memory(host_memory())
     # Independent gates can each start compiler processes. Honor the requested concurrency at this boundary too.
-    failed = run_all_failures(verifier, invocations, verification_workers(installation.jobs), memory)?
+    failed = run_all_failures(verifier.0, invocations, verification_workers(installation.jobs), memory)?
     if len(failed) > 0:
         return Err(
             "installed verification phase failures: " + ", ".join(
@@ -196,6 +197,14 @@ def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tup
             .map_err((error) => error.message())?.strip(),
     )
     return Ok((report, suites))
+
+
+pub def pin_phase_verifier(executable: Path, run: Path) -> Result[Path, str]:
+    """Hold the running script's executable for later phases, even when Oven publishes another script to the shared output path."""
+    pinned = run.joinpath("phase-verifier")
+    if pinned.hardlink_to(executable).is_err():
+        return executable.copy(pinned, true, true).map_err((error) => error.message())
+    return Ok(pinned)
 
 
 pub def verification_phase_arguments(name: str, run: Path, runner: Path, jobs: int, timeout: int) -> list[str]:
@@ -314,8 +323,9 @@ def phase_positive(text: str, name: str) -> Result[int, str]:
 
 
 def phase_installation(run: Path, jobs: int, timeout_seconds: int) -> Result[Installation, str]:
-    """Reconstruct immutable installed paths for a child phase without creating another evidence run."""
-    root = repository_root()?
+    """Resolve the checkout from the directory the parent assigned to the pinned verifier process."""
+    directory = Path(".").resolve().map_err((error) => error.message())?
+    root = repository_above(directory)?
     home_text = get_or("INCAN_HOME", "")
     if home_text == "":
         return Err("INCAN_HOME must select the installed release")

@@ -31,6 +31,7 @@ from oven_tests import (
 )
 from verify_installation import (
     VerificationPhase,
+    pin_phase_verifier,
     verification_phase_arguments,
     verification_phase_plans,
     verification_trace_environment,
@@ -142,6 +143,16 @@ def test_verification_phases_reserve_their_complete_parallel_work() -> Result[No
         "900",
     ]
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    # A later phase can start after the shared script output has been replaced by a sibling script.
+    run = temporary.path()
+    shared_output = run.joinpath("incan_release_scripts")
+    replacement = run.joinpath("new-script")
+    write(run, "incan_release_scripts", "verifier")?
+    pinned = pin_phase_verifier(shared_output, run)?
+    write(run, "new-script", "oven tests")?
+    _ = replacement.replace(shared_output).map_err((error) => error.message())?
+    assert pinned.read_text("utf-8", "strict").map_err((error) => error.message())? == "verifier"
+    assert shared_output.read_text("utf-8", "strict").map_err((error) => error.message())? == "oven tests"
     assert selected_builder_bakery("") == ""
     assert selected_builder_bakery(temporary.path().0) == ""
     temporary.path().joinpath("bakery").mkdir(true, true).map_err((error) => error.message())?
