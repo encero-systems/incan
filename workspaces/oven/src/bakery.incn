@@ -607,6 +607,14 @@ def bind_library(store: Path, fact: Fact, layout: str, legacy: bool = false) -> 
                 Err(_) =>
                     target.unlink().map_err((error) => f"cannot {error.message()}")?
                     link_payload(store, source, target)?
+        elif target.is_file():
+            # A producer may rewrite a bound file in place with the bytes its fact names. Equal bytes are bound to
+            # their payload again; any other content is refused.
+            observed = hexlify(file_digest(target, "sha256").map_err((error) => f"cannot hash file {error.message()}")?)
+            if observed != file.digest:
+                return Err(f"{target.0}: library binding is not a payload link")
+            target.unlink().map_err((error) => f"cannot {error.message()}")?
+            link_payload(store, source, target)?
         elif target.exists():
             return Err(f"{target.0}: library binding is not a payload link")
         else:
@@ -629,6 +637,22 @@ def link_payload(store: Path, source: Path, target: Path) -> Result[None, str]:
     for _ in range(len(target.0[len(prefix):].split("/")) - 1):
         text = "../" + text
     return target.symlink_to(Path(text)).map_err((error) => f"cannot {error.message()}")
+
+
+pub def rebind_refreshed_file(store: Path, target: Path) -> Result[bool, str]:
+    """
+    Bind a file that a producer rewrote inside a bound library to its sealed payload, so the library holds payload
+    links only, and say whether it did. A file that is already a link, or is absent, is left as it is.
+    """
+    if target.is_symlink() or not target.is_file():
+        return Ok(false)
+    digest = hexlify(file_digest(target, "sha256").map_err((error) => f"cannot hash file {error.message()}")?)
+    source = payload_path(store, digest)
+    if not source.is_file():
+        return Err(f"{target.0}: refreshed file has no sealed payload")
+    target.unlink().map_err((error) => f"cannot {error.message()}")?
+    link_payload(store, source, target)?
+    return Ok(true)
 
 
 pub def viewed_fact(directory: Path) -> Result[Option[Path], str]:

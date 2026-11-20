@@ -49,7 +49,7 @@ from rust_bakery import baked_rust, claim_rust, rust_store, rust_unit_name, seal
 from installed_sources import differing_crates, mismatch
 from source_security import validate_native_sources
 from compile_time_trust import combine as combine_trust, decide, decide_registry
-from bakery import bakery, forget_view, library_directory
+from bakery import bakery, forget_view, library_directory, rebind_refreshed_file
 from rust_registry import selected_registry
 from rust_manifest import RustFacet, package_environment, rust_facet
 from rust_build import (
@@ -1088,6 +1088,10 @@ def refresh_baked_rust_graph(
         facet.project,
         linked,
     )?
+    # A refresh writes the graph beside a bound library's payload links: bind it again and describe that generation.
+    if artifact.is_symlink() and rebind_refreshed_file(store, graph)?:
+        record(directory.joinpath("library.oven-inputs"), native, outputs)?
+        record(directory.joinpath("library.graph-inputs"), rust_library_graph_key(native, toolchain.driver)?, [graph])?
     trace(
         f"unit {declared.crate_name} rust: reused native identity={native.digest}; refreshed graph identity={identity}",
     )
