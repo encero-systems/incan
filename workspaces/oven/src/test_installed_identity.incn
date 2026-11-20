@@ -18,6 +18,7 @@ from unit_publication import (
     admitted_identity,
     facts_path,
     import_publication,
+    publication,
     published_identity,
     record_path,
     record_payload,
@@ -109,6 +110,39 @@ pub def test_a_directory_named_like_a_registry_entry_gives_its_artifacts_no_iden
     admit_observations([replaced.0], [observe(replaced)?.stamp])
     assert artifact_identity(replaced)? == "sha256:" + next_identity
     clear()
+    return Ok(None)
+
+
+pub def test_a_selected_registry_entry_is_named_from_its_admission_without_an_observation() -> Result[None, str]:
+    """
+    Naming a linked artifact of the selected closure's registry observes nothing: the installation's admission owns
+    that frozen store, so a request reads the content that admission recorded. Any other artifact is still observed.
+    """
+    scratch = scratch_directory()?
+    entry = "sha256-efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef"
+    registry = scratch.path().joinpath("registry")
+    artifact = registry.joinpath("entries").joinpath(entry).joinpath("artifacts/libtokio.rlib")
+    outside = scratch.path().joinpath("vendor/entries").joinpath(entry).joinpath("artifacts/libtokio.rlib")
+    identity = "sha256:" + entry[7:]
+    for path in [artifact, outside]:
+        write(path, "registry payload")?
+        import_payload(path, identity, file_digest(path)?)?
+    closure = registry.joinpath("closure.json")
+    binding = JsonValue.object({"path": JsonValue.string(artifact.0)})
+    document = JsonValue.object({"externs": JsonValue.object({"tokio": binding})})
+    select([Document(path=closure.0, stamp="closure-stamp", value=document)], [], [], [], closure.0, "closure", "rustc", "compiler")
+    # The same bytes in a new file: only an observation tells this generation from the admitted one.
+    for path in [artifact, outside]:
+        incoming = path.parent().joinpath("incoming")
+        write(incoming, "registry payload")?
+        rename(incoming.0, path.0).map_err((error) => str(error))?
+    selected = publication(artifact)
+    unselected = publication(outside)
+    clear()
+    named, content = selected?
+    assert named == identity, "the selected entry lost its admitted producer identity"
+    assert content == file_digest(artifact)?, "the selected entry lost its admitted content"
+    assert unselected.is_err(), "an artifact outside the selected closure was named without an observation"
     return Ok(None)
 
 

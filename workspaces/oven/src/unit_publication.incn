@@ -55,7 +55,13 @@ def located(directory: Path, path: str) -> str:
 
 
 pub def verified_payload(path: Path) -> Result[PayloadAdmission, str]:
-    """Capture an admitted payload's proof before publishing its containing installation by rename."""
+    """
+    Capture an admitted payload's proof before publishing its containing installation by rename.
+
+    An entry of the selected closure's registry is frozen with its installation, whose admission validated it: its
+    proof is read from that admission and the artifact is not observed. Any other payload must still be the file
+    generation its record names.
+    """
     if let Some(proof) = frozen_payload(path)?:
         return Ok(proof)
     location = available_record(path)?
@@ -65,6 +71,8 @@ pub def verified_payload(path: Path) -> Result[PayloadAdmission, str]:
             if not location.is_file():
                 return Err(missing_producer(path))
             return Err(reason)
+    if admitted_registry_identity(path)? == Some(record.identity):
+        return Ok(record)
     if observe(path)?.stamp != record.observation:
         return Err(f"{path.0}: published payload changed; admission is required")
     return Ok(record)
