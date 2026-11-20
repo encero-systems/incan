@@ -270,12 +270,23 @@ impl TypeChecker {
 
     /// Check the exact current owner before a ranked activation enters this function's statements.
     pub(in crate::typechecker) fn permits_ranked_body(&self, program: Option<&Program>, owner: Span) -> bool {
-        if self.graph_body_records.ranked_owner().is_none() {
+        if self.graph_body_records.demanded_owner().is_none() {
             return true;
         }
-        let identity = program
-            .and_then(|program| SemanticNodeBindings::new(self, program, owner).ok())
-            .map(|nodes| nodes.owner().render_compact());
+        let identity = if self.graph_body_records.ranked_owner().is_some() {
+            program
+                .and_then(|program| SemanticNodeBindings::new(self, program, owner).ok())
+                .map(|nodes| nodes.owner().render_compact())
+        } else {
+            // The regular checker already entered the callable's declared signature. Its stable identity
+            // names this statement entry without walking the owner's syntax a second time.
+            let declarations = self.declaration_view();
+            declarations
+                .function(owner)
+                .and_then(|binding| binding.identity.as_ref())
+                .and_then(|canonical| declarations.source_identity(canonical))
+                .map(StableDeclarationId::render_compact)
+        };
         self.graph_body_records.enter_ranked_owner(identity.as_deref())
     }
 
@@ -304,7 +315,7 @@ impl TypeChecker {
                 "final callable scope allocation is missing".into(),
             ));
         }
-        let restored = restore(&positions, program, owner, &final_fields)?;
+        let restored = restore(self, &positions, program, owner, &final_fields)?;
         if restored.binding.is_some() || !restored.defaults.is_empty() {
             return Err(NodeBindingError::InvalidField(
                 "body record carried declaration output".into(),
@@ -423,7 +434,7 @@ impl TypeChecker {
             return Ok(false);
         };
         let positions = Positions::new(self, program, owner, true)?;
-        let restored = restore(&positions, program, owner, &fields)?;
+        let restored = restore(self, &positions, program, owner, &fields)?;
         let binding = restored.binding.ok_or(NodeBindingError::MissingOwner)?;
         if self.declaration_view().callable(owner) != Some(&binding)
             || restored.defaults != default_writers(program, owner)?
@@ -820,16 +831,19 @@ impl Positions {
                 .map(|stable| stable.render_compact())
                 .ok_or(NodeBindingError::MissingOwner);
         }
+        tracing::debug!(target: "incan::invocation", declaration = ?canonical, "unadmitted checker record reference");
         Err(NodeBindingError::Unsupported("unadmitted declaration reference"))
     }
 
-    /// A source expression can read a registered Rust item. Only that reference row may use its import authority.
-    fn read_identity(&self, canonical: &CanonicalSymbolId) -> Result<String, NodeBindingError> {
+    /// Bind a source read to a checked lexical target, a Rust import, or the Rust field checked at that occurrence.
+    fn read_identity(&self, canonical: &CanonicalSymbolId, checked_field: bool) -> Result<String, NodeBindingError> {
         if matches!(canonical.origin, incan_semantics_core::SymbolOrigin::RustCrate(_))
             && let Some(stable) = StableDeclarationId::from_canonical(canonical, None, None)
         {
             let key = stable.render_compact();
-            if self.rust_reads.get(&key).and_then(Option::as_ref) == Some(canonical) {
+            if (canonical.kind == SemanticSourceTargetKind::Field && checked_field)
+                || self.rust_reads.get(&key).and_then(Option::as_ref) == Some(canonical)
+            {
                 return Ok(key);
             }
         }
@@ -977,6 +991,7 @@ fn admitted_type_identities(
 /// Rebuild a selected owner solely from canonical fields and current position/identity bindings. The independently
 /// checked current baseline supplies coordinates/handles only; no native fact payload is copied from it.
 fn restore(
+    checker: &TypeChecker,
     positions: &Positions,
     program: &Program,
     owner: Span,
@@ -1016,13 +1031,15 @@ fn restore(
             ));
         }
         previous = Some(row);
-        rebound.field(program, positions, header, row).map_err(|error| {
-            if error == NodeBindingError::MissingNode {
-                NodeBindingError::InvalidField(format!("family={} node={} selector={}", row[0], row[1], row[2]))
-            } else {
-                error
-            }
-        })?;
+        rebound
+            .field(checker, program, positions, header, row)
+            .map_err(|error| {
+                if error == NodeBindingError::MissingNode {
+                    NodeBindingError::InvalidField(format!("family={} node={} selector={}", row[0], row[1], row[2]))
+                } else {
+                    error
+                }
+            })?;
     }
     // Native input calls are not recorded; rebuild them from the restored native calls, as the body proof built them.
     if let Some(identity) = rebound.local.protocols.explicit_input_flow.keys().next().cloned() {
@@ -1080,7 +1097,14 @@ fn restore_pending(
             restored.diagnostic(program, positions, row)?;
             continue;
         }
-        restore_local(positions, &mut restored.local, &mut restored.record_identities, row).map_err(|error| {
+        restore_local(
+            checker,
+            positions,
+            &mut restored.local,
+            &mut restored.record_identities,
+            row,
+        )
+        .map_err(|error| {
             if error == NodeBindingError::MissingNode {
                 NodeBindingError::InvalidField(format!("family={} node={} selector={}", row[0], row[1], row[2]))
             } else {
@@ -1138,6 +1162,7 @@ impl Rebinding {
     /// Dispatch exactly one admitted field grammar. Unrecognized selectors never fall back to native source facts.
     fn field(
         &mut self,
+        checker: &TypeChecker,
         program: &Program,
         positions: &Positions,
         header: &[String],
@@ -1167,7 +1192,7 @@ impl Rebinding {
             "final-type" => self.final_type(positions, row)?,
             "native-call" if row[1].is_empty() && row[2] == "empty" && row.len() == 4 && row[3] == "true" => {}
             "diagnostic" => self.diagnostic(program, positions, row)?,
-            _ => restore_local(positions, &mut self.local, &mut self.record_identities, row)?,
+            _ => restore_local(checker, positions, &mut self.local, &mut self.record_identities, row)?,
         }
         Ok(())
     }

@@ -524,8 +524,8 @@ fn read_graph_body_records(
             path.display()
         ));
     }
-    Ok(incan_frontend::checker_records::GraphBodyRecords::from_source(
-        std::sync::Arc::new(GraphBodyRecordPages {
+    let records =
+        incan_frontend::checker_records::GraphBodyRecords::from_source(std::sync::Arc::new(GraphBodyRecordPages {
             root: path.to_path_buf(),
             namespaces: namespace_pages::NamespacePages::open(
                 path,
@@ -535,8 +535,68 @@ fn read_graph_body_records(
             )?,
             bakery,
             reopened: std::sync::OnceLock::new(),
-        }),
-    ))
+        }));
+    if path
+        .join("ranked-source-edit.crumb")
+        .try_exists()
+        .map_err(|e| e.to_string())?
+    {
+        return bind_contextual_rank(path, records);
+    }
+    Ok(records)
+}
+
+/// Bind a body-only edit and the exact namespace order the engine selected for it.
+fn bind_contextual_rank(
+    directory: &Path,
+    records: incan_frontend::checker_records::GraphBodyRecords,
+) -> Result<incan_frontend::checker_records::GraphBodyRecords, String> {
+    let bounded = |name: &str| -> Result<Vec<u8>, String> {
+        use std::io::Read;
+        const LIMIT: u64 = 65_536;
+        let mut bytes = Vec::new();
+        std::fs::File::open(directory.join(name))
+            .map_err(|error| error.to_string())?
+            .take(LIMIT + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|error| error.to_string())?;
+        if bytes.len() as u64 > LIMIT {
+            return Err(format!("contextual ranked page {name} exceeds its bound"));
+        }
+        Ok(bytes)
+    };
+    let demand = internal_models::decode_demand_page(&bounded("ranked-source-edit.crumb")?)
+        .map_err(|error| error.to_string())?;
+    let [owner, source]: [_; 2] = demand
+        .keys
+        .try_into()
+        .map_err(|_| "contextual ranked edit requires one owner and its changed source")?;
+    let name = owner
+        .identity
+        .split_once('|')
+        .and_then(|(identity, _)| identity.strip_prefix("function:"))
+        .and_then(|identity| identity.rsplit_once("::"))
+        .map(|(_, name)| name);
+    if owner.family != "ranked-source-edit"
+        || owner.identity_profile != "incan.stable-declaration/1"
+        || source.family != "owner-source"
+        || source.identity_profile != "incan.source-projection/1"
+        || source.origin != owner.origin
+        || source.identity != owner.facet
+        || name != Some(source.facet.as_str())
+        || !owner.facet.ends_with(".incn")
+        || Path::new(&owner.facet)
+            .components()
+            .any(|part| !matches!(part, std::path::Component::Normal(_)))
+    {
+        return Err("contextual ranked edit does not bind a project source owner".into());
+    }
+    let order = internal_models::decode_namespace_order(&bounded("ranked-source-order.crumb")?, owner.origin)
+        .map_err(|error| error.to_string())?;
+    if order.evidence != owner.context || order.members.as_slice() != [owner.facet.as_str()] {
+        return Err("contextual ranked edit does not match its namespace certificate".into());
+    }
+    Ok(records.for_contextual_ranked_owner(owner.identity, owner.facet, order.rank, order.evidence))
 }
 
 /// Run one ordinary signature reader in the real compiler environment and publish only that owner's two Crumb values.
@@ -820,6 +880,7 @@ fn compile_unit(
         dependencies.graph_body_output.clone(),
         dependencies.collect_codegraph,
     )?;
+    dependencies.graph_body_records.report_contextual_ranked_owner();
     if census_complete(&mut program, kind, overflow_checks)? {
         return Ok(UnitCompiled::InProcess);
     }

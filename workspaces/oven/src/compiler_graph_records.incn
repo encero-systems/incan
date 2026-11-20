@@ -38,7 +38,7 @@ from pub::internal_models.records import (
     encode_record_key,
 )
 from compiler_graph_rows import (
-    IncomingEdge, OutgoingEdge, encode_evaluation, encode_incoming, encode_outgoing, encode_pointer,
+    Evaluation, IncomingEdge, OutgoingEdge, encode_evaluation, encode_incoming, encode_outgoing, encode_pointer,
     evaluation_value_digest, read_evaluation, read_identity, read_incoming, read_outgoing, read_pointer,
 )
 
@@ -185,14 +185,8 @@ pub def reusable_evaluation(
     return select_evaluation(selected, output, profile, selected_witnesses)
 
 
-def select_evaluation(
-    selected: Snapshot,
-    output: RecordKey,
-    profile: str,
-    mut selected_witnesses: Dict[str, tuple[RecordRequest, str]],
-    defer_payload: bool = false,
-) -> Result[Option[ReusableEvaluation], str]:
-    """Validate an output and share only successful selections of the same pinned family read."""
+pub def evaluation_authority(selected: Snapshot, output: RecordKey, profile: str) -> Result[Option[tuple[Evaluation, ReadReceipt]], str]:
+    """Bind an exact output slot to its completed, content-addressed read receipt."""
     if profile == "":
         return Err("a reusable compiler evaluation requires a producer profile")
     value_key = encode_record_key(output)?
@@ -206,13 +200,28 @@ def select_evaluation(
     if evaluation.profile != profile or evaluation.output != value_key:
         return Err("selected compiler evaluation has mismatched authority")
     receipt_root = evaluation.receipt_root
-    value_digest = evaluation.value_digest
     receipt_bytes = required_value(selected, "incan.engine.receipt\t" + receipt_root)?
     if digest(receipt_bytes) != receipt_root:
         return Err("selected compiler receipt differs from its content root")
     receipt = decode_read_receipt(receipt_bytes)?
     if receipt.scope.profile != profile or encode_record_key(receipt.preparation.output)? != value_key:
         return Err("selected compiler receipt does not describe its evaluation")
+    return Ok(Some((evaluation, receipt)))
+
+
+def select_evaluation(
+    selected: Snapshot,
+    output: RecordKey,
+    profile: str,
+    mut selected_witnesses: Dict[str, tuple[RecordRequest, str]],
+    defer_payload: bool = false,
+) -> Result[Option[ReusableEvaluation], str]:
+    """Validate an output and share only successful selections of the same pinned family read."""
+    evaluation, receipt = match evaluation_authority(selected, output, profile)?:
+        Some(authority) => authority
+        None => return Ok(None)
+    value_key = evaluation.output
+    value_digest = evaluation.value_digest
     mut value: bytes = b""
     mut location: Option[Location] = None
     if defer_payload:

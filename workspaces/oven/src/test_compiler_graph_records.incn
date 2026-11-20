@@ -3,7 +3,7 @@
 from checker_record_fixtures import empty_checker_record
 from store_selection_records import read_binding
 import compiler_source_projection
-from pub::internal_models.source_value_records import read_documentation
+from pub::internal_models.source_value_records import encode_source_text, read_documentation
 from pub::incan_platform.store import Snapshot, begin, commit, delete, finish_frame_reads, get, keys, lookup_binding, measure_frame_reads, put, read_counts, BindingLookup
 from pub::incan_platform.store import snapshot as store_snapshot
 from pub::incan_platform.store.memory import root as memory_root
@@ -61,6 +61,7 @@ from compiler_graph_records import OutputSlots, PublishedEvaluation, family_outp
 from compiler_owner_retirement import retire_missing_functions
 from compiler_prepared_records import PreparedBodyRecordSource
 from compiler_record_envelopes import RankedActivation, RankedCheckingSweep, persist_activation
+from compiler_ranked_build import RankedBuildInputs, contextual_ranked_pages
 from compiler_body_keys import body_key, namespace_key, project_declaration_slot
 from compiler_plan_values import LOWERING_PROFILE, select_plan_modules
 from compiler_plan_modules import plan_module_key
@@ -823,6 +824,51 @@ pub def test_projected_body_witnesses_drive_early_cutoff_and_signature_invalidat
         "second",
         "unrelated",
     ]
+    return Ok(None)
+
+
+pub def test_contextual_body_edit_uses_a_certified_receipt_without_opening_prior_values() -> Result[None, str]:
+    """An imported-model body edit schedules one owner and leaves old payloads and unrelated source untouched."""
+    origin = "fixture"
+    consumer = "src/consumer.incn"
+    provider = "src/worker.incn"
+    source = "from worker import Completion\n\ndef reported(report: Completion) -> bool:\n    return report.code == 0\n"
+    projection = project_source(origin, consumer, source)?
+    owner = projected_owner(projection, "reported")?
+    supplier = compiler_source_projection.signature_key(origin, provider, "model:Completion")
+    identity = "function:consumer::reported|signature"
+    declaration = body_key("declaration", origin, identity, "reported", "prior")
+    local = body_key("local", origin, identity, "checked", "prior")
+    orders = certified_namespace_order(origin, {consumer: [provider], provider: []})?
+    order = orders[consumer]
+    before = store_snapshot(memory_root()).map_err((error) => error.message())?
+    certified = commit(put(begin(before), "incan.compiler.namespace-order\t" + order.evidence, order.certificate)).map_err((error) => error.message())?
+    scope = ReadScope(snapshot=certified.digest, profile=CHECKER_PROFILE)
+    mut prepared = PreparedBodyRecordSource.open(scope)
+    prepared.add(encode_record_key(owner.key)?, owner.encoded()?)
+    prepared.add(encode_record_key(declaration)?, b"prior declaration")
+    prepared.add(encode_record_key(supplier)?, encode_source_text("model Completion:")?)
+    reads = [prepared_product_request(owner.key), prepared_product_request(declaration), prepared_product_request(supplier)]
+    receipt = prepared.receipt(scope, local, reads, order.evidence)?
+    rank = ProducerRank(namespace=order.rank, stage=ProducerStage.CheckBody, dependency=0)
+    graph = publish_evaluation(certified, "compiled-local", rank, b"prior local", receipt)?.snapshot
+    mut inputs = RankedBuildInputs(graph=graph, projected=begin(graph), origin=origin, invalid=[identity],
+        changes=[owner.key, projection.positioned.key])
+    measure_frame_reads(true)
+    selected = contextual_ranked_pages(inputs, local)
+    opened = finish_frame_reads()
+    pages = selected?
+    assert len(pages) == 2
+    assert pages[0].key == "ranked-source-edit.crumb"
+    assert pages[1].key == "ranked-source-order.crumb" and pages[1].value == order.certificate
+    demand = decode_demand_page(pages[0].value)?
+    assert len(demand.keys) == 2 and demand.keys[1] == owner.key
+    assert demand.keys[0].identity == identity and demand.keys[0].facet == consumer
+    assert demand.keys[0].context == order.evidence
+    for read in opened:
+        assert read.key not in [encode_record_key(local)?, encode_record_key(owner.key)?, encode_record_key(supplier)?, encode_record_key(declaration)?]
+    inputs.changes.append(supplier)
+    assert len(contextual_ranked_pages(inputs, local)?) == 0
     return Ok(None)
 
 

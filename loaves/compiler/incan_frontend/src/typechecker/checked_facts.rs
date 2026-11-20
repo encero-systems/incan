@@ -130,8 +130,15 @@ impl TypeChecker {
         path: &[usize],
         identities: &mut std::collections::BTreeMap<Vec<usize>, CanonicalSymbolId>,
     ) {
+        if let Some(identity) = self.native_expression_leaf_identity(display) {
+            identities.insert(path.to_vec(), identity);
+        }
+    }
+
+    /// Resolve a native expression leaf through a registered runtime owner or its current type metadata.
+    pub(super) fn native_expression_leaf_identity(&self, display: &str) -> Option<CanonicalSymbolId> {
         if let Some(builtin) = incan_semantics_core::RuntimeBuiltinType::from_carrier_path(display) {
-            let identity = self
+            return self
                 .type_info
                 .body_ir_runtime_types
                 .values()
@@ -140,19 +147,12 @@ impl TypeChecker {
                 })
                 .cloned()
                 .or_else(|| incan_semantics_core::body_ir::rust_item_identity(display));
-            if let Some(identity) = identity {
-                identities.insert(path.to_vec(), identity);
-            }
-            return;
         }
-        let Some(metadata) = self.rust_item_metadata_for_path(display) else {
-            return;
-        };
-        if matches!(metadata.kind, RustItemKind::Type(_))
-            && let Some(identity) = incan_semantics_core::body_ir::rust_item_identity(&metadata.canonical_path)
-        {
-            identities.insert(path.to_vec(), identity);
+        let metadata = self.rust_item_metadata_for_path(display)?;
+        if !matches!(metadata.kind, RustItemKind::Type(_)) {
+            return None;
         }
+        incan_semantics_core::body_ir::rust_item_identity(&metadata.canonical_path)
     }
 
     /// Record `destination` as the type the value at `value_span` is written to, when the value's type `value_ty` is

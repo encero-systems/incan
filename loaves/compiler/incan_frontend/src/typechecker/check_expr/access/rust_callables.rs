@@ -9,7 +9,7 @@ impl TypeChecker {
     /// Rust field declared as `r#type` is accessed as `obj.type` and constructed with `TypeName(type=...)`; emission
     /// rawifies the keyword identifier back to `r#type`. An ordinary Rust field declared as `type_` remains available
     /// only as `obj.type_`.
-    pub(in crate::typechecker::check_expr) fn rust_field_for_source_name<'a>(
+    pub(in crate::typechecker) fn rust_field_for_source_name<'a>(
         info: &'a RustTypeInfo,
         source_name: &str,
     ) -> Option<&'a RustFieldInfo> {

@@ -431,6 +431,7 @@ fn checked_attempt(
         dependencies.dedup();
         dependencies
     };
+    let contextual_rank = graph_body_records.has_contextual_rank();
     let mut analysis = {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::analyze_modules", modules = modules.len()).entered();
         session
@@ -440,6 +441,9 @@ fn checked_attempt(
                 std::sync::Arc::clone(&imports),
                 library && collect_codegraph,
                 &mut |module, checker, provider| {
+                    if contextual_rank {
+                        graph_body_records.count_contextual_statements(checker.check_work().body_local_checks);
+                    }
                     callable_products.observe(module, checker);
                     if let Some(indexes) = &namespace_indexes
                         && let Some(&index) = indexes.get(module.file_path.as_path())

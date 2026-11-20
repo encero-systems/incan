@@ -361,7 +361,7 @@ pub def obtain(
     mut selected_bodies = encode_body_inventory(retained_bodies)?
     mut checking: Option[RankedBuildInputs] = None
     if not listing_refusals and len(invalid) > 0:
-        checking = Some(RankedBuildInputs(graph=graph, projected=projected.transaction, origin=origin, invalid=invalid, covered=covered, plan_reads=plan_reads))
+        checking = Some(RankedBuildInputs(graph=graph, projected=projected.transaction, origin=origin, invalid=invalid, changes=projected.keys, covered=covered, plan_reads=plan_reads))
     if len(covered.owners) > 0:
         selected_bodies.append(reopen_selection(graph, origin)?)
     selected_bodies.extend(namespaces.pages)

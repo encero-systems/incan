@@ -121,7 +121,10 @@ pub(super) fn project_references(
                 ]);
                 identity
             }
-            None => positions.read_identity(canonical)?,
+            None => positions.read_identity(
+                canonical,
+                canonical.kind == SemanticSourceTargetKind::Field && local.rust.field_values.contains_key(span),
+            )?,
         };
         fields.push(vec![
             "reference".into(),

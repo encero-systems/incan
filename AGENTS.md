@@ -31,6 +31,11 @@ Incan is a Python-like language that compiles to native code through the pinned 
 5. **Apply the [Zen of Incan](workspaces/docs-site/docs/_snippets/language/zen_of_incan.md).** Keep ownership, namespaces, and costs visible in the code. Use one obvious route to each fact and surface misses, invalid evidence, and fallbacks explicitly.
 6. **Prove the work on the normal entry point.** Measure real cold, edited warm, and independently fresh runs with matched inputs and pinned tools. Count and attribute reads, bytes copied or decoded, and producer executions. Check warm and fresh results and enforce the work and time budgets before calling the change done.
 
+## Checkout and build-home lifecycle
+
+- Use one persistent Incan checkout and one reusable build home. Work on named branches and switch branches in that checkout. Treat scratch outputs as disposable.
+- Create extra worktrees and build homes only when a run genuinely needs parallel work. When the run ends, integrate successful changes and preserve useful commits, patches, receipts, and logs. Immediately remove its temporary worktrees, build homes, and scratch outputs. Apply the same cleanup after failed and interrupted runs.
+
 ## Key References
 
 | Document                 | Path                                                                                 |

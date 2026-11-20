@@ -118,9 +118,19 @@ pub struct GraphBodyRecords {
 #[derive(Debug)]
 struct RankedOwner {
     identity: String,
+    contextual: Option<ContextualRank>,
     attempts: AtomicUsize,
     missing_peer: AtomicBool,
     damaged_input: AtomicBool,
+}
+
+/// A body-only edit scheduled from the graph's certified import order.
+#[derive(Debug)]
+struct ContextualRank {
+    module: String,
+    rank: i64,
+    certificate: String,
+    statement_entries: AtomicUsize,
 }
 
 /// Canonical field primitives emitted for one checked top-level free function.
@@ -238,6 +248,7 @@ impl GraphBodyRecords {
     pub fn for_ranked_owner(mut self, identity: &str) -> Self {
         self.ranked_owner = Some(Arc::new(RankedOwner {
             identity: identity.to_owned(),
+            contextual: None,
             attempts: AtomicUsize::new(0),
             missing_peer: AtomicBool::new(false),
             damaged_input: AtomicBool::new(false),
@@ -245,9 +256,69 @@ impl GraphBodyRecords {
         self
     }
 
-    /// The sole callable whose statement producer may execute during this ranked reader activation.
+    /// Schedule a graph-selected source edit inside the ordinary native compilation and its imported interfaces.
+    pub fn for_contextual_ranked_owner(
+        mut self,
+        identity: String,
+        module: String,
+        rank: i64,
+        certificate: String,
+    ) -> Self {
+        self.ranked_owner = Some(Arc::new(RankedOwner {
+            identity,
+            contextual: Some(ContextualRank {
+                module,
+                rank,
+                certificate,
+                statement_entries: AtomicUsize::new(0),
+            }),
+            attempts: AtomicUsize::new(0),
+            missing_peer: AtomicBool::new(false),
+            damaged_input: AtomicBool::new(false),
+        }));
+        self
+    }
+
+    /// The only body allowed to run during a standalone ranked reader activation.
     pub(crate) fn ranked_owner(&self) -> Option<&str> {
+        self.ranked_owner
+            .as_ref()
+            .filter(|owner| owner.contextual.is_none())
+            .map(|owner| owner.identity.as_str())
+    }
+
+    /// The exact body requested by either ranked entry point.
+    pub(crate) fn demanded_owner(&self) -> Option<&str> {
         self.ranked_owner.as_ref().map(|owner| owner.identity.as_str())
+    }
+
+    /// Whether this native compilation carries a graph-authorized contextual edit.
+    pub fn has_contextual_rank(&self) -> bool {
+        self.ranked_owner
+            .as_ref()
+            .is_some_and(|owner| owner.contextual.is_some())
+    }
+
+    /// Add this checked module's actual statement entries, including methods and properties.
+    pub fn count_contextual_statements(&self, count: usize) {
+        if let Some(context) = self.ranked_owner.as_ref().and_then(|owner| owner.contextual.as_ref()) {
+            context.statement_entries.fetch_add(count, Ordering::Relaxed);
+        }
+    }
+
+    /// Account for the physical body entries of this certified edit after the native checker has settled.
+    /// A peer miss keeps ordinary correctness and is visible as a declined ranked activation.
+    pub fn report_contextual_ranked_owner(&self) {
+        let Some(owner) = &self.ranked_owner else { return };
+        let Some(context) = &owner.contextual else { return };
+        let Some((entries, missing_peer, damaged_input)) = self.ranked_admission() else {
+            return;
+        };
+        let statement_entries = context.statement_entries.load(Ordering::Relaxed);
+        tracing::debug!(target: "incan::invocation", owner = %owner.identity, module = %context.module,
+            rank = context.rank, certificate = %context.certificate, entries, statement_entries, missing_peer, damaged_input,
+            admitted = entries == 1 && statement_entries == 1 && !missing_peer && !damaged_input,
+            "settled contextual ranked body demand");
     }
 
     /// Permit one actual statement entry and identify a missing settled peer independently of source errors.
@@ -255,9 +326,10 @@ impl GraphBodyRecords {
         let Some(owner) = &self.ranked_owner else { return true };
         if identity != Some(owner.identity.as_str()) {
             owner.missing_peer.store(true, Ordering::Relaxed);
-            return false;
+            return owner.contextual.is_some();
         }
-        owner.attempts.fetch_add(1, Ordering::Relaxed) == 0
+        let prior = owner.attempts.fetch_add(1, Ordering::Relaxed);
+        prior == 0 || owner.contextual.is_some()
     }
 
     /// The observed statement-entry attempts and whether another owner lacked a reusable value.
@@ -284,7 +356,7 @@ impl GraphBodyRecords {
             return false;
         }
         let identity = owner.render_compact();
-        self.ranked_owner() == Some(identity.as_str())
+        self.demanded_owner() == Some(identity.as_str())
             || self.current.contains_key(&identity)
             || self.eager.contains_key(&identity)
             || self.source.as_ref().is_some_and(|source| source.has_owner(&identity))
@@ -292,7 +364,7 @@ impl GraphBodyRecords {
 
     /// Read one exact declaration's already codec-validated pair without scanning unrelated owner pages.
     pub(crate) fn get(&self, identity: &str) -> Result<Option<GraphBodyRecord>, RecordAdapterFault> {
-        if self.ranked_owner() == Some(identity) {
+        if self.demanded_owner() == Some(identity) {
             return Ok(None);
         }
         let mut record = match self.current.get(identity).or_else(|| self.eager.get(identity)) {

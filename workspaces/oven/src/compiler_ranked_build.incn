@@ -20,7 +20,7 @@ from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily,
 from pub::internal_models.records import ReadWitness, RecordKey, encode_record_key
 from compiler_body_keys import IDENTITY_PROFILE
 from compiler_body_values import CoveredBodyOwners, SelectedBodyPage, SelectedBodyRecord, encode_body_inventory, select_body_inventory_of
-from compiler_graph_records import OutputSlots, decode_record_key, family_outputs
+from compiler_graph_records import OutputSlots, decode_record_key, evaluation_authority, family_outputs
 from compiler_record_envelopes import RankedActivation, RankedCheckingSweep
 from compiler_snapshot import StagedSnapshot, stage_selected_snapshot
 from compiler_worker import activate_record
@@ -47,6 +47,7 @@ pub model RankedBuildInputs:
     pub projected: Transaction
     pub origin: str
     pub invalid: list[str]
+    pub changes: list[RecordKey] = []
     pub covered: CoveredBodyOwners = CoveredBodyOwners()
     pub plan_reads: Dict[str, list[RecordKey]] = {}
 
@@ -161,6 +162,54 @@ def changed_owner(graph: Snapshot, prior: RecordKey, captured: &Dict[str, bytes]
     if len(families) != 4 or name == "" or (len(scope_names) > 0 and name not in scope_names):
         return Ok(None)
     return Ok(Some(BuildOwner(prior=prior, name=name, namespace=order.rank, inputs=inputs, prior_declaration_root=prior_declaration_root, prior_declaration=prior_declaration, signature_input=signature_input)))
+
+
+pub def contextual_ranked_pages(inputs: &RankedBuildInputs, prior: RecordKey) -> Result[list[SelectedBodyPage], str]:
+    """Schedule one body edit in the native compiler's already prepared namespace and imported interfaces."""
+    if len(inputs.invalid) != 1 or len(inputs.changes) == 0 or not prior.identity.startswith("function:"):
+        return Ok([])
+    evaluation, receipt = match evaluation_authority(inputs.graph, prior, CHECKER_PROFILE)?:
+        Some(value) => value
+        None => return Ok([])
+    certificate = receipt.preparation.rank_certificate
+    if certificate == "compiled-check":
+        return Ok([])
+    encoded = required(inputs.graph, CERTIFICATE_FAMILY + "\t" + certificate)?
+    order = decode_namespace_order(encoded, prior.origin)?
+    if order.evidence != certificate or order.rank != evaluation.namespace:
+        return Err("contextual checking certificate differs from its completed evaluation")
+    if len(order.members) != 1:
+        return Ok([])
+    module = order.members[0]
+    mut selected_source: Option[RecordKey] = None
+    mut declaration = false
+    for witness in receipt.witnesses:
+        match witness:
+            ReadWitness.Found(previous, _) =>
+                supplier = previous.request.key
+                if supplier.family == "owner-source":
+                    if selected_source is not None or supplier.origin != prior.origin or supplier.identity != module:
+                        return Ok([])
+                    selected_source = Some(supplier)
+                elif supplier.family == "declaration" and supplier.identity == prior.identity and supplier.origin == prior.origin:
+                    declaration = true
+            _ => return Ok([])
+    source = match selected_source:
+        Some(value) => value
+        None => return Ok([])
+    if not declaration or source not in inputs.changes:
+        return Ok([])
+    for changed in inputs.changes:
+        if changed != source and (changed.origin != prior.origin or changed.identity != module or changed.family not in ["source-positioned", "owner-placement"]):
+            return Ok([])
+    mut demand = prior
+    demand.family = "ranked-source-edit"
+    demand.facet = module
+    demand.context = certificate
+    return Ok([
+        SelectedBodyPage(key="ranked-source-edit.crumb", value=encode_demand_page(DemandPage(keys=[demand, source]))?),
+        SelectedBodyPage(key="ranked-source-order.crumb", value=encoded),
+    ])
 
 
 def submit(store: Path, view: str, toolchain: Toolchain, owner: &BuildOwner, family: str) -> Result[Submitted, str]:
@@ -296,11 +345,16 @@ pub def ranked_build_pages(store: Path, inputs: &RankedBuildInputs, toolchain: T
     mut ranks: set[int] = set()
     for indexed in family_outputs(graph, "local", CHECKER_PROFILE, Some(slots))?:
         prior = decode_record_key(indexed)?
-        if let Some(owner) = changed_owner(graph, prior, captured)?:
-            if prior.identity in owners:
-                return Err("multiple current local outputs for one ranked owner")
-            owners[prior.identity] = owner
-            ranks.add(owner.namespace)
+        match changed_owner(graph, prior, captured)?:
+            Some(owner) =>
+                if prior.identity in owners:
+                    return Err("multiple current local outputs for one ranked owner")
+                owners[prior.identity] = owner
+                ranks.add(owner.namespace)
+            None =>
+                contextual = contextual_ranked_pages(inputs, prior)?
+                if len(contextual) > 0:
+                    return Ok(Some(contextual))
     # The store view is shared staging space. Each activation re-publishes all of its exact inputs atomically,
     # then pins that revision. Concurrent requests can share immutable envelopes without following one another.
     view = "compiler-checking-" + digest((graph.view + "\n" + origin).encode("utf-8"))
