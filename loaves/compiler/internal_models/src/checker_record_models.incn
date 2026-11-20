@@ -1,5 +1,7 @@
 """Checker, graph and compiled-body values shared by the canonical checker-record codecs."""
 
+from std.primitives.views import MappedView
+
 
 @derive(Eq)
 pub model CanonicalField:
@@ -83,6 +85,19 @@ pub model GraphNamespaceValue:
     pub call_reads: list[SettledCallRead] = []
     pub call_reads_known: bool = true
     pub identity_proof: bytes = b""
+
+
+pub model GraphNamespaceView:
+    """A checked namespace whose large interface and executable payloads retain the admitted envelope."""
+
+    pub module: str
+    pub interface: MappedView
+    pub body_ir: MappedView
+    pub lowering_inputs: list[list[str]]
+    pub package_roots: list[str]
+    pub call_reads: list[SettledCallRead]
+    pub call_reads_known: bool
+    pub identity_proof: bytes
 
 
 pub model CompiledBodyValue:

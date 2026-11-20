@@ -58,7 +58,7 @@ fn encode_payload_row_native(
             identity: b"value_".to_vec(),
             canonical: true,
             absent: 'r',
-            value: Value::Binary(payload),
+            value: Value::Binary(payload.into()),
         },
     ]);
     row_write::write_rows(&Rows {
@@ -89,6 +89,7 @@ fn decode_payload_row_native(data: &[u8]) -> Option<(Vec<u8>, String, String, St
             require_sealed: false,
             exact: true,
         },
+        None,
         &mut budget,
     )
     .ok()?;
@@ -99,25 +100,22 @@ fn decode_payload_row_native(data: &[u8]) -> Option<(Vec<u8>, String, String, St
     let Meta::Text(model) = get(&rows.dictionary[0].metadata, "path")? else {
         return None;
     };
-    let Value::Record(fields) = &rows.records[0].value else {
+    let record = rows.records.into_iter().next()?;
+    let Value::Record(fields) = record.value else {
         return None;
     };
-    let kind = payload_field(fields, b"kind__")?;
-    let id = payload_field(fields, b"id____")?;
-    let payload = payload_field(fields, b"value_")?;
-    match (kind, id, payload) {
-        (Value::Text(kind), Value::Text(id), Value::Binary(payload)) => {
-            Some((selector, model.clone(), kind.clone(), id.clone(), payload.clone()))
+    let mut kind = None;
+    let mut id = None;
+    let mut payload = None;
+    for field in fields {
+        match (field.identity.as_slice(), field.value) {
+            (b"kind__", Value::Text(value)) => kind = Some(value),
+            (b"id____", Value::Text(value)) => id = Some(value),
+            (b"value_", Value::Binary(hash::Binary::Owned(value))) => payload = Some(value),
+            _ => return None,
         }
-        _ => None,
     }
-}
-
-fn payload_field<'a>(fields: &'a [hash::Field], identity: &[u8]) -> Option<&'a Value> {
-    fields
-        .iter()
-        .find(|field| field.identity == identity)
-        .map(|field| &field.value)
+    Some((selector, model.clone(), kind?, id?, payload?))
 }
 
 fn payload_description(selector: Vec<u8>, model: String) -> Meta {

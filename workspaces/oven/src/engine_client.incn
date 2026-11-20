@@ -40,7 +40,8 @@ from request_directory import working_directory
 from engine_overlay import (
     OverlayDiagnostic,
     editor_view_name,
-    mirror_overlay,
+    OverlayMirror,
+    mirror_into,
     overlay_entry,
     program_root,
     report_diagnostics,
@@ -69,7 +70,8 @@ pub def execute_overlay(request: OverlayRequest) -> Result[str, str]:
     """Answer one overlay request over a connection of its own."""
     store = bakery()?
     mut channel = engine_channel(store)?
-    answer = answer_overlay(channel, store, request)
+    mut mirror = OverlayMirror()
+    answer = answer_overlay(channel, store, request, mirror)
     _ = channel.transport.close()
     return answer
 
@@ -84,6 +86,7 @@ pub def serve_overlays(profile: str) -> Result[i32, str]:
     store = bakery()?
     mut channel = engine_channel(store)?
     input = stdin()
+    mut mirror = OverlayMirror()
     while true:
         mut incoming = RustString.new()
         match input.read_line(incoming):
@@ -99,7 +102,7 @@ pub def serve_overlays(profile: str) -> Result[i32, str]:
         match parse_served(line, profile):
             Err(reason) => answer = failed_answer(-1, reason)?
             Ok(request) =>
-                match answer_overlay(channel, store, request):
+                match answer_overlay(channel, store, request, mirror):
                     Ok(document) => answer = document
                     Err(reason) =>
                         _ = channel.transport.close()
@@ -112,7 +115,7 @@ pub def serve_overlays(profile: str) -> Result[i32, str]:
     return Ok(0)
 
 
-def answer_overlay(mut channel: Channel, store: Path, request: OverlayRequest) -> Result[str, str]:
+def answer_overlay(mut channel: Channel, store: Path, request: OverlayRequest, mut mirror: OverlayMirror) -> Result[str, str]:
     """
     Answer one overlay request: the diagnostics of its source with its buffer in place of the file, as an
     `incan.overlay-diagnostics/1` document carrying the editor's document version.
@@ -139,7 +142,7 @@ def answer_overlay(mut channel: Channel, store: Path, request: OverlayRequest) -
         return hover_answer(store, editor, program, entry, document, text, request)
     # The overlay root lies beside the store, not in it: capture never re-reads a file under the bakery.
     overlay = store.parent().joinpath("editor").joinpath(editor)
-    _ = mirror_overlay(program, overlay, document, text)?
+    _ = mirror_into(mirror, program, overlay, document, text)?
     # 2. The editor view starts from the records every build reads, and nothing it publishes reaches them.
     if snapshot(store, editor).map_err((error) => error.message())?.index == "":
         fork_project_view(store, HOME_VIEW, editor)?

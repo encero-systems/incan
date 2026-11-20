@@ -114,6 +114,8 @@ pub def test_finalization_matches_every_carried_frame_before_reusing_capture() -
             assert placed == positioned_product(product, nodes, "positions.incn", 10)?
             exact, _positions = finalize_scalar(directory.0, key, function, false, references, nodes, [frame], captured)?
             assert exact == captured
+            retained, _retained_positions = finalize_scalar(directory.0, key, function, true, references, nodes, [frame], captured)?
+            assert retained == captured
             changed = positioned("helper", owner, 12, 11)
             assert finalize_scalar(directory.0, key, function, true, references, nodes, [changed], captured).is_err()
             replaced, _new_positions = finalize_scalar(directory.0, key, function, false, references, nodes, [changed], captured)?
