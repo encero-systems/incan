@@ -81,6 +81,9 @@ pub mod records {
 }
 
 #[cfg(test)]
+mod surface_tests;
+
+#[cfg(test)]
 mod tests {
     use super::{CodecFault, compiled_body_frame_size};
 
