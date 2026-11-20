@@ -516,6 +516,30 @@ def test_keep_going_runs_every_planned_invocation_after_a_failure() -> Result[No
     return Ok(None)
 
 
+def test_an_ignored_prefix_covering_every_position_stops_no_invocation() -> Result[None, str]:
+    """Independent release gates ignore every position, so each gate runs and each failure is named."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    logs = root.joinpath("logs")
+    logs.mkdir(true, true).map_err((error) => error.message())?
+    first = Invocation(arguments=["-c", "exit 1"], directory=root.0, reservation=GIB, log=logs.joinpath("000-first.log"))
+    second = Invocation(
+        arguments=["-c", "touch second; exit 1"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("001-second.log"),
+    )
+    third = Invocation(
+        arguments=["-c", "touch third"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("002-third.log"),
+    )
+    assert run_all_failures("/bin/sh", [first, second, third], 1, 0, 3)? == [0, 1]
+    assert root.joinpath("second").exists() and root.joinpath("third").exists()
+    return Ok(None)
+
+
 def test_completed_slot_is_settled_before_queued_admission() -> Result[None, str]:
     """A failure raised during another child's cleanup is observed before its freed slot admits queued work."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
