@@ -58,7 +58,13 @@ pub def verified_payload(path: Path) -> Result[PayloadAdmission, str]:
     """Capture an admitted payload's proof before publishing its containing installation by rename."""
     if let Some(proof) = frozen_payload(path)?:
         return Ok(proof)
-    record = read_evidence(available_record(path)?, path)?
+    location = available_record(path)?
+    record = match read_evidence(location, path):
+        Ok(value) => value
+        Err(reason) =>
+            if not location.is_file():
+                return Err(missing_producer(path))
+            return Err(reason)
     if observe(path)?.stamp != record.observation:
         return Err(f"{path.0}: published payload changed; admission is required")
     return Ok(record)
@@ -142,7 +148,7 @@ pub def published_identity(path: Path) -> Result[str, str]:
     if not record.is_file():
         if let Some(entry) = admitted_registry_identity(path)?:
             return Ok(entry)
-        return Err(f"unit identity refused: {path.0}: linked unit has no recorded producer identity")
+        return Err(missing_producer(path))
     proof = read_evidence(record, path)?
     if observe(path)?.stamp != proof.observation:
         return Err(f"{path.0}: published payload changed; admission is required")
@@ -275,6 +281,11 @@ pub def admit_payload(path: Path) -> Result[None, str]:
 pub def record_path(path: Path) -> Path:
     """The portable producer record that accompanies one artifact."""
     return Path(f"{path.0}.oven-unit")
+
+
+def missing_producer(path: Path) -> str:
+    """Return the refusal that lets an ordinary unit build without caching when its publication is missing."""
+    return f"unit identity refused: {path.0}: linked unit has no recorded producer identity"
 
 
 def imported_record(path: Path) -> Result[Path, str]:
