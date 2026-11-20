@@ -96,7 +96,7 @@ pub def test_importer_rename_checks_only_its_direct_signature_reader() -> Result
     root = scratch.path()
     project = root.joinpath("importer")
     project.mkdir(true, true).map_err((error) => error.message())?
-    fixture = Path("examples/pro/codegraph_importer")
+    fixture = Path("../../examples/pro/codegraph_importer")
     fixture.joinpath("src").copy(project.joinpath("src"), false, false).map_err((error) => error.message())?
     fixture.joinpath("tests").copy(project.joinpath("tests"), false, false).map_err((error) => error.message())?
     fixture.joinpath("loaf.toml").copy(project.joinpath("loaf.toml"), false, false).map_err((error) => error.message())?
@@ -106,7 +106,7 @@ pub def test_importer_rename_checks_only_its_direct_signature_reader() -> Result
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     cold = report_fixture_build(binary, project, store, Some(trace))?
     cold_checks = importer_statement_checks(trace)?
-    assert len(importer_ranked_completions(trace)?) == 0
+    assert len(importer_ranked_completions(trace)?) == 0, "a cold build completed ranked work"
     stop_example_engine(binary, store)?
     warm_trace = root.joinpath("warm-trace")
     warm_trace.mkdir(true, true).map_err((error) => error.message())?
@@ -120,10 +120,12 @@ pub def test_importer_rename_checks_only_its_direct_signature_reader() -> Result
     warm = report_fixture_build(binary, project, store, Some(warm_trace))?
     stop_example_engine(binary, store)?
     diagnostic = warm.to_json().map_err((error) => error.message())?
-    assert proof_count(cold, "all_declarations")? == 8
-    assert proof_count(cold, "reusable_declarations")? == 8
-    assert len(cold_checks) == 6
-    assert importer_physical_statement_count(trace)? == 8
+    cold_diagnostic = cold.to_json().map_err((error) => error.message())?
+    assert proof_count(cold, "all_declarations")? == 8, cold_diagnostic
+    assert proof_count(cold, "reusable_declarations")? == 8, cold_diagnostic
+    assert len(cold_checks) == 6, f"cold statement checks: {cold_checks:?}"
+    cold_statements = importer_physical_statement_count(trace)?
+    assert cold_statements == 8, f"cold physical statements: {cold_statements}"
     assert importer_physical_statement_count(warm_trace)? == 2, diagnostic
     assert proof_count(warm, "lowering_demand_evaluations")? == 1, diagnostic
     assert proof_count(warm, "plan_function_evaluations")? == 1, diagnostic
@@ -142,12 +144,16 @@ pub def test_importer_rename_checks_only_its_direct_signature_reader() -> Result
     control_trace.mkdir(true, true).map_err((error) => error.message())?
     control_proof = report_fixture_build(binary, project, control, Some(control_trace))?
     stop_example_engine(binary, control)?
-    assert proof_count(control_proof, "body_evaluations")? == 8
-    assert proof_count(control_proof, "reusable_declarations")? == 8
-    assert sorted(importer_statement_checks(control_trace)?) == sorted(cold_checks)
-    assert importer_physical_statement_count(control_trace)? == 8
-    assert len(importer_ranked_completions(control_trace)?) == 0
-    assert importer_checked_values(control)? == warm_values
+    control_diagnostic = control_proof.to_json().map_err((error) => error.message())?
+    assert proof_count(control_proof, "body_evaluations")? == 8, control_diagnostic
+    assert proof_count(control_proof, "reusable_declarations")? == 8, control_diagnostic
+    control_checks = sorted(importer_statement_checks(control_trace)?)
+    assert control_checks == sorted(cold_checks), f"fresh statement checks {control_checks:?}, cold {cold_checks:?}"
+    control_statements = importer_physical_statement_count(control_trace)?
+    assert control_statements == 8, f"fresh physical statements: {control_statements}"
+    control_completions = importer_ranked_completions(control_trace)?
+    assert len(control_completions) == 0, f"a fresh build completed ranked work: {control_completions:?}"
+    assert importer_checked_values(control)? == warm_values, "the warm checked values differ from a fresh build's"
     warm_ranks = importer_rank_errors(store)?
     cold_ranks = importer_rank_errors(control)?
     rank_diagnostic = f"misranked importer records: warm {warm_ranks:?}, fresh {cold_ranks:?}"
@@ -170,7 +176,7 @@ def importer_rank_errors(store: Path) -> Result[list[str], str]:
             if let ReadWitness.Found(prior, _) = witness:
                 supplier = prior.request.key
                 if supplier.family == "body-ir":
-                    assert supplier.origin == demand.key.origin and supplier.identity == demand.key.identity
+                    assert supplier.origin == demand.key.origin and supplier.identity == demand.key.identity, name
                     suppliers += 1
                     if not importer_rank_matches(
                         selected, supplier, CHECKER_PROFILE, "compiled-body-ir-", ProducerStage.BodyIr,
@@ -214,21 +220,23 @@ def importer_checked_values(store: Path) -> Result[Dict[str, list[bytes]], str]:
             if let ReadWitness.Found(prior, _) = witness:
                 key = prior.request.key
                 if key.family == "declaration" and key.identity == local.key.identity and key.origin == origin:
-                    assert key.identity not in declarations
+                    assert key.identity not in declarations, f"two declarations for {key.identity}"
                     match get(selected, encode_record_key(key)?).map_err((error) => error.message())?:
                         None => return Err("a published importer local lost its declaration")
                         Some(value) =>
-                            assert record_root(value).map_err((error) => f"invalid importer declaration: {error:?}")? == key.context
+                            root = record_root(value).map_err((error) => f"invalid importer declaration: {error:?}")?
+                            assert root == key.context, f"the declaration of {key.identity} has another root"
                             declarations[key.identity] = value
-    assert len(declarations) == 6
+    assert len(declarations) == 8, f"{len(declarations)} importer declarations were published"
     mut values: Dict[str, list[bytes]] = {}
     for row in select_body_inventory_except(selected, CHECKER_PROFILE, origin, [])?:
-        assert row.identity in declarations and row.identity not in values
+        assert row.identity in declarations and row.identity not in values, f"an unmatched body row: {row.identity}"
         values[row.identity] = [declarations[row.identity], row.local, row.final, row.body_ir]
-    assert len([owner for owner in values.keys() if owner.startswith("function:")]) == 6
-    assert "member/method:importer::empty#in(model:importer::GraphSummary)[0]" in values
-    assert "member/method:importer::add_fact#in(model:importer::GraphSummary)[0]" in values
-    assert len(values) == 8
+    owners = sorted([owner for owner in values.keys()])
+    assert len([owner for owner in owners if owner.startswith("function:")]) == 6, f"checked owners: {owners:?}"
+    assert "member/method:importer::empty#in(model:importer::GraphSummary)[0]" in values, f"checked owners: {owners:?}"
+    assert "member/method:importer::add_fact#in(model:importer::GraphSummary)[0]" in values, f"checked owners: {owners:?}"
+    assert len(values) == 8, f"checked owners: {owners:?}"
     return Ok(values)
 
 
@@ -245,16 +253,16 @@ def importer_frontier_order(trace: Path) -> Result[list[str], str]:
             key = parse(line).and_then((record) => record.require("key")).and_then((field) => field.expect_str()).map_err((error) => error.message())?
             fields = key.split("\t")
             if fields[0] == "ranked-stage":
-                assert len(fields) == 3
+                assert len(fields) == 3, f"a ranked stage key has {len(fields)} fields: {key}"
                 result.append(fields[1].split("|")[0] + "\t" + fields[2])
             elif fields[0] == "ranked-reader":
-                assert len(fields) == 9
+                assert len(fields) == 9, f"a ranked reader key has {len(fields)} fields: {key}"
                 # The resolved call stores its parameter label in both body records.
-                assert len(fields[2]) == 64 and len(fields[3]) == 64 and fields[2] != fields[3]
-                assert len(fields[4]) == 64 and len(fields[5]) == 64 and fields[4] != fields[5]
+                assert len(fields[2]) == 64 and len(fields[3]) == 64 and fields[2] != fields[3], f"local records: {key}"
+                assert len(fields[4]) == 64 and len(fields[5]) == 64 and fields[4] != fields[5], f"final records: {key}"
                 # Downstream callers read import_jsonl's own declaration, whose signature stays equal.
-                assert len(fields[6]) == 64 and fields[6] == fields[7]
-                assert fields[8] == "0"
+                assert len(fields[6]) == 64 and fields[6] == fields[7], f"the reader's signature changed: {key}"
+                assert fields[8] == "0", f"a ranked reader left a frontier: {key}"
                 result.append(fields[1].split("|")[0] + "\treader")
     return Ok(result)
 
@@ -287,7 +295,7 @@ def importer_physical_statement_count(trace: Path) -> Result[int, str]:
             continue
         records = file.read_text("utf-8", "strict").map_err((error) => error.message())?
         for line in records.split("\n"):
-            if '\"action\":\"body\"' not in line or '\"phase\":\"checking\"' not in line:
+            if '"action":"body"' not in line or '"phase":"checking"' not in line:
                 continue
             fields = parse(line).and_then((record) => record.require("fields")).map_err((error) => error.message())?
             module = fields.require("module").and_then((value) => value.expect_str()).map_err((error) => error.message())?
@@ -1300,7 +1308,7 @@ def stop_example_engine(binary: str, store: Path) -> Result[None, str]:
     stopped = channel.receive().map_err((refusal) => refusal.detail)?
     match stopped.message:
         Message.Event(value) =>
-            assert value.status == "Stopping"
+            assert value.status == "Stopping", f"the engine answered {value.status}"
         _ => return Err("lowering example did not stop its engine")
     _ = channel.transport.close()
     return Ok(None)

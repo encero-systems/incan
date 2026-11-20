@@ -398,6 +398,8 @@ def isolated_oven_project(root: Path, evidence: Path, position: int) -> Result[P
         .map_err((error) => error.message())?
     _ = root.joinpath("workbench").copy(checkout.joinpath("workbench"), true, false).map_err((error) => error.message())?
     checkout.joinpath("loaves").symlink_to(root.joinpath("loaves")).map_err((error) => error.message())?
+    # Tests read example projects as fixtures through the same relative path as in the checkout.
+    checkout.joinpath("examples").symlink_to(root.joinpath("examples")).map_err((error) => error.message())?
     return Ok(project)
 
 
