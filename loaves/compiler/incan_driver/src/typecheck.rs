@@ -41,6 +41,15 @@ pub struct TypecheckedModules {
     pub warnings: Vec<CliDiagnostic>,
 }
 
+/// Which products the caller consumes after checking each module.
+pub(crate) enum TypecheckOutput<'a> {
+    /// Preserve the full checked facts for compilation and interactive source analysis.
+    Full,
+    /// Release the module's lowering facts after observation, keeping diagnostics, C binding verification inputs, and
+    /// optional editor state.
+    Diagnostics(Option<&'a mut crate::check::RetainedModuleChecks>),
+}
+
 /// Typecheck a collected graph in dependency-safe order against the program's Loaves, retaining one result for every
 /// input module, and verify its checked C bindings against `c_abi_plan` (the host when absent). A library unit passes
 /// its `package`, the package identity of every declaration it checks (DD-0007). `visit` sees each module's checker
@@ -49,8 +58,9 @@ pub struct TypecheckedModules {
 ///
 /// Ordering is intentional: session analysis also needs an identity-keyed representation for synthetic modules that
 /// share a source file path.
-pub fn typecheck_modules(
+pub(crate) fn typecheck_modules(
     modules: &[ParsedModule],
+    imports: &SourceModuleImports,
     unit: &UnitDescription,
     loaves: &Arc<LoafIndex>,
     own_standard_package: Option<&'static StandardPackageNamespacePolicy>,
@@ -59,14 +69,18 @@ pub fn typecheck_modules(
     visit: &mut dyn FnMut(&ParsedModule, &typechecker::TypeChecker),
     body_reuse: &dyn crate::session::CallableBodySource,
     graph_body_records: &incan_frontend::checker_records::GraphBodyRecords,
+    output: TypecheckOutput<'_>,
 ) -> Result<TypecheckedModules, CliDiagnosticFailure> {
+    let (diagnostics_only, mut retained) = match output {
+        TypecheckOutput::Full => (false, None),
+        TypecheckOutput::Diagnostics(retained) => (true, retained),
+    };
     let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::typecheck_modules").entered();
     let declared = unit
         .rust_crates
         .iter()
         .cloned()
         .collect::<std::collections::HashSet<_>>();
-    let imports = SourceModuleImports::new(modules, own_standard_package);
     // The ordinary checker is the only consumer of source exports. Fully restored modules outside
     // every checked dependency closure contribute no lookup table or copied export declaration.
     let dependency_exports = modules
@@ -126,7 +140,7 @@ pub fn typecheck_modules(
                 Some(source) => graph_body_records
                     .namespace(&source)
                     .map(|record| {
-                        record.filter(|record| record.interface.belongs_to(&module.name, &module.path_segments))
+                        record.filter(|record| record.header.interface.belongs_to(&module.name, &module.path_segments))
                     })
                     .map_err(|error| format!("graph namespace `{source}` refused: {error:?}")),
                 None => Ok(None),
@@ -148,14 +162,23 @@ pub fn typecheck_modules(
         .enumerate()
         .map(|(index, &complete)| complete && cycle_peers[index].iter().all(|&peer| complete_namespaces[peer]))
         .collect::<Vec<_>>();
-    let (checked_dependencies, needed_interfaces) = imports.checker_dependencies(&restored);
+    let mut skipped = restored.clone();
+    if let Some(cache) = retained.as_deref() {
+        for (index, interface) in dependency_interfaces.iter_mut().enumerate() {
+            if let Some(entry) = cache.get(index) {
+                *interface = Some(Arc::clone(&entry.interface));
+                skipped[index] = true;
+            }
+        }
+    }
+    let (checked_dependencies, needed_interfaces) = imports.checker_dependencies(&skipped);
     let selected = namespace_records
         .iter()
         .enumerate()
         .filter(|(index, _)| restored[*index] && needed_interfaces[*index])
         .filter_map(|(index, row)| {
             row.as_ref()
-                .map(|record| (index, modules[index].file_path.as_path(), &record.interface))
+                .map(|record| (index, modules[index].file_path.as_path(), &record.header.interface))
         })
         .collect::<Vec<_>>();
     for (index, interface) in restore_dependency_interfaces(&selected).map_err(|message| {
@@ -183,8 +206,21 @@ pub fn typecheck_modules(
             warnings_out.extend(parser_warning_diagnostics(module));
             type_infos.push(TypeCheckInfo::default());
             namespace_bodies.push(Some(record.body_ir));
-            namespace_lowering_inputs.extend(record.lowering_inputs);
-            namespace_package_roots.extend(record.package_roots);
+            namespace_lowering_inputs.extend(record.header.lowering_inputs.iter().cloned());
+            namespace_package_roots.extend(record.header.package_roots.iter().cloned());
+            continue;
+        }
+        if let Some(entry) = retained.as_deref().and_then(|cache| cache.get(idx)) {
+            tracing::trace!(target: "incan::invocation", module = %module.file_path.display(), "editor retained checked module");
+            warnings_out.extend(parser_warning_diagnostics(module));
+            render_module_warnings(
+                module.file_path.to_string_lossy().as_ref(),
+                &module.source,
+                &entry.warnings,
+            );
+            warnings_out.extend(typecheck_warning_diagnostics(module, &entry.warnings));
+            type_infos.push(TypeCheckInfo::default());
+            namespace_bodies.push(None);
             continue;
         }
         let deps_for_module = dep_indexes
@@ -257,18 +293,20 @@ pub fn typecheck_modules(
                 } else {
                     None
                 };
-                (checker.into_type_info(), interface)
+                let warnings = retained.is_some().then(|| checker.warnings().to_vec());
+                (checker.into_type_info(), interface, warnings)
             })
         };
-        trace_typecheck_memory(
-            memory_trace,
-            "released",
-            module.file_path.as_path(),
-            deps_for_module.len(),
-        );
         match check_result {
-            Ok((type_info, interface)) => {
-                type_infos.push(type_info);
+            Ok((type_info, interface, warnings)) => {
+                let foreign_bindings = !type_info.c_abi.bindings.is_empty();
+                if diagnostics_only {
+                    let mut verification = TypeCheckInfo::default();
+                    verification.c_abi = type_info.c_abi;
+                    type_infos.push(verification);
+                } else {
+                    type_infos.push(type_info);
+                }
                 namespace_bodies.push(None);
                 if let Some(interface) = interface {
                     dependency_interfaces[idx] = Some(interface);
@@ -305,6 +343,12 @@ pub fn typecheck_modules(
                         dependency_interfaces[component_idx] = Some(interface);
                     }
                 }
+                if !foreign_bindings
+                    && let (Some(cache), Some(interface), Some(warnings)) =
+                        (retained.as_deref_mut(), dependency_interfaces[idx].as_ref(), warnings)
+                {
+                    cache.stage(idx, interface, warnings);
+                }
             }
             Err(errs) => diagnostics_out.extend(errs.into_iter().map(|error| CliDiagnostic {
                 file_path: module.file_path.to_string_lossy().to_string(),
@@ -313,6 +357,12 @@ pub fn typecheck_modules(
                 error,
             })),
         }
+        trace_typecheck_memory(
+            memory_trace,
+            "released",
+            module.file_path.as_path(),
+            deps_for_module.len(),
+        );
     }
 
     if diagnostics_out.is_empty() {

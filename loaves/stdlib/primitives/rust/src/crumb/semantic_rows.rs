@@ -9,7 +9,7 @@ use serde_json::Value as Json;
 use sha2::{Digest, Sha256};
 
 use super::columns::{self, Budget, Cursor, Refused};
-use super::hash::{self, Node, Projection, Value};
+use super::hash::{self, Node, Projection, RowView, Value};
 use super::row_cells::read_root;
 use super::row_cursor::{Place, Positioned, Refusal, Span, at, bounded_count, read_text};
 
@@ -116,7 +116,12 @@ pub(super) fn decode(document: &Json) -> Option<Vec<u8>> {
     let mut output = Vec::new();
     for length in lengths {
         let mut budget = row_budget(document)?;
-        match read_rows(&data[..length], &ReadInputs::case(&supplied, document), &mut budget) {
+        match read_rows(
+            &data[..length],
+            &ReadInputs::case(&supplied, document),
+            None,
+            &mut budget,
+        ) {
             Ok(rows) => {
                 output.push(0);
                 output.push(u8::from(rows.sealed));
@@ -154,7 +159,7 @@ fn refusal_bytes(refusal: &Refusal, output: &mut Vec<u8>) {
 pub(super) fn encode(document: &Json) -> Option<Vec<u8>> {
     let (data, supplied) = row_inputs(document)?;
     let mut budget = row_budget(document)?;
-    match read_rows(&data, &ReadInputs::case(&supplied, document), &mut budget) {
+    match read_rows(&data, &ReadInputs::case(&supplied, document), None, &mut budget) {
         Ok(rows) => super::row_write::write_rows(&rows),
         Err(_) => Some(Vec::new()),
     }
@@ -228,7 +233,12 @@ pub(super) fn notation(value: &Json) -> Option<Meta> {
 
 /// Check the header and frame, then admit the dictionary, every row and any seal; an exact read refuses any bytes
 /// after the envelope, and a prefix read reports how many it occupies.
-pub(super) fn read_rows(data: &[u8], inputs: &ReadInputs, budget: &mut Budget) -> Positioned<Rows> {
+pub(super) fn read_rows(
+    data: &[u8],
+    inputs: &ReadInputs,
+    mapped: Option<&RowView>,
+    budget: &mut Budget,
+) -> Positioned<Rows> {
     let mut cursor = Span::new(data, 0);
     let magic = cursor.take(4, budget)?;
     budget.bytes(4).place(0)?;
@@ -253,7 +263,7 @@ pub(super) fn read_rows(data: &[u8], inputs: &ReadInputs, budget: &mut Budget) -
         return Err(at("seal_required", 6));
     }
     let (dictionary, mut body) = admitted_dictionary(payload, payload_origin, inputs, budget)?;
-    let records = read_records(&mut body, &dictionary, sealed, budget)?;
+    let records = read_records(&mut body, &dictionary, sealed, mapped, budget)?;
     body.finished()?;
     Ok(Rows {
         dictionary,
@@ -365,6 +375,7 @@ fn read_records(
     cursor: &mut Span,
     dictionary: &[Stored],
     sealed: bool,
+    mapped: Option<&RowView>,
     budget: &mut Budget,
 ) -> Positioned<Vec<Record>> {
     let count_offset = cursor.absolute();
@@ -389,7 +400,7 @@ fn read_records(
         let origin = cursor.absolute() - raw.len();
         let (bytes, elements) = budget.left();
         let depth = budget.depth();
-        let value = read_root(&dictionary[slot], raw, origin, dictionary, budget)?;
+        let value = read_root(&dictionary[slot], raw, origin, dictionary, mapped, budget)?;
         let (remaining_bytes, remaining_elements) = budget.left();
         let read_allowance = (bytes - remaining_bytes, elements - remaining_elements, depth);
         if sealed {

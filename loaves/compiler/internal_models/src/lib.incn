@@ -134,6 +134,7 @@ pub from checker_record_models import (
     GraphBodyValue,
     GraphBodyFields,
     GraphNamespaceValue,
+    GraphNamespaceView,
     SettledCallRead,
     SettledCallContract,
     CompiledBodyValue,
@@ -159,6 +160,8 @@ pub from checker_records import (
     decode_graph_body_page,
     decode_graph_body_values,
     decode_graph_namespace_value,
+    decode_owned_namespace_view,
+    decode_graph_namespace_view,
     record_root,
 )
 pub from compiled_body_rows import (
@@ -176,8 +179,10 @@ pub from unit_admission import PayloadAdmission, decode_unit_admission, encode_u
 pub from selection_bindings import encode_binding, read_binding
 pub from source_value_records import SOURCE_PROFILE, encode_source_text, source_value
 
+pub from namespace_references import NamespaceReference, encode_namespace_references, decode_namespace_references, namespace_reference_filename
 pub from namespace_proof import encode_namespace_proof, read_namespace_proof, namespace_proof_output_suffix
-pub from namespace_rows import NamespaceAtom, NamespaceEntry, NamespaceField, NamespaceIdentity, NamespacePublication, PreparedNamespaceReader, prepare_namespace_reader, decode_prepared_namespace, identify_prepared_namespace, namespace_identity, decode_namespace_interface, encode_namespace_interface, publish_namespace_interface
+pub from std.primitives.views import MappedView
+pub from namespace_rows import NamespaceAtom, NamespaceEntry, NamespaceField, NamespaceIdentity, NamespacePublication, PreparedNamespaceReader, prepare_namespace_reader, decode_prepared_namespace, decode_prepared_namespace_view, identify_prepared_namespace, identify_prepared_namespace_view, namespace_identity, decode_namespace_interface, encode_namespace_interface, publish_namespace_interface
 
 pub from compiler_contributors import CompilerContributors, decode_compiler_contributors, encode_compiler_contributors
 pub from checker_publication import CheckerRecordCounts, checker_report_suffix, encode_checker_counts, decode_checker_counts

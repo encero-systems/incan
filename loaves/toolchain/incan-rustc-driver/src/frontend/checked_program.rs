@@ -366,22 +366,22 @@ fn checked_attempt(
     let mut graph_body_output =
         graph_body_output::GraphBodyOutput::prepare(graph_body_output, unit.project_root.clone())?;
     let mut publication = library.then(|| PublicationFacts::new(package_identity).for_inspection(inspection));
-    let namespace_imports = graph_body_output.enabled().then(|| {
-        let path_indexes = modules
+    let imports = std::sync::Arc::new(incan_driver::modules::SourceModuleImports::new(
+        &modules,
+        session.own_standard_package(),
+    ));
+    let namespace_indexes = graph_body_output.enabled().then(|| {
+        modules
             .iter()
             .enumerate()
             .map(|(index, module)| (module.file_path.clone(), index))
-            .collect::<BTreeMap<_, _>>();
-        (
-            incan_driver::modules::SourceModuleImports::new(&modules, session.own_standard_package()),
-            path_indexes,
-        )
+            .collect::<BTreeMap<_, _>>()
     });
-    let project_dependencies = |imports: &incan_driver::modules::SourceModuleImports, index: usize| {
+    let project_dependencies = |index: usize| {
         let mut dependencies = imports
             .dependencies(index)
-            .into_iter()
-            .filter_map(|dependency| {
+            .iter()
+            .filter_map(|&dependency| {
                 modules[dependency]
                     .file_path
                     .strip_prefix(&unit.project_root)
@@ -396,22 +396,28 @@ fn checked_attempt(
     let mut analysis = {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::analyze_modules", modules = modules.len()).entered();
         session
-            .analyze_unit(&modules, library.then_some(package_identity), &mut |module, checker| {
-                callable_products.observe(module, checker);
-                if let Some((imports, indexes)) = &namespace_imports
-                    && let Some(&index) = indexes.get(module.file_path.as_path())
-                {
-                    let dependencies = project_dependencies(imports, index);
-                    graph_body_output.observe(module, checker, &dependencies, package_identity);
-                }
-                if let Some(publication) = publication.as_mut() {
-                    publication.visit(module, checker, module.file_path == path);
-                }
-            })
+            .analyze_unit_with_imports(
+                &modules,
+                library.then_some(package_identity),
+                std::sync::Arc::clone(&imports),
+                library && collect_codegraph,
+                &mut |module, checker| {
+                    callable_products.observe(module, checker);
+                    if let Some(indexes) = &namespace_indexes
+                        && let Some(&index) = indexes.get(module.file_path.as_path())
+                    {
+                        let dependencies = project_dependencies(index);
+                        graph_body_output.observe(module, checker, &dependencies, package_identity);
+                    }
+                    if let Some(publication) = publication.as_mut() {
+                        publication.visit(module, checker, module.file_path == path);
+                    }
+                },
+            )
             .map_err(|failure| receipt.diagnostic(failure))?
     };
-    if let Some((imports, indexes)) = &namespace_imports {
-        graph_body_output.include_restored_imports(&path, indexes, |index| project_dependencies(imports, index))?;
+    if let Some(indexes) = &namespace_indexes {
+        graph_body_output.include_restored_imports(&path, indexes, project_dependencies)?;
     }
     let entry = modules
         .iter()
@@ -459,7 +465,7 @@ fn checked_attempt(
         .filter_map(|m| m.file_path.strip_prefix(&unit.project_root).ok())
         .map(|p| p.to_string_lossy().into_owned())
         .collect::<BTreeSet<_>>();
-    lower_authored_modules(&modules, &mut analysis, &session, &mut bodies, &mut files)?;
+    let rebound = lower_authored_modules(&modules, &mut analysis, &session, &mut bodies, &mut files)?;
     let retained_generated_member_owners = retained_generated_member_owners(&modules, &analysis)?;
     let retained_requirements = retained_body_call_requirements(
         &bodies[loaf_modules..],
@@ -584,6 +590,18 @@ fn checked_attempt(
     } else {
         None
     };
+    let retained_namespaces = if resident && unit.kind == UnitKind::Program && !inspection {
+        retained_namespace_bodies(
+            &modules,
+            &bodies[loaf_modules..],
+            &restored,
+            &rebound,
+            &unit.project_root,
+            entry - loaf_modules,
+        )
+    } else {
+        Vec::new()
+    };
     sources.extend(modules.into_iter().map(|module| module.source));
     let program_entrypoints = program_entrypoints(unit, &bodies, &files)?;
     let entry_module = bodies.get_mut(entry).ok_or("selected Body IR entry is missing")?;
@@ -594,6 +612,7 @@ fn checked_attempt(
     let program = complete_dependency_context(
         CheckedProgram {
             cacheable_bodies,
+            retained_namespaces,
             dependencies: RuntimeDependencyContext {
                 loaves: std::sync::Arc::clone(session.loaves()),
                 requested: requested.clone(),
@@ -683,6 +702,78 @@ pub(super) fn checked_local_identities(manifest: Option<&LibraryManifest>) -> BT
                 .filter(move |identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library == &manifest.name))
         })
         .collect()
+}
+
+/// A body borrowed for one native compilation, plus the exact source scopes it held on admission.
+pub(super) struct RetainedNamespaceBody {
+    source: String,
+    offset: usize,
+    scopes: Vec<incan_semantics_core::body_ir::SharedIdentities>,
+}
+
+/// A restored module can return its exact compiled Body IR once planning drops the invocation's native context.
+/// Exclude modules with rewritten call locators or fields the context takes ownership of.
+fn retained_namespace_bodies(
+    modules: &[ParsedModule],
+    authored: &[BodyIrModule],
+    restored: &BTreeSet<String>,
+    rebound: &BTreeSet<PathBuf>,
+    project: &Path,
+    entry: usize,
+) -> Vec<RetainedNamespaceBody> {
+    modules
+        .iter()
+        .zip(authored)
+        .enumerate()
+        .filter_map(|(offset, (source, module))| {
+            let relative = source.file_path.strip_prefix(project).ok()?.to_str()?;
+            if offset == entry
+                || !restored.contains(relative)
+                || rebound.contains(&source.file_path)
+                || !module.loaf_callables.is_empty()
+                || module
+                    .nominal_declarations
+                    .iter()
+                    .any(|layout| matches!(layout.canonical.origin, SymbolOrigin::RustCrate(_)))
+                || module
+                    .enum_declarations
+                    .iter()
+                    .any(|layout| matches!(layout.canonical.origin, SymbolOrigin::RustCrate(_)))
+            {
+                return None;
+            }
+            // Runtime preparation may extend a scope with target-specific names. Keep only the original shared handles.
+            let scopes = module
+                .bodies
+                .iter()
+                .map(|body| std::sync::Arc::clone(&body.named_type_identities))
+                .collect();
+            Some(RetainedNamespaceBody {
+                source: relative.to_owned(),
+                offset,
+                scopes,
+            })
+        })
+        .collect()
+}
+
+/// Move protected authored bodies back to their exact verified records. The native plan now owns its own products.
+pub(super) fn return_retained_namespaces(
+    program: &mut CheckedProgram,
+    records: &incan_frontend::checker_records::GraphBodyRecords,
+) {
+    for retained in program.retained_namespaces.drain(..) {
+        let Some(module) = program.modules.get_mut(program.own + retained.offset) else {
+            continue;
+        };
+        if module.bodies.len() != retained.scopes.len() {
+            continue;
+        }
+        for (body, scope) in module.bodies.iter_mut().zip(retained.scopes) {
+            body.named_type_identities = scope;
+        }
+        records.retain_namespace(&retained.source, module);
+    }
 }
 
 /// Complete selected defaults and native layouts before the first planning attempt.

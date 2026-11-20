@@ -381,9 +381,12 @@ pub def test_a_status_change_during_a_read_is_not_a_change_of_the_file() -> Resu
     moved = capture_with(request, None, admitted, 0, (path) => relinking(path))?
     assert moved.outcome == CaptureOutcome.Changed and moved.counters.retries == 0
     epoch = epoch_of(moved)?
-    # The recorded metadata are those after the read, so the next capture finds the file unchanged.
+    # The recorded metadata are those after the read. Any input captured within a coarse timestamp tick still
+    # needs its exact bytes checked again before those metadata can vouch for them.
+    observed = len([input for input in epoch.inputs if not input.settled])
     again = capture(request, Some(epoch), admitted, 0)?
-    assert again.outcome == CaptureOutcome.Unchanged and again.counters.in_reach.reads == 0
+    assert epoch_of(again)?.identity()? == epoch.identity()?
+    assert again.counters.in_reach.reads == observed
     return Ok(None)
 
 

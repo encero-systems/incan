@@ -32,6 +32,7 @@ mod declaration_validation;
 pub(crate) mod decoded_pages;
 mod graph_body_output;
 mod namespace_crumb;
+mod namespace_pages;
 
 use checked_program::*;
 use declaration_validation::*;
@@ -130,6 +131,7 @@ struct RuntimeDependencyContext {
 struct CheckedProgram {
     /// Invocation-local producer evidence for self-contained scalar native function products.
     cacheable_bodies: Vec<(incan_semantics_core::CompilerNodeId, String)>,
+    retained_namespaces: Vec<checked_program::RetainedNamespaceBody>,
     dependencies: RuntimeDependencyContext,
     modules: Vec<BodyIrModule>,
     sources: Vec<String>,
@@ -274,7 +276,12 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
         return Err("shared native linking cannot link the toolchain's own libraries".into());
     }
     let graph_body_records = match graph_body_directory {
-        Some(path) => read_graph_body_records(path, anchors.bakery.clone())?,
+        Some(path) => read_graph_body_records(
+            path,
+            anchors.bakery.clone(),
+            &unit.project_root,
+            graph_body_output.is_some() && plan_record_products.is_some() && unit.kind == UnitKind::Program,
+        )?,
         None => incan_frontend::checker_records::GraphBodyRecords::default(),
     };
     Ok(Dependencies {
@@ -299,6 +306,7 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
 struct GraphBodyRecordPages {
     root: PathBuf,
     bakery: Option<PathBuf>,
+    namespaces: namespace_pages::NamespacePages,
     reopened: std::sync::OnceLock<Result<tempfile::TempDir, String>>,
 }
 
@@ -344,15 +352,19 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
                 "graph body page is not a bounded regular file".into(),
             ));
         }
-        let encoded = std::fs::read(&path).map_err(|error| {
-            incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
-                "cannot read graph body page {}: {error}",
-                path.display()
-            ))
-        })?;
-        // The same bytes decode to the same record: a page this process decoded before is not decoded again.
+        let generation = crate::native_search::FileGeneration::observe(&metadata);
+        if let Some(generation) = generation
+            && let Some(record) = decoded_pages::observed(generation, identity)
+        {
+            tracing::trace!(target: "incan::invocation", phase = "checker_page_retained", owner = identity);
+            return Ok(Some(record));
+        }
+        let _input = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::read_checker_page",
+            owner = identity, bytes = metadata.len())
+        .entered();
+        let (encoded, generation) = read_checker_page(&path, generation, MAX_PAGE_BYTES)?;
         let digest: [u8; 32] = Sha256::digest(&encoded).into();
-        if let Some(record) = decoded_pages::decoded(&digest, identity) {
+        if let Some(record) = decoded_pages::decoded(digest, identity, generation) {
             return Ok(Some(record));
         }
         // Oven writes each page as one owner's Crumb row (`encode_graph_body_values`); the shared codec decodes and
@@ -388,11 +400,11 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
         };
         let record = incan_frontend::checker_records::GraphBodyRecord {
             identity: record.identity,
-            local: record.local,
-            final_value: record.final_fields,
+            local: record.local.into(),
+            final_value: record.final_fields.into(),
             body_ir: frame,
         };
-        decoded_pages::remember(digest, &record);
+        decoded_pages::remember(digest, generation, &record);
         Ok(Some(record))
     }
 
@@ -435,7 +447,7 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
         Ok(())
     }
 
-    /// Read one engine-selected namespace page, admit its declaration root and decode its executable contribution.
+    /// Read the request's exact namespace selection on demand.
     fn read_namespace(
         &self,
         source: &str,
@@ -443,123 +455,51 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
         Option<incan_frontend::checker_records::GraphNamespaceRecord>,
         incan_frontend::checker_records::RecordAdapterFault,
     > {
-        const MAX_PAGE_BYTES: u64 = 64 * 1024 * 1024;
-        let key = format!("namespace-{}", hex::encode(Sha256::digest(source.as_bytes())));
-        let path = self.root.join(key);
-        let metadata = match std::fs::metadata(&path) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => {
-                return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
-                    format!("cannot inspect graph namespace page {}: {error}", path.display()),
-                ));
-            }
-        };
-        if !metadata.is_file() || metadata.len() > MAX_PAGE_BYTES {
-            return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
-                "graph namespace page is not a bounded regular file".into(),
-            ));
-        }
-        let _page = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::restore_namespace", module = source, bytes = metadata.len()).entered();
-        let encoded = std::fs::read(&path).map_err(|error| {
-            incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
-                "cannot read graph namespace page {}: {error}",
-                path.display()
-            ))
-        })?;
-        let record = internal_models::decode_graph_namespace_value(&encoded).map_err(|error| {
-            incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
-                "graph namespace page refused: {error:?}"
-            ))
-        })?;
-        if record.module != source {
-            return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
-                "graph namespace page disagrees with its requested source".into(),
-            ));
-        }
-        if !record.call_reads_known {
-            return Ok(None);
-        }
-        let interface_span = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::decode_namespace_interface", module = source, bytes = record.interface.len()).entered();
-        let checked = namespace_crumb::admit(source, &record.identity_proof, record.interface)
-            .map_err(incan_frontend::checker_records::RecordAdapterFault::InvalidField)?;
-        drop(interface_span);
-        let body_span = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::decode_namespace_body_ir", module = source, bytes = record.body_ir.len()).entered();
-        let body_ir = incan_semantics_core::executable_representation::decode_namespace_module(&record.body_ir)
-            .map_err(|error| {
-                incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
-                    "graph namespace Body IR refused: {error}"
-                ))
-            })?;
-        drop(body_span);
-        // Join witnesses by exact kernel owner path once per namespace. Duplicate declarations stay ambiguous.
-        let mut owners = std::collections::HashMap::new();
-        if !record.lowering_inputs.is_empty() {
-            for body in &body_ir.bodies {
-                owners
-                    .entry(body.direct_call_id.path())
-                    .and_modify(|found| *found = None)
-                    .or_insert(Some(&body.direct_call_id));
-            }
-        }
-        let mut lowering_inputs = Vec::with_capacity(record.lowering_inputs.len());
-        for input in record.lowering_inputs {
-            let [owner, witness]: [String; 2] = input.try_into().map_err(|_| {
-                incan_frontend::checker_records::RecordAdapterFault::InvalidField(
-                    "graph namespace lowering witness has the wrong field count".into(),
-                )
-            })?;
-            let id = match owners.get(owner.as_str()) {
-                Some(Some(id)) => *id,
-                Some(None) => {
-                    return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
-                        "graph namespace lowering witness names multiple Body IR owners".into(),
-                    ));
-                }
-                None => {
-                    return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
-                        "graph namespace lowering witness names no Body IR owner".into(),
-                    ));
-                }
-            };
-            lowering_inputs.push((id.clone(), witness));
-        }
-        let mut package_roots = Vec::with_capacity(record.package_roots.len());
-        for encoded in record.package_roots {
-            let identity = incan_semantics_core::decode_incan_symbol_identity(&encoded)
-                .ok()
-                .flatten()
-                .filter(|identity| matches!(identity.origin, SymbolOrigin::Package { .. }))
-                .ok_or_else(|| {
-                    incan_frontend::checker_records::RecordAdapterFault::InvalidField(
-                        "graph namespace has an invalid package declaration root".into(),
-                    )
-                })?;
-            package_roots.push(identity);
-        }
-        Ok(Some(incan_frontend::checker_records::GraphNamespaceRecord {
-            source: record.module,
-            call_reads: record
-                .call_reads
-                .into_iter()
-                .map(|r| incan_frontend::body_ir::SettledCallRead {
-                    reader: r.reader,
-                    target: r.target,
-                    digest: r.digest,
-                })
-                .collect(),
-            interface: checked,
-            package_roots,
-            body_ir,
-            lowering_inputs,
-        }))
+        self.namespaces.read(&self.root, source)
     }
+
+    fn retain_namespace(&self, source: &str, body: &mut BodyIrModule) {
+        self.namespaces.retain(source, body);
+    }
+}
+
+/// Read an exact bounded file through one descriptor. A changing read is refused before the codec sees its bytes.
+fn read_checker_page(
+    path: &Path,
+    generation: Option<crate::native_search::FileGeneration>,
+    limit: u64,
+) -> Result<(Vec<u8>, Option<crate::native_search::FileGeneration>), incan_frontend::checker_records::RecordAdapterFault>
+{
+    use crate::native_search::FileGeneration;
+    use incan_frontend::checker_records::RecordAdapterFault;
+    use std::io::Read;
+    let read_failed =
+        |error| RecordAdapterFault::InvalidField(format!("cannot read graph body page {}: {error}", path.display()));
+    let changed = || RecordAdapterFault::InvalidField("graph body page changed during its read".into());
+    let mut file = std::fs::File::open(path).map_err(read_failed)?;
+    let metadata = file.metadata().map_err(read_failed)?;
+    if !metadata.is_file() || metadata.len() > limit || FileGeneration::observe(&metadata) != generation {
+        return Err(changed());
+    }
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.by_ref()
+        .take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(read_failed)?;
+    if bytes.len() as u64 != metadata.len()
+        || FileGeneration::observe(&file.metadata().map_err(read_failed)?) != generation
+    {
+        return Err(changed());
+    }
+    Ok((bytes, generation))
 }
 
 /// Bind the engine's keyed graph-record page directory without reading an aggregate inventory.
 fn read_graph_body_records(
     path: &Path,
     bakery: Option<PathBuf>,
+    project_root: &Path,
+    retain_namespaces: bool,
 ) -> Result<incan_frontend::checker_records::GraphBodyRecords, String> {
     if !path.is_dir() {
         return Err(format!(
@@ -570,6 +510,12 @@ fn read_graph_body_records(
     Ok(incan_frontend::checker_records::GraphBodyRecords::from_source(
         std::sync::Arc::new(GraphBodyRecordPages {
             root: path.to_path_buf(),
+            namespaces: namespace_pages::NamespacePages::open(
+                path,
+                bakery.as_deref(),
+                project_root,
+                retain_namespaces,
+            )?,
             bakery,
             reopened: std::sync::OnceLock::new(),
         }),
@@ -921,6 +867,7 @@ fn compile_unit(
         None
     };
     timing.mark("native_inputs_prepared");
+    checked_program::return_retained_namespaces(&mut program, &dependencies.graph_body_records);
     drop(program);
     drop(dependencies.graph_body_records);
     // The checked program, its Body IR and the lowering's temporaries are gone; return their pages before rustc runs
@@ -1150,18 +1097,18 @@ fn lower_authored_modules(
     session: &CompilationSession,
     bodies: &mut Vec<BodyIrModule>,
     files: &mut Vec<String>,
-) -> Result<(), String> {
+) -> Result<BTreeSet<PathBuf>, String> {
     let _invocation =
         tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::build_body_ir", modules = modules.len())
             .entered();
     let own = bodies.len();
-    incan_driver::body_ir::lower_compilation_modules(modules, analysis, session, bodies)?;
+    let rebound = incan_driver::body_ir::lower_compilation_modules(modules, analysis, session, bodies)?;
     for (module, body_ir) in modules.iter().zip(&bodies[own..]) {
         validate_retained_storage(&module.ast, &body_ir)
             .map_err(|error| format!("{}: {error}", module.file_path.display()))?;
         files.push(module.file_path.to_string_lossy().into_owned());
     }
-    Ok(())
+    Ok(rebound)
 }
 
 /// Report an optional exact-body census and decide whether it completed the invocation without native compilation.
@@ -1285,6 +1232,7 @@ mod graph_body_page_tests {
         let source = GraphBodyRecordPages {
             root: root.clone(),
             bakery: None,
+            namespaces: Default::default(),
             reopened: Default::default(),
         };
 

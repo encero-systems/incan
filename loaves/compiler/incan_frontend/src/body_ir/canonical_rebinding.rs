@@ -1,7 +1,7 @@
 //! Refresh edit-unstable dependency call locators in retained whole-module Body IR.
 
 use crate::body_ir::ContextModules;
-use std::cell::OnceCell;
+use std::cell::{Cell, OnceCell};
 use std::collections::HashMap;
 
 use super::bir;
@@ -14,7 +14,8 @@ use incan_semantics_core::stable_identity::StableDeclarationId;
 /// namespace may keep its Body IR when an imported callable's signature is unchanged, while that callable's edited
 /// body changes its current canonical span. This boundary replaces only the retained call locator; declaration
 /// selection remains keyed by the compiler's span-free stable identity and ambiguous candidates remain untouched.
-pub fn refresh_dependency_call_targets(module: &mut bir::BodyIrModule, dependencies: ContextModules<'_>) {
+pub fn refresh_dependency_call_targets(module: &mut bir::BodyIrModule, dependencies: ContextModules<'_>) -> bool {
+    let changed = Cell::new(false);
     // Most retained calls still have their precise physical declaration. Borrow the selected dependencies and
     // compute a stable identity only for a displaced call among declarations of the same name.
     let by_name = OnceCell::<HashMap<&str, Vec<&CanonicalSymbolId>>>::new();
@@ -30,6 +31,7 @@ pub fn refresh_dependency_call_targets(module: &mut bir::BodyIrModule, dependenc
             && let Some(selected) = displaced_call_target(previous, owners)
         {
             *previous = selected.clone();
+            changed.set(true);
         }
     };
     for body in &mut module.bodies {
@@ -40,6 +42,7 @@ pub fn refresh_dependency_call_targets(module: &mut bir::BodyIrModule, dependenc
             }
         }
     }
+    changed.get()
 }
 
 /// An exact match needs no rewrite. A displaced call can move only to one distinct matching stable declaration.

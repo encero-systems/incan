@@ -1,6 +1,9 @@
 //! Durable checked namespace projection for editable source dependencies.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use super::*;
+use crate::loaf_index::LoafIdentity;
 
 mod wire;
 pub use wire::{NamespaceCell, NamespaceCrumb};
@@ -28,6 +31,21 @@ pub struct CheckedNamespaceInterface {
         Vec<Option<ownership_contracts::defaults::DefaultValue>>,
     )>,
     nominal_scope: Arc<std::collections::BTreeMap<String, CanonicalSymbolId>>,
+    compiled_libraries: BTreeSet<String>,
+    compiled_providers: Vec<LoafIdentity>,
+    compiled_types: BTreeMap<String, NamespaceCompiledType>,
+}
+
+/// One checked binding into the compiled Loaf environment already admitted by the unit.
+/// Most canonical declarations are already in the namespace's nominal scope. The differing or legacy entries
+/// retain their original evidence instead of treating a spelling as a declaration.
+#[derive(Clone, Debug)]
+struct NamespaceCompiledType {
+    dependency_key: String,
+    source_path: Vec<String>,
+    scope_binding: bool,
+    canonical: Option<CanonicalSymbolId>,
+    selected_provider: Option<u32>,
 }
 
 /// The canonical identities of one declaration's members, by member name, as the cold checker recorded them.
@@ -44,7 +62,7 @@ struct NamespaceMemberIdentities {
 
 impl CheckedNamespaceInterface {
     /// Schema of the compiler-owned checked declaration root and its identity projection.
-    pub const SCHEMA: u32 = 7;
+    pub const SCHEMA: u32 = 8;
 
     /// Capture one complete installable public namespace from an accepted editable module.
     ///
@@ -126,6 +144,8 @@ impl CheckedNamespaceInterface {
             .map(|(owner, fields)| (owner.clone(), fields.clone()))
             .collect();
         constructor_defaults.sort_by(|(left, _), (right, _)| left.cmp(right));
+        let compiled_libraries = checker.cached_pub_libraries.iter().cloned().collect();
+        let (compiled_providers, compiled_types) = Self::capture_compiled_types(checker, &nominal_scope)?;
         let retained = Self {
             schema: Self::SCHEMA,
             constructor_defaults,
@@ -135,6 +155,9 @@ impl CheckedNamespaceInterface {
             identities,
             members,
             nominal_scope: Arc::new(nominal_scope),
+            compiled_libraries,
+            compiled_providers,
+            compiled_types,
         };
         // A partial ownership projection cannot replace the ordinary provider. Compare the projected contracts
         // with the completed source check before this namespace is made available for future builds.
@@ -147,6 +170,89 @@ impl CheckedNamespaceInterface {
             }
         }
         Ok(projected.is_empty().then_some(retained))
+    }
+
+    /// Keep exact provider identities once per namespace and refer to the existing canonical scope where possible.
+    fn capture_compiled_types(
+        checker: &TypeChecker,
+        scope: &BTreeMap<String, CanonicalSymbolId>,
+    ) -> Result<(Vec<LoafIdentity>, BTreeMap<String, NamespaceCompiledType>), String> {
+        let providers: BTreeSet<_> = checker
+            .public_library_type_identities
+            .values()
+            .filter_map(|identity| identity.selected_provider.as_ref())
+            .collect();
+        let positions = providers
+            .iter()
+            .enumerate()
+            .map(|(ordinal, &provider)| {
+                Ok((
+                    provider,
+                    u32::try_from(ordinal).map_err(|_| "too many compiled namespace providers")?,
+                ))
+            })
+            .collect::<Result<BTreeMap<_, _>, String>>()?;
+        let bindings = checker
+            .public_library_type_identities
+            .iter()
+            .map(|(name, identity)| {
+                let scope_binding = scope
+                    .get(name)
+                    .is_some_and(|owner| identity.canonical.as_ref() == Some(owner));
+                (
+                    name.clone(),
+                    NamespaceCompiledType {
+                        dependency_key: identity.dependency_key.clone(),
+                        source_path: identity.source_path.clone(),
+                        scope_binding,
+                        canonical: if scope_binding {
+                            None
+                        } else {
+                            identity.canonical.clone()
+                        },
+                        selected_provider: identity.selected_provider.as_ref().map(|provider| positions[provider]),
+                    },
+                )
+            })
+            .collect();
+        Ok((providers.into_iter().cloned().collect(), bindings))
+    }
+
+    /// Open the same compiled type aliases and declaring instances as the fresh source dependency.
+    fn restore_compiled_types(&self) -> Result<HashMap<String, PublicLibraryTypeIdentity>, String> {
+        self.compiled_types
+            .iter()
+            .map(|(name, binding)| {
+                let canonical = if binding.scope_binding {
+                    Some(
+                        self.nominal_scope
+                            .get(name)
+                            .ok_or("checked namespace has no compiled type scope entry")?
+                            .clone(),
+                    )
+                } else {
+                    binding.canonical.clone()
+                };
+                let selected_provider = binding
+                    .selected_provider
+                    .map(|ordinal| {
+                        self.compiled_providers
+                            .get(ordinal as usize)
+                            .cloned()
+                            .ok_or("checked namespace has no selected compiled provider")
+                    })
+                    .transpose()?;
+                Ok((
+                    name.clone(),
+                    PublicLibraryTypeIdentity {
+                        dependency_key: binding.dependency_key.clone(),
+                        source_path: binding.source_path.clone(),
+                        canonical,
+                        selected_provider,
+                    },
+                ))
+            })
+            .collect()
     }
 
     /// Project the checked declarations into their compiler-owned Crumb schemas.
@@ -295,12 +401,21 @@ impl CheckedNamespaceInterface {
             .map(|(name, identity)| (name.clone(), identity.clone()))
             .collect::<HashMap<_, _>>();
         let nominal_scope = &self.nominal_scope;
+        let mut retained_scope = false;
         for (name, kind) in &symbols {
             if let Some(identity) = identities.get(name) {
-                converter.retain_declaration_nominal_scope(identity, kind, nominal_scope);
+                retained_scope |= converter.retain_declaration_nominal_scope(identity, kind, nominal_scope);
             }
         }
-        converter.retain_nominal_scope_carriers(nominal_scope);
+        if retained_scope {
+            // The provider keeps its full lexical scope. Its consumer receives only the carriers the provider owns,
+            // as when sealing a dependency from source.
+            converter.retain_nominal_scope_carriers(
+                nominal_scope
+                    .values()
+                    .filter(|identity| identity_owned_by(identity, &self.module_path)),
+            );
+        }
         let (transitive_public_types, transitive_public_traits) = provider_transitive_semantics(&symbols, &identities);
         let symbols = Arc::new(symbols);
         let identities = Arc::new(identities);
@@ -331,8 +446,8 @@ impl CheckedNamespaceInterface {
             trait_rust_derive_paths: Arc::default(),
             transitive_public_types: Arc::new(transitive_public_types),
             transitive_public_traits: Arc::new(transitive_public_traits),
-            compiled_libraries: Arc::from([]),
-            public_library_type_identities: Arc::default(),
+            compiled_libraries: self.compiled_libraries.iter().cloned().collect(),
+            public_library_type_identities: Arc::new(self.restore_compiled_types()?),
             symbol_rows: Arc::from(symbol_rows),
             snapshot: std::sync::OnceLock::new(),
         };
@@ -414,6 +529,16 @@ impl CheckedNamespaceInterface {
             })
         {
             return Err("checked namespace constructor defaults disagree with their declaration owner".into());
+        }
+        if self.compiled_providers.windows(2).any(|pair| pair[0] >= pair[1])
+            || self.compiled_types.iter().any(|(name, binding)| {
+                binding.scope_binding && (binding.canonical.is_some() || !self.nominal_scope.contains_key(name))
+                    || binding
+                        .selected_provider
+                        .is_some_and(|ordinal| ordinal as usize >= self.compiled_providers.len())
+            })
+        {
+            return Err("checked namespace has invalid compiled type bindings".into());
         }
         if self.members.keys().any(|name| !self.identities.contains_key(name)) {
             return Err("checked namespace interface has members of an undeclared name".into());
@@ -691,8 +816,15 @@ mod tests {
         checker
             .check_program(&program)
             .map_err(|errors| format!("{errors:?}"))?;
-        let retained = CheckedNamespaceInterface::from_checked("domain", &module_path, &program, &checker)?
+        let mut retained = CheckedNamespaceInterface::from_checked("domain", &module_path, &program, &checker)?
             .ok_or("model namespace was not retained")?;
+        let external = CanonicalSymbolId::module_declaration(
+            vec!["dependency".into()],
+            "PrivateState",
+            SemanticSourceTargetKind::Model,
+            Default::default(),
+        );
+        Arc::make_mut(&mut retained.nominal_scope).insert("PrivateState".into(), external.clone());
         let installed = retained.installable()?;
         let order = retained.identities.get("Order").ok_or("missing Order identity")?;
         let scope = installed
@@ -700,6 +832,8 @@ mod tests {
             .get(order)
             .ok_or("missing Order declaration scope")?;
         assert_eq!(scope.get("Order"), Some(order));
+        assert_eq!(scope.get("PrivateState"), Some(&external));
+        assert!(!installed.retained_nominal_carriers.contains_key(&external));
         let carrier =
             incan_semantics_core::body_ir::nominal_carrier_key(order).ok_or("missing Order nominal carrier")?;
         assert_eq!(installed.retained_nominal_carriers.get(order), Some(&carrier));
@@ -714,6 +848,83 @@ mod tests {
         };
         assert!(model.fields.contains_key("quantity"));
         assert!(model.fields.contains_key("unit_price"));
+        Ok(())
+    }
+
+    /// Restore exact compiled aliases, including bindings with no canonical proof in older compiled Loaves.
+    #[test]
+    fn reopened_namespace_retains_compiled_type_bindings() -> Result<(), String> {
+        let source = "pub def value() -> int:\n    return 7\n";
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let path = vec!["facade".to_owned()];
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(path.clone()));
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let selected = LoafIdentity {
+            name: "compiled".into(),
+            version: "1.0.0".into(),
+            digest: "f".repeat(64),
+            feature_projection: BTreeSet::from(["model".into()]),
+        };
+        let mut owner = CanonicalSymbolId::module_declaration(
+            vec!["values".into()],
+            "Packet",
+            SemanticSourceTargetKind::Model,
+            Default::default(),
+        );
+        owner.origin = SymbolOrigin::Package {
+            library: "compiled".into(),
+            module_path: vec!["values".into()],
+        };
+        let canonical = PublicLibraryTypeIdentity {
+            dependency_key: "compiled".into(),
+            source_path: vec!["values".into(), "Packet".into()],
+            canonical: Some(owner.clone()),
+            selected_provider: Some(selected.clone()),
+        };
+        checker
+            .public_library_type_identities
+            .insert("Packet".into(), canonical.clone());
+        checker
+            .public_library_type_identities
+            .insert("FilteredAlias".into(), canonical);
+        checker.public_library_type_identities.insert(
+            "Legacy".into(),
+            PublicLibraryTypeIdentity {
+                dependency_key: "compiled".into(),
+                source_path: vec!["values".into(), "Legacy".into()],
+                canonical: None,
+                selected_provider: Some(selected.clone()),
+            },
+        );
+        checker
+            .type_info
+            .declarations
+            .named_type_identities
+            .insert("Packet".into(), owner);
+        checker.cached_pub_libraries.insert("compiled".into());
+        let proof = CheckedNamespaceInterface::from_checked("facade", &path, &program, &checker)?
+            .ok_or("facade namespace was not captured")?;
+        assert!(proof.compiled_types["Packet"].scope_binding);
+        assert!(proof.compiled_types["Packet"].canonical.is_none());
+        assert!(proof.compiled_types["FilteredAlias"].canonical.is_some());
+        let restored = CheckedNamespaceInterface::from_wire_value(proof.wire_value()?)?;
+        assert_eq!(restored.compiled_providers, [selected]);
+        let installed = restored.installable()?;
+        let sealed = checker.seal_current_module_dependency_interface(
+            "facade",
+            &program,
+            Arc::from(crate::module::exported_symbols(&program)),
+            true,
+        );
+        assert_eq!(installed.compiled_libraries, sealed.compiled_libraries);
+        assert_eq!(
+            installed.public_library_type_identities,
+            sealed.public_library_type_identities
+        );
         Ok(())
     }
 

@@ -79,6 +79,12 @@ pub model FileMetadata:
         """Whether its last change is at least `settle` seconds old, so these metadata can vouch for its bytes."""
         return settled_since(self.newest_second(), settle)
 
+    pub def settled_for_capture(self, settle: int) -> bool:
+        """Require an observation after the timestamp tick when status changes have whole-second precision."""
+        if settle < SETTLE_SECONDS and self.changed_ns % NANOSECONDS == 0:
+            return self.settled(SETTLE_SECONDS)
+        return self.settled(settle)
+
     pub def is_file(self) -> bool:
         """Whether it describes a regular file."""
         return (self.mode & FILE_TYPE) == REGULAR_FILE

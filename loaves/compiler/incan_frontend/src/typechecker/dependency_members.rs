@@ -210,7 +210,7 @@ impl TypeChecker {
             }
         }
         if retained_scope {
-            self.retain_nominal_scope_carriers(&scope);
+            self.retain_nominal_scope_carriers(scope.values());
         }
         for declaration in &module_ast.declarations {
             let Declaration::TypeAlias(alias) = &declaration.node else {
@@ -385,11 +385,11 @@ impl TypeChecker {
 
     /// Index a newly retained immutable scope once, retaining one spelling per canonical nominal. The scope registry
     /// never removes entries, so no discarded generation or source-scope snapshot is retained by this index.
-    pub(super) fn retain_nominal_scope_carriers(
+    pub(super) fn retain_nominal_scope_carriers<'a>(
         &mut self,
-        scope: &std::collections::BTreeMap<String, CanonicalSymbolId>,
+        identities: impl IntoIterator<Item = &'a CanonicalSymbolId>,
     ) {
-        for identity in scope.values() {
+        for identity in identities {
             if self.retained_nominal_carriers.contains_key(identity) {
                 continue;
             }
