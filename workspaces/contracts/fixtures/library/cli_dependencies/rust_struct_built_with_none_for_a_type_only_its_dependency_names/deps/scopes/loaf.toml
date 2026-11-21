@@ -7,3 +7,4 @@ path = "src/lib.rs"
 
 [dependencies]
 levels = { loaf = "levels", path = "../levels" }
+depths = { loaf = "depths", path = "../depths" }
