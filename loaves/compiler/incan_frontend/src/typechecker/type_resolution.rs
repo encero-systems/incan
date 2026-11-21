@@ -43,7 +43,7 @@ impl TypeChecker {
     }
 
     /// The top-level spelling of [`Self::canonical_borrow_annotation`].
-    fn canonical_borrow_root(&self, annotation: &Spanned<Type>, explicit: bool) -> Option<Spanned<Type>> {
+    pub(super) fn canonical_borrow_root(&self, annotation: &Spanned<Type>, explicit: bool) -> Option<Spanned<Type>> {
         use incan_lang::lang::types::ownership::OwnershipMode;
         let node = match (&annotation.node, explicit) {
             (Type::Generic(name, arguments), false) => {
@@ -158,15 +158,20 @@ impl TypeChecker {
         result: &Spanned<Type>,
         source: Option<&Spanned<crate::ast::ResultSource>>,
     ) -> bool {
-        use incan_lang::lang::types::ownership::OwnershipMode;
         let native_result = self.native_nested_borrows(result, false);
         source.is_some()
-            || parameters.iter().any(|parameter| {
-                matches!(&parameter.node.ty.node, Type::Generic(name, arguments)
-                    if arguments.len() == 1
-                        && matches!(self.explicit_ownership_mode(name), Some(OwnershipMode::Owned | OwnershipMode::Reference)))
-            })
+            || self.has_owned_or_reference_parameter(parameters)
             || self.annotation_mentions_ownership_mode(&native_result.as_ref().unwrap_or(result).node)
+    }
+
+    /// Whether a top-level parameter takes an `Owned[T]` or `Reference[T]` input.
+    pub(super) fn has_owned_or_reference_parameter(&self, parameters: &[Spanned<Param>]) -> bool {
+        use incan_lang::lang::types::ownership::OwnershipMode;
+        parameters.iter().any(|parameter| {
+            matches!(&parameter.node.ty.node, Type::Generic(name, arguments)
+                if arguments.len() == 1
+                    && matches!(self.explicit_ownership_mode(name), Some(OwnershipMode::Owned | OwnershipMode::Reference)))
+        })
     }
 
     /// Whether an annotation names a canonical ownership mode at any depth.

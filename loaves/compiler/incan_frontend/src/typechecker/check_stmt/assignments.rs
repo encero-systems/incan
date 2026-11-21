@@ -15,6 +15,7 @@ impl TypeChecker {
             return;
         }
         self.check_assignment_binding(assign, span);
+        self.note_native_result_local(assign);
         self.refuse_owned_native_tuple_field(assign);
         self.note_static_alias_binding(assign);
         let declares = self
