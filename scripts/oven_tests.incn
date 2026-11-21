@@ -39,12 +39,12 @@ from std.fs import Path
 from std.regex import Regex
 from check_support import read, repository_root, write_stderr
 from release_support import (
+    ReleaseMember,
     ReleaseTermination,
     merge_release_terminations,
-    release_process_census,
+    observe_release_processes,
     stop_child_process_tree,
 )
-from pub::incan_platform.probes import process_table
 
 const GIB: int = 1073741824
 # What one invocation reserves. Peaks measured one invocation at a time, as the summed RSS of its processes and the
@@ -129,7 +129,7 @@ model Running:
     started: Instant
     child: Rc[RefCell[Child]]
     # Every descendant observed while the root was alive, retained for fail-fast cleanup after the root exits.
-    members: list[int]
+    members: list[ReleaseMember]
     census_error: Option[str]
     # The worker project it runs in; empty when it has none.
     worker: str
@@ -641,7 +641,7 @@ def start_waiting(
                         timeout_seconds=planned[index].timeout_seconds,
                         started=Instant.now(),
                         child=Rc.new(RefCell.new(child)),
-                        members=[root],
+                        members=[],
                         census_error=None,
                         worker=worker,
                     ),
@@ -657,8 +657,8 @@ def start_waiting(
 def running_custody(item: &Running) -> ReleaseTermination:
     """Merge one invocation's retained descendants with the operating system's current observation."""
     root = int(item.child.borrow().id())
-    known = ReleaseTermination(members=item.members.clone(), census_error=item.census_error.clone())
-    observed = release_process_census(process_table(), root)
+    known = ReleaseTermination(root=root, members=item.members.clone(), census_error=item.census_error.clone())
+    observed = observe_release_processes(root)
     return merge_release_terminations(known, observed)
 
 
