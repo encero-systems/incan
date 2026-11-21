@@ -6,6 +6,7 @@ use crate::records::function::{decode_product, decode_runtime, encode_product, e
 use crate::records::layout::{
     decode_enums, decode_models, decode_zip_carriers, encode_enums, encode_models, encode_zip_carriers,
 };
+use crate::records::plan_function::encode_entry_record;
 use crate::types::source_span;
 use crate::wire::{
     Schema, Shape, ShapeBody, ShapeField, Wire, decode_graph_row, encode_graph_row, items, number, required, text,
@@ -14,8 +15,6 @@ use crate::wire::{
 
 /// The root selector of a unit's native interface.
 const PLAN_ROOT: &[u8] = b"mirpln\x00";
-/// The root selector of a standalone entry binding.
-const ENTRY_ROOT: &[u8] = b"plnent\x00";
 
 /// A unit interface preserves all native tables, reference ordinals and the plan's diagnostic span.
 static NATIVE_PLAN: Shape = Shape {
@@ -66,25 +65,6 @@ static NATIVE_PLAN: Shape = Shape {
 };
 static NATIVE_PLAN_SCHEMA: Schema = Schema::new(&[&NATIVE_PLAN]);
 
-/// The standalone entry and its ordered, complete producer inputs.
-static PLAN_ENTRY: Shape = Shape {
-    selector: ENTRY_ROOT,
-    path: "incan.plan-entry/2",
-    body: ShapeBody::Record(&[
-        ShapeField {
-            identity: b"entry_",
-            name: "entry",
-            storage: "string",
-        },
-        ShapeField {
-            identity: b"inputs",
-            name: "inputs",
-            storage: "list<string>",
-        },
-    ]),
-};
-static PLAN_ENTRY_SCHEMA: Schema = Schema::new(&[&PLAN_ENTRY]);
-
 /// Every nonempty field admitted by the bounded ordinary-program profile.
 struct StoredPlan {
     functions: Vec<Vec<u8>>,
@@ -101,14 +81,7 @@ struct StoredPlan {
 
 /// Bind the standalone entry under the same typed row the graph retains.
 pub fn encode_entry_binding(entry: &str, inputs: &[String]) -> Result<Vec<u8>, String> {
-    encode_graph_row(
-        ENTRY_ROOT,
-        &PLAN_ENTRY_SCHEMA,
-        vec![
-            required(b"entry_", Wire::Text(entry.to_owned())),
-            required(b"inputs", text_list(inputs)),
-        ],
-    )
+    encode_entry_record(entry, inputs)
 }
 
 /// Encode one complete plan or explicitly refuse a field the codec cannot preserve.

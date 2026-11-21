@@ -1,9 +1,15 @@
 //! One bounded Crumb row for a retained plan-function product and its complete input witness.
 
+use std::collections::HashMap;
+
 use incan_semantics_core::semantic_digest::semantic_digest;
 use sha2::{Digest, Sha256};
 
-use crate::wire::{Schema, Shape, ShapeBody, ShapeField, Wire, decode_graph_row, encode_graph_row, items, required};
+use crate::records::wire_schema::{STORED_EXTERNAL_SCHEMA, STORED_PRODUCT_SCHEMA};
+use crate::wire::{
+    Schema, Shape, ShapeBody, ShapeField, Wire, admit_root, decode_graph_row, encode_graph_row, items, required,
+    write_wire,
+};
 
 /// The root selector of a plan-function record.
 const PLAN_FUNCTION_ROOT: &[u8] = b"plnfun\x00";
@@ -138,4 +144,144 @@ fn text_values(value: &Wire) -> Result<Vec<String>, String> {
         Wire::List(items) => items.iter().map(text_value).collect(),
         _ => Err("plan-function Crumb field is not a text list".to_owned()),
     }
+}
+
+/// The root selector of a keyed function product, whose runtime field a lowering demand reads.
+const PRODUCT_ROOT: &[u8] = b"G\xc7\x7f$\xca!\x00";
+/// The product's runtime field identity.
+const RUNTIME_FIELD: &[u8] = b"\xd9,j\x81\xb2\xff";
+/// The root selector of one runtime dependency signature.
+const EXTERNAL_ROOT: &[u8] = b"t\xaa^\x89\x16D\x00";
+/// The root selector of a lowering demand.
+const DEMAND_ROOT: &[u8] = b"lowdem\x00";
+/// The largest runtime field a demand cache keys by its exact bytes.
+const CACHED_FIELD_BYTES: i64 = 65_536;
+/// The bound on one publication's cached signature bytes.
+const CACHE_BYTES: usize = 67_108_864;
+
+/// One function's lowering demand: its complete producer inputs and the runtime signatures its product requires.
+static LOWERING_DEMAND: Shape = Shape {
+    selector: DEMAND_ROOT,
+    path: "incan.lowering-demand/4",
+    body: ShapeBody::Record(&[
+        ShapeField {
+            identity: b"inputs",
+            name: "inputs",
+            storage: "list<string>",
+        },
+        ShapeField {
+            identity: b"runtim",
+            name: "runtime",
+            storage: "list<binary>",
+        },
+    ]),
+};
+static LOWERING_DEMAND_SCHEMA: Schema = Schema::new(&[&LOWERING_DEMAND]);
+
+/// The standalone entry and its ordered, complete producer inputs.
+static PLAN_ENTRY: Shape = Shape {
+    selector: b"plnent\x00",
+    path: "incan.plan-entry/2",
+    body: ShapeBody::Record(&[
+        ShapeField {
+            identity: b"entry_",
+            name: "entry",
+            storage: "string",
+        },
+        ShapeField {
+            identity: b"inputs",
+            name: "inputs",
+            storage: "list<string>",
+        },
+    ]),
+};
+static PLAN_ENTRY_SCHEMA: Schema = Schema::new(&[&PLAN_ENTRY]);
+
+/// Retain the standalone entry and its ordered, complete producer inputs.
+pub fn encode_entry_record(entry: &str, inputs: &[String]) -> Result<Vec<u8>, String> {
+    encode_graph_row(
+        b"plnent\x00",
+        &PLAN_ENTRY_SCHEMA,
+        vec![
+            required(b"entry_", Wire::Text(entry.to_owned())),
+            required(
+                b"inputs",
+                Wire::List(inputs.iter().map(|input| Wire::Text(input.clone())).collect()),
+            ),
+        ],
+    )
+}
+
+/// Authenticate an admitted entry against its current selection, generation and complete ordered inputs.
+pub fn verify_entry_record(encoded: &[u8], entry: &str, inputs: &[String]) -> Result<(), String> {
+    let fields = decode_graph_row(encoded, b"plnent\x00", &PLAN_ENTRY_SCHEMA, 2)?;
+    if text_value(&fields[0].value)? != entry || text_values(&fields[1].value)? != inputs {
+        return Err("selected plan-function(entry) disagrees with its complete inputs".to_owned());
+    }
+    Ok(())
+}
+
+/// One publication's decoder and bounded cache of fully authenticated runtime signature lists.
+#[derive(Debug, Default)]
+pub struct LoweringDemands {
+    externals: HashMap<String, Vec<Vec<u8>>>,
+    cache_bytes: usize,
+}
+
+impl LoweringDemands {
+    /// Encode the demand of one admitted product: its producer inputs and each runtime signature as its own row.
+    ///
+    /// The source bytes and dictionary ordinals together specify every runtime signature. A cache hit still requires
+    /// full admission, including all fields, the exact root and the complete referenced dictionary.
+    pub fn encode(&mut self, inputs: &[String], function: &[u8]) -> Result<Vec<u8>, String> {
+        let (mut row, slots) = admit_root(function, PRODUCT_ROOT, &STORED_PRODUCT_SCHEMA, "native plan wire")?;
+        let cell = row.field_cell(RUNTIME_FIELD)?;
+        let end = cell.origin.checked_add(cell.length);
+        let within = end.is_some_and(|end| end <= function.len() as i64);
+        if !cell.present || cell.origin < 0 || cell.length < 0 || !within {
+            return Err("native plan product has no typed runtime requirements".to_owned());
+        }
+        let mut key = String::new();
+        if cell.length <= CACHED_FIELD_BYTES {
+            let start = cell.origin as usize;
+            let bytes = &function[start..start + cell.length as usize];
+            let ordinals: Vec<String> = slots.iter().map(i64::to_string).collect();
+            key = format!("{}:{}", ordinals.join(","), hex(bytes));
+        }
+        if let Some(externals) = self.externals.get(&key).filter(|_| !key.is_empty()) {
+            return demand_row(inputs, externals.clone());
+        }
+        let mut externals = Vec::new();
+        let mut size = key.len();
+        for signature in items(&row.read_field(RUNTIME_FIELD)?)? {
+            let encoded = write_wire(EXTERNAL_ROOT, &STORED_EXTERNAL_SCHEMA, signature.clone())?;
+            size += encoded.len();
+            externals.push(encoded);
+        }
+        if !key.is_empty() && self.cache_bytes + size <= CACHE_BYTES {
+            self.externals.insert(key, externals.clone());
+            self.cache_bytes += size;
+        }
+        demand_row(inputs, externals)
+    }
+}
+
+/// Encode one demand independently of other publications.
+pub fn encode_lowering_demand(inputs: &[String], function: &[u8]) -> Result<Vec<u8>, String> {
+    LoweringDemands::default().encode(inputs, function)
+}
+
+/// The demand row: inputs, then the runtime signature rows in product order.
+fn demand_row(inputs: &[String], externals: Vec<Vec<u8>>) -> Result<Vec<u8>, String> {
+    encode_graph_row(
+        DEMAND_ROOT,
+        &LOWERING_DEMAND_SCHEMA,
+        vec![
+            required(
+                b"inputs",
+                Wire::List(inputs.iter().map(|input| Wire::Text(input.clone())).collect()),
+            ),
+            required(b"runtim", Wire::List(externals.into_iter().map(Wire::Binary).collect())),
+        ],
+    )
 }

@@ -685,6 +685,99 @@ impl AdmittedRow {
     }
 }
 
+/// Admit exactly one `root` row against a closed reference dictionary, as `plan_wire_rows.PreparedWireReader` does,
+/// returning the dictionary slot each written description resolved to.
+pub(crate) fn admit_root(
+    encoded: &[u8],
+    root: &[u8],
+    schema: &Schema,
+    name: &str,
+) -> Result<(AdmittedRow, Vec<i64>), String> {
+    if encoded.len() as u64 > MAX_RECORD_BYTES as u64 {
+        return Err(format!("{name} exceeds its byte limit"));
+    }
+    let mut budget = Budget::graph();
+    let mut request = RowRequest::new(encoded.to_vec(), false, true);
+    for description in schema.descriptions() {
+        request.supply(description.clone());
+    }
+    request.allow(budget.bytes, budget.elements, budget.depth);
+    let admission = request.admit();
+    budget
+        .charge_bytes(admission.bytes_charged)
+        .map_err(|error| error.message())?;
+    budget
+        .charge_elements(admission.elements_charged)
+        .map_err(|error| error.message())?;
+    if !admission.admitted() {
+        return Err(refusal(&admission.category, admission.offset));
+    }
+    let count = admission.description_count();
+    if admission.records != 1 || admission.key(0) != root || usize::try_from(count).ok() != Some(schema.len()) {
+        return Err(format!(
+            "{name} requires one root and its complete declaration dictionary"
+        ));
+    }
+    let mut slots = Vec::with_capacity(schema.len());
+    for index in 0..count {
+        let slot = admission.reference_index(index);
+        if slot < 0 {
+            return Err(format!("{name} requires referenced compiler descriptions"));
+        }
+        slots.push(slot);
+    }
+    Ok((AdmittedRow { admission, budget }, slots))
+}
+
+/// The envelope range of one root field's cell: its origin and length, or `None` when the field is absent.
+pub(crate) struct FieldCell {
+    pub present: bool,
+    pub origin: i64,
+    pub length: i64,
+}
+
+impl AdmittedRow {
+    /// Locate one root field's encoded cell under the remaining allowance.
+    pub(crate) fn field_cell(&mut self, identity: &[u8]) -> Result<FieldCell, String> {
+        let read = self.admission.field_cell(
+            0,
+            identity.to_vec(),
+            self.budget.bytes,
+            self.budget.elements,
+            self.budget.depth,
+        );
+        settle(
+            &mut self.budget,
+            (read.bytes_charged, read.elements_charged),
+            &read.category,
+            read.offset,
+        )?;
+        Ok(FieldCell {
+            present: read.present,
+            origin: read.origin,
+            length: read.length,
+        })
+    }
+
+    /// Materialize one root field's value under the remaining allowance.
+    pub(crate) fn read_field(&mut self, identity: &[u8]) -> Result<Wire, String> {
+        let mut read = self.admission.read_field(
+            0,
+            identity.to_vec(),
+            self.budget.bytes,
+            self.budget.elements,
+            self.budget.depth,
+        );
+        settle(
+            &mut self.budget,
+            (read.bytes_charged, read.elements_charged),
+            &read.category,
+            read.offset,
+        )?;
+        build(&mut read)
+    }
+}
+
 /// Build one logical value from a successful native read's pre-order nodes.
 fn build(read: &mut RowRead) -> Result<Wire, String> {
     let code = read.next();

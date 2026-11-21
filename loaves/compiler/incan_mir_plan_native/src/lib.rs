@@ -47,7 +47,8 @@ pub use records::layout::{
     encode_instance_request, encode_models, encode_zip_carriers,
 };
 pub use records::plan_function::{
-    PlanFunctionRecord, decode_plan_function_record, encode_plan_function_record, plan_function_digest,
+    LoweringDemands, PlanFunctionRecord, decode_plan_function_record, encode_entry_record, encode_lowering_demand,
+    encode_plan_function_record, plan_function_digest, verify_entry_record,
 };
 pub use span_file::SpanFile;
 pub use types::{
