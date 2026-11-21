@@ -43,15 +43,16 @@ from rust::std::rc import Rc
 from std.primitives.hash import sha256
 from std.primitives.hex import hexlify
 from std.primitives.locking import LockGuard
-from std.primitives.views import MappedView
+from std.primitives.views import MappedFile, MappedView
 from crate.trace.schema import Operation
 from crate.ipc import session_id
 from crate.store.files import file_digest
 from crate.store.index import Entry, Location, build, entries as index_entries, find as index_find, insert
+from crate.store.index import first_stored_key as index_first_stored_key
 from crate.store.index import entries_for_keys as index_entries_for_keys
 from crate.store.index import entries_with_prefix as index_entries_with_prefix
 from crate.store.index import read_page as index_page, search as index_search
-from crate.store.index import copied_index_bytes, page_directory, page_path, page_reads, pages_checked, view_digest
+from crate.store.index import copied_index_bytes, page_directory, page_path, page_checked_bytes, page_reads, pages_checked, view_digest
 from crate.store.index import PageWriter, install_pack, installed_reference
 from crate.store.files import (
     StoreError,
@@ -92,7 +93,7 @@ pub enum Lookup:
 
 
 pub model PresentBinding:
-    """Owned value bytes and the authenticated revision, semantic value and selected index-path identities."""
+    """Selected value bytes and the authenticated revision, complete value digest and selected index path."""
 
     pub value: bytes
     pub revision: str
@@ -182,7 +183,9 @@ pub model ReadCounts:
     `records` frames found, `bytes` frame bytes checked in place, `pages` index pages read and `checked` the index pages
     mapped and hashed to check them against their digest; `copied` bytes copied out of mapped pages and frames by
     lookups (keys compared and locations decoded, never a value); `decoded` bytes of found values copied into owned
-    bytes by `owned`; `listed` keys returned by whole and prefix listings.
+    bytes by `owned`; `listed` keys returned by whole and prefix listings. `index_bytes_checked` counts the bytes
+    checked on first access to immutable index pages. `digest_only_payload_bytes` and `digest_only_reads` count
+    complete values hashed in place to answer payload-free binding queries.
     """
 
     pub records: int
@@ -192,10 +195,63 @@ pub model ReadCounts:
     pub decoded: int
     pub listed: int = 0
     pub checked: int = 0
+    pub index_bytes_checked: int = 0
+    pub digest_only_payload_bytes: int = 0
+    pub digest_only_reads: int = 0
 
 
 # Reads this process made, for measuring what a compile reads; nothing is cached by them.
 static counted: dict[str, int] = {}
+
+
+pub model FrameRead:
+    """A physical store frame authenticated during an explicitly measured operation."""
+    pub key: str
+    pub revision: str
+    pub reads: int
+    pub frame_bytes: int
+    pub value_bytes: int
+
+
+class FrameReadMeasurement:
+    """Measure repeated reads by frame revision only inside the active observation."""
+    active: bool = false
+    frames: Dict[str, FrameRead] = {}
+
+    pub def start(mut self, enabled: bool) -> None:
+        self.frames = {}
+        self.active = enabled
+
+    pub def record(mut self, key: str, location: Location, value_size: int) -> None:
+        if self.active:
+            revision = hexlify(location.digest)
+            if revision in self.frames:
+                previous = self.frames[revision]
+                self.frames[revision] = FrameRead(key=key, revision=revision, reads=previous.reads + 1,
+                    frame_bytes=location.length, value_bytes=value_size)
+            else:
+                self.frames[revision] = FrameRead(key=key, revision=revision, reads=1,
+                    frame_bytes=location.length, value_bytes=value_size)
+
+    pub def finish(mut self) -> list[FrameRead]:
+        self.active = false
+        result = [self.frames[revision] for revision in sorted([value for value in self.frames.keys()])]
+        self.frames = {}
+        return result
+
+
+static frame_measurement: FrameReadMeasurement = FrameReadMeasurement()
+
+
+pub def measure_frame_reads(enabled: bool) -> None:
+    """Begin a scoped observation of exact authenticated frames for a request that asked for proof."""
+    frame_measurement.start(enabled)
+
+
+pub def finish_frame_reads() -> list[FrameRead]:
+    """End observation, returning exact logical keys, physical revisions, counts and byte sizes."""
+    return frame_measurement.finish()
+
 
 
 pub def store_identity(root: Path) -> Result[str, StoreError]:
@@ -239,6 +295,9 @@ pub def read_counts() -> ReadCounts:
         decoded=counted.get("decoded", 0),
         listed=counted.get("listed", 0),
         checked=pages_checked(),
+        index_bytes_checked=page_checked_bytes(),
+        digest_only_payload_bytes=counted.get("digest_only_payload_bytes", 0),
+        digest_only_reads=counted.get("digest_only_reads", 0),
     )
 
 
@@ -423,12 +482,30 @@ pub def lookup(view: Snapshot, key: str) -> Result[Lookup, StoreError]:
     match index_find(view.root, view.index, key).map_err(index_failure)?:
         None => return Ok(Lookup.Absent)
         Some(location) =>
-            counted["records"] = counted.get("records", 0) + 1
             return read_frame(view.root, key, location)
 
 
+pub def locate_value(view: Snapshot, key: str) -> Result[Option[Location], StoreError]:
+    """Select a live frame address from a pinned index. The consumer authenticates the frame when it opens it."""
+    found = index_find(view.root, view.index, key).map_err(index_failure)?
+    if let Some(location) = found:
+        if not location.tombstone:
+            return Ok(found)
+    return Ok(None)
+
+
 pub def lookup_binding(view: Snapshot, key: str) -> Result[BindingLookup, StoreError]:
-    """Read one key with revision, semantic and authenticated search-path evidence from the selected snapshot."""
+    """Read one complete value with its authenticated binding evidence."""
+    return select_binding(view, key, true)
+
+
+pub def lookup_binding_metadata(view: Snapshot, key: str) -> Result[BindingLookup, StoreError]:
+    """Authenticate one exact binding and hash the complete value in place, returning an empty payload."""
+    return select_binding(view, key, false)
+
+
+def select_binding(view: Snapshot, key: str, materialize: bool) -> Result[BindingLookup, StoreError]:
+    """Use the same index, frame checks and binding identities for both exact selections."""
     searched = index_search(view.root, view.index, key).map_err(index_failure)?
     match searched.location:
         None => return Ok(BindingLookup.Absent(AbsentBinding(exclusion_digest=searched.path_digest)))
@@ -436,13 +513,19 @@ pub def lookup_binding(view: Snapshot, key: str) -> Result[BindingLookup, StoreE
             revision = hexlify(location.digest)
             match read_frame(view.root, key, location)?:
                 Lookup.Found(value) =>
-                    bytes = owned(value)
+                    semantic = hexlify(view_digest(value))
+                    mut selected_value: bytes = b""
+                    if materialize:
+                        selected_value = owned(value)
+                    else:
+                        counted["digest_only_payload_bytes"] = counted.get("digest_only_payload_bytes", 0) + value.len()
+                        counted["digest_only_reads"] = counted.get("digest_only_reads", 0) + 1
                     return Ok(
                         BindingLookup.Present(
                             PresentBinding(
-                                value=bytes,
+                                value=selected_value,
                                 revision=revision,
-                                semantic_digest=hexlify(sha256.digest(bytes)),
+                                semantic_digest=semantic,
                                 selection_digest=searched.path_digest,
                             ),
                         ),
@@ -524,7 +607,26 @@ pub def read_frame(root: Path, key: str, location: Location) -> Result[Lookup, S
     """
     path = root.joinpath("segments").joinpath(f"{location.segment}.seg")
     mapped = path.store_map_read().map_err((error) => failure("integrity", path.value, error.message()))?
+    return read_placed_frame(path, mapped, key, location)
+
+
+pub def read_frame_cached(
+    root: Path, key: str, location: Location, mut mappings: Dict[str, MappedFile],
+) -> Result[Lookup, StoreError]:
+    """Reuse immutable segment mappings within one leased request, retaining at most 32 segments."""
+    path = root.joinpath("segments").joinpath(f"{location.segment}.seg")
+    if let Some(mapped) = mappings.get(location.segment):
+        return read_placed_frame(path, mapped, key, location)
+    mapped = path.store_map_read().map_err((error) => failure("integrity", path.value, error.message()))?
+    if len(mappings) < 32:
+        mappings[location.segment] = mapped
+    return read_placed_frame(path, mapped, key, location)
+
+
+def read_placed_frame(path: Path, mapped: &MappedFile, key: str, location: Location) -> Result[Lookup, StoreError]:
+    """Verify an indexed frame from its established immutable backing and retain only the bounded value view."""
     frame = part(path, mapped.view(location.offset, location.length), "frame runs past its segment")?
+    counted["records"] = counted.get("records", 0) + 1
     counted["bytes"] = counted.get("bytes", 0) + location.length
     if view_digest(frame) != location.digest:
         return Err(failure("integrity", path.value, "frame does not match its digest"))
@@ -540,8 +642,10 @@ pub def read_frame(root: Path, key: str, location: Location) -> Result[Lookup, S
             if found != key:
                 return Err(failure("integrity", path.value, "frame holds another key"))
     if location.tombstone:
+        frame_measurement.record(key, location, 0)
         return Ok(Lookup.Deleted)
     value = part(path, frame.slice(8 + size, frame.len() - 8 - size), "frame key runs past the frame")?
+    frame_measurement.record(key, location, value.len())
     return Ok(Lookup.Found(value))
 
 
@@ -570,6 +674,14 @@ pub def index_levels(view: Snapshot) -> Result[int, StoreError]:
     if view.index == "":
         return Ok(0)
     return Ok(index_page(view.root, view.index).map_err(index_failure)?.level + 1)
+
+
+pub def first_stored_key(view: Snapshot, lower: str) -> Result[Option[str], StoreError]:
+    """Seek one physical index key, including deleted keys, without reading or listing its neighboring records."""
+    found = index_first_stored_key(view.root, view.index, lower).map_err(index_failure)?
+    if found is not None:
+        counted["listed"] = counted.get("listed", 0) + 1
+    return Ok(found)
 
 
 pub def keys_with_prefix(view: Snapshot, prefix: str) -> Result[list[str], StoreError]:
@@ -738,21 +850,21 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
     """
     if len(transactions) == 0:
         return Err(failure("format", "transaction", "an empty group has no selected view"))
-    first = transactions[0]
-    root = first.root
+    transaction_id = transactions[0].id
+    root = transactions[0].root
     ensure_directory(root.joinpath("locks"))?
     locking = begin_work()
     held = root.joinpath("locks/publication").store_lock_exclusive().map_err((error) => io_failure(root, error))?
     record_work(Operation.StoreLock, root.value, locking)
-    mut selected_view = first.view
+    mut selected_view = transactions[0].view
     if execution_view != "":
         selected_view = execution_view
     latest = snapshot(root, selected_view)?
-    staged = root.joinpath("staging").joinpath(first.id)
-    if len(transactions) == 1 and first.fork != "":
+    staged = root.joinpath("staging").joinpath(transaction_id)
+    if len(transactions) == 1 and transactions[0].fork != "":
         if execution_view != "":
             return Err(failure("format", "transaction", "a fork does not select an execution view"))
-        return publish_fork(root, latest, first, staged).map((view) => Publication(snapshot=view))
+        return publish_fork(root, latest, transactions[0], staged).map((view) => Publication(snapshot=view))
     # 1. Duplicate views are combined before their preconditions are checked.
     mut writes: Dict[str, list[Write]] = {}
     mut compared: Dict[str, str] = {}
@@ -764,9 +876,9 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
         ):
             return Err(failure("format", "transaction", "a group needs one store and no forks"))
         check_view_key(transaction.view)?
-        mut combined = writes.get(transaction.view, [])
-        combined.extend(transaction.writes)
-        writes[transaction.view] = combined
+        if transaction.view not in writes:
+            writes[transaction.view] = []
+        writes[transaction.view].extend(transaction.writes)
         if let Some(revision) = transaction.compared:
             compared[transaction.view] = revision
     mut changed: Dict[str, list[Write]] = {}
@@ -801,7 +913,7 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
     for name in sorted([view for view in staged_roots.keys()]):
         views = with_view(views, name, installed_reference(staged_roots[name], pack))
     # 3. One switch is the only visibility and durability boundary for the entire request.
-    published = publish_switch(root, latest, views, first.id, execution_view)?
+    published = publish_switch(root, latest, views, transaction_id, execution_view)?
     remove_tree(staged)
     return Ok(published)
 
@@ -882,7 +994,6 @@ def pending_writes(latest: Snapshot, writes: list[Write]) -> Result[list[Write],
     for write in writes:
         mut found: Result[Lookup, StoreError] = Ok(Lookup.Absent)
         if write.key in located:
-            counted["records"] = counted.get("records", 0) + 1
             found = read_frame(latest.root, write.key, located[write.key])
         if kept(write, found)?:
             remaining.append(write)
@@ -898,7 +1009,7 @@ def pending_each(latest: Snapshot, writes: list[Write]) -> Result[list[Write], S
     return Ok(remaining)
 
 
-def kept(write: Write, found: Result[Lookup, StoreError]) -> Result[bool, StoreError]:
+def kept(write: &Write, found: Result[Lookup, StoreError]) -> Result[bool, StoreError]:
     """Whether `write` stays pending given its key's lookup, refusing it when its precondition no longer holds."""
     match found:
         Err(error) =>
@@ -908,11 +1019,11 @@ def kept(write: Write, found: Result[Lookup, StoreError]) -> Result[bool, StoreE
         Ok(outcome) => return needed(write, outcome)
 
 
-def needed(write: Write, found: Lookup) -> Result[bool, StoreError]:
+def needed(write: &Write, found: Lookup) -> Result[bool, StoreError]:
     """Whether `write` changes what is committed, refusing it when its precondition no longer holds."""
     match found:
         Lookup.Found(value) =>
-            if write.kind == KIND_VALUE and value.len() == len(write.value) and owned(value) == write.value:
+            if write.kind == KIND_VALUE and value.len() == len(write.value) and value.0.as_bytes().starts_with(write.value.as_slice()):
                 return Ok(false)
             if write.expect not in [EXPECT_ANY, EXPECT_REPAIR]:
                 return Err(failure("conflict", write.key, "another value was committed under this key"))

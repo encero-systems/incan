@@ -1,6 +1,6 @@
 """Bounded engine observations over a separate append-only channel, with shared raw host-clock spans."""
 
-from rust::std::env import var_os
+from rust::std::env import var, var_os
 from rust::std::fs import File, OpenOptions
 from rust::std::io import BufWriter, Cursor, Write
 from rust::std::sync import Arc, Mutex
@@ -328,6 +328,50 @@ model TraceRecord:
     records: int
     calls: int
     cpu_ns: Option[int]
+
+
+pub model ProducerAttempt:
+    """One observed execution, with its process identity, shared host clock and exact producer address."""
+
+    clock: Clock
+    channel: str
+    producer: str
+    address: str
+
+    @staticmethod
+    pub def opened(clock: Clock, channel: str, producer: str, address: str) -> Self:
+        return ProducerAttempt(clock=clock, channel=channel, producer=producer, address=address)
+
+    pub def event(self, kind: str, outcome: str) -> None:
+        work = f"{id()}:{self.clock.span}"
+        span = complete(self.clock, self.producer, kind, self.address, work=work, outcome=outcome)
+        # Preserve the entrance even if the evaluator exits or rejects its inputs before it reports a result.
+        if let Ok(writer) = CHANNELS.writer(self.channel):
+            if writer.record(span).is_ok():
+                _ = writer.flush()
+
+
+pub def enter_producer(actor: str, family: str, identity: &str, detail: &str) -> Option[ProducerAttempt]:
+    """Record the physical call before executing it, when the request explicitly asks for a producer trace."""
+    if not enabled("INCAN_TRACE_PRODUCERS"):
+        return None
+    directory = match var("INCAN_ENGINE_TRACE"):
+        Ok(value) => str(value)
+        Err(_) => return None
+    if directory == "":
+        return None
+    if let Some(clock) = begin(true):
+        attempt = ProducerAttempt.opened(clock, f"{directory}/engine-producers-{id()}.jsonl",
+            actor, f"{family}\t{identity}\t{detail}")
+        attempt.event("producer_attempt", "entered")
+        return Some(attempt)
+    return None
+
+
+pub def finish_producer(attempt: Option[ProducerAttempt], outcome: str) -> None:
+    """Close the same measured operation only once its actual disposition is known."""
+    if let Some(started) = attempt:
+        started.event("producer_result", outcome)
 
 
 pub def encode(span: &EngineSpan) -> Result[str, TraceError]:

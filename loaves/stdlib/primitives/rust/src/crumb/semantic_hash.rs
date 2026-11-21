@@ -4,9 +4,80 @@
 //! streamed through the same tagged V, S and D contributions as `std.primitives.crumb.hashes`.
 
 use std::cmp::Ordering;
+use std::fmt::Debug;
+use std::ops::Range;
+use std::sync::Arc;
 
 use serde_json::Value as Json;
 use sha2::{Digest, Sha256};
+
+/// The codec borrows immutable bytes independently of the native mapping implementation used by its caller.
+trait RowBacking: AsRef<[u8]> + Debug + Send + Sync {}
+impl<T: AsRef<[u8]> + Debug + Send + Sync> RowBacking for T {}
+
+/// A bounded view keeps its envelope's backing alive and only copies the shared handle when sliced.
+#[derive(Clone, Debug)]
+pub(super) struct RowView {
+    backing: Arc<dyn RowBacking>,
+    range: Range<usize>,
+}
+
+impl RowView {
+    /// Share an already-owned immutable input. Platform views carry their own mapping lifetime.
+    #[allow(
+        dead_code,
+        reason = "the shared standalone codegraph codec also accepts borrowed slices"
+    )]
+    pub(super) fn new(backing: impl AsRef<[u8]> + Debug + Send + Sync + 'static) -> Self {
+        let size = backing.as_ref().len();
+        Self {
+            backing: Arc::new(backing),
+            range: 0..size,
+        }
+    }
+
+    /// Borrow the bytes within this view's checked extent.
+    pub(super) fn as_bytes(&self) -> &[u8] {
+        &self.backing.as_ref().as_ref()[self.range.clone()]
+    }
+
+    /// Select an extent relative to this view, retaining only the shared backing handle.
+    pub(super) fn slice(&self, offset: usize, length: usize) -> Option<Self> {
+        let end = offset.checked_add(length)?;
+        if end > self.range.len() {
+            return None;
+        }
+        let start = self.range.start;
+        Some(Self {
+            backing: Arc::clone(&self.backing),
+            range: start + offset..start + end,
+        })
+    }
+}
+
+/// Binary cells are byte values regardless of whether they own bytes or retain part of an immutable row.
+#[derive(Clone)]
+pub(super) enum Binary {
+    Owned(Vec<u8>),
+    Mapped(RowView),
+}
+
+impl From<Vec<u8>> for Binary {
+    /// Move newly produced bytes into a logical cell.
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::Owned(bytes)
+    }
+}
+
+impl AsRef<[u8]> for Binary {
+    /// Borrow the logical bytes for comparisons, hashing and explicit materialization.
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Owned(bytes) => bytes,
+            Self::Mapped(view) => view.as_bytes(),
+        }
+    }
+}
 
 /// One logical value after notation translation, mirroring the Incan `Value` carrier.
 #[derive(Clone)]
@@ -18,7 +89,7 @@ pub(super) enum Value {
     Float(Vec<u8>),
     Decimal(i128, i64),
     Text(String),
-    Binary(Vec<u8>),
+    Binary(Binary),
     Withheld,
     List(Vec<Value>),
     Tuple(Vec<Value>),
@@ -157,7 +228,7 @@ pub(super) fn logical(value: &Json) -> Option<Value> {
             value.get("scale")?.as_i64()?,
         ),
         "string" => Value::Text(value.get("value")?.as_str()?.to_string()),
-        "binary" => Value::Binary(hex(value.get("hex")?)?),
+        "binary" => Value::Binary(hex(value.get("hex")?)?.into()),
         "withheld" => Value::Withheld,
         "list" => Value::List(logical_items(value.get("items")?)?),
         "tuple" => Value::Tuple(logical_items(value.get("items")?)?),
@@ -484,7 +555,7 @@ fn emit(value: &Value, projection: Projection, output: &mut Vec<u8>) -> Option<(
         }
         Value::Binary(data) => {
             output.push(6);
-            frame(output, data);
+            frame(output, data.as_ref());
         }
         Value::Withheld => output.push(7),
         Value::List(items) => sequence(8, items, projection, output)?,
@@ -631,7 +702,7 @@ pub(super) fn compare(left: &Value, right: &Value, projection: Projection) -> Op
         (Value::Float(a), Value::Float(b)) => Some(float_key(a).cmp(&float_key(b))),
         (Value::Decimal(a, a_scale), Value::Decimal(b, b_scale)) => compare_decimals(*a, *a_scale, *b, *b_scale),
         (Value::Text(a), Value::Text(b)) => Some(a.as_bytes().cmp(b.as_bytes())),
-        (Value::Binary(a), Value::Binary(b)) => Some(a.cmp(b)),
+        (Value::Binary(a), Value::Binary(b)) => Some(a.as_ref().cmp(b.as_ref())),
         (Value::Withheld, Value::Withheld) => Some(Ordering::Equal),
         (Value::List(a), Value::List(b)) | (Value::Tuple(a), Value::Tuple(b)) => compare_sequences(a, b, projection),
         (Value::Set(a), Value::Set(b)) => {
