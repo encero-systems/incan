@@ -10,6 +10,7 @@ use incan_semantics_core::{CanonicalSymbolId, IncanType, SymbolOrigin, canonical
 
 use crate::async_::{construct_future, is_future};
 use crate::builtin_calls::lower_builtin;
+use crate::callable_values::owned_callable_value;
 use crate::calls::{lower_loaf_call, ordered_arguments};
 use crate::carrier_operands::boundary_plan_operand;
 use crate::checked_values::scalar_place;
@@ -61,7 +62,7 @@ pub fn carrier_callable_operand(
     };
     for variant in &declaration.variants {
         if variant.fields.len() == 1 && variant.fields[0] == PlanType::Closure(signature.clone()) {
-            return Err(untranslated("callable_calls::owned_callable_value"));
+            return owned_callable_value(builder, value, &signature, span);
         }
     }
     Ok(value)

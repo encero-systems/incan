@@ -10,6 +10,7 @@ use incan_semantics_core::{IncanType, SemanticSourceTargetKind};
 
 use crate::builtin_calls::{clone_enum_reference, clone_model_reference, coerce_numeric_operand};
 use crate::callable_calls::carrier_callable_operand;
+use crate::callable_values::owned_callable_value;
 use crate::checked_values::{reference_read_fact, scalar_place};
 use crate::closures::function_assignment;
 use crate::compiler_record_adapters::semantic_key_matches_native;
@@ -138,7 +139,7 @@ pub fn boundary_plan_operand(
         return converted_carrier_operand(builder, value, &source, target, span);
     }
     match target {
-        PlanType::Closure(_) => return Err(untranslated("callable_calls::owned_callable_value")),
+        PlanType::Closure(signature) => return owned_callable_value(builder, value, signature, span),
         PlanType::FunctionPointer(_) => {
             let source = value_type(builder, &value)?;
             let context = format!("value boundary in {}", builder.name);

@@ -11,6 +11,7 @@ use incan_semantics_core::body_ir::{
 use incan_semantics_core::{HirSourceSpan, IncanType};
 
 use crate::builtin_calls::{clone_enum_reference, clone_model_reference};
+use crate::callable_values::{callable_object, cloned_closure};
 use crate::carrier_operands::boundary_operand;
 use crate::closures::callable_copy_type;
 use crate::decimal_plan::decimal_literal;
@@ -322,7 +323,7 @@ pub fn target_read(
             }
             Ok(read_place(target, true, span))
         }
-        PlanType::Closure(_) => closure_read(builder, target, fact, span),
+        PlanType::Closure(signature) => closure_read(builder, target, &signature, fact, span),
         _ => owned_target_read(builder, target, fact, span),
     }
 }
@@ -331,6 +332,7 @@ pub fn target_read(
 fn closure_read(
     builder: &mut Builder,
     target: Place,
+    signature: &[PlanType],
     fact: OwnershipFact,
     span: &SourceSpan,
 ) -> Result<Operand, String> {
@@ -338,7 +340,7 @@ fn closure_read(
         match target.projection {
             Projection::VariantField(..) => return target_read(builder, target, OwnershipFact::Clone, span),
             Projection::Field(..) | Projection::Fields(_) | Projection::DerefField(..) | Projection::DerefFields(_) => {
-                return Err(untranslated("callable_calls::callable_object"));
+                return callable_object(builder, target, signature, span);
             }
             _ => {}
         }
@@ -350,7 +352,7 @@ fn closure_read(
             }
             Ok(read_place(target, true, span))
         }
-        OwnershipFact::Clone => Err(untranslated("callable_calls::callable_object")),
+        OwnershipFact::Clone => cloned_closure(builder, target, signature, span),
         _ => {
             let site = format!("{}:{}:{} in {}", builder.file, span.line, span.column, builder.name);
             Err(format!(
