@@ -8,6 +8,9 @@ use crate::ownership_metadata::{
 };
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::symbols::{CallableParam, MethodInfo, ResolvedType, TypeInfo};
+use incan_lang::lang::builtins::BuiltinMethodId;
+use incan_lang::lang::surface::clone_methods::CloneMethodId;
+use incan_lang::lang::surface::result_methods::ResultMethodId;
 use incan_lang::lang::types::ownership;
 use incan_semantics_core::{CanonicalSymbolId, IncanInputAccess, SemanticSourceTargetKind, SymbolOrigin};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -23,6 +26,80 @@ struct Signature<'a> {
 }
 
 impl TypeChecker {
+    /// Retain one compiler-selected builtin `Clone.clone` invocation after its receiver and zero-argument surface
+    /// have checked. Compiler-owned Clone members have no source declaration, so this exact fact lets source flow
+    /// reuse the normal invocation path without treating a same-spelled user method as a copy operation.
+    pub(in crate::typechecker) fn record_selected_clone_input_call(&mut self, span: Span) {
+        let Some(owner) = self.current_body_identity().cloned() else {
+            return;
+        };
+        let callee = crate::symbols::canonical_builtin_member_identity(
+            incan_lang::lang::traits::as_str(incan_lang::lang::traits::TraitId::Clone),
+            incan_lang::lang::trait_bounds::rust::CLONE_METHOD,
+        );
+        let selected_identity = self.type_info.resolved_identity(span) == Some(&callee)
+            || self.type_info.traits.inferred_method_identities.get(&span) == Some(&callee);
+        if !selected_identity
+            || self.type_info.resolved_builtin_method_call(span) != Some(BuiltinMethodId::Clone(CloneMethodId::Clone))
+        {
+            return;
+        }
+        self.type_info.record_call_site_callable_params_exact(span, &[]);
+        self.type_info.protocols.explicit_input_calls.insert(
+            span,
+            super::InputCall {
+                site: span,
+                kind: super::InputCallKind::Ordinary,
+                owner: Some(owner),
+                callee,
+                parameters: Vec::new(),
+                receiver: Some(Receiver::Immutable),
+            },
+        );
+    }
+
+    /// Retain the compiler-selected `Result.map_err` call only after its callback and result have both checked.
+    /// This is the builtin combinator's exact selected surface, not a fallback for arbitrary builtin methods.
+    pub(in crate::typechecker) fn record_selected_result_map_err_input_call(
+        &mut self,
+        callback: &ResolvedType,
+        result: &ResolvedType,
+        span: Span,
+    ) {
+        let Some(owner) = self.current_body_identity().cloned() else {
+            return;
+        };
+        let Some(callee) = self.type_info.resolved_identity(span).cloned() else {
+            return;
+        };
+        let callback_is_checked = matches!(callback, ResolvedType::Function(parameters, _) if parameters.len() == 1);
+        let result_is_checked = matches!(result, ResolvedType::Generic(name, sides)
+            if crate::typechecker::helpers::collection_type_id(name)
+                == Some(incan_lang::lang::types::collections::CollectionTypeId::Result)
+                && sides.len() == 2);
+        if callee != crate::symbols::canonical_builtin_member_identity("Result", "map_err")
+            || self.type_info.resolved_builtin_method_call(span)
+                != Some(BuiltinMethodId::Result(ResultMethodId::MapErr))
+            || !callback_is_checked
+            || !result_is_checked
+        {
+            return;
+        }
+        let parameters = vec![CallableParam::positional(callback.clone())];
+        self.type_info.record_call_site_callable_params_exact(span, &parameters);
+        self.type_info.protocols.explicit_input_calls.insert(
+            span,
+            super::InputCall {
+                site: span,
+                kind: super::InputCallKind::Ordinary,
+                owner: Some(owner),
+                callee,
+                parameters,
+                receiver: Some(Receiver::Immutable),
+            },
+        );
+    }
+
     /// Retain successful selected calls in the isolated body writer. Ordinary candidates are discarded unless the
     /// completed body independently needs explicit-input analysis. Candidate speculation is discarded with its
     /// normal call artifacts, and a caller without annotations still owes its callee's explicit contract.
@@ -154,6 +231,7 @@ impl TypeChecker {
             projected
         });
         let contract = receiver_contract.as_ref().unwrap_or(contract);
+        let imported = identity.is_some_and(|identity| !self.declared_in_current_module(identity));
         let mut output = None;
         for mode in &contract.modes {
             let Some(slot) = mode.component.parameter else { continue };
@@ -167,12 +245,20 @@ impl TypeChecker {
                 )
                 .with_stable_code("INCAN-T0123")
             })?;
+            // An imported contract's payload is spelled in its declaring module, while the caller sees the parameter
+            // re-spelled for its own scope, for example a nominal it does not import by its carrier key. The same
+            // mode on the parameter's own wrapper selects that slot; the caller's spelling is the value type.
+            let respelled = imported
+                && matches!(&parameter.ty, ResolvedType::Generic(name, arguments)
+                    if arguments.len() == 1 && self.explicit_ownership_mode(name) == Some(mode.mode));
             let underlying = crate::ownership_metadata::input_value_type_matching(
                 Some(contract),
                 slot,
                 &parameter.ty,
                 &|declared, instantiated| {
-                    self.types_compatible(declared, instantiated) && self.types_compatible(instantiated, declared)
+                    respelled
+                        || (self.types_compatible(declared, instantiated)
+                            && self.types_compatible(instantiated, declared))
                 },
             )
             .map_err(|reason| CompileError::type_error(reason.into(), span).with_stable_code("INCAN-T0123"))?;
@@ -250,8 +336,16 @@ impl TypeChecker {
     /// signatures remain unavailable; their declaration-owned check reports the error at its normal source anchor.
     /// This uses the same canonical inventory as publication, including distinct overload declaration spans.
     pub(in crate::typechecker) fn collect_function_ownership_headers(&mut self, program: &Program) {
+        self.collect_constructor_defaults(program);
         self.collect_method_ownership_headers(program);
         self.inherit_trait_input_contracts(program);
+        self.collect_free_function_ownership_headers(program, None);
+    }
+
+    /// Complete each free function's contract from its collected binding. With `origin`, only the binding this
+    /// module's own collection produced for the declaration counts: an imported module collects only its public
+    /// functions, so a private declaration's span can still select another module's binding.
+    fn collect_free_function_ownership_headers(&mut self, program: &Program, origin: Option<&SymbolOrigin>) {
         for declaration in &program.declarations {
             let Declaration::Function(function) = &declaration.node else {
                 continue;
@@ -267,6 +361,13 @@ impl TypeChecker {
             let Some(identity) = binding.identity.clone() else {
                 continue;
             };
+            if origin.is_some_and(|origin| {
+                identity.origin != *origin
+                    || identity.declaration_span != declaration.span
+                    || identity.declaration_name != function.name
+            }) {
+                continue;
+            }
             let parameters: Vec<_> = binding.params.iter().map(|parameter| parameter.ty.clone()).collect();
             let signature = Signature {
                 parameters: &function.params,
@@ -286,9 +387,19 @@ impl TypeChecker {
         }
     }
 
-    /// Collect dependency method contracts while that module's canonical names and aliases are still in scope.
-    /// The exact member identity check excludes declarations omitted from the imported public interface.
-    pub(in crate::typechecker) fn collect_imported_method_ownership_headers(&mut self, program: &Program) {
+    /// Whether a declaration belongs to the module being checked, rather than to a module or Loaf it imports.
+    fn declared_in_current_module(&self, identity: &CanonicalSymbolId) -> bool {
+        identity.origin
+            == self
+                .symbols
+                .member_declaration_identity("", SemanticSourceTargetKind::Method, Span::new(0, 0))
+                .origin
+    }
+
+    /// Collect dependency function and method contracts while that module's canonical names and aliases are still in
+    /// scope, so a call from another module projects the same value types as a call in the declaring module. The
+    /// exact identity check excludes declarations omitted from the imported public interface.
+    pub(in crate::typechecker) fn collect_imported_ownership_headers(&mut self, program: &Program) {
         let origin = self
             .symbols
             .member_declaration_identity("", SemanticSourceTargetKind::Method, Span::new(0, 0))
@@ -297,13 +408,20 @@ impl TypeChecker {
             .declarations
             .ownership_contracts
             .retain(|identity, _| identity.origin != origin);
+        self.collect_constructor_defaults(program);
         self.collect_method_ownership_headers(program);
         self.inherit_trait_input_contracts(program);
-        self.dependency_method_input_contracts
+        self.collect_free_function_ownership_headers(program, Some(&origin));
+        self.dependency_input_contracts
             .retain(|identity, _| identity.origin != origin);
         for (identity, contract) in &self.type_info.declarations.ownership_contracts {
-            if identity.origin == origin && identity.kind == SemanticSourceTargetKind::Method {
-                self.dependency_method_input_contracts
+            if identity.origin == origin
+                && matches!(
+                    identity.kind,
+                    SemanticSourceTargetKind::Method | SemanticSourceTargetKind::Function
+                )
+            {
+                self.dependency_input_contracts
                     .insert(identity.clone(), contract.clone());
             }
         }

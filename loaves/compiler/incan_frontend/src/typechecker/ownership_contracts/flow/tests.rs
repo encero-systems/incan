@@ -51,6 +51,7 @@ fn graph(events: Vec<Event>, edges: Vec<Vec<usize>>, loans: Vec<Loan>) -> Graph 
         dependent_values: BTreeSet::new(),
         operations: BTreeMap::new(),
         owned_locals: BTreeMap::new(),
+        value_uses: BTreeMap::new(),
         invocations: BTreeMap::new(),
         closures: BTreeMap::new(),
         mutation: super::MutationBody::default(),

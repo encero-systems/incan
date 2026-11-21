@@ -24,6 +24,8 @@ impl CheckedInputBody<'_> {
             last: None,
             known: BTreeSet::new(),
             constrained: BTreeSet::new(),
+            fresh_loop_locals: BTreeSet::new(),
+            active_value_uses: BTreeSet::new(),
         };
         for (index, node) in self.graph.nodes.iter().enumerate() {
             if matches!(node.event, flow::Event::Access { .. }) {
@@ -101,6 +103,8 @@ struct SourceAccesses<'a, 'facts> {
     last: Option<usize>,
     known: BTreeSet<flow::Root>,
     constrained: BTreeSet<flow::Root>,
+    fresh_loop_locals: BTreeSet<incan_semantics_core::CanonicalSymbolId>,
+    active_value_uses: BTreeSet<HirSourceSpan>,
 }
 
 impl SourceAccesses<'_, '_> {
@@ -314,6 +318,8 @@ impl SourceAccesses<'_, '_> {
     /// an owned argument constrains its root and is consumed.
     fn invocation_arguments(
         &mut self,
+        invocation_span: HirSourceSpan,
+        receiver: Option<&Spanned<Expr>>,
         invocation: &flow::Invocation,
         arguments: &[CallArg],
     ) -> Result<(), &'static str> {
@@ -328,6 +334,15 @@ impl SourceAccesses<'_, '_> {
             {
                 let loans: Vec<_> = closure.loans.iter().map(|(_, id)| *id).collect();
                 self.closure_capture_accesses(value.span, &loans)?;
+            }
+            if argument.access == IncanInputAccess::Inferred
+                && matches!(value.node, Expr::Closure(..))
+                && receiver.is_some_and(|receiver| {
+                    self.proof
+                        .capture_free_result_map_err_callback(invocation_span, receiver, arguments)
+                })
+            {
+                continue;
             }
             let source = self.place(value)?;
             match argument.access {
@@ -351,7 +366,18 @@ impl SourceAccesses<'_, '_> {
     /// Visit source expressions according to the producer's actual evaluation policy. Borrowing a stored place
     /// evaluates its address, not its value; fresh borrowed arguments still evaluate their nested value normally.
     fn expression(&mut self, expression: &Spanned<Expr>, consume: bool) -> Result<(), &'static str> {
+        if self.proof.graph.value_uses.contains_key(&expression.span)
+            && !self.active_value_uses.contains(&expression.span)
+        {
+            return self.classified_value_use(expression);
+        }
         match &expression.node {
+            Expr::Ident(_) | Expr::Field(_, _)
+                if self
+                    .proof
+                    .facts
+                    .resolved_identity(expression.span)
+                    .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Const) => {}
             Expr::Field(_, _)
                 if self
                     .proof
@@ -368,6 +394,21 @@ impl SourceAccesses<'_, '_> {
             // `?` consumes its carrier, as the source flow evaluates it; a local still holding a carried call is read
             // through its loan instead, as a match on it is.
             Expr::Try(inner) => self.expression(inner, self.proof.carrier_loan(inner).is_none())?,
+            Expr::Slice(base, slice) => {
+                if self
+                    .proof
+                    .facts
+                    .calls
+                    .resolved_operator_calls
+                    .contains_key(&expression.span)
+                {
+                    return Err("source access coverage needs builtin slice selection");
+                }
+                self.expression(base, false)?;
+                for bound in [&slice.start, &slice.end, &slice.step].into_iter().flatten() {
+                    self.expression(bound, false)?;
+                }
+            }
             Expr::Binary(left, _, right) => {
                 self.expression(left, false)?;
                 self.expression(right, false)?;
@@ -384,7 +425,9 @@ impl SourceAccesses<'_, '_> {
                     let ListEntry::Element(value) = entry else {
                         return Err("source access cannot infer spread evaluation");
                     };
-                    self.expression(value, false)?;
+                    // Source admission may retain an exact field move for one transferable scalar-list element.
+                    // Replay that existing event; this coverage pass cannot create transfer authority.
+                    self.retained_source(value, false)?;
                 }
             }
             Expr::Tuple(elements) => {
@@ -410,6 +453,66 @@ impl SourceAccesses<'_, '_> {
             _ => return Err("source access coverage requires the supported expression profile"),
         }
         Ok(())
+    }
+
+    /// Consume one current-source classification through its exact retained event links. Call results recurse into
+    /// ordinary invocation replay while stored observations must claim exactly the classified access nodes.
+    fn classified_value_use(&mut self, expression: &Spanned<Expr>) -> Result<(), &'static str> {
+        let value_use = self
+            .proof
+            .graph
+            .value_uses
+            .get(&expression.span)
+            .ok_or("source classification is absent")?
+            .clone();
+        if self.proof.facts.expr_type(expression.span) != Some(&value_use.value_type) {
+            return Err("source classification differs from its checked value type");
+        }
+        self.active_value_uses.insert(expression.span);
+        let result = match value_use.kind {
+            flow::ValueUseKind::Read | flow::ValueUseKind::Move => {
+                // An indexed place evaluates its subscript before the retained access to the element.
+                if matches!(expression.node, Expr::Index(..)) {
+                    self.place_evaluation(expression)?;
+                }
+                let expected = if value_use.kind == flow::ValueUseKind::Read {
+                    flow::Access::Read
+                } else {
+                    flow::Access::Move
+                };
+                for classified in &value_use.accesses {
+                    let index = classified.node;
+                    let node = self
+                        .proof
+                        .graph
+                        .nodes
+                        .get(index)
+                        .ok_or("source classification access is outside callable")?;
+                    if self.claimed.contains(&index)
+                        || self.last.is_some_and(|previous| previous >= index)
+                        || !matches!(&node.event,
+                            flow::Event::Access { place, access, through }
+                                if place == &classified.place
+                                    && *access == expected
+                                    && *access == classified.access
+                                    && *through == classified.through)
+                    {
+                        return Err("source classification access is missing, reused or reordered");
+                    }
+                    self.claimed.insert(index);
+                    self.last = Some(index);
+                }
+                Ok(())
+            }
+            flow::ValueUseKind::CallResult => {
+                let evaluated =
+                    super::super::source::call_results::direct_call_field_projection(self.proof.facts, expression)
+                        .unwrap_or(expression);
+                self.expression(evaluated, false)
+            }
+        };
+        self.active_value_uses.remove(&expression.span);
+        result
     }
 
     /// Validate a generator's eager source; its later clauses execute only when a terminal reader advances it.
@@ -452,6 +555,10 @@ impl SourceAccesses<'_, '_> {
                 }
                 self.expression(value, transfer)?;
             }
+            return Ok(());
+        }
+        if let Some(receiver) = super::super::builtins::builtin_str_encode_receiver(self.proof.facts, expression) {
+            self.expression(receiver, false)?;
             return Ok(());
         }
         if let Some(iterator) = super::super::builtins::retained_iterator_method(self.proof.facts, expression.span) {
@@ -502,13 +609,13 @@ impl SourceAccesses<'_, '_> {
             .ok_or("source access method call has no checked invocation")?;
         if invocation.receiver_owned {
             self.expression(receiver, true)?;
-            return self.invocation_arguments(invocation, arguments);
+            return self.invocation_arguments(expression.span, Some(receiver), invocation, arguments);
         }
         if invocation.receiver.is_none() {
-            return self.invocation_arguments(invocation, arguments);
+            return self.invocation_arguments(expression.span, Some(receiver), invocation, arguments);
         }
         self.fresh_method_receiver(receiver, invocation)?;
-        self.invocation_arguments(invocation, arguments)
+        self.invocation_arguments(expression.span, Some(receiver), invocation, arguments)
     }
 
     /// Claim a builtin access over a computed receiver only when the graph ties it to that exact temporary or to a
@@ -611,7 +718,7 @@ impl SourceAccesses<'_, '_> {
             return self.closure_capture_accesses(expression.span, &loans);
         }
         if let Some(invocation) = self.proof.graph.invocations.get(&expression.span) {
-            return self.invocation_arguments(invocation, arguments);
+            return self.invocation_arguments(expression.span, None, invocation, arguments);
         }
         let carrier = super::super::builtins::carrier_constructor(self.proof.facts, callee).is_some();
         let construction = self.proof.facts.constructor_field_binding(expression.span).is_some();
@@ -619,24 +726,93 @@ impl SourceAccesses<'_, '_> {
             let (CallArg::Positional(value) | CallArg::Named(_, value)) = argument else {
                 return Err("source access needs fixed call arguments");
             };
-            let consume = carrier
-                || (construction
-                    && self.place(value)?.is_some_and(|(place, through)| {
-                        through.is_none()
-                            && self
-                                .proof
-                                .graph
-                                .permissions
-                                .get(&place.root)
-                                .is_some_and(|permission| permission.transferable)
-                    })
-                    && !self.copy_value(value)?);
+            if carrier {
+                self.retained_source(value, false)?;
+                continue;
+            }
+            let consume = construction
+                && self.place(value)?.is_some_and(|(place, through)| {
+                    through.is_none()
+                        && self
+                            .proof
+                            .graph
+                            .permissions
+                            .get(&place.root)
+                            .is_some_and(|permission| permission.transferable)
+                })
+                && !self.copy_value(value)?
+                && !self.fresh_loop_constructor_materialization(value)?;
             if consume && let Some((place, _)) = self.place(value)? {
                 self.constrained.insert(place.root);
             }
             self.expression(value, consume)?;
         }
         Ok(())
+    }
+
+    /// Whether a constructor reads an independently materialized builtin index or slice from the current loop item.
+    fn fresh_loop_constructor_materialization(&mut self, value: &Spanned<Expr>) -> Result<bool, &'static str> {
+        let (base, cloneable_result) = match &value.node {
+            Expr::Index(base, _) => (
+                base.as_ref(),
+                matches!(
+                    self.proof.facts.expr_type(value.span),
+                    Some(
+                        crate::symbols::ResolvedType::Str
+                            | crate::symbols::ResolvedType::Bytes
+                            | crate::symbols::ResolvedType::FrozenStr
+                            | crate::symbols::ResolvedType::FrozenBytes
+                    )
+                ),
+            ),
+            Expr::Slice(base, _) => {
+                let result = self.proof.facts.expr_type(value.span);
+                let cloneable = matches!(result,
+                Some(crate::symbols::ResolvedType::Generic(name, arguments))
+                    if incan_lang::lang::types::collections::from_str(name)
+                        == Some(incan_lang::lang::types::collections::CollectionTypeId::List)
+                        && arguments.len() == 1
+                        && matches!(arguments.first(), Some(
+                            crate::symbols::ResolvedType::Int
+                                | crate::symbols::ResolvedType::Float
+                                | crate::symbols::ResolvedType::Numeric(_)
+                                | crate::symbols::ResolvedType::Bool
+                                | crate::symbols::ResolvedType::Str
+                                | crate::symbols::ResolvedType::Bytes
+                                | crate::symbols::ResolvedType::FrozenStr
+                                | crate::symbols::ResolvedType::FrozenBytes
+                                | crate::symbols::ResolvedType::Unit
+                        )));
+                (
+                    base.as_ref(),
+                    cloneable && self.proof.facts.expr_type(base.span) == result,
+                )
+            }
+            _ => return Ok(false),
+        };
+        if self.proof.facts.calls.resolved_operator_calls.contains_key(&value.span) || !cloneable_result {
+            return Ok(false);
+        }
+        let builtin_list = match &value.node {
+            Expr::Index(_, _) => {
+                let element = self.proof.facts.expr_type(value.span);
+                matches!(self.proof.facts.expr_type(base.span),
+                    Some(crate::symbols::ResolvedType::Generic(name, arguments))
+                        if incan_lang::lang::types::collections::from_str(name)
+                            == Some(incan_lang::lang::types::collections::CollectionTypeId::List)
+                            && arguments.first() == element
+                            && arguments.len() == 1)
+            }
+            Expr::Slice(_, _) => true,
+            _ => false,
+        };
+        Ok(builtin_list
+            && self.place(base)?.is_some_and(|(place, through)| {
+                through.is_none()
+                    && place.projection.is_empty()
+                    && matches!(&place.root, flow::Root::Binding(identity)
+                        if self.fresh_loop_locals.contains(identity))
+            }))
     }
 
     /// Unpacking a call that carries a view in one tuple element evaluates the call; the view's name takes a borrow
@@ -1003,8 +1179,68 @@ impl SourceAccesses<'_, '_> {
     /// iterable reads it through the loop's own shared loan, created over that exact place at the iterable.
     fn for_loop(&mut self, loop_: &ForStmt) -> Result<(), &'static str> {
         self.for_iterable(&loop_.iter)?;
-        self.block(&loop_.body)?;
+        let locals = self.enter_fresh_loop_pattern(&loop_.pattern)?;
+        let result = self.block(&loop_.body);
+        for local in locals {
+            self.fresh_loop_locals.remove(&local);
+        }
+        result?;
         Ok(())
+    }
+
+    /// Claim the producer-retained replacement that initializes each canonical loop-pattern local on every poll.
+    /// Statement loops and eager comprehensions share this exact boundary so neither can leave a valid access event
+    /// unclaimed or silently infer authority from the authored pattern alone.
+    fn enter_fresh_loop_pattern(
+        &mut self,
+        pattern: &Spanned<crate::ast::Pattern>,
+    ) -> Result<Vec<incan_semantics_core::CanonicalSymbolId>, &'static str> {
+        let locals = self.fresh_loop_pattern_bindings(pattern);
+        self.fresh_loop_locals.extend(locals.iter().cloned());
+        for local in &locals {
+            let place = flow::Place {
+                root: flow::Root::Binding(local.clone()),
+                projection: Vec::new(),
+            };
+            self.known.insert(place.root.clone());
+            self.access(pattern.span, &place, None, flow::Access::Replace)?;
+        }
+        Ok(locals)
+    }
+
+    fn fresh_loop_pattern_bindings(
+        &self,
+        pattern: &Spanned<crate::ast::Pattern>,
+    ) -> Vec<incan_semantics_core::CanonicalSymbolId> {
+        let mut bindings = Vec::new();
+        self.collect_fresh_loop_pattern_bindings(pattern, &mut bindings);
+        bindings
+    }
+
+    fn collect_fresh_loop_pattern_bindings(
+        &self,
+        pattern: &Spanned<crate::ast::Pattern>,
+        bindings: &mut Vec<incan_semantics_core::CanonicalSymbolId>,
+    ) {
+        match &pattern.node {
+            crate::ast::Pattern::Binding(name) | crate::ast::Pattern::MutBinding(name) => {
+                if let Some(identity) = self
+                    .proof
+                    .facts
+                    .resolved_write_identity(pattern.span, name)
+                    .filter(|identity| identity.kind == SemanticSourceTargetKind::Local)
+                {
+                    bindings.push(identity.clone());
+                }
+            }
+            crate::ast::Pattern::Tuple(items) => {
+                for item in items {
+                    self.collect_fresh_loop_pattern_bindings(item, bindings);
+                }
+            }
+            crate::ast::Pattern::Group(inner) => self.collect_fresh_loop_pattern_bindings(inner, bindings),
+            _ => {}
+        }
     }
 
     /// Validate an eager comprehension's nested source loops, filters and produced values in evaluation order.
@@ -1013,16 +1249,27 @@ impl SourceAccesses<'_, '_> {
         clauses: &[crate::ast::ComprehensionClause],
         output: &[&Spanned<Expr>],
     ) -> Result<(), &'static str> {
-        for clause in clauses {
-            match clause {
-                crate::ast::ComprehensionClause::For { iter, .. } => self.for_iterable(iter)?,
-                crate::ast::ComprehensionClause::If(condition) => self.expression(condition, false)?,
+        let Some((clause, remaining)) = clauses.split_first() else {
+            for value in output {
+                self.expression(value, false)?;
+            }
+            return Ok(());
+        };
+        match clause {
+            crate::ast::ComprehensionClause::For { pattern, iter } => {
+                self.for_iterable(iter)?;
+                let locals = self.enter_fresh_loop_pattern(pattern)?;
+                let result = self.comprehension(remaining, output);
+                for local in locals {
+                    self.fresh_loop_locals.remove(&local);
+                }
+                result
+            }
+            crate::ast::ComprehensionClause::If(condition) => {
+                self.expression(condition, false)?;
+                self.comprehension(remaining, output)
             }
         }
-        for value in output {
-            self.expression(value, false)?;
-        }
-        Ok(())
     }
 
     /// Validate one eager-loop iterable evaluation and its retained poll without inferring either access.

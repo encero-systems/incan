@@ -1,0 +1,12 @@
+# behavior: A native method reads through a shared text input (RFC 164).
+# pending: INCAN-T0123 refuses the body: "call has no selected explicit input access facts" at the native method call.
+# expect-stdout:
+#   3
+
+def width(value: Borrowed[str]) -> int:
+    """A native method read through a shared text input."""
+    return int(value.len())
+
+
+def main() -> None:
+    println(width("abc"))

@@ -7,6 +7,7 @@ use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use incan_lang::lang::surface::iterator_methods::IteratorMethodId;
 use incan_lang::lang::surface::option_methods::OptionMethodId;
 use incan_lang::lang::surface::set_methods::SetMethodId;
+use incan_lang::lang::surface::string_methods::{self, StringMethodId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_semantics_core::SymbolOrigin;
 
@@ -108,7 +109,7 @@ pub(crate) fn carried_view_binding(pattern: &Spanned<Pattern>, payload: usize) -
         return None;
     };
     match &payload.node {
-        Pattern::Binding(binding) => Some((binding.as_str(), payload.span)),
+        Pattern::Binding(binding) | Pattern::MutBinding(binding) => Some((binding.as_str(), payload.span)),
         _ => None,
     }
 }
@@ -127,6 +128,33 @@ pub(super) fn builtin_place_method_writes(facts: &TypeCheckInfo, span: Span) -> 
         }
         _ => None,
     }
+}
+
+/// Return the receiver of the exact zero-argument runtime `str.encode()` builtin.
+///
+/// The checked operation, canonical builtin member and both endpoint types are all authority. A frozen string,
+/// source method with the same spelling, supplied codec label or subsequently changed fact stays on its existing
+/// call path instead of acquiring this source-less builtin operation route.
+pub(super) fn builtin_str_encode_receiver<'a>(
+    facts: &TypeCheckInfo,
+    expression: &'a Spanned<Expr>,
+) -> Option<&'a Spanned<Expr>> {
+    let Expr::MethodCall(receiver, method, type_args, arguments) = &expression.node else {
+        return None;
+    };
+    let operation = BuiltinMethodId::Str(StringMethodId::Encode);
+    (method == string_methods::as_str(StringMethodId::Encode)
+        && type_args.is_empty()
+        && arguments.is_empty()
+        && facts.resolved_builtin_method_call(expression.span) == Some(operation)
+        && facts.resolved_identity(expression.span)
+            == Some(&crate::symbols::canonical_builtin_member_identity(
+                operation.owner(),
+                operation.member(),
+            ))
+        && facts.expr_type(receiver.span) == Some(&ResolvedType::Str)
+        && facts.expr_type(expression.span) == Some(&ResolvedType::Bytes))
+    .then_some(receiver)
 }
 
 /// Return the receiver of the compiler-selected `bytes.as_slice()` view. The retained Body IR result fact proves this
