@@ -47,8 +47,10 @@ from pub::internal_models import (
 from pub::internal_models.checker_records import CHECKER_PROFILE
 from pub::internal_models.namespace_references import decode_namespace_references, namespace_reference_filename
 from compiler_graph_records import (
+    EditCutoff,
     OutputSlots,
     PublishedEvaluation,
+    edit_cutoff,
     publish_evaluation,
     reusable_evaluation,
     reusable_family_records,
@@ -330,6 +332,50 @@ pub def test_shared_family_witness_opens_each_selection_once() -> Result[None, s
     invalid = reusable_family_records(changed, "local", "profile", Some(OutputSlots(origin="package",
         included=Some(["shared-consumer-a", "shared-consumer-b", "shared-consumer-c"]))))?
     assert len(invalid) == 0
+    return Ok(None)
+
+
+pub def test_an_edit_validates_only_the_readers_of_what_it_changed() -> Result[None, str]:
+    """
+    An edit's cutoff names the evaluations that read a record it changed, directly or through another evaluation, and
+    only those read their witnesses back: an owner the edit leaves alone is reused without reading its input. An edit
+    that changes the input an unchanged owner read still validates, and refuses, that owner.
+    """
+    original = store_snapshot(memory_root()).map_err((e) => e.message())?
+    edited_input = request("cutoff-edited-input", RecordSelection.Field("value"))
+    kept_input = request("cutoff-kept-input", RecordSelection.Field("value"))
+    edited_key = encode_record_key(edited_input.key)?
+    kept_key = encode_record_key(kept_input.key)?
+    start = commit(put(put(begin(original), edited_key, b"edited"), kept_key, b"kept")).map_err((e) => e.message())?
+    owner = publish_fixture(start, "cutoff-edited-owner", edited_input)?
+    reader = publish_fixture(owner.snapshot, "cutoff-edited-reader", record_request(key("cutoff-edited-owner")))?
+    kept = publish_fixture(reader.snapshot, "cutoff-kept-owner", kept_input)?
+    graph = kept.snapshot
+    owners = ["cutoff-edited-owner", "cutoff-edited-reader", "cutoff-kept-owner"]
+    slots = Some(OutputSlots(origin="package", included=Some(owners)))
+
+    cutoff = edit_cutoff(graph, [edited_input.key], ["profile"])?
+    assert cutoff.active and len(cutoff.stale) == 2, f"the edit named {len(cutoff.stale)} stale evaluations"
+    assert cutoff.revalidates(encode_record_key(key("cutoff-edited-owner"))?)
+    assert cutoff.revalidates(encode_record_key(key("cutoff-edited-reader"))?)
+    assert not cutoff.revalidates(encode_record_key(key("cutoff-kept-owner"))?)
+    measure_frame_reads(true)
+    reused = reusable_family_records(graph, "local", "profile", slots, cutoff=cutoff)?
+    observed = finish_frame_reads()
+    assert len(reused) == 3
+    assert sum([r.reads for r in observed if r.key == kept_key]) == 0, "an owner the edit left alone read its input back"
+    assert sum([r.reads for r in observed if r.key == edited_key]) == 1, "the edited owner did not validate its input"
+    measure_frame_reads(true)
+    _ = reusable_family_records(graph, "local", "profile", slots)?
+    assert sum([r.reads for r in finish_frame_reads() if r.key == kept_key]) == 1, "without a cutoff every owner validates"
+
+    changed = commit(put(begin(graph), kept_key, b"changed")).map_err((e) => e.message())?
+    kept_cutoff = edit_cutoff(changed, [kept_input.key], ["profile"])?
+    assert len(kept_cutoff.stale) == 1 and kept_cutoff.revalidates(encode_record_key(key("cutoff-kept-owner"))?)
+    remaining = reusable_family_records(changed, "local", "profile", slots, cutoff=kept_cutoff)?
+    assert len(remaining) == 2 and "cutoff-kept-owner" not in [row.key.identity for row in remaining]
+    assert reusable_evaluation(changed, key("cutoff-kept-owner"), "profile", kept_cutoff)? is None
+    assert not EditCutoff().active and EditCutoff().revalidates("any")
     return Ok(None)
 
 
