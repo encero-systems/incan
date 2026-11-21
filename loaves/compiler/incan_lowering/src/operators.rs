@@ -17,9 +17,9 @@ use crate::collections::is_collection;
 use crate::decimal_plan::decimal_comparison;
 use crate::element_borrows::shared_element_place;
 use crate::element_places::is_element_place;
+use crate::enum_display::native_enum_owner;
 use crate::enums::{unit_variant, validate_unit_comparison, validate_unit_ordering};
 use crate::equality::{emit_collection_equality, equality_shape};
-use crate::formatting::native_enum_owner;
 use crate::frame::{Builder, literal, place_type, read_place, temporary, terminate_call, value_type};
 use crate::frozen_equality::compare_frozen;
 use crate::frozen_list_equality::{frozen_list_equality, supports_frozen_list_equality};
@@ -39,6 +39,7 @@ use crate::sequence_builtins::source_operand_type;
 use crate::statements::is_text_or_nominal;
 use crate::strings::emit_text_helper;
 use crate::text_ownership::drop_borrowed_text_temporaries;
+use crate::value_enums::value_variant;
 
 /// The plan type an operand carries: its local's declared type, or its literal's type.
 pub fn operand_type(builder: &Builder, operand: &Operand) -> Result<PlanType, String> {
@@ -181,7 +182,10 @@ pub fn scalar_rvalue(
         Rvalue::IsInstance(_) => Err(untranslated("carrier_operands::lower_union_isinstance")),
         Rvalue::Aggregate(kind, elements) => checked_aggregate(module, builder, kind, elements, expected, span),
         Rvalue::Dict(_) => Err("unsupported Body IR Dict".into()),
-        Rvalue::ValueEnumVariant(_) => Err(untranslated("value_enums::value_variant")),
+        Rvalue::ValueEnumVariant(target) => {
+            let (owner, variant) = value_variant(builder.enums(), builder.value_enums(), target)?;
+            Ok(RvalueKind::Enum(owner as i64, variant as i64, Vec::new()))
+        }
         Rvalue::FieldlessEnumVariant(target) => {
             let (owner, variant) = unit_variant(builder.enums(), target)?;
             Ok(RvalueKind::Enum(owner as i64, variant as i64, Vec::new()))

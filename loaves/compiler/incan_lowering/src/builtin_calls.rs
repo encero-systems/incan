@@ -12,13 +12,13 @@ use crate::builtins::{emit_boolean_operator, scalar_builtin};
 use crate::checked_values::scalar_operand;
 use crate::checked_values::scalar_place;
 use crate::decls::library_enum_item;
-use crate::element_places::{element_place_type, is_element_place};
 use crate::formatting::display_operand;
 use crate::frame::{
     Builder, drop_owned, external_call, forget_owned, literal, place_type, read_place, temporary, terminate_call,
     value_type,
 };
 use crate::hashed_collections::collection_contains;
+use crate::json_builtins::lower_model_json_builtin;
 use crate::list_methods::{argument_value, call_destination, lower_list_builtin, lower_list_helper};
 use crate::list_values::value_operand;
 use crate::numerics::{float_conversion, integer_conversion};
@@ -26,7 +26,10 @@ use crate::numerics::{has_sized_numeric, numeric_carrier, numeric_name};
 use crate::operand_borrows::{borrow_str_operand, lower_text_helper};
 use crate::operators::scalar_operator_operand;
 use crate::pending::untranslated;
-use crate::sequence_builtins::{lower_sequence_builtin, lower_truth_builtin, source_operand_type};
+use crate::sequence_builtins::{
+    lower_join_helper, lower_list_concat, lower_list_repeat, lower_sequence_builtin, lower_split_helper,
+    lower_truth_builtin, source_operand_type,
+};
 use crate::strings::text_helper;
 use crate::text_plan::{format_parts, owned_literal};
 use incan_semantics_core::body_ir::Operand as SourceOperand;
@@ -176,7 +179,7 @@ pub fn lower_builtin(
         BuiltinFnId::Zip => Err(untranslated("builtin_calls::lower_zip_builtin")),
         BuiltinFnId::Enumerate => Err(untranslated("builtin_calls::lower_enumerate_builtin")),
         BuiltinFnId::Len => lower_list_builtin(builder, arguments, destination, span),
-        BuiltinFnId::JsonStringify => Err(untranslated("builtin_calls::lower_model_json_builtin")),
+        BuiltinFnId::JsonStringify => lower_model_json_builtin(builder, arguments, destination, span),
         BuiltinFnId::Range => Err(untranslated("builtin_calls::lower_range_builtin")),
         _ => Err(format!("unsupported Body IR builtin {builtin:?}")),
     }
@@ -437,11 +440,11 @@ pub fn lower_runtime_helper(
         HelperOp::SetNotContains | HelperOp::DictNotContainsKey => {
             return collection_contains(builder, true, arguments, destination, span);
         }
-        HelperOp::StrSplit | HelperOp::StrJoin => {
-            return Err(untranslated("sequence_builtins::split and join helpers"));
-        }
-        HelperOp::ListConcat | HelperOp::ListRepeat | HelperOp::RangeListFill => {
-            return Err(untranslated("sequence_builtins::list concat and repeat helpers"));
+        HelperOp::StrSplit => return lower_split_helper(builder, arguments, destination, span),
+        HelperOp::StrJoin => return lower_join_helper(builder, arguments, destination, span),
+        HelperOp::ListConcat => return lower_list_concat(builder, arguments, destination, span),
+        HelperOp::ListRepeat | HelperOp::RangeListFill => {
+            return lower_list_repeat(builder, arguments, destination, span);
         }
         HelperOp::ListContains => return lower_list_helper(builder, false, arguments, destination, span),
         HelperOp::ListNotContains => return lower_list_helper(builder, true, arguments, destination, span),

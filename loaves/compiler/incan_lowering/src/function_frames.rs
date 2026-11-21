@@ -32,7 +32,6 @@ use crate::list_iteration::frozen_list_snapshot_type;
 use crate::lists::{list_iterator_locals, list_parameter_type, taking_iterator_locals};
 use crate::native_type_identity::ConstructorIndex;
 use crate::pair_generators::{pair_generator_locals, pair_generator_type};
-use crate::pending::untranslated;
 use crate::program_context::ProgramContext;
 use crate::redo_counts::record_lowering;
 use crate::result_requirements::validate_result_requirements;

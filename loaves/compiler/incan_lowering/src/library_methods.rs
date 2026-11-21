@@ -19,6 +19,7 @@ use crate::derived_methods::{
 };
 use crate::element_places::is_element_place;
 use crate::frame::{Builder, place_type, read_place, temporary};
+use crate::json_builtins::lower_model_json_builtin;
 use crate::layout_types::{native_source_type, shared_receiver_type};
 use crate::list_methods::call_destination;
 use crate::method_calls::{is_json_serialize_method, receiver_fills_slot, receiver_method_identity};
@@ -376,7 +377,8 @@ pub fn lower_standard_slot(
         return Ok(false);
     }
     if json {
-        return Err(untranslated("model_values::serialize_model_operand"));
+        lower_model_json_builtin(builder, arguments, destination, span)?;
+        return Ok(true);
     }
     if is_derived_clone(target) {
         lower_derived_clone(builder, arguments, destination, span)?;

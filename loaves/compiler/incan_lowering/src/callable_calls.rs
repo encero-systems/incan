@@ -25,12 +25,15 @@ use crate::frame::{
 use crate::generic_callables::owned_callable_slots;
 use crate::layout_types::native_source_type;
 use crate::list_methods::call_destination;
+use crate::model_values::{is_json_deserialize_method, lower_model_from_json};
 use crate::models::model_type;
 use crate::pending::untranslated;
 use crate::statements::is_nominal_type;
 use crate::string_conversion_contracts::conversion_trait;
 use crate::traits::{close_trait_dispatch_arguments, instantiate_type, is_lazy_method_body};
 use crate::type_parameters::{indexed_static_type_arguments, instantiate, request_instance, substitute};
+use crate::value_enum_methods::lower_value_enum_from_value;
+use crate::value_enums::value_enum_from_value_owner;
 
 /// Fill an environment-owning payload selected by the retained union declaration, preserving captured values.
 pub fn carrier_callable_operand(
@@ -109,6 +112,12 @@ pub fn lower_named_target(
     if let Some(step) = special_named_target(module, builder, target)? {
         return Err(untranslated(step));
     }
+    if is_json_deserialize_method(target) {
+        return lower_model_from_json(module, builder, target, arguments, destination, span);
+    }
+    if let Some(owner) = value_enum_from_value_owner(module, target)? {
+        return lower_value_enum_from_value(builder, owner, arguments, destination, span);
+    }
     let Some(identity) = &target.canonical else {
         return Err("unsupported Body IR builtin or unproven NamedCallableTarget".into());
     };
@@ -178,25 +187,11 @@ fn special_named_target(
     if method && identity.declaration_name == "default" && identity_in(identity, "std", "derives", "copying") {
         return Ok(Some("derived_defaults::lower_derived_default"));
     }
-    if method && identity.declaration_name == "from_json" && identity_in(identity, "std", "serde", "json") {
-        return Ok(Some("model_values::lower_model_from_json"));
-    }
     if let StringConversionContract::Selected(selection) = &module.string_conversion_contract
         && selection.method_identity == *identity
         && !conversion_trait(module)?.is_empty()
     {
         return Ok(Some("string_conversion::string_conversion_callee"));
-    }
-    if identity.declaration_name == "from_value"
-        && identity.namespace == SymbolNamespace::Member
-        && method
-        && module.value_enum_declarations.iter().any(|declaration| {
-            identity.origin == declaration.canonical.origin
-                && identity.scope_discriminant == declaration.canonical.scope_discriminant
-                && identity.declaration_span == declaration.canonical.declaration_span
-        })
-    {
-        return Ok(Some("value_enums::lower_value_enum_from_value"));
     }
     Ok(None)
 }

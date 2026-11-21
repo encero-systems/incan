@@ -14,10 +14,12 @@ use crate::checked_values::scalar_place;
 use crate::collections::{is_collection, is_owned_collection};
 use crate::decls::library_enum_item;
 use crate::element_places::{element_place_type, is_element_place};
+use crate::enum_display::{display_enum_operand, native_enum_owner, native_enum_text};
 use crate::frame::{Builder, drop_owned, forget_owned, place_type, read_place, temporary, terminate_call, value_type};
 use crate::list_values::{element_read, value_operand};
 use crate::lists::{is_list, is_owned_list};
 use crate::model_construction::lower_string_field_assignment;
+use crate::model_values::{debug_model_operand, display_model_operand};
 use crate::numerics::{has_sized_numeric, numeric_carrier, numeric_name};
 use crate::options::format_carrier;
 use crate::pending::untranslated;
@@ -80,12 +82,12 @@ fn debug_operand(builder: &mut Builder, value: &SourceOperand, span: &SourceSpan
         if is_element_place(builder, &read.place)? {
             // An indexed model, including an opaque native one, materializes once for its retained Debug call.
             if let PlanType::Model(..) = element_place_type(builder, &read.place)? {
-                return Err(untranslated("model_values::debug_model_operand"));
+                return debug_model_operand(builder, value, span);
             }
         } else if read.place.global().is_none() {
             let place = scalar_place(builder, &read.place, span)?;
             match place_type(&builder.locals, &place) {
-                PlanType::Model(..) => return Err(untranslated("model_values::debug_model_operand")),
+                PlanType::Model(..) => return debug_model_operand(builder, value, span),
                 PlanType::Enum(..) => return Err(untranslated("formatting::debug_enum_operand")),
                 PlanType::ValidationError | PlanType::ValidationErrorRef => {
                     return Err(untranslated("validation_errors::validation_error_reference"));
@@ -152,7 +154,9 @@ fn display_value_operand(
     span: &SourceSpan,
     type_parameter: bool,
 ) -> Result<Place, String> {
-    display_model_operand(builder, value, span)?;
+    if let Some(text) = display_model_operand(builder, value, span)? {
+        return Ok(text);
+    }
     if let Some(text) = display_enum_operand(builder, value, span)? {
         return Ok(text);
     }
@@ -216,105 +220,6 @@ fn literal_text(value: &SourceConstant) -> Option<&str> {
         SourceConstant::Str(text) | SourceConstant::FrozenStr(text) => Some(text),
         _ => None,
     }
-}
-
-/// Prefer a source carrier's checked string method; any model display awaits the model value lowering.
-fn display_model_operand(builder: &mut Builder, value: &SourceOperand, span: &SourceSpan) -> Result<(), String> {
-    let SourceOperand::Place(read) = value else {
-        return Ok(());
-    };
-    if is_element_place(builder, &read.place)? {
-        if let PlanType::Model(..) = element_place_type(builder, &read.place)? {
-            return Err(untranslated("model_values::display_model_operand"));
-        }
-        return Ok(());
-    }
-    if read.place.local_id().is_none() {
-        return Ok(());
-    }
-    let place = scalar_place(builder, &read.place, span)?;
-    if let PlanType::Model(..) = place_type(&builder.locals, &place) {
-        return Err(untranslated("model_values::display_model_operand"));
-    }
-    Ok(())
-}
-
-/// Use native Display for foreign layouts and retained derived Display for whole source enums.
-fn display_enum_operand(
-    builder: &mut Builder,
-    value: &SourceOperand,
-    span: &SourceSpan,
-) -> Result<Option<Place>, String> {
-    if let Some(text) = native_enum_text(builder, value, false, span)? {
-        return Ok(Some(text));
-    }
-    let SourceOperand::Place(read) = value else {
-        return Ok(None);
-    };
-    if !read.place.projection.is_empty() || read.place.local_id().is_none() {
-        return Ok(None);
-    }
-    let place = scalar_place(builder, &read.place, span)?;
-    if let PlanType::Enum(owner, _) = place_type(&builder.locals, &place) {
-        let Some(declaration) = builder.enums().get(owner as usize) else {
-            return Ok(None);
-        };
-        if !library_enum_item(declaration).is_empty() {
-            return Err(untranslated("enum_display::enum_reference"));
-        }
-        if !declaration.derives.iter().any(|derive| derive == "Display") {
-            return Ok(None);
-        }
-        return Err(untranslated("enum_display::borrowed_enum_debug"));
-    }
-    Ok(None)
-}
-
-/// Borrow an exact native enum local or structural field for Rust Display or Debug; trait validation stays in rustc.
-fn native_enum_text(
-    builder: &mut Builder,
-    value: &SourceOperand,
-    debug: bool,
-    span: &SourceSpan,
-) -> Result<Option<Place>, String> {
-    let SourceOperand::Place(read) = value else {
-        return Ok(None);
-    };
-    if read.place.local_id().is_none() || is_element_place(builder, &read.place)? {
-        return Ok(None);
-    }
-    let place = scalar_place(builder, &read.place, span)?;
-    match place_type(&builder.locals, &place) {
-        PlanType::Enum(owner, _) => {
-            if !native_enum_owner(builder, owner) {
-                return Ok(None);
-            }
-            Err(untranslated("enum_display::enum_reference"))
-        }
-        PlanType::EnumRef(owner, _) => {
-            if !native_enum_owner(builder, owner) {
-                return Ok(None);
-            }
-            Ok(Some(native_format_text(
-                builder,
-                read_place(place, false, span),
-                debug,
-                span,
-            )?))
-        }
-        _ => Ok(None),
-    }
-}
-
-/// Require an authenticated Rust enum layout, independently of compiled source enum aliases and their derives.
-pub fn native_enum_owner(builder: &Builder, owner: i64) -> bool {
-    let Some(declaration) = builder.enums().get(owner as usize) else {
-        return false;
-    };
-    if owner < 0 || library_enum_item(declaration).is_empty() {
-        return false;
-    }
-    matches!(declaration.canonical.origin, SymbolOrigin::RustCrate(_))
 }
 
 /// Find the value enum whose retained layout is source enum `index`, or -1 for any other enum.
