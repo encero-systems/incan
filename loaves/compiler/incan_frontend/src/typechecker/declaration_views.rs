@@ -82,6 +82,11 @@ impl<'a> DeclarationView<'a> {
         self.checker.type_info.declarations.method_bindings_by_span.get(&span)
     }
 
+    /// Read the checked signature for this exact free function or nominal method.
+    pub(crate) fn callable(self, span: Span) -> Option<&'a FunctionBindingInfo> {
+        self.function(span).or_else(|| self.method(span))
+    }
+
     /// Read a source alias's checked arguments, target and nominal provenance from its declaring authority.
     pub fn alias(self, name: &str) -> Option<&'a TypeAliasTarget> {
         self.checker.type_aliases.get(name)

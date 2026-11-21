@@ -39,10 +39,9 @@ impl TypeChecker {
         // A compiler-owned trait can resolve to an empty symbol-table stub, which shadows the real contract and leaves
         // every derive-provided method unresolvable; the standard package's declaration of the trait carries it.
         if filtered.is_empty()
-            && let Some(full_trait) = self.standard_trait(adopted_trait)
-            && let Some(info) = full_trait.methods.get(method)
+            && let Some(info) = self.standard_trait_method(adopted_trait, method)
         {
-            return Some(info.clone());
+            return Some(info);
         }
         match filtered.as_slice() {
             [] => None,

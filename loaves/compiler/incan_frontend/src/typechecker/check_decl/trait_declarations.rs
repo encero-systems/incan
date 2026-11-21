@@ -81,7 +81,7 @@ impl TypeChecker {
 
     /// Validate a trait declaration, including required fields, abstract properties, defaults, and self-typed method
     /// bodies.
-    pub(super) fn check_trait(&mut self, tr: &TraitDecl) {
+    pub(super) fn check_trait(&mut self, tr: &TraitDecl, program: Option<&Program>) {
         self.symbols.enter_scope(ScopeKind::Trait);
 
         // Trait API annotations are collected before source names can be validated. Re-establish the trait's generic
@@ -152,7 +152,7 @@ impl TypeChecker {
             .filter(|method| self.member_binding_is_active(method.span))
             .collect::<Vec<_>>();
         for method in active_trait_methods {
-            self.check_trait_method(&method.node, method.span, tr);
+            self.check_trait_method(&method.node, method.span, tr, program);
         }
         self.check_method_partials(&tr.name, &tr.method_partials);
         let active_trait_properties = tr
@@ -180,7 +180,13 @@ impl TypeChecker {
 
     /// Prepare one trait method's metadata/defaults, consume its body once, and retain post-body decoration
     /// at the original traversal point. Abstract methods validate their declaration without entering statements.
-    pub(super) fn check_trait_method(&mut self, method: &MethodDecl, span: Span, tr: &TraitDecl) {
+    pub(super) fn check_trait_method(
+        &mut self,
+        method: &MethodDecl,
+        span: Span,
+        tr: &TraitDecl,
+        program: Option<&Program>,
+    ) {
         let index = self.body_checks.len();
         let (prepared, previous_seen) = self.check_declaration_owner(span, |checker| {
             checker.validate_decorators_allowing_user_defined(&method.decorators);
@@ -189,7 +195,7 @@ impl TypeChecker {
             let prepared = checker.prepare_method_declaration(method, span, ResolvedType::SelfType, &tr.type_params);
             (prepared, previous)
         });
-        self.check_prepared_method(method, span, prepared);
+        self.check_prepared_method(method, span, prepared, program);
         #[cfg(test)]
         if method.body.is_some() {
             self.observe_body_local(span);

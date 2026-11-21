@@ -11,7 +11,7 @@ impl TypeChecker {
         declaration: &Spanned<Declaration>,
     ) {
         let Declaration::Function(function) = &declaration.node else {
-            self.check_declaration(declaration);
+            self.check_declaration_in_program(declaration, Some(program));
             return;
         };
         self.record_check_work("declaration", "top_level", declaration.span);
@@ -28,6 +28,10 @@ impl TypeChecker {
     /// Dispatches to `check_model`, `check_class`, etc. Expects symbols to already be registered via
     /// [`collect_declaration`](Self::collect_declaration).
     pub fn check_declaration(&mut self, decl: &Spanned<Declaration>) {
+        self.check_declaration_in_program(decl, None);
+    }
+
+    fn check_declaration_in_program(&mut self, decl: &Spanned<Declaration>, program: Option<&Program>) {
         if !matches!(
             decl.node,
             Declaration::Import(_) | Declaration::Alias(_) | Declaration::Docstring(_)
@@ -42,11 +46,11 @@ impl TypeChecker {
             Declaration::Static(static_decl) => {
                 self.check_declaration_owner(decl.span, |checker| checker.check_static(static_decl, decl.span))
             }
-            Declaration::Model(model) => self.check_model(model, decl.span),
-            Declaration::Class(class) => self.check_class(class, decl.span),
+            Declaration::Model(model) => self.check_model(model, decl.span, program),
+            Declaration::Class(class) => self.check_class(class, decl.span, program),
             Declaration::Trait(tr) => {
                 self.validate_protected_type_param_bindings(&tr.type_params, decl.span);
-                self.check_trait(tr);
+                self.check_trait(tr, program);
             }
             Declaration::Alias(_) => {} // Alias targets are validated during collection.
             Declaration::Partial(partial) => self.check_partial_decl(partial),
@@ -56,12 +60,12 @@ impl TypeChecker {
             }
             Declaration::Newtype(nt) => {
                 self.validate_protected_type_param_bindings(&nt.type_params, decl.span);
-                self.check_newtype(nt);
+                self.check_newtype(nt, program);
                 self.record_declared_display_route(&nt.name, decl.span);
             }
             Declaration::Enum(en) => {
                 self.validate_protected_type_param_bindings(&en.type_params, decl.span);
-                self.check_enum(en);
+                self.check_enum(en, program);
                 self.record_declared_display_route(&en.name, decl.span);
             }
             Declaration::Function(func) => {
