@@ -7,7 +7,7 @@ from std.fs import Path
 from std.json import JsonValue
 from std.primitives.crumb.descriptions import Description
 from std.primitives.crumb.values import Value
-from pub::internal_models.crumb_rows import ModelField, model_description, required_value
+from pub::internal_models.crumb_rows import ModelField, field_value, model_description, required_value
 from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, integer as integer_field, items, number, text, tuple_items
 from files import json_text
 from json_fields import required_items, required_text, string_value
@@ -68,7 +68,7 @@ pub def encode_fact(fact: Fact, provenance: str) -> Result[bytes, str]:
         required_value(b"ident_", Value.Text(fact.identity)),
         required_value(b"kind__", Value.Text(fact.kind)),
         required_value(b"name__", Value.Text(fact.name)),
-        required_value(b"proven", Value.Text(provenance), false),
+        field_value(b"proven", Value.Text(provenance), false),
         required_value(b"reache", Value.List([Value.Text(identity) for identity in fact.reaches])),
     ])
 

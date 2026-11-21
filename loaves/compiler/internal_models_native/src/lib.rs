@@ -113,8 +113,8 @@ pub use compiler_records::{
     valid_stable_declaration_id,
 };
 pub use crumb_rows::{
-    ModelField, admit_rows, admit_rows_view, decode_rows, description_field, encode_rows, model_description,
-    operation_budget, required_value,
+    ModelField, admit_rows, admit_rows_view, decode_rows, description_field, encode_rows, field_value,
+    model_description, operation_budget, required_value,
 };
 pub use graph_crumb_fields::{
     KEY_TYPE, REQUEST_TYPE, admit_graph_row, decode_graph_field, decode_graph_row, encode_graph_row, graph_read_budget,
