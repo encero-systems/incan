@@ -4,7 +4,17 @@ from std.fs import Path
 from pub::incan_platform.store import Snapshot, Transaction, begin, commit, get, stage_put
 from pub::internal_models.records import RecordKey, encode_record_key
 from pub::internal_models.source_value_records import source_value
-from compiler_source_projection import SourceProjectionRecord, project_source, scope_member, scope_members, signature_record
+from compiler_source_projection import (
+    SourceProjectionRecord,
+    captured_source_key,
+    positioned_source_key,
+    project_source,
+    scope_member,
+    scope_members,
+    signature_record,
+)
+from core_process import executable
+from observation import observe
 from engine_capture import CapturedInput, InputRole
 from unit import UnitDescription, dependency_source_roots
 
@@ -45,15 +55,27 @@ pub def prepare_captured_source_inputs(
     mut prepared = transaction
     mut changed: list[RecordKey] = []
     mut positioned: Dict[str, bytes] = {}
+    engine = observe(Path(executable()?))?.stamp
     for input in inputs:
         if input.path.endswith(".incn") and input.role in [InputRole.Root, InputRole.Member, InputRole.Resolved]:
             if let Some(identity) = captured_source_identity(unit, input.path)?:
-                source = Path(input.path).read_text("utf-8", "strict").map_err((error) => error.message())?
                 mut declared: list[str] = []
                 mut active: Option[list[str]] = None
                 if identity[0] == source_origin(unit):
                     declared = unit.declared_features
                     active = Some(unit.active_features)
+                capture = SourceProjectionRecord(
+                    key=captured_source_key(identity[0], identity[1]),
+                    text=capture_marker(engine, input.digest, declared, active),
+                    start=0,
+                    end=0,
+                )
+                # A module captured with the bytes, features and engine its selected projection was made from projects
+                # to the same records: its positioned record is carried and nothing is projected again.
+                if carried_projection(selected, capture, identity, positioned)?:
+                    continue
+                stage_put(prepared, encode_record_key(capture.key)?, capture.encoded()?)
+                source = Path(input.path).read_text("utf-8", "strict").map_err((error) => error.message())?
                 projection = project_source(identity[0], identity[1], source, declared, active)?
                 doc_key = projection.documentation_key()
                 doc_slot = encode_record_key(doc_key)?
@@ -87,6 +109,36 @@ pub def prepare_captured_source_inputs(
                         if stage_changed_projection(selected, prepared, key, record, positioned)?:
                             changed.append(record.key)
     return Ok(PreparedSourceInputs(transaction=prepared, keys=changed, positioned=positioned))
+
+
+def capture_marker(engine: str, digest: str, declared: list[str], active: Option[list[str]]) -> str:
+    """Everything one module's projection is a function of, besides its logical path: its captured bytes' digest, its
+    feature selection and the engine that projects it."""
+    mut parts = ["incan.source-capture/1", engine, digest, "declared:" + ",".join(declared)]
+    match active:
+        Some(features) => parts.append("active:" + ",".join(features))
+        None => parts.append("active:none")
+    return "\n".join(parts)
+
+
+def carried_projection(
+    selected: Snapshot,
+    capture: SourceProjectionRecord,
+    identity: Tuple[str, str],
+    mut positioned: Dict[str, bytes],
+) -> Result[bool, str]:
+    """Carry a module's selected positioned record when its selected projection was made from this capture."""
+    match get(selected, encode_record_key(capture.key)?).map_err((error) => error.message())?:
+        None => return Ok(false)
+        Some(stored) =>
+            if source_value(capture.key, stored)? != capture.text.encode("utf-8"):
+                return Ok(false)
+    slot = encode_record_key(positioned_source_key(identity[0], identity[1]))?
+    match get(selected, slot).map_err((error) => error.message())?:
+        None => return Ok(false)
+        Some(value) =>
+            positioned[slot] = value
+            return Ok(true)
 
 
 def stage_census_members(selected: Snapshot, mut transaction: Transaction, census: &SourceProjectionRecord, current: &Dict[str, list[str]]) -> Result[list[RecordKey], str]:

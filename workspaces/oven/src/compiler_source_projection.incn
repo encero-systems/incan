@@ -693,6 +693,11 @@ def source_key(family: str, origin: str, path: str, facet: str) -> RecordKey:
     )
 
 
+pub def captured_source_key(origin: str, file: str) -> RecordKey:
+    """What one module's selected projection was made from: its captured bytes, features and projecting engine."""
+    return source_key("source-capture", origin, file, "module")
+
+
 pub def positioned_source_key(origin: str, file: str) -> RecordKey:
     """The positioned source projection recorded when an aggregate binds physical source geometry."""
     return source_key("source-positioned", origin, file, "module")
