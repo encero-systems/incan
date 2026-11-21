@@ -40,6 +40,7 @@ pub def retain_callable_products(unit: UnitDescription, toolchain: Toolchain) ->
         trace(f"{unit.package}: checked-source reuse refused for executable vocabulary or C headers")
         mut refused = unit
         refused.checked_context = None
+        refused.lowering_context = None
         refused.checked_products = None
         return Ok(refused)
     # 2. Profile flags never enter checked-source equivalence, but every semantic input does.
@@ -64,7 +65,11 @@ pub def retain_callable_products(unit: UnitDescription, toolchain: Toolchain) ->
     ledger.save()?
     # 3. Expanded nodes never enter scalar products; source bytes are checked by the item producer itself.
     mut selected = unit
-    context = fingerprint(parts)?
+    producer = fingerprint(parts)?
+    selected.lowering_context = Some(producer)
+    mut context = producer
+    if len(unit.declared_features) > 0 or len(unit.active_features) > 0:
+        context = fingerprint(["incan.oven.checked-features/1", producer, fingerprint(unit.declared_features)?, fingerprint(unit.active_features)?])?
     selected.checked_context = Some(context)
     selected.checked_products = Some(
         loaf_build_dir(unit.project_root, unit.package).joinpath(".products").joinpath(context).0,
@@ -99,6 +104,9 @@ def semantic_description(
     """Normalize native profile policy, authenticated Loaf locations and anchored native paths, keeping other fields."""
     mut fields = unit.to_json().expect_object().map_err((error) => error.message())?
     fields["profile"] = JsonValue.string("")
+    # Package features select declarations before checking. Guarded modules witness this selection in their graph.
+    fields["declared_features"] = JsonValue.array([])
+    fields["active_features"] = JsonValue.array([])
     fields["checked_context"] = JsonValue.null()
     fields["checked_products"] = JsonValue.null()
     mut loaves: list[JsonValue] = []

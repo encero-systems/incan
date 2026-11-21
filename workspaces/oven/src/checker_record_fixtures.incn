@@ -1,0 +1,12 @@
+"""Production-format checker records used by compiler graph tests."""
+
+from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily, CheckedRecord, encode_record
+
+const EMPTY_SEMANTIC_ROOT: str = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+
+pub def empty_checker_record(owner: str, family: CheckedFamily) -> Result[bytes, str]:
+    """Encode an empty record for one owner and family through the production codec."""
+    return encode_record(
+        CheckedRecord(profile=CHECKER_PROFILE, owner=owner, root=EMPTY_SEMANTIC_ROOT, family=family, fields=[]),
+    ).map_err((error) => f"{error:?}")

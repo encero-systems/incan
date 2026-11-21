@@ -2,14 +2,21 @@
 
 from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
-from pub::incan_platform.store import Snapshot
-from pub::internal_models import GraphBodyValue, ProducerRank, encode_graph_body_values
-from pub::internal_models.records import ReadReceipt, RecordKey
+from pub::incan_platform.store import Snapshot, get
+from pub::internal_models import GraphBodyValue, ProducerRank, encode_graph_body_values, encode_graph_checking_pair
+from pub::internal_models.namespace_references import NamespaceReference, encode_namespace_references, namespace_reference_filename
+from pub::internal_models.records import ReadReceipt, RecordKey, encode_record_key
+from pub::incan_mir_plan import LoweringEvent
+from pub::internal_models.namespace_order import NamespaceOrder, decode_namespace_order
+from compiler_body_keys import IDENTITY_PROFILE, NAMESPACE_IDENTITY_PROFILE
+from compiler_owner_records import read_body_frame
 from compiler_graph_records import (
+    OutputSlots,
     PublishedEvaluation,
     ReusableRecord,
     publish_evaluation,
     readers_of,
+    reusable_checker_records,
     reusable_evaluation,
     reusable_family_records,
     reusable_owner_records,
@@ -47,20 +54,94 @@ pub model SelectedBodyPage:
     pub value: bytes
 
 
+pub model NamespaceInventory:
+    """An exact namespace page and the modules for which every peer in its certified cycle was selected."""
+
+    pub pages: list[SelectedBodyPage] = []
+    pub complete: set[str] = set()
+
+
 pub def select_namespace_inventory_except(
     selected: Snapshot,
     profile: str,
     origin: str,
     invalid: list[str],
-) -> Result[list[SelectedBodyPage], str]:
-    """Select this project origin's namespaces whose source and imported declaration witnesses remain current."""
-    mut pages: list[SelectedBodyPage] = []
-    for record in reusable_family_records(selected, "namespace", profile)?:
-        if record.key.origin != origin or record.key.identity in invalid:
+    use_references: bool = false,
+) -> Result[NamespaceInventory, str]:
+    """Select namespace pages and certify which scoped checker peers may travel exclusively in a whole module."""
+    mut inventory = NamespaceInventory()
+    slots = OutputSlots(origin=origin, identity_profile=NAMESPACE_IDENTITY_PROFILE, excluded=invalid)
+    mut orders: Dict[str, NamespaceOrder] = {}
+    mut modules: Dict[str, str] = {}
+    mut references: list[NamespaceReference] = []
+    for record in reusable_family_records(selected, "namespace", profile, Some(slots), use_references)?:
+        module = record.key.identity
+        match record.location:
+            Some(location) =>
+                references.append(NamespaceReference(
+                    key=record.key, segment=location.segment, offset=location.offset, length=location.length,
+                    frame_digest=location.digest, value_digest=record.value_digest,
+                ))
+            None =>
+                key = "namespace-" + hexlify(sha256.digest(module.encode("utf-8")))
+                inventory.pages.append(SelectedBodyPage(key=key, value=record.value))
+        certificate = record.receipt.preparation.rank_certificate
+        if certificate == "compiled-check":
             continue
-        key = "namespace-" + hexlify(sha256.digest(record.key.identity.encode("utf-8")))
-        pages.append(SelectedBodyPage(key=key, value=record.value))
-    return Ok(pages)
+        if certificate not in orders:
+            page = get(selected, "incan.compiler.namespace-order\t" + certificate).map_err((error) => error.message())?
+            match page:
+                None => continue
+                Some(value) =>
+                    order = decode_namespace_order(value, origin)?
+                    if order.evidence != certificate:
+                        return Err("namespace selection certificate differs from its content identity")
+                    orders[certificate] = order
+        if module not in orders[certificate].members:
+            return Err("namespace selection is outside its certified cycle")
+        modules[module] = certificate
+    if len(references) > 0:
+        inventory.pages.append(SelectedBodyPage(key=namespace_reference_filename(), value=encode_namespace_references(references)?))
+    for module in modules.keys():
+        certificate = modules[module]
+        mut complete = true
+        for peer in orders[certificate].members:
+            if modules.get(peer, "") != certificate:
+                complete = false
+        if complete:
+            inventory.complete.add(module)
+    return Ok(inventory)
+
+
+pub model CoveredBodyOwners:
+    """Exact checker owners carried by both an admitted namespace and its witnessed plan module."""
+
+    pub owners: Dict[str, str] = {}
+    pub module_owners: Dict[str, list[str]] = {}
+    pub symbols: Dict[str, str] = {}
+
+    pub def include(mut self, module: str, owner: str, symbol: str) -> Result[None, str]:
+        if symbol in self.symbols and self.symbols[symbol] != owner:
+            return Err("overlapping plan modules disagree on the owner of a native symbol")
+        self.symbols[symbol] = owner
+        if owner in self.owners and self.owners[owner] != module:
+            return Err("overlapping plan modules name one checker owner in different source files")
+        if owner not in self.owners:
+            self.owners[owner] = module
+            if module not in self.module_owners:
+                self.module_owners[module] = []
+            self.module_owners[module].append(owner)
+        return Ok(None)
+
+    pub def lowering_demands(self, events: &list[LoweringEvent], published: set[str], complete: set[str]) -> list[str]:
+        """A fresh plan or entry binding still needs its own checked witness when the module travels whole."""
+        mut demanded: set[str] = set()
+        for event in events:
+            if event.identity in self.symbols:
+                owner = self.symbols[event.identity]
+                if owner not in published and (event.role == "entry" or not event.reused or event.module not in complete):
+                    demanded.add(owner)
+        return sorted([owner for owner in demanded])
 
 
 pub def invalid_namespace_modules(selected: Snapshot, changed: list[RecordKey], profile: str) -> Result[list[str], str]:
@@ -94,10 +175,8 @@ pub def select_body_values(
 
 pub def select_body_inventory(selected: Snapshot, profile: str) -> Result[list[SelectedBodyRecord], str]:
     """Select complete checker pairs with final Body IR while invalidated owners stay on fresh production."""
-    locals = reusable_family_records(selected, "local", profile)?
-    finals = reusable_family_records(selected, "final", profile)?
-    bodies = reusable_family_records(selected, "body-ir", profile)?
-    return Ok(paired_records(locals, finals, bodies))
+    locals, finals, bodies = reusable_checker_records(selected, profile, None)?
+    return paired_records(locals, finals, bodies, profile)
 
 
 pub def select_body_inventory_except(
@@ -105,13 +184,12 @@ pub def select_body_inventory_except(
     profile: str,
     origin: str,
     invalid: list[str],
+    mint_body_ir: bool = false,
 ) -> Result[list[SelectedBodyRecord], str]:
     """Select this project origin's complete owners except those reached by its current source changes."""
-    locals = reusable_family_records(selected, "local", profile)?
-    finals = reusable_family_records(selected, "final", profile)?
-    bodies = reusable_family_records(selected, "body-ir", profile)?
-    owned = [local for local in locals if local.key.origin == origin and local.key.identity not in invalid]
-    return Ok(paired_records(owned, finals, bodies))
+    slots = Some(OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, excluded=invalid))
+    locals, finals, bodies = reusable_checker_records(selected, profile, slots)?
+    return paired_records(locals, finals, bodies, profile, mint_body_ir)
 
 
 pub def select_body_inventory_of(
@@ -119,46 +197,63 @@ pub def select_body_inventory_of(
     profile: str,
     origin: str,
     owners: list[str],
+    mint_body_ir: bool = false,
 ) -> Result[list[SelectedBodyRecord], str]:
     """Select the complete owners of this project origin that `owners` names, validating no other owner's records."""
-    locals = reusable_owner_records(selected, "local", profile, origin, owners)?
-    finals = reusable_owner_records(selected, "final", profile, origin, owners)?
-    bodies = reusable_owner_records(selected, "body-ir", profile, origin, owners)?
-    return Ok(paired_records(locals, finals, bodies))
+    slots = Some(OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, included=Some(owners)))
+    locals, finals, bodies = reusable_checker_records(selected, profile, slots)?
+    return paired_records(locals, finals, bodies, profile, mint_body_ir)
+
+
+pub def select_checking_pairs(selected: Snapshot, profile: str, origin: str,
+    owners: Option[list[str]] = None,
+) -> Result[list[SelectedBodyRecord], str]:
+    """Select the exact local and final checker outputs for diagnostics. Executable owners stay in Bakery."""
+    slots = Some(OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, included=owners))
+    locals, finals, _ = reusable_checker_records(selected, profile, slots, executable=false)?
+    return paired_records(locals, finals, [], profile, allow_checking_pair=true)
 
 
 def paired_records(
     locals: list[ReusableRecord],
     finals: list[ReusableRecord],
     bodies: list[ReusableRecord],
-) -> list[SelectedBodyRecord]:
-    """Each local value whose final value and Body IR frame were selected too, as one owner's complete record."""
+    profile: str,
+    allow_checking_pair: bool = false,
+) -> Result[list[SelectedBodyRecord], str]:
+    """Join each admitted local value to its exact final value and the selected executable frame, when requested."""
+    final_positions = owner_positions(finals)?
+    body_positions = owner_positions(bodies)?
     mut selected_records: list[SelectedBodyRecord] = []
     for local in locals:
-        match matching_record(finals, local):
-            Some(final) =>
-                match matching_record(bodies, local):
-                    Some(body) =>
-                        selected_records.append(
-                            SelectedBodyRecord(
-                                identity=local.key.identity,
-                                local=local.value,
-                                final=final.value,
-                                body_ir=body.value,
-                            ),
-                        )
-                    None => pass
-            None => pass
-    return selected_records
+        owner = encode_record_key(local.key)?
+        if owner not in final_positions:
+            continue
+        mut frame = b""
+        if owner in body_positions:
+            index = body_positions[owner]
+            # An older installation can carry an unwrapped kernel payload. Mint the frame under the current authority.
+            if bodies[index].value[:4] == b"CRMB":
+                frame = read_body_frame(bodies[index].key, profile, bodies[index].value)?
+        if len(frame) > 0 or allow_checking_pair:
+            selected_records.append(SelectedBodyRecord(identity=local.key.identity, local=local.value,
+                final=finals[final_positions[owner]].value, body_ir=frame))
+    return Ok(selected_records)
 
 
 pub def encode_body_inventory(records: list[SelectedBodyRecord]) -> Result[list[SelectedBodyPage], str]:
     """Encode each graph-admitted checker pair and owner frame as one bounded, identity-addressed page."""
     mut pages: list[SelectedBodyPage] = []
     for record in records:
-        value = encode_graph_body_values(
-            [GraphBodyValue(identity=record.identity, local=record.local, final=record.final, body_ir=record.body_ir)],
-        ).map_err((error) => f"selected body page refused: {error:?}")?
+        mut value = b""
+        if len(record.body_ir) == 0:
+            value = encode_graph_checking_pair(record.identity, record.local, record.final).map_err(
+                (error) => f"selected checking pair refused: {error:?}",
+            )?
+        else:
+            value = encode_graph_body_values(
+                [GraphBodyValue(identity=record.identity, local=record.local, final=record.final, body_ir=record.body_ir)],
+            ).map_err((error) => f"selected body page refused: {error:?}")?
         pages.append(SelectedBodyPage(key=hexlify(sha256.digest(record.identity.encode("utf-8"))), value=value))
     return Ok(pages)
 
@@ -177,7 +272,10 @@ pub def invalid_body_owners(selected: Snapshot, changed: list[RecordKey], profil
 pub def body_owners_reading(selected: Snapshot, changed: list[RecordKey], profile: str) -> Result[list[str], str]:
     """Select body owners whose prior evaluations read keys with changed values staged by the current request."""
     mut owners: set[str] = set()
-    for reader in readers_of(selected, changed, profile)?:
+    # A position edit can restamp a selected executable frame against today's syntax.
+    # Only changed semantic inputs withdraw an owner's checked pair from the compiler.
+    semantic = [key for key in changed if key.family != "owner-placement"]
+    for reader in readers_of(selected, semantic, profile)?:
         if reader.family in ["local", "final", "body-ir"]:
             owners.add(reader.identity)
     return Ok(sorted([owner for owner in owners]))
@@ -200,15 +298,13 @@ pub def publish_body_values(
     return Ok(PublishedBodyValues(snapshot=final.snapshot, local=local, final=final))
 
 
-def matching_record(records: list[ReusableRecord], local: ReusableRecord) -> Option[ReusableRecord]:
-    """Find the final value whose complete logical owner key differs from the local key only by family."""
-    for record in records:
-        if (
-            record.key.identity == local.key.identity
-            and record.key.identity_profile == local.key.identity_profile
-            and record.key.origin == local.key.origin
-            and record.key.facet == local.key.facet
-            and record.key.context == local.key.context
-        ):
-            return Some(record)
-    return None
+def owner_positions(records: &list[ReusableRecord]) -> Result[Dict[str, int], str]:
+    """Index the first selection for each complete owner key using the local checker family for comparison."""
+    mut positions: Dict[str, int] = {}
+    for index in range(len(records)):
+        mut key = records[index].key
+        key.family = "local"
+        owner = encode_record_key(key)?
+        if owner not in positions:
+            positions[owner] = index
+    return Ok(positions)

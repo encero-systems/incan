@@ -42,3 +42,22 @@ pub def test_a_checked_source_selection_resolves_each_native_path_once() -> Resu
     assert selected.checked_context is not None, "the selection named no checked-source context"
     assert observed.resolutions == 2, f"three closures naming one archive and its directory resolved {observed.resolutions} paths"
     return Ok(None)
+
+
+pub def test_checked_context_keeps_features_while_lowering_keys_the_checked_body() -> Result[None, str]:
+    scratch = scratch_directory()?
+    setup = fixture(scratch.path())?
+    mut unit = setup.unit
+    unit.loaves = []
+    unit.declared_features = ["optional"]
+    unit.active_features = []
+    initial = retain_callable_products(unit, setup.toolchain)?
+    unit.active_features = ["optional"]
+    enabled = retain_callable_products(unit, setup.toolchain)?
+    assert initial.checked_context is not None and enabled.checked_context is not None
+    assert initial.checked_context != enabled.checked_context
+    assert initial.lowering_context is not None and initial.lowering_context == enabled.lowering_context
+    unit.program_checks = true
+    alternate = retain_callable_products(unit, setup.toolchain)?
+    assert alternate.lowering_context != enabled.lowering_context
+    return Ok(None)

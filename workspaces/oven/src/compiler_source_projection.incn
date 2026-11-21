@@ -11,9 +11,9 @@ from std.fs import Path
 from pub::incan_platform.store import Snapshot, begin, commit, put
 from pub::internal_models import CompiledNamespaceValue
 from pub::internal_models.records import RecordKey, encode_record_key
-from semantic_text import comment_free, documentation_free
+from semantic_text import comment_free, documentation_free, split_documentation
 
-const SOURCE_PROFILE: str = "incan.source-projection/1"
+from pub::internal_models.source_value_records import SOURCE_PROFILE, encode_documentation, encode_source_text
 
 
 pub model SourceProjectionRecord:
@@ -23,6 +23,10 @@ pub model SourceProjectionRecord:
     pub text: str
     pub start: int
     pub end: int
+
+    pub def encoded(self) -> Result[bytes, str]:
+        """The Crumb value retained in the store under this record's logical key."""
+        return encode_source_text(self.text)
 
     pub def digest(self) -> str:
         """Return the semantic identity of this slice without folding file-wide coordinates into it."""
@@ -34,7 +38,22 @@ pub model SourceProjection:
 
     pub header: SourceProjectionRecord
     pub declarations: SourceProjectionRecord
+    pub census: SourceProjectionRecord
+    pub positioned: SourceProjectionRecord
     pub owners: list[SourceProjectionRecord]
+    pub documentation: list[tuple[str, str]]
+    pub placements: Dict[str, SourceProjectionRecord] = {}
+    pub bindings: Dict[str, list[str]] = {}
+    # Only guarded project modules depend on the resolved package feature environment.
+    pub feature_inputs: list[SourceProjectionRecord] = []
+
+    pub def documentation_key(self) -> RecordKey:
+        """The latest documentation inventory replaces the previous one even when an owner was removed."""
+        return RecordKey(family="source-documentation", identity_profile="incan.source-documentation/1",
+            origin=self.header.key.origin, identity=self.header.key.identity, facet="module", context="")
+
+    pub def encoded_documentation(self) -> Result[bytes, str]:
+        return encode_documentation(self.documentation)
 
 
 pub model PublishedSourceProjection:
@@ -59,6 +78,7 @@ class SourceProjector:
     source: str
     lines: list[str]
     boundaries: list[Boundary] = []
+    guarded: bool = false
 
     @staticmethod
     pub def open(origin: str, path: str, source: str) -> SourceProjector:
@@ -91,6 +111,8 @@ class SourceProjector:
             if content != "" and indent == 0:
                 chunk = true
                 if not content.startswith("#"):
+                    if identifier_prefix(content) == "when":
+                        self.guarded = true
                     conditional = conditional_block(content)
                     member_indent = -1
             elif conditional and content != "" and not content.startswith("#"):
@@ -112,17 +134,21 @@ class SourceProjector:
         if decorated_start >= 0:
             self.boundaries.append(Boundary(start=decorated_start, owner=""))
 
-    pub def projection(mut self) -> Result[SourceProjection, str]:
+    pub def projection(mut self, declared: list[str], active: Option[list[str]]) -> Result[SourceProjection, str]:
         """Partition source owners and nested defaults while retaining a declaration surface for selector invalidation."""
         self.discover()
         mut header = ""
         mut declarations = ""
         mut owners: list[SourceProjectionRecord] = []
+        mut docs: list[tuple[str, str]] = []
+        mut placements: Dict[str, SourceProjectionRecord] = {}
+        mut bindings: Dict[str, list[str]] = {}
         if len(self.boundaries) == 0:
             header = self.source
         else:
             if self.boundaries[0].start > 0:
                 header += self.source[:self.boundaries[0].start]
+            mut byte_start = len(header.encode("utf-8"))
             for index in range(len(self.boundaries)):
                 boundary = self.boundaries[index]
                 mut end = len(self.source)
@@ -132,7 +158,10 @@ class SourceProjector:
                 if boundary.owner == "":
                     header += text
                 else:
-                    semantic = documentation_free(text)
+                    first_owner = len(owners)
+                    semantic, documentation = split_documentation(text)
+                    if documentation != "":
+                        docs.append((boundary.owner, documentation))
                     declarations += boundary.owner + "\n" + declaration_surface(semantic) + "\n"
                     owners.append(
                         SourceProjectionRecord(
@@ -142,15 +171,42 @@ class SourceProjector:
                             end=end,
                         ),
                     )
-                    for field in field_records(boundary.owner, text, boundary.start, self.origin, self.path):
-                        owners.append(semantic_record(field, documentation_free(field.text)))
-                    for default in field_default_records(boundary.owner, text, boundary.start, self.origin, self.path):
-                        owners.append(semantic_record(default, comment_free(default.text)))
+                    if boundary.owner.startswith("model:") or boundary.owner.startswith("class:"):
+                        for field in field_records(boundary.owner, text, boundary.start, self.origin, self.path):
+                            owners.append(semantic_record(field, documentation_free(field.text)))
+                        for default in field_default_records(boundary.owner, text, boundary.start, self.origin, self.path):
+                            owners.append(semantic_record(default, comment_free(default.text)))
+                    for owner_index in range(first_owner, len(owners)):
+                        record = owners[owner_index]
+                        add_scope_binding(bindings, record.key.facet)
+                        relative = record.start - boundary.start
+                        mut offset = byte_start
+                        if relative != 0:
+                            offset += len(text[:relative].encode("utf-8"))
+                        # The parser's dedent span reaches the next declaration or EOF, including separating newlines.
+                        raw = text[relative:record.end - boundary.start]
+                        mark_placement(placements, record, offset, raw)
+                byte_start += len(text.encode("utf-8"))
+        header_semantic, module_docs = split_documentation(header)
+        if module_docs != "":
+            docs.append(("", module_docs))
+        mut feature_inputs: list[SourceProjectionRecord] = []
+        if self.guarded and active is not None:
+            names = ["declared=" + name for name in sorted(declared)] + ["active=" + name for name in sorted(active.unwrap_or([]))]
+            feature_inputs.append(SourceProjectionRecord(
+                key=source_key("module-feature-selection", self.origin, self.path, "module"),
+                text="\n".join(names), start=0, end=0,
+            ))
         return Ok(
             SourceProjection(
+                feature_inputs=feature_inputs,
+                positioned=SourceProjectionRecord(
+                    key=positioned_source_key(self.origin, self.path),
+                    text=hexlify(sha256.digest(self.source.encode("utf-8"))), start=0, end=len(self.source),
+                ),
                 header=SourceProjectionRecord(
                     key=source_key("module-header", self.origin, self.path, "module"),
-                    text=documentation_free(header),
+                    text=header_semantic,
                     start=0,
                     end=len(self.source),
                 ),
@@ -160,16 +216,87 @@ class SourceProjector:
                     start=0,
                     end=len(self.source),
                 ),
+                census=SourceProjectionRecord(
+                    key=source_key("owner-census", self.origin, self.path, "module"),
+                    text="\n".join([owner.key.facet for owner in owners]) + "\n",
+                    start=0,
+                    end=len(self.source),
+                ),
                 owners=owners,
+                documentation=docs,
+                placements=placements,
+                bindings=bindings,
             ),
         )
 
 
-pub def project_source(origin: str, path: str, source: str) -> Result[SourceProjection, str]:
+pub def scope_members(census: str) -> Dict[str, list[str]]:
+    """Index the declaration kinds and multiplicity visible at each project spelling."""
+    mut by_name: Dict[str, list[str]] = {}
+    for facet in census.split("\n"):
+        if facet == "":
+            continue
+        add_scope_binding(by_name, facet)
+    return by_name
+
+
+def add_scope_binding(mut bindings: Dict[str, list[str]], facet: str) -> None:
+    name = scope_name(facet)
+    if name not in bindings:
+        bindings[name] = []
+    bindings[name].append(facet)
+
+
+def scope_name(facet: str) -> str:
+    parts = facet.split(":")
+    return parts[len(parts) - 1]
+
+
+pub def scope_key(census: &SourceProjectionRecord, name: str) -> RecordKey:
+    """Address one declared name, including all its same-name owners."""
+    return source_key("scope-name", census.key.origin, census.key.identity, name)
+
+
+pub def signature_scope_key(signature: &RecordKey) -> RecordKey:
+    """Observe presence of the exact name whose signature a caller binds."""
+    return source_key("scope-name", signature.origin, signature.identity, scope_name(signature.facet))
+
+
+pub def scope_member(census: &SourceProjectionRecord, members: &Dict[str, list[str]], name: str) -> SourceProjectionRecord:
+    """An empty selection proves that no declaration of this name exists in the captured module."""
+    key = scope_key(census, name)
+    mut text = ""
+    if members.contains_key(name):
+        text = "\n".join(sorted(members[name]))
+    return SourceProjectionRecord(key=key, text=text, start=0, end=0)
+
+
+def mark_placement(mut placements: Dict[str, SourceProjectionRecord], owner: &SourceProjectionRecord, offset: int, raw: str) -> None:
+    """Bind an owner's physical source bytes and absolute UTF-8 offset, including every same-named overload."""
+    key = owner_placement_key(owner.key.origin, owner.key.identity, owner.key.facet)
+    content = hexlify(sha256.digest(raw.encode("utf-8")))
+    mut stamp = str(offset) + "|" + content
+    if owner.key.facet in placements:
+        stamp = hexlify(sha256.digest((placements[owner.key.facet].text + "|" + stamp).encode("utf-8")))
+    placements[owner.key.facet] = SourceProjectionRecord(key=key, text=stamp, start=owner.start, end=owner.end)
+
+
+pub def project_source(
+    origin: str,
+    path: str,
+    source: str,
+    declared: list[str] = [],
+    active: Option[list[str]] = None,
+) -> Result[SourceProjection, str]:
     """Produce one module header plus exact source records for top-level owners and nested field defaults."""
     if origin == "" or path == "":
         return Err("source projection requires an origin and logical path")
-    return SourceProjector.open(origin, path, source).projection()
+    return SourceProjector.open(origin, path, source).projection(declared, active)
+
+
+pub def owner_placement_key(origin: str, path: str, name: str) -> RecordKey:
+    """The mutable coordinate binding owned by this source declaration."""
+    return source_key("owner-placement", origin, path, name)
 
 
 pub def owner_source_key(origin: str, path: str, name: str) -> RecordKey:
@@ -189,6 +316,16 @@ pub def compiled_owner_source(
     identity: str = "",
 ) -> Result[SourceProjectionRecord, str]:
     """Map one compiler body name to its exact owner or unambiguous declaration-qualified default expression."""
+    if identity.startswith("member/method:"):
+        enclosing = stable_member_declaration(identity)
+        context = identity.split("#in(")
+        if len(context) == 2 and enclosing != "":
+            kind = context[1].split(":")[0]
+            if kind in ["model", "class", "trait", "enum", "newtype"]:
+                for owner in projection.owners:
+                    if owner.key.facet == kind + ":" + enclosing:
+                        return Ok(owner)
+        return Err(f"compiled method has no enclosing declaration source: {module}:{name}; identity={identity}")
     for owner in projection.owners:
         if owner.key.facet == name:
             return Ok(owner)
@@ -266,6 +403,11 @@ pub def import_declaration_indexes(
     return Ok(indexes)
 
 
+pub def owner_census_key(origin: str, path: str) -> RecordKey:
+    """Name the signature-independent current-owner membership witness for one source module."""
+    return source_key("owner-census", origin, path, "module")
+
+
 pub def signature_record(owner: &SourceProjectionRecord) -> SourceProjectionRecord:
     """Project one declaration's header without its implementation, preserving its kind-qualified source owner."""
     mut key = owner.key
@@ -286,17 +428,30 @@ pub def publish_source_projection(
     mut transaction = put(
         begin(selected),
         encode_record_key(projection.header.key)?,
-        projection.header.text.encode("utf-8"),
+        projection.header.encoded()?,
     )
     mut published = [encode_record_key(projection.header.key)?]
     declaration_key = encode_record_key(projection.declarations.key)?
-    transaction = put(transaction, declaration_key, projection.declarations.text.encode("utf-8"))
+    transaction = put(transaction, declaration_key, projection.declarations.encoded()?)
     published.append(declaration_key)
+    census_key = encode_record_key(projection.census.key)?
+    transaction = put(transaction, census_key, projection.census.encoded()?)
+    published.append(census_key)
+    positioned_key = encode_record_key(projection.positioned.key)?
+    transaction = put(transaction, positioned_key, projection.positioned.encoded()?)
+    published.append(positioned_key)
+    for feature in projection.feature_inputs + [projection.placements[facet] for facet in sorted([name for name in projection.placements.keys()])]:
+        key = encode_record_key(feature.key)?
+        transaction = put(transaction, key, feature.encoded()?)
+        published.append(key)
     for owner in projection.owners:
         for record in [owner, signature_record(owner)]:
             key = encode_record_key(record.key)?
-            transaction = put(transaction, key, record.text.encode("utf-8"))
+            transaction = put(transaction, key, record.encoded()?)
             published.append(key)
+    doc_key = encode_record_key(projection.documentation_key())?
+    transaction = put(transaction, doc_key, projection.encoded_documentation()?)
+    published.append(doc_key)
     snapshot = commit(transaction).map_err((error) => error.message())?
     return Ok(PublishedSourceProjection(snapshot=snapshot, keys=published))
 
@@ -378,8 +533,6 @@ def field_default_records(
     path: str,
 ) -> list[SourceProjectionRecord]:
     """Project each direct model or class field default as its own expression-only source facet."""
-    if not declaration.startswith("model:") and not declaration.startswith("class:"):
-        return []
     starts = direct_member_starts(source)
     mut records: list[SourceProjectionRecord] = []
     for index in range(len(starts)):
@@ -538,3 +691,8 @@ def source_key(family: str, origin: str, path: str, facet: str) -> RecordKey:
         facet=facet,
         context="",
     )
+
+
+pub def positioned_source_key(origin: str, file: str) -> RecordKey:
+    """The positioned source projection recorded when an aggregate binds physical source geometry."""
+    return source_key("source-positioned", origin, file, "module")
