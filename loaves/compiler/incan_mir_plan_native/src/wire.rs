@@ -290,8 +290,14 @@ pub(crate) fn optional<T>(value: &Option<T>, each: impl FnOnce(&T) -> Result<Wir
 }
 
 /// Read each element of one list.
-pub(crate) fn read_list<T>(value: &Wire, each: impl FnMut(&Wire) -> Result<T, String>) -> Result<Vec<T>, String> {
-    items(value)?.iter().map(each).collect()
+pub(crate) fn read_list<T>(value: &Wire, mut each: impl FnMut(&Wire) -> Result<T, String>) -> Result<Vec<T>, String> {
+    let elements = items(value)?;
+    // Sized up front: collecting through `Result` would grow the vector by doubling and keep the spare capacity.
+    let mut read = Vec::with_capacity(elements.len());
+    for element in elements {
+        read.push(each(element)?);
+    }
+    Ok(read)
 }
 
 /// A schema-admitted record's fields in identity order.
