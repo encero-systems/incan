@@ -805,11 +805,16 @@ pub(super) fn selector_key(node: &Node) -> Option<(u8, Vec<u8>, String)> {
 }
 
 /// Frame a nominal identity, argument count and exact argument spellings.
+///
+/// A nominal has a selector when its identity has six bytes and each argument has a selector spelling, so the node
+/// itself is never spelled only to be discarded: a row read closes the selector of every nested record it reads.
 pub(super) fn closed_selector(node: &Node) -> Option<Vec<u8>> {
-    selector_spelling(node)?;
     let Node::Nominal(_, identity, arguments) = node else {
         return None;
     };
+    if identity.len() != 6 {
+        return None;
+    }
     let mut output = identity.clone();
     unsigned(&mut output, arguments.len() as u128);
     for argument in arguments {
@@ -1077,7 +1082,13 @@ pub(super) fn frame(output: &mut Vec<u8>, data: &[u8]) {
 
 /// Spell octets as lowercase hexadecimal.
 pub(super) fn hex_string(data: &[u8]) -> String {
-    data.iter().map(|byte| format!("{byte:02x}")).collect()
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut text = String::with_capacity(2 * data.len());
+    for byte in data {
+        text.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        text.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
+    }
+    text
 }
 
 /// Append one value's object contribution without validating it again.
