@@ -9,9 +9,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use incan_mir_plan_native::{
-    CalleeKind, ExternalFunction, Function, NominalReference, Plan, PlanFunctionRecord, ProductNominal, TerminatorKind,
-    decode_plan_function_record, decode_product_parts, encode_plan_function_record, encode_product,
-    plan_function_digest, product_identities,
+    CalleeKind, ExternalFunction, Function, INTERFACE_REPORT, NominalReference, Plan, PlanFunctionRecord,
+    ProductNominal, TerminatorKind, decode_lowering_event, decode_native_interface, decode_plan_function_record,
+    decode_product_parts, decode_record_plan, encode_plan_function_record, encode_product, plan_function_digest,
+    product_identities,
 };
 use incan_semantics_core::body_ir::{
     Body, BodyIrModule, NativeAttribute, NativeUnionDeclaration, RuntimeCallableBinding, StaticInitializer,
@@ -318,26 +319,62 @@ pub fn renamed_initializers(expected: &[u8], produced: &[u8]) -> Option<(Vec<u8>
         return None;
     }
     let mut plan: Plan = postcard::from_bytes(expected).ok()?;
+    let renamed = rename_plan(&mut plan, &names);
+    if renamed == 0 {
+        return None;
+    }
+    Some((postcard::to_allocvec(&plan).ok()?, renamed))
+}
+
+/// Rename a plan's slot-named module initializers and every call to them; returns how many names changed.
+fn rename_plan(plan: &mut Plan, names: &BTreeMap<i64, String>) -> usize {
     let mut renamed = 0;
     for function in &mut plan.functions {
-        if let Some(name) = slot_name(&function.name, &names) {
+        if let Some(name) = slot_name(&function.name, names) {
             function.name = name;
             renamed += 1;
         }
         for block in &mut function.blocks {
             if let TerminatorKind::Call(callee, ..) = &mut block.terminator.kind
                 && let CalleeKind::Planned(target) = &mut callee.kind
-                && let Some(name) = slot_name(target, &names)
+                && let Some(name) = slot_name(target, names)
             {
                 *target = name;
                 renamed += 1;
             }
         }
     }
-    if renamed == 0 {
-        return None;
+    renamed
+}
+
+/// Whether two records report files differ only in the module initializer names their plan functions call: a product
+/// event whose product differs only so, or a native interface whose plan does.
+pub fn report_differs_only_by_initializers(
+    file: &str,
+    expected: &[u8],
+    produced: &[u8],
+    names: &BTreeMap<i64, String>,
+) -> bool {
+    if file.ends_with(".event") {
+        let (Ok(mut want), Ok(mut have)) = (decode_lowering_event(expected), decode_lowering_event(produced)) else {
+            return false;
+        };
+        let (want_product, have_product) = (std::mem::take(&mut want.product), std::mem::take(&mut have.product));
+        return want == have
+            && (want_product == have_product
+                || product_differs_only_by_initializers(&want_product, &have_product, names));
     }
-    Some((postcard::to_allocvec(&plan).ok()?, renamed))
+    if file == INTERFACE_REPORT {
+        let (Ok(want), Ok(have)) = (decode_native_interface(expected), decode_native_interface(produced)) else {
+            return false;
+        };
+        let (Ok(mut reference), Ok(current)) = (decode_record_plan(&want.plan), decode_record_plan(&have.plan)) else {
+            return false;
+        };
+        rename_plan(&mut reference, names);
+        return want.entry == have.entry && reference == current;
+    }
+    false
 }
 
 /// The produced name for a reference initializer name `__incan_init_module_statics_<slot>`.

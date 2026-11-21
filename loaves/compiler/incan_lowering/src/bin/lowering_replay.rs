@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use incan_lowering::corpus::{
     Case, Corpus, Outcome, Requirement, Step, produced_initializers, product_differs_only_by_initializers,
-    renamed_initializers,
+    renamed_initializers, report_differs_only_by_initializers,
 };
 use incan_lowering::reuse_proof::{FrameOutcomes, FrameTrace, changed_bodies, check_records_keys};
 use incan_lowering::{
@@ -49,6 +49,8 @@ struct Tally {
     reports_identical: usize,
     renamed_plans: usize,
     products_renamed: usize,
+    reports_renamed: usize,
+    publications_renamed: usize,
     renamed_names: usize,
     publications: usize,
     publications_identical: usize,
@@ -284,6 +286,7 @@ fn replay_case(
     }
     let mut published: Option<(Vec<u8>, Vec<u8>)> = None;
     let mut renamed_products: Vec<(String, Vec<u8>, Vec<u8>)> = Vec::new();
+    let mut renamed_reports: Vec<(String, Vec<u8>, Vec<u8>)> = Vec::new();
     let mut last_plan: Option<Vec<u8>> = None;
     for (index, step) in case.steps.iter().enumerate() {
         tally.steps += 1;
@@ -313,7 +316,8 @@ fn replay_case(
             tally.products_identical += same;
         }
         if step.record_report.is_some() {
-            let (expected, same) = compare_directory(corpus, &step.report_after, &directories.report);
+            let (expected, same, differing) = differing_files(corpus, &step.report_after, &directories.report);
+            renamed_reports.extend(differing);
             tally.reports += expected;
             tally.reports_identical += same;
         }
@@ -390,6 +394,15 @@ fn replay_case(
                 .push(format!("{name}: product {file} differs beyond the initializer rename"));
         }
     }
+    for (file, expected, produced) in renamed_reports {
+        if !names.is_empty() && report_differs_only_by_initializers(&file, &expected, &produced, &names) {
+            tally.reports_renamed += 1;
+        } else {
+            tally.mismatches.push(format!(
+                "{name}: report file {file} differs beyond the initializer rename"
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -430,8 +443,20 @@ fn compare_publication(
     files.sort();
     tally.publication_files += captured.len();
     tally.publication_files_identical += captured.iter().filter(|file| files.contains(file)).count();
+    let names = produced_initializers(produced);
+    let renamed_only = !names.is_empty()
+        && files.len() == captured.len()
+        && files
+            .iter()
+            .zip(&captured)
+            .all(|((have_name, have), (want_name, want))| {
+                have_name == want_name
+                    && (have == want || report_differs_only_by_initializers(want_name, want, have, &names))
+            });
     if files == captured {
         tally.publications_identical += 1;
+    } else if renamed_only {
+        tally.publications_renamed += 1;
     } else {
         let names = |list: &[(String, Vec<u8>)]| list.iter().map(|(file, _)| file.clone()).collect::<Vec<_>>();
         let differing: Vec<String> = captured
@@ -739,10 +764,14 @@ fn print_tally(tally: &Tally, show: usize) {
         tally.publication_files_identical,
         tally.publication_files
     );
-    if tally.renamed_plans > 0 || tally.products_renamed > 0 {
+    if tally.renamed_plans > 0 || tally.products_renamed > 0 || tally.reports_renamed > 0 {
         println!(
-            "reference module initializers renamed by module identity: {} names in {} plans; {} products differ only by those names",
-            tally.renamed_names, tally.renamed_plans, tally.products_renamed
+            "reference module initializers renamed by module identity: {} names in {} plans; differing only by those names: {} products, {} report files, {} publications",
+            tally.renamed_names,
+            tally.renamed_plans,
+            tally.products_renamed,
+            tally.reports_renamed,
+            tally.publications_renamed
         );
     }
 }
@@ -827,7 +856,7 @@ fn main() {
     print_tally(&tally, show);
     let complete = tally.mismatches.is_empty()
         && tally.products_identical + tally.products_renamed == tally.products
-        && tally.reports_identical == tally.reports
-        && tally.publications_identical == tally.publications;
+        && tally.reports_identical + tally.reports_renamed == tally.reports
+        && tally.publications_identical + tally.publications_renamed == tally.publications;
     std::process::exit(if complete { 0 } else { 1 });
 }
