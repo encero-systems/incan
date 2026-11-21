@@ -23,13 +23,16 @@ Example:
 Compiles to Axum with Tokio — native Rust performance, no GC.
 
 Note: ``from std.web import route`` relies on this prelude re-exporting ``route``
-from ``std.web.routing``. If import resolution does not resolve re-exports yet,
-use ``from std.web.routing import route`` directly.
+with ``pub from``.
 """
 
-from std.web.app import App
-from std.web.response import Json, Html, Response
-from std.web.request import Query, Path
-from std.web.macros import IntoResponse, FromRequestParts
-from std.web.routing import route
-from std.web.routing import GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS
+pub from crate.web.app import App
+pub from crate.web.response import Response
+pub from crate.web.routing import GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS
+# The Rust items come from their crates, as `std.web.response`, `std.web.request`, `std.web.macros` and
+# `std.web.routing` take them: re-exported through one of those modules, a Rust item reaches this library's manifest
+# with no canonical identity.
+pub from rust::axum import Json
+pub from rust::incan_std_web import Html
+pub from rust::axum::extract import Query, Path
+pub from rust::incan_web_macros import IntoResponse, FromRequestParts, route

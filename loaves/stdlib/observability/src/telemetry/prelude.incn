@@ -6,7 +6,7 @@ starting exporters. Full provider configuration, tracing, context propagation, s
 on this data layer.
 """
 
-from std.telemetry.core import (
+pub from crate.telemetry.core import (
     Timestamp,
     TelemetryValue,
     Attributes,
