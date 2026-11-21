@@ -1052,7 +1052,7 @@ def prepare_lowering_records(
     mut plan_keys: list[RecordKey] = []
     mut staged: list[StagedPlan] = []
     mut interface_namespace = 0
-    mut demands = LoweringDemands()
+    mut demands = LoweringDemands.new()
     mut work = LoweringDemandWork()
     # Scalar demand and plan suppliers settle before the entry-binding contribution reads main's demand.
     for event in events:

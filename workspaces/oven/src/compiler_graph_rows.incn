@@ -156,7 +156,7 @@ pub def read_identity(reader_slot: str, edge: OutgoingEdge) -> Result[str, str]:
         identity=target.identity, facet=target.facet, context="")
     stable_request = RecordRequest(key=stable_key, selection=edge.request.selection, byte_limit=edge.request.byte_limit)
     value = Value.Tuple([Value.Text(reader_slot), Value.Text(edge.profile), request_value(stable_request)])
-    mut budget = operation_budget()?
+    mut budget = operation_budget(0)?
     logical = value_hash(value, Projection.Canonical, budget).map_err((error) => error.message())?
     return Ok(hexlify(logical.digest))
 

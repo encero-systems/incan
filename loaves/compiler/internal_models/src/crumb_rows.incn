@@ -5,6 +5,7 @@ pub from rust::internal_models_native import (
     operation_budget,
     model_description,
     required_value,
+    field_value,
     encode_rows,
     decode_rows,
     description_field,
