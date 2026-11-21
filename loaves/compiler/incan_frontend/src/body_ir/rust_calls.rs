@@ -76,7 +76,81 @@ pub(super) fn declarations(facts: &TypeCheckInfo) -> Vec<bir::LoafCallable> {
             calls.push(declaration);
         }
     }
+    for declaration in published_default_declarations(facts) {
+        if !calls.contains(&declaration) {
+            calls.push(declaration);
+        }
+    }
     calls
+}
+
+/// Declare the published default each checked native construction calls for a field it leaves out.
+fn published_default_declarations(facts: &TypeCheckInfo) -> Vec<bir::LoafCallable> {
+    let mut constructions = facts
+        .calls
+        .body_ir_native_constructor_bindings
+        .iter()
+        .collect::<Vec<_>>();
+    constructions.sort_by_key(|(span, _)| **span);
+    let mut declarations = Vec::new();
+    for (owner, binding) in constructions.into_iter().map(|(_, construction)| construction) {
+        if binding.defaulted_slots.is_empty() {
+            continue;
+        }
+        let Some(owner) = incan_semantics_core::body_ir::native_nominal_item(owner) else {
+            continue;
+        };
+        for (_, path, return_type) in published_native_defaults(facts, &owner, &binding.defaulted_slots)
+            .into_iter()
+            .flatten()
+        {
+            let Some(canonical) = bir::rust_item_identity(&path) else {
+                continue;
+            };
+            declarations.push(bir::LoafCallable {
+                canonical,
+                item: path,
+                parameters: Vec::new(),
+                return_type,
+                type_parameters: Vec::new(),
+                native_type_arguments: Vec::new(),
+                native_callable_parameters: Vec::new(),
+                parameter_defaults: Vec::new(),
+                declaration_frame: None,
+            });
+        }
+    }
+    declarations
+}
+
+/// Each defaulted slot of a native construction with its record's published default function and the field's
+/// checked storage type. The checker retains a defaulted slot only for a field whose record publishes its default.
+pub(super) fn published_native_defaults(
+    facts: &TypeCheckInfo,
+    owner: &str,
+    slots: &[usize],
+) -> Result<Vec<(usize, String, IncanType)>, String> {
+    let layout = facts
+        .rust
+        .checked_layouts
+        .get(owner)
+        .ok_or_else(|| format!("native construction of `{owner}` without its retained layout"))?;
+    slots
+        .iter()
+        .map(|&slot| {
+            let field = layout
+                .fields
+                .get(slot)
+                .ok_or_else(|| format!("native construction of `{owner}` defaults field slot {slot}"))?;
+            let name = field
+                .name
+                .as_deref()
+                .ok_or_else(|| format!("native construction of `{owner}` defaults an unnamed field"))?;
+            let ty = super::parameter_types::checked_parameter_type(&field.ty, facts, &layout.type_parameters);
+            let function = crate::typechecker::rust_field_default_function(name);
+            Ok((slot, format!("{owner}::{function}"), ty))
+        })
+        .collect()
 }
 
 impl BodyBuilder<'_, '_> {

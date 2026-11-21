@@ -15,4 +15,6 @@ mod class_constructors;
 mod value_constructors;
 
 #[cfg(test)]
+mod rust_field_default_tests;
+#[cfg(test)]
 mod selected_module_binding_tests;

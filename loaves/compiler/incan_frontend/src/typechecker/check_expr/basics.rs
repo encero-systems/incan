@@ -359,8 +359,8 @@ impl TypeChecker {
                     self.resolved_function_type_from_rust_sig_for_owner_path(sig, false, info.path.as_str())
                 }
                 incan_lang::interop::RustItemKind::Constant { type_display } => {
-                    self.type_info.rust.checked_constants.insert(span, info.path.clone());
-                    self.native_rust_signature_type(type_display.as_str(), info.path.as_str())
+                    let (path, display) = (info.path.clone(), type_display.clone());
+                    self.checked_rust_constant(span, path.clone(), &display, &path)
                 }
                 incan_lang::interop::RustItemKind::Unsupported { description } => {
                     self.errors.push(errors::rust_item_shape_not_supported(
@@ -378,6 +378,24 @@ impl TypeChecker {
             .and_then(|(path, signature)| self.retain_rust_function_value(&path, &signature, span))
             .unwrap_or(ty);
         self.finish_identifier_read(span, kind, ty, source_target)
+    }
+
+    /// Retain one Rust constant read and return its source type. A `&'static str` constant reads as Incan text, while
+    /// Body IR keeps its native borrow and converts it where the text is used, as it does a native `&str` result.
+    pub(in crate::typechecker::check_expr) fn checked_rust_constant(
+        &mut self,
+        span: Span,
+        path: String,
+        type_display: &str,
+        owner: &str,
+    ) -> ResolvedType {
+        self.type_info.rust.checked_constants.insert(span, path);
+        let native = self.native_rust_signature_type(type_display, owner);
+        if !matches!(&native, ResolvedType::Ref(inner) if **inner == ResolvedType::RustPath("str".into())) {
+            return native;
+        }
+        self.type_info.expressions.body_ir_expr_types.insert(span, native);
+        ResolvedType::Str
     }
 
     /// Publish a successful identifier read's classification before its source target, returning the already

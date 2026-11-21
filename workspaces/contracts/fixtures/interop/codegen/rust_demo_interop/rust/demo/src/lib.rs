@@ -203,6 +203,31 @@ pub struct JoinRel {
     pub type_: i64,
 }
 
+/// A text constant an Incan caller reads as `str`.
+pub const GREETING: &str = "hello";
+
+/// A request whose `limit` and `tags` publish defaults, so an Incan caller may leave them out.
+pub struct Request {
+    /// The request name, always written.
+    pub name: String,
+    /// Bytes read at most.
+    pub limit: i64,
+    /// Labels on the request.
+    pub tags: Vec<String>,
+}
+
+impl Request {
+    /// The `limit` of a request that leaves it out.
+    pub fn __incan_default_limit() -> i64 {
+        4096
+    }
+
+    /// The `tags` of a request that leaves them out.
+    pub fn __incan_default_tags() -> Vec<String> {
+        vec!["default".to_owned()]
+    }
+}
+
 /// A builder-like type whose `json` borrows its payload.
 pub struct Builder {
     pub length: usize,
