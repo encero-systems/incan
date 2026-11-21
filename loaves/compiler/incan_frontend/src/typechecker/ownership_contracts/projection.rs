@@ -578,7 +578,12 @@ impl TypeCheckInfo {
                 call.kind != InputCallKind::Indirect && call.receiver.is_none(),
             )?;
             for argument in &invocation.arguments {
-                let access = crate::ownership_metadata::direct_input_access(contract, argument.slot)?;
+                let parameter_type = &call
+                    .parameters
+                    .get(argument.slot)
+                    .ok_or("invocation parameter is absent")?
+                    .ty;
+                let access = crate::ownership_metadata::slot_input_access(contract, argument.slot, parameter_type)?;
                 let classified_move = graph
                     .value_uses
                     .get(&argument.span)

@@ -180,7 +180,9 @@ impl TypeChecker {
         let param_types: Vec<_> = params
             .iter()
             .map(|p| {
-                let ty = self.resolve_type_checked(&p.node.ty);
+                let annotation = self.parameter_annotation(p, false);
+                let ty = self.resolve_type_checked(&annotation);
+                let ty = self.canonical_borrow_type(ty, false);
                 self.validate_protected_builtin_binding(&p.node.name, p.span);
                 self.symbols.define_with_target_kind(
                     Symbol {

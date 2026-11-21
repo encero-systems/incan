@@ -51,7 +51,8 @@ fn explicit_bodies_propagate_construct_and_match_results() -> Result<(), Box<dyn
     // A carrier consumes an owned payload through the same checked move as an explicit owned call argument.
     let accepted = checked("def wrap(text: Owned[str]) -> Option[str]:\n    return Some(text)\n")?;
     assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
-    let refused = checked("def wrap(text: Borrowed[str]) -> Option[str]:\n    return Some(text)\n")?;
+    let refused =
+        checked("def wrap(text: Borrowed[str], proof: Owned[int] = 0) -> Option[str]:\n    return Some(text)\n")?;
     assert!(
         refused
             .errors
@@ -118,7 +119,7 @@ fn carried_views_propagate_and_recover() -> Result<(), Box<dyn std::error::Error
 #[test]
 fn explicit_bodies_call_builtin_list_methods_on_places() -> Result<(), Box<dyn std::error::Error>> {
     let accepted = checked(
-        "class SampleBuffer:\n    pub capacity: int\n    pub samples: list[int]\n\n    pub def add(mut self, sample: Borrowed[int]) -> bool:\n        self.samples.append(sample)\n        return self.samples.contains(sample)\n\ndef main() -> None:\n    mut buffer = SampleBuffer(capacity=2, samples=[])\n    buffer.add(10)\n    println(len(buffer.samples))\n",
+        "class SampleBuffer:\n    pub capacity: int\n    pub samples: list[int]\n\n    pub def add(mut self, sample: Borrowed[int], proof: Owned[int] = 0) -> bool:\n        self.samples.append(sample)\n        return self.samples.contains(sample)\n\ndef main() -> None:\n    mut buffer = SampleBuffer(capacity=2, samples=[])\n    buffer.add(10)\n    println(len(buffer.samples))\n",
     )?;
     assert!(
         accepted.errors.is_empty(),
@@ -126,7 +127,8 @@ fn explicit_bodies_call_builtin_list_methods_on_places() -> Result<(), Box<dyn s
         accepted.errors,
         flow_summary(&accepted)
     );
-    let refused = checked("def grow(values: Borrowed[list[int]]) -> None:\n    values.append(1)\n")?;
+    let refused =
+        checked("def grow(values: Borrowed[list[int]], proof: Owned[int] = 0) -> None:\n    values.append(1)\n")?;
     assert!(
         refused
             .errors
@@ -160,11 +162,11 @@ fn checked_bodies_call_plain_helpers_without_arguments() -> Result<(), Box<dyn s
 #[test]
 fn checked_callers_print_lists_of_primitives() -> Result<(), Box<dyn std::error::Error>> {
     let accepted = checked(
-        "def collapse(mut values: BorrowedMut[list[int]]) -> None:\n    values = [9]\ndef main() -> None:\n    mut values = [1, 2, 3]\n    collapse(values)\n    println(values)\n",
+        "def collapse(mut values: BorrowedMut[list[int]], proof: Owned[int] = 0) -> None:\n    values = [9]\ndef main() -> None:\n    mut values = [1, 2, 3]\n    collapse(values)\n    println(values)\n",
     )?;
     assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
     let refused = checked(
-        "class Tag:\n    pub name: str\ndef keep(mut tags: BorrowedMut[list[Tag]]) -> None:\n    pass\ndef main() -> None:\n    mut tags = [Tag(name=\"a\")]\n    keep(tags)\n    println(tags)\n",
+        "class Tag:\n    pub name: str\ndef keep(mut tags: BorrowedMut[list[Tag]], proof: Owned[int] = 0) -> None:\n    pass\ndef main() -> None:\n    mut tags = [Tag(name=\"a\")]\n    keep(tags)\n    println(tags)\n",
     )?;
     assert!(
         refused
@@ -205,14 +207,16 @@ fn explicit_loops_refuse_a_transfer_another_iteration_repeats() -> Result<(), Bo
 #[test]
 fn local_alias_admission_preserves_other_boundaries() -> Result<(), Box<dyn std::error::Error>> {
     for source in [
-        "class Counter:\n    value: int\n    pub def read(self) -> int:\n        let local: Borrowed[int] = self.value\n        return local\n",
+        "class Counter:\n    value: int\n    pub def read(self, proof: Owned[int] = 0) -> int:\n        let local: Borrowed[int] = self.value\n        return local\n",
         "def read(value: Borrowed[str]) -> Borrowed[str] from value:\n    let local: Borrowed[str] = value\n    return local\n",
         "def read(value: Owned[int], choose: bool) -> int:\n    if choose:\n        let local: Owned[int] = value\n        return local\n    return value\n",
     ] {
         let checker = checked(source)?;
         assert!(checker.errors.is_empty(), "{source}: {:?}", checker.errors);
     }
-    for source in ["def wrong() -> int:\n    mut value = 1\n    value: BorrowedMut[int] = 2\n    return value\n"] {
+    for source in [
+        "def wrong(proof: Owned[int] = 0) -> int:\n    mut value = 1\n    value: BorrowedMut[int] = 2\n    return value\n",
+    ] {
         let checker = checked(source)?;
         assert!(
             checker
@@ -456,7 +460,7 @@ fn checked_alias_and_invalid_field_contracts() -> Result<(), Box<dyn std::error:
 /// explicit argument while a disjoint field argument stays accepted.
 #[test]
 fn method_frames_check_receiver_and_argument_overlap() -> Result<(), Box<dyn std::error::Error>> {
-    let declarations = "class Counter:\n    pub value: int\n    pub step: int\n\n    pub def bump(mut self, mut amount: BorrowedMut[int]) -> None:\n        self.value = self.value + amount\n";
+    let declarations = "class Counter:\n    pub value: int\n    pub step: int\n\n    pub def bump(mut self, mut amount: BorrowedMut[int], proof: Owned[int] = 0) -> None:\n        self.value = self.value + amount\n";
     let accepted = checked(&format!(
         "{declarations}\ndef main() -> int:\n    mut counter = Counter(value=1, step=2)\n    mut step = 2\n    counter.bump(step)\n    return counter.value\n"
     ))?;

@@ -34,7 +34,7 @@ impl TypeChecker {
             }
             return operand_ty;
         }
-        let operand_ty = self.check_expr(operand);
+        let operand_ty = crate::typechecker::helpers::borrowed_value_type(self.check_expr(operand));
         match op {
             UnaryOp::Neg => {
                 let exact_family = match &operand_ty {

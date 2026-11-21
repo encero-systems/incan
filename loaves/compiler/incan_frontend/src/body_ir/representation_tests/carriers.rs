@@ -189,8 +189,8 @@ pub(super) fn assert_nominal_carrier_maps_stay_shared() -> Result<(), Box<dyn st
 
 /// A package-owned provider declaration authenticates its own carrier before a consumer retains a nested field.
 pub(super) fn assert_package_provider_declaration_retains_own_carrier() -> Result<(), Box<dyn std::error::Error>> {
-    let provider_source = "pub model CarrierValue:\n    pub number: int\npub enum CarrierFault:\n    Bad\npub def carrier_value(seed: Borrowed[int]) -> Result[CarrierValue, CarrierFault]:\n    return Ok(CarrierValue(number=seed))\n";
-    let consumer_source = "from provider import CarrierValue, CarrierFault, carrier_value\npub model Envelope:\n    pub values: Option[list[CarrierValue]]\npub def consume(seed: Borrowed[int]) -> Result[CarrierValue, CarrierFault]:\n    value = carrier_value(seed)?\n    return Ok(value)\n";
+    let provider_source = "pub model CarrierValue:\n    pub number: int\npub enum CarrierFault:\n    Bad\npub def carrier_value(seed: Owned[int]) -> Result[CarrierValue, CarrierFault]:\n    return Ok(CarrierValue(number=seed))\n";
+    let consumer_source = "from provider import CarrierValue, CarrierFault, carrier_value\npub model Envelope:\n    pub values: Option[list[CarrierValue]]\npub def consume(seed: Owned[int]) -> Result[CarrierValue, CarrierFault]:\n    value = carrier_value(seed)?\n    return Ok(value)\n";
     let provider_tokens = crate::lexer::lex(provider_source).map_err(|errors| format!("{errors:?}"))?;
     let provider_program = crate::parser::parse(&provider_tokens).map_err(|errors| format!("{errors:?}"))?;
     let provider_path = vec!["provider".to_owned()];

@@ -40,7 +40,7 @@ fn require_package_checked(provider: &str, consumer: &str, owner_name: &str) -> 
 fn signature_block_value_use_mutations_reject_map_err_callback_substitution() -> Result<(), Box<dyn std::error::Error>>
 {
     let provider = "pub def decode(value: int) -> Result[int, str]:\n    return Ok(value)\n";
-    let consumer = "from views import decode\n\nenum Fault:\n    Malformed\ndef use(value: Borrowed[int]) -> Result[int, Fault]:\n    decoded = decode(value).map_err((_) => Fault.Malformed)?\n    return Ok(decoded)\n";
+    let consumer = "from views import decode\n\nenum Fault:\n    Malformed\ndef use(value: Borrowed[int], proof: Owned[int] = 0) -> Result[int, Fault]:\n    decoded = decode(value).map_err((_) => Fault.Malformed)?\n    return Ok(decoded)\n";
     let tokens = crate::lexer::lex(consumer).map_err(|errors| format!("{errors:?}"))?;
     let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
     let function = program
@@ -200,7 +200,7 @@ fn signature_block_value_use_mutations_reject_map_err_callback_substitution() ->
         }
     }
 
-    let paired = "from views import decode\n\nenum Fault:\n    Malformed\ndef use(value: Borrowed[int]) -> Result[int, Fault]:\n    fault = Fault.Malformed\n    first = decode(value).map_err((_) => Fault.Malformed)?\n    second = decode(value).map_err((_) => Fault.Malformed)?\n    return Ok(first + second)\n";
+    let paired = "from views import decode\n\nenum Fault:\n    Malformed\ndef use(value: Borrowed[int], proof: Owned[int] = 0) -> Result[int, Fault]:\n    fault = Fault.Malformed\n    first = decode(value).map_err((_) => Fault.Malformed)?\n    second = decode(value).map_err((_) => Fault.Malformed)?\n    return Ok(first + second)\n";
     let paired_tokens = crate::lexer::lex(paired).map_err(|errors| format!("{errors:?}"))?;
     let paired_program = crate::parser::parse(&paired_tokens).map_err(|errors| format!("{errors:?}"))?;
     let paired_function = paired_program
@@ -297,7 +297,7 @@ fn signature_block_value_use_mutations_reject_map_err_callback_substitution() ->
 #[test]
 fn signature_block_classifies_package_map_err_and_decoded_record() -> Result<(), Box<dyn std::error::Error>> {
     let scalar_provider = "pub def decode(value: int) -> Result[int, str]:\n    return Ok(value)\n";
-    let captureful = "from views import decode\n\nenum Fault:\n    Malformed\n\ndef use(value: Borrowed[int]) -> Result[int, Fault]:\n    fault = Fault.Malformed\n    decoded = decode(value).map_err((_) => fault)?\n    return Ok(decoded)\n";
+    let captureful = "from views import decode\n\nenum Fault:\n    Malformed\n\ndef use(value: Borrowed[int], proof: Owned[int] = 0) -> Result[int, Fault]:\n    fault = Fault.Malformed\n    decoded = decode(value).map_err((_) => fault)?\n    return Ok(decoded)\n";
     for (route, checker) in super::one_type::package_consumer_checkers(scalar_provider, captureful)? {
         let state = checker
             .type_info
@@ -325,7 +325,7 @@ fn signature_block_classifies_package_map_err_and_decoded_record() -> Result<(),
     }
 
     let provider = "@derive(Clone)\npub model Cell:\n    pub value: str\n@derive(Clone)\npub enum Payload:\n    Record(list[Cell])\n@derive(Clone)\npub model Row:\n    pub value: Payload\npub def decode(value: int) -> Result[list[Row], str]:\n    values = [Cell(value=str(value)), Cell(value=\"binary\"), Cell(value=\"family\"), Cell(value=\"decoded\"), Cell(value=\"native\")]\n    return Ok([Row(value=Payload.Record(values))])\n";
-    let map_err = "from views import Row, decode\n\nenum Fault:\n    Malformed\ndef use(value: Borrowed[int]) -> Result[list[Row], Fault]:\n    rows = decode(value).map_err((_) => Fault.Malformed)?\n    return Ok(rows)\n";
+    let map_err = "from views import Row, decode\n\nenum Fault:\n    Malformed\ndef use(value: Borrowed[int], proof: Owned[int] = 0) -> Result[list[Row], Fault]:\n    rows = decode(value).map_err((_) => Fault.Malformed)?\n    return Ok(rows)\n";
     require_package_checked(provider, map_err, "use")?;
     for (route, checker) in super::one_type::package_consumer_checkers(provider, map_err)? {
         let inner = checker
@@ -358,7 +358,7 @@ fn signature_block_classifies_package_map_err_and_decoded_record() -> Result<(),
         );
     }
 
-    let decoded = "from views import Payload, decode\n\nenum Fault:\n    Malformed\nenum Family:\n    Local\n@derive(Clone)\nmodel OutputCell:\n    value: str\nmodel Record:\n    text: str\n    binary: bytes\n    family: Family\n    decoded: list[OutputCell]\n    native: list[OutputCell]\ndef text_value(value: str) -> Result[str, Fault]:\n    return Ok(value)\ndef binary_value(value: str) -> Result[bytes, Fault]:\n    return Ok(b\"value\")\ndef family_value(value: str) -> Result[Family, Fault]:\n    return Ok(Family.Local)\ndef decoded_fields(value: str) -> Result[list[OutputCell], Fault]:\n    return Ok([OutputCell(value=value)])\ndef native_fields(value: str) -> Result[list[OutputCell], Fault]:\n    return Ok([OutputCell(value=value)])\ndef decoded_record(value: Borrowed[int]) -> Result[Record, Fault]:\n    rows = decode(value).map_err((_) => Fault.Malformed)?\n    row = rows[0]\n    values = match row.value:\n        Payload.Record(fields) => fields\n    return Ok(Record(text=text_value(values[0].value)?, binary=binary_value(values[1].value)?, family=family_value(values[2].value)?, decoded=decoded_fields(values[3].value)?, native=native_fields(values[4].value)?))\n";
+    let decoded = "from views import Payload, decode\n\nenum Fault:\n    Malformed\nenum Family:\n    Local\n@derive(Clone)\nmodel OutputCell:\n    value: str\nmodel Record:\n    text: str\n    binary: bytes\n    family: Family\n    decoded: list[OutputCell]\n    native: list[OutputCell]\ndef text_value(value: str) -> Result[str, Fault]:\n    return Ok(value)\ndef binary_value(value: str) -> Result[bytes, Fault]:\n    return Ok(b\"value\")\ndef family_value(value: str) -> Result[Family, Fault]:\n    return Ok(Family.Local)\ndef decoded_fields(value: str) -> Result[list[OutputCell], Fault]:\n    return Ok([OutputCell(value=value)])\ndef native_fields(value: str) -> Result[list[OutputCell], Fault]:\n    return Ok([OutputCell(value=value)])\ndef decoded_record(value: Borrowed[int], proof: Owned[int] = 0) -> Result[Record, Fault]:\n    rows = decode(value).map_err((_) => Fault.Malformed)?\n    row = rows[0]\n    values = match row.value:\n        Payload.Record(fields) => fields\n    return Ok(Record(text=text_value(values[0].value)?, binary=binary_value(values[1].value)?, family=family_value(values[2].value)?, decoded=decoded_fields(values[3].value)?, native=native_fields(values[4].value)?))\n";
     require_package_checked(provider, decoded, "decoded_record")
 }
 
@@ -367,11 +367,11 @@ fn signature_block_classifies_package_map_err_and_decoded_record() -> Result<(),
 /// reanchored onto the outer builtin invocation.
 #[test]
 fn signature_block_retains_explicit_list_result_for_map_err_and_match() -> Result<(), Box<dyn std::error::Error>> {
-    let provider = "pub def produce(seed: Borrowed[int]) -> Result[list[bytes], str]:\n    return Ok([b\"row\"])\n";
-    let consumer = "from views import produce\n\ndef map_rows(seed: Borrowed[int]) -> Result[list[bytes], str]:\n    rows = produce(seed).map_err((fault) => fault)?\n    return Ok(rows)\n\ndef match_rows(seed: Borrowed[int]) -> int:\n    match produce(seed):\n        Ok(rows) => return len(rows)\n        Err(_) => return 0\n";
+    let provider = "pub def produce(seed: Owned[int]) -> Result[list[bytes], str]:\n    return Ok([b\"row\"])\n";
+    let consumer = "from views import produce\n\ndef map_rows(seed: Owned[int]) -> Result[list[bytes], str]:\n    rows = produce(seed).map_err((fault) => fault)?\n    return Ok(rows)\n\ndef match_rows(seed: Owned[int]) -> int:\n    match produce(seed):\n        Ok(rows) => return len(rows)\n        Err(_) => return 0\n";
     for refused in [
-        "from views import produce\n\ndef map_rows(seed: Borrowed[int]) -> Result[list[bytes], str]:\n    captured = \"fault\"\n    rows = produce(seed).map_err((_) => captured)?\n    return Ok(rows)\n",
-        "from views import produce\n\ndef map_rows(seed: Borrowed[int]) -> Result[list[bytes], str]:\n    result = produce(seed)\n    rows = result.map_err((fault) => fault)?\n    return Ok(rows)\n",
+        "from views import produce\n\ndef map_rows(seed: Owned[int]) -> Result[list[bytes], str]:\n    captured = \"fault\"\n    rows = produce(seed).map_err((_) => captured)?\n    return Ok(rows)\n",
+        "from views import produce\n\ndef map_rows(seed: Owned[int]) -> Result[list[bytes], str]:\n    result = produce(seed)\n    rows = result.map_err((fault) => fault)?\n    return Ok(rows)\n",
     ] {
         for (route, checker) in super::one_type::package_consumer_checkers(provider, refused)? {
             assert!(

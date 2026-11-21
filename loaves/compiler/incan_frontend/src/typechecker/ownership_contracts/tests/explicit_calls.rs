@@ -7,7 +7,7 @@ use super::*;
 #[test]
 fn method_input_payload_retains_checked_self_substitution() -> Result<(), Box<dyn std::error::Error>> {
     let checker = checked(
-        "class Reader:\n    pub def view(self, other: Borrowed[Self]) -> None:\n        pass\ndef run() -> None:\n    reader = Reader()\n    reader.view(reader)\n",
+        "class Reader:\n    pub def view(self, other: Borrowed[Self], proof: Owned[int] = 0) -> None:\n        pass\ndef run() -> None:\n    reader = Reader()\n    reader.view(reader)\n",
     )?;
     assert!(checker.errors.is_empty(), "{:?}", checker.errors);
     assert_eq!(checker.type_info.protocols.explicit_input_calls.len(), 1);
@@ -20,15 +20,15 @@ fn method_input_payload_retains_checked_self_substitution() -> Result<(), Box<dy
 fn method_flow_preserves_receiver_permissions() -> Result<(), Box<dyn std::error::Error>> {
     for (source, conflict) in [
         (
-            "model Counter:\n    value: int\n    def change(mut self, amount: Borrowed[int]) -> int:\n        mut view: BorrowedMut[int] = self.value\n        view += amount\n        return self.value\n",
+            "model Counter:\n    value: int\n    def change(mut self, amount: Borrowed[int], proof: Owned[int] = 0) -> int:\n        mut view: BorrowedMut[int] = self.value\n        view += amount\n        return self.value\n",
             false,
         ),
         (
-            "model Counter:\n    value: int\n    def change(self, amount: Borrowed[int]) -> int:\n        mut view: BorrowedMut[int] = self.value\n        view += amount\n        return self.value\n",
+            "model Counter:\n    value: int\n    def change(self, amount: Borrowed[int], proof: Owned[int] = 0) -> int:\n        mut view: BorrowedMut[int] = self.value\n        view += amount\n        return self.value\n",
             true,
         ),
         (
-            "model Counter:\n    value: int\n    pub def read(self) -> int:\n        let view: Borrowed[int] = self.value\n        return view\n",
+            "model Counter:\n    value: int\n    pub def read(self, proof: Owned[int] = 0) -> int:\n        let view: Borrowed[int] = self.value\n        return view\n",
             false,
         ),
     ] {
@@ -62,7 +62,7 @@ fn method_flow_preserves_receiver_permissions() -> Result<(), Box<dyn std::error
         );
     }
     let checker = checked(
-        "model First:\n    value: int\n    pub def read(self) -> int:\n        let view: Borrowed[int] = self.value\n        return view\nmodel Second:\n    value: int\n    pub def read(self) -> int:\n        let view: Borrowed[int] = self.value\n        return view\n",
+        "model First:\n    value: int\n    pub def read(self, proof: Owned[int] = 0) -> int:\n        let view: Borrowed[int] = self.value\n        return view\nmodel Second:\n    value: int\n    pub def read(self, proof: Owned[int] = 0) -> int:\n        let view: Borrowed[int] = self.value\n        return view\n",
     )?;
     assert_eq!(checker.type_info.protocols.explicit_input_flow.len(), 2);
     let mut receivers = std::collections::BTreeSet::new();
@@ -122,7 +122,7 @@ fn explicit_conflicts_report_origin_and_dependent_use() -> Result<(), Box<dyn st
     assert_eq!(conflict.related_spans().len(), 1);
     assert!(conflict.related_spans()[0].span.start < conflict.span.start);
 
-    let source = "def readonly(value: Borrowed[int]) -> None:\n    value = 2\n";
+    let source = "def readonly(value: Borrowed[int], proof: Owned[int] = 0) -> None:\n    value = 2\n";
     let checker = checked(source)?;
     let conflict = checker
         .errors
@@ -348,8 +348,8 @@ fn ordinary_helpers_are_scoped_to_required_input_bodies() -> Result<(), Box<dyn 
     assert!(ordinary.type_info.protocols.explicit_input_calls.is_empty());
     assert!(ordinary.type_info.protocols.explicit_input_flow.is_empty());
     for source in [
-        "def add(left: int, right: int) -> int:\n    return left + right\ndef use(value: Borrowed[int]) -> int:\n    return add(right=2, left=value)\n",
-        "def add(left: int, right: int) -> int:\n    return left + right\ndef read(value: Borrowed[int]) -> int:\n    return value\ndef use(value: int) -> int:\n    first = add(value, 2)\n    return read(first)\n",
+        "def add(left: int, right: int) -> int:\n    return left + right\ndef use(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return add(right=2, left=value)\n",
+        "def add(left: int, right: int) -> int:\n    return left + right\ndef read(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return value\ndef use(value: int) -> int:\n    first = add(value, 2)\n    return read(first)\n",
     ] {
         let checker = checked(source)?;
         assert!(checker.errors.is_empty(), "{source}\n{:?}", checker.errors);
@@ -364,15 +364,15 @@ fn ordinary_helpers_are_scoped_to_required_input_bodies() -> Result<(), Box<dyn 
     }
     for (source, accepted) in [
         (
-            "def identity[T](value: T) -> T:\n    return value\ndef use(value: Borrowed[int]) -> int:\n    return identity(value)\n",
+            "def identity[T](value: T) -> T:\n    return value\ndef use(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return identity(value)\n",
             false,
         ),
         (
-            "def phantom[T](value: int) -> int:\n    return value\ndef use(value: Borrowed[int]) -> int:\n    return phantom[int](value)\n",
+            "def phantom[T](value: int) -> int:\n    return value\ndef use(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return phantom[int](value)\n",
             true,
         ),
         (
-            "def absent[T](value: int) -> Option[T]:\n    return None\ndef use(value: Borrowed[int]) -> Option[int]:\n    return absent[int](value)\n",
+            "def absent[T](value: int) -> Option[T]:\n    return None\ndef use(value: Borrowed[int], proof: Owned[int] = 0) -> Option[int]:\n    return absent[int](value)\n",
             true,
         ),
     ] {
@@ -388,7 +388,7 @@ fn ordinary_helpers_are_scoped_to_required_input_bodies() -> Result<(), Box<dyn 
         );
     }
     let failed = checked(
-        "def choose(value: int) -> int:\n    return value\ndef choose(other: int) -> int:\n    return other\ndef use(value: Borrowed[int]) -> int:\n    return choose(value)\n",
+        "def choose(value: int) -> int:\n    return value\ndef choose(other: int) -> int:\n    return other\ndef use(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return choose(value)\n",
     )?;
     assert!(
         failed.errors.iter().any(|error| error.message.contains("ambiguous")),
@@ -403,7 +403,7 @@ fn ordinary_helpers_are_scoped_to_required_input_bodies() -> Result<(), Box<dyn 
 /// explicit contract nor borrowing a same-shaped ordinary header may authorize a forged invocation.
 #[test]
 fn ordinary_call_replay_requires_its_exact_header() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def add(left: int, right: int) -> int:\n    return left + right\ndef use(value: Borrowed[int]) -> int:\n    return add(right=2, left=value)\n";
+    let source = "def add(left: int, right: int) -> int:\n    return left + right\ndef use(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return add(right=2, left=value)\n";
     let checker = checked(source)?;
     assert!(checker.errors.is_empty(), "{:?}", checker.errors);
     let (span, call) = checker
@@ -473,7 +473,7 @@ fn ordinary_call_replay_requires_its_exact_header() -> Result<(), Box<dyn std::e
         );
     }
     let mut explicit = checked(
-        "def read(value: Borrowed[int]) -> int:\n    return value\ndef use(value: int) -> int:\n    return read(value)\n",
+        "def read(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return value\ndef use(value: int) -> int:\n    return read(value)\n",
     )?;
     let call = explicit
         .type_info
@@ -494,7 +494,7 @@ fn ordinary_call_replay_requires_its_exact_header() -> Result<(), Box<dyn std::e
 #[test]
 fn package_ordinary_call_requires_exact_selected_header_without_local_binding() -> Result<(), Box<dyn std::error::Error>>
 {
-    let source = "def add(left: int, right: int) -> int:\n    return left + right\ndef use(value: Borrowed[int]) -> int:\n    return add(value, 1)\n";
+    let source = "def add(left: int, right: int) -> int:\n    return left + right\ndef use(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return add(value, 1)\n";
     let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
     let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
     let mut checker = TypeChecker::new();
@@ -644,11 +644,11 @@ fn explicit_call_facts_preserve_canonical_slots() -> Result<(), Box<dyn std::err
 fn explicit_calls_check_source_access_and_transfer() -> Result<(), Box<dyn std::error::Error>> {
     for (source, conflicts) in [
         (
-            "def use(mut value: int) -> int:\n    set(value)\n    return value\ndef set(mut value: BorrowedMut[int]) -> None:\n    value = 2\n",
+            "def use(mut value: int) -> int:\n    set(value)\n    return value\ndef set(mut value: BorrowedMut[int], proof: Owned[int] = 0) -> None:\n    value = 2\n",
             false,
         ),
         (
-            "def use(value: str) -> None:\n    read(value, value)\ndef read(first: Borrowed[str], second: Borrowed[str]) -> None:\n    pass\n",
+            "def use(value: str) -> None:\n    read(value, value)\ndef read(first: Borrowed[str], second: Borrowed[str], proof: Owned[int] = 0) -> None:\n    pass\n",
             false,
         ),
         (
@@ -660,11 +660,11 @@ fn explicit_calls_check_source_access_and_transfer() -> Result<(), Box<dyn std::
             false,
         ),
         (
-            "def use(value: int) -> None:\n    read(value)\ndef read(value: BorrowedMut[int]) -> None:\n    pass\n",
+            "def use(value: int) -> None:\n    read(value)\ndef read(value: BorrowedMut[int], proof: Owned[int] = 0) -> None:\n    pass\n",
             true,
         ),
         (
-            "def use(mut value: int) -> None:\n    read(value, value)\ndef read(first: BorrowedMut[int], second: BorrowedMut[int]) -> None:\n    pass\n",
+            "def use(mut value: int) -> None:\n    read(value, value)\ndef read(first: BorrowedMut[int], second: BorrowedMut[int], proof: Owned[int] = 0) -> None:\n    pass\n",
             true,
         ),
         (
@@ -672,35 +672,35 @@ fn explicit_calls_check_source_access_and_transfer() -> Result<(), Box<dyn std::
             true,
         ),
         (
-            "def use(value: str) -> None:\n    read(second=take(value), first=value)\ndef read(first: Borrowed[str], second: int) -> None:\n    pass\ndef take(value: Owned[str]) -> int:\n    return 1\n",
+            "def use(value: str) -> None:\n    read(second=take(value), first=value)\ndef read(first: Borrowed[str], second: int, proof: Owned[int] = 0) -> None:\n    pass\ndef take(value: Owned[str]) -> int:\n    return 1\n",
             true,
         ),
         (
-            "def use(value: str) -> None:\n    read(first=value, second=take(value))\ndef read(first: Borrowed[str], second: int) -> None:\n    pass\ndef take(value: Owned[str]) -> int:\n    return 1\n",
+            "def use(value: str) -> None:\n    read(first=value, second=take(value))\ndef read(first: Borrowed[str], second: int, proof: Owned[int] = 0) -> None:\n    pass\ndef take(value: Owned[str]) -> int:\n    return 1\n",
             true,
         ),
         (
-            "def use(mut value: Pair) -> None:\n    read(value.left, value.right)\ndef read(first: BorrowedMut[int], second: BorrowedMut[int]) -> None:\n    pass\nmodel Pair:\n    left: int\n    right: int\n",
+            "def use(mut value: Pair) -> None:\n    read(value.left, value.right)\ndef read(first: BorrowedMut[int], second: BorrowedMut[int], proof: Owned[int] = 0) -> None:\n    pass\nmodel Pair:\n    left: int\n    right: int\n",
             false,
         ),
         (
-            "def use(mut value: Pair) -> None:\n    read(value, value.left)\ndef read(first: BorrowedMut[Pair], second: Borrowed[int]) -> None:\n    pass\nmodel Pair:\n    left: int\n    right: int\n",
+            "def use(mut value: Pair) -> None:\n    read(value, value.left)\ndef read(first: BorrowedMut[Pair], second: Borrowed[int], proof: Owned[int] = 0) -> None:\n    pass\nmodel Pair:\n    left: int\n    right: int\n",
             true,
         ),
         (
-            "def use(mut value: BorrowedMut[int]) -> int:\n    read(value)\n    value = 3\n    return value\ndef read(value: Borrowed[int]) -> None:\n    pass\n",
+            "def use(mut value: BorrowedMut[int], proof: Owned[int] = 0) -> int:\n    read(value)\n    value = 3\n    return value\ndef read(value: Borrowed[int], proof: Owned[int] = 0) -> None:\n    pass\n",
             false,
         ),
         (
-            "def use(value: Borrowed[str]) -> None:\n    take(value)\ndef take(value: Owned[str]) -> None:\n    pass\n",
+            "def use(value: Borrowed[str], proof: Owned[int] = 0) -> None:\n    take(value)\ndef take(value: Owned[str]) -> None:\n    pass\n",
             true,
         ),
         (
-            "def use(value: str) -> int:\n    return choose(second=value == \"x\", first=take(value))\ndef choose(first: Borrowed[int], second: bool) -> int:\n    return first\ndef take(value: Owned[str]) -> int:\n    return 1\n",
+            "def use(value: str) -> int:\n    return choose(second=value == \"x\", first=take(value))\ndef choose(first: Borrowed[int], second: bool, proof: Owned[int] = 0) -> int:\n    return first\ndef take(value: Owned[str]) -> int:\n    return 1\n",
             true,
         ),
         (
-            "def use(reader: Reader, value: str) -> int:\n    return reader.choose(second=value == \"x\", first=take(value))\ndef take(value: Owned[str]) -> int:\n    return 1\nmodel Reader:\n    marker: int\n    def choose(self, first: Borrowed[int], second: bool) -> int:\n        return first\n",
+            "def use(reader: Reader, value: str) -> int:\n    return reader.choose(second=value == \"x\", first=take(value))\ndef take(value: Owned[str]) -> int:\n    return 1\nmodel Reader:\n    marker: int\n    def choose(self, first: Borrowed[int], second: bool, proof: Owned[int] = 0) -> int:\n        return first\n",
             false,
         ),
     ] {
@@ -716,7 +716,7 @@ fn explicit_calls_check_source_access_and_transfer() -> Result<(), Box<dyn std::
 #[test]
 fn explicit_calls_follow_call_site_save_and_restore() -> Result<(), Box<dyn std::error::Error>> {
     let mut checker = checked(
-        "def use(value: int) -> int:\n    return read(value)\ndef read(value: Borrowed[int]) -> int:\n    return value\n",
+        "def use(value: int) -> int:\n    return read(value)\ndef read(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return value\n",
     )?;
     let (span, original) = checker
         .type_info
@@ -764,23 +764,23 @@ fn explicit_calls_follow_call_site_save_and_restore() -> Result<(), Box<dyn std:
 fn explicit_method_calls_retain_receiver_access() -> Result<(), Box<dyn std::error::Error>> {
     for (source, conflict) in [
         (
-            "def use(reader: Reader, value: str) -> None:\n    reader.read(value)\nclass Reader:\n    pub def read(self, value: Borrowed[str]) -> None:\n        pass\n",
+            "def use(reader: Reader, value: str) -> None:\n    reader.read(value)\nclass Reader:\n    pub def read(self, value: Borrowed[str], proof: Owned[int] = 0) -> None:\n        pass\n",
             false,
         ),
         (
-            "def use(mut reader: Reader, value: str) -> None:\n    reader.read(value)\nclass Reader:\n    pub def read(mut self, value: Borrowed[str]) -> None:\n        pass\n",
+            "def use(mut reader: Reader, value: str) -> None:\n    reader.read(value)\nclass Reader:\n    pub def read(mut self, value: Borrowed[str], proof: Owned[int] = 0) -> None:\n        pass\n",
             false,
         ),
         (
-            "def use(reader: Reader, value: str) -> None:\n    reader.read(value)\nclass Reader:\n    pub def read(mut self, value: Borrowed[str]) -> None:\n        pass\n",
+            "def use(reader: Reader, value: str) -> None:\n    reader.read(value)\nclass Reader:\n    pub def read(mut self, value: Borrowed[str], proof: Owned[int] = 0) -> None:\n        pass\n",
             true,
         ),
         (
-            "def use(mut reader: Reader) -> None:\n    reader.read(reader.value)\nclass Reader:\n    pub value: str\n    pub def read(mut self, value: Borrowed[str]) -> None:\n        pass\n",
+            "def use(mut reader: Reader) -> None:\n    reader.read(reader.value)\nclass Reader:\n    pub value: str\n    pub def read(mut self, value: Borrowed[str], proof: Owned[int] = 0) -> None:\n        pass\n",
             true,
         ),
         (
-            "def use(reader: Reader, value: str) -> str:\n    reader.read(1, value)\n    return value\nclass Reader:\n    pub def read(self, value: Borrowed[int]) -> None:\n        pass\n    pub def read(self, prefix: int, value: Owned[str]) -> None:\n        pass\n",
+            "def use(reader: Reader, value: str) -> str:\n    reader.read(1, value)\n    return value\nclass Reader:\n    pub def read(self, value: Borrowed[int], proof: Owned[int] = 0) -> None:\n        pass\n    pub def read(self, prefix: int, value: Owned[str]) -> None:\n        pass\n",
             true,
         ),
     ] {
@@ -816,23 +816,23 @@ fn rejected_method_does_not_retain_input_access() -> Result<(), Box<dyn std::err
 fn borrowed_arguments_can_use_bounded_temporary_owners() -> Result<(), Box<dyn std::error::Error>> {
     for (source, conflict) in [
         (
-            "def use() -> None:\n    read(\"hello\")\ndef read(value: Borrowed[str]) -> None:\n    pass\n",
+            "def use() -> None:\n    read(\"hello\")\ndef read(value: Borrowed[str], proof: Owned[int] = 0) -> None:\n    pass\n",
             false,
         ),
         (
-            "def use() -> None:\n    read(1 + 2)\ndef read(value: Borrowed[int]) -> None:\n    pass\n",
+            "def use() -> None:\n    read(1 + 2)\ndef read(value: Borrowed[int], proof: Owned[int] = 0) -> None:\n    pass\n",
             false,
         ),
         (
-            "def use() -> None:\n    change(1)\ndef change(mut value: BorrowedMut[int]) -> None:\n    value = 2\n",
+            "def use() -> None:\n    change(1)\ndef change(mut value: BorrowedMut[int], proof: Owned[int] = 0) -> None:\n    value = 2\n",
             false,
         ),
         (
-            "def use(value: int) -> None:\n    change((value))\ndef change(mut value: BorrowedMut[int]) -> None:\n    value = 2\n",
+            "def use(value: int) -> None:\n    change((value))\ndef change(mut value: BorrowedMut[int], proof: Owned[int] = 0) -> None:\n    value = 2\n",
             true,
         ),
         (
-            "def use(value: str) -> str:\n    read(take(value))\n    return value\ndef read(value: Borrowed[str]) -> None:\n    pass\ndef take(value: Owned[str]) -> str:\n    return value\n",
+            "def use(value: str) -> str:\n    read(take(value))\n    return value\ndef read(value: Borrowed[str], proof: Owned[int] = 0) -> None:\n    pass\ndef take(value: Owned[str]) -> str:\n    return value\n",
             true,
         ),
     ] {

@@ -45,6 +45,10 @@ impl TypeChecker {
                 && param.kind == ParamKind::Normal
                 && contract.mode == incan_lang::lang::types::ownership::OwnershipMode::BorrowedMut;
         }
+        // A shared borrow never shows changes to its caller, in either spelling: it is read-only in the body.
+        if matches!(resolved, ResolvedType::Ref(_)) {
+            return false;
+        }
         if !def_param_is_marked(param, &self.expand_type_aliases(resolved.clone())) {
             return false;
         }

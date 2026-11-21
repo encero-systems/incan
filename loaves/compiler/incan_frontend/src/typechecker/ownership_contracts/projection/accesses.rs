@@ -54,7 +54,6 @@ impl CheckedInputBody<'_> {
                 return Err("synthetic input access fulfills more than one source role");
             }
         }
-        let contract = self.facts.declarations.ownership_contracts.get(self.canonical_owner());
         for (slot, parameter) in function.params().iter().enumerate() {
             let identity = self
                 .facts
@@ -62,7 +61,7 @@ impl CheckedInputBody<'_> {
                 .ok_or("source access parameter has no canonical declaration")?;
             let root = flow::Root::Binding(identity.clone());
             coverage.known.insert(root.clone());
-            if crate::ownership_metadata::direct_input_access(contract, slot)? != IncanInputAccess::Inferred {
+            if self.facts.body_input_access(self.canonical_owner(), slot)? != IncanInputAccess::Inferred {
                 coverage.constrained.insert(root);
             }
         }

@@ -7,7 +7,7 @@ use super::*;
 #[test]
 fn ordinary_argument_accepts_only_fresh_closed_selected_call_results() -> Result<(), Box<dyn std::error::Error>> {
     let accepted = checked(
-        "def encode(value: Borrowed[int]) -> bytes:\n    return b\"row\"\ndef observe(value: bytes) -> int:\n    return len(value)\ndef inspect(value: Borrowed[int]) -> int:\n    return observe(encode(value))\n",
+        "def encode(value: Borrowed[int], proof: Owned[int] = 0) -> bytes:\n    return b\"row\"\ndef observe(value: bytes) -> int:\n    return len(value)\ndef inspect(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return observe(encode(value))\n",
     )?;
     assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
     assert!(
@@ -19,7 +19,7 @@ fn ordinary_argument_accepts_only_fresh_closed_selected_call_results() -> Result
             .any(|(owner, flow)| { owner.declaration_name == "inspect" && matches!(flow, InputFlow::Checked { .. }) })
     );
 
-    let refused_source = "def view(value: Borrowed[bytes]) -> Borrowed[bytes] from value:\n    return value\ndef observe(value: bytes) -> int:\n    return len(value)\ndef inspect(value: Borrowed[bytes]) -> int:\n    return observe(view(value))\n";
+    let refused_source = "def view(value: Borrowed[bytes]) -> Borrowed[bytes] from value:\n    return value\ndef observe(value: bytes) -> int:\n    return len(value)\ndef inspect(value: Borrowed[bytes], proof: Owned[int] = 0) -> int:\n    return observe(view(value))\n";
     let refused = checked(refused_source)?;
     let state = refused
         .type_info
@@ -56,7 +56,7 @@ fn ordinary_argument_accepts_only_fresh_closed_selected_call_results() -> Result
 /// its root and still needs retained-owner projection instead of acquiring transfer authority from the list literal.
 #[test]
 fn list_element_accepts_only_fresh_closed_selected_model_results() -> Result<(), Box<dyn std::error::Error>> {
-    let accepted_source = "model Field:\n    value: bytes\ndef make(seed: int) -> Field:\n    return Field(value=b\"row\")\ndef collect(seed: Borrowed[int]) -> list[Field]:\n    return [make(seed)]\n";
+    let accepted_source = "model Field:\n    value: bytes\ndef make(seed: int) -> Field:\n    return Field(value=b\"row\")\ndef collect(seed: Owned[int]) -> list[Field]:\n    return [make(seed)]\n";
     let accepted = checked(accepted_source)?;
     assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
     assert!(
@@ -87,7 +87,7 @@ fn list_element_accepts_only_fresh_closed_selected_model_results() -> Result<(),
     for (label, refused_source, reason, stop) in [
         (
             "stored model",
-            "model Field:\n    value: bytes\ndef collect(seed: Borrowed[int]) -> list[Field]:\n    field = Field(value=b\"row\")\n    return [field]\n",
+            "model Field:\n    value: bytes\ndef collect(seed: Owned[int]) -> list[Field]:\n    field = Field(value=b\"row\")\n    return [field]\n",
             "list element needs checked retained-owner projection",
             "field",
         ),
@@ -134,7 +134,7 @@ fn list_element_accepts_only_fresh_closed_selected_model_results() -> Result<(),
 #[test]
 fn constructor_field_index_requires_fresh_transferable_loop_row() -> Result<(), Box<dyn std::error::Error>> {
     let accepted = checked(
-        "model Field:\n    value: str\ndef collect(rows: Borrowed[list[list[str]]]) -> list[Field]:\n    mut fields: list[Field] = []\n    for row in rows[1:]:\n        fields.append(Field(value=row[0]))\n    return fields\n",
+        "model Field:\n    value: str\ndef collect(rows: Borrowed[list[list[str]]], proof: Owned[int] = 0) -> list[Field]:\n    mut fields: list[Field] = []\n    for row in rows[1:]:\n        fields.append(Field(value=row[0]))\n    return fields\n",
     )?;
     assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
     assert!(
@@ -149,13 +149,13 @@ fn constructor_field_index_requires_fresh_transferable_loop_row() -> Result<(), 
     for (label, source, expected, stop) in [
         (
             "stored local row",
-            "model Field:\n    value: str\ndef collect(seed: Borrowed[int]) -> Field:\n    row = [\"stored\"]\n    return Field(value=row[0])\n",
+            "model Field:\n    value: str\ndef collect(seed: Owned[int]) -> Field:\n    row = [\"stored\"]\n    return Field(value=row[0])\n",
             "non-Copy constructor field needs checked ownership transfer materialization",
             "row[0]",
         ),
         (
             "borrowed row",
-            "model Field:\n    value: str\ndef collect(row: Borrowed[list[str]]) -> Field:\n    return Field(value=row[0])\n",
+            "model Field:\n    value: str\ndef collect(row: Borrowed[list[str]], proof: Owned[int] = 0) -> Field:\n    return Field(value=row[0])\n",
             source::BORROWED_VALUE_IN_OWNED_FIELD,
             "row[0]",
         ),
@@ -283,10 +283,10 @@ fn cloneable_loop_pattern_reinitializes_without_suppressing_real_moves() -> Resu
 /// returned-view carrier keep their existing outcomes instead of borrowing the loop's per-poll replacement.
 #[test]
 fn parenthesized_short_circuit_loop_validation_preserves_exact_edges() -> Result<(), Box<dyn std::error::Error>> {
-    let accepted_source = "enum Fault:\n    Bad\nmodel Field:\n    family: str\n    node: str\n    selector: str\ndef validate(field: Borrowed[Field]) -> Result[None, Fault]:\n    if field.family == \"bad\":\n        return Err(Fault.Bad)\n    return Ok(None)\ndef inspect(fields: Borrowed[list[Field]]) -> Result[str, Fault]:\n    mut previous_family = \"\"\n    mut previous_node = \"\"\n    mut previous_selector = \"\"\n    for field in fields:\n        if field.family < previous_family or (field.family == previous_family and field.node < previous_node):\n            return Err(Fault.Bad)\n        validate(field)?\n        previous_family = field.family\n        previous_node = field.node\n        previous_selector = field.selector\n    return Ok(previous_selector)\n";
+    let accepted_source = "enum Fault:\n    Bad\nmodel Field:\n    family: str\n    node: str\n    selector: str\ndef validate(field: Borrowed[Field], proof: Owned[int] = 0) -> Result[None, Fault]:\n    if field.family == \"bad\":\n        return Err(Fault.Bad)\n    return Ok(None)\ndef inspect(fields: Borrowed[list[Field]], proof: Owned[int] = 0) -> Result[str, Fault]:\n    mut previous_family = \"\"\n    mut previous_node = \"\"\n    mut previous_selector = \"\"\n    for field in fields:\n        if field.family < previous_family or (field.family == previous_family and field.node < previous_node):\n            return Err(Fault.Bad)\n        validate(field)?\n        previous_family = field.family\n        previous_node = field.node\n        previous_selector = field.selector\n    return Ok(previous_selector)\n";
     let accepted = checked(accepted_source)?;
 
-    let moved_source = "enum Fault:\n    Bad\nmodel Field:\n    value: str\ndef consume(value: Owned[str]) -> Result[None, Fault]:\n    return Ok(None)\ndef inspect(fields: Borrowed[list[Field]]) -> Result[str, Fault]:\n    mut previous = \"\"\n    for field in fields:\n        consume(field.value)?\n        previous = field.value\n    return Ok(previous)\n";
+    let moved_source = "enum Fault:\n    Bad\nmodel Field:\n    value: str\ndef consume(value: Owned[str]) -> Result[None, Fault]:\n    return Ok(None)\ndef inspect(fields: Borrowed[list[Field]], proof: Owned[int] = 0) -> Result[str, Fault]:\n    mut previous = \"\"\n    for field in fields:\n        consume(field.value)?\n        previous = field.value\n    return Ok(previous)\n";
     let moved = checked(moved_source)?;
     assert!(
         !moved.errors.is_empty()
@@ -313,7 +313,7 @@ fn parenthesized_short_circuit_loop_validation_preserves_exact_edges() -> Result
         "same-iteration move lost its exact T0126 conflict"
     );
 
-    let dependent_source = "enum Fault:\n    Bad\nmodel Field:\n    value: str\ndef view(value: Borrowed[str]) -> Result[Borrowed[str], Fault] from value:\n    return Ok(value)\ndef inspect(fields: Borrowed[list[Field]]) -> Result[list[str], Fault]:\n    mut values: list[str] = []\n    for field in fields:\n        values.append(view(field.value)?)\n    return Ok(values)\n";
+    let dependent_source = "enum Fault:\n    Bad\nmodel Field:\n    value: str\ndef view(value: Borrowed[str]) -> Result[Borrowed[str], Fault] from value:\n    return Ok(value)\ndef inspect(fields: Borrowed[list[Field]], proof: Owned[int] = 0) -> Result[list[str], Fault]:\n    mut values: list[str] = []\n    for field in fields:\n        values.append(view(field.value)?)\n    return Ok(values)\n";
     let dependent = checked(dependent_source)?;
     let dependent_state = dependent
         .type_info
@@ -360,19 +360,19 @@ fn parenthesized_short_circuit_loop_validation_preserves_exact_edges() -> Result
 /// closed cloneable non-scalar elements and the identical slice nested as a list element retain their refusals.
 #[test]
 fn constructor_field_slice_requires_fresh_transferable_loop_row() -> Result<(), Box<dyn std::error::Error>> {
-    let accepted_source = "model Field:\n    family: str\n    values: list[str]\ndef from_native(rows: Borrowed[list[list[str]]]) -> list[Field]:\n    mut fields: list[Field] = []\n    for row in rows[1:]:\n        fields.append(Field(family=row[0], values=row[3:]))\n    return fields\ndef from_family(rows: Borrowed[list[list[str]]]) -> list[Field]:\n    mut fields: list[Field] = []\n    for row in rows[1:]:\n        fields.append(Field(family=row[0], values=row[3:]))\n    return fields\n";
+    let accepted_source = "model Field:\n    family: str\n    values: list[str]\ndef from_native(rows: Borrowed[list[list[str]]], proof: Owned[int] = 0) -> list[Field]:\n    mut fields: list[Field] = []\n    for row in rows[1:]:\n        fields.append(Field(family=row[0], values=row[3:]))\n    return fields\ndef from_family(rows: Borrowed[list[list[str]]], proof: Owned[int] = 0) -> list[Field]:\n    mut fields: list[Field] = []\n    for row in rows[1:]:\n        fields.append(Field(family=row[0], values=row[3:]))\n    return fields\n";
     let accepted = checked(accepted_source)?;
 
     for (label, source, expected, stop) in [
         (
             "stored row",
-            "model Field:\n    values: list[str]\ndef collect(seed: Borrowed[int]) -> Field:\n    row = [\"a\", \"b\", \"c\", \"d\"]\n    return Field(values=row[3:])\n",
+            "model Field:\n    values: list[str]\ndef collect(seed: Owned[int]) -> Field:\n    row = [\"a\", \"b\", \"c\", \"d\"]\n    return Field(values=row[3:])\n",
             "non-Copy constructor field needs checked ownership transfer materialization",
             "row[3:]",
         ),
         (
             "borrowed row",
-            "model Field:\n    values: list[str]\ndef collect(row: Borrowed[list[str]]) -> Field:\n    return Field(values=row[3:])\n",
+            "model Field:\n    values: list[str]\ndef collect(row: Borrowed[list[str]], proof: Owned[int] = 0) -> Field:\n    return Field(values=row[3:])\n",
             "non-Copy constructor field needs checked ownership transfer materialization",
             "row[3:]",
         ),
@@ -390,7 +390,7 @@ fn constructor_field_slice_requires_fresh_transferable_loop_row() -> Result<(), 
         ),
         (
             "closed cloneable model element",
-            "@derive(Clone)\nmodel Token:\n    value: str\nmodel Field:\n    values: list[Token]\ndef collect(rows: Borrowed[list[list[Token]]]) -> list[Field]:\n    mut fields: list[Field] = []\n    for row in rows:\n        fields.append(Field(values=row[1:]))\n    return fields\n",
+            "@derive(Clone)\nmodel Token:\n    value: str\nmodel Field:\n    values: list[Token]\ndef collect(rows: Borrowed[list[list[Token]]], proof: Owned[int] = 0) -> list[Field]:\n    mut fields: list[Field] = []\n    for row in rows:\n        fields.append(Field(values=row[1:]))\n    return fields\n",
             "non-Copy constructor field needs checked ownership transfer materialization",
             "row[1:]",
         ),
@@ -455,7 +455,7 @@ fn omitted_fields_follow_the_declaring_constructor_across_modules() -> Result<()
         "@derive(Eq)\nmodel Detail:\n    labels: list[str] = []\n    flags: list[str] = []\n    components: list[str] = []\npub model Row:\n    pub value: int\n    detail: Detail = Detail()\n    label: str = \"new\"\n    tag: Option[str] = None\n",
     )?;
     let consumer = parse(
-        "from provider import Row\nmodel Detail:\n    required: int\ndef make(value: Borrowed[int]) -> Row:\n    return Row(value=value)\n",
+        "from provider import Row\nmodel Detail:\n    required: int\ndef make(value: Borrowed[int], proof: Owned[int] = 0) -> Row:\n    return Row(value=value)\n",
     )?;
     let mut checker = TypeChecker::new();
     checker
@@ -478,7 +478,7 @@ fn omitted_fields_follow_the_declaring_constructor_across_modules() -> Result<()
 #[test]
 fn omitted_fields_refuse_effectful_nested_defaults() -> Result<(), Box<dyn std::error::Error>> {
     let checker = checked(
-        "def make_labels() -> list[str]:\n    return [\"user\"]\n@derive(Eq)\nmodel Detail:\n    labels: list[str] = make_labels()\nmodel Row:\n    value: int\n    detail: Detail = Detail()\ndef make(value: Borrowed[int]) -> Row:\n    return Row(value=value)\n",
+        "def make_labels() -> list[str]:\n    return [\"user\"]\n@derive(Eq)\nmodel Detail:\n    labels: list[str] = make_labels()\nmodel Row:\n    value: int\n    detail: Detail = Detail()\ndef make(value: Borrowed[int], proof: Owned[int] = 0) -> Row:\n    return Row(value=value)\n",
     )?;
     assert!(checker.type_info.protocols.explicit_input_flow.iter().any(|(id, flow)| id.declaration_name == "make" && matches!(flow, InputFlow::Unavailable(stop) if stop.reason == "construction needs declaration-owned fresh defaults for all omitted fields")), "{:?}", flow_summary(&checker));
     Ok(())
