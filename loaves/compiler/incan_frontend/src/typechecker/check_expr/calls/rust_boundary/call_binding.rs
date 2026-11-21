@@ -520,7 +520,14 @@ impl TypeChecker {
         }
 
         let ret = self.resolved_rust_call_type_from_sig(&effective_sig, path, span);
-        let ret = self.instantiate_rust_signature_type(&ret, &inference_parameters, &callable_returns);
+        let instantiated = self.instantiate_rust_signature_type(&ret, &inference_parameters, &callable_returns);
+        // Inference reads a byte buffer as a list of u8 so it can bind element parameters. With nothing to infer, a
+        // result whose only change would be that reading keeps its Incan bytes, as a field of the same type does.
+        let ret = if inference_parameters.is_empty() && instantiated == byte_buffers_as_element_lists(&ret) {
+            ret
+        } else {
+            instantiated
+        };
         self.record_rust_return_coercion_from_display(sig.return_type.as_str(), &ret, span);
         if self.errors.len() == errors_before && Self::rust_signature_const_parameters_are_bound(sig, &callable_returns)
         {
@@ -528,4 +535,18 @@ impl TypeChecker {
         }
         self.native_borrowed_source_result(span, ret)
     }
+}
+
+/// The inference reading of a source type: each Incan `bytes` leaf as the `list[u8]` its native buffer holds.
+fn byte_buffers_as_element_lists(ty: &ResolvedType) -> ResolvedType {
+    crate::resolved_type_subst::map_resolved_type_leaves(ty, &|leaf| {
+        (*leaf == ResolvedType::Bytes).then(|| {
+            ResolvedType::Generic(
+                "List".into(),
+                vec![ResolvedType::Numeric(
+                    incan_lang::lang::types::numerics::NumericTypeId::U8,
+                )],
+            )
+        })
+    })
 }

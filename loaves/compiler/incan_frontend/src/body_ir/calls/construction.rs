@@ -443,8 +443,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let planned: Vec<(usize, &ast::Spanned<ast::Expr>)> =
             argument_slots.iter().copied().zip(written_exprs).collect();
         let canonical = self.constructed_declaration_identity(callee_span, span);
-        // Supplied operands precede deferred defaults; only retained effect-free defaults may cross that boundary.
-        if self.construction_interleaves_default_effects(canonical.as_ref(), name, argument_slots, &planned) {
+        // A native record evaluates the defaults it publishes after the written arguments, as Rust evaluates a struct
+        // update. Elsewhere supplied operands precede deferred defaults; only retained effect-free defaults may cross
+        // that boundary.
+        let native_owner = self.native_construction_owner(span);
+        if native_owner.is_none()
+            && self.construction_interleaves_default_effects(canonical.as_ref(), name, argument_slots, &planned)
+        {
             return self.unsupported_operand(
                 format!("model field-default evaluation interleaved with supplied arguments on `{name}`"),
                 scope,
@@ -460,6 +465,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             None => self.lower_planned_args(&planned, field_count, &[], &[], scope, out),
         };
         self.restore_constructor_argument_carriers(contextual_types);
+        let lowered = match (native_owner, lowered) {
+            (Some(owner), Ok(bound)) => self.fill_published_native_defaults(&owner, bound, scope, hir_span_value, out),
+            (_, lowered) => lowered,
+        };
         let (operands, binding) = match lowered {
             Ok(bound) => bound,
             Err(description) => {
@@ -582,6 +591,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 ast::CallArg::Positional(expr) => {
                     let operand = self.lower_expr_to_operand(expr, scope, out);
                     let operand = self.retain_evaluated_value_read(expr, operand, scope, out);
+                    let operand = self.retain_borrowed_value_destination(expr, operand, scope, out);
                     elements.push(bir::ArgumentElement::One(operand));
                 }
                 ast::CallArg::PositionalUnpack(source) => {
@@ -593,6 +603,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 ast::CallArg::Named(name, expr) => {
                     let operand = self.lower_expr_to_operand(expr, scope, out);
                     let operand = self.retain_evaluated_value_read(expr, operand, scope, out);
+                    let operand = self.retain_borrowed_value_destination(expr, operand, scope, out);
                     elements.push(bir::ArgumentElement::Named {
                         name: name.node.clone(),
                         operand,

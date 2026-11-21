@@ -1,0 +1,9 @@
+[project]
+name = "rust_text_constant_rebound"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+profiles = { loaf = "profiles", path = "rust/profiles" }
