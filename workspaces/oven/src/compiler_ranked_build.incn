@@ -1,0 +1,448 @@
+"""Execute ranked checking work for changed, independently certified project owners before native compilation."""
+
+from pub::incan_platform.trace import enter_producer, finish_producer
+from std.encoding.hex import hexlify
+from std.fs import Path
+from pub::internal_models.source_value_records import source_value
+from std.primitives.hash import sha256
+from pub::incan_platform.store import Snapshot, Transaction, begin, commit, get, stage_put
+from pub::incan_platform.store.codec import KIND_VALUE
+from pub::incan_worker_host import completed_checker_key
+from pub::incan_worker_host.record_protocol import Evaluate, Prepare, RecordMessage
+from pub::incan_worker_host.record_snapshot import SNAPSHOT_FORMAT_PROFILE, staged_key, valid_digest
+from pub::internal_models import (
+    DEMAND_FAMILY, PREPARED_FAMILY, WORK_FAMILY, DemandPage, ProducerProfile, ProducerStage, ReadyWork,
+    RecordRoot, checking_basis_key, decode_namespace_order, decode_prepared_inputs, decode_read_receipt,
+    encode_checking_completion, encode_demand_page, encode_ready_work, envelope_key,
+)
+from pub::internal_models.namespace_order import CHECKING_BASIS, read_checking_basis
+from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily, decode_owned_record
+from pub::internal_models.records import ReadWitness, RecordKey, encode_record_key
+from compiler_body_keys import IDENTITY_PROFILE
+from compiler_body_values import CoveredBodyOwners, SelectedBodyPage, SelectedBodyRecord, encode_body_inventory, select_body_inventory_of
+from compiler_graph_records import OutputSlots, decode_record_key, evaluation_authority, family_outputs
+from compiler_record_envelopes import RankedActivation, RankedCheckingSweep
+from compiler_snapshot import StagedSnapshot, stage_selected_snapshot
+from compiler_worker import activate_record
+from compiler_reader_frontier import ReaderFrontier, evaluate_reader
+from compiler_parameter_labels import parameter_label_edit
+from compiler_plan_values import select_plan_inventory_except
+from jec import begin as begin_work, record as record_work
+from pub::incan_platform.trace import Operation
+from home_paths import bakery_location, home as compiler_home
+from store_path_conversion import snapshot
+from toolchain import Toolchain
+from unit import UnitDescription
+from unit_freshness import Key
+
+
+const CERTIFICATE_FAMILY: str = "incan.compiler.namespace-order"
+const RECEIPT_FAMILY: str = "incan.engine.receipt"
+const COMPLETION_FAMILY: str = "incan.compiler.completed-checking"
+
+
+pub model RankedBuildInputs:
+    """The native claim's captured source transaction and affected project owners."""
+    pub graph: Snapshot
+    pub projected: Transaction
+    pub origin: str
+    pub invalid: list[str]
+    pub changes: list[RecordKey] = []
+    pub covered: CoveredBodyOwners = CoveredBodyOwners()
+    pub plan_reads: Dict[str, list[RecordKey]] = {}
+
+
+model BuildOwner:
+    """The prior compiler-selected owner and the exact inputs to re-stage for each immutable worker snapshot."""
+    prior: RecordKey
+    namespace: int
+    name: str
+    inputs: Dict[str, bytes]
+    prior_declaration_root: str
+    prior_declaration: RecordKey
+    signature_input: RecordKey
+    label_edit: bool = false
+    equal_declaration: bool = false
+    predecessors: list[RecordKey] = []
+    local: bytes = b""
+    settled: bytes = b""
+    refused: bool = false
+
+
+model Submitted:
+    """Keep the source lease live from Prepare until the paired Evaluate completes."""
+    selected: StagedSnapshot
+    activation: RankedActivation
+    work_root: str
+    prepared_root: str
+
+
+def digest(value: bytes) -> str:
+    """Compute the shared immutable worker page identity."""
+    return hexlify(sha256.digest(value))
+
+
+def required(graph: Snapshot, key: str) -> Result[bytes, str]:
+    """Distinguish missing graph authority from an unsupported owner."""
+    match get(graph, key).map_err((error) => error.message())?:
+        Some(value) => return Ok(value)
+        None => return Err("ranked compiler preparation lost " + key)
+
+
+def changed_owner(graph: Snapshot, prior: RecordKey, captured: &Dict[str, bytes]) -> Result[Option[BuildOwner], str]:
+    """Select only a changed complete source whose earlier checker discovered a closed local environment."""
+    # The standalone ranked producer currently selects a free declaration. Concrete method records are
+    # restored at their ordinary nominal preparation site, where the enclosing type is available.
+    if not prior.identity.startswith("function:"):
+        return Ok(None)
+    basis_key = checking_basis_key(prior)?
+    pointer = match get(graph, basis_key).map_err((error) => error.message())?:
+        Some(value) => value
+        None => return Ok(None)
+
+    root = read_checking_basis(prior, pointer)?
+    receipt_key = RECEIPT_FAMILY + "\t" + root
+    encoded = required(graph, receipt_key)?
+    if digest(encoded) != root:
+        return Err("ranked compiler receipt differs from its content root")
+    basis = decode_read_receipt(encoded)?
+    if basis.preparation.output != prior or basis.scope.profile != CHECKER_PROFILE:
+        return Err("ranked compiler receipt belongs to another owner")
+    certificate_key = CERTIFICATE_FAMILY + "\t" + basis.preparation.rank_certificate
+    certificate = required(graph, certificate_key)?
+    order = decode_namespace_order(certificate, prior.origin)?
+    if order.evidence != basis.preparation.rank_certificate or len(order.members) != 1:
+        return Err("ranked compiler basis has inconsistent namespace authority")
+    mut inputs = {basis_key: pointer, receipt_key: encoded, certificate_key: certificate}
+    mut name = ""
+    mut prior_declaration_root = ""
+    mut prior_declaration = prior
+    mut signature_input = prior
+    mut families: set[str] = set()
+    mut scope_names: set[str] = set()
+    for witness in basis.witnesses:
+        match witness:
+            ReadWitness.Found(previous, _) =>
+                mut key = previous.request.key
+                family = key.family
+                if family == "scope-name":
+                    if key.facet == "" or key.facet in scope_names:
+                        return Ok(None)
+                    scope_names.add(key.facet)
+                elif family in families or family not in ["module-header", "owner-source", "owner-census", "declaration"]:
+                    return Ok(None)
+                families.add(family)
+                encoded_key = encode_record_key(key)?
+                if family == "declaration":
+                    if key.identity != prior.identity:
+                        return Ok(None)
+                    prior_declaration = previous.request.key
+                    key.family = "prior-declaration"
+                    inputs[encode_record_key(key)?] = required(graph, encoded_key)?
+                    prior_declaration_root = previous.semantic_digest
+                else:
+                    if key.identity != order.members[0]:
+                        return Ok(None)
+                    mut current: bytes = b""
+                    if captured.contains_key(encoded_key):
+                        current = captured[encoded_key]
+                    elif family == "scope-name":
+                        current = required(graph, encoded_key)?
+                    else:
+                        return Ok(None)
+                    changed = digest(source_value(key, current)?) != previous.semantic_digest
+                    if changed != (family == "owner-source"):
+                        return Ok(None)
+                    if family == "owner-source":
+                        name = key.facet
+                        signature_input = key
+                        signature_input.family = "declaration-signature"
+                    inputs[encoded_key] = current
+            _ => return Ok(None)
+    if len(families) != 4 or name == "" or (len(scope_names) > 0 and name not in scope_names):
+        return Ok(None)
+    return Ok(Some(BuildOwner(prior=prior, name=name, namespace=order.rank, inputs=inputs, prior_declaration_root=prior_declaration_root, prior_declaration=prior_declaration, signature_input=signature_input)))
+
+
+pub def contextual_ranked_pages(inputs: &RankedBuildInputs, prior: RecordKey) -> Result[list[SelectedBodyPage], str]:
+    """Schedule one body edit in the native compiler's already prepared namespace and imported interfaces."""
+    if len(inputs.invalid) != 1 or len(inputs.changes) == 0 or not prior.identity.startswith("function:"):
+        return Ok([])
+    evaluation, receipt = match evaluation_authority(inputs.graph, prior, CHECKER_PROFILE)?:
+        Some(value) => value
+        None => return Ok([])
+    certificate = receipt.preparation.rank_certificate
+    if certificate == "compiled-check":
+        return Ok([])
+    encoded = required(inputs.graph, CERTIFICATE_FAMILY + "\t" + certificate)?
+    order = decode_namespace_order(encoded, prior.origin)?
+    if order.evidence != certificate or order.rank != evaluation.namespace:
+        return Err("contextual checking certificate differs from its completed evaluation")
+    if len(order.members) != 1:
+        return Ok([])
+    module = order.members[0]
+    mut selected_source: Option[RecordKey] = None
+    mut declaration = false
+    for witness in receipt.witnesses:
+        match witness:
+            ReadWitness.Found(previous, _) =>
+                supplier = previous.request.key
+                if supplier.family == "owner-source":
+                    if selected_source is not None or supplier.origin != prior.origin or supplier.identity != module:
+                        return Ok([])
+                    selected_source = Some(supplier)
+                elif supplier.family == "declaration" and supplier.identity == prior.identity and supplier.origin == prior.origin:
+                    declaration = true
+            _ => return Ok([])
+    source = match selected_source:
+        Some(value) => value
+        None => return Ok([])
+    if not declaration or source not in inputs.changes:
+        return Ok([])
+    for changed in inputs.changes:
+        if changed != source and (changed.origin != prior.origin or changed.identity != module or changed.family not in ["source-positioned", "owner-placement"]):
+            return Ok([])
+    mut demand = prior
+    demand.family = "ranked-source-edit"
+    demand.facet = module
+    demand.context = certificate
+    return Ok([
+        SelectedBodyPage(key="ranked-source-edit.crumb", value=encode_demand_page(DemandPage(keys=[demand, source]))?),
+        SelectedBodyPage(key="ranked-source-order.crumb", value=encoded),
+    ])
+
+
+def submit(store: Path, view: str, toolchain: Toolchain, owner: &BuildOwner, family: str) -> Result[Submitted, str]:
+    """Publish only this owner's inputs in one pinned staging revision before asking the compiler to certify rank."""
+    mut output = owner.prior
+    output.family = family
+    output.facet = owner.name
+    output.context = "current"
+    demand = encode_demand_page(DemandPage(keys=[output, owner.prior] + owner.predecessors))?
+    demand_root = digest(demand)
+    mut staging = begin(snapshot(store, view).map_err((error) => error.message())?)
+    for key in owner.inputs.keys():
+        stage_put(staging, key, owner.inputs[key])
+    stage_put(staging, envelope_key(DEMAND_FAMILY, demand_root)?, demand)
+    exact = commit(staging).map_err((error) => error.message())?
+    roots = [CHECKING_BASIS, CERTIFICATE_FAMILY, RECEIPT_FAMILY, COMPLETION_FAMILY, DEMAND_FAMILY, PREPARED_FAMILY,
+        WORK_FAMILY, "module-header", "owner-source", "owner-census", "scope-name", "prior-declaration", "declaration", "local"]
+    lease = stage_selected_snapshot(compiler_home()?, Path(toolchain.console).parent(), bakery_location()?, store, exact, roots, SNAPSHOT_FORMAT_PROFILE)?
+    mut stage = ProducerStage.CheckBody
+    mut stage_name = "check-body"
+    if family == "declaration":
+        stage = ProducerStage.Signature
+        stage_name = "signature"
+    request = RecordMessage.Prepare(Prepare(stage=stage_name, snapshot=lease.digest, demand_root=demand_root, producer_profile=CHECKER_PROFILE))
+    prepared_root = match activate_record(toolchain, request, lease.authority)?:
+        RecordMessage.Prepared(answer) => answer.prepared_root
+        RecordMessage.CompilerFault(fault) => return Err("ranked compiler preparation: " + fault.fault_root)
+        _ => return Err("ranked closed owner preparation returned an unexpected disposition")
+
+    staged = snapshot(store, view).map_err((error) => error.message())?
+    encoded = required(staged, envelope_key(PREPARED_FAMILY, prepared_root)?)?
+    if digest(encoded) != prepared_root:
+        return Err("prepared compiler input differs from its root")
+    prepared = decode_prepared_inputs(encoded)?
+    ready = ReadyWork(output=output, stage=stage, profile=ProducerProfile(identity=RecordRoot(digest=CHECKER_PROFILE)))
+    if prepared.snapshot.root.digest != lease.digest or prepared.rank_certificate.rank.namespace != owner.namespace:
+        return Err("compiler prepared the wrong input revision or namespace rank")
+    return Ok(Submitted(selected=lease, activation=RankedActivation(ready=ready, prepared=prepared),
+        work_root=digest(encode_ready_work(ready)?), prepared_root=prepared_root))
+
+
+def page(graph: Snapshot, kind: str, root: str) -> Result[bytes, str]:
+    """Authenticate every produced page against the exact root returned by the compiler worker."""
+    if not valid_digest(root):
+        return Err("invalid ranked compiler output root")
+    value = required(graph, staged_key(kind, root))?
+    if digest(value) != root:
+        return Err("ranked compiler output differs from its root")
+    return Ok(value)
+
+
+def evaluate(store: Path, view: str, toolchain: Toolchain, pending: BuildOwner, job: &Submitted) -> Result[BuildOwner, str]:
+    """Settle one reserved contribution, retaining only the typed record and verified predecessor evidence."""
+    mut owner = pending
+    output = job.activation.ready.output
+    request = RecordMessage.Evaluate(Evaluate(work_root=job.work_root, snapshot=job.selected.digest,
+        prepared_root=job.prepared_root, reservation=job.prepared_root, cancellation_generation=0))
+    attempt = enter_producer("oven", output.family, output.identity, job.work_root)
+    produced = match activate_record(toolchain, request, job.selected.authority)?:
+        RecordMessage.Produced(value) => value
+        RecordMessage.CompilerFault(fault) =>
+            finish_producer(attempt, "refused")
+            if output.family == "declaration" and fault.fault_root == "unsupported-closed-checking-inputs":
+                owner.refused = true
+                return Ok(owner)
+            return Err("ranked compiler evaluation: " + fault.fault_root)
+        _ => return Err("ranked closed owner evaluation returned an unexpected disposition")
+
+    finish_producer(attempt, "produced")
+    staged = snapshot(store, view).map_err((error) => error.message())?
+    value = page(staged, "value", produced.staged_root)?
+    encoded = page(staged, "receipt", produced.witness_root)?
+    if len(page(staged, "diagnostic", produced.diagnostic_root)?) != 0 or page(staged, "counter", produced.counter_root)? != f"evaluations=1\nsemantic=sha256:{produced.staged_root}".encode("utf-8"):
+        return Err("ranked compiler did not complete one checking evaluation")
+    receipt = decode_read_receipt(encoded)?
+    if receipt.preparation.output != output or receipt.scope.snapshot != job.selected.digest or receipt.scope.profile != CHECKER_PROFILE or receipt.preparation.rank_certificate != job.activation.prepared.rank_certificate.evidence.digest or receipt.preparation.selector_witnesses != job.activation.prepared.selector_witnesses.digest:
+        return Err("ranked compiler output receipt disagrees with its preparation")
+    reads = job.activation.prepared.required_reads
+    if receipt.operations != len(reads) or len(receipt.witnesses) != len(reads):
+        return Err("ranked compiler did not complete every prepared read")
+    mut response_bytes = 0
+    for index in range(len(reads)):
+        expected_read = reads[index]
+        key = encode_record_key(expected_read.key)?
+        if key not in owner.inputs:
+            return Err("ranked compiler returned a read outside its captured inputs")
+        input = source_value(expected_read.key, owner.inputs[key].clone())?
+        match receipt.witnesses[index]:
+            ReadWitness.Found(observed, _) =>
+                if observed.scope != receipt.scope or observed.request != expected_read or observed.semantic_digest != digest(input):
+                    return Err("ranked compiler read evidence differs from its captured scalar")
+            _ => return Err("ranked compiler returned an unexpected selection result")
+        response_bytes += len(input)
+    if receipt.response_bytes != response_bytes:
+        return Err("ranked compiler response count differs from its selected scalars")
+    checked = decode_owned_record(value, CHECKER_PROFILE, output.identity).map_err((_) => "ranked compiler returned a different owner or checking profile")?
+    if not ((output.family == "declaration" and checked.family == CheckedFamily.Declaration)
+        or (output.family == "local" and checked.family == CheckedFamily.Local)
+        or (output.family == "final" and checked.family == CheckedFamily.Final)):
+        return Err("ranked compiler returned a different checking stage")
+    mut completed = output
+    completed.context = checked.root
+    completed_key = encode_record_key(completed)?
+    owner.inputs[completed_key] = value
+    owner.inputs[completed_checker_key(completed_key)] = encode_checking_completion(produced.staged_root, encoded)?
+    owner.predecessors.append(completed)
+    if output.family == "declaration":
+        owner.equal_declaration = produced.staged_root == owner.prior_declaration_root
+        if not owner.equal_declaration:
+            mut previous = owner.prior_declaration
+            previous.family = "prior-declaration"
+            prior = decode_owned_record(owner.inputs[encode_record_key(previous)?].clone(), CHECKER_PROFILE, output.identity).map_err((_) => "invalid prior ranked declaration")?
+            owner.label_edit = parameter_label_edit(prior, checked)
+    elif output.family == "local":
+        owner.local = value
+    elif output.family == "final":
+        owner.settled = value
+    return Ok(owner)
+
+
+pub def ranked_build_pages(store: Path, inputs: &RankedBuildInputs, toolchain: Toolchain, unit: UnitDescription, key: Key,
+    retained: list[SelectedBodyPage]) -> Result[Option[list[SelectedBodyPage]], str]:
+    """Run only the source-changed certified frontier. Equal settled values retain the old Body IR frame."""
+    if len(inputs.invalid) == 0:
+        return Ok(Some([]))
+    graph = inputs.graph
+    origin = inputs.origin
+    mut captured: Dict[str, bytes] = {}
+    for write in inputs.projected.writes:
+        if write.kind == KIND_VALUE:
+            captured[write.key] = write.value
+    slots = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, included=Some(inputs.invalid))
+    mut owners: Dict[str, BuildOwner] = {}
+    mut ranks: set[int] = set()
+    for indexed in family_outputs(graph, "local", CHECKER_PROFILE, Some(slots))?:
+        prior = decode_record_key(indexed)?
+        match changed_owner(graph, prior, captured)?:
+            Some(owner) =>
+                if prior.identity in owners:
+                    return Err("multiple current local outputs for one ranked owner")
+                owners[prior.identity] = owner
+                ranks.add(owner.namespace)
+            None =>
+                contextual = contextual_ranked_pages(inputs, prior)?
+                if len(contextual) > 0:
+                    return Ok(Some(contextual))
+    # The store view is shared staging space. Each activation re-publishes all of its exact inputs atomically,
+    # then pins that revision. Concurrent requests can share immutable envelopes without following one another.
+    view = "compiler-checking-" + digest((graph.view + "\n" + origin).encode("utf-8"))
+    mut result: list[SelectedBodyRecord] = []
+    mut readers = ReaderFrontier()
+    for rank in sorted([value for value in ranks]):
+        for family in ["declaration", "local", "final"]:
+            mut jobs: Dict[str, Submitted] = {}
+            mut frontier: list[RankedActivation] = []
+            for identity in sorted([identity for identity in owners.keys()]):
+                owner = owners[identity]
+                if owner.namespace == rank and not owner.refused and len(owner.settled) == 0:
+                    submitted = submit(store, view, toolchain, owner, family)?
+                    jobs[identity] = submitted
+                    frontier.append(submitted.activation)
+            mut sweep = RankedCheckingSweep.schedule(frontier)?
+            while true:
+                activation = match sweep.next():
+                    Some(next) => next
+                    None => break
+
+                identity = activation.ready.output.identity
+                clock = begin_work()
+                mut updated = evaluate(store, view, toolchain, owners[identity], jobs[identity])?
+                if not updated.refused:
+                    record_work(Operation.EnginePrepare, "ranked-stage\t" + identity + "\t" + family, clock)
+                if family == "declaration" and not updated.refused and not updated.equal_declaration:
+                    readers.enqueue(graph, identity, [updated.prior_declaration])?
+                elif family == "local" and updated.equal_declaration:
+                    for old in select_body_inventory_of(graph, CHECKER_PROFILE, origin, [identity])?:
+                        if old.local == updated.local:
+                            # The earlier producer authenticated both of this closed owner's semantic inputs.
+                            # The compiler restores source locations when installing the existing final value.
+                            updated.settled = old.final
+                            result.append(old)
+                elif family == "final":
+                    mut frame = b""
+                    for old in select_body_inventory_of(graph, CHECKER_PROFILE, origin, [identity])?:
+                        if old.final == updated.settled:
+                            frame = old.body_ir
+                    result.append(SelectedBodyRecord(identity=identity, local=updated.local, final=updated.settled, body_ir=frame))
+                owners[identity] = updated
+    mut label_inputs: list[RecordKey] = []
+    for identity in owners.keys():
+        owner = owners[identity]
+        if owner.label_edit and not owner.refused and len(owner.settled) > 0:
+            label_inputs.append(owner.signature_input)
+    mut keyed_readers: list[str] = []
+    mut refreshed = encode_body_inventory(result)?
+    while true:
+        if readers.joint:
+            record_work(Operation.EnginePrepare, "ranked-declined\tjoint-namespace", begin_work())
+            return Ok(None)
+        reader = match readers.next()?:
+            Some(value) => value
+            None =>
+                if readers.joint:
+                    continue
+                break
+
+        clock = begin_work()
+        if not reader.prior.identity.startswith("function:"):
+            record_work(Operation.EnginePrepare, "ranked-declined\tnominal-reader\t" + reader.prior.identity, clock)
+            return Ok(None)
+        mut peers: list[SelectedBodyPage] = []
+        if reader.module in inputs.covered.module_owners:
+            # This one-off activation discards its own namespace to evaluate the reader. Supply the exact peers
+            # omitted from its normal worker pages, so the compiler can still refuse additional statement entries.
+            peer_owners = [owner for owner in inputs.covered.module_owners[reader.module] if owner != reader.prior.identity]
+            restored = select_body_inventory_of(graph, CHECKER_PROFILE, origin, peer_owners, mint_body_ir=true)?
+            peers = encode_body_inventory(restored)?
+        products = match evaluate_reader(unit, toolchain, key, reader, retained + peers + refreshed)?:
+            Some(value) => value
+            None =>
+                record_work(Operation.EnginePrepare, "ranked-declined\tmissing-settled-peer\t" + reader.prior.identity, clock)
+                return Ok(None)
+        readers.settle(graph, origin, reader, products)?
+        current = products.body
+        if current.identity in inputs.plan_reads and products.declaration_digest == reader.declaration_digest:
+            causes = inputs.plan_reads[current.identity]
+            if len(causes) > 0 and len([cause for cause in causes if cause not in label_inputs]) == 0:
+                keyed_readers.append(current.identity)
+        record_work(Operation.EnginePrepare, "ranked-reader\t" + current.identity + "\t" + digest(reader.prior.local)
+            + "\t" + digest(current.local) + "\t" + digest(reader.prior.final) + "\t" + digest(current.final)
+            + "\t" + reader.declaration_digest + "\t" + products.declaration_digest + "\t" + str(readers.remaining()), clock)
+        refreshed.extend(encode_body_inventory([current])?)
+    if len(keyed_readers) > 0:
+        inventory = select_plan_inventory_except(graph, origin, [], keyed_readers=Some(keyed_readers))?
+        refreshed.extend(inventory.pages)
+    return Ok(Some(refreshed))

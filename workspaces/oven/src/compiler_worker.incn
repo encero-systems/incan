@@ -17,19 +17,20 @@ from std.fs.locking import FileLock
 from pub::incan_platform.ipc import Connection, Listener, listen
 from files import discard_file, open_stream
 from home import owners_dir
-from pub::incan_worker_host.protocol import SCHEMA, completion, handoff, ready, request_document, retired
+from pub::incan_worker_host.protocol import SCHEMA, compile_frame, read_completion, read_ready
+from pub::incan_worker_host.worker_packets import PREFIX
 from pub::incan_worker_host.record_protocol import (
     RECORD_SCHEMA,
     RecordMessage,
     accept_record_reply,
     decode_record_message,
-    encode_record_message,
+    record_frame,
 )
 from observation import trace, trace_boundary
+from core_process import executable
 from owner_client import status_code
 from owner_endpoint import Endpoint, attach, bindable, prepare_directory, socket_prefix
 from decimal_text import digits_only
-from owner_protocol import receive_document, send_document
 from toolchain import Toolchain
 from request_directory import working_directory
 from unit_freshness import compiler_fingerprint, fingerprint
@@ -119,7 +120,7 @@ pub def captured_resident(toolchain: Toolchain, arguments: list[str]) -> Result[
                     return Err(reason)
 
 
-pub def activate_record(toolchain: Toolchain, request: RecordMessage) -> Result[RecordMessage, str]:
+pub def activate_record(toolchain: Toolchain, request: RecordMessage, snapshot_authority: Path) -> Result[RecordMessage, str]:
     """
     Run one compiler record activation through the selected generation's worker and require its closed reply set.
 
@@ -127,12 +128,12 @@ pub def activate_record(toolchain: Toolchain, request: RecordMessage) -> Result[
     protocol fault. Immutable roots in the message name the engine-owned staged values; no compiler heap crosses it.
     """
     connecting = begin()
-    found_connection = connection_for(toolchain)
+    found_connection = connection_for(toolchain, Some(snapshot_authority))
     record(Operation.WorkerConnect, toolchain.driver, connecting)
     connected_socket, generation, _slot = found_connection?
     mut connected = connected_socket
     clock = begin()
-    connected.send(encode_record_message(request, generation))?
+    connected.send(record_frame(request, generation)?)?
     payload = connected.receive()?
     reply = decode_record_message(payload, generation)?
     accepted = accept_record_reply(request, reply)?
@@ -233,7 +234,7 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
             # 2. Once submission begins, failure cannot silently run the same compilation twice.
             clock = begin()
             directory = working_directory()?
-            document = request_document(
+            frame = compile_frame(
                 generation,
                 arguments,
                 directory,
@@ -241,20 +242,22 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
                 f"{toolchain.console}.err",
                 toolchain.retire_worker,
             )
-            send_document(connected, document)?
+            connected.send(frame?)?
             # 3. A completed request grants only its actual exit code, never a retained checking result.
-            reply = receive_document(connected)?
+            reply = read_completion(connected.receive()?, generation)?
             record(Operation.DriverRequest, invocation_key(arguments), clock)
             # 4. Retirement is an ordinary completion: the worker withdrew its endpoint before it replied.
-            if retired(reply):
+            if reply.retired:
                 trace("compiler worker: retired after its request")
             elif toolchain.retire_worker:
                 return Err("compiler worker did not honor the requested activation lifetime")
             # 5. The handoff is this request's native compilation, so it runs exactly once, after the worker's heap is gone.
-            if let Some(path) = handoff(reply):
+            if reply.reason != "":
+                return Err(reply.reason)
+            if reply.handoff != "":
                 trace("compiler worker: rustc handed to a fresh process")
-                return Ok(Some(rustc_from_handoff(toolchain, path)?))
-            return Ok(Some(status_code(completion(reply)?)))
+                return Ok(Some(rustc_from_handoff(toolchain, reply.handoff)?))
+            return Ok(Some(status_code(reply.status)))
 
 
 def rustc_from_handoff(toolchain: Toolchain, path: str) -> Result[i32, str]:
@@ -278,7 +281,7 @@ def rustc_from_handoff(toolchain: Toolchain, path: str) -> Result[i32, str]:
         None => return Ok(1)
 
 
-def connection_for(toolchain: Toolchain) -> Result[tuple[Connection, str, FileLock], str]:
+def connection_for(toolchain: Toolchain, snapshot_authority: Option[Path] = None) -> Result[tuple[Connection, str, FileLock], str]:
     """
     Take an idle slot of the worker pool and connect to its worker before any source request is submitted.
 
@@ -286,7 +289,9 @@ def connection_for(toolchain: Toolchain) -> Result[tuple[Connection, str, FileLo
     2. With every slot of the pool held, wait for this caller's own slot.
     3. Connect to the slot's worker, starting it when there is none.
     """
-    generation = generation_of(toolchain)?
+    mut generation = generation_of(toolchain)?
+    if let Some(authority) = snapshot_authority:
+        generation = fingerprint([generation, "compiler-snapshot-authority", authority.0])?
     directory = Path(toolchain.console).parent()
     prepare_directory(directory.0)?
     # 1. and 2. A slot nobody holds, or this caller's own slot once the pool is full.
@@ -294,7 +299,7 @@ def connection_for(toolchain: Toolchain) -> Result[tuple[Connection, str, FileLo
     endpoint = slot_endpoint(directory, generation, slot)?
     trace_boundary("worker_selected")
     # 3. The slot's lock also arbitrates startup: only its holder can start the slot's worker.
-    connected = slot_connection(toolchain, endpoint)?
+    connected = slot_connection(toolchain, endpoint, snapshot_authority)?
     trace_boundary("worker_connected")
     return Ok((connected, generation, held))
 
@@ -325,12 +330,12 @@ def try_slot(directory: Path, generation: str, slot: int) -> Result[Option[FileL
     return path.try_lock_exclusive().map_err((error) => f"cannot {error.message()}")
 
 
-def slot_connection(toolchain: Toolchain, endpoint: Endpoint) -> Result[Connection, str]:
+def slot_connection(toolchain: Toolchain, endpoint: Endpoint, snapshot_authority: Option[Path]) -> Result[Connection, str]:
     """Connect to the held slot's worker, or start it and connect after its readiness acknowledgment."""
     match attach(endpoint)?:
         Some(found) => return Ok(found)
         None => pass
-    launch(toolchain, endpoint)?
+    launch(toolchain, endpoint, snapshot_authority)?
     match attach(endpoint)?:
         Some(found) => return Ok(found)
         None => return Err("the compiler worker disappeared after readiness")
@@ -414,10 +419,15 @@ pub def generation_for(toolchain: Toolchain, compiler: str) -> Result[str, str]:
     environment remains unchanged. Every other caller derives it for the request; source, checking and compilation are
     never retained.
     """
-    mut selected = [SCHEMA, RECORD_SCHEMA, compiler]
+    mut selected = [SCHEMA, RECORD_SCHEMA, compiler, "reopened-peer-reader/1", executable()?]
     if let Some(pin) = toolchain.compiler_records:
         selected.append(f"compiler-records {pin.digest}")
-    return Ok(fingerprint(selected + environment()?)?[0:16])
+        if pin.directory != "":
+            selected.append(f"compiler-directory {pin.directory}")
+    identity = fingerprint(selected + environment()?)?[0:16]
+    if toolchain.worker_protocol_crumb:
+        return Ok(PREFIX + identity)
+    return Ok(identity)
 
 
 def environment() -> Result[list[str], str]:
@@ -448,7 +458,7 @@ def unicode_environment(value: OsString) -> Result[str, str]:
     return value.into_string().map_err((_) => "a compiler environment entry is not Unicode")
 
 
-def launch(toolchain: Toolchain, endpoint: Endpoint) -> Result[None, str]:
+def launch(toolchain: Toolchain, endpoint: Endpoint, snapshot_authority: Option[Path]) -> Result[None, str]:
     """
     Start the exact driver detached from the owner, with protocol and console on separate streams. The worker decides
     its own retirement, after its idle period among others.
@@ -457,6 +467,8 @@ def launch(toolchain: Toolchain, endpoint: Endpoint) -> Result[None, str]:
     mut command = driver_command(toolchain)?
     command.arg("--resident").arg(f"{endpoint.socket}").arg(f"{endpoint.generation}")
     command.arg(f"{endpoint.ready}").arg(f"{endpoint.directory}")
+    if let Some(authority) = snapshot_authority:
+        command.arg(authority.0)
     command.stdin(Stdio.null()).stdout(Stdio.null()).stderr(Stdio.null())
     command.process_group(0)
     clock = begin()
@@ -476,8 +488,7 @@ def await_ready(mut listener: Listener, mut child: Child, endpoint: Endpoint) ->
             Some(waiting) =>
                 mut connected = waiting
                 connected.wait_at_most(5)
-                document = receive_document(connected)?
-                ready(document, endpoint.generation, int(child.id()))?
+                read_ready(connected.receive()?, endpoint.generation, int(child.id()))?
                 trace(f"compiler worker: started pid {child.id()}")
                 return Ok(None)
             None => pass

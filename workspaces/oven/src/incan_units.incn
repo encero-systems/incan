@@ -40,6 +40,7 @@ from bakery import (
 from bakery_records import Fact
 from bakery_roots import lease_unit, register_root
 from compiler_body_values import SelectedBodyPage
+from compiler_ranked_build import RankedBuildInputs, ranked_build_pages
 from compiler_refusals import check_or_replay
 from observation import trace, trace_launch
 from project_library import library_loaf, library_output, shared_library
@@ -84,6 +85,7 @@ pub def check_prepared(
     toolchain: Toolchain,
     format: str,
     pages: Option[Path] = None,
+    editor: bool = false,
 ) -> Result[CheckedUnit, str]:
     """
     Check a prepared unit. With a directory of the engine's selected checked-body pages, the compiler restores each
@@ -95,14 +97,21 @@ pub def check_prepared(
     """
     # 1. An unchanged description is kept as it is.
     key = unit_key(ready, toolchain)?
-    path = write_unit(ready, crate_name(ready), None, described_by(key), true)?
+    path = write_unit(ready, crate_name(ready), None, described_by(key), true, typed=toolchain.unit_descriptor_crumb)?
     # 2. The engine keeps a check's pages apart from a build's, which may be selected for the same unit.
     mut options: list[str] = []
     mut sidecar: Option[Path] = None
     if let Some(directory) = pages:
-        report = Path(f"{path.0}.checked-bodies")
+        mut report = Path(f"{path.0}.checked-bodies")
+        mut flag = "--checked-bodies"
+        if toolchain.checked_body_counts_crumb:
+            report = Path(f"{path.0}.checked-bodies.crumb")
+            flag = "--checked-body-counts"
         discard_file(report)
-        options = ["--checked-bodies", report.0, "--graph-body-records", directory.0]
+        options = [flag, report.0]
+        if editor and toolchain.retain_checked_modules:
+            options.append("--retain-checked-modules")
+        options.extend(["--graph-body-records", directory.0])
         sidecar = Some(report)
     # 3. The record's identity covers the key and the report format, so text and JSON reports are kept apart.
     code = check_or_replay(ready, toolchain, path, format, bakery()?, key, options)?
@@ -122,7 +131,7 @@ pub def report_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Resu
     3. Ask the compiler for the closure. The report is never retained, so it always describes the current inputs.
     """
     ready = prepare_native(unit, toolchain)?
-    path = write_unit(ready, crate_name(ready))?
+    path = write_unit(ready, crate_name(ready), typed=toolchain.unit_descriptor_crumb)?
     mut arguments = ["--dependencies", path.0, toolchain.sysroot]
     if toolchain.codegraph_on_request:
         arguments.append("--no-codegraph")
@@ -211,6 +220,8 @@ pub def obtain_executable(
     selected_store: Option[Path] = None,
     defer_publication: bool = false,
     graph_body_records: Option[list[SelectedBodyPage]] = None,
+    ranked: Option[RankedBuildInputs] = None,
+    records_directory: Option[Path] = None,
 ) -> Result[Made, str]:
     """
     Obtain the executable of `key` from the home bakery and make `output` a view of it.
@@ -224,12 +235,13 @@ pub def obtain_executable(
     2. Otherwise claim the identity: one bake of it at a time, in any project or process.
     3. A fact another command sealed while this one waited is viewed.
     4. Compile into a private staging directory of the fact.
-    5. Seal it, then view it.
+    5. Seal it, then view it. With `defer_publication` the caller's commit seals the prepared fact, so no view is
+       made here: the caller views the returned fact once that commit has flushed it.
     """
     shared = development_link(unit, development)
     # Inputs that cannot be named portably are compiled in place; nothing is baked or reused.
     if key.refusal != "":
-        code = compile_staged(unit, toolchain, output, key, key.refusal, shared, graph_body_records)?
+        code = compile_staged(unit, toolchain, output, key, key.refusal, shared, graph_body_records, records_directory)?
         return Ok(Made(code=code, launch=output, evaluations=1))
     selected = linkage_key(key, shared)?
     mut store = Path("")
@@ -252,6 +264,16 @@ pub def obtain_executable(
         trace(f"{label}: reused (built meanwhile by another command)")
         return Ok(made)
     # 4. A failed bake publishes nothing; its staging directory goes with it.
+    mut selected_pages = graph_body_records
+    if let Some(inputs) = ranked:
+        mut pages: list[SelectedBodyPage] = []
+        if let Some(retained) = selected_pages:
+            pages = retained
+        match ranked_build_pages(store, inputs, toolchain, unit, key, pages)?:
+            Some(ranked_pages) =>
+                pages.extend(ranked_pages)
+                selected_pages = Some(pages)
+            None => selected_pages = Some([])
     staged = staging(store, identity, prior_size(store, unit_name(unit)))?
     code = compile_staged(
         unit,
@@ -260,7 +282,8 @@ pub def obtain_executable(
         key,
         bake_reason(store, unit),
         shared,
-        graph_body_records,
+        selected_pages,
+        records_directory,
     )?
     if code != 0:
         _ = staged.remove_tree()
@@ -283,7 +306,8 @@ pub def obtain_executable(
             f"incan {unit.kind} {unit.profile}",
         )?
         record_work(Operation.EngineFactSeal, identity, sealing)
-        view_executable(store, prepared.fact, output, unit.kind, shared)?
+        # No view yet: the payloads are ordered on storage but not flushed. The caller's commit is the seal's full
+        # flush, and the caller views the fact after it.
         return Ok(
             Made(
                 code=0,
@@ -339,9 +363,10 @@ def compile_staged(
     reason: str,
     shared: bool,
     graph_body_records: Option[list[SelectedBodyPage]] = None,
+    records_directory: Option[Path] = None,
 ) -> Result[i32, str]:
     """Compile a unit to its staged name. Returns the compiler's exit code."""
-    return compile_prepared_unit(unit, toolchain, staged, Some(key), reason, shared, graph_body_records)
+    return compile_prepared_unit(unit, toolchain, staged, Some(key), reason, shared, graph_body_records, records_directory)
 
 
 pub def executable_outputs(kind: str, output: Path, shared: bool = false) -> list[Path]:
