@@ -140,3 +140,12 @@ fn namespace_frames_refuse_invalid_segments_and_missing_stores() {
         ))
     );
 }
+
+#[test]
+fn namespace_frame_readers_describe_their_bakery_anchor() {
+    let reader = namespace_frame_reader(HOME);
+    assert_eq!(
+        format!("{reader:?}"),
+        "NamespaceFrameReader { directory: \"/nonexistent-runtime-home\", mapped_segments: 0 }"
+    );
+}
