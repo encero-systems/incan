@@ -1,12 +1,14 @@
 """
-Plain data for native bodies, independent of rustc's internal types.
+The native plan, by the names lowering and its callers import: plain data for native bodies, independent of rustc's
+internal types, and the plan records that retain it.
 
-Local zero is the return place; parameters occupy the next locals in declaration
-order. Blocks are indexed from zero. Every source-bearing node keeps its Incan
-location, including operands and places, so native diagnostics retain provenance.
+The types and codecs are the Rust Loaf `incan_mir_plan_native`. Local zero is the return place; parameters occupy the
+next locals in declaration order. Blocks are indexed from zero. Every source-bearing node keeps its Incan location,
+including operands and places, so native diagnostics retain provenance.
 """
 
-pub from _types import (
+pub from rust::incan_mir_plan_native import (
+    SpanFile,
     TupleElement,
     SourceSpan,
     ListLeaf,
@@ -17,8 +19,6 @@ pub from _types import (
     range_field_types,
     tuple_element_type,
     source_span,
-)
-pub from _body import (
     Parameter,
     Local,
     FieldProjection,
@@ -48,10 +48,6 @@ pub from _body import (
     copy,
     assign,
     block,
-)
-
-
-pub from _plan import (
     AttributeValue,
     AttributeArgument,
     NativeAttribute,
@@ -76,18 +72,15 @@ pub from _plan import (
     Carrier,
     EnumDeclaration,
     EnumVariant,
-)
-pub from function_records import (
-    encode_product,
-    decode_product,
+    decode_product_parts,
+    restore_named_product,
+    valid_ordinal_product,
+    positioned_product_requirements,
+    matches_product,
     encode_scalar,
     decode_scalar,
     product_identities,
-    product_nominals,
-    decode_frames,
     product_frame_names,
-)
-pub from nominal_identities import (
     NominalKind,
     NominalReference,
     ProductNominal,
@@ -98,12 +91,141 @@ pub from nominal_identities import (
     carrier_index,
     carrier_position,
     is_carrier_index,
-)
-pub from carrier_positions import fold_carrier_positions, fold_inventories
-pub from record_codec import (
-    encode_record_plan,
-    encode_record_plan_products,
+    fold_carrier_positions,
+    fold_inventories,
     decode_record_plan,
     encode_entry_binding,
     record_plan_products,
+    WirePositions,
+    PositionChange,
+    encode_checked_layout,
+    encode_instance_request,
+    decode_instance_request,
 )
+from rust::incan_mir_plan_native import (
+    decode_frames as native_decode_frames,
+    decode_product as native_decode_product,
+    encode_product as native_encode_product,
+    encode_record_plan as native_encode_record_plan,
+    encode_record_plan_products as native_encode_record_plan_products,
+    product_nominals as native_product_nominals,
+    transform_product_positions as native_transform_product_positions,
+)
+
+
+pub def product_nominals(
+    function: &Function,
+    runtime: &list[ExternalFunction],
+    frames: list[Function] = [],
+) -> Result[list[NominalReference], str]:
+    """Name the unit positions a product of this function would retain, in first-seen ordinal order."""
+    return native_product_nominals(function, runtime, frames)
+
+
+pub def encode_product(
+    function: &Function,
+    runtime: &list[ExternalFunction],
+    nominals: list[ProductNominal] = [],
+    frames: list[Function] = [],
+) -> Result[bytes, str]:
+    """Retain a complete function, its helper frames and its dependency requirements, naming declarations."""
+    return native_encode_product(function, runtime, nominals, frames)
+
+
+pub def decode_product(
+    text: bytes,
+    references: list[NominalReference] = [],
+) -> Result[tuple[Function, list[ExternalFunction]], str]:
+    """Restore a product's function and runtime demand at the positions its consumer resolved."""
+    return native_decode_product(text, references)
+
+
+pub def decode_frames(text: bytes, references: list[NominalReference] = []) -> Result[list[Function], str]:
+    """Restore a product's helper frames, binding their ordinals as the product's function binds them."""
+    return native_decode_frames(text, references)
+
+
+pub def transform_product_positions(
+    encoded: bytes,
+    positions: WirePositions,
+    mut frame_names: list[str] = [],
+) -> Result[bytes, str]:
+    """Rebuild only native span positions, naming the product's helper frames in `frame_names`."""
+    return native_transform_product_positions(encoded, positions, frame_names)
+
+
+pub def encode_record_plan(plan: &Plan) -> Result[bytes, str]:
+    """Encode one complete plan or explicitly refuse a field the codec cannot preserve."""
+    return native_encode_record_plan(plan)
+
+
+pub def encode_record_plan_products(
+    plan: &Plan,
+    functions: list[bytes],
+    references: list[list[NominalReference]] = [],
+) -> Result[bytes, str]:
+    """Encode a complete interface while retaining its keyed function-product bytes in declaration order."""
+    return native_encode_record_plan_products(plan, functions, references)
+pub from rust::incan_mir_plan_native import (
+    LoweringDemands,
+    PlanFunctionRecord,
+    decode_plan_function_record,
+    encode_entry_record,
+    encode_lowering_demand,
+    encode_plan_function_record,
+    plan_function_digest,
+    verify_entry_record,
+)
+pub from rust::incan_mir_plan_native import (
+    ADMITTED_DEFINITIONS,
+    AdmittedDefinition,
+    AdmittedFunction,
+    AdmittedModule,
+    AdmittedPlacement,
+    EventPosition,
+    EventReference,
+    INTERFACE_REPORT,
+    LoweringEvent,
+    LoweringRefusal,
+    NativeInterface,
+    admitted_definitions_filename,
+    decode_admitted_definitions,
+    decode_lowering_event,
+    decode_lowering_refusal,
+    decode_module_note,
+    decode_native_interface,
+    encode_admitted_definitions,
+    encode_lowering_event,
+    encode_lowering_refusal,
+    encode_module_note,
+    encode_native_interface,
+    native_interface_filename,
+    placed_admission,
+)
+pub from rust::incan_mir_plan_native import (
+    ADMITTED_MODULE_NOTE,
+    PARTIAL_MODULE_NOTE,
+    PLAN_MODULE_FAMILY,
+    PLAN_MODULE_PAGE,
+    POSITIONED_MODULE_PAGE,
+    REPOSITION_MODULE_PAGE,
+    PlanModuleFunction,
+    PlanModuleValue,
+    decode_plan_module,
+    encode_plan_module,
+)
+from std.fs import Path
+from rust::incan_mir_plan_native import (
+    read_module_admission as read_module_admission_at,
+    write_module_placement as write_module_placement_at,
+)
+
+
+pub def read_module_admission(path: Path) -> Result[AdmittedModule, str]:
+    """Read the module admission note at `path` with its sparse placement companion."""
+    return read_module_admission_at(path.0)
+
+
+pub def write_module_placement(path: Path, note: AdmittedModule) -> Result[None, str]:
+    """Store a module admission's changed placements at the companion `path`, or remove a stale companion."""
+    return write_module_placement_at(path.0, note)
