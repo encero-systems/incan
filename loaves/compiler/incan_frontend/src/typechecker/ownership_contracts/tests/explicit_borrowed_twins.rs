@@ -285,6 +285,51 @@ fn borrowed_results_cannot_return_values_created_in_the_body() -> Result<(), Box
     Ok(())
 }
 
+/// A borrow-only signature takes the native route even when its borrowed result is exactly its source: no ownership
+/// contract and no whole-body proof for it or for its caller. This is the guarded native callback's shape: a caller
+/// matches on a lookup keyed through the returned borrow.
+#[test]
+fn exact_borrowed_results_of_borrow_only_signatures_take_the_native_route() -> Result<(), Box<dyn std::error::Error>> {
+    let template = "model Key:\n    name: str\n\ndef borrowed_key(value: {borrow:Key}) -> {borrow:Key} from value:\n    return value\n\ndef lookup(entries: dict[str, int]) -> int:\n    key = Key(name=\"key\")\n    match entries.get(borrowed_key(key).name):\n        Some(value) =>\n            println(value)\n            return value\n        None => return 0\n";
+    let checker = check_twins(template)?;
+    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+    assert!(
+        checker.type_info.declarations.ownership_contracts.is_empty(),
+        "{:?}",
+        checker.type_info.declarations.ownership_contracts.keys()
+    );
+    assert!(
+        checker.type_info.protocols.explicit_input_flow.is_empty(),
+        "{:?}",
+        checker.type_info.protocols.explicit_input_flow.keys()
+    );
+    Ok(())
+}
+
+/// A caller holds such a result as a loan of the argument it borrows from, alive while the result is used: an edit of
+/// that argument while the result is still read is refused with INCAN-T0126 in both spellings, and the same edit after
+/// the last read is accepted.
+#[test]
+fn held_borrowed_results_are_loans_of_their_source() -> Result<(), Box<dyn std::error::Error>> {
+    let table = "def table(items: {borrow:list[int]}) -> {borrow:list[int]} from items:\n    return items\n\n";
+    let refused = check_twins(&format!(
+        "{table}def edit(start: int) -> int:\n    mut items = [start]\n    view = table(items)\n    items.append(2)\n    return len(view)\n"
+    ))?;
+    assert!(
+        refused
+            .errors
+            .iter()
+            .any(|error| error.stable_code() == Some("INCAN-T0126")),
+        "{:?}",
+        refused.errors
+    );
+    let accepted = check_twins(&format!(
+        "{table}def edit(start: int) -> int:\n    mut items = [start]\n    view = table(items)\n    size = len(view)\n    items.append(2)\n    return size + len(items)\n"
+    ))?;
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+    Ok(())
+}
+
 /// A function with borrowed parameters is one callable type in both spellings, and an imported function with
 /// borrowed parameters takes owned locals on both dependency routes.
 #[test]
