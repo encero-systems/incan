@@ -29,6 +29,8 @@ mod host_tests;
 #[cfg(test)]
 mod snapshot_tests;
 #[cfg(test)]
+mod store_tests;
+#[cfg(test)]
 mod wire_golden;
 #[cfg(test)]
 mod wire_tests;

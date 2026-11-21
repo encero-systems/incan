@@ -11,6 +11,8 @@ pub from pub::incan_platform.store import (
     Transaction,
     begin,
     commit,
+    fork,
+    get,
     lease_token,
     lookup,
     owned,
@@ -19,6 +21,7 @@ pub from pub::incan_platform.store import (
     read_manifest,
     read_store_identity,
     snapshot as store_snapshot,
+    store_identity,
 )
 from pub::incan_platform.store import lease
 pub from pub::incan_platform.store.disk import root as disk_root
