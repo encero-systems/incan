@@ -8,6 +8,7 @@ from toolchain import Toolchain
 from unit_freshness import Key, compiler_fingerprint, fingerprint
 from unit_publication import published_identity, source_origins
 from invocation_identity import invocation_facts
+from lock_format import LOCK_NAME
 from source_identity import source_inputs
 
 # A unit whose dependency scan is absent, or lists a file that no longer exists, as after a module is removed, has no
@@ -59,7 +60,7 @@ def observed_library_key(
     text = read(dependencies)?
     paths, variables = dependency_inputs(text)?
     selected = source_paths(project, dependencies, arguments, paths)?
-    mut ledger = load_ledger(directory.joinpath("observations.json"), SETTLE_SECONDS)
+    mut ledger = load_ledger(directory.joinpath("observations.crumb"), SETTLE_SECONDS)
     mut selected_compiler = compiler
     if selected_compiler == "":
         selected_compiler = compiler_fingerprint(toolchain)?
@@ -311,7 +312,13 @@ pub def inputs_unchanged(
 
 
 def authored_files(root: Path, mut visited: set[str]) -> Result[list[str], str]:
-    """Observe project files without entering outputs, hidden directories or symbolic-link cycles."""
+    """
+    Observe project files without entering outputs, hidden directories or symbolic-link cycles.
+
+    A Loaf's oven.lock is Oven's resolution record, never a file rustc reads, and another build may refresh it while
+    this one compiles the Loaf as a dependency; a changed resolution reaches the compile through its arguments and
+    linked artifacts, which stay observed.
+    """
     if root.is_file():
         return Ok([root.0])
     canonical = root.resolve().map_err((error) => f"cannot {error.message()}")?.0
@@ -321,7 +328,7 @@ def authored_files(root: Path, mut visited: set[str]) -> Result[list[str], str]:
     mut paths: list[str] = []
     for entry in root.iterdir().map_err((error) => f"cannot {error.message()}")?:
         name = entry.name()
-        if skipped_directory(name):
+        if skipped_directory(name) or (name == LOCK_NAME and entry.is_file()):
             continue
         paths.extend(authored_files(entry, visited)?)
     return Ok(paths)
