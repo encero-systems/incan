@@ -4,7 +4,6 @@
 use incan_loaf_names::artifact_stem;
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
@@ -14,6 +13,8 @@ use sha2::{Digest, Sha256};
 use super::decoded_manifest::compiler_generation;
 use super::manifest_input::{self, Generation, generation};
 use super::{LoafArtifact, LoafEntry, LoafIdentity, LoafIndexError, LoafNamespace};
+use crate::library_manifest::VocabExports;
+use crate::library_manifest::capabilities::Contributions;
 use crate::library_manifest::compiler_records::RecordFamily;
 use crate::library_manifest::declaration_records::{DeclarationFacet, declaration_facts};
 use crate::library_manifest::executable_surface::{ExecutableSurface, runtime_bindings};
@@ -82,10 +83,14 @@ pub(super) struct IndexedLoaf {
     pub key: String,
     pub namespace: LoafNamespace,
     pub dir: PathBuf,
-    pub summary: Summary,
+    pub name: String,
+    pub globals: Contributions,
+    initial_summary: Option<Summary>,
+    selected_summary: Arc<OnceLock<Result<Summary, LoafIndexError>>>,
     entry: Arc<OnceLock<Result<LoafEntry, LoafIndexError>>>,
     execution: Arc<OnceLock<Result<Arc<crate::library_manifest::LibraryManifest>, LoafIndexError>>>,
     surface: Arc<OnceLock<Result<Arc<ExecutableSurface>, LoafIndexError>>>,
+    vocabulary: Arc<OnceLock<Result<Option<Arc<VocabExports>>, LoafIndexError>>>,
     bindings: Arc<OnceLock<Result<Arc<Vec<RuntimeCallableBinding>>, LoafIndexError>>>,
     /// The shipped native ABI cache, read by the digest the summary names when the manifest is not demanded.
     rust_abi: Arc<OnceLock<Result<Option<Arc<RustAbiCache>>, LoafIndexError>>>,
@@ -98,32 +103,104 @@ pub(super) struct IndexedLoaf {
 type NamedRecords = HashMap<(&'static str, String), Option<Arc<Vec<serde_json::Value>>>>;
 
 impl IndexedLoaf {
-    /// Wrap a caller's already admitted entry without reopening its files.
-    pub fn admitted(entry: LoafEntry) -> Self {
-        let indexed = Self {
-            key: entry.key.clone(),
-            namespace: entry.namespace.clone(),
-            dir: entry.artifact.dir.clone(),
-            summary: Summary::from_artifact(&entry.artifact),
+    fn new(
+        key: String,
+        namespace: LoafNamespace,
+        dir: PathBuf,
+        name: String,
+        globals: Contributions,
+        initial_summary: Option<Summary>,
+    ) -> Self {
+        Self {
+            key,
+            namespace,
+            dir,
+            name,
+            globals,
+            initial_summary,
+            selected_summary: Arc::default(),
             entry: Arc::default(),
             execution: Arc::default(),
             surface: Arc::default(),
             bindings: Arc::default(),
+            vocabulary: Arc::default(),
             rust_abi: Arc::default(),
             named: Arc::default(),
+        }
+    }
+
+    pub(super) fn known(key: String, namespace: LoafNamespace, dir: PathBuf, summary: Summary) -> Self {
+        let globals = Contributions {
+            vocabulary: summary.vocabulary,
+            provider_operations: summary.provider_operations,
         };
+        Self::new(
+            key,
+            namespace,
+            dir,
+            summary.identity.name.clone(),
+            globals,
+            Some(summary),
+        )
+    }
+
+    pub fn contributor(
+        key: String,
+        namespace: LoafNamespace,
+        dir: PathBuf,
+        name: String,
+        globals: Contributions,
+    ) -> Self {
+        Self::new(key, namespace, dir, name, globals, None)
+    }
+
+    /// Only an actual identity, Rust ABI or declaration request needs the package's individual metadata record.
+    pub fn summary(&self) -> Result<&Summary, LoafIndexError> {
+        if let Some(summary) = &self.initial_summary {
+            return Ok(summary);
+        }
+        self.selected_summary
+            .get_or_init(|| {
+                let summary = super::compiler_record_set::summary(&self.dir, &self.name)?
+                    .ok_or_else(|| self.inventory_mismatch("contributor package has no installed metadata"))?;
+                if summary.vocabulary != self.globals.vocabulary
+                    || summary.provider_operations != self.globals.provider_operations
+                {
+                    return Err(self.inventory_mismatch("package metadata disagrees with global contributors"));
+                }
+                Ok(summary)
+            })
+            .as_ref()
+            .map_err(Clone::clone)
+    }
+
+    /// An indexed installed package has an already verified ABI cache by construction. Only a legacy artifact
+    /// admitted with a stale cache can contribute the paths its compiling unit must re-extract.
+    pub fn stale_rust_paths(&self) -> impl Iterator<Item = &String> {
+        self.initial_summary
+            .iter()
+            .filter(|s| s.rust_abi_cache_declared && !s.rust_abi_cache)
+            .flat_map(|s| s.rust_paths.iter())
+    }
+
+    pub fn admitted(entry: LoafEntry) -> Self {
+        let indexed = Self::known(
+            entry.key.clone(),
+            entry.namespace.clone(),
+            entry.artifact.dir.clone(),
+            Summary::from_artifact(&entry.artifact),
+        );
         let _ = indexed.entry.set(Ok(entry));
         indexed
     }
 
-    /// Construct an inventory-only entry for tests that prove a metadata projection preserves demand loading.
     #[cfg(test)]
     pub(super) fn summary_only(key: String, namespace: LoafNamespace, identity: LoafIdentity) -> Self {
-        Self {
+        Self::known(
             key,
             namespace,
-            dir: PathBuf::new(),
-            summary: Summary {
+            PathBuf::new(),
+            Summary {
                 identity,
                 vocabulary: false,
                 provider_operations: false,
@@ -133,15 +210,8 @@ impl IndexedLoaf {
                 rust_abi_cache: false,
                 rust_abi_cache_digest: None,
             },
-            entry: Arc::default(),
-            execution: Arc::default(),
-            surface: Arc::default(),
-            bindings: Arc::default(),
-            rust_abi: Arc::default(),
-            named: Arc::default(),
-        }
+        )
     }
-
     /// Whether a focused test caused this inventory-only entry to demand its complete manifest.
     #[cfg(test)]
     pub(super) fn was_demanded(&self) -> bool {
@@ -154,35 +224,13 @@ impl IndexedLoaf {
         if super::compiler_record_set::configured()
             && let Some(summary) = super::compiler_record_set::summary(&dir, name)?
         {
-            return Ok(Self {
-                key,
-                namespace,
-                dir,
-                summary,
-                entry: Arc::default(),
-                execution: Arc::default(),
-                surface: Arc::default(),
-                bindings: Arc::default(),
-                rust_abi: Arc::default(),
-                named: Arc::default(),
-            });
+            return Ok(Self::known(key, namespace, dir, summary));
         }
         if !super::compiler_record_set::configured()
             && let Some(summary) = retained(&path)
             && summary.identity.name == name
         {
-            return Ok(Self {
-                key,
-                namespace,
-                dir,
-                summary,
-                entry: Arc::default(),
-                execution: Arc::default(),
-                surface: Arc::default(),
-                bindings: Arc::default(),
-                rust_abi: Arc::default(),
-                named: Arc::default(),
-            });
+            return Ok(Self::known(key, namespace, dir, summary));
         }
         let before = observation(&path);
         let artifact = LoafArtifact::read(&dir, name)?;
@@ -194,7 +242,7 @@ impl IndexedLoaf {
         if let Some(before) = before
             && observation(&path).as_ref() == Some(&before)
         {
-            let _ = retain(&path, before, &indexed.summary);
+            let _ = retain(&path, before, indexed.summary()?);
         }
         Ok(indexed)
     }
@@ -203,8 +251,8 @@ impl IndexedLoaf {
     pub fn demand(&self) -> Result<&LoafEntry, LoafIndexError> {
         self.entry
             .get_or_init(|| {
-                let artifact = LoafArtifact::read(&self.dir, &self.summary.identity.name)?;
-                if artifact.identity != self.summary.identity {
+                let artifact = LoafArtifact::read(&self.dir, &self.name)?;
+                if artifact.identity != self.summary()?.identity {
                     return Err(LoafIndexError::Unreadable {
                         path: artifact.manifest_path(),
                         reason: "the manifest changed after its inventory was admitted".to_owned(),
@@ -230,13 +278,12 @@ impl IndexedLoaf {
                 .map(|entry| entry.artifact.rust_abi_cache.clone())
                 .map_err(Clone::clone);
         }
-        let Some(expected) = self.summary.rust_abi_cache_digest.as_deref() else {
+        let Some(expected) = self.summary()?.rust_abi_cache_digest.as_deref() else {
             return Ok(self.demand()?.artifact.rust_abi_cache.clone());
         };
         self.rust_abi
             .get_or_init(|| {
-                LoafArtifact::read_digested_rust_abi_cache(&self.dir, &self.summary.identity.name, expected)
-                    .map(|(cache, _)| cache)
+                LoafArtifact::read_digested_rust_abi_cache(&self.dir, &self.name, expected).map(|(cache, _)| cache)
             })
             .clone()
     }
@@ -252,14 +299,11 @@ impl IndexedLoaf {
                         .map_err(Clone::clone);
                 }
                 if super::compiler_record_set::configured()
-                    && let Some((manifest, digest)) =
-                        super::compiler_record_set::read_execution(&self.dir, &self.summary.identity.name)?
+                    && let Some((manifest, digest)) = super::compiler_record_set::read_execution(&self.dir, &self.name)?
                 {
-                    if digest != self.summary.identity.digest {
+                    if digest != self.summary()?.identity.digest {
                         return Err(LoafIndexError::Unreadable {
-                            path: self
-                                .dir
-                                .join(format!("{}.incnlib", artifact_stem(&self.summary.identity.name))),
+                            path: self.dir.join(format!("{}.incnlib", artifact_stem(&self.name))),
                             reason: "executable record projection differs from its admitted inventory".to_owned(),
                         });
                     }
@@ -278,14 +322,11 @@ impl IndexedLoaf {
         self.surface
             .get_or_init(|| {
                 if super::compiler_record_set::configured()
-                    && let Some((surface, digest)) =
-                        super::compiler_record_set::read_surface(&self.dir, &self.summary.identity.name)?
+                    && let Some((surface, digest)) = super::compiler_record_set::read_surface(&self.dir, &self.name)?
                 {
-                    if digest != self.summary.identity.digest {
+                    if digest != self.summary()?.identity.digest {
                         return Err(LoafIndexError::Unreadable {
-                            path: self
-                                .dir
-                                .join(format!("{}.incnlib", artifact_stem(&self.summary.identity.name))),
+                            path: self.dir.join(format!("{}.incnlib", artifact_stem(&self.name))),
                             reason: "executable surface records differ from their admitted inventory".to_owned(),
                         });
                     }
@@ -306,13 +347,11 @@ impl IndexedLoaf {
             .get_or_init(|| {
                 if super::compiler_record_set::configured()
                     && let Some((bindings, digest)) =
-                        super::compiler_record_set::read_runtime_bindings(&self.dir, &self.summary.identity.name)?
+                        super::compiler_record_set::read_runtime_bindings(&self.dir, &self.name)?
                 {
-                    if digest != self.summary.identity.digest {
+                    if digest != self.summary()?.identity.digest {
                         return Err(LoafIndexError::Unreadable {
-                            path: self
-                                .dir
-                                .join(format!("{}.incnlib", artifact_stem(&self.summary.identity.name))),
+                            path: self.dir.join(format!("{}.incnlib", artifact_stem(&self.name))),
                             reason: "runtime bindings records differ from their admitted inventory".to_owned(),
                         });
                     }
@@ -351,9 +390,7 @@ impl IndexedLoaf {
             return Ok(Vec::new());
         };
         let facts = declaration_facts(&api).map_err(|error| LoafIndexError::Unreadable {
-            path: self
-                .dir
-                .join(format!("{}.incnlib", artifact_stem(&self.summary.identity.name))),
+            path: self.dir.join(format!("{}.incnlib", artifact_stem(&self.name))),
             reason: format!("cannot project its declarations: {error}"),
         })?;
         Ok(facts
@@ -406,9 +443,9 @@ impl IndexedLoaf {
         if let Some(found) = kept.get(&(family, name.to_owned())) {
             return Ok(found.clone());
         }
-        let read = super::compiler_record_set::read_declaration(&self.dir, &self.summary.identity.name, family, name)?;
+        let read = super::compiler_record_set::read_declaration(&self.dir, &self.name, family, name)?;
         let values = match read {
-            Some((_, digest)) if digest != self.summary.identity.digest => {
+            Some((_, digest)) if digest != self.summary()?.identity.digest => {
                 return Err(self.inventory_mismatch("records read by name differ from their admitted inventory"));
             }
             Some((values, _)) => Some(Arc::new(values)),
@@ -418,12 +455,46 @@ impl IndexedLoaf {
         Ok(values)
     }
 
+    /// Validate every record selected under this path, including aliases, before exposing its canonical identity.
+    pub fn runtime_binding(&self, path: &str) -> Result<Option<RuntimeCallableBinding>, LoafIndexError> {
+        let mut selected = None;
+        if let Some(values) = self.named_records("runtime-binding", path)? {
+            for value in values.iter() {
+                let binding = serde_json::from_value(value.clone())
+                    .map_err(|_| self.inventory_mismatch("invalid runtime-binding value"))?;
+                self.admit_runtime_binding(path, binding, &mut selected)?;
+            }
+        } else if self.names_record(&["runtime-binding"], None)? != Some(true) {
+            // An aggregate-only package has no individual member to select. Every matching legacy row still
+            // has to agree with the path, owner, and any other declaration of this public facade.
+            for binding in self.runtime_bindings()?.iter().filter(|binding| binding.path == path) {
+                self.admit_runtime_binding(path, binding.clone(), &mut selected)?;
+            }
+        }
+        Ok(selected)
+    }
+
+    fn admit_runtime_binding(
+        &self,
+        path: &str,
+        binding: RuntimeCallableBinding,
+        selected: &mut Option<RuntimeCallableBinding>,
+    ) -> Result<(), LoafIndexError> {
+        if binding.path != path
+            || binding.canonical.kind != incan_semantics_core::SemanticSourceTargetKind::Function
+            || !matches!(&binding.canonical.origin, incan_semantics_core::SymbolOrigin::Package { library, .. } if library == &self.name)
+            || selected.as_ref().is_some_and(|previous| previous != &binding)
+        {
+            return Err(self.inventory_mismatch("runtime binding path, identity, or owner differs from its selection"));
+        }
+        *selected = Some(binding);
+        Ok(())
+    }
+
     /// The refusal of a record that does not belong to the inventory the index admitted this Loaf by.
     fn inventory_mismatch(&self, reason: &str) -> LoafIndexError {
         LoafIndexError::Unreadable {
-            path: self
-                .dir
-                .join(format!("{}.incnlib", artifact_stem(&self.summary.identity.name))),
+            path: self.dir.join(format!("{}.incnlib", artifact_stem(&self.name))),
             reason: reason.to_owned(),
         }
     }
@@ -434,18 +505,39 @@ impl IndexedLoaf {
         if !super::compiler_record_set::configured() {
             return Ok(None);
         }
-        super::compiler_record_set::names_record(&self.dir, &self.summary.identity.name, families, record)
+        super::compiler_record_set::names_record(&self.dir, &self.name, families, record)
     }
 
     /// The governed bodies sidecar can be located from admitted identity without demanding declaration records.
     pub fn bodies_path(&self) -> PathBuf {
-        self.dir
-            .join(format!("{}.incnbody", artifact_stem(&self.summary.identity.name)))
+        self.dir.join(format!("{}.incnbody", artifact_stem(&self.name)))
+    }
+
+    /// Return only this parser vocabulary; a non-indexed producer retains normal manifest validation.
+    pub fn parser_vocabulary(&self) -> Result<Option<Arc<VocabExports>>, LoafIndexError> {
+        self.vocabulary
+            .get_or_init(|| {
+                if super::compiler_record_set::configured()
+                    && let Some((vocabulary, digest)) =
+                        super::compiler_record_set::read_vocabulary(&self.dir, &self.name)?
+                {
+                    if digest != self.summary()?.identity.digest {
+                        return Err(self.inventory_mismatch("vocabulary differs from its admitted inventory"));
+                    }
+                    return Ok(Some(vocabulary));
+                }
+                Ok(self.demand()?.artifact.manifest.vocab.clone().map(Arc::new))
+            })
+            .clone()
     }
 
     /// Report a failed demand without opening an untouched manifest.
     pub fn failure(&self) -> Option<&LoafIndexError> {
-        self.entry.get().and_then(|result| result.as_ref().err())
+        self.entry
+            .get()
+            .and_then(|result| result.as_ref().err())
+            .or_else(|| self.selected_summary.get().and_then(|result| result.as_ref().err()))
+            .or_else(|| self.vocabulary.get().and_then(|result| result.as_ref().err()))
     }
 
     /// Resolve namespace ownership from the index's declared binding, before reading manifest contents.
@@ -455,20 +547,11 @@ impl IndexedLoaf {
 }
 
 /// Exact source and compiler generations bound to an optional private summary.
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 struct Observation {
     path: PathBuf,
     source: Generation,
     compiler: (PathBuf, Generation),
-}
-
-/// A separately checksummed small inventory, with no executable or acceptance result.
-#[derive(Serialize, Deserialize)]
-struct Record {
-    version: u32,
-    observation: Observation,
-    summary: Summary,
-    checksum: String,
 }
 
 /// Observe the exact file and running compiler; unsupported filesystems keep full admission.
@@ -485,54 +568,52 @@ fn observation(path: &Path) -> Option<Observation> {
 fn record_path(path: &Path) -> Option<PathBuf> {
     let canonical = path.canonicalize().ok()?;
     let key = format!("{:x}", Sha256::digest(canonical.as_os_str().as_encoded_bytes()));
-    Some(manifest_input::cache_path(&key)?.with_extension("inventory"))
+    Some(manifest_input::cache_path(&key)?.with_file_name(format!("{key}.inventory.crumb")))
 }
 
 /// Refuse stale, malformed, oversized or corrupted records and fall back to full public admission.
 fn retained(path: &Path) -> Option<Summary> {
     let observed = observation(path)?;
     let cache = record_path(path)?;
-    let metadata = fs::symlink_metadata(&cache).ok()?;
-    if !metadata.is_file() || metadata.len() > MAX_INVENTORY_RECORD_BYTES {
+    let guard = manifest_input::checked_guard(&observed.path, observed.source, &observed.compiler);
+    let (digest, payload) = manifest_input::read_cache(&cache, "inventory", guard, MAX_INVENTORY_RECORD_BYTES)?;
+    let row = internal_models::decode_manifest_inventory(&payload).ok()?;
+    if observation(path).as_ref() != Some(&observed) {
         return None;
     }
-    let mut bytes = Vec::new();
-    fs::File::open(cache)
-        .ok()?
-        .take(MAX_INVENTORY_RECORD_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .ok()?;
-    if u64::try_from(bytes.len()).ok()? > MAX_INVENTORY_RECORD_BYTES {
-        return None;
-    }
-    let record: Record = serde_json::from_slice(&bytes).ok()?;
-    if record.version != 1
-        || record.observation != observed
-        || record.checksum != checksum(&record.observation, &record.summary).ok()?
-        || observation(path).as_ref() != Some(&observed)
-    {
-        return None;
-    }
-    Some(record.summary)
-}
-
-/// Bind both the positive and negative inventory facts to their complete observation.
-fn checksum(observed: &Observation, summary: &Summary) -> std::io::Result<String> {
-    let bytes = serde_json::to_vec(&(1_u32, observed, summary)).map_err(std::io::Error::other)?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
+    Some(Summary {
+        identity: LoafIdentity {
+            name: row.name,
+            version: row.version,
+            digest,
+            feature_projection: row.features.into_iter().collect(),
+        },
+        vocabulary: row.vocabulary,
+        provider_operations: row.operations,
+        native_unions: row.native_unions,
+        rust_paths: row.rust_paths.into_iter().collect(),
+        rust_abi_cache_declared: row.declares_abi_cache,
+        rust_abi_cache: row.has_abi_cache,
+        rust_abi_cache_digest: row.abi_digest,
+    })
 }
 
 /// Atomically publish an optional inventory only after ordinary manifest admission has succeeded.
 fn retain(path: &Path, observation: Observation, summary: &Summary) -> std::io::Result<()> {
-    let Some(cache) = record_path(path) else {
-        return Ok(());
+    let Some(cache) = record_path(path) else { return Ok(()) };
+    let guard = manifest_input::checked_guard(&observation.path, observation.source, &observation.compiler);
+    let row = internal_models::ManifestInventory {
+        name: summary.identity.name.clone(),
+        version: summary.identity.version.clone(),
+        features: summary.identity.feature_projection.iter().cloned().collect(),
+        vocabulary: summary.vocabulary,
+        operations: summary.provider_operations,
+        native_unions: summary.native_unions,
+        rust_paths: summary.rust_paths.iter().cloned().collect(),
+        declares_abi_cache: summary.rust_abi_cache_declared,
+        has_abi_cache: summary.rust_abi_cache,
+        abi_digest: summary.rust_abi_cache_digest.clone(),
     };
-    let record = Record {
-        version: 1,
-        checksum: checksum(&observation, summary)?,
-        observation,
-        summary: summary.clone(),
-    };
-    let bytes = serde_json::to_vec(&record).map_err(std::io::Error::other)?;
-    super::publish_private_record(&cache, &bytes, "inventory-pending")
+    let payload = internal_models::encode_manifest_inventory(&row).map_err(std::io::Error::other)?;
+    manifest_input::write_cache(&cache, "inventory", guard, &summary.identity.digest, payload)
 }

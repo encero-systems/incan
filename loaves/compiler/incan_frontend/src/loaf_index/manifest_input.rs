@@ -10,14 +10,13 @@ use std::io::{self, Read};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 /// Maximum encoded digest proof size; oversized optional records never bypass the full content hash.
 const MAX_DIGEST_RECORD_BYTES: u64 = 8192;
 
 /// The generation guards used for a digest, including ctime so restored-mtime edits invalidate it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Generation {
     device: u64,
     inode: u64,
@@ -29,14 +28,30 @@ pub(super) struct Generation {
     changed_ns: i64,
 }
 
-/// An integrity-checked local record of the digest computed for one canonical file generation.
-#[derive(Serialize, Deserialize)]
-struct Record {
-    version: u32,
-    key: String,
-    generation: Generation,
-    digest: String,
-    checksum: String,
+impl Generation {
+    /// Bind the complete observed OS generation and its independent file identity to the cache key.
+    pub(super) fn guard(self, key: &[u8]) -> [u8; 32] {
+        let mut hash = Sha256::new();
+        hash.update(b"incan.loaf-manifest-generation/2");
+        hash.update(self.device.to_le_bytes());
+        hash.update(self.inode.to_le_bytes());
+        hash.update(self.size.to_le_bytes());
+        hash.update(self.mode.to_le_bytes());
+        hash.update(self.modified.to_le_bytes());
+        hash.update(self.modified_ns.to_le_bytes());
+        hash.update(self.changed.to_le_bytes());
+        hash.update(self.changed_ns.to_le_bytes());
+        hash.update(key);
+        hash.finalize().into()
+    }
+}
+
+/// Both source and running compiler must match before restoring any compiler-specific interpretation.
+pub(super) fn checked_guard(path: &Path, state: Generation, compiler: &(PathBuf, Generation)) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(state.guard(path.as_os_str().as_encoded_bytes()));
+    hash.update(compiler.1.guard(compiler.0.as_os_str().as_encoded_bytes()));
+    hash.finalize().into()
 }
 
 /// Read current UTF-8 bytes, retaining or computing their digest only while descriptor and path stay stable.
@@ -113,47 +128,50 @@ pub(super) fn cache_path(key: &str) -> Option<PathBuf> {
         let root = bin.parent()?;
         (bin.file_name()? == "bin" && root.join("toolchain.json").is_file()).then(|| root.to_owned())
     })?;
-    Some(root.join("cache/loaf-manifest-identities").join(format!("{key}.json")))
+    Some(
+        root.join("cache/loaf-manifest-identities")
+            .join(format!("{key}.identity.crumb")),
+    )
 }
 
-/// Refuse malformed, oversized, symlinked, stale or corrupt records without changing the manifest's acceptance.
-fn retained_digest(path: &Path, key: &str, generation: Generation) -> Option<String> {
+/// An optional private Crumb is selected only by current observations. Legacy filenames are independent.
+pub(super) fn read_cache(path: &Path, kind: &str, guard: [u8; 32], maximum: u64) -> Option<(String, Vec<u8>)> {
     let metadata = fs::symlink_metadata(path).ok()?;
-    if !metadata.is_file() || metadata.len() > MAX_DIGEST_RECORD_BYTES {
+    if !metadata.is_file() || metadata.len() > maximum {
         return None;
     }
     let mut bytes = Vec::new();
-    File::open(path)
-        .ok()?
-        .take(MAX_DIGEST_RECORD_BYTES)
-        .read_to_end(&mut bytes)
-        .ok()?;
-    let record: Record = serde_json::from_slice(&bytes).ok()?;
-    if record.version != 1 || record.key != key || record.generation != generation {
+    File::open(path).ok()?.take(maximum + 1).read_to_end(&mut bytes).ok()?;
+    if bytes.len() as u64 > maximum {
         return None;
     }
-    crate::library_manifest::sha256_digest("retained manifest digest", &record.digest, true).ok()?;
-    if record.checksum != checksum(&record.key, generation, &record.digest).ok()? {
-        return None;
-    }
-    Some(record.digest)
+    let value = internal_models::decode_manifest_cache(&kind.to_owned(), &guard.to_vec(), &bytes).ok()?;
+    Some((format!("sha256:{}", hex::encode(value.digest)), value.payload))
 }
 
-/// Detect accidental corruption of a record independently of the current manifest's content hash.
-fn checksum(key: &str, generation: Generation, digest: &str) -> io::Result<String> {
-    let bytes = serde_json::to_vec(&(1_u32, key, generation, digest)).map_err(io::Error::other)?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
+/// The Incan codec owns verification and framing. Failed optional publication leaves full admission available.
+pub(super) fn write_cache(path: &Path, kind: &str, guard: [u8; 32], digest: &str, payload: Vec<u8>) -> io::Result<()> {
+    let raw = hex::decode(
+        digest
+            .strip_prefix("sha256:")
+            .ok_or_else(|| io::Error::other("missing manifest digest scheme"))?,
+    )
+    .map_err(io::Error::other)?;
+    let bytes = internal_models::encode_manifest_cache(&kind.to_owned(), &guard.to_vec(), &raw, &payload)
+        .map_err(io::Error::other)?;
+    super::publish_private_record(path, &bytes, "pending")
 }
 
-/// Publish one complete private record atomically; failures leave the already-computed identity usable.
+fn retained_digest(path: &Path, key: &str, generation: Generation) -> Option<String> {
+    let (digest, _) = read_cache(
+        path,
+        "identity",
+        generation.guard(key.as_bytes()),
+        MAX_DIGEST_RECORD_BYTES,
+    )?;
+    Some(digest)
+}
+
 fn store(path: &Path, key: &str, generation: Generation, digest: &str) -> io::Result<()> {
-    let record = Record {
-        version: 1,
-        key: key.to_owned(),
-        generation,
-        digest: digest.to_owned(),
-        checksum: checksum(key, generation, digest)?,
-    };
-    let bytes = serde_json::to_vec(&record).map_err(io::Error::other)?;
-    super::publish_private_record(path, &bytes, "tmp")
+    write_cache(path, "identity", generation.guard(key.as_bytes()), digest, Vec::new())
 }

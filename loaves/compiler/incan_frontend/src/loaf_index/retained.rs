@@ -135,7 +135,10 @@ pub(super) fn abi(path: &Path) -> Result<Arc<RustAbiCache>, String> {
         tracing::debug!(target: "incan::invocation", path = %path.display(), "retained immutable Rust ABI index");
         return Ok(value);
     }
-    let value = Arc::new(RustAbiCache::open(&canonical)?);
+    let value = {
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_frontend::open_rust_abi_index", path = %path.display()).entered();
+        Arc::new(RustAbiCache::open(&canonical)?)
+    };
     if let Some(inputs) = before
         && observe(&paths).as_ref() == Some(&inputs)
         && let Ok(mut store) = store.lock()
