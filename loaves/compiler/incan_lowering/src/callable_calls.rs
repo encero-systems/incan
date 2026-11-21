@@ -4,17 +4,23 @@ use incan_mir_plan_native::{
     CalleeKind, Carrier, Operand, Place, PlanType, RvalueKind, SourceSpan, assign as plan_assign, carrier_position,
 };
 use incan_semantics_core::body_ir::{
-    ArgumentElement, Body, BodyIrModule, NamedCallableTarget, Place as SourcePlace, StringConversionContract,
+    ArgumentElement, Body, BodyIrModule, NamedCallableTarget, Operand as SourceOperand, Place as SourcePlace,
+    StringConversionContract,
 };
 use incan_semantics_core::{CanonicalSymbolId, IncanType, SymbolOrigin, canonical_module_identity};
 
 use crate::async_::{construct_future, is_future};
 use crate::builtin_calls::lower_builtin;
+use crate::callable_values::callable_object;
 use crate::calls::{lower_loaf_call, ordered_arguments};
 use crate::carrier_operands::boundary_plan_operand;
-use crate::checked_values::scalar_place;
+use crate::checked_values::{partial_flags, scalar_place};
 use crate::classes::function_name;
-use crate::closures::{callable_copy_type, return_representation};
+use crate::closure_lifting::synthesize;
+use crate::closures::{
+    borrowed_callable_forwarder, callable_copy_type, callable_signature, closure_arguments, closure_constructor,
+    pointer_forwarder, return_representation,
+};
 use crate::collections::is_owned_collection;
 use crate::derived_defaults::{is_derived_default, lower_derived_default};
 use crate::enums::enum_type;
@@ -43,7 +49,6 @@ pub fn carrier_callable_operand(
     target: &PlanType,
     span: &SourceSpan,
 ) -> Result<Operand, String> {
-    let _ = span;
     let PlanType::Enum(owner, _) = target else {
         return Ok(value);
     };
@@ -61,7 +66,7 @@ pub fn carrier_callable_operand(
     };
     for variant in &declaration.variants {
         if variant.fields.len() == 1 && variant.fields[0] == PlanType::Closure(signature.clone()) {
-            return Err(untranslated("callable_calls::owned_callable_value"));
+            return owned_callable_value(builder, value, &signature, span);
         }
     }
     Ok(value)
@@ -340,4 +345,153 @@ pub fn lower_callable_result(
         terminate_call(builder, callee, operands, output, span);
     }
     Ok(())
+}
+
+/// Own a forwarding environment so either a borrowed argument or a union payload retains the function value.
+fn pointer_callable_owner(
+    builder: &mut Builder,
+    pointer: Place,
+    signature: &[PlanType],
+    span: &SourceSpan,
+) -> Result<Place, String> {
+    closure_arguments(signature)?;
+    let name = format!("__incan_pointer_closure_{}_{}", builder.name, builder.synthesized.len());
+    let forwarder = pointer_forwarder(&name, signature, span)?;
+    synthesize(builder, forwarder);
+    let constructor = format!("{name}_new");
+    let captures = [PlanType::FunctionPointer(signature.to_vec())];
+    let object = closure_constructor(
+        &constructor,
+        &name,
+        &captures,
+        signature,
+        false,
+        span,
+        false,
+        false,
+        false,
+    );
+    synthesize(builder, object);
+    let boxed = temporary(builder, PlanType::Closure(signature.to_vec()), span);
+    let local = boxed.local;
+    let arguments = vec![read_place(pointer, false, span)];
+    terminate_call(
+        builder,
+        CalleeKind::Planned(constructor),
+        arguments,
+        boxed.clone(),
+        span,
+    );
+    builder.owned.push(local);
+    Ok(boxed)
+}
+
+/// Retain a function item's forwarding environment at any environment-owning value boundary.
+pub fn owned_callable_value(
+    builder: &mut Builder,
+    value: Operand,
+    signature: &[PlanType],
+    span: &SourceSpan,
+) -> Result<Operand, String> {
+    let source = value_type(builder, &value)?;
+    if source == PlanType::Closure(signature.to_vec()) {
+        return Ok(value);
+    }
+    if !callable_copy_type(&source) || callable_signature(&source)? != signature {
+        return Err("unsupported Body IR callable ownership conversion".into());
+    }
+    let pointer = temporary(builder, PlanType::FunctionPointer(signature.to_vec()), span);
+    let operation = match source {
+        PlanType::FunctionItem(..) => RvalueKind::ReifyFunction(value),
+        _ => RvalueKind::Use(value),
+    };
+    builder.emit(plan_assign(pointer.clone(), operation, span));
+    let boxed = pointer_callable_owner(builder, pointer, signature, span)?;
+    Ok(read_place(boxed, true, span))
+}
+
+/// Adapt a callable to the parameter's shared view or call-owned lending envelope.
+pub fn callable_argument(
+    builder: &mut Builder,
+    value: &SourceOperand,
+    signature: &[PlanType],
+    span: &SourceSpan,
+    borrowing: bool,
+) -> Result<Operand, String> {
+    let SourceOperand::Place(read) = value else {
+        return Err("unsupported Body IR constant passed to a closure-holding parameter".into());
+    };
+    let place = scalar_place(builder, &read.place, span)?;
+    if partial_flags(builder, place.local).is_some() {
+        return Err("unsupported Body IR partial passed to a closure-holding parameter".into());
+    }
+    let source = place_type(&builder.locals, &place);
+    if callable_signature(&source)? != signature {
+        return Err("invalid Body IR callable argument signature".into());
+    }
+    let owner = match source {
+        PlanType::FunctionItem(..) => {
+            let pointer = temporary(builder, PlanType::FunctionPointer(signature.to_vec()), span);
+            let item = read_place(place, false, span);
+            builder.emit(plan_assign(pointer.clone(), RvalueKind::ReifyFunction(item), span));
+            pointer_callable_owner(builder, pointer, signature, span)?
+        }
+        PlanType::FunctionPointer(_) => pointer_callable_owner(builder, place, signature, span)?,
+        _ => place,
+    };
+    if borrowing {
+        return borrowed_callable_argument(builder, owner, signature, span);
+    }
+    callable_object(builder, owner, signature, span)
+}
+
+/// Move a call-owned envelope that lends the source callable for the callee's calls.
+fn borrowed_callable_argument(
+    builder: &mut Builder,
+    callable: Place,
+    signature: &[PlanType],
+    span: &SourceSpan,
+) -> Result<Operand, String> {
+    let borrowing_source = match place_type(&builder.locals, &callable) {
+        PlanType::BorrowingClosure(_) | PlanType::BorrowingClosureRef(_) => true,
+        PlanType::Closure(_) | PlanType::ClosureRef(_) => false,
+        _ => return Err("unsupported Body IR borrowing callable argument".into()),
+    };
+    let source = callable_object(builder, callable, signature, span)?;
+    let capture = if borrowing_source {
+        PlanType::BorrowingClosureRef(signature.to_vec())
+    } else {
+        PlanType::ClosureRef(signature.to_vec())
+    };
+    let name = format!(
+        "__incan_borrowed_callable_{}_{}",
+        builder.name,
+        builder.synthesized.len()
+    );
+    let forwarder = borrowed_callable_forwarder(&name, signature, borrowing_source, span)?;
+    synthesize(builder, forwarder);
+    let constructor = format!("{name}_new");
+    let object = closure_constructor(
+        &constructor,
+        &name,
+        &[capture],
+        signature,
+        false,
+        span,
+        false,
+        false,
+        true,
+    );
+    synthesize(builder, object);
+    let boxed = temporary(builder, PlanType::BorrowingClosure(signature.to_vec()), span);
+    let local = boxed.local;
+    terminate_call(
+        builder,
+        CalleeKind::Planned(constructor),
+        vec![source],
+        boxed.clone(),
+        span,
+    );
+    builder.owned.push(local);
+    Ok(read_place(boxed, true, span))
 }

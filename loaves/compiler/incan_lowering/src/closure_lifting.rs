@@ -11,6 +11,7 @@ use incan_semantics_core::body_ir::{
 };
 
 use crate::builtins::list_call;
+use crate::callable_calls::owned_callable_value;
 use crate::checked_values::{partial_flags, scalar_place, target_read};
 use crate::closures::{
     callable_signature, closure_arguments, closure_capture_type, closure_constructor, function_assignment,
@@ -34,7 +35,6 @@ use crate::list_methods::borrowed_list_generator_call;
 use crate::list_values::{list_borrow, value_operand};
 use crate::lists::{is_exclusive_borrow, is_owned_list, list_element, list_shape, parameter_storage_type};
 use crate::partial_callables::{bind_defaulted_parameter, default_flags, record_partial, with_supplied_flags};
-use crate::pending::untranslated;
 use crate::shared_callables::{record_scalar_closure, scalar_capture};
 use crate::statements::{finish_return, is_nominal_type, is_owned_callable, lower_statement, return_operand};
 use crate::text_plan::clone_text;
@@ -44,8 +44,7 @@ use crate::type_parameters::merge_instance_requests;
 
 /// Store a Copy callable with its retained item type or the source-required function-pointer coercion.
 ///
-/// An owned closure binding that receives a function item or pointer boxes it through
-/// `callable_calls::owned_callable_value`, which refuses by name until it is in Rust.
+/// An owned closure binding that receives a function item or pointer boxes it in a forwarding environment.
 pub fn assign_callable(
     builder: &mut Builder,
     target: Place,
@@ -63,10 +62,8 @@ pub fn assign_callable(
         if source == PlanType::BorrowingClosure(signature.clone()) {
             return move_closure(builder, target, value, signature.clone(), false, span, true);
         }
-        if source != PlanType::Closure(signature.clone()) {
-            return Err(untranslated("callable_calls::owned_callable_value"));
-        }
-        return move_closure(builder, target, value, signature.clone(), false, span, false);
+        let owned = owned_callable_value(builder, value, signature, span)?;
+        return move_closure(builder, target, owned, signature.clone(), false, span, false);
     }
     let context = format!("binding in {}", builder.name);
     let (ty, operation) = function_assignment(&declared, &source, value, pointer_storage, &context)?;

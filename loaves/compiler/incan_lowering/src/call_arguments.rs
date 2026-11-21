@@ -8,6 +8,7 @@ use incan_semantics_core::body_ir::{
 };
 
 use crate::builtin_calls::coerce_numeric_operand;
+use crate::callable_calls::callable_argument;
 use crate::carrier_operands::boundary_operand;
 use crate::checked_values::{scalar_constant, scalar_place};
 use crate::closures::{function_assignment, packed_input, parameter_representation};
@@ -239,8 +240,9 @@ pub fn call_argument_operand(
         return explicit_argument_operand(builder, value, ty, span, input_access);
     }
     match ty {
-        PlanType::ClosureRef(_) | PlanType::BorrowingClosure(_) | PlanType::BorrowingClosureRef(_) => {
-            return Err(untranslated("callable_calls::callable_argument"));
+        PlanType::ClosureRef(signature) => return callable_argument(builder, value, signature, span, false),
+        PlanType::BorrowingClosure(signature) | PlanType::BorrowingClosureRef(signature) => {
+            return callable_argument(builder, value, signature, span, true);
         }
         PlanType::StringRef => return borrow_text_operand(builder, value, span),
         PlanType::StrRef => return borrow_str_operand(builder, value, span),
