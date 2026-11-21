@@ -28,6 +28,7 @@ use crate::pending::untranslated;
 use crate::result_carriers::lower_carrier_method;
 use crate::result_combinators::{lower_result_combinator, result_combinator};
 use crate::sequence_builtins::argument_type;
+use crate::static_methods::{StaticCall, lower_static_method_body, lower_static_sdk_method};
 use crate::static_storage::computed_static_type;
 use crate::traits::{is_lazy_method_body, receiver_selects_slot_arguments};
 use crate::type_parameters::{instantiate, request_instance};
@@ -107,10 +108,8 @@ fn special_method_route(
 ) -> Result<MethodRoute, String> {
     use MethodRoute::Refused;
     let receiver = &arguments[0];
-    if let Some(SourceOperand::Place(read)) = receiver.as_one()
-        && read.place.global().is_some()
-    {
-        return Ok(Refused("method_calls::lower_global_method"));
+    if lower_global_method(module, builder, target, arguments, destination, span)? {
+        return Ok(MethodRoute::Lowered);
     }
     match &target.operation {
         None | Some(ReflectionOperation::Builtin(_)) => {}
@@ -455,7 +454,7 @@ fn method_index(
 }
 
 /// Find the selected body's exact receiver frame; a compiled Loaf implementation uses its callable record instead.
-fn owner_method_index(
+pub fn owner_method_index(
     module: &BodyIrModule,
     target: &MethodTarget,
     owner: &PlanType,
@@ -633,7 +632,7 @@ fn source_equality_target(module: &BodyIrModule, target: &MethodTarget, body: &B
 }
 
 /// Bind the ordinary slots once, excluding the method's separately prepared receiver.
-fn method_ordinary_operands(
+pub fn method_ordinary_operands(
     module: &BodyIrModule,
     builder: &mut Builder,
     target: &MethodTarget,
@@ -752,7 +751,7 @@ pub fn receiver_method_identity(
 }
 
 /// Close only the selected method's retained parameters and queue its exact executable instance.
-fn instantiated_method_body(
+pub fn instantiated_method_body(
     module: &BodyIrModule,
     builder: &mut Builder,
     target: &MethodTarget,
@@ -877,4 +876,71 @@ fn iterator_default_pair(
             && protocol.declaration_span.start <= caller.declaration_span.start
             && caller.declaration_span.end <= protocol.declaration_span.end
     })
+}
+
+/// Preserve an explicit equality source member's owned input and drop timing while its native trait slot borrows; its
+/// owned-equality wrapper is `comparison_methods::source_equality_value`.
+pub fn source_method_symbol(module: &BodyIrModule, target: &MethodTarget, body: &Body) -> Result<String, String> {
+    if source_equality_target(module, target, body) {
+        return Err(untranslated("comparison_methods::source_equality_value"));
+    }
+    Ok(function_name(module, body))
+}
+
+/// Prefer an adopter's checked implementation only when its executable body is retained in this program.
+fn receiver_fills_retained_slot(
+    module: &BodyIrModule,
+    target: &MethodTarget,
+    builder: &Builder,
+    argument: &ArgumentElement,
+    span: &SourceSpan,
+) -> Result<bool, String> {
+    let Some(owner) = receiver_owner(module, builder, argument, span)? else {
+        return Ok(false);
+    };
+    let identity = owner_identity(module, &owner)?;
+    Ok(module.trait_implementations.iter().any(|implementation| {
+        implementation.owner == identity
+            && Some(&implementation.method) == target.canonical.as_ref()
+            && module
+                .bodies
+                .iter()
+                .any(|body| body.canonical.as_ref() == Some(&implementation.implementation))
+    }))
+}
+
+/// Call a computed model static's selected method under its actual storage lock, preserving mutation and unwinding
+/// rather than copying a receiver out of storage.
+fn lower_global_method(
+    module: &BodyIrModule,
+    builder: &mut Builder,
+    target: &MethodTarget,
+    arguments: &[ArgumentElement],
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<bool, String> {
+    let Some(SourceOperand::Place(read)) = arguments[0].as_one() else {
+        return Ok(false);
+    };
+    let Some(global) = read.place.global() else {
+        return Ok(false);
+    };
+    let call = StaticCall {
+        target,
+        read,
+        global,
+        arguments,
+        destination,
+    };
+    if !receiver_fills_retained_slot(module, target, builder, &arguments[0], span)?
+        && let Some(callable) = module
+            .loaf_callables
+            .iter()
+            .find(|callable| Some(&callable.canonical) == target.canonical.as_ref())
+    {
+        lower_static_sdk_method(module, builder, callable, &call, span)?;
+        return Ok(true);
+    }
+    lower_static_method_body(module, builder, &call, span)?;
+    Ok(true)
 }

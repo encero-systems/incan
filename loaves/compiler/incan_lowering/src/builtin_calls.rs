@@ -1,7 +1,7 @@
 //! Builtin function calls and their scalar boundary checks.
 
 use incan_mir_plan_native::{
-    CalleeKind, Constant, ExternalFunction, Operand, Place, PlanType, RvalueKind, SourceSpan, TerminatorKind,
+    CalleeKind, Constant, ExternalFunction, ListLeaf, Operand, Place, PlanType, RvalueKind, SourceSpan, TerminatorKind,
     assign as plan_assign,
 };
 use incan_semantics_core::body_ir::{
@@ -19,15 +19,18 @@ use crate::frame::{
 };
 use crate::hashed_collections::collection_contains;
 use crate::json_builtins::lower_model_json_builtin;
-use crate::list_methods::{argument_value, call_destination, lower_list_builtin, lower_list_helper};
+use crate::list_methods::{
+    argument_value, borrowed_list_argument, call_destination, lower_list_builtin, lower_list_helper,
+};
 use crate::list_values::value_operand;
+use crate::lists::require_list_shape;
 use crate::numerics::{float_conversion, integer_conversion};
 use crate::numerics::{has_sized_numeric, numeric_carrier, numeric_name};
 use crate::operand_borrows::{borrow_str_operand, lower_text_helper};
 use crate::operators::scalar_operator_operand;
 use crate::pending::untranslated;
 use crate::sequence_builtins::{
-    lower_join_helper, lower_list_concat, lower_list_repeat, lower_sequence_builtin, lower_split_helper,
+    argument_type, lower_join_helper, lower_list_concat, lower_list_repeat, lower_sequence_builtin, lower_split_helper,
     lower_truth_builtin, source_operand_type,
 };
 use crate::strings::text_helper;
@@ -174,7 +177,7 @@ pub fn lower_builtin(
         BuiltinFnId::Sum | BuiltinFnId::Sorted => {
             lower_sequence_builtin(builder, builtin, arguments, destination, span)
         }
-        BuiltinFnId::Min | BuiltinFnId::Max => Err(untranslated("builtin_calls::lower_extrema_builtin")),
+        BuiltinFnId::Min | BuiltinFnId::Max => lower_extrema_builtin(builder, builtin, arguments, destination, span),
         BuiltinFnId::ReadFile | BuiltinFnId::WriteFile => Err(untranslated("builtin_calls::lower_file_builtin")),
         BuiltinFnId::Zip => Err(untranslated("builtin_calls::lower_zip_builtin")),
         BuiltinFnId::Enumerate => Err(untranslated("builtin_calls::lower_enumerate_builtin")),
@@ -545,4 +548,50 @@ fn fixed_arguments(
         }
     }
     Ok(result)
+}
+
+/// Classify a homogeneous scalar list before borrowing its value for the minimum or maximum implementation.
+fn lower_extrema_builtin(
+    builder: &mut Builder,
+    builtin: BuiltinFnId,
+    arguments: &[ArgumentElement],
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    if arguments.len() != 1 {
+        return Err("unsupported Body IR extrema builtin arity".into());
+    }
+    let source_type = argument_type(builder, arguments, 0, span)?;
+    let (leaf, depth) = require_list_shape(&source_type, "unsupported Body IR extrema builtin type")?;
+    if depth != 1 {
+        return Err("unsupported Body IR nested extrema list".into());
+    }
+    let (suffix, result) = match leaf {
+        ListLeaf::Int => ("int", PlanType::Int),
+        ListLeaf::Float => ("float", PlanType::Float),
+        ListLeaf::Bool => ("bool", PlanType::Bool),
+        ListLeaf::Str => ("text", PlanType::String),
+        _ => return Err("unsupported Body IR extrema list element".into()),
+    };
+    let name = if builtin == BuiltinFnId::Max {
+        "maximum"
+    } else {
+        "minimum"
+    };
+    let output = call_destination(builder, destination, result.clone(), span)?;
+    let reference = borrowed_list_argument(builder, arguments, 0, false, span)?;
+    let local = output.local;
+    external_call(
+        builder,
+        &format!("incan_native_runtime::{name}_{suffix}"),
+        vec![PlanType::ListRef(leaf, depth)],
+        result.clone(),
+        vec![reference],
+        output,
+        span,
+    );
+    if result == PlanType::String {
+        builder.owned.push(local);
+    }
+    Ok(())
 }
