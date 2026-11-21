@@ -272,7 +272,8 @@ fn decode_store_binding(encoded: &[u8]) -> Result<StoreView, String> {
 
 /// Accept the typed binding only when it reproduces the portable descriptor's exact observed bytes; otherwise decode
 /// the portable descriptor, whose whitespace and member order do not change the selected view.
-pub fn select_store_view(path: &Path) -> Result<SelectedStoreView, String> {
+pub fn select_store_view(path: &str) -> Result<SelectedStoreView, String> {
+    let path = Path::new(path);
     let portable = std::fs::read(path).map_err(|error| error.to_string())?;
     let mut projection = path.as_os_str().to_owned();
     projection.push(".crumb");
@@ -436,8 +437,8 @@ pub fn resolve_snapshot(home: &str, digest: &str) -> Result<ResolvedSnapshot, Sn
     if !binding_path.is_file() {
         return Err(fault(SnapshotFaultKind::MissingBinding, binding_path.to_string_lossy()));
     }
-    let selected =
-        select_store_view(&binding_path).map_err(|detail| fault(SnapshotFaultKind::InvalidBinding, detail))?;
+    let selected = select_store_view(&binding_path.to_string_lossy())
+        .map_err(|detail| fault(SnapshotFaultKind::InvalidBinding, detail))?;
     let binding = selected.binding;
     let root = disk_root(binding.locator.clone());
     if read_store_identity(&root).map_err(store_fault)? != binding.store_id {

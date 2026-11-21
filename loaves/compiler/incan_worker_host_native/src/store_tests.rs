@@ -80,7 +80,7 @@ fn found_text(found: Lookup) -> Result<String, String> {
 fn home_view(home: &Path, store: &Path, identity: &str) -> Result<String, String> {
     let descriptor = home.join("bakery.view");
     if descriptor.is_file() {
-        let bound = select_store_view(&descriptor)?.binding;
+        let bound = select_store_view(&text(&descriptor))?.binding;
         if bound.store_id != identity {
             return Err(format!("{} binds another bakery", text(&descriptor)));
         }
@@ -135,7 +135,7 @@ fn fault_kind<T>(result: Result<T, crate::record_snapshot::SnapshotFault>) -> Op
 }
 
 fn bound(home: &Path) -> Result<StoreView, String> {
-    Ok(select_store_view(&home.join("bakery.view"))?.binding)
+    Ok(select_store_view(&text(&home.join("bakery.view")))?.binding)
 }
 
 #[test]

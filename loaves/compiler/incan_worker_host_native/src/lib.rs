@@ -35,18 +35,23 @@ pub use host::{
 };
 pub use lifecycle::ActivationOutcome;
 pub use namespace_frames::{NamespaceFrameReader, namespace_frame_reader, read_namespace_frame};
-pub use protocol::{CompileRequest, SCHEMA, WorkerCommand};
+pub use protocol::{
+    Admission, CompileRequest, Fault, MISMATCH, PANIC_STATUS, Reply, SCHEMA, WorkerCommand, WorkerCompletion, admit,
+    compile_frame, read_completion, read_ready, ready_frame, reply_frame,
+};
 pub use record_directory::{DirectoryAnswer, DirectoryMember, directory_member_key, read_directory};
 pub use record_protocol::{
     CompilerFault, Evaluate, NeedPrerequisite, Prepare, Prepared, Produced, RECORD_SCHEMA, RecordAdmission,
     RecordMessage, RecordMessageKind, SemanticRefusal, accept_record_reply, admit_record, decode_record_message,
-    encode_record_message,
+    encode_record_message, record_frame,
 };
 pub use record_snapshot::{
-    ResolvedSnapshot, SNAPSHOT_FORMAT_PROFILE, SnapshotFault, SnapshotFaultKind, SnapshotHandle, StagedCompilerOutputs,
-    StoreView, canonical_roots, encode_snapshot_handle, encode_snapshot_record, encode_store_view,
-    read_snapshot_record, resolve_snapshot, snapshot_handle_digest, snapshot_record_key,
+    ResolvedSnapshot, SNAPSHOT_FORMAT_PROFILE, STORE_VIEW_SCHEMA, SelectedStoreView, SnapshotFault, SnapshotFaultKind,
+    SnapshotHandle, StagedCompilerOutputs, StoreView, canonical_roots, encode_snapshot_handle, encode_snapshot_record,
+    encode_store_binding, encode_store_view, portable_store_view, read_snapshot_record, resolve_snapshot,
+    select_store_view, snapshot_handle_digest, snapshot_record_key, staged_key, valid_digest,
 };
+pub use worker_packets::PREFIX;
 
 #[cfg(test)]
 mod activation_tests;
