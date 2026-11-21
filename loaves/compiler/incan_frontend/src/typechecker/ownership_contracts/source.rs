@@ -2,6 +2,7 @@
 //! profile; an empty graph is never substituted for missing call, capture, suspension or returned-dependency facts.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use super::TypeChecker;
 use super::flow::{
@@ -14,6 +15,7 @@ use crate::ast::{
 };
 use crate::ownership_metadata::SourceSlot;
 use crate::symbols::{ResolvedType, SymbolKind};
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_lang::lang::types::ownership::OwnershipMode;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
@@ -27,6 +29,7 @@ mod dictionaries;
 mod matches;
 mod operations;
 mod retained_results;
+mod value_uses;
 mod values;
 
 /// Source-analysis refusal for a borrowed place passed into a plain owned nominal field. The caller turns this typed
@@ -121,6 +124,8 @@ pub(super) enum ViewSource {
 /// Invocation-local projection state, borrowing immutable checked identities and types rather than resolving names.
 struct Builder<'a> {
     checker: &'a TypeChecker,
+    /// Full source-time nominal scope retained for exact comparison while the current checked body is active.
+    nominal_scope: Arc<BTreeMap<String, CanonicalSymbolId>>,
     owner: CanonicalSymbolId,
     /// Whether an ordinary iteration-only profile may evaluate fresh aggregate list elements. Explicit ownership
     /// profiles keep their established refusal until retained aggregate storage has a complete transfer proof.
@@ -139,7 +144,17 @@ struct Builder<'a> {
     /// Calls an `await` suspends on directly. A call to an async callable anywhere else would leave a future holding
     /// its loans, which is not modeled.
     awaited: BTreeSet<Span>,
+    /// Direct calls whose closed carrier is consumed by `?` or selected by a match.
+    consumed_carrier_calls: BTreeSet<Span>,
+    /// Canonical locals introduced by the active loop headers; every poll produces fresh owned storage.
+    fresh_loop_locals: BTreeSet<CanonicalSymbolId>,
+    /// Unannotated locals whose initializer was classified as an independent materialization.
+    independent_locals: BTreeSet<CanonicalSymbolId>,
+    /// Selected dependency-free call results active only while their classified value is evaluated.
+    independent_call_results: BTreeSet<Span>,
     constrained: BTreeSet<Root>,
+    /// Parameter roots constrained by their authored input mode before body moves add transient constraints.
+    declared_constrained_inputs: BTreeSet<Root>,
     borrowed_inputs: BTreeSet<Root>,
     loops: Vec<LoopEdges>,
     /// The declared source dependency of a top-level owned result. The result remains value storage rather than a
@@ -251,6 +266,7 @@ fn build_graph(
     }
     let mut builder = Builder {
         checker,
+        nominal_scope: checker.checked_nominal_type_identities(),
         owner: identity.clone(),
         allow_fresh_aggregate_elements,
         locals: checker
@@ -287,6 +303,7 @@ fn build_graph(
             dependent_locals: BTreeMap::new(),
             dependent_values: BTreeSet::new(),
             owned_locals: BTreeMap::new(),
+            value_uses: BTreeMap::new(),
             invocations: BTreeMap::new(),
             operations: BTreeMap::new(),
             closures: BTreeMap::new(),
@@ -299,12 +316,17 @@ fn build_graph(
             entry: 0,
         },
         constrained: BTreeSet::new(),
+        declared_constrained_inputs: BTreeSet::new(),
         borrowed_inputs: BTreeSet::new(),
         aliases: BTreeMap::new(),
         carriers: BTreeMap::new(),
         taken_carriers: BTreeSet::new(),
         closures: BTreeMap::new(),
         awaited: BTreeSet::new(),
+        consumed_carrier_calls: BTreeSet::new(),
+        fresh_loop_locals: BTreeSet::new(),
+        independent_locals: BTreeSet::new(),
+        independent_call_results: BTreeSet::new(),
         loops: Vec::new(),
         owned_source: None,
         view: None,
@@ -385,6 +407,22 @@ fn build_graph(
 }
 
 impl Builder<'_> {
+    /// Evaluate a consumed carrier without losing its ordinary argument accesses or any retained result dependencies.
+    fn carrier_expression(
+        &mut self,
+        value: &Spanned<Expr>,
+        incoming: Vec<usize>,
+        consume: bool,
+    ) -> Result<Vec<usize>, Unavailable> {
+        if !matches!(value.node, Expr::Call(..) | Expr::MethodCall(..)) {
+            return self.expression(value, incoming, consume);
+        }
+        self.consumed_carrier_calls.insert(value.span);
+        let evaluated = self.expression(value, incoming, consume);
+        self.consumed_carrier_calls.remove(&value.span);
+        evaluated
+    }
+
     /// Evaluate an expression in source order. A checked Copy read is not a transfer; ordinary unconstrained values
     /// retain their existing semantics until the separate ordinary-binding migration ships.
     fn expression(
@@ -395,6 +433,19 @@ impl Builder<'_> {
     ) -> Result<Vec<usize>, Unavailable> {
         if let Some(result) = self.retained_result(expression, incoming.clone(), false)? {
             return Ok(result.incoming);
+        }
+        if let Some(plan) = self.fresh_newtype_slot(expression) {
+            return self.apply_value_use(expression, plan, incoming);
+        }
+        // A checker-resolved module constant is an immutable value, not a storage place in this body's access graph.
+        if matches!(expression.node, Expr::Ident(_) | Expr::Field(_, _))
+            && self
+                .checker
+                .type_info
+                .resolved_identity(expression.span)
+                .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Const)
+        {
+            return Ok(incoming);
         }
         if matches!(expression.node, Expr::Field(_, _))
             && self
@@ -493,7 +544,7 @@ impl Builder<'_> {
                         }
                     }) =>
             {
-                self.scalar_list(entries, incoming)
+                self.scalar_list(entries, expression.span, incoming)
             }
             Expr::FString(parts) => self.formatted_text(parts, expression.span, incoming),
             // A returned view, including one `?` takes out of its carrier, is a place, not a value: it may be bound,
@@ -540,6 +591,13 @@ impl Builder<'_> {
                     }
                     return self.variant_construction(arguments, expression.span, incoming);
                 }
+                if let Some(receiver) =
+                    super::builtins::builtin_str_encode_receiver(&self.checker.type_info, expression)
+                {
+                    let incoming = self.expression(receiver, incoming, false)?;
+                    let (incoming, dependency) = self.retain_operation_operand(receiver, incoming)?;
+                    return self.finish_operation(expression.span, dependency.into_iter().collect(), incoming);
+                }
                 match super::builtins::builtin_place_method_writes(&self.checker.type_info, expression.span) {
                     Some(writes) => self.builtin_place_method(receiver, writes, arguments, expression.span, incoming),
                     None if self.uses_ordinary_iteration_access(expression.span) => {
@@ -554,13 +612,22 @@ impl Builder<'_> {
             // whose view is carried in the success payload, has that exit; an error that carries the view must be the
             // declared source's.
             Expr::Try(inner) if self.view.is_none() || self.view_carried == Some(0) => {
-                self.expression(inner, incoming, true)
+                self.carrier_expression(inner, incoming, true)
             }
             Expr::Try(_) if self.view_carried == Some(1) => Err(error_view_try(expression.span)),
             Expr::Binary(left, operation, right) => {
-                let incoming = self.expression(left, incoming, false)?;
+                let builtin_list_concat = self.builtin_list_concat_argument(expression);
+                let incoming = if builtin_list_concat {
+                    self.builtin_list_concat_operand(left, incoming)?
+                } else {
+                    self.expression(left, incoming, false)?
+                };
                 let (incoming, left_dependency) = self.retain_operation_operand(left, incoming)?;
-                let mut outgoing = self.expression(right, incoming.clone(), false)?;
+                let mut outgoing = if builtin_list_concat {
+                    self.builtin_list_concat_operand(right, incoming.clone())?
+                } else {
+                    self.expression(right, incoming.clone(), false)?
+                };
                 let (evaluated, right_dependency) = self.retain_operation_operand(right, outgoing)?;
                 outgoing = evaluated;
                 if matches!(operation, BinaryOp::And | BinaryOp::Or) {
@@ -572,6 +639,7 @@ impl Builder<'_> {
                     outgoing,
                 )
             }
+            Expr::Slice(base, slice) => self.builtin_list_slice(base, slice, expression.span, incoming),
             Expr::ListComp(comprehension) => self.list_comprehension(comprehension, expression.span, incoming),
             Expr::DictComp(comprehension) => self.dict_comprehension(comprehension, expression.span, incoming),
             // `await` on a call suspends this body until the call's future completes, and the call's loans end there as
@@ -641,6 +709,54 @@ impl Builder<'_> {
                 reason: "expression needs checked call or dependency access facts".into(),
             }),
         }
+    }
+
+    /// A checker-selected builtin list slice reads its stored base and Copy bounds, then returns fresh storage. A
+    /// selected user operator was refused before dispatch, and reference-carrying elements need dependency facts.
+    fn builtin_list_slice(
+        &mut self,
+        base: &Spanned<Expr>,
+        slice: &crate::ast::SliceExpr,
+        span: Span,
+        incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        let base_ty = self.checker.type_info.expr_type(base.span).ok_or(Unavailable {
+            span,
+            reason: "list slice has no checked base type".into(),
+        })?;
+        let result_ty = self.checker.type_info.expr_type(span).ok_or(Unavailable {
+            span,
+            reason: "list slice has no checked result type".into(),
+        })?;
+        let builtin_list = |ty: &ResolvedType| {
+            matches!(ty, ResolvedType::Generic(name, arguments)
+                if collections::from_str(name) == Some(CollectionTypeId::List) && arguments.len() == 1)
+        };
+        if base_ty != result_ty
+            || !builtin_list(base_ty)
+            || self.checker.type_holds_borrow(result_ty)
+            || self.checker.type_holds_native_loan(result_ty)
+        {
+            return Err(Unavailable {
+                span,
+                reason: "slice needs builtin borrow-free list facts".into(),
+            });
+        }
+        let mut outgoing = self.expression(base, incoming, false)?;
+        for bound in [&slice.start, &slice.end, &slice.step].into_iter().flatten() {
+            let ty = self.checker.type_info.expr_type(bound.span).ok_or(Unavailable {
+                span: bound.span,
+                reason: "slice bound has no checked type".into(),
+            })?;
+            if !self.copy_value(ty) {
+                return Err(Unavailable {
+                    span: bound.span,
+                    reason: "slice bound needs a checked Copy value".into(),
+                });
+            }
+            outgoing = self.expression(bound, outgoing, false)?;
+        }
+        Ok(outgoing)
     }
 
     /// Whether this expression names one of the non-copyable loop-item roots retained for graph settlement.

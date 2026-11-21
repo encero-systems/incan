@@ -55,7 +55,9 @@ impl Builder<'_> {
                 if mode.is_some_and(|mode| matches!(mode.mode, OwnershipMode::Borrowed | OwnershipMode::BorrowedMut)) {
                     self.borrowed_inputs.insert(Root::Binding(root.clone()));
                 }
-                self.constrained.insert(Root::Binding(root));
+                let root = Root::Binding(root);
+                self.declared_constrained_inputs.insert(root.clone());
+                self.constrained.insert(root);
             }
         }
         Ok(())
@@ -153,11 +155,7 @@ impl Builder<'_> {
                         reason: "computed property access".into(),
                     });
                 }
-                let identity = self
-                    .checker
-                    .type_info
-                    .resolved_identity(expression.span)
-                    .filter(|identity| identity.kind == SemanticSourceTargetKind::Field)
+                let identity = super::call_results::stored_projection_identity(&self.checker.type_info, expression)
                     .ok_or(Unavailable {
                         span: expression.span,
                         reason: "field lacks a checked stored identity".into(),
@@ -241,11 +239,7 @@ impl Builder<'_> {
                         reason: "computed property access".into(),
                     });
                 }
-                let identity = self
-                    .checker
-                    .type_info
-                    .resolved_identity(expression.span)
-                    .filter(|identity| identity.kind == SemanticSourceTargetKind::Field)
+                let identity = super::call_results::stored_projection_identity(&self.checker.type_info, expression)
                     .ok_or(Unavailable {
                         span: expression.span,
                         reason: "field lacks a checked stored identity".into(),
@@ -435,6 +429,15 @@ impl Builder<'_> {
     /// Distinguish stored sources from fresh computed values without swallowing missing checked projection facts.
     pub(super) fn optional_place(&mut self, expression: &Spanned<Expr>) -> Result<Option<Path>, Unavailable> {
         match &expression.node {
+            Expr::Ident(_) | Expr::Field(_, _)
+                if self
+                    .checker
+                    .type_info
+                    .resolved_identity(expression.span)
+                    .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Const) =>
+            {
+                Ok(None)
+            }
             Expr::Field(_, _)
                 if self
                     .checker
@@ -444,6 +447,7 @@ impl Builder<'_> {
             {
                 Ok(None)
             }
+            Expr::Field(_, _) if self.fresh_newtype_slot(expression).is_some() => Ok(None),
             Expr::Ident(_) | Expr::SelfExpr | Expr::Field(_, _) | Expr::Index(_, _) => self.place(expression).map(Some),
             Expr::Paren(inner) => self.optional_place(inner),
             Expr::MethodCall(..)
