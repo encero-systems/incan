@@ -1,5 +1,4 @@
 # behavior: Native bytes made from a shared text input read it and leave it with its owner (RFC 164).
-# pending: INCAN-T0126 refuses the shared read as an access the contract does not grant, and INCAN-T0123 refuses the caller: "call has no selected explicit input access facts".
 # expect-stdout:
 #   4
 
