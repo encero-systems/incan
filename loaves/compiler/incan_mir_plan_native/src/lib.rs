@@ -51,9 +51,20 @@ pub use records::layout::{
     decode_enums, decode_instance_request, decode_models, decode_zip_carriers, encode_checked_layout, encode_enums,
     encode_instance_request, encode_models, encode_zip_carriers,
 };
+pub use records::lowering_events::{
+    ADMITTED_DEFINITIONS, AdmittedDefinition, AdmittedFunction, AdmittedModule, AdmittedPlacement, EventPosition,
+    EventReference, INTERFACE_REPORT, LoweringEvent, LoweringRefusal, NativeInterface, decode_admitted_definitions,
+    decode_lowering_event, decode_lowering_refusal, decode_module_note, decode_native_interface,
+    encode_admitted_definitions, encode_lowering_event, encode_lowering_refusal, encode_module_note,
+    encode_native_interface, placed_admission, read_module_admission, write_module_placement,
+};
 pub use records::plan_function::{
     LoweringDemands, PlanFunctionRecord, decode_plan_function_record, encode_entry_record, encode_lowering_demand,
     encode_plan_function_record, plan_function_digest, verify_entry_record,
+};
+pub use records::plan_module::{
+    ADMITTED_MODULE_NOTE, PARTIAL_MODULE_NOTE, PLAN_MODULE_FAMILY, PLAN_MODULE_PAGE, POSITIONED_MODULE_PAGE,
+    PlanModuleFunction, PlanModuleValue, REPOSITION_MODULE_PAGE, decode_plan_module, encode_plan_module,
 };
 pub use span_file::SpanFile;
 pub use types::{

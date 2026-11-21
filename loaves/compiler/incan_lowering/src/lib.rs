@@ -126,6 +126,8 @@ mod program_entries;
 mod project;
 mod races;
 mod ranges;
+#[cfg(test)]
+mod record_codec_parity;
 mod redo_counts;
 mod reflection;
 mod reflection_carriers;
