@@ -877,7 +877,7 @@ mod tests {
     /// A callable's mut marker does not shift its explicit ownership component path.
     #[test]
     fn nested_mutable_callable_modes_round_trip() -> Result<(), Box<dyn std::error::Error>> {
-        let source = "pub def accept(action: (mut Borrowed[str]) -> str) -> None:\n    pass\n";
+        let source = "pub def accept(action: (mut Owned[str]) -> str) -> None:\n    pass\n";
         let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
         let mut checker = TypeChecker::new();
@@ -918,7 +918,7 @@ mod tests {
     /// Dedicated frozen-container and type-token nodes retain modes just as generic and callable nodes do.
     #[test]
     fn compound_ownership_modes_round_trip() -> Result<(), Box<dyn std::error::Error>> {
-        let source = "pub def inspect(a: FrozenList[Borrowed[str]], b: FrozenDict[str, Owned[int]], c: FrozenSet[BorrowedMut[int]], d: Type[Owned[int]]) -> None:\n    pass\n";
+        let source = "pub def inspect(a: FrozenList[Reference[str]], b: FrozenDict[str, Owned[int]], c: FrozenSet[Owned[int]], d: Type[Owned[int]]) -> None:\n    pass\n";
         let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
         let mut checker = TypeChecker::new();
