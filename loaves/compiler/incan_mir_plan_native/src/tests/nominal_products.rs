@@ -7,6 +7,7 @@ use crate::nominal::{
 };
 use crate::plan::{ExternalFunction, Function};
 use crate::records::function::{decode_product, encode_product, product_identities, product_nominals};
+use crate::records::lowering_events::{EventReference, LoweringEvent, decode_lowering_event, encode_lowering_event};
 use crate::types::{ListLeaf, PlanType, SourceSpan, source_span};
 
 /// A product captured with `Point` at model 0 binds to model 1 after an unrelated model is declared before it.
@@ -189,6 +190,33 @@ fn product_names_static_cells_by_declaration() -> Result<(), String> {
         resolve_nominals(&identities, &removed).is_none(),
         "a removed static cell was reused"
     );
+    Ok(())
+}
+
+/// A lowering event names the static cells its product binds, beside its models and enums, so a module page that
+/// restores the product reads the event back.
+#[test]
+fn a_lowering_event_names_static_cells() -> Result<(), String> {
+    let event = LoweringEvent {
+        identity: "app::count".to_owned(),
+        key: "key".to_owned(),
+        function: "count".to_owned(),
+        product: vec![1, 2, 3],
+        references: vec![
+            EventReference {
+                kind: "model".to_owned(),
+                index: 0,
+                name: "Point".to_owned(),
+            },
+            EventReference {
+                kind: "static".to_owned(),
+                index: 2,
+                name: String::new(),
+            },
+        ],
+        ..LoweringEvent::default()
+    };
+    assert!(decode_lowering_event(&encode_lowering_event(&event)?)? == event);
     Ok(())
 }
 
