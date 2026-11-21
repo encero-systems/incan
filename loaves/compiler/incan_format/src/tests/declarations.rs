@@ -799,3 +799,15 @@ fn explicit_result_sources_round_trip() -> Result<(), FormatError> {
     assert_eq!(format_source_with_config(&wrapped, config)?, wrapped);
     Ok(())
 }
+
+/// A property's borrowed result names its source as a method's does: the field the view borrows, or the receiver.
+#[test]
+fn property_result_sources_round_trip() -> Result<(), FormatError> {
+    let source = "model Frame:\n    nominals: list[int]\n\n    property nominals_view -> Borrowed[list[int]] from self.nominals:\n        return self.nominals\n\n    property frame -> Borrowed[Frame] from self:\n        return self\n\ntrait Viewed:\n    property names -> Borrowed[list[str]] from self.names\n";
+    let formatted = assert_format_round_trip_lex_parse(source)?;
+    assert!(formatted.contains("property nominals_view -> Borrowed[list[int]] from self.nominals:\n"));
+    assert!(formatted.contains("property frame -> Borrowed[Frame] from self:\n"));
+    assert!(formatted.contains("property names -> Borrowed[list[str]] from self.names\n"));
+    assert_eq!(format_source(&formatted)?, formatted);
+    Ok(())
+}

@@ -11,6 +11,7 @@ mod admission;
 mod builtins;
 mod checked;
 mod copy;
+pub(super) mod defaults;
 mod dictionary;
 pub(super) mod flow;
 mod iteration;
@@ -22,6 +23,7 @@ pub(super) mod projection;
 mod report;
 mod source;
 mod trait_inputs;
+mod view_arguments;
 
 pub(super) use admission::{direct_function_boundary, method_input_header};
 pub(crate) use builtins::carried_view_binding;
