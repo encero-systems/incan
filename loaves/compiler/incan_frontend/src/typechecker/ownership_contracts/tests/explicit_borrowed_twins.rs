@@ -589,3 +589,13 @@ fn api_metadata_publishes_borrows_as_their_reference_twins() -> Result<(), Box<d
     );
     Ok(())
 }
+
+/// Membership of a borrow in a list of borrows compares borrows, in both spellings (the iterator fixture's
+/// `value in values` with `values: list[&int]`).
+#[test]
+fn borrows_are_members_of_lists_of_borrows() -> Result<(), Box<dyn std::error::Error>> {
+    let template = "def has_reference(value: {borrow:int}) -> bool:\n    values: list[{borrow:int}] = [value]\n    return value in values\n";
+    let checker = check_twins(template)?;
+    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+    Ok(())
+}
