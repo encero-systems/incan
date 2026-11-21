@@ -501,7 +501,8 @@ fn is_rust_prelude_type(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        Qualification, public_bridge_roots, qualify_for_manifest, transform_display, validate_emission_display,
+        Qualification, public_bridge_roots, qualify_for_manifest, replace_rust_display_path, transform_display,
+        validate_emission_display,
     };
     use crate::symbols::ResolvedType;
 
@@ -613,5 +614,25 @@ mod tests {
 
         validate_emission_display(&manifest)?;
         Ok(())
+    }
+
+    /// A display names an item by its public path in every position, and only whole paths are replaced.
+    #[test]
+    fn displays_replace_whole_item_paths_only() {
+        let replace = |display: &str| replace_rust_display_path(display, "levels::private::Level", "levels::Level");
+        assert_eq!(replace("levels::private::Level"), "levels::Level");
+        assert_eq!(
+            replace("std::vec::Vec<(levels::private::Level, &levels::private::Level)>"),
+            "std::vec::Vec<(levels::Level, &levels::Level)>"
+        );
+        assert_eq!(replace("levels::private::Levels"), "levels::private::Levels");
+        assert_eq!(
+            replace("other::levels::private::Level"),
+            "other::levels::private::Level"
+        );
+        assert_eq!(
+            replace("levels::private::Level::Inner"),
+            "levels::private::Level::Inner"
+        );
     }
 }
