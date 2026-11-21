@@ -116,6 +116,7 @@ mod plan_product_inputs;
 mod program_context;
 mod program_entries;
 mod project;
+mod races;
 mod ranges;
 mod redo_counts;
 mod reflection;

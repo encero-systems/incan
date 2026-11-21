@@ -756,7 +756,7 @@ fn finish_unit_plan(
             &template_constructors,
             &source_context,
             &context,
-            &inventories.enums,
+            &mut inventories.enums,
             &intrinsics,
             &entry_file,
         )?;
