@@ -359,6 +359,7 @@ pub def obtain(
     mut cutoff = EditCutoff()
     if not listing_refusals:
         cutoff = edit_cutoff(graph, projected.keys, [CHECKER_PROFILE, LOWERING_PROFILE])?
+        cutoff.carried = projected.carried
     record_work(Operation.EngineSelect, "edit-cutoff", selecting)
     selecting = begin_work()
     namespaces = select_namespace_inventory_except(
