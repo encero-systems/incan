@@ -6,6 +6,7 @@ use crate::typechecker::{CheckedBodyInputError, TypeCheckInfo, TypeChecker};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 mod baselines;
+mod borrowed_plans;
 mod borrowed_values;
 mod carriers;
 mod comparison;
