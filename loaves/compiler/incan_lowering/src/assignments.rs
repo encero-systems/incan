@@ -38,6 +38,7 @@ use crate::result_carriers::{
     frozen_operand, lower_none_assignment, lower_option_construction, lower_result_construction,
     retained_reference_value,
 };
+use crate::sequence_builtins::lower_power_operator;
 use crate::statements::{is_nominal_type, is_owned_callable};
 use crate::tuple_iterators::initialize_zip_iterator;
 
@@ -245,7 +246,7 @@ fn assign_stored_value(
         }
         Rvalue::Format(parts) => return lower_format(builder, target, parts, span),
         Rvalue::BinaryOp(operator, left, right) => match operator {
-            BinOp::Pow => return Err(untranslated("sequence_builtins::lower_power_operator")),
+            BinOp::Pow => return lower_power_operator(builder, target, left, right, span),
             BinOp::And => return lower_boolean_operator(builder, target, left, right, "boolean_and", span),
             BinOp::Or => return lower_boolean_operator(builder, target, left, right, "boolean_or", span),
             BinOp::FloorDiv => return lower_numeric_helper(builder, target, left, right, "py_floor_div", span),

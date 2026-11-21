@@ -8,7 +8,7 @@ use incan_semantics_core::body_ir::{
     ArgumentElement, BuiltinFnId, Constant as SourceConstant, HelperOp, Place as SourcePlace,
 };
 
-use crate::builtins::emit_boolean_operator;
+use crate::builtins::{emit_boolean_operator, scalar_builtin};
 use crate::checked_values::scalar_operand;
 use crate::checked_values::scalar_place;
 use crate::decls::library_enum_item;
@@ -19,13 +19,14 @@ use crate::frame::{
     value_type,
 };
 use crate::hashed_collections::collection_contains;
-use crate::list_methods::{call_destination, lower_list_builtin, lower_list_helper};
+use crate::list_methods::{argument_value, call_destination, lower_list_builtin, lower_list_helper};
 use crate::list_values::value_operand;
 use crate::numerics::{float_conversion, integer_conversion};
 use crate::numerics::{has_sized_numeric, numeric_carrier, numeric_name};
 use crate::operand_borrows::{borrow_str_operand, lower_text_helper};
 use crate::operators::scalar_operator_operand;
 use crate::pending::untranslated;
+use crate::sequence_builtins::{lower_sequence_builtin, lower_truth_builtin, source_operand_type};
 use crate::strings::text_helper;
 use crate::text_plan::{format_parts, owned_literal};
 use incan_semantics_core::body_ir::Operand as SourceOperand;
@@ -167,7 +168,9 @@ pub fn lower_builtin(
         BuiltinFnId::Float => lower_scalar_conversion(builder, arguments, destination, false, span),
         BuiltinFnId::Int => lower_scalar_conversion(builder, arguments, destination, true, span),
         BuiltinFnId::Str => lower_str_builtin(builder, arguments, destination, span),
-        BuiltinFnId::Sum | BuiltinFnId::Sorted => Err(untranslated("sequence_builtins::lower_sequence_builtin")),
+        BuiltinFnId::Sum | BuiltinFnId::Sorted => {
+            lower_sequence_builtin(builder, builtin, arguments, destination, span)
+        }
         BuiltinFnId::Min | BuiltinFnId::Max => Err(untranslated("builtin_calls::lower_extrema_builtin")),
         BuiltinFnId::ReadFile | BuiltinFnId::WriteFile => Err(untranslated("builtin_calls::lower_file_builtin")),
         BuiltinFnId::Zip => Err(untranslated("builtin_calls::lower_zip_builtin")),
@@ -177,87 +180,6 @@ pub fn lower_builtin(
         BuiltinFnId::Range => Err(untranslated("builtin_calls::lower_range_builtin")),
         _ => Err(format!("unsupported Body IR builtin {builtin:?}")),
     }
-}
-
-/// Materialize exactly one retained argument, refusing a spread before executing it.
-fn argument_value(
-    builder: &mut Builder,
-    arguments: &[ArgumentElement],
-    index: usize,
-    span: &SourceSpan,
-) -> Result<Operand, String> {
-    let Some(argument) = arguments.get(index) else {
-        return Err("invalid Body IR list call arity".into());
-    };
-    match argument.as_one() {
-        Some(value) => value_operand(builder, value, span),
-        None => Err("unsupported Body IR list spread argument".into()),
-    }
-}
-
-/// Select runtime entry points only for representations whose legacy contract is retained.
-fn scalar_builtin(builtin: BuiltinFnId, ty: &PlanType) -> Option<(&'static str, PlanType)> {
-    match (builtin, ty) {
-        (BuiltinFnId::Abs, PlanType::Int) => Some(("absolute_int", PlanType::Int)),
-        (BuiltinFnId::Bool, PlanType::Int) => Some(("truth_int", PlanType::Bool)),
-        (BuiltinFnId::Bool, PlanType::Float) => Some(("truth_float", PlanType::Bool)),
-        (BuiltinFnId::Bool, PlanType::Bool) => Some(("truth_bool", PlanType::Bool)),
-        _ => None,
-    }
-}
-
-/// Read a retained carrier without materializing its value.
-fn source_operand_type(builder: &mut Builder, value: &SourceOperand, span: &SourceSpan) -> Result<PlanType, String> {
-    match value {
-        SourceOperand::Place(read) => {
-            if read.place.global().is_some() {
-                return Err(untranslated("static_storage::computed_static_type"));
-            }
-            if is_element_place(builder, &read.place)? {
-                return element_place_type(builder, &read.place);
-            }
-            let place = scalar_place(builder, &read.place, span)?;
-            Ok(place_type(&builder.locals, &place))
-        }
-        SourceOperand::Constant(SourceConstant::Str(_)) => Ok(PlanType::String),
-        SourceOperand::Constant(SourceConstant::FrozenStr(_)) => Ok(PlanType::FrozenStr),
-        SourceOperand::Constant(_) => {
-            let operand = value_operand(builder, value, span)?;
-            value_type(builder, &operand)
-        }
-    }
-}
-
-/// Preserve builtin truthiness for admitted scalars; text, lists and hashed collections take their own lowering.
-fn lower_truth_builtin(
-    builder: &mut Builder,
-    arguments: &[ArgumentElement],
-    destination: &Option<SourcePlace>,
-    span: &SourceSpan,
-) -> Result<(), String> {
-    let output = call_destination(builder, destination, PlanType::Bool, span)?;
-    if arguments.is_empty() {
-        builder.emit(plan_assign(
-            output,
-            RvalueKind::Use(literal(Constant::Bool(false), span)),
-            span,
-        ));
-        return Ok(());
-    }
-    if arguments.len() != 1 {
-        return Err("unsupported Body IR Bool arity".into());
-    }
-    let Some(value) = arguments[0].as_one() else {
-        return Err("unsupported Body IR argument type spread".into());
-    };
-    let ty = source_operand_type(builder, value, span)?;
-    if let Some((name, result)) = scalar_builtin(BuiltinFnId::Bool, &ty) {
-        let operand = argument_value(builder, arguments, 0, span)?;
-        let path = format!("incan_native_runtime::{name}");
-        external_call(builder, &path, vec![ty], result, vec![operand], output, span);
-        return Ok(());
-    }
-    Err(untranslated("sequence_builtins::lower_truth_builtin"))
 }
 
 /// Print space-separated arguments and initialize the checked Unit result when the call is an expression.
