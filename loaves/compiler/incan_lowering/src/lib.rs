@@ -125,6 +125,7 @@ mod plan_product_inputs;
 mod primitive_traits;
 mod program_context;
 mod program_entries;
+mod program_refusals;
 mod project;
 mod races;
 mod ranges;
@@ -250,8 +251,17 @@ pub fn program_refusals(
     selection: &str,
     kind: &str,
 ) -> RefusalPlanning {
-    let _ = (modules, inputs, entry, progress, selection, kind);
-    RefusalPlanning::Complete(vec![pending::untranslated("program_refusals::program_refusals")])
+    let census = program_refusals::CensusInputs {
+        sources: &inputs.sources,
+        files: &inputs.files,
+        entry,
+        progress,
+        selection,
+        kind,
+        package_versions: &inputs.package_versions,
+        overflow_checks: inputs.overflow_checks,
+    };
+    program_refusals::program_refusals(modules, &census)
 }
 
 /// The runtime layouts a unit needs installed before its first lowering attempt.

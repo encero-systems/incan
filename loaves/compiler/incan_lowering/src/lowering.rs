@@ -799,7 +799,7 @@ fn finish_unit_plan(
 /// 2. Admit model and enum layouts with the selected unit kind and profile policy.
 /// 3. Merge their runtime and instance requests through the ordinary admission rules.
 #[allow(clippy::too_many_arguments)]
-fn initial_plan_roots(
+pub fn initial_plan_roots(
     constructors: Arc<ConstructorIndex>,
     context: &BodyIrModule,
     file: &str,
