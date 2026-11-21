@@ -98,3 +98,28 @@ fn whole_plan_keeps_keyed_product_bytes() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// A decoded list holds exactly its items: a restored product a resident worker keeps carries no spare capacity from
+/// growing its vectors while it was read.
+#[test]
+fn a_decoded_list_holds_exactly_its_items() -> Result<(), String> {
+    use crate::wire::{Wire, read_list};
+    for count in [0_usize, 1, 5, 17, 1000] {
+        let list = Wire::List((0..count).map(|value| Wire::Signed(value as i128)).collect());
+        let read = read_list(&list, |item| match item {
+            Wire::Signed(value) => Ok(*value),
+            _ => Err("not a signed value".to_owned()),
+        })?;
+        assert_eq!(read.len(), count);
+        assert_eq!(read.capacity(), count, "a list of {count} items kept spare capacity");
+    }
+    let refused = read_list(
+        &Wire::List(vec![Wire::Signed(1), Wire::Boolean(true)]),
+        |item| match item {
+            Wire::Signed(value) => Ok(*value),
+            _ => Err("not a signed value".to_owned()),
+        },
+    );
+    assert_eq!(refused.err().as_deref(), Some("not a signed value"));
+    Ok(())
+}

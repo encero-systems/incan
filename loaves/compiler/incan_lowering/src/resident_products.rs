@@ -41,13 +41,39 @@ pub struct RestoreInputs {
     pub positions: Option<Vec<(i64, i64)>>,
 }
 
+impl RestoreInputs {
+    /// The digest of every input, each length-prefixed, the positions after whether there are any.
+    fn digest(&self) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        for text in [&self.frame, &self.file, &self.reads, &self.generation] {
+            hasher.update((text.len() as u64).to_le_bytes());
+            hasher.update(text.as_bytes());
+        }
+        hasher.update(self.line.to_le_bytes());
+        hasher.update([u8::from(self.overflow)]);
+        match &self.positions {
+            None => hasher.update([0]),
+            Some(positions) => {
+                hasher.update([1]);
+                hasher.update((positions.len() as u64).to_le_bytes());
+                for (node, column) in positions {
+                    hasher.update(node.to_le_bytes());
+                    hasher.update(column.to_le_bytes());
+                }
+            }
+        }
+        hasher.finalize().into()
+    }
+}
+
 /// One module page as this worker read it, and each product restored from it by its restore inputs. A product is
 /// added once and never changed.
 pub struct ResidentPage {
     page: AdmittedPage,
     /// The bytes the page was read from; none for a page read for one request only.
     bytes: u64,
-    restored: Mutex<HashMap<RestoreInputs, Arc<AdmittedPayload>>>,
+    /// Each restored product by the digest of its restore inputs, so a kept product holds no copy of them.
+    restored: Mutex<HashMap<[u8; 32], Arc<AdmittedPayload>>>,
 }
 
 impl Deref for ResidentPage {
@@ -75,14 +101,15 @@ impl ResidentPage {
         inputs: &RestoreInputs,
         restore: impl FnOnce() -> Result<AdmittedPayload, E>,
     ) -> Result<Arc<AdmittedPayload>, E> {
+        let key = inputs.digest();
         if let Ok(guard) = self.restored.lock()
-            && let Some(kept) = guard.get(inputs)
+            && let Some(kept) = guard.get(&key)
         {
             return Ok(kept.clone());
         }
         let payload = Arc::new(restore()?);
         if let Ok(mut guard) = self.restored.lock() {
-            guard.insert(inputs.clone(), payload.clone());
+            guard.insert(key, payload.clone());
         }
         Ok(payload)
     }
