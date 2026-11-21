@@ -128,6 +128,7 @@ mod result_requirements;
 mod runtime_arguments;
 mod runtime_calls;
 mod runtime_frames;
+mod runtime_futures;
 mod runtime_layouts;
 mod runtime_requirements;
 mod scalar_reads;

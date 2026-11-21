@@ -21,12 +21,12 @@ use crate::model_construction::lower_string_field_assignment;
 use crate::model_values::{debug_model_operand, display_model_operand};
 use crate::numerics::{has_sized_numeric, numeric_carrier, numeric_name};
 use crate::option_tests::is_union_carrier;
-use crate::options::format_carrier;
+use crate::options::{clone_tuple_operand, format_carrier};
 use crate::pending::untranslated;
 use crate::text_plan::{
     clone_text, clone_text_reference, format_parts, owned_borrowed_text, owned_literal, owned_slice_text,
 };
-use crate::tuples::is_tuple_type;
+use crate::tuples::{display_tuple, is_tuple_type, tuple_debug_formatted};
 use crate::validation_errors::{display_validation_error, validation_error_reference};
 
 /// Lower an f-string, retaining literal boundaries and the checked display or nominal Debug style.
@@ -136,10 +136,16 @@ fn display_tuple_place(builder: &mut Builder, value: &SourcePlace, span: &Source
         return Ok(None);
     }
     let target = scalar_place(builder, value, span)?;
-    if !is_tuple_type(&place_type(&builder.locals, &target)) {
+    let ty = place_type(&builder.locals, &target);
+    if !is_tuple_type(&ty) {
         return Ok(None);
     }
-    Err(untranslated("tuples::display_tuple"))
+    if tuple_debug_formatted(&ty) {
+        // A list or carrier element has no flat formatter; Debug of a snapshot spells the whole tuple as legacy does.
+        let snapshot = clone_tuple_operand(builder, target, span)?;
+        return Ok(Some(debug_plan_operand(builder, snapshot, span)?));
+    }
+    Ok(Some(display_tuple(builder, target, span)?))
 }
 
 /// Produce an owned `String` holding a value's display text, honoring the value's ownership fact.

@@ -321,12 +321,19 @@ pub fn lower_callable_result(
     result_type: PlanType,
     span: &SourceSpan,
 ) -> Result<(), String> {
+    let mut owned_closure = false;
     if let PlanType::Closure(_) = result_type {
-        return Err(untranslated("callable_calls::owned closure result"));
+        // The destination's function type takes the returned closure's own boxed representation.
+        if output.projection != incan_mir_plan_native::Projection::Whole {
+            return Err("unsupported Body IR projected closure result".into());
+        }
+        builder.locals[output.local as usize].ty = result_type.clone();
+        owned_closure = true;
     }
     if result_type == PlanType::String
         || is_nominal_type(&result_type)
         || is_owned_collection(&result_type)
+        || owned_closure
         || is_future(&result_type)
     {
         // 1. Materialize the result in its declared return carrier.
