@@ -9,6 +9,7 @@ use crate::body::{
     Rvalue, RvalueKind, Statement, StatementKind, UnaryOp,
 };
 use crate::nominal::{NominalKind, NominalRemap, remap_type};
+use crate::records::function::{restore_named_binding, store_binding};
 use crate::records::wire_body_records::{
     StoredConstant, StoredFieldStep, StoredFrozenValue, StoredOperand, StoredPlace, StoredProjection, StoredRead,
     StoredRvalue, StoredSpan, StoredStatement, StoredStatementKind, StoredType,
@@ -181,7 +182,8 @@ fn store_constant(value: &Constant, remap: &mut NominalRemap) -> Result<StoredCo
         Constant::Text(value) => StoredConstant::Text(value.clone()),
         Constant::Numeric(digits, ty) => StoredConstant::Numeric(digits.clone(), store_type(ty, remap)?),
         Constant::TypeToken(types) => StoredConstant::TypeToken(store_types(types, remap)?),
-        Constant::RustItem(..) => return Err("scalar function products refuse this native constant".to_owned()),
+        // A Rust constant is named by the same binding identity as a Rust function.
+        Constant::RustItem(path, ty) => StoredConstant::RustItem(store_binding(path)?, store_type(ty, remap)?),
     })
 }
 
@@ -227,6 +229,9 @@ fn restore_constant(value: &StoredConstant, remap: &mut NominalRemap) -> Result<
         StoredConstant::Text(value) => Constant::Text(value.clone()),
         StoredConstant::Numeric(digits, ty) => Constant::Numeric(digits.clone(), restore_type(ty, remap)?),
         StoredConstant::TypeToken(types) => Constant::TypeToken(restore_types(types, remap)?),
+        StoredConstant::RustItem(identity, ty) => {
+            Constant::RustItem(restore_named_binding(identity, remap)?, restore_type(ty, remap)?)
+        }
     })
 }
 
