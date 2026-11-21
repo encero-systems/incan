@@ -1,0 +1,714 @@
+"""What a native plan holds that the source never asked for, copies and initializers, read from its plan report."""
+
+from rust::std::process import Command
+from rust::std::str import from_utf8
+from std.environ import get_or
+from std.fs import Path
+from files import read, write
+from scratch import scratch_directory
+from engine_client import service_generation, service_identity
+from engine_endpoint import connect_with
+from engine_messages import Message, Stop
+from engine_wire import zero_id
+
+const FIELD_OUT: str = """pub enum Value:
+    Empty
+    Many(str, list[Value])
+
+
+pub model Decoded:
+    pub value: Value
+    pub index: list[int]
+
+
+def decode(size: int) -> Decoded:
+    mut items: list[Value] = []
+    for _ in range(size):
+        items.append(Value.Empty)
+    return Decoded(value=Value.Many("label", items), index=[1, 2, 3])
+
+
+def field_out(size: int) -> Value:
+    decoded = decode(size)
+    return decoded.value
+
+
+def field_out_result(size: int) -> Result[Value, str]:
+    decoded = decode(size)
+    return Ok(decoded.value)
+
+
+def keep(value: Value) -> Value:
+    return value
+
+
+def branch_exclusive(flag: bool, size: int) -> Value:
+    decoded = decode(size)
+    value = decoded.value
+    if flag:
+        return keep(value)
+    else:
+        return keep(value)
+
+
+def arity(value: Value) -> int:
+    match value:
+        Value.Many(_, items) => return len(items)
+        _ => return 0
+
+
+def main() -> None:
+    println(arity(field_out(17)))
+    match field_out_result(17):
+        Ok(value) => println(arity(value))
+        Err(message) => println(message)
+    println(arity(branch_exclusive(true, 5)) + arity(branch_exclusive(false, 6)))
+"""
+
+
+const COPY_MODEL: str = """@derive(Copy, Clone)
+pub model Point:
+    pub x: int
+    pub y: int
+
+
+def point_sum(point: Point) -> int:
+    return point.x + point.y
+
+
+def copy_twice(point: Point) -> int:
+    first = point_sum(point)
+    pair = (point, point)
+    return first + point_sum(pair.0) + point_sum(point)
+
+
+def main() -> None:
+    println(copy_twice(Point(x=3, y=4)))
+"""
+
+
+pub def test_a_model_that_derives_copy_is_copied_and_never_cloned() -> Result[None, str]:
+    """Reading a `@derive(Copy)` model into a call, a tuple and a second call copies it and calls no clone (#1603)."""
+    report = plan_report("copies", COPY_MODEL, "21")?
+    copies = clones(report, "copy_twice")?
+    assert copies == 0, f"copy_twice holds {copies} clone calls"
+    return Ok(None)
+
+
+pub def test_a_field_leaves_its_owner_at_the_owners_last_read() -> Result[None, str]:
+    """The last read of a local model takes a field out of it, so the plan clones nothing (#1604)."""
+    report = plan_report("fields", FIELD_OUT, "17\n17\n11")?
+    for function in ["field_out", "field_out_result", "branch_exclusive"]:
+        copies = clones(report, function)?
+        assert copies == 0, f"{function} holds {copies} clone calls"
+    return Ok(None)
+
+
+const INDEXED_LIST: str = """pub model Variant:
+    pub identity: bytes
+    pub labels: list[str]
+
+
+pub model Stored:
+    pub variants: list[Variant]
+
+
+def count_labels(labels: &list[str]) -> int:
+    return len(labels)
+
+
+def via_index(stored: &Stored, at: int) -> int:
+    return count_labels(stored.variants[at].labels)
+
+
+def main() -> None:
+    stored = Stored(variants=[Variant(identity=b"ab", labels=["x", "y"])])
+    println(via_index(stored, 0))
+"""
+
+
+pub def test_a_list_inside_an_indexed_element_is_lent_without_a_copy() -> Result[None, str]:
+    """A list field of a list element passed to a shared list parameter is lent through the element (#1605)."""
+    report = plan_report("indexed", INDEXED_LIST, "2")?
+    dropped = plan_counts(report, "via_index", ["drops"])?
+    assert dropped == 0, f"via_index drops {dropped} copies"
+    return Ok(None)
+
+
+const READ_ONLY_MATCH: str = """pub enum Value:
+    NoneValue
+    Text(str)
+    List(list[Value])
+
+
+pub model ValueField:
+    pub value: Value
+    pub empty_omits: bool
+
+
+def omitted(field: &ValueField) -> bool:
+    match field.value:
+        Value.NoneValue => return true
+        Value.List(items) => return field.empty_omits and len(items) == 0
+        _ => return false
+
+
+def count(items: list[Value]) -> int:
+    return len(items)
+
+
+def emit_inner(value: Value) -> int:
+    match value:
+        Value.NoneValue => return 0
+        Value.Text(text) => return len(text)
+        Value.List(items) => return count(items)
+
+
+def main() -> None:
+    field = ValueField(value=Value.List([Value.Text("ab"), Value.NoneValue]), empty_omits=true)
+    if omitted(field):
+        println(0)
+    else:
+        println(1)
+    println(emit_inner(field.value))
+"""
+
+
+pub def test_a_match_whose_arms_only_read_binds_its_payloads_by_reference() -> Result[None, str]:
+    """A payload an arm only measures or passes to a shared parameter is bound by reference, never copied (#1607)."""
+    report = plan_report("matched", READ_ONLY_MATCH, "1\n2")?
+    for function in ["omitted", "emit_inner"]:
+        dropped = plan_counts(report, function, ["drops"])?
+        assert dropped == 0, f"{function} drops {dropped} copies"
+    return Ok(None)
+
+
+const BORROWED_LOOP: str = """pub model Field:
+    pub identity: bytes
+    pub labels: list[str]
+
+
+def total_identity(fields: list[Field]) -> int:
+    mut total = 0
+    for field in fields:
+        total += len(field.identity)
+    return total
+
+
+def main() -> None:
+    fields = [Field(identity=b"ab", labels=["x"]), Field(identity=b"cde", labels=[])]
+    println(total_identity(fields))
+"""
+
+
+pub def test_a_loop_that_only_reads_its_item_borrows_each_element() -> Result[None, str]:
+    """A `for` loop over a lent list whose body only reads its item borrows each element, never copying it (#1605)."""
+    report = plan_report("looped", BORROWED_LOOP, "5")?
+    dropped = plan_counts(report, "total_identity", ["drops"])?
+    assert dropped == 0, f"total_identity drops {dropped} copies"
+    return Ok(None)
+
+
+const PUBLISHED_PROJECTION: str = """pub model Variant:
+    pub identity: bytes
+    pub labels: list[str]
+
+
+pub model Stored:
+    pub variants: list[Variant]
+
+
+pub model Holder:
+    pub identity: bytes
+    pub size: int
+
+
+pub def holder_of(written: Stored, at: int) -> Holder:
+    return Holder(identity=written.variants[at].identity, size=at)
+
+
+def read_twice(written: Stored) -> int:
+    first = holder_of(written, 0)
+    second = holder_of(written, 0)
+    return first.size + second.size + len(first.identity)
+
+
+def main() -> None:
+    stored = Stored(variants=[Variant(identity=b"ab", labels=["x", "y"])])
+    println(read_twice(stored))
+"""
+
+
+pub def test_a_published_function_that_builds_from_a_projected_read_borrows_its_parameter() -> Result[None, str]:
+    """A `pub` callable that copies one field of its parameter into a new value lends that parameter (#1605)."""
+    report = plan_report("published", PUBLISHED_PROJECTION, "2")?
+    copies = clones(report, "read_twice")?
+    assert copies == 0, f"read_twice holds {copies} clone calls"
+    return Ok(None)
+
+
+const PATH_READS: str = """pub enum Value:
+    Empty
+    Many(str, list[Value])
+
+
+def make(size: int) -> Value:
+    mut items: list[Value] = []
+    for _ in range(size):
+        items.append(Value.Empty)
+    return Value.Many("label", items)
+
+
+def keep(value: Value) -> Value:
+    return value
+
+
+def each_branch(flag: bool, size: int) -> Value:
+    value = make(size)
+    mut kept = Value.Empty
+    if flag:
+        kept = keep(value)
+    else:
+        kept = Value.Many("other", [value])
+    return kept
+
+
+def leaving_loop(size: int) -> Value:
+    value = make(size)
+    mut kept = Value.Empty
+    mut round = 0
+    while true:
+        round += 1
+        if round == 3:
+            kept = keep(value)
+            break
+    return kept
+
+
+def arity(value: Value) -> int:
+    match value:
+        Value.Many(_, items) => return len(items)
+        _ => return 0
+
+
+def main() -> None:
+    println(arity(each_branch(true, 4)) + arity(each_branch(false, 9)))
+    println(arity(leaving_loop(7)))
+"""
+
+
+pub def test_a_value_read_once_on_each_path_is_transferred_at_that_read() -> Result[None, str]:
+    """A value read once on each branch moves there uncopied (#1604). A read inside a loop keeps its copy."""
+    report = plan_report("paths", PATH_READS, "5\n7")?
+    for function in ["each_branch"]:
+        copies = clones(report, function)?
+        assert copies == 0, f"{function} holds {copies} clone calls"
+    return Ok(None)
+
+
+const FIELD_PATHS: str = """pub enum Value:
+    Empty
+    Many(str, list[Value])
+
+
+pub model Decoded:
+    pub value: Value
+    pub index: list[int]
+
+
+def decode(size: int) -> Decoded:
+    mut items: list[Value] = []
+    for _ in range(size):
+        items.append(Value.Empty)
+    return Decoded(value=Value.Many("label", items), index=[1, 2, 3])
+
+
+def keep(value: Value) -> Value:
+    return value
+
+
+def field_each_branch(flag: bool, size: int) -> Value:
+    decoded = decode(size)
+    mut kept = Value.Empty
+    if flag:
+        kept = keep(decoded.value)
+    else:
+        kept = Value.Many("other", [decoded.value])
+    return kept
+
+
+def field_each_return(flag: bool, size: int) -> Value:
+    decoded = decode(size)
+    if flag:
+        return decoded.value
+    return keep(decoded.value)
+
+
+def field_then_replaced(size: int) -> int:
+    mut decoded = decode(size)
+    first = keep(decoded.value)
+    decoded = decode(size + 1)
+    return arity(first) + arity(keep(decoded.value))
+
+
+def field_in_loop(size: int) -> int:
+    mut total = 0
+    for round in range(3):
+        decoded = decode(size + round)
+        total += arity(keep(decoded.value))
+    return total
+
+
+def arity(value: Value) -> int:
+    match value:
+        Value.Many(_, items) => return len(items)
+        _ => return 0
+
+
+def main() -> None:
+    println(arity(field_each_branch(true, 4)) + arity(field_each_branch(false, 9)))
+    println(arity(field_each_return(true, 2)) + arity(field_each_return(false, 3)))
+    println(field_then_replaced(5))
+    println(field_in_loop(1))
+"""
+
+
+pub def test_a_field_read_once_on_each_path_leaves_its_owner_at_that_read() -> Result[None, str]:
+    """A field read once on each path, or before its owner is replaced, moves out there uncopied (#1604)."""
+    report = plan_report("field_paths", FIELD_PATHS, "5\n5\n11\n6")?
+    for function in ["field_each_branch", "field_each_return", "field_then_replaced", "field_in_loop"]:
+        copies = clones(report, function)?
+        assert copies == 0, f"{function} holds {copies} clone calls"
+    return Ok(None)
+
+
+const ENDED_LOAN: str = """pub enum Value:
+    Empty
+    Many(str, list[Value])
+
+
+def make(size: int) -> Value:
+    mut items: list[Value] = []
+    for _ in range(size):
+        items.append(Value.Empty)
+    return Value.Many("label", items)
+
+
+def describe(value: Value) -> str:
+    match value:
+        Value.Many(_, items) => return f"{len(items)} items"
+        _ => return "empty"
+
+
+def store(value: Value) -> str:
+    kept = [value]
+    return f"{len(kept)} kept"
+
+
+def lent(size: int, pick: int) -> str:
+    value = make(size)
+    label = describe(value)
+    if pick == 0:
+        return label
+    if pick == 1:
+        return "one"
+    return "other"
+
+
+def moved(size: int, pick: int) -> str:
+    value = make(size)
+    label = store(value)
+    if pick == 0:
+        return label
+    if pick == 1:
+        return "one"
+    return "other"
+
+
+def main() -> None:
+    println(lent(4, 0))
+    println(lent(4, 1))
+    println(moved(4, 0))
+    println(moved(4, 2))
+"""
+
+
+pub def test_a_local_lent_at_its_last_use_is_dropped_after_a_call_that_returns_a_value() -> Result[None, str]:
+    """
+    A large local lent at its last use is dropped once, right after the call, whatever that call returns (#1604).
+
+    `moved` hands the same local to a callee that keeps it, so its own frame never drops it. `lent` lends it to a
+    callee that returns text; dropped after that call, it costs one drop more than `moved` on the paths that return,
+    where holding it to the end of its scope costs one drop on each of the three. Drops on unwind paths are not
+    counted: while `lent` still owns the value its call needs one, which `moved` never does.
+    """
+    report = plan_report("ended", ENDED_LOAN, "4 items\none\n1 kept\nother")?
+    lent = returning_drops(report, "lent")?
+    moved = returning_drops(report, "moved")?
+    assert lent == moved + 1, f"lent holds {lent} drops on returning paths and moved holds {moved}"
+    return Ok(None)
+
+
+const DECIDED_CONDITION: str = """pub enum Value:
+    Empty
+    Many(str, list[Value])
+
+
+def make(size: int) -> Value:
+    mut items: list[Value] = []
+    for _ in range(size):
+        items.append(Value.Empty)
+    return Value.Many("label", items)
+
+
+def arity(value: Value) -> int:
+    match value:
+        Value.Many(_, items) => return len(items)
+        _ => return 0
+
+
+def in_condition(size: int) -> str:
+    if arity(make(size)) > 3:
+        return "many"
+    return "few"
+
+
+def before_condition(size: int) -> str:
+    many = arity(make(size)) > 3
+    if many:
+        return "many"
+    return "few"
+
+
+def main() -> None:
+    println(in_condition(4))
+    println(in_condition(2))
+    println(before_condition(4))
+    println(before_condition(2))
+"""
+
+
+pub def test_a_value_built_to_decide_a_condition_is_dropped_before_the_branch() -> Result[None, str]:
+    """
+    A value built only to decide an `if` is dropped once, when the condition is decided (#1604).
+
+    `before_condition` decides in a statement of its own, so the built value drops once before the `if`.
+    `in_condition` decides in the `if` itself and holds the same drops: held to the end of the `if` statement, the
+    value would cost one drop inside the returning branch and one more after the statement.
+    """
+    report = plan_report("decided", DECIDED_CONDITION, "many\nfew\nmany\nfew")?
+    inside = returning_drops(report, "in_condition")?
+    before = returning_drops(report, "before_condition")?
+    assert inside == before, f"in_condition holds {inside} drops on returning paths and before_condition holds {before}"
+    return Ok(None)
+
+
+const RUST_CONSTANTS: str = """from rust::std::f64::consts import PI as RUST_PI, TAU as RUST_TAU
+
+const HALF_TURN: float = RUST_PI
+pub const TURN: float = RUST_TAU
+
+
+def scaled(value: float) -> float:
+    return value * HALF_TURN
+
+
+def main() -> None:
+    println(scaled(2.0) == TURN)
+"""
+
+
+const COMPUTED_CONSTANT: str = """model Point:
+    x: int
+
+
+const ORIGINS: FrozenList[Point] = [Point(x=1), Point(x=2)]
+
+
+def count() -> int:
+    return len(ORIGINS)
+
+
+def main() -> None:
+    println(count())
+"""
+
+
+pub def test_a_module_whose_consts_are_rust_constants_has_no_initializer() -> Result[None, str]:
+    """
+    A `const` whose initializer is a Rust constant is that constant: it has no storage to initialize.
+
+    A module whose only module-level values are such consts therefore has no initializer, and a function that reads
+    one calls nothing on entry.
+    """
+    report = plan_report("rust_constants", RUST_CONSTANTS, "true")?
+    found = initializers(report)
+    assert len(found) == 0, f"the plan holds initializers: {found}"
+    calls = plan_counts(report, "scaled", ["calls"])?
+    assert calls == 0, f"scaled holds {calls} calls"
+    return Ok(None)
+
+
+pub def test_a_const_with_a_computed_initializer_keeps_its_module_initializer() -> Result[None, str]:
+    """A `const` whose value is built at run time, a list of models here, is still initialized on entry."""
+    report = plan_report("computed_constant", COMPUTED_CONSTANT, "2")?
+    found = initializers(report)
+    # The module initializer is named by the module's identity, never by a static slot another module can shift.
+    modules = [name for name in found if name.startswith("__incan_init_module_statics_")]
+    assert len(modules) == 1, f"the plan holds only these initializers: {found}"
+    return Ok(None)
+
+
+const FROZEN_MEMBERSHIP: str = """const CONTROLS: FrozenSet[str] = {"a", "b", "c"}
+const NAMES: FrozenList[str] = ["x", "y"]
+
+
+def count(text: str) -> int:
+    mut found = 0
+    for character in text:
+        if character in CONTROLS:
+            found += 1
+        if character not in NAMES:
+            found += 10
+    return found
+
+
+def main() -> None:
+    println(count("abxz"))
+"""
+
+
+pub def test_text_membership_in_a_frozen_set_or_list_copies_no_element() -> Result[None, str]:
+    """
+    `x in` a frozen set or list of text compares each static element in place: the plan formats no element into an
+    owned list, and the frozen carriers' own in-place comparisons are what the program instantiates (#2944).
+    """
+    report = plan_report("frozen_membership", FROZEN_MEMBERSHIP, "32")?
+    names = plan_function_names(report)
+    snapshots = [name for name in names if encoded_name("frozen_text_item") in name]
+    assert len(snapshots) == 0, f"membership formats frozen elements through {snapshots}"
+    for helper in ["frozen_set_contains_text", "frozen_list_contains_text"]:
+        assert f"incan_std_primitives::frozen::{helper}" in report, f"the program instantiates no {helper}"
+    return Ok(None)
+
+
+def plan_function_names(report: str) -> list[str]:
+    """Every function the plan report names, runtime helpers included."""
+    mut names: list[str] = []
+    for line in report.split("\n"):
+        fields = line.split("\t")
+        if len(fields) >= 2 and fields[0] == "plan-function":
+            names.append(fields[len(fields) - 1])
+    return names
+
+
+def encoded_name(name: str) -> str:
+    """A function name as a records plan spells it inside a module item's name: its bytes in decimal, joined by `_`."""
+    return "_".join([str(int(byte)) for byte in name.encode("utf-8")])
+
+
+const READ_ONLY_TEXT: str = """def read_only(value: str) -> int:
+    return len(value)
+
+
+def loop_over(value: str) -> int:
+    mut total = 0
+    for _ in range(3):
+        total += read_only(value)
+    return total
+
+
+def main() -> None:
+    mut text = ""
+    for _ in range(4):
+        text += "a"
+    println(loop_over(text))
+"""
+
+
+pub def test_a_read_only_text_parameter_is_lent_and_never_copied() -> Result[None, str]:
+    """
+    A function whose `str` parameter it only reads receives it lent: neither it nor a loop that passes the same text on
+    each turn copies or drops a string (#3071).
+    """
+    report = plan_report("read_only_text", READ_ONLY_TEXT, "12")?
+    assert returning_drops(report, "read_only")? == 0, "read_only drops a copy of its parameter"
+    assert returning_drops(report, "loop_over")? == 0, "loop_over drops a copy of its parameter"
+    return Ok(None)
+
+
+def initializers(report: str) -> list[str]:
+    """The module and static initializer functions the plan report names."""
+    mut found: list[str] = []
+    for line in report.split("\n"):
+        fields = line.split("\t")
+        if len(fields) < 2 or fields[0] != "plan-function":
+            continue
+        name = fields[len(fields) - 1]
+        if name.startswith("__incan_init_module_statics_") or name.startswith("__incan_static_init_"):
+            found.append(name)
+    return found
+
+
+def plan_report(name: str, source_text: str, expected: str) -> Result[str, str]:
+    """Run one program through the records engine in a store of its own and return the driver's plan report."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    source = root.joinpath(f"{name}.incn")
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    store = root.joinpath("store")
+    write(source, source_text)?
+    outcome = Command
+        .new(binary)
+        .arg("run")
+        .arg(source.0)
+        .args(["--profile", "release"])
+        .env("INCAN_NATIVE_PLAN_REPORT", root.joinpath("native.plan").0)
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
+    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+    stop_engine(binary, store)?
+    if not outcome.status.success() or output != expected + "\n":
+        return Err(f"{name}: status={outcome.status.code()} stdout={output} stderr={errors}")
+    return read(root.joinpath("native.plan"))
+
+
+def clones(report: str, function: str) -> Result[int, str]:
+    """The model and enum clone calls the plan of `function` holds, summed over every frame of that name."""
+    return plan_counts(report, function, ["model-clones", "enum-clones"])
+
+
+def returning_drops(report: str, function: str) -> Result[int, str]:
+    """The drops the plan of `function` holds outside its unwind paths."""
+    return Ok(plan_counts(report, function, ["drops"])? - plan_counts(report, function, ["cleanup-drops"])?)
+
+
+def plan_counts(report: str, function: str, columns: list[str]) -> Result[int, str]:
+    """The named counts of the plan report's rows for `function`, summed over every frame of that name."""
+    mut total = 0
+    mut found = false
+    for line in report.split("\n"):
+        fields = line.split("\t")
+        if len(fields) < 2 or fields[0] != "plan-function" or fields[len(fields) - 1] != function:
+            continue
+        found = true
+        for position in range(len(fields) - 1):
+            if fields[position] in columns:
+                total += int(fields[position + 1])
+    if not found:
+        return Err(f"the plan report names no function {function}")
+    return Ok(total)
+
+
+def stop_engine(binary: str, store: Path) -> Result[None, str]:
+    """Stop the disposable records engine of one test's store."""
+    mut identity = service_identity(store)?
+    identity.service_generation = service_generation(binary)?
+    mut channel = connect_with(store, identity, binary).map_err((refusal) => refusal.detail)?
+    channel.send(zero_id(), Message.Stop(Stop(reason="ownership plan read"))).map_err((refusal) => refusal.detail)?
+    _ = channel.receive().map_err((refusal) => refusal.detail)?
+    _ = channel.transport.close()
+    return Ok(None)
