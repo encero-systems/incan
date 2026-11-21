@@ -10,6 +10,7 @@ use incan_semantics_core::{IncanType, SemanticSourceTargetKind, SymbolOrigin};
 use crate::builtin_calls::lower_runtime_helper;
 use crate::call_arguments::{SlotPolicy, call_parameter_type, has_defaulted_slots, ordered_slot_operands};
 use crate::callable_calls::{checked_type_arguments, has_adapter_slot, lower_callable_result, lower_named_target};
+use crate::callable_values::lower_callable_value;
 use crate::closures::return_representation;
 use crate::defaults::{DefaultCall, default_arguments, library_default_arguments};
 use crate::explicit_arguments::{parameter_accesses, validate_source_input_call};
@@ -42,7 +43,9 @@ pub fn lower_call(
         Callee::Function(CallableTarget::Named(target)) => {
             lower_named_target(module, builder, target, args, destination, span)
         }
-        Callee::Function(CallableTarget::Local(_)) => Err(untranslated("callable_calls::lower_callable_value")),
+        Callee::Function(CallableTarget::Local(target)) => {
+            lower_callable_value(builder, target, args, destination, span)
+        }
         Callee::Method(target) => {
             if let Some(identity) = &target.canonical
                 && has_adapter_slot(module, identity)

@@ -18,7 +18,7 @@ use crate::defaults::{DefaultCall, default_arguments};
 use crate::element_places::{element_place_type, is_element_place};
 use crate::explicit_arguments::parameter_accesses;
 use crate::frame::{Builder, dereferenced_place, place_type, read_place, temporary};
-use crate::library_methods::lower_library_method;
+use crate::library_methods::{lower_library_method, lower_standard_slot};
 use crate::models::model_place;
 use crate::pending::untranslated;
 use crate::sequence_builtins::argument_type;
@@ -69,8 +69,9 @@ fn lower_checked_method_call(
     let Some(receiver) = arguments.first() else {
         return Err("invalid Body IR Method missing receiver".into());
     };
-    match special_method_route(module, builder, target, receiver, span)? {
+    match special_method_route(module, builder, target, arguments, destination, span)? {
         MethodRoute::Refused(step) => return Err(untranslated(step)),
+        MethodRoute::Lowered => return Ok(()),
         MethodRoute::Library(index, selected) => {
             let callable = &module.loaf_callables[index];
             return lower_library_method(module, builder, callable, &selected, arguments, destination, span);
@@ -87,10 +88,12 @@ fn special_method_route(
     module: &BodyIrModule,
     builder: &mut Builder,
     target: &MethodTarget,
-    receiver: &ArgumentElement,
+    arguments: &[ArgumentElement],
+    destination: &Option<SourcePlace>,
     span: &SourceSpan,
 ) -> Result<MethodRoute, String> {
     use MethodRoute::Refused;
+    let receiver = &arguments[0];
     if let Some(SourceOperand::Place(read)) = receiver.as_one()
         && read.place.global().is_some()
     {
@@ -100,8 +103,11 @@ fn special_method_route(
         None | Some(ReflectionOperation::Builtin(_)) => {}
         Some(_) => return Ok(Refused("reflection::lower_reflection")),
     }
-    if standard_slot(target) || is_std_primitives_method(target, "traits", "callable", "__call__") {
-        return Ok(Refused("library_methods::lower_standard_slot"));
+    // Any other slot leaves the standard-slot step without effects, so only these targets enter it.
+    if (standard_slot(target) || is_std_primitives_method(target, "traits", "callable", "__call__"))
+        && lower_standard_slot(module, builder, target, arguments, destination, span)?
+    {
+        return Ok(MethodRoute::Lowered);
     }
     let mut implementation = target.canonical.clone();
     if let Some(owner) = receiver_owner(module, builder, receiver, span)? {
@@ -149,22 +155,7 @@ fn special_method_route(
 
 /// Whether the checker selected a standard derive or comparison slot, which a derive or JSON protocol implements.
 fn standard_slot(target: &MethodTarget) -> bool {
-    let json = target.canonical.as_ref().is_some_and(|identity| {
-        identity.kind == SemanticSourceTargetKind::Method
-            && identity.declaration_name == "to_json"
-            && match &identity.origin {
-                SymbolOrigin::Module(path) => {
-                    path.len() == 3 && path[0] == "std" && path[1] == "serde" && path[2] == "json"
-                }
-                SymbolOrigin::Package { library, module_path } => {
-                    library == "incan_stdlib_data"
-                        && module_path.len() == 2
-                        && module_path[0] == "serde"
-                        && module_path[1] == "json"
-                }
-                _ => false,
-            }
-    });
+    let json = is_json_serialize_method(target);
     json || is_std_primitives_method(target, "derives", "copying", "clone")
         || is_std_primitives_method(target, "derives", "string", "__str__")
         || ["__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__"]
@@ -173,7 +164,7 @@ fn standard_slot(target: &MethodTarget) -> bool {
 }
 
 /// Whether the checker selected `name` of `std.<section>.<module>`, in source or compiled SDK identities.
-fn is_std_primitives_method(target: &MethodTarget, section: &str, module: &str, name: &str) -> bool {
+pub fn is_std_primitives_method(target: &MethodTarget, section: &str, module: &str, name: &str) -> bool {
     let Some(identity) = &target.canonical else {
         return false;
     };
@@ -215,6 +206,7 @@ fn implementation_target(target: &MethodTarget, canonical: CanonicalSymbolId) ->
 /// How a method call lowers once its special routes are excluded.
 enum MethodRoute {
     Refused(&'static str),
+    Lowered,
     Library(usize, MethodTarget),
     Retained,
 }
@@ -755,4 +747,58 @@ fn lower_builtin_origin_method(
         return Err(untranslated("result_combinators::lower_result_combinator"));
     }
     lower_builtin_method(builder, target, arguments, destination, span)
+}
+
+/// Recognize the JSON protocol default in source and compiled SDK identities, never a same-name override.
+pub fn is_json_serialize_method(target: &MethodTarget) -> bool {
+    let Some(identity) = &target.canonical else {
+        return false;
+    };
+    if identity.kind != SemanticSourceTargetKind::Method || identity.declaration_name != "to_json" {
+        return false;
+    }
+    match &identity.origin {
+        SymbolOrigin::Module(path) => path.len() == 3 && path[0] == "std" && path[1] == "serde" && path[2] == "json",
+        SymbolOrigin::Package { library, module_path } => {
+            library == "incan_stdlib_data"
+                && module_path.len() == 2
+                && module_path[0] == "serde"
+                && module_path[1] == "json"
+        }
+        _ => false,
+    }
+}
+
+/// Whether a retained implementation record fills the selected slot for the receiver's concrete nominal.
+///
+/// Such a slot dispatches to that body, ahead of any behavior a standard derive gives the slot, because the adopter's
+/// own method is what legacy calls. A receiver that is not a retained nominal has no record.
+pub fn receiver_fills_slot(
+    module: &BodyIrModule,
+    target: &MethodTarget,
+    builder: &Builder,
+    argument: &ArgumentElement,
+    span: &SourceSpan,
+) -> Result<bool, String> {
+    let Some(owner) = receiver_owner(module, builder, argument, span)? else {
+        return Ok(false);
+    };
+    let identity = owner_identity(module, &owner)?;
+    Ok(module.trait_implementations.iter().any(|implementation| {
+        implementation.owner == identity && Some(&implementation.method) == target.canonical.as_ref()
+    }))
+}
+
+/// Use the same checked adopter selection for a compiled method and a retained executable body.
+pub fn receiver_method_identity(
+    module: &BodyIrModule,
+    target: &MethodTarget,
+    builder: &Builder,
+    argument: &ArgumentElement,
+    span: &SourceSpan,
+) -> Result<Option<CanonicalSymbolId>, String> {
+    match receiver_owner(module, builder, argument, span)? {
+        Some(owner) => Ok(Some(owner_method_identity(module, target, &owner)?)),
+        None => Ok(target.canonical.clone()),
+    }
 }

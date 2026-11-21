@@ -1,19 +1,27 @@
-//! Standard derive methods: Clone of any admitted carrier.
+//! Standard derive methods: Clone of any admitted carrier, Display and comparison dunders.
 
 use incan_mir_plan_native::{
     CalleeKind, OperandKind, Place, PlanType, Projection, RvalueKind, SourceSpan, assign as plan_assign,
 };
-use incan_semantics_core::body_ir::{ArgumentElement, Operand as SourceOperand, Place as SourcePlace};
+use incan_semantics_core::CanonicalSymbolId;
+use incan_semantics_core::body_ir::{
+    ArgumentElement, BinOp, BodyIrModule, MethodTarget, Operand as SourceOperand, Place as SourcePlace, Rvalue,
+};
 
+use crate::assignments::lower_assignment;
 use crate::callable_calls::lower_callable_result;
 use crate::checked_values::scalar_place;
 use crate::decls::library_enum_item;
 use crate::element_places::is_element_place;
 use crate::frame::{Builder, drop_owned, forget_owned, place_type, read_place, temporary, track_rvalue_moves};
 use crate::list_methods::materialized_receiver;
+use crate::method_calls::is_std_primitives_method;
 use crate::numerics::numeric_carrier;
+use crate::operators::{binary_operator, scalar_operator_operand};
 use crate::options::{carrier_payload_value, clone_tuple_operand};
+use crate::sequence_builtins::source_operand_type;
 use crate::text_plan::clone_text;
+use crate::trait_links::contains;
 use crate::tuples::is_tuple_type;
 
 /// Clone a standard or inferred Clone receiver through its concrete native representation.
@@ -257,4 +265,208 @@ fn clone_builtin_place(
         }
     }
     Ok(())
+}
+
+/// Recognize `clone` of the standard library's Clone in source and compiled SDK identities, never a same-name method.
+pub fn is_derived_clone(target: &MethodTarget) -> bool {
+    is_std_derive_method(target, "copying", "clone")
+}
+
+/// Recognize `__str__` of the standard library's Display, never a same-name method.
+pub fn is_derived_display(target: &MethodTarget) -> bool {
+    is_std_derive_method(target, "string", "__str__")
+}
+
+/// Whether the checker selected `name` of a trait declared by the standard library's `std.derives.<module>`.
+fn is_std_derive_method(target: &MethodTarget, module: &str, name: &str) -> bool {
+    is_std_primitives_method(target, "derives", module, name)
+}
+
+/// Select the operator a dunder of the standard library's Eq or Ord names, never a same-name method.
+pub fn comparison_dunder(target: &MethodTarget) -> Option<BinOp> {
+    [
+        ("__eq__", BinOp::Eq),
+        ("__ne__", BinOp::Ne),
+        ("__lt__", BinOp::Lt),
+        ("__le__", BinOp::Le),
+        ("__gt__", BinOp::Gt),
+        ("__ge__", BinOp::Ge),
+    ]
+    .into_iter()
+    .find(|(name, _)| is_std_derive_method(target, "comparison", name))
+    .map(|(_, operator)| operator)
+}
+
+/// Lower an explicit standard comparison dunder as the operator it names, through that operator's own lowering.
+///
+/// A derived Eq or Ord implements each dunder as its operator, so `a.__ge__(b)` is `a >= b`; a number or a bool
+/// compares by value. A source comparison adopter must retain its complete native forwarding frame; any other receiver
+/// with its own comparison methods keeps refusing.
+pub fn lower_comparison_dunder(
+    module: &BodyIrModule,
+    builder: &mut Builder,
+    operator: BinOp,
+    arguments: &[ArgumentElement],
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    if arguments.len() != 2 {
+        return Err("invalid Body IR comparison dunder arguments".into());
+    }
+    let left = single_operand(&arguments[0])?;
+    let right = single_operand(&arguments[1])?;
+    if compare_scalars(builder, operator, &left, &right, destination, span)? {
+        return Ok(());
+    }
+    if declares_own_comparison(module, builder, &left, span)? && !has_native_comparison(builder, &left, operator, span)?
+    {
+        return Err("unsupported Body IR comparison dunder on a type with its own comparison methods".into());
+    }
+    match destination {
+        Some(place) => lower_assignment(module, builder, place, &Rvalue::BinaryOp(operator, left, right), span),
+        None => Err("unsupported Body IR discarded comparison dunder".into()),
+    }
+}
+
+/// Require the already validated native comparison frame before an explicit standard default forwards to an operator.
+fn has_native_comparison(
+    builder: &mut Builder,
+    value: &SourceOperand,
+    operator: BinOp,
+    span: &SourceSpan,
+) -> Result<bool, String> {
+    if let SourceOperand::Place(_) = value
+        && let PlanType::Model(owner, _) = source_operand_type(builder, value, span)?
+    {
+        let count = if operator == BinOp::Eq || operator == BinOp::Ne {
+            1
+        } else {
+            5
+        };
+        let functions = builder
+            .program
+            .comparison_functions
+            .get(owner as usize)
+            .map_or(0, Vec::len);
+        return Ok(functions >= count);
+    }
+    Ok(false)
+}
+
+/// Compare two values of one numeric or boolean carrier, as a closed type-parameter instance reaches them.
+///
+/// The receiver is borrowed for the method call the checker selected, but a number or a bool is copied freely, so the
+/// comparison materializes each checked read once. Type inspection never projects collection elements, and other
+/// carriers are left to the operator's own lowering.
+fn compare_scalars(
+    builder: &mut Builder,
+    operator: BinOp,
+    left: &SourceOperand,
+    right: &SourceOperand,
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<bool, String> {
+    if !matches!(left, SourceOperand::Place(_)) || !matches!(right, SourceOperand::Place(_)) {
+        return Ok(false);
+    }
+    let ty = source_operand_type(builder, left, span)?;
+    if !(numeric_carrier(&ty) || ty == PlanType::Bool) {
+        return Ok(false);
+    }
+    if ty != source_operand_type(builder, right, span)? {
+        return Ok(false);
+    }
+    let Some(place) = destination else {
+        return Err("unsupported Body IR discarded comparison dunder".into());
+    };
+    let output = scalar_place(builder, place, span)?;
+    let left_value = scalar_operator_operand(builder, left, span)?;
+    let right_value = scalar_operator_operand(builder, right, span)?;
+    let comparison = RvalueKind::Binary(binary_operator(operator)?, left_value, right_value);
+    builder.emit(plan_assign(output, comparison, span));
+    Ok(true)
+}
+
+/// Read one positional argument's checked operand, refusing a spread.
+fn single_operand(argument: &ArgumentElement) -> Result<SourceOperand, String> {
+    match argument.as_one() {
+        Some(value) => Ok(value.clone()),
+        None => Err("unsupported Body IR comparison dunder spread argument".into()),
+    }
+}
+
+/// Whether the receiver's source nominal or enum declares a comparison dunder or fills one from a source trait.
+fn declares_own_comparison(
+    module: &BodyIrModule,
+    builder: &mut Builder,
+    receiver: &SourceOperand,
+    span: &SourceSpan,
+) -> Result<bool, String> {
+    let dunders = ["__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__"];
+    declares_own_method(module, builder, receiver, &dunders, span)
+}
+
+/// The checker-selected slot's declared name, empty for an unproven target.
+pub fn slot_name(target: &MethodTarget) -> String {
+    target
+        .canonical
+        .as_ref()
+        .map(|identity| identity.declaration_name.to_string())
+        .unwrap_or_default()
+}
+
+/// Whether a method call's receiver type declares a method of `name` itself or fills that slot from a source trait.
+///
+/// A standard derive's behavior stands in for a slot only where the type supplies no method of its own for it.
+pub fn receiver_declares_method(
+    module: &BodyIrModule,
+    builder: &mut Builder,
+    receiver: &ArgumentElement,
+    name: &str,
+    span: &SourceSpan,
+) -> Result<bool, String> {
+    match receiver.as_one() {
+        Some(value) => declares_own_method(module, builder, value, &[name], span),
+        None => Ok(false),
+    }
+}
+
+/// Whether the retained receiver type declares a method of one of `names` or fills one from a trait, without
+/// evaluating an index.
+fn declares_own_method(
+    module: &BodyIrModule,
+    builder: &mut Builder,
+    receiver: &SourceOperand,
+    names: &[&str],
+    span: &SourceSpan,
+) -> Result<bool, String> {
+    if !matches!(receiver, SourceOperand::Place(_)) {
+        return Ok(false);
+    }
+    match source_operand_type(builder, receiver, span)? {
+        PlanType::Model(index, _) => match builder.nominals().get(index as usize) {
+            Some(declaration) => Ok(owns_method(module, &declaration.canonical, names)),
+            None => Err("invalid Body IR receiver model owner".into()),
+        },
+        PlanType::Enum(index, _) => match usize::try_from(index).ok().and_then(|slot| builder.enums().get(slot)) {
+            Some(declaration) => Ok(owns_method(module, &declaration.canonical, names)),
+            None => Ok(false),
+        },
+        _ => Ok(false),
+    }
+}
+
+/// Whether a body inside the owner's declaration, or a trait slot recorded for it, has one of `names`.
+fn owns_method(module: &BodyIrModule, owner: &CanonicalSymbolId, names: &[&str]) -> bool {
+    let named = |name: &str| names.contains(&name);
+    let declared = module.bodies.iter().any(|body| {
+        body.canonical.as_ref().is_some_and(|identity| {
+            identity.origin == owner.origin && contains(owner, identity) && named(&identity.declaration_name)
+        })
+    });
+    declared
+        || module
+            .trait_implementations
+            .iter()
+            .any(|implementation| implementation.owner == *owner && named(&implementation.method.declaration_name))
 }

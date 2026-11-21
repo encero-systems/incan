@@ -25,6 +25,7 @@ mod bytes_plan;
 mod call_arguments;
 mod callable_calls;
 mod callable_methods;
+mod callable_values;
 mod calls;
 mod carrier_operands;
 mod checked_json;
