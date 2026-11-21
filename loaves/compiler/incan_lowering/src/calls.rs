@@ -7,6 +7,7 @@ use incan_semantics_core::body_ir::{
 };
 use incan_semantics_core::{IncanType, SemanticSourceTargetKind, SymbolOrigin};
 
+use crate::async_::construct_boxed_future;
 use crate::builtin_calls::lower_runtime_helper;
 use crate::call_arguments::{SlotPolicy, call_parameter_type, has_defaulted_slots, ordered_slot_operands};
 use crate::callable_calls::{checked_type_arguments, has_adapter_slot, lower_callable_result, lower_named_target};
@@ -259,8 +260,16 @@ fn lower_delegated_call(
     let Some(path) = delegation.rust_path() else {
         return Err("the standard library call target has no checked native identity".into());
     };
-    if let PlanType::Future(_) = result {
-        return Err(untranslated("async_::construct_boxed_future"));
+    if let PlanType::Future(outputs) = &result {
+        let [output_type] = outputs.as_slice() else {
+            return Err("the standard library future requires exactly one output type".into());
+        };
+        let callee = if type_arguments.is_empty() {
+            CalleeKind::External(path)
+        } else {
+            CalleeKind::Instantiated(path, type_arguments)
+        };
+        return construct_boxed_future(builder, callee, parameters, output_type.clone(), operands, output, span);
     }
     instantiated_external_call(
         builder,

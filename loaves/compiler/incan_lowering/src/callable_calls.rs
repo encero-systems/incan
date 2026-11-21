@@ -10,10 +10,11 @@ use incan_semantics_core::{
     CanonicalSymbolId, IncanType, SemanticSourceTargetKind, SymbolOrigin, canonical_module_identity,
 };
 
-use crate::async_::is_future;
+use crate::async_::{construct_future, is_future};
 use crate::builtin_calls::lower_builtin;
 use crate::calls::{lower_loaf_call, ordered_arguments};
 use crate::carrier_operands::boundary_plan_operand;
+use crate::checked_values::scalar_place;
 use crate::classes::function_name;
 use crate::closures::{callable_copy_type, return_representation};
 use crate::collections::is_owned_collection;
@@ -291,7 +292,11 @@ fn lower_local_call(
     }
     let operands = ordered_arguments(module, builder, &target.binding, arguments, body, span)?;
     if body.is_async {
-        return Err(untranslated("async_::construct_future"));
+        let Some(place) = destination else {
+            return Err("unsupported Body IR async call without carrier".into());
+        };
+        let output = scalar_place(builder, place, span)?;
+        return construct_future(module, builder, body, operands, output, span);
     }
     let callee = CalleeKind::Planned(function_name(module, body));
     emit_selected_body_call(module, builder, body, callee, operands, destination, span)

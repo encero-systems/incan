@@ -12,6 +12,7 @@ use incan_semantics_core::body_ir::{
 
 use crate::assertions::lower_assertion;
 use crate::assignments::lower_assignment;
+use crate::async_::await_future;
 use crate::builtin_calls::{coerce_numeric_operand, validate_exact_float};
 use crate::calls::lower_call;
 use crate::carrier_operands::boundary_operand;
@@ -187,7 +188,14 @@ pub fn lower_statement(
         // An expression statement only needs its operand to be valid; its value is discarded.
         SourceStatementKind::Expr { value } => lower_discarded_operand(builder, value, &span),
         SourceStatementKind::Call { .. } => lower_call(module, builder, statement, &span),
-        SourceStatementKind::Await { .. } => Err(untranslated("async_::await_future")),
+        SourceStatementKind::Await { destination, awaited } => {
+            let future = source_future_place(builder, awaited, &span)?;
+            let Some(place) = destination else {
+                return Err("unsupported Body IR Await without destination".into());
+            };
+            let output = scalar_place(builder, place, &span)?;
+            await_future(builder, future, output, &span)
+        }
         SourceStatementKind::Race { .. } => Err(untranslated("statements::lower_native_race")),
         SourceStatementKind::Yield { value } => lower_yield(builder, value, &span),
         SourceStatementKind::Assert { kind, message, .. } => lower_assertion(builder, kind, message.as_ref(), &span),
@@ -480,4 +488,21 @@ fn lower_yield(builder: &mut Builder, value: &SourceOperand, span: &SourceSpan) 
     let operand = value_operand(builder, value, span)?;
     let converted = coerce_numeric_operand(builder, operand, &generator_element(&leaf, depth), span)?;
     generator_yield(builder, converted, span)
+}
+
+/// Consume a frontend-owned source future; copying or borrowing one cannot realize its one-shot await.
+fn source_future_place(
+    builder: &mut Builder,
+    awaited: &SourceOperand,
+    span: &SourceSpan,
+) -> Result<incan_mir_plan_native::Place, String> {
+    match awaited {
+        SourceOperand::Place(read) => {
+            if read.fact != OwnershipFact::Move {
+                return Err("unsupported Body IR async future ownership".into());
+            }
+            scalar_place(builder, &read.place, span)
+        }
+        SourceOperand::Constant(_) => Err("unsupported Body IR Await constant".into()),
+    }
 }

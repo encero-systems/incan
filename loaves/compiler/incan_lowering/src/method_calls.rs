@@ -8,9 +8,11 @@ use incan_semantics_core::body_ir::{
 };
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 
+use crate::async_::construct_future;
 use crate::builtin_methods::lower_builtin_method;
 use crate::call_arguments::{SlotPolicy, call_parameter_type, has_defaulted_slots, ordered_slot_operands};
 use crate::callable_calls::{checked_type_arguments, emit_selected_body_call};
+use crate::checked_values::scalar_place;
 use crate::classes::{frame_type, function_name, receiver_mode};
 use crate::decls::{library_enum_item, library_item};
 use crate::defaults::{DefaultCall, default_arguments};
@@ -601,7 +603,11 @@ fn call_method_body(
     let mut operands = vec![read_place(reference, true, span)];
     operands.extend(ordinary);
     if body.is_async {
-        return Err(untranslated("async_::construct_future"));
+        let Some(place) = destination else {
+            return Err("unsupported Body IR async method call without carrier".into());
+        };
+        let output = scalar_place(builder, place, span)?;
+        return construct_future(module, builder, body, operands, output, span);
     }
     let callee = CalleeKind::Planned(function_name(module, body));
     emit_selected_body_call(module, builder, body, callee, operands, destination, span)
