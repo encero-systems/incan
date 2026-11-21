@@ -229,6 +229,11 @@ pub struct LoweringDemands {
 }
 
 impl LoweringDemands {
+    /// An empty cache for one publication.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Encode the demand of one admitted product: its producer inputs and each runtime signature as its own row.
     ///
     /// The source bytes and dictionary ordinals together specify every runtime signature. A cache hit still requires
