@@ -11,6 +11,7 @@ use incan_semantics_core::CompilerNodeId;
 use incan_semantics_core::body_ir::{BodyIrModule, NativeUnionDeclaration};
 
 pub mod corpus;
+pub mod corpus_recording;
 pub mod reuse_proof;
 
 mod array_views;
