@@ -3,6 +3,7 @@
 //! The reference's finalization test calls `finalize_scalar`, a wrapper that returns the first two parts of
 //! `finalized_plan_product`; the Rust lowering keeps only the latter, which this test calls.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use incan_mir_plan_native::{
@@ -92,7 +93,9 @@ fn moved_body_lines_keep_the_plan_product() -> Result<(), String> {
     );
     assert!(unchanged == inputs);
     let unit = unit_nominals(Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    let Some((function, _, _, _, _)) = retained_scalar(&text, &inputs, &unit, Some(&owner), &after_nodes) else {
+    let Some((function, _, _, _, _)) =
+        retained_scalar(&text, &inputs, &unit, &BTreeSet::new(), Some(&owner), &after_nodes)
+    else {
         return Err("a comment that moved lines inside the body made the product a miss".into());
     };
     assert!(
@@ -125,7 +128,7 @@ fn an_admitted_product_restores_from_one_placed_read() -> Result<(), String> {
     let bytes = positioned_product(&stored, &moved_nodes, "moved.incn", 20, &mut Vec::new())?;
     let placed = placed_record(&stored, &moved_nodes, "moved.incn", 20)?;
     assert!(placed.nominals() == product_identities(&bytes)?.as_slice());
-    let (restored, runtime, frames) = placed.restore(&[])?;
+    let (restored, runtime, frames) = placed.restore(&[], &BTreeSet::new())?;
     let (decoded, decoded_runtime, decoded_frames, _) = decode_product_parts(&bytes, &[])?;
     assert!(restored == decoded, "the placed record restored another function");
     assert!(runtime == decoded_runtime && frames == decoded_frames);

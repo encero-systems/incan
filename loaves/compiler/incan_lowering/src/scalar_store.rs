@@ -4,6 +4,7 @@
 //! its complete producer inputs. A records request also reports each product's event, or why a frame has none, in its
 //! report directory for Bakery admission; an ordinary keyed request reports nothing.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use incan_mir_plan_native::{
@@ -85,6 +86,7 @@ pub fn retained_scalar(
     directory: &str,
     inputs: &[String],
     unit: &UnitNominals,
+    linked: &BTreeSet<String>,
     span: Option<&SourceSpan>,
     positions: &[(i64, i64)],
 ) -> Option<RetainedProduct> {
@@ -95,7 +97,7 @@ pub fn retained_scalar(
     let (placed, requests) = record_payload(&encoded, inputs, span, positions)?;
     let resolved = resolve_nominals(placed.nominals(), unit)?;
     // 3. The record placed in step 2 restores directly; its placed bytes are never written or read.
-    let (function, runtime, frames) = placed.restore(&resolved).ok()?;
+    let (function, runtime, frames) = placed.restore(&resolved, linked).ok()?;
     Some((function, runtime, resolved, frames, requests))
 }
 
@@ -105,6 +107,7 @@ pub fn scalar_miss(
     directory: &str,
     inputs: &[String],
     unit: &UnitNominals,
+    linked: &BTreeSet<String>,
     span: Option<&SourceSpan>,
     positions: &[(i64, i64)],
 ) -> &'static str {
@@ -126,7 +129,7 @@ pub fn scalar_miss(
     let Some(resolved) = resolve_nominals(placed.nominals(), unit) else {
         return unresolved_nominal(placed.nominals(), unit).unwrap_or("a declaration it names does not resolve");
     };
-    if placed.restore(&resolved).is_err() {
+    if placed.restore(&resolved, linked).is_err() {
         return "its stored product does not restore at the resolved declarations";
     }
     "a generic instance it requests is gone"
@@ -555,8 +558,9 @@ fn input_difference(stored: &[String], current: &[String]) -> &'static str {
 pub fn admitted_function(
     placed: &PlacedRecord,
     resolved: &[NominalReference],
+    linked: &BTreeSet<String>,
 ) -> Option<(Function, Vec<ExternalFunction>, Vec<Function>)> {
-    placed.restore(resolved).ok()
+    placed.restore(resolved, linked).ok()
 }
 
 /// Name a native product by the existing semantic digest owner's unambiguous framed serialization.
@@ -583,6 +587,8 @@ fn publish_record(directory: &str, inputs: &[String], encoded: &[u8]) -> Result<
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use incan_mir_plan_native::{
         Callee, CalleeKind, Function, Local, PlanType, TerminatorKind, Unwind, block, place, source_span, unit_nominals,
     };
@@ -647,7 +653,8 @@ mod tests {
         );
         let unit = unit_nominals(Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let (restored, runtime, references, frames, encoded) =
-            retained_scalar(&directory, &inputs, &unit, Some(&span), &[]).expect("a retained product is reused");
+            retained_scalar(&directory, &inputs, &unit, &BTreeSet::new(), Some(&span), &[])
+                .expect("a retained product is reused");
         assert_eq!(restored, function);
         assert!(runtime.is_empty() && references.is_empty() && frames.is_empty());
         assert_eq!(encoded, requests);
@@ -662,10 +669,10 @@ mod tests {
         retain_scalar(&directory, &inputs, &returning_unit("main"), &[], &[], &[], &[], &[]).expect("retain");
         let unit = unit_nominals(Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let changed = scalar_inputs("sha256:ab", "main", &span, true, "witness");
-        assert!(retained_scalar(&directory, &changed, &unit, Some(&span), &[]).is_none());
+        assert!(retained_scalar(&directory, &changed, &unit, &BTreeSet::new(), Some(&span), &[]).is_none());
         let path = scalar_path(&directory, &inputs).expect("path");
         std::fs::write(&path, b"not a product").expect("damage");
-        assert!(retained_scalar(&directory, &inputs, &unit, Some(&span), &[]).is_none());
+        assert!(retained_scalar(&directory, &inputs, &unit, &BTreeSet::new(), Some(&span), &[]).is_none());
         let _ = std::fs::remove_dir_all(&directory);
     }
 
@@ -734,7 +741,7 @@ mod tests {
             "a product holding a static slot was written"
         );
         let unit = unit_nominals(Vec::new(), Vec::new(), Vec::new(), Vec::new());
-        assert!(retained_scalar(&directory, &inputs, &unit, Some(&span), &[]).is_none());
+        assert!(retained_scalar(&directory, &inputs, &unit, &BTreeSet::new(), Some(&span), &[]).is_none());
         let _ = std::fs::remove_dir_all(&directory);
     }
 }

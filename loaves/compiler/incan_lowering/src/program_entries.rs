@@ -1,6 +1,6 @@
 //! Lower a program's ordinary bodies, entrypoints, async entries, tests, and Loaf exports.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use incan_mir_plan_native::{
     AdmittedFunction, AdmittedPlacement, Carrier, EnumDeclaration, Function, GenericEnumDeclaration,
@@ -26,7 +26,7 @@ use crate::instance_products::{encode_requests, restore_requests};
 use crate::lowering::Inventories;
 use crate::nominal_records::{product_nominal_table, retain_named_scalar, sync_carriers};
 use crate::plan_modules::{AdmittedPage, admitted_page, report_admitted};
-use crate::plan_product_inputs::{ordinary_product_inputs, producer_generation};
+use crate::plan_product_inputs::{linked_crates, ordinary_product_inputs, producer_generation};
 use crate::producer_trace::{enter_producer, finish_producer};
 use crate::program_context::ProgramContext;
 use crate::scalar_store::{
@@ -104,6 +104,7 @@ pub fn lower_ordinary_bodies(
         report: record_report.as_deref(),
         generation: producer_generation(directory),
         nominals: product_nominal_table(program, intrinsics, directory),
+        linked: linked_crates(context),
     };
     let mut module_bodies: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     for (position, body) in context.bodies.iter().enumerate() {
@@ -221,6 +222,8 @@ pub struct KeyedProducts<'a> {
     pub report: Option<&'a str>,
     pub generation: Option<String>,
     pub nominals: UnitNominals,
+    /// The crates the unit links; a restored product names functions of no other crate.
+    pub linked: BTreeSet<String>,
 }
 
 /// The source text and file an ordinary frame lowers in.
@@ -290,9 +293,14 @@ fn lower_ordinary_frame(
     if let (Some(directory), Some((witness, positions))) = (keyed.directory, &inputs) {
         sync_carriers(&mut keyed.nominals, intrinsics);
         let current = location(&body.span, frame.source, frame.file);
-        if let Some((function, runtime, references, frames, encoded)) =
-            retained_scalar(directory, witness, &keyed.nominals, Some(&current), positions)
-            && let Some(requests) = restore_requests(&encoded, context)
+        if let Some((function, runtime, references, frames, encoded)) = retained_scalar(
+            directory,
+            witness,
+            &keyed.nominals,
+            &keyed.linked,
+            Some(&current),
+            positions,
+        ) && let Some(requests) = restore_requests(&encoded, context)
         {
             report_scalar(
                 keyed.report,
@@ -311,7 +319,14 @@ fn lower_ordinary_frame(
         }
         // A witnessed body is lowered again although it may have a kept product: name why the product did not fit.
         if tracing_products() {
-            let reason = scalar_miss(directory, witness, &keyed.nominals, Some(&current), positions);
+            let reason = scalar_miss(
+                directory,
+                witness,
+                &keyed.nominals,
+                &keyed.linked,
+                Some(&current),
+                positions,
+            );
             frame_product("unreused", "ordinary", &format!("{} {reason}", frame_label(body)));
         }
     }
@@ -518,7 +533,7 @@ fn restore_admitted(
             unresolved_nominal(placed.nominals(), &keyed.nominals).unwrap_or("a declaration it names does not resolve"),
         );
     };
-    let Some((function, runtime, frames)) = admitted_function(&placed, &resolved) else {
+    let Some((function, runtime, frames)) = admitted_function(&placed, &resolved, &keyed.linked) else {
         return Admission::Missed("its product does not restore at the resolved declarations");
     };
     let Some(requests) = restore_requests(&encoded, context) else {
