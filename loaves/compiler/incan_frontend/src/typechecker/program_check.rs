@@ -181,6 +181,9 @@ impl TypeChecker {
             self.finish_program_check(program)
         };
         self.visibility_point = VisibilityPoint::Finished;
+        if result.is_ok() {
+            self.finish_graph_body_frames(program);
+        }
         result
     }
 
@@ -199,9 +202,12 @@ impl TypeChecker {
         self.declaration_record_refusals.clear();
         self.selected_declaration_records.clear();
         self.produced_local_records.clear();
+        self.callable_scope_layouts.clear();
         self.local_record_refusals.clear();
         self.selected_local_records.clear();
         self.selected_final_records.clear();
+        self.pending_graph_frames.clear();
+        self.completed_graph_body_digests.clear();
         self.produced_final_records.clear();
         self.final_record_refusals.clear();
         self.callable_declaration_reuse.clear();
@@ -232,9 +238,10 @@ impl TypeChecker {
             self.type_info
                 .declarations
                 .ownership_contracts
-                .clone_from(&self.dependency_method_input_contracts);
+                .clone_from(&self.dependency_input_contracts);
         } else {
-            self.dependency_method_input_contracts.clear();
+            self.constructor_defaults.clear();
+            self.dependency_input_contracts.clear();
         }
         self.type_info.declarations.record_package_identity = self.record_package_identity.clone();
         self.warnings.clear();
