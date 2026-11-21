@@ -1,11 +1,11 @@
 //! Replay the golden lowering corpus through this lowering and report byte identity with the reference.
 //!
-//! Usage: `lowering-replay CORPUS [--case PREFIX] [--show N] [--describe] [--dump DIRECTORY] [--reuse [--base
-//! PREFIX]]`; `--reuse` prints each call's restored, kept and productless frames, and `--base` the bodies an edit
-//! changed. Every case's layout
-//! request and lowering calls run in order; each answer is compared with the captured one: refusal text, runtime
-//! requests, census lines, published unions and the whole plan's bytes. Where both sides have a plan, every function is
-//! compared by name as well. The exit status is 0 only when every compared answer is identical.
+//! Usage: `lowering-replay CORPUS [--case PREFIX] [--show N] [--describe] [--dump DIRECTORY] [--reuse]
+//! [--base PREFIX]`. Every case's layout request and lowering calls run in order; each answer is compared with the
+//! captured one: refusal text, runtime requests, census lines, published unions and the whole plan's bytes. Where both
+//! sides have a plan, every function is compared by name as well. The exit status is 0 only when every compared answer
+//! is identical. With `INCAN_ENGINE_TRACE` naming a directory, `--reuse` prints the keyed frames each call restored,
+//! lowered and kept, or lowered without a product, and `--base` names the case whose bodies an edit is compared with.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
