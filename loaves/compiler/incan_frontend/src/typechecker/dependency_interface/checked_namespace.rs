@@ -838,6 +838,9 @@ fn namespace_exports(declaration: &crate::api_metadata::ApiDeclaration) -> Vec<E
 }
 
 #[cfg(test)]
+mod import_refusals;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1095,116 +1098,6 @@ mod tests {
             carriers.push(carrier);
         }
         assert_ne!(carriers[0], carriers[1]);
-        Ok(())
-    }
-
-    /// RFC 176: a name one module imports without `pub` is no export of that module, so importing it from there is
-    /// refused with `INCAN-I0001`, whether the importer is checked against the module's source or against its
-    /// published namespace, with one error whose hint names the module that exports the name (Oven's `toolchain` took
-    /// `PayloadAdmission` from `unit_publication`, which imports it from `payload_types`). The exporting module and a
-    /// `pub from` re-export of it stay importable on both routes.
-    #[test]
-    fn a_non_pub_import_is_refused_from_source_and_from_the_published_namespace() -> Result<(), String> {
-        fn program(source: &str) -> Result<Program, String> {
-            let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
-            crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))
-        }
-        const MODULES: [&str; 4] = ["payload_types", "unit_publication", "facade", "toolchain"];
-        fn configured(module: &str) -> TypeChecker {
-            let mut checker = TypeChecker::new();
-            checker.set_current_module_path(Some(vec![module.to_owned()]));
-            for name in MODULES {
-                checker.register_dependency_module_path_segments(name, vec![name.to_owned()]);
-            }
-            checker
-        }
-        fn published(
-            name: &str,
-            program: &Program,
-            dependencies: &[(&str, &Program)],
-        ) -> Result<Arc<ModuleDependencyInterface>, String> {
-            let mut checker = configured(name);
-            checker
-                .check_with_imports(program, dependencies)
-                .map_err(|errors| format!("{name}: {errors:?}"))?;
-            let retained = CheckedNamespaceInterface::from_checked(name, &[name.to_owned()], program, &checker)?
-                .ok_or_else(|| format!("{name} published no namespace"))?;
-            CheckedNamespaceInterface::from_wire_value(retained.wire_value()?)?.installable()
-        }
-        fn toolchain(source_module: &str) -> Result<Program, String> {
-            program(&format!(
-                "from {source_module} import PayloadAdmission\nfrom unit_publication import admitted\n\npub model Toolchain:\n    pub payloads: list[PayloadAdmission]\n\npub def first() -> Toolchain:\n    return Toolchain(payloads=[admitted(\"unit\")])\n"
-            ))
-        }
-
-        let payload_types = program("pub model PayloadAdmission:\n    pub identity: str\n")?;
-        let unit_publication = program(
-            "from payload_types import PayloadAdmission\n\npub def admitted(identity: str) -> PayloadAdmission:\n    return PayloadAdmission(identity=identity)\n",
-        )?;
-        let facade = program("pub from payload_types import PayloadAdmission\n")?;
-        let types = published("payload_types", &payload_types, &[])?;
-        let publication = published(
-            "unit_publication",
-            &unit_publication,
-            &[("payload_types", &payload_types)],
-        )?;
-        let reexport = published("facade", &facade, &[("payload_types", &payload_types)])?;
-        let empty = program("")?;
-        // One importer, checked from its providers' source or, warm, from their published namespaces alone.
-        let check = |source: &Program, warm: bool| {
-            let mut consumer = configured("toolchain");
-            if warm {
-                consumer.select_dependency_interfaces(vec![
-                    Arc::clone(&types),
-                    Arc::clone(&publication),
-                    Arc::clone(&reexport),
-                ]);
-                return consumer.check_with_imports(
-                    source,
-                    &[
-                        ("payload_types", &empty),
-                        ("unit_publication", &empty),
-                        ("facade", &empty),
-                    ],
-                );
-            }
-            consumer.check_with_imports(
-                source,
-                &[
-                    ("payload_types", &payload_types),
-                    ("unit_publication", &unit_publication),
-                    ("facade", &facade),
-                ],
-            )
-        };
-
-        let refused = toolchain("unit_publication")?;
-        for warm in [false, true] {
-            let route = if warm { "warm" } else { "cold" };
-            let errors = check(&refused, warm)
-                .err()
-                .ok_or_else(|| format!("{route}: the import of a non-pub import was accepted"))?;
-            let [error] = errors.as_slice() else {
-                let messages = errors.iter().map(|error| error.message.as_str()).collect::<Vec<_>>();
-                return Err(format!("{route}: expected one refusal, got {messages:?}"));
-            };
-            assert_eq!(error.stable_code(), Some("INCAN-I0001"), "{route}");
-            assert_eq!(
-                error.message, "`PayloadAdmission` is not exported by `unit_publication`",
-                "{route}"
-            );
-            assert!(
-                error
-                    .hints()
-                    .iter()
-                    .any(|hint| hint.contains("`payload_types`") && hint.contains("`facade`")),
-                "{route}: the hint names the modules that export the name: {:?}",
-                error.hints()
-            );
-            for exporter in ["payload_types", "facade"] {
-                check(&toolchain(exporter)?, warm).map_err(|errors| format!("{route} from {exporter}: {errors:?}"))?;
-            }
-        }
         Ok(())
     }
 }
