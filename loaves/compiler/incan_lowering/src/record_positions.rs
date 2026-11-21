@@ -6,7 +6,9 @@
 
 use std::collections::HashMap;
 
-use incan_mir_plan_native::{PositionChange, WirePositions, transform_product_positions};
+use incan_mir_plan_native::{
+    PlacedRecord, PositionChange, WirePositions, place_product_record, transform_product_positions,
+};
 
 /// Translate every typed function, frame and runtime span together.
 pub fn relocate_product(encoded: &[u8], file: &str, line: i64) -> Result<Vec<u8>, String> {
@@ -51,4 +53,11 @@ pub fn positioned_product(
 ) -> Result<Vec<u8>, String> {
     let change = PositionChange::PlaceAt(positions.to_vec(), String::new(), 0, file.to_owned(), line);
     transform_product_positions(encoded, &WirePositions::new(change), frame_names)
+}
+
+/// Place a product as [`positioned_product`] does, keeping the typed record a restoring consumer reads, so the
+/// placed product is neither encoded nor decoded again.
+pub fn placed_record(encoded: &[u8], positions: &[(i64, i64)], file: &str, line: i64) -> Result<PlacedRecord, String> {
+    let change = PositionChange::PlaceAt(positions.to_vec(), String::new(), 0, file.to_owned(), line);
+    place_product_record(encoded, &WirePositions::new(change))
 }

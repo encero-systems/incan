@@ -29,7 +29,7 @@ pub use body::{
 pub use carriers::{fold_carrier_positions, fold_inventories};
 pub use nominal::{
     CARRIER_BASE, NominalKind, NominalReference, NominalRemap, ProductNominal, UnitNominals, carrier_index,
-    carrier_position, describe_nominals, is_carrier_index, resolve_nominals, unit_nominals,
+    carrier_position, describe_nominals, is_carrier_index, resolve_nominals, unit_nominals, unresolved_nominal,
 };
 pub use plan::{
     AttributeArgument, AttributeValue, Carrier, EnumDeclaration, EnumVariant, ExternalFunction,
@@ -42,10 +42,10 @@ pub use records::codec::{
     decode_record_plan, encode_entry_binding, encode_record_plan, encode_record_plan_products, record_plan_products,
 };
 pub use records::function::{
-    NamedProduct, PlacedProduct, ProductParts, decode_frames, decode_product, decode_product_parts, decode_runtime,
-    decode_scalar, encode_product, encode_runtime, encode_scalar, matches_product, positioned_product_requirements,
-    product_frame_names, product_identities, product_nominals, restore_named_product, transform_product_positions,
-    valid_ordinal_product,
+    NamedProduct, PlacedProduct, PlacedRecord, ProductParts, decode_frames, decode_product, decode_product_parts,
+    decode_runtime, decode_scalar, encode_product, encode_runtime, encode_scalar, matches_product,
+    place_product_record, positioned_product_requirements, product_frame_names, product_identities, product_nominals,
+    restore_named_product, transform_product_positions, valid_ordinal_product,
 };
 pub use records::layout::{
     decode_enums, decode_instance_request, decode_models, decode_zip_carriers, encode_checked_layout, encode_enums,

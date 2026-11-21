@@ -448,6 +448,44 @@ pub fn resolve_nominals(stored: &[ProductNominal], unit: &UnitNominals) -> Optio
     Some(references)
 }
 
+/// Say why [`resolve_nominals`] finds no position for a product's declarations, naming the first that misses: a model,
+/// a source enum or a standard carrier the unit does not describe, or one whose meaning digest differs. `None` when
+/// every declaration resolves.
+pub fn unresolved_nominal(stored: &[ProductNominal], unit: &UnitNominals) -> Option<&'static str> {
+    for nominal in stored {
+        if nominal.kind == NominalKind::Model {
+            let Some(index) = unit
+                .model_positions
+                .get(&nominal.identity)
+                .and_then(|position| usize::try_from(*position).ok())
+            else {
+                return Some("names a model the unit does not describe");
+            };
+            match unit.models.get(index) {
+                Some(described) if described.digest == nominal.digest => continue,
+                Some(_) => return Some("names a model whose meaning changed"),
+                None => return Some("names a model the unit does not describe"),
+            }
+        }
+        let carrier = unit
+            .enum_positions
+            .get(&nominal.identity)
+            .is_none_or(|position| is_carrier_index(*position));
+        match unit
+            .enum_positions
+            .get(&nominal.identity)
+            .and_then(|position| unit.enum_at(*position))
+        {
+            Some((described, _)) if described.digest == nominal.digest => {}
+            Some(_) if carrier => return Some("names a carrier whose meaning changed"),
+            Some(_) => return Some("names an enum whose meaning changed"),
+            None if nominal.identity.is_empty() => return Some("names an enum without a declaration identity"),
+            None => return Some("names an enum or carrier the unit has not admitted yet"),
+        }
+    }
+    None
+}
+
 /// Name each referenced unit position by its declaration.
 ///
 /// Refuses a position the unit does not describe, a declaration without a stable identity, and a native name that is

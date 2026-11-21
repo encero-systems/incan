@@ -307,6 +307,55 @@ pub fn positioned_product_requirements(
     Ok((positioned, runtime, stored.nominals))
 }
 
+/// A product read once and placed at this request's positions, kept typed until its consumer has resolved the
+/// declarations it names.
+///
+/// A restored body needs the declarations first and its function, runtime demand and helper frames after. Both come
+/// from this one decode: the placed product is not written back to bytes, and those bytes are not read again.
+pub struct PlacedRecord {
+    stored: StoredProduct,
+}
+
+impl PlacedRecord {
+    /// The declarations the product names, in its ordinal order.
+    pub fn nominals(&self) -> &[ProductNominal] {
+        &self.stored.nominals
+    }
+
+    /// Restore the function, its runtime demand and its helper frames with each ordinal bound to the unit position
+    /// `references` resolved for it.
+    pub fn restore(
+        &self,
+        references: &[NominalReference],
+    ) -> Result<(Function, Vec<ExternalFunction>, Vec<Function>), String> {
+        let (function, runtime) = restore_product(&self.stored, references)?;
+        let frames = restore_frames(&self.stored, references)?;
+        Ok((function, runtime, frames))
+    }
+
+    /// Whether the product restores with every declaration bound to its own product-local ordinal.
+    pub fn restores_at_own_ordinals(&self) -> bool {
+        let ordinals: Vec<NominalReference> = self
+            .stored
+            .nominals
+            .iter()
+            .enumerate()
+            .map(|(ordinal, nominal)| NominalReference::unnamed(nominal.kind, ordinal as i64))
+            .collect();
+        restore_product(&self.stored, &ordinals).is_ok()
+    }
+}
+
+/// Read one stored product and apply `positions` to its spans in the same decode, keeping the typed value.
+///
+/// This is [`transform_product_positions`] without the final encoding: restoring the returned record equals decoding
+/// the bytes that function returns.
+pub fn place_product_record(encoded: &[u8], positions: &WirePositions) -> Result<PlacedRecord, String> {
+    Ok(PlacedRecord {
+        stored: positioned_record(encoded, positions)?,
+    })
+}
+
 /// Apply the selected coordinate mapping to one fully admitted typed product.
 fn positioned_record(encoded: &[u8], positions: &WirePositions) -> Result<StoredProduct, String> {
     let value = read_wire(encoded, PRODUCT_ROOT, &STORED_PRODUCT_SCHEMA)?;
