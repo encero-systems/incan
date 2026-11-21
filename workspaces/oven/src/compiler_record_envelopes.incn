@@ -48,7 +48,7 @@ pub class RankedCheckingSweep:
         """Admit only complete checking-family activations whose output, snapshot and profile bindings agree."""
         for activation in activations:
             if not valid_activation(activation):
-                return Err("ranked checking sweep requires matching prepared CheckBody work")
+                return Err("ranked checking sweep requires matching prepared signature or body work")
         return Ok(RankedCheckingSweep(pending=activations))
 
     pub def next(mut self) -> Option[RankedActivation]:
@@ -110,9 +110,11 @@ pub def persist_activation(
 def valid_activation(value: RankedActivation) -> bool:
     """Whether one local/final activation has one output, snapshot, profile and CheckBody rank authority."""
     return (
-        (value.ready.output.family == "local" or value.ready.output.family == "final")
-        and value.ready.stage == ProducerStage.CheckBody
-        and value.prepared.rank_certificate.rank.stage == ProducerStage.CheckBody
+        (
+            (value.ready.output.family == "declaration" and value.ready.stage == ProducerStage.Signature)
+            or (value.ready.output.family in ["local", "final"] and value.ready.stage == ProducerStage.CheckBody)
+        )
+        and value.prepared.rank_certificate.rank.stage == value.ready.stage
         and value.ready.output == value.prepared.output
         and value.ready.profile.identity.digest == value.prepared.profile.identity.digest
         and value.prepared.snapshot.root.digest != ""

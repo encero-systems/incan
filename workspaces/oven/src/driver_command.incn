@@ -4,6 +4,7 @@ from rust::std::process import Command
 from rust::std::env::consts import OS
 from std.environ import get_or
 from apple_sdk import configure_sdk
+from core_process import executable
 from c_interop_target import selected_abi_clang
 from codegen import DARWIN_UUID_SALT
 from toolchain import Toolchain
@@ -13,13 +14,17 @@ pub def driver_command(toolchain: Toolchain) -> Result[Command, str]:
     """Bind the selected driver and SDK, removing shell-owned Rust bootstrap permissions."""
     mut command = Command.new(toolchain.driver)
     configure_sdk(command, toolchain.sysroot)?
+    command.env("INCAN_GRAPH_PEER_READER", executable()?)
     command.env_remove("RUSTC_BOOTSTRAP")
     command.env_remove("INCAN_COMPILER_RECORD_ROOT")
     command.env_remove("INCAN_COMPILER_RECORD_DIGEST")
+    command.env_remove("INCAN_COMPILER_RECORD_DIRECTORY")
     match toolchain.compiler_records:
         Some(pin) =>
             command.env("INCAN_COMPILER_RECORD_ROOT", pin.root)
             command.env("INCAN_COMPILER_RECORD_DIGEST", pin.digest)
+            if pin.directory != "":
+                command.env("INCAN_COMPILER_RECORD_DIRECTORY", pin.directory)
         None => pass
     if OS == "macos":
         command.env("RC_UUID_SALT", DARWIN_UUID_SALT)

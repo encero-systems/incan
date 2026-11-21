@@ -2,20 +2,25 @@
 
 from rust::std::str import from_utf8
 from std.fs import Path
+from std.encoding.hex import hexlify
+from std.primitives.hash import sha256
 from std.json import JsonValue
-from compiler_snapshot import stage_snapshot
-from pub::incan_platform.store import Lookup, begin, commit, fork, get, owned, put
-from pub::incan_worker_host.record_snapshot import SNAPSHOT_FORMAT_PROFILE, SnapshotFaultKind, resolve_snapshot, staged_key
+from compiler_snapshot import stage_selected_snapshot, stage_snapshot
+from home_paths import BAKERY_OVERRIDE, BakeryLocation
+from pub::incan_platform.store import begin, commit, fork, put
+from pub::incan_worker_host.record_snapshot import SNAPSHOT_FORMAT_PROFILE, SnapshotFaultKind, resolve_snapshot
+from pub::incan_worker_host.record_snapshot import (
+    SnapshotHandle, encode_snapshot_handle, encode_snapshot_record, read_snapshot_record, snapshot_handle_digest,
+)
 from scratch import scratch_directory
 from store_path_conversion import snapshot
 
 
-def text(value: Lookup) -> Result[str, str]:
-    """Decode one found test value without treating another store state as bytes."""
+def text(value: Option[bytes]) -> Result[str, str]:
+    """Decode one found test value; a tombstone or absence selects none."""
     match value:
-        Lookup.Found(found) => return Ok(str(from_utf8(owned(found)).map_err((error) => str(error))?))
-        Lookup.Deleted => return Err("snapshot read selected a tombstone")
-        Lookup.Absent => return Err("snapshot read selected absence")
+        Some(found) => return Ok(str(from_utf8(found).map_err((error) => str(error))?))
+        None => return Err("snapshot read selected no value")
 
 
 pub def test_snapshot_descriptors_are_staged_resolved_and_scoped_by_digest() -> Result[None, str]:
@@ -40,14 +45,14 @@ pub def test_snapshot_descriptors_are_staged_resolved_and_scoped_by_digest() -> 
     staged = stage_snapshot(home, store, project, ["compiler.input"], SNAPSHOT_FORMAT_PROFILE)?
     assert len(staged.digest) == 64
     opened = resolve_snapshot(home.0, staged.digest).map_err((fault) => fault.message())?
-    first = opened.read("compiler.input\tallowed").map_err((fault) => fault.message())?
+    first = opened.read_value("compiler.input\tallowed").map_err((fault) => fault.message())?
     assert text(first)? == "old"
 
     project = commit(put(begin(project), "compiler.input\tallowed", b"new")).map_err((error) => error.message())?
-    retained = opened.read("compiler.input\tallowed").map_err((fault) => fault.message())?
+    retained = opened.read_value("compiler.input\tallowed").map_err((fault) => fault.message())?
     assert text(retained)? == "old", "worker followed the mutable project head"
 
-    match opened.read("compiler.other\toutside"):
+    match opened.read_value("compiler.other\toutside"):
         Err(fault) =>
             assert fault.kind == SnapshotFaultKind.RootOutside
         Ok(_) => return Err("snapshot descriptor allowed a read outside its roots")
@@ -61,15 +66,9 @@ pub def test_snapshot_descriptors_are_staged_resolved_and_scoped_by_digest() -> 
     outputs = output_view
         .stage_compiler_outputs(b"local-value", b"read-receipt", b"", b"evaluations=1")
         .map_err((fault) => fault.message())?
-    assert get(outputs.snapshot, staged_key("value", outputs.value)).map_err((error) => error.message())? == Some(
-        b"local-value",
-    )
-    assert get(outputs.snapshot, staged_key("receipt", outputs.receipt)).map_err((error) => error.message())? == Some(
-        b"read-receipt",
-    )
-    assert get(outputs.snapshot, staged_key("counter", outputs.counter)).map_err((error) => error.message())? == Some(
-        b"evaluations=1",
-    )
+    assert outputs.staged_page("value")? == Some(b"local-value")
+    assert outputs.staged_page("receipt")? == Some(b"read-receipt")
+    assert outputs.staged_page("counter")? == Some(b"evaluations=1")
 
     wrong = stage_snapshot(home, store, project, ["compiler.input"], "incan.compiler-records/wrong")?
     match resolve_snapshot(home.0, wrong.digest):
@@ -115,7 +114,7 @@ pub def test_two_homes_over_one_bakery_keep_their_own_views() -> Result[None, st
     project = commit(put(begin(project), "compiler.input\tallowed", b"new")).map_err((error) => error.message())?
     _ = stage_snapshot(first, store, project, ["compiler.input"], SNAPSHOT_FORMAT_PROFILE)?
     opened = resolve_snapshot(second.0, second_staged.digest).map_err((fault) => fault.message())?
-    assert text(opened.read("compiler.input\tallowed").map_err((fault) => fault.message())?)? == "old"
+    assert text(opened.read_value("compiler.input\tallowed").map_err((fault) => fault.message())?)? == "old"
     # Staging again keeps a home's view, and a copied descriptor names the same view.
     assert field(binding(first)?, "home_view")? == field(first_binding, "home_view")?
     copy = scratch.path().joinpath("copy")
@@ -124,6 +123,38 @@ pub def test_two_homes_over_one_bakery_keep_their_own_views() -> Result[None, st
     copy.joinpath("bakery.view").write_text(descriptor, "utf-8", "strict", None).map_err((error) => error.message())?
     _ = stage_snapshot(copy, store, project, ["compiler.input"], SNAPSHOT_FORMAT_PROFILE)?
     assert field(binding(copy)?, "home_view")? == field(first_binding, "home_view")?
+    return Ok(None)
+
+
+pub def test_worker_snapshot_authority_isolated_from_socket_and_bakery_override() -> Result[None, str]:
+    """A worker reads the selected store while the socket owner and configured home retain their own identities."""
+    scratch = scratch_directory()?
+    home = scratch.path().joinpath("home")
+    workers = scratch.path().joinpath("socket-owner")
+    home.mkdir(true, true).map_err((error) => error.message())?
+    workers.mkdir(true, true).map_err((error) => error.message())?
+    base = home.joinpath("bakery")
+    other = scratch.path().joinpath("other-bakery")
+    base.mkdir(true, true).map_err((error) => error.message())?
+    other.mkdir(true, true).map_err((error) => error.message())?
+    normal = BakeryLocation(path=base, source="default")
+    override = BakeryLocation(path=other, source=BAKERY_OVERRIDE)
+    first = commit(put(begin(snapshot(base).map_err((error) => error.message())?), "input", b"normal")).map_err((error) => error.message())?
+    second = commit(put(begin(snapshot(other).map_err((error) => error.message())?), "input", b"override")).map_err((error) => error.message())?
+    ordinary = stage_selected_snapshot(home, workers, normal, base, first, ["input"], SNAPSHOT_FORMAT_PROFILE)?
+    original = home.joinpath("bakery.view").read_bytes().map_err((error) => error.message())?
+    chosen = stage_selected_snapshot(home, workers, override, other, second, ["input"], SNAPSHOT_FORMAT_PROFILE)?
+    assert ordinary.authority.0 == home.0
+    assert chosen.authority.0 != home.0 and chosen.authority.0 != workers.0
+    assert home.joinpath("bakery.view").read_bytes().map_err((error) => error.message())? == original
+    for selected, expected in [(ordinary, "normal"), (chosen, "override")]:
+        resolved = resolve_snapshot(selected.authority.0, selected.digest).map_err((fault) => fault.message())?
+        assert text(resolved.read_value("input").map_err((fault) => fault.message())?)? == expected
+    assert resolve_snapshot(home.0, chosen.digest).is_err()
+    assert resolve_snapshot(chosen.authority.0, ordinary.digest).is_err()
+    assert not workers.joinpath("bakery.view").exists()
+    assert stage_selected_snapshot(home, workers, override, base, first, ["input"], SNAPSHOT_FORMAT_PROFILE).is_err()
+    assert stage_selected_snapshot(home, workers, override, other, first, ["input"], SNAPSHOT_FORMAT_PROFILE).is_err()
     return Ok(None)
 
 
@@ -136,3 +167,19 @@ def binding(home: Path) -> Result[JsonValue, str]:
 def field(document: JsonValue, key: str) -> Result[str, str]:
     """A required string field of a descriptor."""
     return document.require(key).and_then((value) => value.expect_str()).map_err((error) => error.message())
+
+pub def test_snapshot_record_authenticates_current_and_predecessor_bytes() -> Result[None, str]:
+    """An old lease keeps its original content address. Altered bytes cannot reopen either generation."""
+    handle = SnapshotHandle(store_id="store", generation=2, manifest="manifest", view="view",
+        view_revision="revision", allowed_roots=["a", "b"], lease="lease", format_profile=SNAPSHOT_FORMAT_PROFILE)
+    current = encode_snapshot_record(handle)?
+    previous = encode_snapshot_handle(handle)?.encode("utf-8")
+    assert current[:4] == b"CRMB"
+    assert snapshot_handle_digest(handle)? == hexlify(sha256.digest(current))
+    for data in [current, previous]:
+        identity = hexlify(sha256.digest(data))
+        assert read_snapshot_record(data, identity)? == handle
+        assert read_snapshot_record(data[:-1], identity).is_err()
+    padded = (encode_snapshot_handle(handle)? + " ").encode("utf-8")
+    assert read_snapshot_record(padded, hexlify(sha256.digest(padded))).is_err()
+    return Ok(None)
