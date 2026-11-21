@@ -25,11 +25,11 @@ use crate::generators::append_generator_constructor;
 use crate::instance_products::{encode_requests, restore_requests};
 use crate::lowering::Inventories;
 use crate::nominal_records::{product_nominal_table, retain_named_scalar, sync_carriers};
-use crate::plan_modules::{admitted_page, report_admitted};
+use crate::plan_modules::{ModulePage, admitted_page, report_admitted};
 use crate::plan_product_inputs::{linked_crates, ordinary_product_inputs, producer_generation};
 use crate::producer_trace::{enter_producer, finish_producer};
 use crate::program_context::ProgramContext;
-use crate::resident_products::{ResidentPage, RestoreInputs};
+use crate::resident_products::RestoreInputs;
 use crate::scalar_store::{
     ProductEvent, admitted_function, admitted_payload, event_nodes, event_reference, report_scalar,
     report_scalar_refusal, retained_scalar, scalar_miss,
@@ -236,7 +236,7 @@ pub struct FrameSource<'a> {
 /// One module's admitted plan record as its ordinary frames read it: the page, the line index an inspected placement
 /// borrows, the functions restored from the page so far and the helper frames each restored product carries.
 pub struct ModuleAdmission<'a> {
-    pub page: &'a ResidentPage,
+    pub page: &'a ModulePage,
     pub placement_lines: &'a [i64],
     pub restored: Vec<AdmittedFunction>,
     pub frames: Vec<Vec<String>>,
@@ -524,8 +524,9 @@ fn restore_admitted(
         positions: current.clone(),
     };
     let restored = admission.page.restored(&inputs, || {
+        let event = admission.page.event_bytes(&name).ok_or("its page event is gone")?;
         admitted_payload(
-            &selected.event,
+            event,
             &span,
             &name,
             program.overflow_checks,

@@ -1,8 +1,9 @@
 //! A module's admitted plan record: the page a worker restores its functions from, and the note of what it restored.
 
 use std::collections::HashMap;
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use incan_mir_plan_native::{
     ADMITTED_MODULE_NOTE, AdmittedFunction, AdmittedModule, PARTIAL_MODULE_NOTE, POSITIONED_MODULE_PAGE,
@@ -37,22 +38,82 @@ impl AdmittedPage {
     }
 }
 
+/// One module's page as one request reads it: the page this worker keeps for its bytes, which holds each event's
+/// identity but not its bytes, and this request's copy of the bytes, from which an event the worker has not restored
+/// for these inputs yet is read.
+pub struct ModulePage {
+    resident: Arc<ResidentPage>,
+    encoded: Vec<u8>,
+    module: String,
+    /// This request's page with its event bytes, read on its first restore the worker has not kept.
+    full: OnceLock<Option<AdmittedPage>>,
+}
+
+impl Deref for ModulePage {
+    type Target = ResidentPage;
+
+    fn deref(&self) -> &ResidentPage {
+        &self.resident
+    }
+}
+
+impl ModulePage {
+    /// A page that admits nothing.
+    fn empty() -> Self {
+        Self {
+            resident: ResidentPage::unkept(no_page()),
+            encoded: Vec::new(),
+            module: String::new(),
+            full: OnceLock::new(),
+        }
+    }
+
+    /// The page this worker keeps for these bytes.
+    pub fn resident(&self) -> &Arc<ResidentPage> {
+        &self.resident
+    }
+
+    /// The bytes of the final event of the body lowered to `function`, read from this request's page.
+    pub fn event_bytes(&self, function: &str) -> Option<&[u8]> {
+        let inspect = self.resident.inspect_placement;
+        let page = self
+            .full
+            .get_or_init(|| read_page(&self.encoded, &self.module, inspect))
+            .as_ref()?;
+        page.event(function).map(|event| event.event.as_slice())
+    }
+}
+
 /// The final events of an admitted module, by the native function name of the body each belongs to.
 ///
 /// Bakery writes the page only for a module whose every witness still validates. No page, or a page that does not
 /// decode or names another module, admits nothing: every body then takes the keyed route. A page this worker already
 /// read from the same bytes is the page it kept, with the products it restored from it.
-pub fn admitted_page(products: Option<&str>, module: &str, generation: Option<&str>) -> Arc<ResidentPage> {
+pub fn admitted_page(products: Option<&str>, module: &str, generation: Option<&str>) -> ModulePage {
     let (Some(directory), Some(_)) = (products, generation) else {
-        return ResidentPage::unkept(no_page());
+        return ModulePage::empty();
     };
     let path = module_page(directory, module);
     let Ok(encoded) = std::fs::read(&path) else {
-        return ResidentPage::unkept(no_page());
+        return ModulePage::empty();
     };
     let inspect = path.to_string_lossy().ends_with(REPOSITION_MODULE_PAGE);
-    resident_page(&encoded, module, inspect, || read_page(&encoded, module, inspect))
-        .unwrap_or_else(|| ResidentPage::unkept(no_page()))
+    let full = OnceLock::new();
+    let resident = resident_page(&encoded, module, inspect, || {
+        let page = read_page(&encoded, module, inspect)?;
+        let kept = without_event_bytes(&page);
+        let _ = full.set(Some(page));
+        Some(kept)
+    });
+    let Some(resident) = resident else {
+        return ModulePage::empty();
+    };
+    ModulePage {
+        resident,
+        encoded,
+        module: module.to_owned(),
+        full,
+    }
 }
 
 /// A page that admits nothing.
@@ -77,6 +138,28 @@ fn read_page(encoded: &[u8], module: &str, inspect: bool) -> Option<AdmittedPage
         page.events.insert(function.function.clone(), function);
     }
     Some(page)
+}
+
+/// The page a worker keeps: each event's identity, without its bytes.
+fn without_event_bytes(page: &AdmittedPage) -> AdmittedPage {
+    let events = page
+        .events
+        .iter()
+        .map(|(name, function)| {
+            let kept = PlanModuleFunction {
+                identity: function.identity.clone(),
+                symbol: function.symbol.clone(),
+                function: function.function.clone(),
+                key: function.key.clone(),
+                event: Vec::new(),
+            };
+            (name.clone(), kept)
+        })
+        .collect();
+    AdmittedPage {
+        events,
+        inspect_placement: page.inspect_placement,
+    }
 }
 
 /// Distinguish fully admitted modules from modules with individual restored functions.
@@ -444,8 +527,14 @@ mod tests {
         std::fs::write(&reposition, &encoded).map_err(|error| error.to_string())?;
         let first = admitted_page(Some(&products), "resident_gamma", Some("profile"));
         let again = admitted_page(Some(&products), "resident_gamma", Some("profile"));
-        assert!(Arc::ptr_eq(&first, &again), "an unchanged page was read again");
+        assert!(
+            Arc::ptr_eq(first.resident(), again.resident()),
+            "an unchanged page was read again"
+        );
         assert!(first.inspect_placement && first.event("a").is_some());
+        // The kept page holds no event bytes; each request reads them from its own copy of the page.
+        assert!(first.event("a").is_some_and(|event| event.event.is_empty()));
+        assert_eq!(again.event_bytes("a"), Some([2_u8].as_slice()));
         // The same bytes under another module name stay refused, and placed bytes are another page.
         let other = root.join(format!("{}.incnmodule.positioned", hex::encode("resident_delta")));
         std::fs::write(&other, &encoded).map_err(|error| error.to_string())?;
@@ -457,7 +546,7 @@ mod tests {
         let positioned = root.join(format!("{basename}.incnmodule.positioned"));
         std::fs::write(&positioned, &encoded).map_err(|error| error.to_string())?;
         let placed = admitted_page(Some(&products), "resident_gamma", Some("profile"));
-        assert!(!Arc::ptr_eq(&first, &placed) && !placed.inspect_placement);
+        assert!(!Arc::ptr_eq(first.resident(), placed.resident()) && !placed.inspect_placement);
         let inputs = RestoreInputs {
             frame: "a".into(),
             file: "resident.incn".into(),
