@@ -83,9 +83,10 @@ pub struct UnitContinuation {
 }
 
 /// A complete native plan, or preserved ordinary-frame work awaiting exact runtime declarations.
+#[allow(clippy::large_enum_variant)]
 pub enum UnitPlanning {
     Complete(Option<Plan>),
-    NeedsRuntime(Box<UnitContinuation>, Vec<RuntimeRequirement>),
+    NeedsRuntime(UnitContinuation, Vec<RuntimeRequirement>),
 }
 
 /// Validate one module, resolving trait implementations against its current slice and retained project authority.
@@ -154,7 +155,11 @@ fn validate_declarations_and_bodies(module: &BodyIrModule, modules: &[BodyIrModu
     }
     for body in &module.bodies {
         if !module.body_has_canonical_direct_call_id(body) {
-            return Err(format!("unsupported Body IR body identity {}::{}", module.module_id.path(), body.name));
+            return Err(format!(
+                "unsupported Body IR body identity {}::{}",
+                module.module_id.path(),
+                body.name
+            ));
         }
     }
     Ok(module.bodies.len())
@@ -253,13 +258,27 @@ fn lowered_plan(
         &modules[entry],
         &empty_templates,
     )?;
-    let PlanContexts { source_context, template_constructors, owners, context, nominal_instances, template_references } =
-        contexts;
+    let PlanContexts {
+        source_context,
+        template_constructors,
+        owners,
+        context,
+        nominal_instances,
+        template_references,
+    } = contexts;
     let shared_source_context = Arc::new(source_context);
     let context = Arc::new(context);
-    let (constructor_table, unions, initial_intrinsics) =
-        layout_tables(&context, &files[entry], &source_files, inputs.package_versions, Vec::new())?;
-    let constructors = Arc::new(with_generic_constructor_arities(constructor_table, &template_constructors));
+    let (constructor_table, unions, initial_intrinsics) = layout_tables(
+        &context,
+        &files[entry],
+        &source_files,
+        inputs.package_versions,
+        Vec::new(),
+    )?;
+    let constructors = Arc::new(with_generic_constructor_arities(
+        constructor_table,
+        &template_constructors,
+    ));
     let mut intrinsics = initial_intrinsics;
     let mut inventories = Inventories::default();
     let mut program = initial_plan_roots(
@@ -318,7 +337,7 @@ fn lowered_plan(
     let requirements = selected_runtime_requirements(&context, &inventories.externals, &inventories.functions)?;
     if !requirements.is_empty() {
         return Ok(UnitPlanning::NeedsRuntime(
-            Box::new(UnitContinuation {
+            UnitContinuation {
                 source_context: shared_source_context,
                 template_constructors: Arc::new(template_constructors),
                 entry_owner: owners[entry].clone(),
@@ -341,7 +360,7 @@ fn lowered_plan(
                 emitted_frames,
                 statics,
                 instance_products,
-            }),
+            },
             requirements,
         ));
     }
@@ -392,7 +411,13 @@ pub fn resume_unit_plan(
     published: &mut Vec<NativeUnionDeclaration>,
 ) -> Result<UnitPlanning, String> {
     let trace = traced("INCAN_TRACE_LOWERING");
-    validate_plan_inputs(modules, inputs.sources, inputs.files, inputs.entry, &continuation.context)?;
+    validate_plan_inputs(
+        modules,
+        inputs.sources,
+        inputs.files,
+        inputs.entry,
+        &continuation.context,
+    )?;
     let entry = checked_entry(modules, inputs.entry)?;
     let source_files = source_file_index(modules, inputs.files)?;
     let UnitContinuation {
@@ -419,7 +444,13 @@ pub fn resume_unit_plan(
         mut statics,
         instance_products,
     } = continuation;
-    let mut inventories = Inventories { models, enums, functions, externals, instances };
+    let mut inventories = Inventories {
+        models,
+        enums,
+        functions,
+        externals,
+        instances,
+    };
     let previous_nominal_count = context.nominal_declarations.len();
     let previous_model_count = inventories.models.len();
     let previous_static_count = context.static_declarations.len();
@@ -462,7 +493,11 @@ pub fn resume_unit_plan(
             &added.nominal_instances,
         )?;
     }
-    extend_constructor_authority(Arc::make_mut(&mut template_constructors), &source_files, inputs.package_versions);
+    extend_constructor_authority(
+        Arc::make_mut(&mut template_constructors),
+        &source_files,
+        inputs.package_versions,
+    );
     extend_constructor_index(Arc::make_mut(&mut constructors), &context.nominal_declarations);
     extend_generic_constructor_arities(Arc::make_mut(&mut constructors), &template_constructors);
     extend_constructor_authority(Arc::make_mut(&mut constructors), &source_files, inputs.package_versions);
@@ -497,7 +532,7 @@ pub fn resume_unit_plan(
     let requirements = selected_runtime_requirements(&context, &inventories.externals, &inventories.functions)?;
     if !requirements.is_empty() {
         return Ok(UnitPlanning::NeedsRuntime(
-            Box::new(UnitContinuation {
+            UnitContinuation {
                 source_context,
                 template_constructors,
                 owners,
@@ -520,7 +555,7 @@ pub fn resume_unit_plan(
                 emitted_frames,
                 statics,
                 instance_products,
-            }),
+            },
             requirements,
         ));
     }
@@ -678,7 +713,7 @@ fn finish_unit_plan(
                 statics,
                 instance_products: products,
             };
-            return Ok(UnitPlanning::NeedsRuntime(Box::new(retry), requests));
+            return Ok(UnitPlanning::NeedsRuntime(retry, requests));
         }
         RuntimeRetention::Complete => statics.extend(instance_cells),
     }
@@ -710,8 +745,13 @@ fn finish_unit_plan(
     let mut templates: Vec<GenericModelDeclaration> = Vec::new();
     let mut enum_templates: Vec<GenericEnumDeclaration> = Vec::new();
     if kind == "library" {
-        templates =
-            generic_models(&template_constructors, &source_context, &template_references, &retained_nominals, &entry_file)?;
+        templates = generic_models(
+            &template_constructors,
+            &source_context,
+            &template_references,
+            &retained_nominals,
+            &entry_file,
+        )?;
         enum_templates = generic_enums(
             &template_constructors,
             &source_context,
@@ -720,7 +760,13 @@ fn finish_unit_plan(
             &intrinsics,
             &entry_file,
         )?;
-        exports = loaf_exports(&context, &emitted_frames.body_positions, &source_context, &templates, &enum_templates);
+        exports = loaf_exports(
+            &context,
+            &emitted_frames.body_positions,
+            &source_context,
+            &templates,
+            &enum_templates,
+        );
         publish_unions(&constructors, &context, &intrinsics, published)?;
     }
     let sources_count = inventories.enums.len() - intrinsics.len();
@@ -805,8 +851,14 @@ fn resume_plan_roots(
     previous_model_count: usize,
     inventories: &mut Inventories,
 ) -> Result<(), String> {
-    let (checked_functions, checked_runtime, checked_instances) =
-        lower_checked_deserialize(&constructors, context, nominal_instances, file, intrinsics, previous_nominal_count)?;
+    let (checked_functions, checked_runtime, checked_instances) = lower_checked_deserialize(
+        &constructors,
+        context,
+        nominal_instances,
+        file,
+        intrinsics,
+        previous_nominal_count,
+    )?;
     let (string_functions, conversion_runtime) =
         lower_string_conversions(&constructors, context, file, intrinsics, previous_nominal_count)?;
     let new_models = lower_model_declarations(
@@ -828,6 +880,36 @@ fn resume_plan_roots(
     merge_instance_requests(&mut inventories.instances, &bridges);
     inventories.models.extend(new_models);
     Ok(())
+}
+
+/// Admit model and enum layouts in order, then freeze their matching program lookup context.
+#[allow(clippy::too_many_arguments)]
+fn initial_plan_layouts(
+    constructors: Arc<ConstructorIndex>,
+    context: &BodyIrModule,
+    file: &str,
+    intrinsics: &mut Vec<EnumDeclaration>,
+    nominal_instances: &[NominalInstance],
+    kind: &str,
+    unions: &[IncanType],
+    overflow_checks: bool,
+    trace: bool,
+) -> Result<(Vec<ModelDeclaration>, Vec<EnumDeclaration>, ProgramContext), String> {
+    trace_lowering(trace, "model declarations");
+    let models = lower_model_declarations(
+        &constructors,
+        context,
+        file,
+        intrinsics,
+        nominal_instances,
+        kind == "library",
+        0,
+    )?;
+    trace_lowering(trace, "enum declarations");
+    let mut enums = lower_enum_declarations(&constructors, context, file, intrinsics)?;
+    attach_enum_comparisons(&constructors, context, &mut enums, intrinsics)?;
+    let program = program_context(constructors, context, intrinsics, unions, overflow_checks)?;
+    Ok((models, enums, program))
 }
 
 /// Matched constructor, union and intrinsic tables for either planning entry point.
@@ -861,8 +943,7 @@ fn completed_plan(
     sources: usize,
 ) -> Result<Option<Plan>, String> {
     let (has_main, declares_main) = main_selection(context, entry_owner);
-    let test_entries =
-        collected_test_entries(context, entry_owner, tests, &inventories.functions, &inventories.enums)?;
+    let test_entries = collected_test_entries(context, entry_owner, tests, &inventories.functions, &inventories.enums)?;
     let mut program_entries: Vec<String> = Vec::new();
     if kind == "program" && !has_main {
         if declares_main {
@@ -888,7 +969,7 @@ fn completed_plan(
         generic_enums: enum_templates,
     };
     // The inventories were folded when the last carrier was appended; storage and templates are folded here.
-    Ok(Some(fold_carrier_positions(planned, sources as i64)?))
+    Ok(Some(fold_carrier_positions(&planned, sources as i64)?))
 }
 
 /// Retain closed storage, restore the source inventory, then finalize with its paired index.
@@ -904,7 +985,13 @@ fn finish_instance_layouts(
     let zip_carriers = runtime_zip_carriers(retained_constructors, context, intrinsics)?;
     // Closed frames keep their native layouts; source exports retain the original declaration inventory.
     context.nominal_declarations.truncate(original_nominal_count);
-    finalize_plan_layouts(original_constructors, context, inventories, intrinsics, kind == "library")?;
+    finalize_plan_layouts(
+        original_constructors,
+        context,
+        inventories,
+        intrinsics,
+        kind == "library",
+    )?;
     Ok(zip_carriers)
 }
 
@@ -969,9 +1056,22 @@ pub fn plan_contexts(
     trace_lowering_footprint(footprint_trace, "validated modules");
     trace_lowering(trace, "project context");
     let (mut context, owners) = project_context(modules, entry as usize)?;
-    let (source_context, template_constructors, nominal_instances, template_references) =
-        specialize_plan_context(&mut context, source_files, package_versions, retained_templates, footprint_trace, trace)?;
-    Ok(PlanContexts { source_context, template_constructors, owners, context, nominal_instances, template_references })
+    let (source_context, template_constructors, nominal_instances, template_references) = specialize_plan_context(
+        &mut context,
+        source_files,
+        package_versions,
+        retained_templates,
+        footprint_trace,
+        trace,
+    )?;
+    Ok(PlanContexts {
+        source_context,
+        template_constructors,
+        owners,
+        context,
+        nominal_instances,
+        template_references,
+    })
 }
 
 /// Validate a resumed runtime slice and project its body-weighted module ranges concurrently.
@@ -993,9 +1093,22 @@ fn plan_contexts_parallel(
     trace_lowering_footprint(footprint_trace, "validated resumed modules");
     trace_lowering(trace, "parallel resumed project context");
     let (mut context, owners) = project_context_parallel(modules, entry as usize)?;
-    let (source_context, template_constructors, nominal_instances, template_references) =
-        specialize_plan_context(&mut context, source_files, package_versions, retained_templates, footprint_trace, trace)?;
-    Ok(PlanContexts { source_context, template_constructors, owners, context, nominal_instances, template_references })
+    let (source_context, template_constructors, nominal_instances, template_references) = specialize_plan_context(
+        &mut context,
+        source_files,
+        package_versions,
+        retained_templates,
+        footprint_trace,
+        trace,
+    )?;
+    Ok(PlanContexts {
+        source_context,
+        template_constructors,
+        owners,
+        context,
+        nominal_instances,
+        template_references,
+    })
 }
 
 /// Specialize one serially or concurrently projected module context under the same deterministic layout rules.

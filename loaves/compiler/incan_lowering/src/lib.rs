@@ -7,26 +7,67 @@
 
 use std::collections::BTreeMap;
 
+use incan_semantics_core::CompilerNodeId;
 use incan_semantics_core::body_ir::{BodyIrModule, NativeUnionDeclaration};
-use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId};
 
 pub mod corpus;
 
+mod async_;
 mod body_index;
+mod checked_json;
 mod class_inheritance;
+mod classes;
+mod closures;
+mod collections;
+mod comparison_methods;
 mod compiler_record_adapters;
 mod continuation_context;
+mod decls;
+mod decorator_caches;
+mod display_methods;
 mod enum_instances;
+mod enums;
+mod fallible_factories;
+mod frame_instances;
+mod function_frames;
+mod generators;
+mod generic_enums;
+mod generic_layouts;
+mod instance_products;
+mod layout_types;
+mod lists;
+mod lowering;
+mod models;
 mod native_type_identity;
 mod nominal_frames;
 mod nominal_instances;
+mod numerics;
+mod options;
 mod parallel_ranges;
+mod pending;
+mod plan_product_inputs;
+mod program_context;
+mod program_entries;
+mod project;
+mod ranges;
+mod runtime_calls;
+mod runtime_layouts;
 mod runtime_requirements;
+mod static_storage;
+mod string_conversion;
+mod string_conversion_contracts;
 mod symbols;
 mod trace_channel;
+mod trait_links;
+mod traits;
+mod tuples;
 mod type_parameters;
+mod types;
+mod unions;
 
-pub use incan_mir_lowering::{Plan, PlanType, SourceSpan};
+pub use incan_mir_plan_native::{Plan, PlanType, SourceSpan};
+pub use lowering::{UnitContinuation, UnitPlanning};
+pub use runtime_requirements::{RefusalPlanning, RuntimeRequirement};
 
 /// Source provenance, collected tests and the unit's integer overflow policy, aligned with the module list.
 #[derive(Clone, Debug, Default)]
@@ -44,33 +85,22 @@ pub struct SourceInputs {
     pub record_report: Option<String>,
 }
 
-/// An authenticated runtime declaration needed at an existing source operation's location.
-#[derive(Clone, Debug, PartialEq)]
-pub struct RuntimeRequirement {
-    /// None requests the independently addressed facade before its canonical declaration can be selected.
-    pub canonical: Option<CanonicalSymbolId>,
-    pub path: String,
-    pub span: SourceSpan,
+impl SourceInputs {
+    fn unit<'a>(&'a self, entry: i64, kind: &'a str) -> lowering::UnitInputs<'a> {
+        lowering::UnitInputs {
+            sources: &self.sources,
+            files: &self.files,
+            entry,
+            kind,
+            tests: &self.tests,
+            package_versions: &self.package_versions,
+            overflow_checks: self.overflow_checks,
+            scalar_products: self.scalar_products.clone(),
+            scalar_bodies: &self.scalar_bodies,
+            record_report: self.record_report.clone(),
+        }
+    }
 }
-
-/// Lowering work retained while the driver resolves the runtime declarations that work selected.
-pub struct UnitContinuation {
-    _private: (),
-}
-
-/// A complete native plan, or retained work awaiting exact runtime declarations.
-pub enum UnitPlanning {
-    Complete(Option<Plan>),
-    NeedsRuntime(UnitContinuation, Vec<RuntimeRequirement>),
-}
-
-/// A complete diagnostic census, or prerequisites that must resolve before it can publish its report.
-pub enum RefusalPlanning {
-    Complete(Vec<String>),
-    NeedsRuntime(Vec<RuntimeRequirement>),
-}
-
-const UNIMPLEMENTED: &str = "unsupported lowering: the Rust lowering has not reached this unit";
 
 /// Lower one checked program, library or collected test unit.
 pub fn unit_plan(
@@ -80,8 +110,7 @@ pub fn unit_plan(
     kind: &str,
     published: &mut Vec<NativeUnionDeclaration>,
 ) -> Result<UnitPlanning, String> {
-    let _ = (modules, inputs, entry, kind, published);
-    Err(UNIMPLEMENTED.to_owned())
+    lowering::unit_plan(modules, &inputs.unit(entry, kind), published)
 }
 
 /// Resume retained work against the exact runtime declarations the driver resolved.
@@ -93,8 +122,11 @@ pub fn resume_unit_plan(
     kind: &str,
     published: &mut Vec<NativeUnionDeclaration>,
 ) -> Result<UnitPlanning, String> {
-    let _ = (continuation, modules, inputs, entry, kind, published);
-    Err(UNIMPLEMENTED.to_owned())
+    let mut unit = inputs.unit(entry, kind);
+    // A resumed attempt never reads keyed products again: its frames were captured by the first attempt.
+    unit.scalar_products = None;
+    unit.record_report = None;
+    lowering::resume_unit_plan(continuation, modules, &unit, published)
 }
 
 /// Collect every body's first refusal, or all of one selected body's, for the refusal census.
@@ -107,11 +139,15 @@ pub fn program_refusals(
     kind: &str,
 ) -> RefusalPlanning {
     let _ = (modules, inputs, entry, progress, selection, kind);
-    RefusalPlanning::Complete(vec![UNIMPLEMENTED.to_owned()])
+    RefusalPlanning::Complete(vec![pending::untranslated("program_refusals::program_refusals")])
 }
 
 /// The runtime layouts a unit needs installed before its first lowering attempt.
 pub fn layout_runtime_requirements(modules: &[BodyIrModule], file: String) -> Vec<RuntimeRequirement> {
-    let _ = (modules, file);
-    Vec::new()
+    runtime_calls::layout_runtime_requirements(modules, &file)
+}
+
+/// Whether a plan type is an ordinary or sized numeric carrier, shared with native owned-result validation.
+pub fn numeric_carrier(ty: &PlanType) -> bool {
+    numerics::numeric_carrier(ty)
 }
