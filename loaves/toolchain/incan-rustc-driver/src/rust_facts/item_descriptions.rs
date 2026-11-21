@@ -442,7 +442,7 @@ pub(super) fn trait_bounds(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefI
         bounds.push(RustTraitBound {
             self_type: display(tcx, reference.self_ty()),
             path: visible_path(tcx, reference.def_id),
-            type_arguments: reference.args.types().skip(1).map(display).collect(),
+            type_arguments: reference.args.types().skip(1).map(|ty| display(tcx, ty)).collect(),
             associated_type_bindings: Vec::new(),
         });
     }
@@ -466,7 +466,7 @@ pub(super) fn trait_bounds(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefI
             .args
             .types()
             .skip(1)
-            .map(display)
+            .map(|ty| display(tcx, ty))
             .collect::<Vec<_>>();
         let binding = RustAssociatedTypeBinding {
             name: name.to_string(),
@@ -584,7 +584,7 @@ pub(super) fn trait_impl_template(
             .filter(|parameter| matches!(parameter.kind, ty::GenericParamDefKind::Type { .. }))
             .map(|parameter| parameter.name.to_string())
             .collect(),
-        type_arguments: reference.args.types().skip(1).map(display).collect(),
+        type_arguments: reference.args.types().skip(1).map(|ty| display(tcx, ty)).collect(),
         bounds: trait_bounds(tcx, implementation, named),
         associated_type_bindings,
     })
