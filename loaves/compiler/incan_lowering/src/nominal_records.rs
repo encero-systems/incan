@@ -5,6 +5,7 @@ use incan_mir_plan_native::{
     describe_nominals, encode_checked_layout, product_nominals, unit_nominals,
 };
 use incan_semantics_core::CanonicalSymbolId;
+use incan_semantics_core::body_ir::StaticDeclaration;
 use incan_semantics_core::semantic_digest::{enum_layout_witness, model_layout_witness, semantic_digest};
 use incan_semantics_core::stable_identity::StableDeclarationId;
 use sha2::{Digest, Sha256};
@@ -44,9 +45,28 @@ pub fn unit_product_nominals(program: &ProgramContext, intrinsics: &[EnumDeclara
         described.push(source_nominal(NominalKind::Enum, &declaration.canonical, witness));
         enum_names.push(model_symbol(&carrier));
     }
-    let mut unit = unit_nominals(models, described, model_names, enum_names);
+    let statics = program.statics.iter().map(static_nominal).collect();
+    let mut unit = unit_nominals(models, described, model_names, enum_names).with_statics(statics);
     sync_carriers(&mut unit, intrinsics);
     unit
+}
+
+/// Describe one static cell by its stable declaration identity and the digest of its whole checked declaration: its
+/// type and its initializer decide how a reader loads it and whether the reader first initializes its module.
+fn static_nominal(declaration: &StaticDeclaration) -> ProductNominal {
+    let identity = StableDeclarationId::from_canonical(&declaration.canonical, None, None);
+    match (identity, semantic_digest(declaration)) {
+        (Some(stable), Ok(digest)) => ProductNominal {
+            kind: NominalKind::Static,
+            identity: format!("static:{}", stable.render_compact()),
+            digest,
+        },
+        _ => ProductNominal {
+            kind: NominalKind::Static,
+            identity: String::new(),
+            digest: String::new(),
+        },
+    }
 }
 
 /// Describe intrinsic carriers lowering admitted since the table was described, each at its carrier position.

@@ -8,6 +8,7 @@ pub(crate) static SHAPE_NOMINAL_IDENTITIES_NOMINAL_KIND: Shape = Shape {
     body: ShapeBody::Enum(&[
         variant(b"^,aL#\xf0", "Model", &[]),
         variant(b"T\x10\x8d\xaf\xaa\xc5", "Enum", &[]),
+        variant(b"\x1d,s\xdc\x01\xf2", "Static", &[]),
     ]),
 };
 

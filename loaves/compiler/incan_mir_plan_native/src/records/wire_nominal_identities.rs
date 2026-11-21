@@ -11,6 +11,7 @@ pub(crate) fn wire_nominal_kind(value: &NominalKind) -> Result<Wire, String> {
     Ok(match value {
         NominalKind::Model => unit(b"^,aL#\xf0"),
         NominalKind::Enum => unit(b"T\x10\x8d\xaf\xaa\xc5"),
+        NominalKind::Static => unit(b"\x1d,s\xdc\x01\xf2"),
     })
 }
 
@@ -29,6 +30,7 @@ fn read_nominal_kind_alternative(
     Ok(match identity {
         b"^,aL#\xf0" if fields.is_empty() => NominalKind::Model,
         b"T\x10\x8d\xaf\xaa\xc5" if fields.is_empty() => NominalKind::Enum,
+        b"\x1d,s\xdc\x01\xf2" if fields.is_empty() => NominalKind::Static,
         _ => return Err("unknown or incomplete NominalKind alternative".to_owned()),
     })
 }

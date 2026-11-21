@@ -251,6 +251,7 @@ pub fn event_reference(reference: &NominalReference) -> EventReference {
     let kind = match reference.kind {
         NominalKind::Model => "model",
         NominalKind::Enum => "enum",
+        NominalKind::Static => "static",
     };
     EventReference {
         kind: kind.to_owned(),
@@ -268,6 +269,7 @@ pub fn event_references(event: &LoweringEvent) -> Result<Vec<NominalReference>, 
             let kind = match reference.kind.as_str() {
                 "enum" => NominalKind::Enum,
                 "model" => NominalKind::Model,
+                "static" => NominalKind::Static,
                 _ => return Err("invalid lowering event nominal kind".to_owned()),
             };
             Ok(NominalReference {
@@ -706,11 +708,11 @@ mod tests {
         Function::new(name.to_owned(), Vec::new(), PlanType::Unit, locals, blocks, span)
     }
 
-    /// Plans name statics by slot, and a static added to an earlier module shifts every later slot. A product never
-    /// holds one: a function that reads, writes or forces a static, or calls a method under its guard, is refused as
-    /// a product, so no reused product can reach a shifted cell; only its module initializer call is stored, by name.
+    /// Plans name statics by slot, and a static added to an earlier module shifts every later slot. A product names a
+    /// cell by its declaration instead, so a function that reads, writes or forces a static, or calls a method under
+    /// its guard, is kept only with each cell described; without a description it is refused and nothing is written.
     #[test]
-    fn a_function_that_touches_a_static_is_never_kept_as_a_product() {
+    fn a_function_that_touches_an_undescribed_static_is_never_kept_as_a_product() {
         let directory = product_directory("static");
         let span = source_span("src/main.incn", 3, 1);
         let inputs = scalar_inputs("sha256:ab", "main", &span, false, "witness");
@@ -732,8 +734,8 @@ mod tests {
                 &[],
             );
             assert!(
-                refused.is_err_and(|reason| reason.contains("refuse dynamic or owner-dependent callees")),
-                "a product kept a static slot"
+                refused.is_err_and(|reason| reason.contains("without a declaration identity")),
+                "a product kept an undescribed static slot"
             );
         }
         assert!(

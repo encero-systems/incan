@@ -853,6 +853,13 @@ fn store_target(target: &CalleeKind, remap: &mut NominalRemap) -> Result<StoredT
         }
         // The formatted carrier names its model or enum by product-local ordinal, like any stored type.
         CalleeKind::FormatValue(ty, debug) => StoredTarget::FormatValue(store_type(ty, remap)?, *debug),
+        // A static cell is named by its declaration, through a product-local ordinal like a model or enum.
+        CalleeKind::StaticLoad(slot) => StoredTarget::StaticLoad(remap.slot(NominalKind::Static, *slot, "")?.index),
+        CalleeKind::StaticStore(slot) => StoredTarget::StaticStore(remap.slot(NominalKind::Static, *slot, "")?.index),
+        CalleeKind::StaticForce(slot) => StoredTarget::StaticForce(remap.slot(NominalKind::Static, *slot, "")?.index),
+        CalleeKind::StaticMethod(slot, name) => {
+            StoredTarget::StaticMethod(remap.slot(NominalKind::Static, *slot, "")?.index, name.clone())
+        }
         _ => return store_closure_target(target, remap),
     })
 }
@@ -902,6 +909,18 @@ fn restore_target(target: &StoredTarget, remap: &mut NominalRemap) -> Result<Cal
         StoredTarget::CloneClosure(signature) => CalleeKind::CloneClosure(restore_types(signature, remap)?),
         StoredTarget::Value(operand) => CalleeKind::Value(restore_operand(operand, remap)?),
         StoredTarget::FormatValue(ty, debug) => CalleeKind::FormatValue(restore_type(ty, remap)?, *debug),
+        StoredTarget::StaticLoad(ordinal) => {
+            CalleeKind::StaticLoad(remap.slot(NominalKind::Static, *ordinal, "")?.index)
+        }
+        StoredTarget::StaticStore(ordinal) => {
+            CalleeKind::StaticStore(remap.slot(NominalKind::Static, *ordinal, "")?.index)
+        }
+        StoredTarget::StaticForce(ordinal) => {
+            CalleeKind::StaticForce(remap.slot(NominalKind::Static, *ordinal, "")?.index)
+        }
+        StoredTarget::StaticMethod(ordinal, name) => {
+            CalleeKind::StaticMethod(remap.slot(NominalKind::Static, *ordinal, "")?.index, name.clone())
+        }
     })
 }
 
