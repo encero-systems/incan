@@ -205,7 +205,7 @@ def started_at(pid: int) -> Result[str, str]:
 def group_members(group: int) -> Result[list[int], str]:
     """The live processes of one process group, its leader included."""
     identities = process_identities()?
-    return sorted([pid for pid in identities.keys() if identities[pid].group == group])
+    return Ok(sorted([pid for pid in identities.keys() if identities[pid].group == group]))
 
 
 def release_root() -> Result[Child, str]:
