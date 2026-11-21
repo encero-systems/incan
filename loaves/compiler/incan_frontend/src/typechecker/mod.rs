@@ -580,6 +580,13 @@ pub struct TypeChecker {
     /// Callable bodies that replace storage inside a direct borrowed iteration and therefore need graph analysis.
     /// The marker only activates the canonical ownership pass; it does not retain a parallel place or loan model.
     iteration_replacement_bodies: HashSet<CanonicalSymbolId>,
+    /// RFC 164: callable bodies that lend a place to an exclusive borrow, or bind a local borrow of a value, outside
+    /// the whole-body proof. The marker activates the canonical ownership pass to report loan conflicts only.
+    native_borrow_bodies: HashSet<CanonicalSymbolId>,
+    /// Local borrows of values outside the whole-body proof, keyed by their binding, for that conflict pass.
+    native_local_borrows: std::collections::BTreeMap<CanonicalSymbolId, ownership_contracts::LocalMode>,
+    /// Whether the ownership pass being built reports loan conflicts only; only then are native local borrows loans.
+    native_borrow_pass: bool,
     /// Callable bodies containing an optional dictionary lookup whose matched payload may borrow its stored entry.
     /// The marker only activates canonical graph construction and is consumed when that body is finalized.
     dictionary_lookup_bodies: HashSet<CanonicalSymbolId>,
