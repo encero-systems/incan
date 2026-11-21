@@ -1,5 +1,6 @@
 //! Checked source locations, places and operands read into the native frame.
 
+use incan_lang::numeric_strings::parse_float_string;
 use incan_mir_plan_native::{
     Constant, Operand, OperandKind, Place, PlanType, Projection, RvalueKind, SourceSpan, assign as plan_assign,
     place as plan_place, source_span, tuple_element_type,
@@ -521,9 +522,7 @@ pub fn scalar_constant(constant: &SourceConstant, span: &SourceSpan) -> Result<O
         SourceConstant::Int(number) => Ok(literal(Constant::Int(*number), span)),
         SourceConstant::RustItem(..) => Err("Rust constant requires its checked carrier".into()),
         SourceConstant::Float(text) => {
-            let value: f64 = text
-                .parse()
-                .map_err(|_| format!("invalid Body IR float constant {text}"))?;
+            let value = parse_float_string(text).ok_or_else(|| format!("invalid Body IR float constant {text}"))?;
             Ok(literal(Constant::Float(value), span))
         }
         SourceConstant::Bool(flag) => Ok(literal(Constant::Bool(*flag), span)),

@@ -1,5 +1,6 @@
 //! Checked primitive, tuple, source-local model and carrier pattern tests for direct-route match dispatch.
 
+use incan_lang::numeric_strings::parse_float_string;
 use incan_mir_plan_native::{
     BinaryOp, Carrier, Constant, FieldProjection, Place, PlanType, Projection, RvalueKind, SourceSpan, TerminatorKind,
     assign as plan_assign, carrier_position,
@@ -320,9 +321,7 @@ fn literal_test(
     let (constant, expected) = match value {
         SourceConstant::Int(number) => (Constant::Int(*number), PlanType::Int),
         SourceConstant::Float(text) => {
-            let number: f64 = text
-                .parse()
-                .map_err(|_| format!("invalid Body IR float constant {text}"))?;
+            let number = parse_float_string(text).ok_or_else(|| format!("invalid Body IR float constant {text}"))?;
             (Constant::Float(number), PlanType::Float)
         }
         SourceConstant::Bool(flag) => (Constant::Bool(*flag), PlanType::Bool),
