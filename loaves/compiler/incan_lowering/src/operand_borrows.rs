@@ -13,6 +13,7 @@ use crate::array_views::borrow_array_slice;
 use crate::builtin_calls::assign_text_result;
 use crate::bytes_plan::bytes_literal;
 use crate::checked_values::{reference_value_read, scalar_operand, scalar_place};
+use crate::element_borrows::shared_element_place;
 use crate::element_places::is_element_place;
 use crate::formatting::{display_operand, display_plan_operand};
 use crate::frame::{
@@ -102,7 +103,7 @@ pub fn borrow_text_operand(builder: &mut Builder, value: &SourceOperand, span: &
         return Ok(read_place(reference, false, span));
     }
     if is_element_place(builder, &read.place)? {
-        return Err(untranslated("operand_borrows::borrow_element_text"));
+        return borrow_element_text(builder, value, read.fact, span);
     }
     let place = scalar_place(builder, &read.place, span)?;
     match read.fact {
@@ -122,11 +123,52 @@ pub fn borrow_text_operand(builder: &mut Builder, value: &SourceOperand, span: &
             Ok(borrow_string(builder, owner, span))
         }
         PlanType::String => Ok(borrow_string(builder, place, span)),
-        ty => {
-            let site = format!("{}:{}:{} in {}", builder.file, span.line, span.column, builder.name);
-            Err(format!(
-                "unsupported Body IR non-string text operand at {site}; type {ty:?}"
-            ))
+        ty => Err(unsupported_text_operand(builder, &ty, span)),
+    }
+}
+
+/// Identify the checked text boundary's actual carrier and source site when it cannot be borrowed as text.
+fn unsupported_text_operand(builder: &Builder, ty: &PlanType, span: &SourceSpan) -> String {
+    let site = format!("{}:{}:{} in {}", builder.file, span.line, span.column, builder.name);
+    format!("unsupported Body IR non-string text operand at {site}; type {ty:?}")
+}
+
+/// Borrow indexed text in place for a shared read; owned reads retain their independent materialization.
+fn borrow_element_text(
+    builder: &mut Builder,
+    value: &SourceOperand,
+    fact: OwnershipFact,
+    span: &SourceSpan,
+) -> Result<Operand, String> {
+    match fact {
+        OwnershipFact::MutBorrow => return Err("unsupported Body IR mutable String borrow".into()),
+        OwnershipFact::Unknown => return Err("unsupported Body IR unknown String ownership".into()),
+        _ => {}
+    }
+    if fact == OwnershipFact::Borrow
+        && let SourceOperand::Place(read) = value
+        && let Some(owner) = shared_element_place(builder, &read.place, span)?
+        && place_type(&builder.locals, &owner) == PlanType::String
+    {
+        return Ok(borrow_string(builder, owner, span));
+    }
+    let operand = value_operand(builder, value, span)?;
+    if value_type(builder, &operand)? == PlanType::FrozenStr {
+        // Match direct frozen text: copy its static wrapper, then provide the owned text view this helper expects.
+        let owner = display_plan_operand(builder, operand, span)?;
+        return Ok(borrow_string(builder, owner, span));
+    }
+    match operand.kind {
+        OperandKind::Move(owner) => {
+            let ty = place_type(&builder.locals, &owner);
+            if ty != PlanType::String {
+                return Err(unsupported_text_operand(builder, &ty, span));
+            }
+            Ok(borrow_string(builder, owner, span))
+        }
+        _ => {
+            let ty = value_type(builder, &operand)?;
+            Err(unsupported_text_operand(builder, &ty, span))
         }
     }
 }

@@ -24,6 +24,7 @@ use crate::layout_types::{native_source_type, stored_field_type};
 use crate::list_values::value_operand;
 use crate::models::constructor_index;
 use crate::pending::untranslated;
+use crate::ranges::range_aggregate;
 use crate::result_carriers::frozen_operand;
 use crate::statements::{borrowed_payload, carrier_payload};
 use crate::text_plan::owned_literal;
@@ -85,9 +86,29 @@ pub fn checked_aggregate(
             let operands = model_default_arguments(module, builder, index, &target.binding, elements, span)?;
             Ok(RvalueKind::Model(index as i64, operands))
         }
-        AggregateKind::Range => Err(untranslated("ranges::range_aggregate")),
+        AggregateKind::Range => range_value(builder, elements, expected, span),
         _ => Err("unsupported Body IR Aggregate outside plain models".into()),
     }
+}
+
+/// Copy a source range's checked scalar fields, in Body IR's declared order, into its native layout.
+fn range_value(
+    builder: &mut Builder,
+    elements: &[ArgumentElement],
+    expected: &PlanType,
+    span: &SourceSpan,
+) -> Result<RvalueKind, String> {
+    let mut fields = Vec::with_capacity(elements.len());
+    let mut types = Vec::with_capacity(elements.len());
+    for element in elements {
+        let Some(value) = element.as_one() else {
+            return Err("unsupported Body IR spread range field".into());
+        };
+        let field = scalar_operand(builder, value, span)?;
+        types.push(value_type(builder, &field)?);
+        fields.push(field);
+    }
+    range_aggregate(expected, fields, &types)
 }
 
 /// Materialize a tuple's elements at the destination's checked element carriers.
