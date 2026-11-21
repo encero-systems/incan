@@ -307,6 +307,7 @@ pub(crate) enum StoredRvalue {
     FunctionAddress(StoredOperand),
     ClosureObject(StoredPlace),
     PlannedFunctionItem(String, StoredSpan),
+    FrozenCollection(StoredType, Vec<StoredFrozenValue>),
 }
 
 /// Project one `StoredRvalue` alternative onto its identity and positional payload.
@@ -380,6 +381,10 @@ pub(crate) fn wire_stored_rvalue(value: &StoredRvalue) -> Result<Wire, String> {
         StoredRvalue::PlannedFunctionItem(field0, field1) => alternative(
             b"^H\x983G\x01",
             vec![Wire::Text(field0.clone()), wire_stored_span(field1)?],
+        ),
+        StoredRvalue::FrozenCollection(field0, field1) => alternative(
+            b"`ar\x85\xa4\xcb",
+            vec![wire_stored_type(field0)?, list(field1, wire_stored_frozen_value)?],
         ),
     })
 }
@@ -481,7 +486,50 @@ fn read_stored_rvalue_alternative(
         b"^H\x983G\x01" if fields.len() == 2 => {
             StoredRvalue::PlannedFunctionItem(text(&fields[0].value)?, read_stored_span(&fields[1].value, positions)?)
         }
+        b"`ar\x85\xa4\xcb" if fields.len() == 2 => StoredRvalue::FrozenCollection(
+            read_stored_type(&fields[0].value, positions)?,
+            read_list(&fields[1].value, |item0| read_stored_frozen_value(item0, positions))?,
+        ),
         _ => return Err("unknown or incomplete StoredRvalue alternative".to_owned()),
+    })
+}
+
+/// The stored form of `StoredFrozenValue` in the native-plan profile.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum StoredFrozenValue {
+    Scalar(StoredConstant),
+    Bytes(Vec<i64>),
+    Collection(StoredType, Vec<StoredFrozenValue>),
+}
+
+/// Project one `StoredFrozenValue` alternative onto its identity and positional payload.
+pub(crate) fn wire_stored_frozen_value(value: &StoredFrozenValue) -> Result<Wire, String> {
+    Ok(match value {
+        StoredFrozenValue::Scalar(field0) => alternative(b"C\x81\x9c`\xb3\xbd", vec![wire_stored_constant(field0)?]),
+        StoredFrozenValue::Bytes(field0) => alternative(
+            b"M\x80\x000\x1f\xcc",
+            vec![list(field0, |item0| Ok(Wire::integer(*item0)))?],
+        ),
+        StoredFrozenValue::Collection(field0, field1) => alternative(
+            b"{y\x07\x08\xff\x1b",
+            vec![wire_stored_type(field0)?, list(field1, wire_stored_frozen_value)?],
+        ),
+    })
+}
+
+/// Read one `StoredFrozenValue` alternative by its identity, requiring its exact payload arity.
+pub(crate) fn read_stored_frozen_value(value: &Wire, positions: &WirePositions) -> Result<StoredFrozenValue, String> {
+    let (identity, fields) = wire_variant(value)?;
+    Ok(match identity {
+        b"C\x81\x9c`\xb3\xbd" if fields.len() == 1 => {
+            StoredFrozenValue::Scalar(read_stored_constant(&fields[0].value, positions)?)
+        }
+        b"M\x80\x000\x1f\xcc" if fields.len() == 1 => StoredFrozenValue::Bytes(read_list(&fields[0].value, number)?),
+        b"{y\x07\x08\xff\x1b" if fields.len() == 2 => StoredFrozenValue::Collection(
+            read_stored_type(&fields[0].value, positions)?,
+            read_list(&fields[1].value, |item0| read_stored_frozen_value(item0, positions))?,
+        ),
+        _ => return Err("unknown or incomplete StoredFrozenValue alternative".to_owned()),
     })
 }
 

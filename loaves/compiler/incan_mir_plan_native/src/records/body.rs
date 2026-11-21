@@ -5,13 +5,13 @@
 //! the current unit resolved for the declaration the product names.
 
 use crate::body::{
-    BinaryOp, Callee, CalleeKind, Constant, FieldProjection, Operand, OperandKind, Place, Projection, Rvalue,
-    RvalueKind, Statement, StatementKind, UnaryOp,
+    BinaryOp, Callee, CalleeKind, Constant, FieldProjection, FrozenValue, Operand, OperandKind, Place, Projection,
+    Rvalue, RvalueKind, Statement, StatementKind, UnaryOp,
 };
 use crate::nominal::{NominalKind, NominalRemap, remap_type};
 use crate::records::wire_body_records::{
-    StoredConstant, StoredFieldStep, StoredOperand, StoredPlace, StoredProjection, StoredRead, StoredRvalue,
-    StoredSpan, StoredStatement, StoredStatementKind, StoredType,
+    StoredConstant, StoredFieldStep, StoredFrozenValue, StoredOperand, StoredPlace, StoredProjection, StoredRead,
+    StoredRvalue, StoredSpan, StoredStatement, StoredStatementKind, StoredType,
 };
 use crate::types::{PlanType, SourceSpan, source_span};
 
@@ -185,6 +185,38 @@ fn store_constant(value: &Constant, remap: &mut NominalRemap) -> Result<StoredCo
     })
 }
 
+/// Retain an effect-free static collection's values in source order, each scalar as an ordinary constant.
+fn store_frozen_values(values: &[FrozenValue], remap: &mut NominalRemap) -> Result<Vec<StoredFrozenValue>, String> {
+    values
+        .iter()
+        .map(|value| {
+            Ok(match value {
+                FrozenValue::Scalar(constant) => StoredFrozenValue::Scalar(store_constant(constant, remap)?),
+                FrozenValue::Bytes(bytes) => StoredFrozenValue::Bytes(bytes.clone()),
+                FrozenValue::Collection(ty, nested) => {
+                    StoredFrozenValue::Collection(store_type(ty, remap)?, store_frozen_values(nested, remap)?)
+                }
+            })
+        })
+        .collect()
+}
+
+/// Recover a static collection's exact values and nesting.
+fn restore_frozen_values(values: &[StoredFrozenValue], remap: &mut NominalRemap) -> Result<Vec<FrozenValue>, String> {
+    values
+        .iter()
+        .map(|value| {
+            Ok(match value {
+                StoredFrozenValue::Scalar(constant) => FrozenValue::Scalar(restore_constant(constant, remap)?),
+                StoredFrozenValue::Bytes(bytes) => FrozenValue::Bytes(bytes.clone()),
+                StoredFrozenValue::Collection(ty, nested) => {
+                    FrozenValue::Collection(restore_type(ty, remap)?, restore_frozen_values(nested, remap)?)
+                }
+            })
+        })
+        .collect()
+}
+
 /// Recover the producer's exact constant variant.
 fn restore_constant(value: &StoredConstant, remap: &mut NominalRemap) -> Result<Constant, String> {
     Ok(match value {
@@ -322,6 +354,9 @@ fn store_nominal_rvalue(value: &RvalueKind, remap: &mut NominalRemap) -> Result<
         ),
         RvalueKind::FrozenText(operand) => StoredRvalue::FrozenText(store_operand(operand, remap)?),
         RvalueKind::FrozenBytes(bytes) => StoredRvalue::FrozenBytes(bytes.clone()),
+        RvalueKind::FrozenCollection(ty, values) => {
+            StoredRvalue::FrozenCollection(store_type(ty, remap)?, store_frozen_values(values, remap)?)
+        }
         RvalueKind::NumericCast(operand, source, target) => StoredRvalue::NumericCast(
             store_operand(operand, remap)?,
             store_type(source, remap)?,
@@ -382,6 +417,9 @@ fn restore_nominal_rvalue(value: &StoredRvalue, remap: &mut NominalRemap) -> Res
         ),
         StoredRvalue::FrozenText(operand) => RvalueKind::FrozenText(restore_operand(operand, remap)?),
         StoredRvalue::FrozenBytes(bytes) => RvalueKind::FrozenBytes(bytes.clone()),
+        StoredRvalue::FrozenCollection(ty, values) => {
+            RvalueKind::FrozenCollection(restore_type(ty, remap)?, restore_frozen_values(values, remap)?)
+        }
         StoredRvalue::NumericCast(operand, source, target) => RvalueKind::NumericCast(
             restore_operand(operand, remap)?,
             restore_type(source, remap)?,
