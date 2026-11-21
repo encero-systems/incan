@@ -73,10 +73,14 @@ fn note_suffix(complete: bool) -> &'static str {
 }
 
 /// Report each restored function; only a request that restored all ordinary bodies records a whole module.
+///
+/// `frames` names, aligned with `functions`, the helper frames each restored product carries. They go only to the
+/// request-private note directory, where plan publication reads them instead of decoding every admitted product again.
 pub fn report_admitted(
     report: Option<&str>,
     module: &str,
     functions: &[AdmittedFunction],
+    frames: &[Vec<String>],
     ordinary: usize,
     inspected: bool,
     products: Option<&str>,
@@ -84,6 +88,9 @@ pub fn report_admitted(
     let (Some(root), Some(directory)) = (report, products) else {
         return Ok(());
     };
+    if frames.len() != functions.len() {
+        return Err("admitted helper frames are not aligned with the restored functions".into());
+    }
     let basename = hex::encode(module.as_bytes());
     let selected = note_suffix(functions.len() == ordinary);
     let private = Path::new(directory).join("admissions");
@@ -97,10 +104,10 @@ pub fn report_admitted(
                 functions: functions.to_vec(),
                 inspected,
             };
-            write_admitted_note(&path, &diagnostic, &note)?;
+            write_admitted_note(&path, &diagnostic, &note, frames)?;
             continue;
         }
-        for stale in [path, diagnostic] {
+        for stale in [frames_path(&path), path, diagnostic] {
             if stale.is_file() {
                 std::fs::remove_file(&stale).map_err(|error| error.to_string())?;
             }
@@ -109,16 +116,69 @@ pub fn report_admitted(
     Ok(())
 }
 
-/// Publish the restored function positions used to assemble the current native plan.
-fn write_admitted_note(path: &Path, diagnostic: &Path, note: &AdmittedModule) -> Result<(), String> {
+/// Publish the restored function positions used to assemble the current native plan, with the private list of the
+/// helper frames each restored product carries.
+fn write_admitted_note(
+    path: &Path,
+    diagnostic: &Path,
+    note: &AdmittedModule,
+    frames: &[Vec<String>],
+) -> Result<(), String> {
     let encoded = encode_module_note(note)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
     write_module_placement(&format!("{}.placement", path.display()), note)?;
+    let mut listed = String::new();
+    for (function, carried) in note.functions.iter().zip(frames) {
+        listed.push_str(&function.function);
+        for frame in carried {
+            listed.push('\t');
+            listed.push_str(frame);
+        }
+        listed.push('\n');
+    }
+    std::fs::write(frames_path(path), listed).map_err(|error| error.to_string())?;
     std::fs::write(path, &encoded).map_err(|error| error.to_string())?;
-    // The usual descriptor-scoped note is retained for external observers. Publication reads the private pair above.
+    // The usual descriptor-scoped note is retained for external observers. Publication reads the private files above.
     std::fs::write(diagnostic, &encoded).map_err(|error| error.to_string())
+}
+
+/// The private list of helper frames beside a module note: one line per restored function, its native name then
+/// the frames its product carries, separated by tabs.
+fn frames_path(note: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.frames", note.display()))
+}
+
+/// Read the helper frames each restored function of a module note carries, by native function name.
+pub fn admitted_frames(directory: &Path, note: &AdmittedModule) -> Result<HashMap<String, Vec<String>>, String> {
+    let path = frames_path(&directory.join(format!(
+        "{}{}",
+        hex::encode(note.module.as_bytes()),
+        note_suffix(note.complete)
+    )));
+    let listed =
+        std::fs::read_to_string(&path).map_err(|error| format!("cannot read admitted helper frames {error}"))?;
+    let mut frames = HashMap::new();
+    for line in listed.lines() {
+        let mut names = line.split('\t');
+        let Some(function) = names.next() else {
+            continue;
+        };
+        frames.insert(function.to_owned(), names.map(str::to_owned).collect());
+    }
+    if frames.len() != note.functions.len()
+        || note
+            .functions
+            .iter()
+            .any(|function| !frames.contains_key(&function.function))
+    {
+        return Err(format!(
+            "admitted helper frames of {} disagree with its note",
+            note.module
+        ));
+    }
+    Ok(frames)
 }
 
 /// Read every module note of a plan report, in name order.
