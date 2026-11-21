@@ -57,6 +57,8 @@ mod escape_tests;
 #[cfg(test)]
 mod host_tests;
 #[cfg(test)]
+mod number_tests;
+#[cfg(test)]
 mod snapshot_tests;
 #[cfg(test)]
 mod store_tests;
