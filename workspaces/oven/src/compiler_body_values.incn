@@ -11,6 +11,7 @@ from pub::internal_models.namespace_order import NamespaceOrder, decode_namespac
 from compiler_body_keys import IDENTITY_PROFILE, NAMESPACE_IDENTITY_PROFILE
 from compiler_owner_records import read_body_frame
 from compiler_graph_records import (
+    EditCutoff,
     OutputSlots,
     PublishedEvaluation,
     ReusableRecord,
@@ -67,6 +68,7 @@ pub def select_namespace_inventory_except(
     origin: str,
     invalid: list[str],
     use_references: bool = false,
+    cutoff: EditCutoff = EditCutoff(),
 ) -> Result[NamespaceInventory, str]:
     """Select namespace pages and certify which scoped checker peers may travel exclusively in a whole module."""
     mut inventory = NamespaceInventory()
@@ -74,7 +76,7 @@ pub def select_namespace_inventory_except(
     mut orders: Dict[str, NamespaceOrder] = {}
     mut modules: Dict[str, str] = {}
     mut references: list[NamespaceReference] = []
-    for record in reusable_family_records(selected, "namespace", profile, Some(slots), use_references)?:
+    for record in reusable_family_records(selected, "namespace", profile, Some(slots), use_references, cutoff)?:
         module = record.key.identity
         match record.location:
             Some(location) =>
@@ -185,10 +187,14 @@ pub def select_body_inventory_except(
     origin: str,
     invalid: list[str],
     mint_body_ir: bool = false,
+    cutoff: EditCutoff = EditCutoff(),
 ) -> Result[list[SelectedBodyRecord], str]:
-    """Select this project origin's complete owners except those reached by its current source changes."""
+    """
+    Select this project origin's complete owners except those reached by its current source changes. Under the
+    edit's `cutoff`, only owners that read a changed record, directly or through other readers, are validated again.
+    """
     slots = Some(OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, excluded=invalid))
-    locals, finals, bodies = reusable_checker_records(selected, profile, slots)?
+    locals, finals, bodies = reusable_checker_records(selected, profile, slots, cutoff=cutoff)?
     return paired_records(locals, finals, bodies, profile, mint_body_ir)
 
 
