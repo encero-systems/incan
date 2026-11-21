@@ -127,6 +127,7 @@ mod static_storage;
 mod stored_types;
 mod string_conversion;
 mod string_conversion_contracts;
+mod string_input;
 mod strings;
 mod symbols;
 mod text_ownership;
