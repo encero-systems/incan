@@ -180,6 +180,7 @@ impl TypeChecker {
         let param_types: Vec<_> = params
             .iter()
             .map(|p| {
+                self.refuse_rust_borrow_spellings(&p.node.ty);
                 let annotation = self.parameter_annotation(p, false);
                 let ty = self.resolve_type_checked(&annotation);
                 let ty = self.canonical_borrow_type(ty, false);

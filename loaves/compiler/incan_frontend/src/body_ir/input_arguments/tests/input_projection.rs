@@ -113,7 +113,7 @@ fn checked_nominal_copy_materializes_without_legacy_abi_evidence() -> Result<(),
         }));
     }
     let module = admitted(
-        "def consume(value: Owned[&mut int]) -> None:\n    pass\ndef main(value: Owned[&mut int]) -> None:\n    consume(value)\n",
+        "def consume(value: Owned[BorrowedMut[int]]) -> None:\n    pass\ndef main(value: Owned[BorrowedMut[int]]) -> None:\n    consume(value)\n",
     )?;
     let body = module
         .bodies

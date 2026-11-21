@@ -654,7 +654,7 @@ mod tests {
     /// A literal passed to a borrowed parameter builds the referent, so `[]` takes the parameter's element type.
     #[test]
     fn empty_list_argument_takes_its_element_from_a_borrowed_parameter() -> Result<(), String> {
-        let source = "def count(items: &list[str]) -> int:\n    return len(items)\n\ndef total() -> int:\n    return count([])\n";
+        let source = "def count(items: Borrowed[list[str]]) -> int:\n    return len(items)\n\ndef total() -> int:\n    return count([])\n";
         let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
         let mut checker = TypeChecker::new();
