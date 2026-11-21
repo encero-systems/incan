@@ -916,7 +916,8 @@ impl TypeChecker {
 /// `__incan_layout_<carrier key>` module).
 const COMPILED_LAYOUT_NAMESPACE_PREFIX: &str = "__incan_layout_";
 
-/// The nominal carrier key of a compiled Incan library's source-named layout `<crate>::__incan_layout_<key>::<Name>`.
+/// The nominal carrier key of a compiled Incan library's layout: an ordinary layout stays at the crate root under its
+/// key (`<crate>::<key>`), a source-named one lives in its own namespace (`<crate>::__incan_layout_<key>::<Name>`).
 /// Only a plain path names the layout itself: a reference, a generic application or any other display keeps its own
 /// structure, and its inner path reenters this rule.
 pub(super) fn compiled_layout_carrier_key(normalized: &str) -> Option<&str> {
@@ -929,7 +930,12 @@ pub(super) fn compiled_layout_carrier_key(normalized: &str) -> Option<&str> {
     }
     let mut segments = normalized.rsplit("::");
     let name = segments.next()?;
-    let key = segments.next()?.strip_prefix(COMPILED_LAYOUT_NAMESPACE_PREFIX)?;
+    let owner = segments.next()?;
+    if name.starts_with(prefix) {
+        // Only the crate root holds ordinary layouts; a deeper carrier-named path is no layout.
+        return segments.next().is_none().then_some(name);
+    }
+    let key = owner.strip_prefix(COMPILED_LAYOUT_NAMESPACE_PREFIX)?;
     let identifier = !name.is_empty() && name.chars().all(|ch| ch == '_' || ch.is_ascii_alphanumeric());
     (identifier && key.starts_with(prefix)).then_some(key)
 }
