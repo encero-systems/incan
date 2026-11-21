@@ -1,9 +1,10 @@
 """Bakery contracts: one bake per identity across projects and processes, views that cost nothing to lose, collection."""
 
-from rust::std::fs import Permissions, remove_dir_all, rename, set_permissions
+from rust::std::fs import OpenOptions, Permissions, metadata, remove_dir_all, rename, set_permissions
 from rust::std::os::unix::fs import PermissionsExt
 from rust::std::process import Command
 from std.fs import Path
+from std.json import JsonValue
 from std.fs.locking import FileLock
 from bakery import (
     claim,
@@ -21,12 +22,14 @@ from bakery import (
     verify_all,
     repair_derived,
 )
-from bakery_records import Fact, claim_file, staging_root
+from bakery_records import Fact, claim_file, decode_fact, layout_fact_text, record_key, staging_root
+from bakery_views import read_view
+from store_selection_records import read_binding
 from bakery_roots import collect, lease_unit, leased_units, register_root
 from pub::incan_platform.process_lease import ProcessLease
 from pub::incan_platform.store import Snapshot, begin, commit, delete, fork, get, keys, put, segments
 from store_path_conversion import payload_path, put_payload, readmit_payload, snapshot
-from files import make_directory, read, write as write_file
+from files import json_text, make_directory, read, write as write_file
 from incan_units import compile_executable, obtain_executable
 from scratch import scratch_directory
 from toolchain import Toolchain
@@ -267,6 +270,36 @@ pub def test_verify_reports_a_damaged_frame_in_every_live_segment() -> Result[No
     return Ok(None)
 
 
+pub def test_view_replaces_a_different_payload_with_the_same_size_and_timestamp() -> Result[None, str]:
+    """The same filesystem timestamp can belong to two different baked payloads."""
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("bakery")
+    first_id = digest_of("ca")
+    second_id = digest_of("cb")
+    assert bake(store, first_id, "one")?
+    assert bake(store, second_id, "two")?
+    first = baked(store, first_id)?
+    second = baked(store, second_id)?
+    first_payload = match fact_file(store, first, "payload"):
+        Some(path) => path
+        None => return Err("first unit has no payload")
+    second_payload = match fact_file(store, second, "payload"):
+        Some(path) => path
+        None => return Err("second unit has no payload")
+    modified = metadata(first_payload.0).map_err((error) => str(error))?.modified().map_err((error) => str(error))?
+    second_payload.chmod(false).map_err((error) => error.message())?
+    mut options = OpenOptions.new()
+    options.write(true)
+    handle = options.open(second_payload.0).map_err((error) => str(error))?
+    handle.set_modified(modified).map_err((error) => str(error))?
+    destination = scratch.path().joinpath("view")
+    view(store, first, "payload", destination)?
+    assert read(destination)? == "one"
+    view(store, second, "payload", destination)?
+    assert read(destination)? == "two"
+    return Ok(None)
+
+
 pub def test_collection_preserves_published_units_for_cold_and_warm_readers() -> Result[None, str]:
     """Collection between publication and view selection preserves both cold and warm unit readers and payloads."""
     scratch = scratch_directory()?
@@ -296,6 +329,19 @@ pub def test_collection_preserves_published_units_for_cold_and_warm_readers() ->
                 destination = scratch.path().joinpath("selected/payload")
                 view(store, fact, "payload", destination)?
                 assert read(destination)? == "library"
+    # Mix a previously baked unit into the current generation before reopening and collecting it.
+    key = record_key(library)
+    published = snapshot(store).map_err((error) => error.message())?
+    match get(published, key).map_err((error) => error.message())?:
+        Some(row) =>
+            assert row[:4] == b"CRMB"
+            assert decode_fact(row[:len(row) - 1]) is None
+        None => return Err("published bakery unit has no record")
+    original = baked(store, library)?
+    legacy = layout_fact_text(original, "previous installation")?.encode("utf-8")
+    _ = commit(put(begin(published), key, legacy)).map_err((error) => error.message())?
+    _ = collect(store, 86400)?
+    assert payload_text(store, library, "payload")? == "library"
     prove_prepared_payload_survives_collection(store, scratch.path())?
     prove_superseded_payloads_are_collected(store, scratch.path())?
     active = prove_active_staging_survives(store)?
@@ -361,6 +407,16 @@ pub def test_prefixed_unit_identities_register_and_expire() -> Result[None, str]
     recent = "sha256:" + digest_of("b7")
     assert bake(store, old, "old program", [], "app-old")?
     assert bake(store, recent, "new program", [], "app")?
+    before = snapshot(store).map_err((error) => error.message())?
+    old_key = "incan.bakery.name\tapp-old"
+    recent_key = "incan.bakery.name\tapp"
+    match get(before, recent_key).map_err((error) => error.message())?:
+        None => return Err("missing baked name")
+        Some(data) =>
+            assert data[:4] == b"CRMB" and read_binding(recent_key, data)? == recent
+            assert read_binding(old_key, data).is_err()
+    _ = commit(put(begin(before), old_key, old.encode("utf-8"))).map_err((error) => error.message())?
+    assert lookup(store, "app-old")? == Some(old)
     project = scratch.path().joinpath("project")
     make_directory(project)?
     register_root(store, project.0, "unit\tapp\tprogram", [old])?
@@ -370,6 +426,7 @@ pub def test_prefixed_unit_identities_register_and_expire() -> Result[None, str]
     collected = collect(store, -1)?
     assert collected.removed == 1 and not found(find(store, old)?), "a replaced program unit was kept"
     assert found(find(store, recent)?), "the current program unit expired"
+    assert lookup(store, "app-old")? is None and lookup(store, "app")? == Some(recent)
     return Ok(None)
 
 
@@ -438,8 +495,11 @@ def verify_equal_payload_identity_change(root: Path) -> Result[None, str]:
     assert bake(store, second, "identical payload")?
     view_directory(store, baked(store, first)?, target)?
     view_directory(store, baked(store, second)?, target)?
-    marker = read(target.joinpath("fact.json"))?
-    assert second in marker, "equal payloads retained the previous unit identity"
+    match read_view(target)?:
+        Some(marker) => assert marker.identity == second, "equal payloads retained the previous unit identity"
+        None => return Err("view has no unit selection")
+    raw = target.joinpath("fact.crumb").read_bytes().map_err((error) => error.message())?
+    assert raw[:4] == b"CRMB"
     transaction = begin(snapshot(store).map_err((error) => error.message())?)
     removed = delete(transaction, f"incan.bakery.unit\t{first}")
     _ = commit(removed).map_err((error) => error.message())?
@@ -458,6 +518,16 @@ def verify_frozen_library_bindings(root: Path) -> Result[None, str]:
     target = root.joinpath("target/library")
     view_directory(store, fact, target)?
     original = library_directory(store, target)?
+    # A consumer may still carry a v1 layout even after its bakery has moved.
+    prior_snapshot = layout_fact_text(fact, "library bindings")?
+    prior_layout = fingerprint(["incan.bakery.library-layout/1", prior_snapshot])?
+    transported = root.joinpath("previous-library")
+    prior_marker = JsonValue.object({"identity": JsonValue.string(identity), "layout": JsonValue.string(prior_layout), "fact": JsonValue.string(prior_snapshot)})
+    write(transported.joinpath("fact.json"), json_text(prior_marker)?)?
+    prior_directory = library_directory(store, transported)?
+    assert prior_directory.name() == prior_layout
+    assert library_directory(store, prior_directory)?.0 == prior_directory.0
+    assert read(prior_directory.joinpath("payload"))? == "first library"
     damage_unit_record(store, identity)?
     replacement = staging(store, identity)?
     write(replacement.joinpath("payload"), "repaired library")?
