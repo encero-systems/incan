@@ -35,7 +35,7 @@ from pub::internal_models.namespace_order import encode_checking_basis
 from compiler_owner_retirement import retire_missing_functions
 from compiler_owner_records import encode_body_frame, encode_eligibility, read_body_frame
 from store_selection_records import encode_binding
-from compiler_graph_records import prepare_evaluation, reusable_evaluation
+from compiler_graph_records import EditCutoff, prepare_evaluation, reusable_evaluation
 from compiler_body_rows import compiled_namespace_order, compiled_method_reads, read_compiled_body_outputs
 from pub::internal_models.overload_members import MethodReads
 from compiler_method_lookups import method_inputs
@@ -55,8 +55,8 @@ from compiler_plan_values import AdmittedPlanModule, RetainedPlanInputs, carried
 from compiler_body_fallbacks import (
     fallback_lowering_event,
     fallback_reasons,
-    member_event,
     member_namespace,
+    namespace_witnessed_event,
     retained_namespace_event,
 )
 from compiler_body_projection import (
@@ -262,6 +262,7 @@ pub def prepare_compiled_bodies(
     captured_positions: Dict[str, bytes] = {},
     admission_report: Option[Path] = None,
     retained_plans: RetainedPlanInputs = RetainedPlanInputs(),
+    cutoff: EditCutoff = EditCutoff(),
 ) -> Result[PreparedCompiledBodies, str]:
     """
     Stage one successful compiler sidecar through source projections and witnessed checker evaluations.
@@ -329,6 +330,7 @@ pub def prepare_compiled_bodies(
         covered,
         admission_report,
         retained_plans,
+        cutoff,
     )?
     record_work(Operation.EngineGraphStaging, output.0, staging)
     return Ok(
@@ -535,6 +537,7 @@ def prepare_optional_lowering_records(
     covered: CoveredBodyOwners = CoveredBodyOwners(),
     admission_report: Option[Path] = None,
     retained_plans: RetainedPlanInputs = RetainedPlanInputs(),
+    cutoff: EditCutoff = EditCutoff(),
 ) -> Result[LoweringDemandWork, str]:
     """Stage lowering records only when this compiler activation requested a plan report."""
     if let Some(report) = plan_output:
@@ -554,7 +557,7 @@ def prepare_optional_lowering_records(
                     rescued = select_body_inventory_of(graph, CHECKER_PROFILE, origin, demanded)?
         if len(rescued) != len(demanded):
             return Err("partially restored plan did not retain its demanded checked owner")
-        witnesses = lowering_witnesses(projections, outputs.values, retained + rescued, source, selected, unit, origin, orders)?
+        witnesses = lowering_witnesses(projections, outputs.values, retained + rescued, source, selected, unit, origin, orders, cutoff)?
         return prepare_lowering_records(
             projections,
             prepared,
@@ -573,6 +576,7 @@ def prepare_optional_lowering_records(
             [module for module in covered.module_owners.keys()],
             Some(notes),
             retained_plans,
+            cutoff,
         )
     return Ok(LoweringDemandWork())
 
@@ -779,8 +783,12 @@ def lowering_witnesses(
     unit: UnitDescription,
     origin: str,
     mut orders: LoweringOrders,
+    cutoff: EditCutoff = EditCutoff(),
 ) -> Result[list[LoweringBody], str]:
-    """Carry only graph-selected inputs with unchanged current owner/header bytes; never invent fresh checker facts."""
+    """
+    Carry only graph-selected inputs with unchanged current owner/header bytes; never invent fresh checker facts. A
+    retained owner the edit's `cutoff` leaves valid by the snapshot is not validated again.
+    """
     mut witnesses: list[LoweringBody] = []
     mut witnessed: set[str] = set()
     editable_packages = [dependency[0] for dependency in dependency_source_roots(unit)]
@@ -831,7 +839,7 @@ def lowering_witnesses(
             None => return Err("retained Body IR has no selected graph")
             Some(value) => value
 
-        body = match reusable_evaluation(prior, key, CHECKER_PROFILE)?:
+        body = match reusable_evaluation(prior, key, CHECKER_PROFILE, cutoff)?:
             Some(result) => result
             None => return Err("retained Body IR has no selected evaluation")
         if read_body_frame(key, CHECKER_PROFILE, body.value)? != record.body_ir:
@@ -858,7 +866,7 @@ def lowering_witnesses(
         position = orders.retained(prior, decoded.source, body)?
         source.add(encode_record_key(key)?, body.value)
         local_key = body_key("local", origin, record.identity, "checked", root(record.local)?)
-        local = match reusable_evaluation(prior, local_key, CHECKER_PROFILE)?:
+        local = match reusable_evaluation(prior, local_key, CHECKER_PROFILE, cutoff)?:
             None => return Err("retained lowering owner has no witnessed checker inputs")
             Some(value) => value
 
@@ -934,13 +942,14 @@ def prepare_lowering_records(
     covered_modules: list[str] = [],
     admission_report: Option[Path] = None,
     retained_plans: RetainedPlanInputs = RetainedPlanInputs(),
+    cutoff: EditCutoff = EditCutoff(),
 ) -> Result[LoweringDemandWork, str]:
     """
     Stage evaluated lowering-demand and plan-function values through their exact Body IR witnesses.
 
     A module-level body reads its own Body IR. A member reads its compiler-proven body meaning and checked interface.
-    Earlier compilers and members without a stable identity retain the full namespace witness. A member whose module
-    staged no namespace record has no authoritative plan input.
+    Earlier compilers, members without a stable identity and full-source fallback owners retain the full namespace
+    witness. A member or fallback owner whose module staged no namespace record has no authoritative plan input.
     """
     scope = ReadScope(snapshot=prepared.id, profile=LOWERING_PROFILE)
     source.bind_profile(LOWERING_PROFILE)
@@ -970,12 +979,10 @@ def prepare_lowering_records(
         event_identity = event.identity
         # A toolchain runtime instance reads no authored record: lowering keys it by the runtime body's checked meaning.
         runtime = event_identity.startswith(RUNTIME_INSTANCE_IDENTITY)
-        if not runtime and fallback_lowering_event(unit, fallbacks, event_identity)?:
-            continue
         if event_identity not in bodies and retained_namespace_event(unit, rechecked, event_identity)?:
             continue
         mut member = false
-        if not runtime and event_identity not in bodies and member_event(event_identity)?:
+        if not runtime and event_identity not in bodies and namespace_witnessed_event(unit, fallbacks, event_identity)?:
             member = true
         key = event.key
         function = event.function
@@ -1097,7 +1104,7 @@ def prepare_lowering_records(
         source.add(encode_record_key(key)?, product)
         plan_keys.append(key)
     # Each module's plan functions fold into its module record; a restored module's record joins the interface's reads.
-    carried, carried_namespace, carried_digests = stage_plan_modules(prepared, source, orders, scope, selected, origin, rechecked, staged, admission_report.unwrap_or(report), admitted)?
+    carried, carried_namespace, carried_digests = stage_plan_modules(prepared, source, orders, scope, selected, origin, rechecked, staged, admission_report.unwrap_or(report), admitted, cutoff)?
     if not report.joinpath(INTERFACE_REPORT).is_file():
         require_plan_refusal(report)?
         return Ok(work)

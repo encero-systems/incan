@@ -19,7 +19,7 @@ from pub::internal_models.records import ReadWitness, ReadScope, RecordRequest, 
 from compiler_source_projection import positioned_source_key
 from compiler_body_keys import IDENTITY_PROFILE, body_key
 from compiler_lowering_order import LoweringOrder, LoweringOrders
-from compiler_graph_records import OutputSlots, family_outputs, prepare_evaluation, retire_output, reusable_evaluation
+from compiler_graph_records import EditCutoff, OutputSlots, family_outputs, prepare_evaluation, retire_output, reusable_evaluation
 from compiler_plan_values import AdmittedPlanModule, LOWERING_PROFILE
 from compiler_prepared_records import PreparedBodyRecordSource, prepared_product_request
 
@@ -162,9 +162,12 @@ pub def staged_plan(
 
 def restored_plans(
     mut source: PreparedBodyRecordSource, mut orders: LoweringOrders, graph: Snapshot,
-    module: Borrowed[AdmittedPlanModule], note: AdmittedModule, keyed: list[StagedPlan],
+    module: Borrowed[AdmittedPlanModule], note: AdmittedModule, keyed: list[StagedPlan], cutoff: EditCutoff = EditCutoff(),
 ) -> Result[list[StagedPlan], str]:
-    """Rebind only the functions restored in this compile to their selected scalar products and rank evidence."""
+    """
+    Rebind only the functions restored in this compile to their selected scalar products and rank evidence. A
+    function the edit's `cutoff` leaves valid by the snapshot is not validated again.
+    """
     page = module.plan
     if page.module != note.module:
         return Err("admitted module differs from its selected plan page")
@@ -197,7 +200,7 @@ def restored_plans(
         if event.identity != function.symbol or (function.symbol != admitted.identity and (function.identity == function.symbol or admitted.placement is None)):
             return Err("restored function changed an uncertified canonical identity")
         event = placed_admission(event, note.module, admitted)?
-        selected = match reusable_evaluation(graph, key, LOWERING_PROFILE)?:
+        selected = match reusable_evaluation(graph, key, LOWERING_PROFILE, cutoff)?:
             Some(value) => value
             None => return Err("restored function lost its selected evaluation")
         if selected.value != event.product:
@@ -280,6 +283,7 @@ pub def stage_plan_modules(
     staged: list[StagedPlan],
     report: Path,
     admitted: list[AdmittedPlanModule],
+    cutoff: EditCutoff = EditCutoff(),
 ) -> Result[tuple[list[RecordKey], int, Dict[str, str]], str]:
     """
     Keep one plan record per module current, and return the records of the modules the compiler restored.
@@ -321,7 +325,7 @@ pub def stage_plan_modules(
                     folded.append(file)
                     continue
         keyed = modules.get(file, [])
-        retained = restored_plans(source, orders, graph, module, note, keyed)?
+        retained = restored_plans(source, orders, graph, module, note, keyed, cutoff)?
         modules[file] = keyed + retained
         rebuilt.add(file)
     if len(seen) != len(notes):

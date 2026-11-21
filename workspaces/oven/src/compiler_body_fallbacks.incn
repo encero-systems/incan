@@ -16,7 +16,7 @@ pub def fallback_lowering_event(
     fallbacks: list[CompiledBodyFallback],
     identity: str,
 ) -> Result[bool, str]:
-    """Skip only a self-describing lowering event that names an explicit full-source fallback owner."""
+    """Whether a self-describing lowering event names an explicit full-source fallback owner."""
     owner = match event_owner(identity)?:
         None => return Ok(false)
         Some(value) => value
@@ -92,6 +92,17 @@ pub def member_event(identity: str) -> Result[bool, str]:
     match decode_incan_symbol_identity(identity).map_err((error) => str(error))?:
         None => return Ok(false)
         Some(selected) => return Ok(selected.namespace == SymbolNamespace.Member)
+
+
+pub def namespace_witnessed_event(unit: UnitDescription, fallbacks: list[CompiledBodyFallback], identity: str) -> Result[bool, str]:
+    """
+    Whether a lowering event's plan is witnessed by its module's namespace record: a member body, which the graph holds
+    no owner record for, or a full-source fallback owner, which has no checker record. The namespace record a request
+    stages carries the whole module's Body IR, so it changes with any of those bodies.
+    """
+    if member_event(identity)?:
+        return Ok(true)
+    return fallback_lowering_event(unit, fallbacks, identity)
 
 
 pub def member_namespace(unit: UnitDescription, namespaces: list[str], identity: str) -> Result[Option[str], str]:
