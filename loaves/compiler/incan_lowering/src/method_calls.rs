@@ -6,7 +6,7 @@ use incan_semantics_core::body_ir::{
     ArgumentBinding, ArgumentElement, Body, BodyIrModule, MethodTarget, Operand as SourceOperand, OwnershipFact,
     Place as SourcePlace, ReflectionOperation,
 };
-use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
+use incan_semantics_core::{CanonicalSymbolId, IncanType, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 
 use crate::async_::construct_future;
 use crate::builtin_methods::lower_builtin_method;
@@ -19,14 +19,18 @@ use crate::defaults::{DefaultCall, default_arguments};
 use crate::element_places::{element_place_type, is_element_place};
 use crate::explicit_arguments::parameter_accesses;
 use crate::frame::{Builder, dereferenced_place, place_type, read_place, temporary};
+use crate::generic_callables::owned_callable_slots;
+use crate::iterator_methods::standard_protocol as standard_iterator_protocol;
+use crate::layout_types::native_source_type;
 use crate::library_methods::{lower_library_method, lower_standard_slot};
 use crate::models::model_place;
 use crate::pending::untranslated;
+use crate::result_carriers::lower_carrier_method;
 use crate::result_combinators::{lower_result_combinator, result_combinator};
 use crate::sequence_builtins::argument_type;
 use crate::static_storage::computed_static_type;
 use crate::traits::{is_lazy_method_body, receiver_selects_slot_arguments};
-use crate::type_parameters::request_instance;
+use crate::type_parameters::{instantiate, request_instance};
 use crate::value_enum_methods::{lower_enum_message, lower_value_enum_method};
 use crate::value_enums::{enum_message_layout, value_method_owner};
 
@@ -59,7 +63,7 @@ fn lower_checked_method_call(
         return Err("unsupported Body IR builtin method operation without matching canonical provenance".into());
     }
     if target.intrinsic_carrier.is_some() {
-        return Err(untranslated("result_carriers::lower_carrier_method"));
+        return lower_carrier_method(builder, target, arguments, destination, span);
     }
     // Builtin registry members and source methods both retain identities; their origin selects the admission path.
     let Some(identity) = &target.canonical else {
@@ -579,16 +583,8 @@ fn call_method_body(
     destination: &Option<SourcePlace>,
     span: &SourceSpan,
 ) -> Result<(), String> {
-    let body = &module.bodies[index];
-    if !body.type_parameters.is_empty() {
-        return Err(untranslated("method_calls::sdk_forwarded_type_arguments"));
-    }
-    if !target.type_args.is_empty() {
-        return Err("unsupported Body IR type arguments on a method without type parameters".into());
-    }
-    if is_lazy_method_body(module, body) {
-        request_instance(&mut builder.instances, body, Vec::new(), Vec::new(), false);
-    }
+    let typed = instantiated_method_body(module, builder, target, index, arguments, span)?;
+    let body = &typed;
     if target.loaf_trait.is_some()
         && body.canonical == target.canonical
         && target.has_valid_native_trait_selection()
@@ -753,4 +749,132 @@ pub fn receiver_method_identity(
         Some(owner) => Ok(Some(owner_method_identity(module, target, &owner)?)),
         None => Ok(target.canonical.clone()),
     }
+}
+
+/// Close only the selected method's retained parameters and queue its exact executable instance.
+fn instantiated_method_body(
+    module: &BodyIrModule,
+    builder: &mut Builder,
+    target: &MethodTarget,
+    index: usize,
+    arguments: &[ArgumentElement],
+    span: &SourceSpan,
+) -> Result<Body, String> {
+    let body = &module.bodies[index];
+    if !body.type_parameters.is_empty() {
+        let closed = sdk_forwarded_type_arguments(module, builder, target, body, arguments, span)?;
+        let mut typed = instantiate(body, &closed, &[])?;
+        let owned = owned_callable_slots(builder, body, arguments, &target.binding, 1)?;
+        request_instance(&mut builder.instances, body, closed.clone(), owned.clone(), false);
+        if !owned.is_empty() {
+            typed = instantiate(body, &closed, &owned)?;
+        }
+        return Ok(typed);
+    }
+    if !target.type_args.is_empty() {
+        return Err("unsupported Body IR type arguments on a method without type parameters".into());
+    }
+    if is_lazy_method_body(module, body) {
+        request_instance(&mut builder.instances, body, Vec::new(), Vec::new(), false);
+    }
+    Ok(body.clone())
+}
+
+/// Recover a scalar generic forwarding argument omitted by frozen SDK Self-call facts (#1698).
+///
+/// Both caller and callee must be authenticated defaults of the standard Iterator protocol. The callee's first
+/// ordinary parameter and result name its sole binder. Its actual bound argument must have exactly the primitive
+/// carrier of the caller's one already checked generic argument. Binder spellings from the two declarations are never
+/// compared, and every remaining argument still passes normal instantiated signature validation.
+fn sdk_forwarded_type_arguments(
+    module: &BodyIrModule,
+    builder: &mut Builder,
+    target: &MethodTarget,
+    body: &Body,
+    arguments: &[ArgumentElement],
+    span: &SourceSpan,
+) -> Result<Vec<IncanType>, String> {
+    let closed = checked_type_arguments(builder, &target.type_args)?;
+    if !closed.is_empty() || body.type_parameters.len() != 1 || builder.callable_type_arguments.len() != 1 {
+        return Ok(closed);
+    }
+    if body.params.len() < 2 || arguments.len() != body.params.len() || body.canonical != target.canonical {
+        return Ok(closed);
+    }
+    if !iterator_default_pair(module, target.canonical.as_ref(), builder.callable_identity.as_ref()) {
+        return Ok(closed);
+    }
+    match &body.params[1].ty {
+        IncanType::TypeVar(name) if *name == body.type_parameters[0] && body.return_type == body.params[1].ty => {}
+        _ => return Ok(closed),
+    }
+    let candidate = builder.callable_type_arguments[0].clone();
+    if !matches!(candidate, IncanType::Primitive(_)) {
+        return Ok(closed);
+    }
+    let ArgumentBinding::Resolved {
+        arguments: bindings,
+        defaulted_slots,
+        ..
+    } = &target.binding
+    else {
+        return Ok(closed);
+    };
+    if !defaulted_slots.is_empty() || bindings.len() + 1 != arguments.len() {
+        return Ok(closed);
+    }
+    let mut position = None;
+    for (index, binding) in bindings.iter().enumerate() {
+        if binding.slot == 0 {
+            if position.is_some() {
+                return Ok(closed);
+            }
+            position = Some(index + 1);
+        }
+    }
+    let Some(position) = position else {
+        return Ok(closed);
+    };
+    let actual = argument_type(builder, arguments, position, span)?;
+    let expected = native_source_type(
+        builder.constructors(),
+        builder.nominals(),
+        builder.enums(),
+        &builder.unions,
+        &candidate,
+        &builder.intrinsics,
+        "",
+    )?;
+    if actual != expected {
+        return Ok(closed);
+    }
+    Ok(vec![candidate])
+}
+
+/// Whether the selected callee and the calling frame are both member methods declared inside the standard Iterator
+/// protocol.
+fn iterator_default_pair(
+    module: &BodyIrModule,
+    selected: Option<&CanonicalSymbolId>,
+    caller: Option<&CanonicalSymbolId>,
+) -> bool {
+    let (Some(selected), Some(caller)) = (selected, caller) else {
+        return false;
+    };
+    if selected.kind != SemanticSourceTargetKind::Method
+        || caller.kind != SemanticSourceTargetKind::Method
+        || selected.namespace != SymbolNamespace::Member
+        || caller.namespace != SymbolNamespace::Member
+    {
+        return false;
+    }
+    module.trait_declarations.iter().any(|protocol| {
+        standard_iterator_protocol(protocol)
+            && selected.origin == protocol.origin
+            && caller.origin == protocol.origin
+            && protocol.declaration_span.start <= selected.declaration_span.start
+            && selected.declaration_span.end <= protocol.declaration_span.end
+            && protocol.declaration_span.start <= caller.declaration_span.start
+            && caller.declaration_span.end <= protocol.declaration_span.end
+    })
 }

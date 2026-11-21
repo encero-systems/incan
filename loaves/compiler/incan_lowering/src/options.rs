@@ -1,11 +1,13 @@
 //! Concrete standard Option and Result layouts shared with native enum operations.
 
 use incan_lang::lang::surface::constructors::{ConstructorId, from_str as builtin_constructor};
+use incan_lang::lang::surface::option_methods::OptionMethodId;
+use incan_lang::lang::surface::result_methods::ResultMethodId;
 use incan_lang::lang::types::collections::{CollectionTypeId, from_str as collection_type};
 use incan_mir_plan_native::{
-    CalleeKind, Carrier, Constant, EnumDeclaration, EnumVariant, ExternalFunction, Operand as PlanOperand, OperandKind,
-    Place, PlanType, Projection, RvalueKind, SourceSpan, TerminatorKind, Unwind, assign as plan_assign,
-    carrier_position, place as plan_place, source_span,
+    CalleeKind, Carrier, Constant, EnumDeclaration, EnumVariant, ExternalFunction, FieldProjection,
+    Operand as PlanOperand, OperandKind, Place, PlanType, Projection, RvalueKind, SourceSpan, TerminatorKind, Unwind,
+    assign as plan_assign, carrier_position, place as plan_place, source_span,
 };
 use incan_semantics_core::body_ir::{
     Block, Body, BodyIrModule, CallableTarget, Callee, MatchArm, NamedCallableTarget, Operand, Rvalue, StatementKind,
@@ -18,8 +20,8 @@ use crate::compiler_record_adapters::{authored_plan_checked_type, semantic_key_m
 use crate::enums::validate_payload_patterns;
 use crate::formatting::display_plan_value;
 use crate::frame::{
-    Builder, cleanup_exit, drop_all_owned, drop_owned, forget_owned, place_type, read_place, temporary, terminate_call,
-    track_rvalue_moves,
+    Builder, appended_field, cleanup_exit, drop_all_owned, drop_owned, forget_owned, place_type, read_place, temporary,
+    terminate_call, track_rvalue_moves,
 };
 use crate::layout_types::native_source_type;
 use crate::lists::taking_iterator_locals;
@@ -707,4 +709,173 @@ pub fn assign_carrier(
     span: &SourceSpan,
 ) {
     replace_owned_destination(builder, target, RvalueKind::Enum(owner, slot, operands), span);
+}
+
+/// Lower retained carrier predicates and eager defaults using the shared discriminant and payload machinery.
+pub fn lower_carrier_method_plan(
+    builder: &mut Builder,
+    option_method: Option<OptionMethodId>,
+    result_method: Option<ResultMethodId>,
+    source: Place,
+    target: Place,
+    fallback: Option<PlanOperand>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let (_, declaration) = carrier_layout(builder, &place_type(&builder.locals, &source))?;
+    let mut present = if declaration.carrier == Carrier::Option { 1 } else { 0 };
+    let predicate = matches!(option_method, Some(OptionMethodId::IsSome | OptionMethodId::IsNone))
+        || matches!(result_method, Some(ResultMethodId::IsOk | ResultMethodId::IsErr));
+    if predicate {
+        if option_method == Some(OptionMethodId::IsNone) || result_method == Some(ResultMethodId::IsErr) {
+            present = 1 - present;
+        }
+        let condition = variant_condition(builder, &source, present, span);
+        builder.emit(plan_assign(target, RvalueKind::Use(condition), span));
+        return Ok(());
+    }
+    if option_method == Some(OptionMethodId::Unwrap) || result_method == Some(ResultMethodId::Unwrap) {
+        return lower_carrier_unwrap(builder, &declaration, present, source, target, span);
+    }
+    if option_method != Some(OptionMethodId::UnwrapOr) && result_method != Some(ResultMethodId::UnwrapOr) {
+        return Err("unsupported Body IR intrinsic carrier method".into());
+    }
+    match fallback {
+        Some(value) => lower_carrier_default(builder, &declaration, present, (source, target), value, span),
+        None => Err("unsupported Body IR carrier missing default".into()),
+    }
+}
+
+/// Project a carrier's payload where the carrier lives, keeping the field or reference path that reached it.
+fn carrier_payload_place(source: &Place, variant: i64, ty: PlanType, span: &SourceSpan) -> Result<Place, String> {
+    if source.projection == Projection::Whole {
+        return Ok(Place {
+            local: source.local,
+            projection: Projection::VariantField(variant, 0, ty),
+            span: span.clone(),
+        });
+    }
+    appended_field(
+        source,
+        FieldProjection {
+            slot: 0,
+            ty,
+            variant,
+            dereferences: 0,
+        },
+        span,
+    )
+}
+
+/// Whether a carrier payload owns resources its destination must drop.
+fn payload_owns(ty: &PlanType) -> bool {
+    !numeric_carrier(ty) && *ty != PlanType::Bool && *ty != PlanType::Unit
+}
+
+/// Select the active borrowed payload, or fail through the runtime exactly as legacy's `unwrap` does.
+fn lower_carrier_unwrap(
+    builder: &mut Builder,
+    declaration: &EnumDeclaration,
+    present: i64,
+    source: Place,
+    target: Place,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let payload_type = declaration.variants[present as usize].fields[0].clone();
+    let selected = builder.new_block(span);
+    let missing = builder.new_block(span);
+    let incoming = builder.owned.clone();
+    let condition = variant_condition(builder, &source, present, span);
+    builder.finish(TerminatorKind::SwitchBool(condition, missing, selected), span);
+    // `None` fails with the standard message; `Err` passes a clone of its payload so the message renders it as Debug.
+    builder.select(missing);
+    let unit = temporary(builder, PlanType::Unit, span);
+    if declaration.carrier == Carrier::Option {
+        unwrap_failure(builder, "unwrap_none", Vec::new(), Vec::new(), unit, span);
+    } else {
+        let error_type = declaration.variants[(1 - present) as usize].fields[0].clone();
+        let error_place = carrier_payload_place(&source, 1 - present, error_type.clone(), span)?;
+        let error = carrier_payload_value(builder, error_place, span)?;
+        unwrap_failure(builder, "unwrap_err", vec![error_type], vec![error], unit, span);
+    }
+    builder.finish(TerminatorKind::Unreachable, span);
+    builder.select(selected);
+    builder.owned = incoming;
+    let projected = carrier_payload_place(&source, present, payload_type.clone(), span)?;
+    let payload = carrier_payload_value(builder, projected, span)?;
+    let value = RvalueKind::Use(payload);
+    track_rvalue_moves(builder, &value);
+    let local = target.local;
+    builder.emit(plan_assign(target, value, span));
+    if payload_owns(&payload_type) {
+        builder.owned.push(local);
+    }
+    Ok(())
+}
+
+/// Call the runtime failure for an absent carrier payload; its type argument is the `Err` payload's carrier.
+fn unwrap_failure(
+    builder: &mut Builder,
+    name: &str,
+    type_arguments: Vec<PlanType>,
+    arguments: Vec<PlanOperand>,
+    destination: Place,
+    span: &SourceSpan,
+) {
+    let path = format!("incan_native_runtime::{name}");
+    builder.externals.push(ExternalFunction {
+        path: path.clone(),
+        type_arguments: type_arguments.clone(),
+        parameters: type_arguments.clone(),
+        return_type: PlanType::Unit,
+        span: span.clone(),
+    });
+    // Keep the full instantiation next to the signature that declares it, as `list_call` does.
+    let callee = if type_arguments.is_empty() {
+        CalleeKind::External(path)
+    } else {
+        CalleeKind::Instantiated(path, type_arguments)
+    };
+    terminate_call(builder, callee, arguments, destination, span);
+}
+
+/// Select the active borrowed payload or the eager default, releasing the unused default on the payload edge.
+fn lower_carrier_default(
+    builder: &mut Builder,
+    declaration: &EnumDeclaration,
+    present: i64,
+    (source, target): (Place, Place),
+    fallback: PlanOperand,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let payload_type = declaration.variants[present as usize].fields[0].clone();
+    let selected = builder.new_block(span);
+    let missing = builder.new_block(span);
+    let join = builder.new_block(span);
+    let owners = builder.owned.clone();
+    let condition = variant_condition(builder, &source, present, span);
+    builder.finish(TerminatorKind::SwitchBool(condition, missing, selected), span);
+    builder.select(selected);
+    let projected = carrier_payload_place(&source, present, payload_type.clone(), span)?;
+    let payload = carrier_payload_value(builder, projected, span)?;
+    let value = RvalueKind::Use(payload);
+    track_rvalue_moves(builder, &value);
+    builder.emit(plan_assign(target.clone(), value, span));
+    if let OperandKind::Move(place) = &fallback.kind {
+        drop_owned(builder, place.local, span);
+    }
+    builder.finish(TerminatorKind::Goto(join), span);
+    builder.select(missing);
+    builder.owned = owners;
+    let value = RvalueKind::Use(fallback);
+    track_rvalue_moves(builder, &value);
+    let local = target.local;
+    builder.emit(plan_assign(target, value, span));
+    let retained = builder.owned.clone();
+    builder.finish(TerminatorKind::Goto(join), span);
+    builder.select(join);
+    builder.owned = retained;
+    if payload_owns(&payload_type) {
+        builder.owned.push(local);
+    }
+    Ok(())
 }

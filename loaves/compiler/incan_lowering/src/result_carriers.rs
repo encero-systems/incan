@@ -1,15 +1,18 @@
 //! Typed carrier operands at call, return and collection boundaries, and retained reference values.
 
+use incan_lang::lang::surface::option_methods::OptionMethodId;
+use incan_lang::lang::surface::result_methods::ResultMethodId;
 use incan_mir_plan_native::{
-    Carrier, Operand, Place, PlanType, RvalueKind, SourceSpan, assign as plan_assign, carrier_position,
+    Carrier, Operand, OperandKind, Place, PlanType, RvalueKind, SourceSpan, assign as plan_assign, carrier_position,
     place as plan_place,
 };
 use incan_semantics_core::body_ir::{
-    ArgumentElement, Constant as SourceConstant, Operand as SourceOperand, OwnershipFact, Place as SourcePlace,
-    ResultVariant, ResultVariantKind, TryErrorRouting,
+    ArgumentElement, Constant as SourceConstant, MethodTarget, Operand as SourceOperand, OwnershipFact,
+    Place as SourcePlace, PlaceElem, ResultVariant, ResultVariantKind, TryErrorRouting,
 };
 
 use crate::assignments::assignment_place;
+use crate::carrier_operands::boundary_operand;
 use crate::checked_values::{scalar_place, target_read};
 use crate::element_places::is_element_place;
 use crate::enums::enum_owner;
@@ -17,11 +20,14 @@ use crate::explicit_arguments::reference_contract;
 use crate::formatting::display_plan_operand;
 use crate::frame::{Builder, dereferenced_place, place_type, read_place, temporary, track_rvalue_moves, value_type};
 use crate::frozen_plan::frozen_literal;
-use crate::layout_types::shared_receiver_type;
-use crate::list_values::value_operand;
+use crate::layout_types::{carrier_name, shared_receiver_type};
+use crate::list_methods::{argument_place, call_destination};
+use crate::list_values::{indexed_read, value_operand};
 use crate::lists::is_exclusive_borrow;
 use crate::model_lists::structural_prefix;
-use crate::options::{none_operand, propagate_result, replace_owned_destination};
+use crate::options::{
+    carrier_layout, lower_carrier_method_plan, none_operand, propagate_result, replace_owned_destination,
+};
 use crate::statements::{carrier_payload, is_nominal_type};
 
 /// Materialize checked carrier and text conversions at a concrete call, return, or collection boundary.
@@ -282,4 +288,87 @@ pub fn lower_none_assignment(builder: &mut Builder, target: Place, span: &Source
         builder.emit(plan_assign(target, RvalueKind::Use(value), span));
     }
     Ok(())
+}
+
+/// Materialize intrinsic call arguments, then delegate the carrier's branch and ownership operations.
+pub fn lower_carrier_method(
+    builder: &mut Builder,
+    method: &MethodTarget,
+    arguments: &[ArgumentElement],
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let source = carrier_receiver(builder, arguments, span)?;
+    let (_, declaration) = carrier_layout(builder, &place_type(&builder.locals, &source))?;
+    if method.intrinsic_carrier != carrier_name(&declaration.carrier) {
+        return Err("invalid Body IR intrinsic carrier method identity".into());
+    }
+    let option_method = method.builtin_option();
+    let result_method = method.builtin_result();
+    if (declaration.carrier == Carrier::Option && option_method.is_none())
+        || (declaration.carrier == Carrier::Result && result_method.is_none())
+    {
+        return Err("invalid Body IR intrinsic carrier operation".into());
+    }
+    let mut ty = PlanType::Bool;
+    let mut fallback = None;
+    let mut arity = 1;
+    let unwrap = matches!(option_method, Some(OptionMethodId::Unwrap | OptionMethodId::UnwrapOr))
+        || matches!(result_method, Some(ResultMethodId::Unwrap | ResultMethodId::UnwrapOr));
+    let unwrap_or = option_method == Some(OptionMethodId::UnwrapOr) || result_method == Some(ResultMethodId::UnwrapOr);
+    if unwrap {
+        if unwrap_or {
+            arity = 2;
+        }
+        // The present payload lives in Option's `Some` slot one and Result's `Ok` slot zero.
+        let slot = if declaration.carrier == Carrier::Option { 1 } else { 0 };
+        ty = declaration.variants[slot].fields[0].clone();
+    }
+    if arguments.len() != arity {
+        return Err("unsupported Body IR intrinsic carrier method arity".into());
+    }
+    if arity == 2 {
+        let Some(value) = arguments[1].as_one() else {
+            return Err("unsupported Body IR carrier fallback spread".into());
+        };
+        fallback = Some(boundary_operand(builder, value, &ty, span)?);
+    }
+    let target = call_destination(builder, destination, ty, span)?;
+    lower_carrier_method_plan(builder, option_method, result_method, source, target, fallback, span)
+}
+
+/// The place a carrier method reads: the exact scalar referent, a static snapshot, or a copy of a list element.
+///
+/// An element is read out of its list as any element read is, as legacy's checked `list_get` reads it; the copy drops
+/// when its scope ends. Local carrier references use the general place resolver's retained dereference, while globals
+/// keep their static snapshot path.
+fn carrier_receiver(builder: &mut Builder, arguments: &[ArgumentElement], span: &SourceSpan) -> Result<Place, String> {
+    if arguments.is_empty() {
+        return Err("invalid Body IR intrinsic carrier method arity".into());
+    }
+    if let Some(SourceOperand::Place(read)) = arguments[0].as_one() {
+        if indexes_a_list(&read.place) {
+            return element_copy(builder, &read.place, span);
+        }
+        if read.place.global().is_none() {
+            return scalar_place(builder, &read.place, span);
+        }
+    }
+    argument_place(builder, arguments, 0, span)
+}
+
+/// Report whether a place reaches its value through a list index.
+fn indexes_a_list(place: &SourcePlace) -> bool {
+    place
+        .projection
+        .iter()
+        .any(|projection| matches!(projection, PlaceElem::Index(_)))
+}
+
+/// Read a list element into an owned copy and return its place.
+fn element_copy(builder: &mut Builder, source: &SourcePlace, span: &SourceSpan) -> Result<Place, String> {
+    match indexed_read(builder, source, span)?.kind {
+        OperandKind::Move(place) | OperandKind::Copy(place) => Ok(place),
+        OperandKind::Literal(_) => Err("unsupported Body IR carrier receiver element".into()),
+    }
 }
