@@ -146,11 +146,17 @@ impl WorkerHost {
     /// sent, then send the reply and close the activation.
     fn settle(&mut self, outcome: ActivationOutcome, footprint: i64, live: i64) {
         self.finish_observation();
+        // A saved build that handed rustc off completed checking and lowering; rustc runs in its caller's process.
+        let succeeded = match &outcome {
+            ActivationOutcome::Exited(code) => Some(*code == 0),
+            ActivationOutcome::HandedOff(_) if self.active_record_build => Some(true),
+            _ => None,
+        };
         if (self.active_editor || self.active_record_build)
-            && let ActivationOutcome::Exited(code) = outcome
-            && (self.active_editor || code == 0)
+            && let Some(succeeded) = succeeded
+            && (self.active_editor || succeeded)
         {
-            self.policy.note_retained_activity(code == 0);
+            self.policy.note_retained_activity(succeeded);
         }
         let settled = self.policy.settle(outcome, footprint, self.active_light, live);
         if let Some(reason) = settled.retirement {
