@@ -57,8 +57,8 @@ impl TypeChecker {
         Some(source_type)
     }
 
-    /// Retain the native record layouts a field's type names inside it (an `Option` of a Rust record, say), so
-    /// lowering can carry that payload even where the source never reads the record's own fields.
+    /// Retain the native layouts of the closed public records a field's type names inside it (an `Option` of a Rust
+    /// record, say), so lowering can carry that payload even where the source never reads the record's own fields.
     fn retain_rust_field_payload_layouts(&mut self, ty: &ResolvedType) {
         let mut paths = Vec::new();
         rust_path_leaves(ty, &mut paths);
@@ -66,9 +66,16 @@ impl TypeChecker {
             let Some(metadata) = self.rust_item_metadata_for_complete_type(&path) else {
                 continue;
             };
+            // Only a closed record whose fields are all public: a generic wrapper such as `Box<T>`, or a record with
+            // private storage, keeps its native representation.
             if let RustItemKind::Type(info) = &metadata.kind
                 && info.variants.is_empty()
+                && info.type_params.is_empty()
                 && !info.fields.is_empty()
+                && info
+                    .fields
+                    .iter()
+                    .all(|field| info.metadata_completeness.field_is_public(&field.name))
             {
                 self.retain_rust_layout(&path, info);
             }
