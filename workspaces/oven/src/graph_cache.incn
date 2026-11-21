@@ -225,7 +225,7 @@ def graph_observations(root: Path) -> Result[Ledger, str]:
     """Keep inspection's optional observations in its own home, never inside a selected external source or artifact."""
     name = fingerprint([root.0])?
     directory = home()?.joinpath("cache").joinpath("codegraph-observations")
-    return Ok(load_ledger(directory.joinpath(f"{name}.json"), SETTLE_SECONDS, ""))
+    return Ok(load_ledger(directory.joinpath(f"{name}.crumb"), SETTLE_SECONDS, ""))
 
 
 pub def save_observations(mut ledger: Ledger) -> None:

@@ -44,7 +44,7 @@ def artifact_observations(root: str) -> Ledger:
     if owner.is_file():
         owner = owner.parent()
     cache = owner.joinpath("target").joinpath("incan").joinpath("codegraph")
-    return load_ledger(cache.joinpath("snapshot-observations.json"), SETTLE_SECONDS, "")
+    return load_ledger(cache.joinpath("snapshot-observations.crumb"), SETTLE_SECONDS, "")
 
 
 pub def snapshot_status(expected: str, current: str) -> JsonValue:

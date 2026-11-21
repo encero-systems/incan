@@ -84,4 +84,4 @@ def output_observations(outputs: list[Path]) -> Result[list[str], str]:
 
 def portable_ledger(directory: Path) -> Ledger:
     """Reuse content digests only while the exact file generations that supplied them remain unchanged."""
-    return load_ledger(directory.joinpath("portable-observations.json"), SETTLE_SECONDS)
+    return load_ledger(directory.joinpath("portable-observations.crumb"), SETTLE_SECONDS)

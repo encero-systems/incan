@@ -1,0 +1,77 @@
+"""Private retained facts preserve their exact typed data and remain compatible with earlier home caches."""
+
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import sha256
+from std.json import JsonValue, parse
+from home_paths import home
+from retained_reading_records import DESUGARER, ReadingKind, decode_reading, encode_reading
+from retained_readings import recall, retain_content
+from scratch import scratch_directory
+
+
+pub def test_each_retained_family_keeps_its_exact_value_and_generation() -> Result[None, str]:
+    """The same string in different families has a different nominal contract. Worker field absence survives."""
+    for kind in [ReadingKind.Digest, ReadingKind.SearchPath, ReadingKind.RustProbe, ReadingKind.CrateMetadata]:
+        round_trip(kind, JsonValue.string("first\nsecond\t☃"))?
+    scalar = encode_reading(ReadingKind.Digest, "file", "selector", "stamp", JsonValue.string("abc"))?
+    assert decode_reading(ReadingKind.SearchPath, scalar, "file", "selector", "stamp").is_err()
+    lock = JsonValue.object({"manifest": JsonValue.string("/project/loaf.toml"), "digest": JsonValue.string("sha256:abc")})
+    round_trip(ReadingKind.ProjectLock, lock)?
+    for source in ["{}", "{\"artifact_kind\":\"NativeWorker\"}",
+        "{\"unit_identity\":\"unit\",\"artifact_kind\":\"NativeWorker\",\"abi_version\":2,\"relative_path\":\"worker\",\"sha256\":\"bytes\"}"]:
+        artifact = parse(source).map_err((error) => error.message())?
+        round_trip(ReadingKind.Vocabulary, JsonValue.object({
+            "digest": JsonValue.string("file-sha"), "fields": JsonValue.object({DESUGARER: artifact}),
+        }))?
+    round_trip(ReadingKind.Vocabulary, JsonValue.object({"digest": JsonValue.string("empty"), "fields": JsonValue.object({})}))?
+    future = JsonValue.object({"digest": JsonValue.string("future"), "fields": JsonValue.object({
+        DESUGARER: JsonValue.object({"new_field": JsonValue.string("preserve")}),
+    })})
+    assert encode_reading(ReadingKind.Vocabulary, "file", "selector", "stamp", future).is_err()
+    return Ok(None)
+
+
+def round_trip(kind: ReadingKind, value: JsonValue) -> Result[None, str]:
+    encoded = encode_reading(kind, "file", "selector", "stamp", value)?
+    assert encoded[:4] == b"CRMB"
+    match decode_reading(kind, encoded, "file", "selector", "stamp")?:
+        None => return Err("missing exact typed reading")
+        Some(decoded) =>
+            assert decoded.to_json().map_err((error) => error.message())? == value.to_json().map_err((error) => error.message())?
+    assert decode_reading(kind, encoded, "different", "selector", "stamp")? is None
+    assert decode_reading(kind, encoded, "file", "changed", "stamp")? is None
+    assert decode_reading(kind, encoded, "file", "selector", "new")? is None
+    return Ok(None)
+
+
+pub def test_home_cache_reads_legacy_lock_and_publishes_typed_replacement() -> Result[None, str]:
+    """Exercise the actual cache locator, old JSON, atomic new publication, and fail-closed corrupt replacement."""
+    scratch = scratch_directory()?
+    source = scratch.path().joinpath("loaf.lock")
+    selected = "settled fixture"
+    stamp = "locked-inputs"
+    name = hexlify(sha256.digest(f"{source.0}\n{selected}".encode("utf-8")))[:32]
+    directory = home()?.joinpath("cache").joinpath("retained-readings")
+    directory.mkdir(true, true).map_err((error) => error.message())?
+    legacy = directory.joinpath(name + ".json")
+    value = JsonValue.object({"manifest": JsonValue.string("loaf.toml"), "digest": JsonValue.string("sha256:old")})
+    record = JsonValue.object({
+        "schema": JsonValue.string("incan.oven.retained-reading/2"), "source": JsonValue.string(source.0),
+        "selection": JsonValue.string(selected), "stamp": JsonValue.string(stamp), "value": value,
+    })
+    legacy.write_bytes(record.to_json().map_err((error) => error.message())?.encode("utf-8")).map_err((error) => error.message())?
+    assert recall(source, selected, stamp, ReadingKind.ProjectLock) is not None
+    assert recall(source, selected, "changed", ReadingKind.ProjectLock) is None
+    newer = JsonValue.object({"manifest": JsonValue.string("loaf.toml"), "digest": JsonValue.string("sha256:new")})
+    retain_content(source, selected, stamp, newer)
+    typed = directory.joinpath(name + ".crumb")
+    assert typed.read_bytes().map_err((error) => error.message())?[:4] == b"CRMB"
+    match recall(source, selected, stamp, ReadingKind.ProjectLock):
+        None => return Err("new lock generation is missing")
+        Some(found) => assert found.to_json().map_err((error) => error.message())? == newer.to_json().map_err((error) => error.message())?
+    typed.write_bytes(b"incomplete").map_err((error) => error.message())?
+    assert recall(source, selected, stamp, ReadingKind.ProjectLock) is None
+    typed.unlink().map_err((error) => error.message())?
+    legacy.unlink().map_err((error) => error.message())?
+    return Ok(None)

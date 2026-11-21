@@ -220,12 +220,21 @@ def verify_local_bakery_graph_refresh(scratch: Path) -> Result[None, str]:
     assert read(native_attempts)? == "x"
     assert read(graph_attempts)? == "xx"
 
+    # Returning to the first observer binds the same producer again: a refresh leaves only payload links in the
+    # bound library, so a later process of another observer generation is not refused.
+    write(driver, graph_script)?
+    request.project = scratch.joinpath("returning-consumer").0
+    returned = compile_rust_library(facet, declared, scratch.joinpath("returning-output"), request, {}, [])?
+    assert returned.reused
+    assert read(native_attempts)? == "x"
+    graphs = read(graph_attempts)?
+
     write(source, "pub fn value() -> u32 { 2 }\n")?
     request.project = scratch.joinpath("changed-consumer").0
     changed = compile_rust_library(facet, declared, scratch.joinpath("changed-output"), request, {}, [])?
     assert not changed.reused
     assert read(native_attempts)? == "xx"
-    assert read(graph_attempts)? == "xxx"
+    assert read(graph_attempts)? == graphs + "x"
 
     # An installed producer from another compiler generation is rebuilt from source into this home's store.
     installed_directory = scratch.joinpath("changed-output").joinpath(f"{crate_name}-{facet_slot(facet, "release")}")
@@ -263,7 +272,7 @@ def verify_local_bakery_graph_refresh(scratch: Path) -> Result[None, str]:
     assert not rebuilt.reused
     assert rebuilt.artifact != installed_artifact.0
     assert read(native_attempts)? == "xxx"
-    assert read(graph_attempts)? == "xxxx"
+    assert read(graph_attempts)? == graphs + "xx"
 
     # Without shipped source, the stale installed producer cannot be replaced and says exactly what is missing.
     remove(source)?
@@ -424,9 +433,12 @@ def verify_relocated_rust_producer(
     _ = compile_rust_library(facet, declared, output, selected, built, [])?
     # 2. A fresh installation changes paths, inodes and status-change times, while preserving complete bytes.
     directory = artifact.parent().parent().joinpath("relocated")
+    directory.mkdir(true, true).map_err((error) => error.message())?
+    # The producer directory also keeps binary records, so every file is relocated as bytes.
     for source in artifact.parent().iterdir().map_err((error) => error.message())?:
         if source.is_file():
-            write(directory.joinpath(source.name()), read(source)?)?
+            data = source.read_bytes().map_err((error) => error.message())?
+            directory.joinpath(source.name()).write_bytes(data).map_err((error) => error.message())?
     dependency = directory.joinpath("libcore.rlib")
     write(dependency, read(Path(built["native-core@target"].artifact))?)?
     write(record_path(dependency), read(record_path(Path(built["native-core@target"].artifact)))?)?
@@ -572,7 +584,7 @@ def rust_crate(scratch: Path) -> Result[RustCrate, str]:
     dependency = scratch.joinpath("libcore.rlib")
     write(dependency, "core one")?
     record_payload(dependency, fingerprint(["core one"])?)?
-    return Ok(RustCrate(facet=facet, dependency=dependency, ledger=scratch.joinpath("ledger.json")))
+    return Ok(RustCrate(facet=facet, dependency=dependency, ledger=scratch.joinpath("ledger.crumb")))
 
 
 def rust_pass(setup: RustCrate, compiler: str, feature: str) -> Result[Pass, str]:
