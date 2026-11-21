@@ -8,7 +8,7 @@ from std.environ import args, get_or
 from std.fs import Path
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
-from check_support import repository_root, write_stderr
+from check_support import repository_above, repository_root, write_stderr
 from oven_tests import (
     LOWERING_RESERVATION_BYTES,
     PROJECT_RESERVATION_BYTES as OVEN_PROJECT_RESERVATION_BYTES,
@@ -151,7 +151,8 @@ def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tup
     """Run independent installed gates through this built verifier and recover their typed results."""
     plans = verification_phase_plans(installation.jobs)
     mut invocations: list[Invocation] = []
-    verifier = current_exe().map_err((error) => error.to_string())?.to_string_lossy().into_owned()
+    executable = current_exe().map_err((error) => error.to_string())?
+    verifier = pin_phase_verifier(Path(executable.to_string_lossy().into_owned()), installation.run)?
     retain_traces = verification_traces_requested()
     for plan in plans:
         name = verification_phase_name(plan.phase)
@@ -175,7 +176,15 @@ def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tup
             ),
         )
     memory = shared_memory(host_memory())
-    failed = run_all_failures(verifier, invocations, len(invocations), memory)?
+    # Independent gates can each start compiler processes. Honor the requested concurrency at this boundary too.
+    # A failing gate stops none of the others, so one run reports every failing gate.
+    failed = run_all_failures(
+        verifier.0,
+        invocations,
+        verification_workers(installation.jobs),
+        memory,
+        len(invocations),
+    )?
     if len(failed) > 0:
         return Err(
             "installed verification phase failures: " + ", ".join(
@@ -195,6 +204,14 @@ def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tup
             .map_err((error) => error.message())?.strip(),
     )
     return Ok((report, suites))
+
+
+pub def pin_phase_verifier(executable: Path, run: Path) -> Result[Path, str]:
+    """Hold the running script's executable for later phases, even when Oven publishes another script to the shared output path."""
+    pinned = run.joinpath("phase-verifier")
+    if pinned.hardlink_to(executable).is_err():
+        return executable.copy(pinned, true, true).map_err((error) => error.message())
+    return Ok(pinned)
 
 
 pub def verification_phase_arguments(name: str, run: Path, runner: Path, jobs: int, timeout: int) -> list[str]:
@@ -313,8 +330,9 @@ def phase_positive(text: str, name: str) -> Result[int, str]:
 
 
 def phase_installation(run: Path, jobs: int, timeout_seconds: int) -> Result[Installation, str]:
-    """Reconstruct immutable installed paths for a child phase without creating another evidence run."""
-    root = repository_root()?
+    """Resolve the checkout from the directory the parent assigned to the pinned verifier process."""
+    directory = Path(".").resolve().map_err((error) => error.message())?
+    root = repository_above(directory)?
     home_text = get_or("INCAN_HOME", "")
     if home_text == "":
         return Err("INCAN_HOME must select the installed release")
@@ -376,9 +394,10 @@ pub def require_pristine_relocation_inputs(home: Path) -> Result[None, str]:
         directory = toolchain.joinpath(name)
         if not directory.is_dir():
             continue
-        caches = directory.rglob("*observations.json").map_err((error) => error.message())?
-        if len(caches) > 0:
-            return Err(f"installed archive retained path-keyed observations: {caches[0].0}")
+        for pattern in ["*observations.crumb", "*observations.json"]:
+            caches = directory.rglob(pattern).map_err((error) => error.message())?
+            if len(caches) > 0:
+                return Err(f"installed archive retained path-keyed observations: {caches[0].0}")
     return Ok(None)
 
 
@@ -400,7 +419,7 @@ def release_json_documents(toolchain: Path) -> Result[list[Path], str]:
 
 def is_relocation_observation_cache(path: Path) -> bool:
     """Recognize the path-keyed caches archive packing excludes and installed use recreates locally."""
-    return path.name().ends_with("observations.json")
+    return path.name().ends_with("observations.crumb") or path.name().ends_with("observations.json")
 
 
 def prepare(output: Path, jobs: int, timeout_seconds: int) -> Result[Installation, str]:
@@ -462,24 +481,27 @@ def build_runner(installation: Installation) -> Result[Path, str]:
 
 def run_oven_tests(installation: Installation) -> Result[None, str]:
     """Run the stable Oven and Loaf Incan-test inventory through the installed toolchain."""
-    return require_step(
-        command_step(
-            installation,
-            "oven-tests",
+    mut step = command_step(
+        installation,
+        "oven-tests",
+        installation.oven.0,
+        [
+            "run",
+            installation.root.joinpath("scripts/oven_tests.incn").0,
+            "--",
             installation.oven.0,
-            [
-                "run",
-                installation.root.joinpath("scripts/oven_tests.incn").0,
-                "--",
-                installation.oven.0,
-                installation.run.0,
-                "--jobs",
-                str(installation.jobs),
-            ],
-            installation.root,
-            installation.run.joinpath("oven-tests-command.log"),
-        ),
+            installation.run.0,
+            "--jobs",
+            str(installation.jobs),
+            # A release names every failing test in one run, so no later failure hides behind the first.
+            "--keep-going",
+        ],
+        installation.root,
+        installation.run.joinpath("oven-tests-command.log"),
     )
+    # This one step runs the whole inventory, failures included, so it gets the inventory's deadline, not one command's.
+    step.timeout_seconds = installation.timeout_seconds * 4
+    return require_step(step)
 
 
 def run_rust_facets(installation: Installation) -> Result[int, str]:
@@ -751,20 +773,24 @@ pub def census_arguments(oven: Path, fixtures: Path, scratch: Path, jobs: int, t
 
 
 def measure_memory(installation: Installation) -> Result[None, str]:
-    """Record one cold footprint run per command and enforce release-owned budgets through the installed toolchain."""
+    """Report one footprint observation per command, reusing the sampled candidate Oven build when the bundle has it."""
+    mut arguments = [
+        "run",
+        installation.root.joinpath("scripts/memory_budget.incn").0,
+        "--",
+        installation.oven.0,
+        installation.run.0,
+        "--runs",
+        "1",
+    ]
+    observation = bundled_oven_observation()
+    if observation != "":
+        arguments += ["--reuse-oven", observation]
     return require_step(
         Step(
             name="memory-budget",
             executable=installation.oven.0,
-            arguments=[
-                "run",
-                installation.root.joinpath("scripts/memory_budget.incn").0,
-                "--",
-                installation.oven.0,
-                installation.run.0,
-                "--runs",
-                "1",
-            ],
+            arguments=arguments,
             environment=command_environment(installation),
             remove_environment=["RUSTC_BOOTSTRAP", "INCAN_LSP"],
             directory=Some(installation.root),
@@ -772,6 +798,17 @@ def measure_memory(installation: Installation) -> Result[None, str]:
             timeout_seconds=installation.timeout_seconds * 20,
         ),
     )
+
+
+def bundled_oven_observation() -> str:
+    """Return the informational Oven observation beside the selected release archive, or request a cold fallback."""
+    archive = Path(get_or("INCAN_RELEASE_ARCHIVE", ""))
+    if not archive.is_file():
+        return ""
+    prefix = archive.parent().joinpath("memory-oven-1")
+    if not Path(prefix.0 + ".summary.txt").is_file():
+        return ""
+    return prefix.0
 
 
 def command_step(
@@ -796,8 +833,20 @@ def command_step(
 
 
 def command_environment(installation: Installation) -> Dict[str, str]:
-    """Return the explicit environment selected for every installed-verification child."""
-    return {"INCAN_HOME": installation.home.0, "INCAN_STDLIB": "", "INCAN_NO_BANNER": "1", "OVEN_OWNER": "off", "RUSTUP_TOOLCHAIN": "1.98.0"}
+    """
+    Return the explicit environment selected for every installed-verification child.
+
+    The engine binary is the installed one whatever the caller's environment names, so a development lane's own
+    engine never answers for the installation under test.
+    """
+    return {
+        "INCAN_HOME": installation.home.0,
+        "INCAN_STDLIB": "",
+        "INCAN_NO_BANNER": "1",
+        "OVEN_OWNER": "off",
+        "OVEN_ENGINE_BINARY": installation.oven.0,
+        "RUSTUP_TOOLCHAIN": "1.98.0",
+    }
 
 
 def owns_rust_facet(manifest: str) -> bool:
@@ -862,8 +911,7 @@ def verification_traces_requested() -> bool:
     """
     if get_or("INCAN_VERIFY_TRACES", "") == "1":
         write_stderr(
-            "verify: `INCAN_VERIFY_TRACES` is replaced by `INCAN_ENGINE_TRACE`, which keeps each phase's traces under "
-            + "the run's `traces/`; it is read for one more release\n",
+            "verify: `INCAN_VERIFY_TRACES` is replaced by `INCAN_ENGINE_TRACE`, which keeps each phase's traces under " + "the run's `traces/`; it is read for one more release\n",
         )
         return true
     return get_or("INCAN_ENGINE_TRACE", "") != ""

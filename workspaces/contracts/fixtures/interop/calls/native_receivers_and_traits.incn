@@ -212,7 +212,7 @@ def show_mutable_tuple_fields() -> None:
 
 def show_native_constructor() -> None:
     """Keep record construction and opaque child ownership native, using Rust's status and Clone implementations."""
-    match Command.new("rustc").arg("--version").output():
+    match Command.new("printf").arg("native output").output():
         Ok(report) =>
             snapshot = Output(status=report.status, stdout=report.stdout, stderr=report.stderr)
             copied = snapshot.clone()

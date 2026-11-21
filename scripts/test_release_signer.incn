@@ -7,6 +7,7 @@ from check_support import repository_root
 from release_signer import (
     BUNDLE_SUFFIX,
     CARRIED_TRUST,
+    INFORMATIONAL_ASSETS,
     RELEASE_SIGNER,
     SIGNED_ASSETS,
     STAMP_MODULE,
@@ -103,12 +104,14 @@ def test_the_packing_invocation_stamps_the_program_and_carries_the_file_into_the
 def test_the_verifying_invocation_takes_each_asset_with_its_signature_or_stops() -> Result[None, str]:
     """
     1. The signed bundle's assets and their `ASSET.sigstore.json` files land side by side in the release's bundle.
-    2. A bundle the workflow did not sign completely is refused by the missing file's name, and so is a missing asset.
+    2. The prior job's informational Oven observation follows the bundle without becoming a signed release asset.
+    3. A bundle the workflow did not sign completely is refused by the missing file's name, and so is a missing asset.
     """
     scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
     signed = bundle_of(scratch.path())?
     for asset in SIGNED_ASSETS:
         put(signed.joinpath(asset + BUNDLE_SUFFIX), f"signature of {asset}\n")?
+    put(signed.joinpath(INFORMATIONAL_ASSETS[0]), "candidate Oven observation\n")?
     # 1. The stamped program looks for the signature beside the asset it installs.
     release = scratch.path().joinpath("release/bundle")
     release.mkdir(true, true).map_err((error) => error.message())?
@@ -118,16 +121,21 @@ def test_the_verifying_invocation_takes_each_asset_with_its_signature_or_stops()
         assert taken == f"stand-in for {asset}\n"
         signature = release.joinpath(asset + BUNDLE_SUFFIX)
         assert signature.read_text("utf-8", "strict").map_err((error) => error.message())? == f"signature of {asset}\n"
-    # 2. Nothing passes for a signature, and nothing for an asset.
+    # 2. The observation is evidence, not a release asset that needs a signing identity.
+    observation = release.joinpath(INFORMATIONAL_ASSETS[0])
+    assert observation.read_text("utf-8", "strict").map_err((error) => error.message())? == "candidate Oven observation\n"
+    # 3. Nothing passes for a signature, and nothing for an asset.
     unsigned = signed.joinpath(SIGNED_ASSETS[1] + BUNDLE_SUFFIX)
     unsigned.unlink().map_err((error) => error.message())?
     match adopt_signed_bundle(signed, release):
         Ok(_) => return Err("a bundle with an unsigned asset was taken")
-        Err(reason) => assert reason.endswith(f" has no {SIGNED_ASSETS[1]}{BUNDLE_SUFFIX}"), reason
+        Err(reason) =>
+            assert reason.endswith(f" has no {SIGNED_ASSETS[1]}{BUNDLE_SUFFIX}"), reason
     signed.joinpath(SIGNED_ASSETS[0]).unlink().map_err((error) => error.message())?
     match adopt_signed_bundle(signed, release):
         Ok(_) => return Err("a bundle without an asset was taken")
-        Err(reason) => assert reason.endswith(f" has no {SIGNED_ASSETS[0]}"), reason
+        Err(reason) =>
+            assert reason.endswith(f" has no {SIGNED_ASSETS[0]}"), reason
     return Ok(None)
 
 
@@ -142,7 +150,8 @@ def test_a_signer_file_without_its_workflow_slot_or_trusted_root_stops_a_stamped
     put(source.joinpath(RELEASE_SIGNER), signer_text("null"))?
     match stamp_release_signer(source, toolchain, true):
         Ok(_) => return Err("a release with no trusted root was stamped")
-        Err(reason) => assert reason == f"cannot stamp the release: {RELEASE_SIGNER} has no trusted root", reason
+        Err(reason) =>
+            assert reason == f"cannot stamp the release: {RELEASE_SIGNER} has no trusted root", reason
     assert not toolchain.joinpath(CARRIED_TRUST).is_file()
     return Ok(None)
 
