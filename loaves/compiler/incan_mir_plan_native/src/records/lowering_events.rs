@@ -489,8 +489,10 @@ pub fn decode_module_note(encoded: &[u8]) -> Result<AdmittedModule, String> {
     })
 }
 
-/// Store only changed placements. Refuse a stale companion if it cannot be removed.
-pub fn write_module_placement(path: &Path, note: &AdmittedModule) -> Result<(), String> {
+/// Store only changed placements at the companion path `path`, given as text as an Incan caller passes it. Refuse a
+/// stale companion if it cannot be removed.
+pub fn write_module_placement(path: &str, note: &AdmittedModule) -> Result<(), String> {
+    let path = Path::new(path);
     let mut functions: Vec<Wire> = Vec::new();
     for function in &note.functions {
         if let Some(placement) = &function.placement {
@@ -516,8 +518,10 @@ pub fn write_module_placement(path: &Path, note: &AdmittedModule) -> Result<(), 
     std::fs::write(path, encoded).map_err(|error| error.to_string())
 }
 
-/// Bind a sparse coordinates companion to the exact functions and identities in this admission.
-pub fn read_module_admission(path: &Path) -> Result<AdmittedModule, String> {
+/// Bind a sparse coordinates companion to the exact functions and identities in the admission at `path`, given as text
+/// as an Incan caller passes it.
+pub fn read_module_admission(path: &str) -> Result<AdmittedModule, String> {
+    let path = Path::new(path);
     let mut note = decode_module_note(&std::fs::read(path).map_err(|error| error.to_string())?)?;
     let companion = Path::new(&format!("{}.placement", path.display())).to_path_buf();
     if !companion.is_file() {

@@ -307,7 +307,13 @@ fn admitted_positions_are_private_to_the_compiler_request() -> Result<(), String
         report_admitted(Some(&root_text), "m", &[owner], 1, true, Some(&products))?;
     }
     for (line, attempt) in (8..).zip(&attempts) {
-        let note = read_module_admission(&attempt.join("products").join("admissions").join("6d.admitted"))?;
+        let note = read_module_admission(
+            &attempt
+                .join("products")
+                .join("admissions")
+                .join("6d.admitted")
+                .to_string_lossy(),
+        )?;
         assert!(note.inspected && note.functions.len() == 1);
         let Some(placed) = &note.functions[0].placement else {
             return Err("a later request replaced the earlier admission".into());
