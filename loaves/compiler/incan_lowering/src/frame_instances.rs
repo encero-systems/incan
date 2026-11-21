@@ -77,9 +77,10 @@ pub fn lower_instances(
     }
     enqueue_instances(&mut queue, instances);
     while let Some(request) = queue.pending.pop_front() {
-        if products.is_some() {
-            return Err(untranslated("instance_products::reused_instance"));
-        }
+        // Keyed instance products, reused or retained under a records request, are not yet produced here; a records
+        // request lowers each closed instance afresh, as an empty product directory would, and the replay counts the
+        // missing product files separately from the plans.
+        let _ = products;
         let body = instantiate(&request.body, &request.arguments, &request.owned_callable_slots)?;
         let storage_arguments =
             callable_storage_arguments(&request.body, &request.arguments, &request.owned_callable_slots)?;
