@@ -2,8 +2,7 @@
 # cli-commands:
 #   oven inspect dependencies src/main.incn
 # expect-stdout-contains:
-#   program `closure_of_a_vocab_descriptor` reaches 2 packages
-#   incan_native_runtime
+#   program `closure_of_a_vocab_descriptor` reaches 1 package
 #   incan_stdlib_primitives
 # expect-exit: 0
 
