@@ -278,3 +278,72 @@ fn unit_manifest_and_contributor_records_carry_every_reference_field() {
     assert!(admission.facts.is_empty() && cache.digest.is_empty() && inventory.abi_digest.is_none());
     assert!(contributors.vocabulary.is_empty() && member.key == "k");
 }
+
+/// Every reference field default is published to Incan callers under the name the frontend reads, with the
+/// reference value.
+#[test]
+fn every_reference_field_default_is_published() {
+    use crate::body_ir_declarations::CompilerBodyIrModule;
+    use crate::compiler_records::HirSourceSpan;
+    use crate::crumb_rows::ModelField;
+    use crate::record_scope::{DEFAULT_READ_BYTES, RecordRequest};
+
+    assert!(CompilerBodyIrModule::__incan_default_runtime_binding_scopes().is_empty());
+    let counts = [
+        CheckedBodyCounts::__incan_default_checked(),
+        CheckedBodyCounts::__incan_default_reused(),
+        CheckedBodyCounts::__incan_default_decoded(),
+        CheckerRecordCounts::__incan_default_reusable_declarations(),
+        CheckerRecordCounts::__incan_default_all_declarations(),
+        LoweringEvent::__incan_default_runtime_requirements(),
+        NamespaceOrder::__incan_default_rank(),
+    ];
+    assert_eq!(counts, [0; 7]);
+    assert_eq!(
+        CheckerRecordCounts::__incan_default_summary(),
+        "0/0 reusable declarations"
+    );
+    assert!(CheckerRecordCounts::__incan_default_artifact_refusals().is_empty());
+    assert!(CheckerRecordCounts::__incan_default_restored().is_empty());
+    assert!(CheckerRecordCounts::__incan_default_restored_body_ir().is_empty());
+    assert!(GraphNamespaceValue::__incan_default_lowering_inputs().is_empty());
+    assert!(GraphNamespaceValue::__incan_default_package_roots().is_empty());
+    assert!(GraphNamespaceValue::__incan_default_call_reads().is_empty());
+    assert!(GraphNamespaceValue::__incan_default_call_reads_known());
+    assert!(GraphNamespaceValue::__incan_default_identity_proof().is_empty());
+    assert!(CompiledBodyValue::__incan_default_dependency_reads().is_empty());
+    assert!(CompiledBodyValue::__incan_default_scope_names().is_empty());
+    assert!(CompiledNamespaceValue::__incan_default_lowering_inputs().is_empty());
+    assert!(CompiledNamespaceValue::__incan_default_package_roots().is_empty());
+    assert!(CompiledNamespaceValue::__incan_default_call_reads().is_empty());
+    assert!(CompiledNamespaceValue::__incan_default_semantic_interface().is_empty());
+    assert!(CompiledNamespaceValue::__incan_default_member_witnesses().is_empty());
+    assert_eq!(CompiledNamespaceValue::__incan_default_call_contracts(), None);
+    assert!(CompiledNamespaceValue::__incan_default_identity_proof().is_empty());
+    assert!(CompiledNamespaceValue::__incan_default_published_record().is_empty());
+    assert!(CompiledBodyOutputs::__incan_default_namespaces().is_empty());
+    assert!(CompilerContributors::__incan_default_vocabulary().is_empty());
+    assert!(CompilerContributors::__incan_default_operations().is_empty());
+    assert_eq!(HirSourceSpan::__incan_default_expansion(), None);
+    assert!(ModelField::__incan_default_canonical());
+    assert!(!LoweringEvent::__incan_default_admitted());
+    let texts = [
+        LoweringEvent::__incan_default_module(),
+        LoweringEvent::__incan_default_role(),
+        LoweringEvent::__incan_default_demand(),
+        RecordKey::__incan_default_context(),
+        PayloadAdmission::__incan_default_facts(),
+        PayloadAdmission::__incan_default_refusal(),
+    ];
+    assert!(texts.iter().all(String::is_empty));
+    assert!(LoweringEvent::__incan_default_references().is_empty());
+    assert!(LoweringEvent::__incan_default_positions().is_empty());
+    assert_eq!(AdmittedFunction::__incan_default_placement(), None);
+    assert!(!AdmittedModule::__incan_default_inspected());
+    assert_eq!(NamespaceOrder::__incan_default_evidence(), "compiled-check");
+    assert!(NamespaceOrder::__incan_default_members().is_empty());
+    assert!(NamespaceOrder::__incan_default_certificate().is_empty());
+    assert!(MethodReads::__incan_default_groups().is_empty());
+    assert!(MethodReads::__incan_default_retained().is_empty());
+    assert_eq!(RecordRequest::__incan_default_byte_limit(), DEFAULT_READ_BYTES);
+}

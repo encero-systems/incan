@@ -39,6 +39,7 @@ pub mod plan_function_records;
 pub mod plan_module_records;
 pub mod plan_wire_rows;
 pub mod plan_wire_schema;
+mod published_defaults;
 pub mod read_receipts;
 pub mod record_scope;
 pub mod record_service;
