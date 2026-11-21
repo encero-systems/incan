@@ -1,6 +1,6 @@
 """The public Crumb row API runs the Rust codec; the Incan codec is its measured twin, never a second route."""
 
-from rust::incan_std_primitives::crumb import RowRequest, twin_row_reads
+from rust::incan_std_primitives::crumb import RowRequest, twin_row_reads, twin_row_writes
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.descriptions import Description, DescriptionMode
 from crate.primitives.crumb.errors import CrumbFailure
@@ -81,6 +81,17 @@ def one_record() -> list[RowRecord]:
         ),
     ]
     return [RowRecord(key=b"record\x00", value=Value.Record(values))]
+
+
+def test_the_public_write_path_does_not_run_the_incan_twin() -> Result[None, str]:
+    """Writing an envelope through the public API does not run the retained Incan writer."""
+    mut budget = Budget.create(bytes=1048576, elements=1048576, depth=64).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    before = twin_row_writes()
+    _ = write_rows([stored()], one_record(), registry, true, budget).map_err((e) => e.message())?
+    ran = twin_row_writes() - before
+    assert ran == 0u64, f"the public write path encoded {ran} envelope(s) in the Incan twin"
+    return Ok(None)
 
 
 def other_last(envelope: bytes, index: int) -> int:
