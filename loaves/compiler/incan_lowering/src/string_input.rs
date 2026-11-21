@@ -3,12 +3,12 @@
 use std::sync::Arc;
 
 use incan_mir_plan_native::{EnumDeclaration, Local, PlanType, SourceSpan};
-use incan_semantics_core::IncanInputAccess;
 use incan_semantics_core::body_ir::BodyIrModule;
+use incan_semantics_core::{IncanInputAccess, IncanType};
 
 use crate::frame::Builder;
 use crate::native_type_identity::ConstructorIndex;
-use crate::program_context::synthetic_program_context;
+use crate::program_context::{ProgramContext, synthetic_program_context};
 
 /// Keep the sole input owned until a planned call or construction consumes it, with one local cleanup ledger.
 pub fn owned_string_frame(
@@ -19,8 +19,7 @@ pub fn owned_string_frame(
     intrinsics: &[EnumDeclaration],
     span: &SourceSpan,
 ) -> Builder {
-    let mut builder = Builder {
-        program: synthetic_program_context(module, constructors),
+    let frame = SyntheticFrame {
         locals: vec![
             Local {
                 ty: result,
@@ -32,17 +31,47 @@ pub fn owned_string_frame(
             },
         ],
         parameter_count: 1,
+        file: span.file.to_string(),
+        module_identity: module.module_id.path().to_string(),
+        unions: Vec::new(),
+        intrinsics: intrinsics.to_vec(),
+        name: name.to_string(),
+        owned: vec![1],
+    };
+    let mut builder = synthetic_builder(synthetic_program_context(module, constructors), frame);
+    builder.new_block(span);
+    builder
+}
+
+/// The storage a synthesized frame starts from; every other builder field starts empty.
+pub struct SyntheticFrame {
+    pub locals: Vec<Local>,
+    pub parameter_count: i64,
+    pub file: String,
+    pub module_identity: String,
+    pub unions: Vec<IncanType>,
+    pub intrinsics: Vec<EnumDeclaration>,
+    pub name: String,
+    pub owned: Vec<i64>,
+}
+
+/// A builder for a frame the lowering synthesizes rather than reads from a checked body.
+pub fn synthetic_builder(program: ProgramContext, frame: SyntheticFrame) -> Builder {
+    Builder {
+        program,
+        locals: frame.locals,
+        parameter_count: frame.parameter_count,
         blocks: Vec::new(),
         current: 0,
         source: String::new(),
-        file: span.file.to_string(),
+        file: frame.file,
         line_starts: Vec::new(),
-        module_identity: module.module_id.path().to_string(),
+        module_identity: frame.module_identity,
         callable_identity: None,
         loops: Vec::new(),
         loop_owners: Vec::new(),
         externals: Vec::new(),
-        owned: vec![1],
+        owned: frame.owned,
         cleanup_chains: Vec::new(),
         closed: Vec::new(),
         iterators: Vec::new(),
@@ -51,10 +80,10 @@ pub fn owned_string_frame(
         partial_callables: Vec::new(),
         scalar_closures: Vec::new(),
         unproven_closures: Vec::new(),
-        unions: Vec::new(),
+        unions: frame.unions,
         local_offset: 0,
         consuming_closure_frame: false,
-        intrinsics: intrinsics.to_vec(),
+        intrinsics: frame.intrinsics,
         generator_handle: -1,
         instances: Vec::new(),
         type_parameters: Vec::new(),
@@ -62,7 +91,7 @@ pub fn owned_string_frame(
         callable_type_arguments: Vec::new(),
         trait_environment: None,
         function_pointer_locals: Vec::new(),
-        name: name.to_string(),
+        name: frame.name,
         synthesized: Vec::new(),
         materialized_closures: Vec::new(),
         step_element: None,
@@ -87,7 +116,5 @@ pub fn owned_string_frame(
         carries_view: false,
         invocation_storage: Vec::new(),
         released: Vec::new(),
-    };
-    builder.new_block(span);
-    builder
+    }
 }
