@@ -1,7 +1,9 @@
 """Atomic ranked-graph publication for compiler values, completed receipts and their forward and reverse edges."""
 
+from graph_read_demands import note_graph_demand
+from pub::internal_models.record_scope import checked_row_family, checked_row_request
+from pub::internal_models.source_value_records import SOURCE_PROFILE
 from std.encoding.hex import hexlify
-from std.json import JsonValue, parse
 from std.primitives.hash import sha256
 from pub::incan_platform.store import (
     Snapshot,
@@ -9,20 +11,21 @@ from pub::incan_platform.store import (
     begin,
     commit,
     get,
+    first_stored_key,
     keys_with_prefix,
+    locate_value,
     revisions_with_prefix,
     stage_delete,
     stage_put,
 )
-from pub::incan_platform.store.codec import KIND_TOMBSTONE
+from pub::incan_platform.store.codec import KIND_TOMBSTONE, matches_value_frame
+from pub::incan_platform.store.index import Location, entries_with_prefix
 from pub::internal_models import (
     ProducerRank,
     ProducerStage,
-    RECEIPT_SCHEMA,
     StoreRecordSource,
     decode_read_receipt,
     encode_read_receipt,
-    stage_name,
 )
 from pub::internal_models.records import (
     ReadReceipt,
@@ -32,13 +35,12 @@ from pub::internal_models.records import (
     READ_SCHEMA,
     RecordKey,
     RecordRequest,
-    RecordSelection,
     encode_record_key,
 )
-from files import json_text
-
-const EVALUATION_SCHEMA: str = "incan.engine.evaluation/1"
-const EDGE_SCHEMA: str = "incan.engine.read-edge/2"
+from compiler_graph_rows import (
+    Evaluation, IncomingEdge, OutgoingEdge, encode_evaluation, encode_incoming, encode_outgoing, encode_pointer,
+    evaluation_value_digest, read_evaluation, read_identity, read_incoming, read_outgoing, read_pointer,
+)
 
 
 pub model PublishedEvaluation:
@@ -68,7 +70,10 @@ pub model ReusableEvaluation:
     """One persisted compiler value admitted only after every recorded dependency still validates."""
 
     pub value: bytes
+    pub value_digest: str
     pub receipt: ReadReceipt
+    pub namespace: int
+    pub location: Option[Location] = None
 
 
 pub model ReusableRecord:
@@ -76,7 +81,10 @@ pub model ReusableRecord:
 
     pub key: RecordKey
     pub value: bytes
+    pub value_digest: str
     pub receipt: ReadReceipt
+    pub namespace: int
+    pub location: Option[Location] = None
 
 
 model EdgeFact:
@@ -118,6 +126,7 @@ pub def prepare_evaluation(
     rank: ProducerRank,
     value: bytes,
     receipt: ReadReceipt,
+    expected_value_digest: str = "",
 ) -> Result[PreparedEvaluation, str]:
     """Stage a value, evaluation, completed receipt and both edge directions in a caller-owned transaction."""
     if claim_key == "" or receipt.scope.profile == "" or receipt.schema != READ_SCHEMA:
@@ -126,6 +135,8 @@ pub def prepare_evaluation(
         return Err("a completed evaluation requires a nonnegative certified rank")
     value_key = encode_record_key(receipt.preparation.output)?
     value_digest = digest(value)
+    if expected_value_digest != "" and value_digest != expected_value_digest:
+        return Err("retained compiler value differs from its selected witness")
     edges = normalized_edges(receipt.witnesses)?
     receipt_bytes = encode_read_receipt(receipt)?
     receipt_root = digest(receipt_bytes)
@@ -136,15 +147,17 @@ pub def prepare_evaluation(
     stage_put(transaction, value_key, value)
     stage_put(transaction, receipt_key, receipt_bytes)
     stage_put(transaction, evaluation_key, evaluation)
-    stage_put(transaction, output_index_key(receipt.scope.profile, value_key)?, value_key.encode("utf-8"))
+    stage_put(transaction, output_index_key(receipt.scope.profile, value_key)?, encode_pointer(value_key)?)
     outgoing = outgoing_prefix(receipt.scope.profile, record_slot(value_key)?)
-    mut encoded: list[bytes] = []
+    mut forward: list[OutgoingEdge] = []
     for fact in edges:
-        encoded.append(encode_edge(value_key, receipt.scope.profile, fact)?)
-    incoming = incoming_keys(encoded)?
-    for index in range(len(encoded)):
-        stage_put(transaction, f"{outgoing}{index}", encoded[index])
-        stage_put(transaction, incoming[index], encode_incoming(value_key, receipt.scope.profile, edges[index])?)
+        forward.append(OutgoingEdge(reader=value_key, profile=receipt.scope.profile, kind=fact.kind, request=fact.request, evidence=fact.evidence))
+    incoming = incoming_keys(forward)?
+    slot = record_slot(value_key)?
+    for index in range(len(forward)):
+        stage_put(transaction, f"{outgoing}{index}", encode_outgoing(forward[index])?)
+        reverse = IncomingEdge(reader=slot, profile=receipt.scope.profile, target=edges[index].target)
+        stage_put(transaction, incoming[index], encode_incoming(reverse)?)
     return Ok(
         PreparedEvaluation(
             value_key=value_key,
@@ -168,52 +181,118 @@ pub def reusable_evaluation(
     Absence is an ordinary miss. Malformed or incomplete graph state is damage and fails closed rather than silently
     recomputing through a second authority.
     """
+    mut selected_witnesses: Dict[str, tuple[RecordRequest, str]] = {}
+    return select_evaluation(selected, output, profile, selected_witnesses)
+
+
+pub def evaluation_authority(selected: Snapshot, output: RecordKey, profile: str) -> Result[Option[tuple[Evaluation, ReadReceipt]], str]:
+    """Bind an exact output slot to its completed, content-addressed read receipt."""
     if profile == "":
         return Err("a reusable compiler evaluation requires a producer profile")
     value_key = encode_record_key(output)?
     evaluation_key = evaluation_record_key(profile, value_key)
+    note_graph_demand("evaluation", selected, evaluation_key)
     encoded = match get(selected, evaluation_key).map_err((error) => error.message())?:
         Some(value) => value
         None => return Ok(None)
 
-    evaluation = evaluation_document(encoded)?
-    if (
-        required_text(evaluation, "outcome")? != "produced"
-        or required_text(evaluation, "profile")? != profile
-        or required_text(evaluation, "output")? != value_key
-    ):
+    evaluation = read_evaluation(encoded)?
+    if evaluation.profile != profile or evaluation.output != value_key:
         return Err("selected compiler evaluation has mismatched authority")
-    receipt_root = required_digest(evaluation, "receipt_root")?
-    value_digest = required_digest(evaluation, "value_digest")?
+    receipt_root = evaluation.receipt_root
     receipt_bytes = required_value(selected, "incan.engine.receipt\t" + receipt_root)?
     if digest(receipt_bytes) != receipt_root:
         return Err("selected compiler receipt differs from its content root")
-    receipt_document = parse(receipt_bytes.decode().map_err((_) => "selected compiler receipt is not UTF-8")?).map_err(
-        (error) => error.message(),
-    )?
-    if required_text(receipt_document, "schema")? != RECEIPT_SCHEMA:
-        return Ok(None)
     receipt = decode_read_receipt(receipt_bytes)?
     if receipt.scope.profile != profile or encode_record_key(receipt.preparation.output)? != value_key:
         return Err("selected compiler receipt does not describe its evaluation")
-    value = required_value(selected, value_key)?
-    if digest(value) != value_digest:
-        return Err("selected compiler value differs from its evaluation digest")
-    if not witnesses_validate(selected, receipt)?:
+    return Ok(Some((evaluation, receipt)))
+
+
+def select_evaluation(
+    selected: Snapshot,
+    output: RecordKey,
+    profile: str,
+    mut selected_witnesses: Dict[str, tuple[RecordRequest, str]],
+    defer_payload: bool = false,
+) -> Result[Option[ReusableEvaluation], str]:
+    """Validate an output and share only successful selections of the same pinned family read."""
+    evaluation, receipt = match evaluation_authority(selected, output, profile)?:
+        Some(authority) => authority
+        None => return Ok(None)
+    value_key = evaluation.output
+    value_digest = evaluation.value_digest
+    mut value: bytes = b""
+    mut location: Option[Location] = None
+    if defer_payload:
+        note_graph_demand("evaluation-frame", selected, value_key)
+        location = locate_value(selected, value_key).map_err((error) => error.message())?
+        match location:
+            Some(_) => pass
+            None => return Err("selected compiler evaluation is incomplete")
+    else:
+        value = required_value(selected, value_key)?
+        if digest(value) != value_digest:
+            return Err("selected compiler value differs from its evaluation digest")
+    if not witnesses_validate(selected, receipt, selected_witnesses)?:
         return Ok(None)
-    return Ok(Some(ReusableEvaluation(value=value, receipt=receipt)))
+    # A checked row is already authenticated by this snapshot and the evaluation digest. Its complete
+    # contents have the same digest as the canonical whole-row witness used by the next checker phase.
+    if not defer_payload and output.identity_profile != SOURCE_PROFILE and checked_row_family(output.family) and len(selected_witnesses) < 8192 and len(value_key) <= 4096:
+        if let Ok(request) = checked_row_request(output, len(value)):
+            selected_witnesses[value_key] = (request, value_digest)
+    return Ok(Some(ReusableEvaluation(value=value, value_digest=value_digest, receipt=receipt, namespace=evaluation.namespace, location=location)))
 
 
-pub def reusable_family_records(selected: Snapshot, family: str, profile: str) -> Result[list[ReusableRecord], str]:
+pub model OutputSlots:
+    """A selection over output-index keys that can be answered before reading their values."""
+
+    pub origin: str
+    pub identity_profile: str = ""
+    pub included: Option[list[str]] = None
+    pub excluded: list[str] = []
+    pub excluded_outputs: list[str] = []
+
+
+pub def reusable_family_records(
+    selected: Snapshot, family: str, profile: str, slots: Option[OutputSlots] = None, defer_payload: bool = false,
+) -> Result[list[ReusableRecord], str]:
     """
     Select every witnessed value in one family/profile from the graph's engine-owned output index, reading only that
     family's range of it. The index holds one entry per slot, which names the slot's current record.
     """
+    mut verified: Dict[str, tuple[RecordRequest, str]] = {}
+    return select_family_records(selected, family, profile, slots, verified, defer_payload)
+
+
+pub def reusable_checker_records(selected: Snapshot, profile: str, slots: Option[OutputSlots], executable: bool = true) -> Result[tuple[list[ReusableRecord], list[ReusableRecord], list[ReusableRecord]], str]:
+    """Validate the selected checker families against one pinned snapshot, sharing their exact input reads."""
+    mut verified: Dict[str, tuple[RecordRequest, str]] = {}
+    locals = select_family_records(selected, "local", profile, slots, verified)?
+    finals = select_family_records(selected, "final", profile, slots, verified)?
+    mut bodies: list[ReusableRecord] = []
+    if executable:
+        bodies = select_family_records(selected, "body-ir", profile, slots, verified)?
+    return Ok((locals, finals, bodies))
+
+
+def select_family_records(
+    selected: Snapshot, family: str, profile: str, slots: Option[OutputSlots], mut verified: Dict[str, tuple[RecordRequest, str]],
+    defer_payload: bool = false,
+) -> Result[list[ReusableRecord], str]:
+    """Read one family under the snapshot and profile that own the verified selections."""
+    mut excluded: set[str] = set()
+    if let Some(scope) = slots:
+        excluded = set(scope.excluded_outputs)
     mut records: list[ReusableRecord] = []
-    for output in family_outputs(selected, family, profile)?:
+    for output in family_outputs(selected, family, profile, slots)?:
+        if output in excluded:
+            continue
         key = decode_record_key(output)?
-        match reusable_evaluation(selected, key, profile)?:
-            Some(reused) => records.append(ReusableRecord(key=key, value=reused.value, receipt=reused.receipt))
+        match select_evaluation(selected, key, profile, verified, defer_payload)?:
+            Some(reused) =>
+                records.append(ReusableRecord(key=key, value=reused.value, value_digest=reused.value_digest,
+                    receipt=reused.receipt, namespace=reused.namespace, location=reused.location))
             None => pass
     return Ok(records)
 
@@ -224,20 +303,14 @@ pub def reusable_owner_records(
     profile: str,
     origin: str,
     owners: list[str],
+    identity_profile: str = "",
 ) -> Result[list[ReusableRecord], str]:
     """
     Select the witnessed values of one family/profile for only the owners of `origin` that `owners` names, reading and
     validating no other owner's evaluation.
     """
-    mut records: list[ReusableRecord] = []
-    for output in family_outputs(selected, family, profile)?:
-        key = decode_record_key(output)?
-        if key.origin != origin or key.identity not in owners:
-            continue
-        match reusable_evaluation(selected, key, profile)?:
-            Some(reused) => records.append(ReusableRecord(key=key, value=reused.value, receipt=reused.receipt))
-            None => pass
-    return Ok(records)
+    slots = OutputSlots(origin=origin, identity_profile=identity_profile, included=Some(owners))
+    return reusable_family_records(selected, family, profile, Some(slots))
 
 
 pub def owner_evaluations(
@@ -245,6 +318,7 @@ pub def owner_evaluations(
     families: list[str],
     profile: str,
     origin: str,
+    identity_profile: str = "",
 ) -> Result[Dict[str, str], str]:
     """
     Each owner of `origin` with current outputs in `families`, and one digest of its outputs' keys and the value
@@ -252,16 +326,16 @@ pub def owner_evaluations(
     digest; evaluating the same value again does not. No value is read or validated.
     """
     mut parts: Dict[str, list[str]] = {}
+    slots = OutputSlots(origin=origin, identity_profile=identity_profile)
     for family in families:
-        for value_key in family_outputs(selected, family, profile)?:
+        for value_key in family_outputs(selected, family, profile, Some(slots))?:
             key = decode_record_key(value_key)?
-            if key.origin != origin:
-                continue
             mut evaluation = ""
+            note_graph_demand("evaluation-digest", selected, evaluation_record_key(profile, value_key))
             if let Some(document) = get(selected, evaluation_record_key(profile, value_key)).map_err(
                 (error) => error.message(),
             )?:
-                evaluation = required_digest(evaluation_document(document)?, "value_digest")?
+                evaluation = evaluation_value_digest(document)?
             mut listed: list[str] = []
             if key.identity in parts:
                 listed = parts[key.identity]
@@ -273,37 +347,68 @@ pub def owner_evaluations(
     return Ok(owners)
 
 
-pub def family_outputs(selected: Snapshot, family: str, profile: str) -> Result[list[str], str]:
-    """
-    One family/profile's current outputs, as encoded record keys in the order of their slots. Each is the value of its
-    slot's entry in the graph's output index; no output is read, decoded or validated.
-    """
+pub def family_outputs(
+    selected: Snapshot, family: str, profile: str, slots: Option[OutputSlots] = None,
+) -> Result[list[str], str]:
+    """Read pointers only for selected slots; no evaluation or compiler value is read."""
+    mut base = family_range(family, profile)?
+    mut ranges = [base]
+    mut included: Option[set[str]] = None
+    mut excluded: set[str] = set()
+    if let Some(scope) = slots:
+        if "\t" in scope.origin or "\t" in scope.identity_profile:
+            return Err("invalid compiler output range")
+        excluded = set(scope.excluded)
+        if let Some(owners) = scope.included:
+            if len(owners) == 0:
+                return Ok([])
+            included = Some(set(owners))
+        if scope.identity_profile != "":
+            base = base + scope.identity_profile + "\t" + scope.origin + "\t"
+            ranges = [base]
+            if let Some(names) = included:
+                ranges = []
+                for name in sorted([name for name in names]):
+                    if "\t" in name:
+                        return Err("invalid compiler output owner")
+                    ranges.append(base + name + "\t")
     mut listed: list[str] = []
-    for indexed in keys_with_prefix(selected, family_range(family, profile)?).map_err((error) => error.message())?:
-        if len(indexed.split("\t")) != 7:
-            # An entry an earlier Oven keyed by the record's context as well; the slot's next evaluation retires it.
-            continue
-        output = required_value(selected, indexed)?.decode().map_err((_) => "compiler output index entry is not UTF-8")?
-        if output_index_key(profile, output)? != indexed:
-            return Err("compiler output index entry names a record of another slot")
-        listed.append(output)
+    for prefix in ranges:
+        for indexed in keys_with_prefix(selected, prefix).map_err((error) => error.message())?:
+            fields = indexed.split("\t")
+            if len(fields) != 7:
+                continue
+            if let Some(scope) = slots:
+                if fields[4] != scope.origin or fields[5] in excluded:
+                    continue
+                if let Some(names) = included:
+                    if fields[5] not in names:
+                        continue
+            note_graph_demand("output-slot", selected, indexed)
+            output = read_pointer(required_value(selected, indexed)?)?
+            if output_index_key(profile, output)? != indexed:
+                return Err("compiler output index entry names a record of another slot")
+            listed.append(output)
     return Ok(listed)
 
 
-pub def family_listing(selected: Snapshot, family: str, profile: str) -> Result[list[str], str]:
-    """
-    The revision of every entry in one family/profile's range of the output index, in key order, read from the index
-    alone. A slot's entry is keyed by the slot and holds its current record's key, so the listing changes whenever a
-    slot of the family is evaluated in another context, joins the family or leaves it, and no entry's value is read.
-    """
-    return revisions_with_prefix(selected, family_range(family, profile)?).map_err((error) => error.message())
+pub def family_listing(
+    selected: Snapshot, family: str, profile: str, identity_profile: str = "", origin: str = "",
+) -> Result[list[str], str]:
+    """The ordered output index revisions for one family, optionally restricted to the program's origin."""
+    prefix = family_range(family, profile)?
+    if identity_profile == "":
+        return revisions_with_prefix(selected, prefix).map_err((error) => error.message())
+    if "\t" in identity_profile or "\t" in origin:
+        return Err("invalid compiler output range")
+    return revisions_with_prefix(selected, prefix + identity_profile + "\t" + origin + "\t").map_err((error) => error.message())
 
 
 def family_range(family: str, profile: str) -> Result[str, str]:
     """The key range of the output index that holds one family/profile's entries."""
     if family == "" or profile == "" or "\t" in family or "\t" in profile:
         return Err("reusable compiler family selection requires delimiter-free family and profile names")
-    return Ok("incan.engine.output\t" + profile + "\t" + family + "\t")
+    return Ok("incan.engine.output/2\t" + profile + "\t" + family + "\t")
 
 
 pub def readers_of(selected: Snapshot, changed: list[RecordKey], profile: str) -> Result[list[RecordKey], str]:
@@ -314,20 +419,55 @@ pub def readers_of(selected: Snapshot, changed: list[RecordKey], profile: str) -
     mut readers: Dict[str, RecordKey] = {}
     for target in changed:
         exact = encode_record_key(target)?
-        prefix = "incan.engine.edge-in\t" + record_slot(exact)? + "\t"
+        prefix = "incan.engine.edge-in/3\t" + record_slot(exact)? + "\t"
         for indexed in keys_with_prefix(selected, prefix).map_err((error) => error.message())?:
-            edge = parse(required_value(selected, indexed)?.decode().map_err((_) => "compiler graph edge is not UTF-8")?).map_err(
-                (error) => error.message(),
-            )?
-            if (
-                required_text(edge, "schema")? != EDGE_SCHEMA
-                or required_text(edge, "profile")? != profile
-                or required_text(edge, "target")? != exact
-            ):
+            note_graph_demand("reverse-edge", selected, indexed)
+            edge = read_incoming(required_value(selected, indexed)?)?
+            if edge.profile != profile or edge.target != exact:
                 continue
-            if let Some(reader) = current_reader(selected, profile, required_text(edge, "reader")?)?:
+            if let Some(reader) = current_reader(selected, profile, edge.reader)?:
                 readers[reader] = decode_record_key(reader)?
     return Ok([readers[key] for key in sorted([item for item in readers.keys()])])
+
+
+def index_components(selected: Snapshot, prefix: str) -> Result[list[str], str]:
+    """Seek each immediately nested component once. A tab's byte successor skips the entire component."""
+    mut components: list[str] = []
+    mut lower = prefix
+    while let Some(key) = first_stored_key(selected, lower).map_err((error) => error.message())?:
+        if not key.startswith(prefix):
+            break
+        fields = key[len(prefix):].split("\t")
+        if len(fields) < 2 or fields[0] == "":
+            return Err("invalid compiler output index component")
+        components.append(fields[0])
+        lower = prefix + fields[0] + "\n"
+    return Ok(components)
+
+
+pub def retire_compiler_versions(selected: Snapshot, mut transaction: Transaction, origin: str, current: str) -> Result[None, str]:
+    """
+    Remove obsolete output pointers for this producer and source origin before publishing new values.
+    Compiler versions can produce different physical bytes for the same logical output key. The source
+    transaction retires their old indexes and edges atomically. Earlier snapshots still own their values.
+    """
+    if selected.index == "":
+        return Ok(None)
+    parts = current.split("/")
+    if len(parts) != 2 or parts[0] == "" or parts[1] == "" or "\t" in current or "\t" in origin:
+        return Err("invalid compiler version or source origin")
+    versions = "incan.engine.output/2\t" + parts[0] + "/"
+    for version in index_components(selected, versions)?:
+        if version == parts[1]:
+            continue
+        family_root = versions + version + "\t"
+        for family in index_components(selected, family_root)?:
+            identities = family_root + family + "\t"
+            for identity in index_components(selected, identities)?:
+                scoped = identities + identity + "\t" + origin + "\t"
+                for key in keys_with_prefix(selected, scoped).map_err((error) => error.message())?:
+                    stage_delete(transaction, key)
+    return Ok(None)
 
 
 pub def supersede_outputs(selected: Snapshot, mut transaction: Transaction) -> Result[None, str]:
@@ -344,20 +484,39 @@ pub def supersede_outputs(selected: Snapshot, mut transaction: Transaction) -> R
     then meet one output per slot and one edge per current read instead of one per earlier edit, and neither index
     grows with edits. The superseded values, evaluations and receipts stay, content named.
     """
-    mut writing: set[str] = set()
-    for write in transaction.writes:
-        if write.kind != KIND_TOMBSTONE:
-            writing.add(write.key)
+    if selected.index == "":
+        return Ok(None)
+    mut writing: Dict[str, int] = {}
     mut slots: set[str] = set()
-    for key in writing:
-        if key.startswith("incan.engine.output\t") and len(key.split("\t")) == 7:
+    mut renewed_scopes: set[str] = set()
+    mut removed_scope_edges: set[str] = set()
+    mut position = -1
+    for write in transaction.writes:
+        position += 1
+        key = write.key
+        if key.startswith("incan.engine.output/2\t") and len(key.split("\t")) == 7:
             slots.add(key)
-    for slot in sorted([item for item in slots]):
+        if write.kind != KIND_TOMBSTONE:
+            writing[key] = position
+            if key.startswith("incan.engine.edge-in/3\tscope-name\t"):
+                renewed_scopes.add("\t".join(key.split("\t")[1:6]))
+    for slot in sorted([key for key in slots]):
         # An earlier Oven keyed a slot's outputs by their context as well; the slot's own entry replaces them.
         for old in keys_with_prefix(selected, slot + "\t").map_err((error) => error.message())?:
             stage_delete(transaction, old)
         fields = slot.split("\t")
-        retire_edges(selected, transaction, outgoing_prefix(fields[1], "\t".join(fields[2:7])), writing)?
+        retire_edges(selected, transaction, outgoing_prefix(fields[1], "\t".join(fields[2:7])), writing, removed_scope_edges)?
+    # Scope-name values are materialized on demand. Only losing the last current reader withdraws the value.
+    candidates = set(["\t".join(key.split("\t")[1:6]) for key in removed_scope_edges])
+    for slot in sorted([item for item in candidates if item not in renewed_scopes]):
+        readers = keys_with_prefix(selected, "incan.engine.edge-in/3\t" + slot + "\t").map_err((error) => error.message())?
+        mut retained = false
+        for reader in readers:
+            if reader not in removed_scope_edges:
+                retained = true
+                break
+        if not retained:
+            stage_delete(transaction, slot + "\t")
     return Ok(None)
 
 
@@ -365,19 +524,31 @@ def retire_edges(
     selected: Snapshot,
     mut transaction: Transaction,
     outgoing: str,
-    writing: set[str],
+    writing: Dict[str, int],
+    mut removed_scope_edges: set[str],
 ) -> Result[None, str]:
     """Remove a slot's earlier outgoing edges and their incoming entries, except those written again."""
-    mut earlier: list[bytes] = []
-    for key in keys_with_prefix(selected, outgoing).map_err((error) => error.message())?:
-        earlier.append(required_value(selected, key)?)
-        if key not in writing:
-            stage_delete(transaction, key)
+    mut earlier: list[OutgoingEdge] = []
+    for entry in entries_with_prefix(selected.root, selected.index, outgoing).map_err((error) => f"{error.object}: {error.detail}")?:
+        if let Some(location) = entry.location:
+            if location.tombstone:
+                continue
+            key = entry.key
+            if let Some(position) = writing.get(key):
+                if matches_value_frame(transaction.writes[position], location).map_err((error) => error.message())?:
+                    # The authenticated previous frame has exactly these bytes. Commit still verifies its storage.
+                    earlier.append(read_outgoing(transaction.writes[position].value)?)
+                    continue
+            earlier.append(read_outgoing(required_value(selected, key)?)?)
+            if key not in writing:
+                stage_delete(transaction, key)
     mut retired: set[str] = set()
     for incoming in incoming_keys(earlier)?:
         if incoming not in writing and incoming not in retired:
             stage_delete(transaction, incoming)
             retired.add(incoming)
+            if incoming.startswith("incan.engine.edge-in/3\tscope-name\t"):
+                removed_scope_edges.add(incoming)
     return Ok(None)
 
 
@@ -386,10 +557,10 @@ def outgoing_prefix(profile: str, slot: str) -> str:
     Where an evaluation's outgoing edges are listed: under its profile and slot, not its evaluated context, so the next
     evaluation of the slot writes its edges over the earlier one's instead of beside them.
     """
-    return f"incan.engine.edge-out\t{profile}\t{slot}\t"
+    return f"incan.engine.edge-out/3\t{profile}\t{slot}\t"
 
 
-def incoming_keys(encoded: list[bytes]) -> Result[list[str], str]:
+def incoming_keys(edges: list[OutgoingEdge]) -> Result[list[str], str]:
     """
     The reverse index entries of one evaluation's encoded edges, in their order. Each is the slot of the edge's target
     and its kind, the identity of the read itself (the reading slot, profile and selection), and the edge's place among
@@ -402,15 +573,10 @@ def incoming_keys(encoded: list[bytes]) -> Result[list[str], str]:
     mut reads: list[str] = []
     mut targets: list[str] = []
     mut by_read: Dict[str, set[str]] = {}
-    for edge in encoded:
-        document = parse(edge.decode().map_err((_) => "compiler graph edge is not UTF-8")?).map_err(
-            (error) => error.message(),
-        )?
-        selection = json_text(document.require("selection").map_err((error) => error.message())?)?
-        identity = record_slot(required_text(document, "reader")?)? + "\n" + required_text(document, "profile")?
-        target = required_text(document, "target")?
-        kind = required_text(document, "kind")?
-        read = f"{record_slot(target)?}\t{kind}\t{digest((identity + "\n" + selection).encode("utf-8"))}"
+    for edge in edges:
+        target = encode_record_key(edge.request.key)?
+        identity = read_identity(record_slot(edge.reader)?, edge)?
+        read = f"{record_slot(target)?}\t{edge.kind}\t{identity}"
         mut seen = by_read.get(read).unwrap_or(set())
         seen.add(target)
         by_read[read] = seen
@@ -419,7 +585,7 @@ def incoming_keys(encoded: list[bytes]) -> Result[list[str], str]:
     mut keys: list[str] = []
     for index in range(len(reads)):
         place = len([other for other in by_read[reads[index]] if other < targets[index]])
-        keys.append(f"incan.engine.edge-in\t{reads[index]}\t{place}")
+        keys.append(f"incan.engine.edge-in/3\t{reads[index]}\t{place}")
     return Ok(keys)
 
 
@@ -433,7 +599,7 @@ def record_slot(key: str) -> Result[str, str]:
 
 pub def evaluation_record_key(profile: str, output: str) -> str:
     """Return the selected evaluation identity for one output under one exact producer profile."""
-    identity = digest((profile + "\n" + output).encode("utf-8"))
+    identity = digest(("crumb-evaluation/2\n" + profile + "\n" + output).encode("utf-8"))
     return "incan.engine.evaluation\t" + identity
 
 
@@ -442,10 +608,10 @@ def output_index_key(profile: str, output: str) -> Result[str, str]:
     Where one profile's current output of a slot is indexed: under the slot, not the output's evaluated context, so the
     next evaluation of the slot writes its entry over the earlier one's. The entry's value is the output's record key.
     """
-    return Ok("incan.engine.output\t" + profile + "\t" + record_slot(output)?)
+    return Ok("incan.engine.output/2\t" + profile + "\t" + record_slot(output)?)
 
 
-def decode_record_key(encoded: str) -> Result[RecordKey, str]:
+pub def decode_record_key(encoded: str) -> Result[RecordKey, str]:
     """Decode the canonical six-field record key retained verbatim as the output index's value."""
     fields = encoded.split("\t")
     if len(fields) != 6:
@@ -489,27 +655,6 @@ def edge(kind: str, request: RecordRequest, evidence: str) -> Result[EdgeFact, s
     return Ok(EdgeFact(kind=kind, target=encode_record_key(request.key)?, request=request, evidence=evidence))
 
 
-def encode_evaluation(
-    profile: str,
-    output: str,
-    claim_key: str,
-    value_digest: str,
-    receipt_root: str,
-    rank: ProducerRank,
-) -> Result[bytes, str]:
-    """Encode the selected produced outcome and its rank without duplicating receipt witnesses."""
-    document = JsonValue.object(
-        {"schema": JsonValue.string(EVALUATION_SCHEMA), "outcome": JsonValue.string("produced"), "profile": JsonValue.string(
-            profile,
-        ), "output": JsonValue.string(output), "claim_key": JsonValue.string(claim_key), "value_digest": JsonValue.string(
-            value_digest,
-        ), "receipt_root": JsonValue.string(receipt_root), "rank_namespace": JsonValue.int(rank.namespace), "rank_stage": JsonValue.string(
-            stage_name(rank.stage),
-        ), "rank_dependency": JsonValue.int(rank.dependency)},
-    )
-    return Ok(json_text(document)?.encode("utf-8"))
-
-
 def current_reader(selected: Snapshot, profile: str, reader: str) -> Result[Option[str], str]:
     """
     The record an incoming entry's reader names now. The entry names the reading slot, and the output index names the
@@ -517,73 +662,32 @@ def current_reader(selected: Snapshot, profile: str, reader: str) -> Result[Opti
     """
     if len(reader.split("\t")) == 6:
         return Ok(Some(reader))
-    indexed = "incan.engine.output\t" + profile + "\t" + reader
+    indexed = "incan.engine.output/2\t" + profile + "\t" + reader
+    note_graph_demand("output-slot", selected, indexed)
     match get(selected, indexed).map_err((error) => error.message())?:
         Some(output) =>
-            return Ok(Some(output.decode().map_err((_) => "compiler output index entry is not UTF-8")?))
+            return Ok(Some(read_pointer(output)?))
         None => return Ok(None)
 
 
-def encode_incoming(reader: str, profile: str, edge: EdgeFact) -> Result[bytes, str]:
-    """
-    Encode an incoming entry's value: the reading slot, the profile and the exact record read. Neither the reader's
-    evaluated context nor the read's evidence is in it, so the next evaluation of the slot that reads the same record
-    stages the same bytes, and the commit leaves the entry as it is.
-    """
-    document = JsonValue.object(
-        {
-            "schema": JsonValue.string(EDGE_SCHEMA),
-            "reader": JsonValue.string(record_slot(reader)?),
-            "profile": JsonValue.string(profile),
-            "target": JsonValue.string(edge.target),
-        },
-    )
-    return Ok(json_text(document)?.encode("utf-8"))
-
-
-def encode_edge(reader: str, profile: str, edge: EdgeFact) -> Result[bytes, str]:
-    """Encode an outgoing edge's value: the read, its exact target and the evidence it witnessed."""
-    document = JsonValue.object(
-        {"schema": JsonValue.string(EDGE_SCHEMA), "reader": JsonValue.string(reader), "profile": JsonValue.string(
-            profile,
-        ), "kind": JsonValue.string(edge.kind), "target": JsonValue.string(edge.target), "selection": selection_document(
-            edge.request,
-        ), "evidence": JsonValue.string(edge.evidence)},
-    )
-    return Ok(json_text(document)?.encode("utf-8"))
-
-
-def selection_document(request: RecordRequest) -> JsonValue:
-    """Encode the exact field, payload range or bounded member selector for edge validation."""
-    mut fields: Dict[str, JsonValue] = {"byte_limit": JsonValue.int(request.byte_limit)}
-    match request.selection:
-        RecordSelection.Field(name) =>
-            fields["kind"] = JsonValue.string("field")
-            fields["name"] = JsonValue.string(name)
-        RecordSelection.Payload(payload) =>
-            fields["kind"] = JsonValue.string("payload")
-            fields["reference"] = JsonValue.string(payload.reference)
-            fields["offset"] = JsonValue.int(payload.offset)
-            fields["length"] = JsonValue.int(payload.length)
-        RecordSelection.Members(members) =>
-            fields["kind"] = JsonValue.string("members")
-            fields["selector"] = JsonValue.string(members.selector)
-            fields["order"] = JsonValue.string(members.order)
-            fields["lower"] = JsonValue.string(members.lower)
-            fields["upper"] = JsonValue.string(members.upper)
-            fields["continuation"] = JsonValue.string(members.continuation)
-    return JsonValue.object(fields)
-
-
-def witnesses_validate(selected: Snapshot, receipt: ReadReceipt) -> Result[bool, str]:
-    """Re-read every dependency through the store-backed source and compare only its specified invalidation meaning."""
+def witnesses_validate(selected: Snapshot, receipt: ReadReceipt, mut verified: Dict[str, tuple[RecordRequest, str]]) -> Result[bool, str]:
+    """Authenticate each exact dependency request in the pinned view and compare its invalidation meaning."""
     scope = ReadScope(snapshot=selected.digest, profile=receipt.scope.profile)
     mut roots: list[str] = []
     for witness in receipt.witnesses:
         roots.append(encode_record_key(witness_request(witness).key)?)
     source = StoreRecordSource.open(selected, scope, roots)
-    for witness in receipt.witnesses:
+    for index in range(len(receipt.witnesses)):
+        witness = receipt.witnesses[index]
         request = witness_request(witness)
+        key = roots[index]
+        if let ReadWitness.Found(expected, _) = witness:
+            if key in verified:
+                known = verified[key]
+                if known[0] == request:
+                    if known[1] != expected.semantic_digest:
+                        return Ok(false)
+                    continue
         current = source.read(scope, request)
         match witness:
             ReadWitness.Found(expected, _) =>
@@ -591,6 +695,10 @@ def witnesses_validate(selected: Snapshot, receipt: ReadReceipt) -> Result[bool,
                     RecordRead.Found(found) =>
                         if found.evidence.semantic_digest != expected.semantic_digest:
                             return Ok(false)
+                        # The selection retains its one leased snapshot and producer profile for the whole loop.
+                        # Keep no selected bytes, and retry any different range, field or allowance through the owner.
+                        if len(verified) < 8192 and len(key) <= 4096:
+                            verified[key] = (request, found.evidence.semantic_digest)
                     RecordRead.Failed(_) => return Err("compiler evaluation witness could not be validated")
                     _ => return Ok(false)
             ReadWitness.Deleted(_) =>
@@ -622,16 +730,6 @@ def witness_request(witness: ReadWitness) -> RecordRequest:
         ReadWitness.Members(_, request, _, _) => return request
 
 
-def evaluation_document(encoded: bytes) -> Result[JsonValue, str]:
-    """Decode one evaluation document and require its exact engine-owned schema."""
-    document = parse(encoded.decode().map_err((_) => "compiler evaluation is not UTF-8")?).map_err(
-        (error) => error.message(),
-    )?
-    if required_text(document, "schema")? != EVALUATION_SCHEMA:
-        return Err("unsupported compiler evaluation schema")
-    return Ok(document)
-
-
 def required_value(selected: Snapshot, key: str) -> Result[bytes, str]:
     """Read one graph-owned value whose absence makes the selected evaluation incomplete."""
     match get(selected, key).map_err((error) => error.message())?:
@@ -639,22 +737,15 @@ def required_value(selected: Snapshot, key: str) -> Result[bytes, str]:
         None => return Err("selected compiler evaluation is incomplete")
 
 
-def required_text(value: JsonValue, key: str) -> Result[str, str]:
-    """Read one required evaluation string without coercion."""
-    return value.require(key).map_err((error) => error.message())?.expect_str().map_err((error) => error.message())
-
-
-def required_digest(value: JsonValue, key: str) -> Result[str, str]:
-    """Read one required lowercase SHA-256 digest."""
-    selected = required_text(value, key)?
-    if len(selected) != 64:
-        return Err("compiler evaluation has an invalid content digest")
-    for character in selected:
-        if character not in "0123456789abcdef":
-            return Err("compiler evaluation has an invalid content digest")
-    return Ok(selected)
-
-
 def digest(value: bytes) -> str:
     """Return one lowercase content identity."""
     return hexlify(sha256.digest(value))
+
+
+pub def retire_output(mut transaction: Transaction, profile: str, output: RecordKey) -> Result[None, str]:
+    """
+    Take one output out of its profile's output index without a successor, so no later request selects it. Its value,
+    evaluation and receipt stay, content named, as a superseded output's do.
+    """
+    stage_delete(transaction, output_index_key(profile, encode_record_key(output)?)?)
+    return Ok(None)
