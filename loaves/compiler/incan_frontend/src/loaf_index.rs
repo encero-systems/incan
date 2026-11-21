@@ -1206,6 +1206,23 @@ mod scoped_name_tests {
         assert!(!observation.was_demanded());
         Ok(())
     }
+
+    /// A request's decoded Loaf manifests are released when it ends: a resident worker keeps no owned copy of its
+    /// dependency closure between requests, and the next request reads the Loaf again.
+    #[test]
+    fn released_loaf_readings_do_not_outlive_their_request() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let name = "released/catalog";
+        let manifest = LibraryManifest::new(name, "1.0.0");
+        let path = directory.path().join(format!("{}.incnlib", artifact_stem(name)));
+        std::fs::write(&path, manifest.to_json_string()?)?;
+        LoafArtifact::read(directory.path(), name)?;
+        assert!(super::retained::retains_artifact(directory.path(), name));
+        super::release_retained_loaves();
+        assert!(!super::retained::retains_artifact(directory.path(), name));
+        assert_eq!(LoafArtifact::read(directory.path(), name)?.manifest.name, name);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
