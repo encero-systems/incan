@@ -2,8 +2,7 @@
 # cli-commands:
 #   oven inspect dependencies src/main.incn
 # expect-stdout-contains:
-#   program `closure_of_hex_encoding` reaches 2 packages
-#   incan_native_runtime
+#   program `closure_of_hex_encoding` reaches 1 package
 #   incan_stdlib_codecs
 #     function pub::incan_stdlib_codecs::encoding::hex::hexlify
 #       requested by checked source
