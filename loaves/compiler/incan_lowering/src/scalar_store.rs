@@ -1,19 +1,21 @@
 //! Read and atomically retain native plan products under their producer's complete input witnesses.
 //!
 //! A product is one `<digest>.incnfunction` file in the request's product directory, named by the semantic digest of
-//! its complete producer inputs. Records-mode reporting (product events and refusals for Bakery admission) refuses by
-//! name until it is in Rust; an ordinary keyed request reports nothing.
+//! its complete producer inputs. A records request also reports each product's event, or why a frame has none, in its
+//! report directory for Bakery admission; an ordinary keyed request reports nothing.
 
 use std::path::{Path, PathBuf};
 
 use incan_mir_plan_native::{
-    ExternalFunction, Function, NominalReference, PlanFunctionRecord, ProductNominal, SourceSpan, UnitNominals,
-    decode_plan_function_record, decode_product_parts, encode_plan_function_record, encode_product,
-    plan_function_digest, product_nominals, restore_named_product,
+    EventPosition, EventReference, ExternalFunction, Function, LoweringEvent, LoweringRefusal, NominalKind,
+    NominalReference, PlanFunctionRecord, PositionChange, ProductNominal, SourceSpan, UnitNominals, WirePositions,
+    decode_lowering_event, decode_plan_function_record, decode_product_parts, encode_lowering_event,
+    encode_lowering_refusal, encode_plan_function_record, encode_product, matches_product, plan_function_digest,
+    positioned_product_requirements, product_identities, product_nominals, restore_named_product,
+    valid_ordinal_product,
 };
 use incan_semantics_core::semantic_digest::semantic_digest;
 
-use crate::pending::untranslated;
 use crate::record_positions::{
     index_positions, indexed_product, place_positions, positioned_product, relocate_product,
 };
@@ -116,20 +118,147 @@ pub fn retain_scalar(
     publish_record(directory, inputs, &encoded)
 }
 
-/// Publish one bounded product event for Bakery admission; an ordinary keyed request reports nothing.
-pub fn report_scalar(directory: Option<&str>) -> Result<(), String> {
-    match directory {
-        None => Ok(()),
-        Some(_) => Err(untranslated("scalar_store::report_scalar")),
+/// One product event a records request reports: the product's directory and inputs, the owner's identity, the native
+/// function name, whether the product was reused, its runtime demand, the declaration positions its ordinals resolved
+/// to, its Body IR node positions and the module an ordinary frame declares.
+pub struct ProductEvent<'a> {
+    pub products: &'a str,
+    pub inputs: &'a [String],
+    pub identity: &'a str,
+    pub function: &'a str,
+    pub reused: bool,
+    pub runtime: usize,
+    pub references: &'a [NominalReference],
+    pub positions: &'a [(i64, i64)],
+    pub module: &'a str,
+}
+
+/// Publish one bounded product event for Bakery admission; records mode refuses incomplete transport.
+pub fn report_scalar(directory: Option<&str>, event: &ProductEvent<'_>) -> Result<(), String> {
+    let Some(root) = directory else {
+        return Ok(());
+    };
+    let digest = fingerprint(event.inputs)?;
+    let encoded = std::fs::read(scalar_path(event.products, event.inputs)?)
+        .map_err(|error| format!("cannot read plan-function product {error}"))?;
+    // Revalidate the exact bytes before they cross from private lowering transport into Bakery publication.
+    if !valid_record(&encoded, event.inputs) {
+        return Err("plan-function product failed its lowering codec round trip".into());
     }
+    let key = digest.replace("sha256:", "");
+    let path = Path::new(root).join(format!("{key}.event"));
+    let mut reused = event.reused;
+    // Oven empties this report for each compiler request. A runtime retry can read a product this request just
+    // produced before its final native function existed. Keep that first production verdict while recording the
+    // current nominal ordinals and positions. Other products still require exact equality.
+    if event.reused && path.is_file() {
+        let prior = decode_lowering_event(&std::fs::read(&path).map_err(|error| error.to_string())?)?;
+        if prior.key == key
+            && prior.module == event.module
+            && prior.identity == event.identity
+            && prior.function == event.function
+            && prior.product == encoded
+            && !prior.admitted
+        {
+            reused = prior.reused;
+        }
+    }
+    let record = LoweringEvent {
+        module: event.module.to_owned(),
+        identity: event.identity.to_owned(),
+        key,
+        function: event.function.to_owned(),
+        product: encoded,
+        reused,
+        runtime_requirements: event.runtime as i64,
+        references: event.references.iter().map(event_reference).collect(),
+        positions: event_nodes(event.positions),
+        ..LoweringEvent::default()
+    };
+    write_report(&path, &encode_lowering_event(&record)?)
 }
 
 /// Retain an explicit record refusal without changing the ordinary lowering verdict; only a records request has one.
-pub fn report_scalar_refusal(directory: Option<&str>) -> Result<(), String> {
-    match directory {
-        None => Ok(()),
-        Some(_) => Err(untranslated("scalar_store::report_scalar_refusal")),
+pub fn report_scalar_refusal(
+    directory: Option<&str>,
+    identity: &str,
+    function: &str,
+    refusal: &str,
+) -> Result<(), String> {
+    let Some(root) = directory else {
+        return Ok(());
+    };
+    let encoded = encode_lowering_refusal(&LoweringRefusal {
+        identity: identity.to_owned(),
+        function: function.to_owned(),
+        refusal: refusal.to_owned(),
+    })?;
+    let digest = fingerprint(&[identity.to_owned(), function.to_owned(), refusal.to_owned()])?;
+    write_report(
+        &Path::new(root).join(format!("{}.refusal", digest.replace("sha256:", ""))),
+        &encoded,
+    )
+}
+
+/// Write one report record, creating the report directory when it is missing.
+fn write_report(path: &Path, encoded: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
+    std::fs::write(path, encoded).map_err(|error| error.to_string())
+}
+
+/// Keep one resolved declaration position in an event or a module note.
+pub fn event_reference(reference: &NominalReference) -> EventReference {
+    let kind = match reference.kind {
+        NominalKind::Model => "model",
+        NominalKind::Enum => "enum",
+    };
+    EventReference {
+        kind: kind.to_owned(),
+        index: reference.index,
+        name: reference.name.clone(),
+    }
+}
+
+/// Read the positions a reported product's ordinals resolved to in this request.
+pub fn event_references(event: &LoweringEvent) -> Result<Vec<NominalReference>, String> {
+    event
+        .references
+        .iter()
+        .map(|reference| {
+            let kind = match reference.kind.as_str() {
+                "enum" => NominalKind::Enum,
+                "model" => NominalKind::Model,
+                _ => return Err("invalid lowering event nominal kind".to_owned()),
+            };
+            Ok(NominalReference {
+                kind,
+                index: reference.index,
+                name: reference.name.clone(),
+            })
+        })
+        .collect()
+}
+
+/// Read the Body IR node positions a reported product's spans were placed at in this request.
+pub fn event_positions(event: &LoweringEvent) -> Vec<(i64, i64)> {
+    event
+        .positions
+        .iter()
+        .map(|position| (position.line, position.column))
+        .collect()
+}
+
+/// Carry a body's node positions in a request-local event.
+pub fn event_nodes(positions: &[(i64, i64)]) -> Vec<EventPosition> {
+    positions
+        .iter()
+        .map(|(line, column)| EventPosition {
+            line: *line,
+            column: *column,
+        })
+        .collect()
 }
 
 /// Whether this request already reported a product under these inputs, as a retried instance pass does.
@@ -160,7 +289,7 @@ fn encoded_record(
 ) -> Result<Vec<u8>, String> {
     let mut payload = encode_product(function, runtime, nominals, frames)?;
     if inputs.first().map(String::as_str) == Some(RECORD_FUNCTION) {
-        payload = indexed_record_payload(payload, function, runtime, nominals, positions, frames)?;
+        payload = indexed_record(&payload, function, runtime, nominals, positions, frames)?;
     }
     let digest = plan_function_digest(&payload, requests)?;
     let record = PlanFunctionRecord {
@@ -170,39 +299,6 @@ fn encoded_record(
         digest,
     };
     encode_plan_function_record(&record)
-}
-
-/// Index a records product's spans by Body IR node ordinal, proving the indexing loses no native fact.
-///
-/// A noncanonical spelling must still pass the original codec's independent relocation and index proofs.
-fn indexed_record_payload(
-    payload: Vec<u8>,
-    function: &Function,
-    runtime: &[ExternalFunction],
-    nominals: &[ProductNominal],
-    positions: &[(i64, i64)],
-    frames: &[Function],
-) -> Result<Vec<u8>, String> {
-    let file = function.span.file.to_string();
-    let line = function.span.line;
-    let indexed = indexed_product(&payload, positions, &file, line)?;
-    let restored = positioned_product(&indexed, positions, &file, line, &mut Vec::new())?;
-    if restored != payload {
-        let relative = relocate_product(&payload, "<owner>", 1)?;
-        let original = relocate_product(&relative, &file, line)?;
-        if original != payload {
-            let references = product_nominals(function, runtime, frames)?;
-            let (restored_function, restored_runtime, restored_frames, _identities) =
-                decode_product_parts(&original, &references)?;
-            if encode_product(&restored_function, &restored_runtime, nominals, &restored_frames)? != payload {
-                return Err("plan-function position round trip changed native facts".into());
-            }
-        }
-        if place_positions(&indexed, positions)? != relative || indexed != index_positions(&relative, positions)? {
-            return Err("plan-function position map changed native facts".into());
-        }
-    }
-    Ok(indexed)
 }
 
 /// Verify one decoded record and hand its positioned payload and generic requests to the caller.
@@ -234,6 +330,183 @@ fn record_payload(
         .ok()?;
     }
     Some((payload, record.requests))
+}
+
+/// Move a records product's spans into its owner's node coordinate space after proving the move loses nothing.
+///
+/// A noncanonical spelling must still pass the original codec's independent relocation and index proofs.
+fn indexed_record(
+    payload: &[u8],
+    function: &Function,
+    runtime: &[ExternalFunction],
+    nominals: &[ProductNominal],
+    positions: &[(i64, i64)],
+    frames: &[Function],
+) -> Result<Vec<u8>, String> {
+    let file = function.span.file.to_string();
+    let line = function.span.line;
+    let indexed = indexed_product(payload, positions, &file, line)?;
+    let restored = positioned_product(&indexed, positions, &file, line, &mut Vec::new())?;
+    if restored == payload {
+        return Ok(indexed);
+    }
+    let relative = relocate_product(payload, "<owner>", 1)?;
+    let original = relocate_product(&relative, &file, line)?;
+    if original != payload {
+        let references = product_nominals(function, runtime, frames)?;
+        let (restored_function, restored_runtime, restored_frames, _identities) =
+            decode_product_parts(&original, &references)?;
+        if encode_product(&restored_function, &restored_runtime, nominals, &restored_frames)? != payload {
+            return Err("plan-function position round trip changed native facts".into());
+        }
+    }
+    if place_positions(&indexed, positions)? != relative || indexed != index_positions(&relative, positions)? {
+        return Err("plan-function position map changed native facts".into());
+    }
+    Ok(indexed)
+}
+
+/// Require a record to decode completely, binding each named declaration to its own ordinal.
+fn valid_record(encoded: &[u8], inputs: &[String]) -> bool {
+    record_payload(encoded, inputs, None, &[]).is_some_and(|(payload, _)| valid_ordinal_product(&payload))
+}
+
+/// A finalized keyed product: its storage record, its resolved ordinals and the native product at this request's
+/// source positions.
+pub type FinalizedProduct = (Vec<u8>, Vec<NominalReference>, Vec<u8>);
+
+/// Retain the whole-program plan's final function under a keyed product's unchanged inputs and lowering demand.
+///
+/// 1. Read the product lowering retained or reused for this declaration, at the positions this request resolved.
+/// 2. Encode the function the whole-program plan compiles, after unit-level runtime resolution, with that demand and
+///    the declarations the product named for those positions.
+/// 3. Accept a reused product only when it is already identical; replace a fresh product atomically.
+#[allow(clippy::too_many_arguments)]
+pub fn finalized_plan_product(
+    directory: &str,
+    key: &str,
+    function: &Function,
+    reused: bool,
+    references: Vec<NominalReference>,
+    positions: &[(i64, i64)],
+    frames: &[Function],
+    reported: &[u8],
+) -> Result<FinalizedProduct, String> {
+    // 1. The event key names the product by its complete producer inputs.
+    let path = Path::new(directory).join(format!("{key}.incnfunction"));
+    let encoded = std::fs::read(&path).map_err(|error| format!("cannot read plan-function product {error}"))?;
+    let record = decode_plan_function_record(&encoded)?;
+    let file = function.span.file.to_string();
+    let mapping = WirePositions::new(PositionChange::PlaceAt(
+        positions.to_vec(),
+        String::new(),
+        0,
+        file.clone(),
+        function.span.line,
+    ));
+    let (current, demand, identities) = positioned_product_requirements(&record.function, &mapping, &references)?;
+    // 2. Captured and restored products already passed schema and position admission. Compare the exact whole-plan
+    // bytes, including floating-point bits and helper frames, before keeping that proof under its original key.
+    if reported == encoded && matches_product(&current, function, &demand, &identities, frames, &references)? {
+        if record.digest != plan_function_digest(&record.function, &record.requests)? {
+            return Err("plan-function product digest disagrees with its capture".into());
+        }
+        return Ok((encoded, references, current));
+    }
+    let whole = product_nominals(function, &demand, frames)?;
+    let mut nominals = Vec::with_capacity(whole.len());
+    for reference in &whole {
+        let named = references
+            .iter()
+            .zip(&identities)
+            .filter(|(candidate, _)| *candidate == reference)
+            .map(|(_, identity)| identity.clone())
+            .last();
+        match named {
+            Some(nominal) => nominals.push(nominal),
+            None => {
+                return Err(format!(
+                    "plan-function {} names a declaration its keyed product does not",
+                    function.name
+                ));
+            }
+        }
+    }
+    let last = encoded_record(
+        &record.inputs,
+        function,
+        &demand,
+        &nominals,
+        positions,
+        frames,
+        &record.requests,
+    )?;
+    if last == encoded {
+        return Ok((encoded, whole, current));
+    }
+    // 3. A reused product was already final when retained, so any difference is a lowering defect, never a refresh.
+    if reused {
+        return Err(format!(
+            "plan-function {} differs from the whole-program plan",
+            function.name
+        ));
+    }
+    publish_record(directory, &record.inputs, &last)?;
+    let payload = decode_plan_function_record(&last)?.function;
+    let positioned = positioned_product(&payload, positions, &file, function.span.line, &mut Vec::new())?;
+    Ok((last, whole, positioned))
+}
+
+/// A product restored from a module's admitted page: its placed payload, the declarations it names, the generic
+/// instance requests its lowering made and the event it came from.
+pub type AdmittedPayload = (Vec<u8>, Vec<ProductNominal>, Vec<Vec<u8>>, LoweringEvent);
+
+/// Read the product of a body from the final event of its module's admitted plan record.
+///
+/// Bakery admitted the module because every witness of it still validates, so the product is not looked up by a key
+/// computed from the body: the body is neither serialized nor digested. Every input of the product but the checked
+/// meaning is compared with what the body has now: its producer, overflow policy, frame name, file, checker witness and
+/// node count. Only an unchanged physical source can use the recorded ordinal positions directly. A product that does
+/// not fit is a miss: the body takes the keyed route.
+#[allow(clippy::too_many_arguments)]
+pub fn admitted_payload(
+    event: &[u8],
+    span: &SourceSpan,
+    name: &str,
+    overflow: bool,
+    reads: &str,
+    generation: &str,
+    current: Option<Vec<(i64, i64)>>,
+) -> Option<AdmittedPayload> {
+    let decoded = decode_lowering_event(event).ok()?;
+    let record = decode_plan_function_record(&decoded.product).ok()?;
+    let meaning = record.inputs.get(1)?;
+    let positions = current.unwrap_or_else(|| event_positions(&decoded));
+    let mut expected = record_scalar_inputs(meaning, name, span, overflow, reads, positions.len());
+    expected.push(generation.to_owned());
+    if record.inputs != expected || positions.len() != decoded.positions.len() {
+        return None;
+    }
+    let payload = positioned_product(
+        &record.function,
+        &positions,
+        &span.file.to_string(),
+        span.line,
+        &mut Vec::new(),
+    )
+    .ok()?;
+    let identities = product_identities(&payload).ok()?;
+    Some((payload, identities, record.requests, decoded))
+}
+
+/// Decode an admitted product whose declarations resolved in the current unit: its function, the runtime it demands
+/// and the helper frames it carries. A product that does not decode is a miss.
+pub fn admitted_function(
+    payload: &[u8],
+    resolved: &[NominalReference],
+) -> Option<(Function, Vec<ExternalFunction>, Vec<Function>)> {
+    let (function, runtime, frames, _identities) = decode_product_parts(payload, resolved).ok()?;
+    Some((function, runtime, frames))
 }
 
 /// Name a native product by the existing semantic digest owner's unambiguous framed serialization.

@@ -221,6 +221,30 @@ impl Corpus {
     }
 
     /// Restore a captured directory snapshot into `directory`.
+    /// Make a directory's files exactly the captured ones; subdirectories, which a capture does not record, stay.
+    pub fn reset(&self, files: &[(String, String)], directory: &Path) -> Result<(), String> {
+        std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+        for entry in std::fs::read_dir(directory).map_err(|error| error.to_string())? {
+            let path = entry.map_err(|error| error.to_string())?.path();
+            let name = path.file_name().map(|name| name.to_string_lossy().into_owned());
+            if path.is_file() && !files.iter().any(|(file, _)| Some(file) == name.as_ref()) {
+                std::fs::remove_file(&path).map_err(|error| error.to_string())?;
+            }
+        }
+        self.restore(files, directory)
+    }
+
+    /// The report files the driver published for the plan with this digest, by name, when the capture holds them.
+    pub fn publication(&self, digest: &str) -> Result<Option<Vec<(String, Vec<u8>)>>, String> {
+        let path = self.root.join("publications").join(format!("{digest}.publication"));
+        let Ok(bytes) = std::fs::read(&path) else {
+            return Ok(None);
+        };
+        postcard::from_bytes(&bytes)
+            .map(Some)
+            .map_err(|error| format!("cannot decode {}: {error}", path.display()))
+    }
+
     pub fn restore(&self, files: &[(String, String)], directory: &Path) -> Result<(), String> {
         std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
         for (name, digest) in files {

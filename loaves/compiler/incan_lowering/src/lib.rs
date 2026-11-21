@@ -131,6 +131,7 @@ mod races;
 mod ranges;
 #[cfg(test)]
 mod record_codec_parity;
+mod record_plan_outputs;
 mod record_positions;
 mod redo_counts;
 mod reflection;
@@ -273,11 +274,10 @@ pub fn owned_capture(ty: PlanType) -> bool {
     closures::owned_capture(&ty)
 }
 
-/// Publish a records request's whole-program plan functions under their keyed products, for Bakery admission; the step
-/// `record_plan_outputs::publish_plan_records` names, which refuses until it is in Rust.
+/// Publish a records request's whole-program plan functions under their keyed products, its entry binding and its
+/// native interface, for Bakery admission.
 pub fn publish_plan_records(plan: &Plan, products: String, report: String) -> Result<(), String> {
-    let _ = (plan, products, report);
-    Err(pending::untranslated("record_plan_outputs::publish_plan_records"))
+    record_plan_outputs::publish_plan_records(plan, &products, &report)
 }
 
 /// Whether a plan type is an ordinary or sized numeric carrier, shared with native owned-result validation.
