@@ -809,6 +809,9 @@ impl MutationLocal {
             || !pending.is_empty()
             || current.is_some()
         {
+            tracing::debug!(target: "incan::invocation", forwards = source.forwards.len(),
+                function_values = function_values.len(), loop_variables = loop_variables.len(),
+                pending = pending.len(), current = current.is_some(), "mutation facts outside the record shape");
             return None;
         }
         Some(RecordedMutation {
