@@ -10,6 +10,7 @@ use incan_semantics_core::body_ir::{
 };
 
 use crate::array_views::borrow_array_slice;
+use crate::builtin_calls::assign_text_result;
 use crate::bytes_plan::bytes_literal;
 use crate::checked_values::{reference_value_read, scalar_operand, scalar_place};
 use crate::element_places::is_element_place;
@@ -23,7 +24,9 @@ use crate::list_values::value_operand;
 use crate::list_values::{checked_list_argument, has_slice_projection, list_borrow};
 use crate::lists::is_list;
 use crate::lists::{list_element, require_list_shape};
+use crate::numerics::numeric_carrier;
 use crate::pending::untranslated;
+use crate::static_storage::read_static;
 use crate::strings::{emit_text_helper, text_helper_arity};
 use crate::text_ownership::drop_borrowed_text_temporaries;
 use crate::text_plan::{owned_literal, owned_slice_text};
@@ -89,8 +92,14 @@ pub fn borrow_text_operand(builder: &mut Builder, value: &SourceOperand, span: &
             return Ok(borrow_string(builder, owner, span));
         }
     };
-    if read.place.global().is_some() {
-        return Err(untranslated("static_storage::read_static"));
+    if let Some(global) = read.place.global() {
+        let owner = read_static(builder, &read.place, global, read.fact, span)?;
+        let OperandKind::Move(place) = owner.kind else {
+            return Err("unsupported Body IR non-string static text operand".into());
+        };
+        let reference = temporary(builder, PlanType::StringRef, span);
+        builder.emit(plan_assign(reference.clone(), RvalueKind::Borrow(place), span));
+        return Ok(read_place(reference, false, span));
     }
     if is_element_place(builder, &read.place)? {
         return Err(untranslated("operand_borrows::borrow_element_text"));
@@ -424,4 +433,40 @@ fn scalar_borrow_owner(
         }
     }
     scalar_place(builder, &read.place, span)
+}
+
+/// Render the receiver's Display form, as a derived or builtin Display's `__str__` does.
+///
+/// A number or a bool is copied, though the method call borrows it; any other receiver, a model with a checked derived
+/// Display included, displays as `str()` displays it.
+pub fn lower_display_str(
+    builder: &mut Builder,
+    arguments: &[ArgumentElement],
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    if arguments.len() != 1 {
+        return Err("invalid Body IR Display __str__ arguments".into());
+    }
+    let Some(value) = arguments[0].as_one() else {
+        return Err("unsupported Body IR Display __str__ spread receiver".into());
+    };
+    let text = display_receiver(builder, value, span)?;
+    assign_text_result(builder, text, destination, span)
+}
+
+/// Select the display rendering for one borrowed receiver.
+fn display_receiver(builder: &mut Builder, value: &SourceOperand, span: &SourceSpan) -> Result<Place, String> {
+    if let SourceOperand::Place(read) = value {
+        let place = scalar_place(builder, &read.place, span)?;
+        let ty = place_type(&builder.locals, &place);
+        if numeric_carrier(&ty) || ty == PlanType::Bool {
+            let copied = Operand {
+                kind: OperandKind::Copy(place),
+                span: span.clone(),
+            };
+            return display_plan_operand(builder, copied, span);
+        }
+    }
+    display_operand(builder, value, span)
 }

@@ -18,6 +18,7 @@ use crate::frame::{
     value_type,
 };
 use crate::hashed_collections::collection_contains;
+use crate::json_builtins::lower_model_json_builtin;
 use crate::list_methods::{argument_value, call_destination, lower_list_builtin, lower_list_helper};
 use crate::list_values::value_operand;
 use crate::numerics::{float_conversion, integer_conversion};
@@ -178,7 +179,7 @@ pub fn lower_builtin(
         BuiltinFnId::Zip => Err(untranslated("builtin_calls::lower_zip_builtin")),
         BuiltinFnId::Enumerate => Err(untranslated("builtin_calls::lower_enumerate_builtin")),
         BuiltinFnId::Len => lower_list_builtin(builder, arguments, destination, span),
-        BuiltinFnId::JsonStringify => Err(untranslated("builtin_calls::lower_model_json_builtin")),
+        BuiltinFnId::JsonStringify => lower_model_json_builtin(builder, arguments, destination, span),
         BuiltinFnId::Range => Err(untranslated("builtin_calls::lower_range_builtin")),
         _ => Err(format!("unsupported Body IR builtin {builtin:?}")),
     }

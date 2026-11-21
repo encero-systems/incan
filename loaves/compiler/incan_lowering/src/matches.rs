@@ -1,21 +1,23 @@
 //! Enum matches and the owners live where their branches join.
 
 use incan_mir_plan_native::{
-    Operand, OperandKind, Place, PlanType, Projection, RvalueKind, SourceSpan, TerminatorKind, assign as plan_assign,
-    place as plan_place,
+    CalleeKind, Operand, OperandKind, Place, PlanType, Projection, RvalueKind, SourceSpan, TerminatorKind,
+    assign as plan_assign, place as plan_place,
 };
 use incan_semantics_core::body_ir::{
-    BodyIrModule, MatchArm, Operand as SourceOperand, OwnershipFact, Pattern, PlaceElem,
+    BodyIrModule, GlobalPlace, MatchArm, Operand as SourceOperand, OwnershipFact, Pattern, Place as SourcePlace,
+    PlaceElem,
 };
 
 use crate::carrier_operands::{bind_enum_fields, bind_payload_in_place, boundary_operand};
 use crate::checked_values::{clone_nominal_operand, scalar_operand, scalar_place};
 use crate::closures::callable_copy_type;
 use crate::collections::{is_collection, is_owned_collection};
+use crate::decorator_caches::{binding_accessor_name, builder_signature, validate_instance_binding};
 use crate::element_places::{element_place_type, is_element_place};
 use crate::frame::{
     Builder, bind_read_value, dereferenced_place, drop_owned, finish_fallthrough, place_type, read_place, temporary,
-    track_rvalue_moves,
+    terminate_call, track_rvalue_moves,
 };
 use crate::hashed_collections::cloned_collection;
 use crate::list_values::value_operand;
@@ -911,4 +913,37 @@ pub fn enum_operand(builder: &mut Builder, value: &SourceOperand, span: &SourceS
         place_type(&builder.locals, &place)
     };
     Ok(matches!(ty, PlanType::Enum(..)))
+}
+
+/// Read only a validated wrapper's own closed binding through its instance's publishing accessor.
+pub fn read_generic_decorator(
+    builder: &mut Builder,
+    value: &SourcePlace,
+    global: &GlobalPlace,
+    span: &SourceSpan,
+) -> Result<Option<Operand>, String> {
+    let slot = builder.cached_decorator;
+    if slot < 0 {
+        return Ok(None);
+    }
+    let Some(binding) = builder.decorated_bindings().get(slot as usize) else {
+        return Err("invalid Body IR generic decorator frame slot".into());
+    };
+    if binding.original_body.canonical.as_ref() != Some(&global.identity) {
+        return Ok(None);
+    }
+    if builder.body_identity != binding.original_body.canonical || !value.projection.is_empty() {
+        return Err("unsupported Body IR generic decorator read outside its whole checked wrapper binding".into());
+    }
+    validate_instance_binding(binding)?;
+    // The wrapper shares the original's closed signature, which the accessor returns as a reified pointer.
+    let output = temporary(builder, PlanType::FunctionPointer(builder_signature(builder)), span);
+    terminate_call(
+        builder,
+        CalleeKind::Planned(binding_accessor_name(&builder.name)),
+        Vec::new(),
+        output.clone(),
+        span,
+    );
+    Ok(Some(read_place(output, false, span)))
 }

@@ -18,6 +18,7 @@ use crate::enum_display::{display_enum_operand, native_enum_owner, native_enum_t
 use crate::frame::{Builder, drop_owned, forget_owned, place_type, read_place, temporary, terminate_call, value_type};
 use crate::list_values::{element_read, value_operand};
 use crate::lists::{is_list, is_owned_list};
+use crate::model_construction::lower_string_field_assignment;
 use crate::model_values::{debug_model_operand, display_model_operand};
 use crate::numerics::{has_sized_numeric, numeric_carrier, numeric_name};
 use crate::options::format_carrier;
@@ -423,7 +424,7 @@ pub fn lower_string_assignment(
     span: &SourceSpan,
 ) -> Result<(), String> {
     if destination.projection != Projection::Whole {
-        return Err(untranslated("model_construction::lower_string_field_assignment"));
+        return lower_string_field_assignment(builder, destination, value, span);
     }
     let text = match value {
         Rvalue::Format(parts) => {

@@ -63,3 +63,11 @@ pub fn enters_module_initialization(body: &Body) -> bool {
         None => true,
     }
 }
+
+/// Keep computed values and literal lists or dictionaries in guarded cells without making literals effectful.
+pub fn has_native_static_cell(declaration: &StaticDeclaration) -> bool {
+    match declaration.initial {
+        StaticInitializer::List(_) | StaticInitializer::Dict(_) => true,
+        _ => is_computed_static(declaration),
+    }
+}

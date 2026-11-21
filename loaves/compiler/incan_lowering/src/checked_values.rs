@@ -27,6 +27,7 @@ use crate::options::{carrier_payload_value, clone_tuple_operand};
 use crate::pending::untranslated;
 use crate::scalar_reads::scalar_storage_place;
 use crate::statements::is_nominal_type;
+use crate::static_storage::read_static;
 use crate::text_plan::{clone_text, owned_literal};
 use crate::tuples::{is_tuple_type, owned_carrier, tuple_has_owners};
 use crate::unions::union_projection;
@@ -186,8 +187,8 @@ pub fn place_read(
     fact: OwnershipFact,
     span: &SourceSpan,
 ) -> Result<Operand, String> {
-    if value.global().is_some() {
-        return Err(untranslated("static_storage::read_static"));
+    if let Some(global) = value.global() {
+        return read_static(builder, value, global, fact, span);
     }
     if let Some(reference) = reference_value_read(builder, value, fact, span)? {
         return Ok(reference);

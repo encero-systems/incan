@@ -12,6 +12,7 @@ use incan_semantics_core::body_ir::{
 use crate::bytes_plan::bytes_literal;
 use crate::call_arguments::shared_nominal_argument;
 use crate::calls::instantiated_external_call;
+use crate::carrier_operands::lower_union_isinstance;
 use crate::checked_values::scalar_place;
 use crate::collections::is_collection;
 use crate::decimal_plan::decimal_comparison;
@@ -179,7 +180,9 @@ pub fn scalar_rvalue(
             }
         },
         Rvalue::BinaryOp(operator, left, right) => scalar_binary(builder, *operator, left, right, span),
-        Rvalue::IsInstance(_) => Err(untranslated("carrier_operands::lower_union_isinstance")),
+        Rvalue::IsInstance(payload) => {
+            lower_union_isinstance(builder, &payload.value, &payload.value_ty, &payload.target.ty, span)
+        }
         Rvalue::Aggregate(kind, elements) => checked_aggregate(module, builder, kind, elements, expected, span),
         Rvalue::Dict(_) => Err("unsupported Body IR Dict".into()),
         Rvalue::ValueEnumVariant(target) => {
@@ -555,7 +558,7 @@ fn enum_comparison_place(builder: &mut Builder, operand: &SourceOperand, span: &
 }
 
 /// Materialize one native discriminant as the integer tag type used by checked match dispatch.
-fn enum_comparison_tag(builder: &mut Builder, source: &Place, span: &SourceSpan) -> Place {
+pub fn enum_comparison_tag(builder: &mut Builder, source: &Place, span: &SourceSpan) -> Place {
     let raw = temporary(builder, PlanType::EnumTag, span);
     let tag = temporary(builder, PlanType::Int, span);
     builder.emit(plan_assign(raw.clone(), RvalueKind::Discriminant(source.clone()), span));

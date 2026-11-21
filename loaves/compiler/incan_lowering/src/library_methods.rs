@@ -9,15 +9,23 @@ use incan_semantics_core::{IncanType, generic};
 
 use crate::call_arguments::call_parameter_type;
 use crate::callable_calls::checked_type_arguments;
+use crate::callable_values::lower_callable_bound_call;
 use crate::calls::{instantiated_external_call, library_call_operands, native_delegation};
 use crate::checked_values::scalar_place;
 use crate::closures::return_representation;
+use crate::derived_methods::{
+    comparison_dunder, is_derived_clone, is_derived_display, lower_comparison_dunder, lower_derived_clone,
+    receiver_declares_method, slot_name,
+};
 use crate::element_places::is_element_place;
 use crate::frame::{Builder, place_type, read_place, temporary};
+use crate::json_builtins::lower_model_json_builtin;
 use crate::layout_types::{native_source_type, shared_receiver_type};
 use crate::list_methods::call_destination;
+use crate::method_calls::{is_json_serialize_method, receiver_fills_slot, receiver_method_identity};
 use crate::models::model_place;
 use crate::nominal_instances::{instance_arguments, template_base};
+use crate::operand_borrows::lower_display_str;
 use crate::pending::untranslated;
 use crate::type_parameters::substitute;
 use crate::unions::require_native_union_signature;
@@ -331,4 +339,58 @@ fn library_receiver(
         },
         _ => Err("unsupported Body IR by-value stdlib method receiver".into()),
     }
+}
+
+/// Lower a standard-library slot through the behavior a derive or a held callable gives the receiver.
+///
+/// A slot the receiver's own method fills is left to ordinary dispatch, because that method is what legacy calls. A
+/// receiver type that declares a method of the slot's name without such a record also uses ordinary dispatch. A
+/// checked Serialize default that still names the protocol itself keeps the canonical JSON implementation; retaining
+/// that default is not an override.
+pub fn lower_standard_slot(
+    module: &BodyIrModule,
+    builder: &mut Builder,
+    target: &MethodTarget,
+    arguments: &[ArgumentElement],
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<bool, String> {
+    let json = is_json_serialize_method(target);
+    let mut json_default = false;
+    if receiver_fills_slot(module, target, builder, &arguments[0], span)? {
+        if !json {
+            return Ok(false);
+        }
+        let selected = receiver_method_identity(module, target, builder, &arguments[0], span)?;
+        if selected != target.canonical {
+            return Ok(false);
+        }
+        // A retained default points at the protocol itself; only a distinct implementation overrides that slot.
+        json_default = true;
+    }
+    let comparison = comparison_dunder(target);
+    let standard_slot = json || is_derived_clone(target) || is_derived_display(target) || comparison.is_some();
+    if standard_slot
+        && !json_default
+        && receiver_declares_method(module, builder, &arguments[0], &slot_name(target), span)?
+    {
+        return Ok(false);
+    }
+    if json {
+        lower_model_json_builtin(builder, arguments, destination, span)?;
+        return Ok(true);
+    }
+    if is_derived_clone(target) {
+        lower_derived_clone(builder, arguments, destination, span)?;
+        return Ok(true);
+    }
+    if let Some(operator) = comparison {
+        lower_comparison_dunder(module, builder, operator, arguments, destination, span)?;
+        return Ok(true);
+    }
+    if is_derived_display(target) {
+        lower_display_str(builder, arguments, destination, span)?;
+        return Ok(true);
+    }
+    lower_callable_bound_call(builder, target, arguments, destination, span)
 }

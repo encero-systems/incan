@@ -61,3 +61,17 @@ pub fn callable_name_profile(module: &BodyIrModule, owner: &str) -> Result<bool,
     }
     Ok(true)
 }
+
+/// Name the frame that publishes a closed instance once and returns its decorated callable.
+pub fn binding_accessor_name(base: &str) -> String {
+    format!("{base}__incan_binding")
+}
+
+/// The pointer signature of the frame being built, read from its parameter slots and then its return slot.
+pub fn builder_signature(builder: &crate::frame::Builder) -> Vec<incan_mir_plan_native::PlanType> {
+    let mut signature: Vec<_> = (1..=builder.parameter_count as usize)
+        .map(|index| builder.locals[index].ty.clone())
+        .collect();
+    signature.push(builder.locals[0].ty.clone());
+    signature
+}
