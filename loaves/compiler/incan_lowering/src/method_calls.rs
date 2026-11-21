@@ -367,7 +367,7 @@ fn receiver_owner(
 }
 
 /// A retained model or source enum owns trait slots, including a receiver reached through stored reference.
-fn nominal_owner(module: &BodyIrModule, actual: &PlanType) -> Option<PlanType> {
+pub fn nominal_owner(module: &BodyIrModule, actual: &PlanType) -> Option<PlanType> {
     match actual {
         PlanType::Model(owner, name) | PlanType::ModelRef(owner, name) | PlanType::ModelMutRef(owner, name) => {
             Some(PlanType::Model(*owner, name.clone()))
@@ -430,13 +430,30 @@ fn receiver_fills_source_slot(
     }))
 }
 
-/// Select one concrete owner's retained implementation for instance and associated trait calls.
+/// Select one concrete owner's retained implementation for an instance trait call.
 fn owner_method_identity(
     module: &BodyIrModule,
     target: &MethodTarget,
     owner: &PlanType,
 ) -> Result<CanonicalSymbolId, String> {
-    let Some(checked) = &target.canonical else {
+    owner_callable_identity(
+        module,
+        target.canonical.as_ref(),
+        &target.name,
+        target.trait_arguments.as_ref(),
+        owner,
+    )
+}
+
+/// Select one concrete owner's retained implementation for instance and associated trait calls.
+pub fn owner_callable_identity(
+    module: &BodyIrModule,
+    checked: Option<&CanonicalSymbolId>,
+    name: &str,
+    trait_arguments: Option<&Vec<IncanType>>,
+    owner: &PlanType,
+) -> Result<CanonicalSymbolId, String> {
+    let Some(checked) = checked else {
         return Err("unsupported Body IR unproven Method".into());
     };
     let identity = owner_identity(module, owner)?;
@@ -456,7 +473,7 @@ fn owner_method_identity(
         if implementation.owner != identity || implementation.method != canonical {
             continue;
         }
-        let matches = match &target.trait_arguments {
+        let matches = match trait_arguments {
             Some(arguments) => *arguments == implementation.slot_arguments,
             None => receiver_selects_slot_arguments(module, implementation, owner),
         };
@@ -478,7 +495,7 @@ fn owner_method_identity(
         Some(implementation) => Ok(implementation.implementation.clone()),
         None => {
             if !method_belongs_to_owner(&canonical, &identity)
-                && let Some(declared) = declared_owner_method(module, &identity, &target.name)?
+                && let Some(declared) = declared_owner_method(module, &identity, name)?
             {
                 return Ok(declared);
             }

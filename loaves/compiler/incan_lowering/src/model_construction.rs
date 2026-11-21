@@ -26,7 +26,7 @@ use crate::models::constructor_index;
 use crate::pending::untranslated;
 use crate::ranges::range_aggregate;
 use crate::result_carriers::frozen_operand;
-use crate::statements::{borrowed_payload, carrier_payload};
+use crate::statements::{authenticated_component_operand, borrowed_payload, carrier_payload};
 use crate::text_plan::owned_literal;
 use crate::tuples::carrier_element;
 
@@ -204,7 +204,7 @@ pub fn model_field_operand(
     // A generic carrier selected as this body's returned view stores the authenticated source loan in its
     // reference-shaped field, just as a tuple or builtin result carrier stores its selected payload.
     if builder.carries_view && reference_contract(&field_type).is_ok() {
-        return Err(untranslated("statements::authenticated_component_operand"));
+        return authenticated_component_operand(builder, value, &field_type, span);
     }
     if field_type == PlanType::String {
         let text = display_operand(builder, value, span)?;

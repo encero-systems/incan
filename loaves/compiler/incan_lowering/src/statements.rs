@@ -507,3 +507,23 @@ pub fn source_future_place(
         SourceOperand::Constant(_) => Err("unsupported Body IR Await constant".into()),
     }
 }
+
+/// Borrow one stored aggregate component from the place authenticated by the body's returned-view contract.
+pub fn authenticated_component_operand(
+    builder: &mut Builder,
+    operand: &SourceOperand,
+    expected: &PlanType,
+    span: &SourceSpan,
+) -> Result<Operand, String> {
+    let (_, writable) = reference_contract(expected)?;
+    let (access, fact) = if writable {
+        (IncanInputAccess::Exclusive, OwnershipFact::MutBorrow)
+    } else {
+        (IncanInputAccess::Shared, OwnershipFact::Borrow)
+    };
+    let SourceOperand::Place(read) = operand else {
+        return Err("unsupported Body IR aggregate returned view without a source place".into());
+    };
+    let source = scalar_place(builder, &read.place, span)?;
+    explicit_place_argument(builder, source, fact, expected, access, span)
+}

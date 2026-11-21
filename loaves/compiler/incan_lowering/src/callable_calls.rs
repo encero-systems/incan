@@ -25,9 +25,9 @@ use crate::frame::{
 use crate::generic_callables::owned_callable_slots;
 use crate::layout_types::native_source_type;
 use crate::list_methods::call_destination;
+use crate::method_calls::{nominal_owner, owner_callable_identity};
 use crate::model_values::{is_json_deserialize_method, lower_model_from_json};
 use crate::models::model_type;
-use crate::pending::untranslated;
 use crate::reflection::lower_static_field_metadata;
 use crate::statements::is_nominal_type;
 use crate::string_conversion::string_conversion_callee;
@@ -134,13 +134,16 @@ pub fn lower_named_target(
     if let Some(owner) = value_enum_from_value_owner(module, target)? {
         return lower_value_enum_from_value(builder, owner, arguments, destination, span);
     }
+    let selected = static_receiver_target(module, builder, target)?;
+    let target = &selected;
     let Some(identity) = &target.canonical else {
         return Err("unsupported Body IR builtin or unproven NamedCallableTarget".into());
     };
-    if is_trait_associated_target(module, target) && static_receiver_owner(builder, module, target)?.is_some() {
-        return Err(untranslated("traits::owner_callable_identity"));
-    }
-    let Some(index) = builder.program.body_indices.unique(identity) else {
+    let candidate = match associated_body_index(module, target, builder)? {
+        Some(index) => Some(index),
+        None => builder.program.body_indices.unique(identity),
+    };
+    let Some(index) = candidate else {
         return lower_loaf_call(module, builder, target, arguments, destination, span);
     };
     let body = &module.bodies[index];
@@ -339,4 +342,83 @@ pub fn lower_callable_result(
         terminate_call(builder, callee, operands, output, span);
     }
     Ok(())
+}
+
+/// Select the concrete implementation of a trait associated call after closing its bounded receiver.
+///
+/// Body IR retains the trait slot selected by checking and the receiver template independently. Lowering first closes
+/// a default's Self through its adopting trait environment, then closes the active generic frame and uses the same
+/// owner/implementation records as instance dispatch. When the selected implementation has a body in this module,
+/// lowering replaces the trait slot's local call identity with that body's exact identity, including when the trait
+/// itself came from an imported package.
+fn static_receiver_target(
+    module: &BodyIrModule,
+    builder: &Builder,
+    target: &NamedCallableTarget,
+) -> Result<NamedCallableTarget, String> {
+    if !is_trait_associated_target(module, target) {
+        return Ok(target.clone());
+    }
+    let Some(owner) = static_receiver_owner(builder, module, target)? else {
+        return Ok(target.clone());
+    };
+    let selected_identity = owner_callable_identity(module, target.canonical.as_ref(), &target.name, None, &owner)?;
+    if Some(&selected_identity) == target.canonical.as_ref() {
+        return Ok(target.clone());
+    }
+    let mut selected = target.clone();
+    selected.direct_call_id = module
+        .bodies
+        .iter()
+        .find(|body| body.canonical.as_ref() == Some(&selected_identity))
+        .map(|body| body.direct_call_id.clone());
+    selected.canonical = Some(selected_identity);
+    Ok(selected)
+}
+
+/// Select the adopter-specific body only for a receiver-free trait default with a shared canonical identity.
+fn associated_body_index(
+    module: &BodyIrModule,
+    target: &NamedCallableTarget,
+    builder: &Builder,
+) -> Result<Option<usize>, String> {
+    if !is_trait_associated_target(module, target) {
+        return Ok(None);
+    }
+    let Some(owner) = static_receiver_owner(builder, module, target)? else {
+        return Ok(None);
+    };
+    let selected_identity = owner_callable_identity(module, target.canonical.as_ref(), &target.name, None, &owner)?;
+    let mut selected: Option<usize> = None;
+    for index in builder.program.body_indices.candidates(&selected_identity) {
+        let body = &module.bodies[index];
+        if body.canonical.as_ref() != Some(&selected_identity) {
+            continue;
+        }
+        let Some(instantiation) = &body.trait_default_instantiation else {
+            continue;
+        };
+        let concrete = match enum_type(&module.enum_declarations, &instantiation.receiver_type) {
+            Some(enum_owner) => Some(enum_owner),
+            None => nominal_owner(
+                module,
+                &model_type(
+                    builder.constructors(),
+                    &module.nominal_declarations,
+                    &instantiation.receiver_type,
+                    "",
+                )?,
+            ),
+        };
+        if concrete.as_ref() != Some(&owner) {
+            continue;
+        }
+        if let Some(previous) = selected
+            && module.bodies[previous] != *body
+        {
+            return Err("unsupported Body IR conflicting associated default executable bodies".into());
+        }
+        selected = Some(index);
+    }
+    Ok(selected)
 }
