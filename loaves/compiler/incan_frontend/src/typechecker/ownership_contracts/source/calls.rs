@@ -6,10 +6,10 @@ use super::super::flow::{InputEvaluation, Invocation, InvocationArgument};
 use super::call_results::{conditional_result, plain_result, primitive_display};
 use super::{
     Access, Builder, Event, Loan, LoanId, LoanKind, OwnershipMode, Path, Permission, Place, Projection, ResolvedType,
-    Root, SourceSlot, Unavailable, ViewRelation, ViewSource,
+    Root, Unavailable,
 };
-use crate::ast::{CallArg, Expr, ParamKind, Receiver, Span, Spanned};
-use crate::symbols::CallableParam;
+use crate::ast::{BinaryOp, CallArg, Expr, Literal, ParamKind, Receiver, Span, Spanned};
+use crate::symbols::{CallableParam, TypeInfo};
 use crate::typechecker::TypeChecker;
 use incan_lang::lang::builtins::{BuiltinFnId, BuiltinMethodId};
 use incan_lang::lang::surface::{
@@ -18,7 +18,9 @@ use incan_lang::lang::surface::{
 use incan_lang::lang::trait_bounds;
 use incan_lang::lang::traits::{self as core_traits, TraitId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
-use incan_semantics_core::IncanInputAccess;
+use incan_semantics_core::{IncanInputAccess, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
+
+mod views;
 
 impl Builder<'_> {
     /// Apply a selected free-function contract without inspecting its body. Borrowed arguments remain live until
@@ -181,7 +183,11 @@ impl Builder<'_> {
                     reason: "builtin place method needs positional arguments".into(),
                 });
             };
-            if !self.fresh_or_copy_field(value) && !matches!(value.node, Expr::Call(..) | Expr::MethodCall(..)) {
+            if !self.fresh_or_copy_field(value)
+                && !matches!(value.node, Expr::Call(..) | Expr::MethodCall(..))
+                && !self.transparent_selected_call_argument(value)
+                && !self.builtin_list_concat_argument(value)
+            {
                 return Err(Unavailable {
                     span: value.span,
                     reason: "a non-Copy builtin method argument needs checked ownership transfer materialization"
@@ -200,6 +206,50 @@ impl Builder<'_> {
             },
             span,
         ))
+    }
+
+    /// A checker-unhooked `list[T] + list[T]` evaluates both operands as reads and creates fresh list storage. This
+    /// authorizes only the result at the builtin argument boundary; neither operand receives transfer authority.
+    pub(super) fn builtin_list_concat_argument(&self, value: &Spanned<Expr>) -> bool {
+        let Expr::Binary(left, BinaryOp::Add, right) = &value.node else {
+            return false;
+        };
+        if self.checker.type_info.resolved_operator_call(value.span).is_some() {
+            return false;
+        }
+        self.checker.type_info.expr_type(value.span).is_some_and(|result| {
+            matches!(result, ResolvedType::Generic(name, arguments)
+                if collections::from_str(name) == Some(CollectionTypeId::List) && arguments.len() == 1)
+                && self.checker.type_info.expr_type(left.span) == Some(result)
+                && self.checker.type_info.expr_type(right.span) == Some(result)
+                && !self.checker.type_holds_borrow(result)
+                && !self.checker.type_holds_native_loan(result)
+        })
+    }
+
+    /// A transparent `?` or grouping wrapper preserves one checker-selected call's fresh, closed result. Stored
+    /// values and results capable of carrying source or native loans remain outside the builtin transfer route.
+    fn transparent_selected_call_argument(&self, value: &Spanned<Expr>) -> bool {
+        let mut call = value;
+        let mut wrapped = false;
+        while let Expr::Paren(inner) | Expr::Try(inner) = &call.node {
+            call = inner;
+            wrapped = true;
+        }
+        wrapped
+            && matches!(call.node, Expr::Call(..) | Expr::MethodCall(..))
+            && self.view_source(value).is_ok_and(|source| source.is_none())
+            && self
+                .checker
+                .type_info
+                .protocols
+                .explicit_input_calls
+                .contains_key(&call.span)
+            && self
+                .checker
+                .type_info
+                .expr_type(value.span)
+                .is_some_and(|ty| !self.checker.type_holds_borrow(ty) && !self.checker.type_holds_native_loan(ty))
     }
 
     /// Primitive observers read their arguments through a checker-selected builtin identity. Nominal display and
@@ -402,6 +452,15 @@ impl Builder<'_> {
             })?
             .is_some();
         let clone_result = self.checked_clone_call(span);
+        let path_join_independent_result =
+            self.checked_standard_path_join_result(receiver, arguments, span, call, result);
+        let selected_result_map_err = call.callee
+            == crate::symbols::canonical_builtin_member_identity("Result", "map_err")
+            && call.receiver == Some(Receiver::Immutable)
+            && self.checker.type_info.resolved_builtin_method_call(span)
+                == Some(BuiltinMethodId::Result(
+                    incan_lang::lang::surface::result_methods::ResultMethodId::MapErr,
+                ));
         // A native call that lends nothing returns a value that cannot keep a borrow of the caller's storage.
         let lends_nothing = call.kind == super::super::InputCallKind::Native
             && (call.receiver.is_none() || self.checker.type_info.native_value_receiver(span))
@@ -417,15 +476,32 @@ impl Builder<'_> {
             })
             && conditional_result(result))
         .then(|| result.clone());
+        let closed_carrier_result = self.consumed_carrier_calls.contains(&span)
+            && call.kind == super::super::InputCallKind::Ordinary
+            && view.is_none()
+            && native_dependencies.is_none()
+            && !native_independent_result
+            && !owned_independent_result
+            && !owned_dependent_result
+            && !clone_result
+            && !path_join_independent_result
+            && result_requirement.is_none()
+            && (result.is_result() || result.is_option())
+            && !self.checker.type_holds_borrow(result)
+            && !self.checker.type_holds_native_loan(result);
         if view.is_none()
             && native_dependencies.is_none()
             && !native_independent_result
             && !owned_independent_result
             && !owned_dependent_result
             && !clone_result
+            && !path_join_independent_result
             && !plain_result(result)
             && result_requirement.is_none()
+            && !closed_carrier_result
             && !lends_nothing
+            && !self.independent_call_results.contains(&span)
+            && !selected_result_map_err
             && !(call.kind == super::super::InputCallKind::Ordinary && call.parameters.is_empty())
         {
             return Err(Unavailable {
@@ -461,6 +537,27 @@ impl Builder<'_> {
             receiver_evaluation: None,
             completion_node: 0,
             final_accesses: Vec::new(),
+        };
+        let receiver_value_use = if selected_result_map_err {
+            let receiver = receiver.ok_or(Unavailable {
+                span,
+                reason: "call has no selected explicit input access facts".into(),
+            })?;
+            Some(
+                self.classify_value_use(
+                    receiver,
+                    super::value_uses::ValueUseContext::CallReceiver {
+                        invocation: span,
+                        arguments,
+                    },
+                )?
+                .ok_or(Unavailable {
+                    span,
+                    reason: "call has no selected explicit input access facts".into(),
+                })?,
+            )
+        } else {
+            None
         };
         if let Some(receiver) = receiver {
             let start_node = self.graph.nodes.len();
@@ -530,9 +627,33 @@ impl Builder<'_> {
                         through: None,
                     }
                 } else {
-                    let (source, evaluated) = self.borrowed_input_source(receiver, span, incoming)?;
-                    incoming = evaluated;
-                    source
+                    if let Some(plan) = receiver_value_use {
+                        incoming = self.apply_value_use(receiver, plan, incoming)?;
+                        let root = Root::Temporary {
+                            owner: self.owner.clone(),
+                            expression: receiver.span,
+                            invocation: span,
+                        };
+                        self.graph.permissions.insert(
+                            root.clone(),
+                            Permission {
+                                exclusive: true,
+                                writable: true,
+                                transferable: true,
+                            },
+                        );
+                        Path {
+                            place: Place {
+                                root,
+                                projection: Vec::new(),
+                            },
+                            through: None,
+                        }
+                    } else {
+                        let (source, evaluated) = self.borrowed_input_source(receiver, span, incoming)?;
+                        incoming = evaluated;
+                        source
+                    }
                 };
                 let mutable = call.receiver == Some(Receiver::Mutable);
                 let loan = self.call_loan(source, mutable, mutable, receiver.span);
@@ -570,7 +691,22 @@ impl Builder<'_> {
                 invocation.arguments.push(argument);
                 continue;
             }
-            let source = self.optional_place(expression)?.map(|path| path.place);
+            let call_result_field =
+                super::call_results::direct_call_field_projection(&self.checker.type_info, expression);
+            let source = if call_result_field.is_some() {
+                None
+            } else {
+                self.optional_place(expression)?.map(|path| path.place)
+            };
+            let closed_enum_parameter_observer = if call_result_field.is_some() {
+                false
+            } else {
+                self.closed_enum_parameter_argument(
+                    expression,
+                    &call.parameters[slot],
+                    call.kind == super::super::InputCallKind::Ordinary,
+                )?
+            };
             let start_node = self.graph.nodes.len();
             incoming = self.event(incoming, Event::Nothing, expression.span);
             let (outgoing, loan) = self.call_argument(
@@ -578,6 +714,8 @@ impl Builder<'_> {
                 &call.parameters[slot],
                 mode,
                 call.kind == super::super::InputCallKind::Ordinary,
+                closed_enum_parameter_observer,
+                selected_result_map_err,
                 matches!(
                     call.kind,
                     super::super::InputCallKind::Explicit | super::super::InputCallKind::Native
@@ -586,7 +724,8 @@ impl Builder<'_> {
                         .checker
                         .type_info
                         .constructor_field_binding(expression.span)
-                        .is_some()),
+                        .is_some())
+                    || path_join_independent_result,
                 span,
                 incoming,
             )?;
@@ -604,6 +743,11 @@ impl Builder<'_> {
             if let Some(loan) = loan {
                 loans.push(loan);
             }
+            let classified_move = self
+                .graph
+                .value_uses
+                .get(&expression.span)
+                .is_some_and(|value_use| value_use.kind == super::super::flow::ValueUseKind::Move);
             invocation.arguments.push(InvocationArgument {
                 span: expression.span,
                 slot,
@@ -612,6 +756,7 @@ impl Builder<'_> {
                     Some(OwnershipMode::Borrowed) => IncanInputAccess::Shared,
                     Some(OwnershipMode::BorrowedMut) => IncanInputAccess::Exclusive,
                     Some(OwnershipMode::Owned) => IncanInputAccess::Owned,
+                    None if classified_move => IncanInputAccess::Owned,
                     None => IncanInputAccess::Inferred,
                     Some(OwnershipMode::Reference) => {
                         return Err(Unavailable {
@@ -622,6 +767,7 @@ impl Builder<'_> {
                 },
                 loan,
                 source: loan.map(|loan| self.graph.loans[loan.0].source.clone()).or(source),
+                closed_enum_parameter_observer,
                 evaluation: InputEvaluation {
                     start_node,
                     end_node,
@@ -650,6 +796,27 @@ impl Builder<'_> {
                 span,
                 reason: "invocation has more than one checked argument binding".into(),
             });
+        }
+        if selected_result_map_err {
+            let receiver = receiver.ok_or(Unavailable {
+                span,
+                reason: "call has no selected explicit input access facts".into(),
+            })?;
+            if super::call_results::retained_result_map_err(
+                &self.checker.type_info,
+                &self.owner,
+                receiver,
+                span,
+                arguments,
+                &self.graph,
+            )
+            .is_none()
+            {
+                return Err(Unavailable {
+                    span,
+                    reason: "call has no selected explicit input access facts".into(),
+                });
+            }
         }
         Ok(incoming)
     }
@@ -682,6 +849,106 @@ impl Builder<'_> {
         })
     }
 
+    /// Authenticate the one standard-library lexical method whose plain source signature predates owned-result
+    /// syntax but whose implementation always constructs new storage. Package, module, member and nominal type
+    /// identities all participate so another `Path.joinpath`, another `joinpath` method or a changed result type
+    /// cannot acquire this independent-result fact by spelling or shape alone.
+    fn checked_standard_path_join_result(
+        &self,
+        receiver: Option<&Spanned<Expr>>,
+        arguments: &[CallArg],
+        span: Span,
+        call: &super::super::InputCall,
+        result: &ResolvedType,
+    ) -> bool {
+        let Some(receiver) = receiver else {
+            return false;
+        };
+        let [CallArg::Positional(_)] = arguments else {
+            return false;
+        };
+        let [parameter] = call.parameters.as_slice() else {
+            return false;
+        };
+        let expected_origin = SymbolOrigin::Package {
+            library: "incan_stdlib_system".to_string(),
+            module_path: vec!["fs".to_string(), "path".to_string()],
+        };
+        let canonical_member = call.callee.namespace == SymbolNamespace::Member
+            && call.callee.origin == expected_origin
+            && call.callee.declaration_name == "joinpath"
+            && call.callee.kind == SemanticSourceTargetKind::Method;
+        let selected_surface = call.kind == super::super::InputCallKind::Ordinary
+            && call.receiver == Some(Receiver::Immutable)
+            && self.checker.type_info.resolved_identity(span) == Some(&call.callee)
+            && self.checker.type_info.resolved_builtin_method_call(span).is_none()
+            && self.checker.type_info.call_site_callable_params(span) == Some(call.parameters.as_slice())
+            && parameter.kind == ParamKind::Normal
+            && !parameter.is_mut
+            && parameter.ty == ResolvedType::Str;
+        let Some(receiver_type) = self.checker.type_info.expr_type(receiver.span) else {
+            return false;
+        };
+        let mut receiver_path = Vec::new();
+        let receiver_value_type = self
+            .checker
+            .explicit_ownership_value_type(receiver_type)
+            .map(|value| {
+                receiver_path.push(0);
+                value
+            })
+            .unwrap_or_else(|| receiver_type.clone());
+        let receiver_value_type = match receiver_value_type {
+            ResolvedType::Ref(inner) => {
+                receiver_path.push(0);
+                *inner
+            }
+            other => other,
+        };
+        let mut result_path = Vec::new();
+        let result_value_type = self
+            .checker
+            .explicit_ownership_value_type(result)
+            .map(|value| {
+                result_path.push(0);
+                value
+            })
+            .unwrap_or_else(|| result.clone());
+        let (ResolvedType::Named(_), ResolvedType::Named(_)) = (&receiver_value_type, &result_value_type) else {
+            return false;
+        };
+        let Some(receiver_identity) = self
+            .checker
+            .type_info
+            .expressions
+            .expression_type_identities
+            .get(&receiver.span)
+            .and_then(|identities| identities.get(&receiver_path))
+        else {
+            return false;
+        };
+        let Some(result_identity) = self
+            .checker
+            .type_info
+            .expressions
+            .expression_type_identities
+            .get(&span)
+            .and_then(|identities| identities.get(&result_path))
+        else {
+            return false;
+        };
+        let canonical_path = receiver_identity.namespace == SymbolNamespace::OrdinaryLexical
+            && receiver_identity.origin == expected_origin
+            && receiver_identity.declaration_name == "Path"
+            && receiver_identity.kind == SemanticSourceTargetKind::Newtype;
+        canonical_member
+            && selected_surface
+            && canonical_path
+            && receiver_identity == result_identity
+            && !self.checker.type_holds_borrow(result)
+            && !self.checker.type_holds_native_loan(result)
+    }
+
     /// Evaluate one argument according to its selected slot. A borrowed place is evaluated once before taking its
     /// loan; an explicit ownership request constrains even an otherwise ordinary source binding. Unresolved
     /// duckborrow or ordinary mutable adapters refuse rather than cloning or guessing an access mode.
@@ -691,6 +958,8 @@ impl Builder<'_> {
         parameter: &CallableParam,
         mode: Option<OwnershipMode>,
         ordinary_callee: bool,
+        closed_enum_parameter_observer: bool,
+        selected_result_map_err: bool,
         accepts_fresh_inferred: bool,
         invocation: Span,
         incoming: Vec<usize>,
@@ -716,6 +985,30 @@ impl Builder<'_> {
             None if self.copy_value(&parameter.ty) && !parameter.is_mut => self
                 .expression(expression, incoming, false)
                 .map(|outgoing| (outgoing, None)),
+            // `Result.map_err` invokes its one checked callback without retaining it. A capture-free closure literal
+            // therefore evaluates no caller-owned storage; capturing callbacks still need the ordinary local-closure
+            // route so their loans remain live through invocation.
+            None if selected_result_map_err
+                && !parameter.is_mut
+                && matches!(expression.node, Expr::Closure(..))
+                && self.checker.type_info.expr_type(expression.span) == Some(&parameter.ty)
+                && self
+                    .checker
+                    .closure_captures(expression.span)
+                    .is_some_and(|captures| captures.is_empty()) =>
+            {
+                Ok((self.event(incoming, Event::Nothing, expression.span), None))
+            }
+            // One exact canonical field may be taken from a selected dependency-free direct call result. This must
+            // precede every fallible optional-place guard because its authenticated source shape is Field(Call), not
+            // stored caller storage. Persist the outer value while evaluating only the inner invocation.
+            None if ordinary_callee
+                && !parameter.is_mut
+                && let Some(plan) = self.classify_call_result_field_projection(expression, &parameter.ty) =>
+            {
+                self.apply_value_use(expression, plan, incoming)
+                    .map(|outgoing| (outgoing, None))
+            }
             // A fresh closed value has no caller-owned source to conflict with. Explicit boundaries and an ordinary
             // model constructor argument retain that checked independence without inventing a copy or loan.
             None if accepts_fresh_inferred
@@ -736,18 +1029,67 @@ impl Builder<'_> {
                 self.expression(expression, incoming, true)
                     .map(|outgoing| (outgoing, None))
             }
-            // A whole local may be observed by an ordinary helper while its body retains later storage. Parameters,
-            // projections and borrowed aliases still need an explicit access fact rather than inferred widening.
+            // A private helper's ordinary slot may receive a fresh value whose checked type cannot hold a borrow.
+            // Its expression still proves every nested element; stored and reference-carrying values stay refused.
+            None if ordinary_callee
+                && !parameter.is_mut
+                && self.optional_place(expression)?.is_none()
+                && matches!(
+                    expression.node,
+                    Expr::List(_) | Expr::Tuple(_) | Expr::Set(_) | Expr::Dict(_)
+                )
+                && self.checker.type_info.expr_type(expression.span).is_some_and(|ty| {
+                    !self.checker.type_holds_borrow(ty) && !self.checker.type_holds_native_loan(ty)
+                }) =>
+            {
+                self.expression(expression, incoming, true)
+                    .map(|outgoing| (outgoing, None))
+            }
+            // One exact whole mutable Local may be read into an ordinary mutable slot when its cloneable checked
+            // value has no alias, loan, dependency or prior constraint. Mutation settlement remains authoritative;
+            // this route invents neither an ownership transfer nor an input loan.
+            None if self.mutable_ordinary_local_argument(expression, parameter, ordinary_callee)? => self
+                .expression(expression, incoming, false)
+                .map(|outgoing| (outgoing, None)),
+            // A checked string, bytes, empty option or fieldless enum literal creates fresh storage for an immutable
+            // ordinary slot. An authenticated payload-variant call is equally fresh, while its normal
+            // construction evaluates every payload. None has a caller-owned source place, so no stored
+            // ValueUse authority is invented.
+            None if self.fresh_ordinary_argument(expression, parameter, ordinary_callee)? => self
+                .expression(expression, incoming, false)
+                .map(|outgoing| (outgoing, None)),
+            // A checked whole enum Parameter is an observation, not a generic non-Copy transfer. This exact route
+            // must precede current-source ordinary_move so a later constructor field may still consume the value.
+            None if closed_enum_parameter_observer => self
+                .expression(expression, incoming, false)
+                .map(|outgoing| (outgoing, None)),
+            // Current-source classification is the one authority for exact independent stored reads. Restored
+            // records carry no classification and therefore retain the existing ordinary-argument refusal.
+            None if ordinary_callee
+                && !parameter.is_mut
+                && let Some(plan) = self.classify_value_use(
+                    expression,
+                    super::value_uses::ValueUseContext::OrdinaryArgument(parameter),
+                )? =>
+            {
+                self.apply_value_use(expression, plan, incoming)
+                    .map(|outgoing| (outgoing, None))
+            }
+            // A checked local or parameter, including a field-only path, may be observed by an immutable ordinary
+            // helper while its body retains storage. Indexes and borrowed aliases still need separate access facts.
             None if ordinary_callee
                 && !parameter.is_mut
                 && self.optional_place(expression)?.is_some_and(|path| {
                     path.through.is_none()
-                        && path.place.projection.is_empty()
-                        && matches!(
-                            path.place.root,
-                            Root::Binding(ref identity)
-                                if identity.kind == incan_semantics_core::SemanticSourceTargetKind::Local
-                        )
+                        && path
+                            .place
+                            .projection
+                            .iter()
+                            .all(|projection| matches!(projection, Projection::Field(_)))
+                        && matches!(&path.place.root, Root::Binding(identity)
+                            if identity.kind == incan_semantics_core::SemanticSourceTargetKind::Local
+                                || (identity.kind == incan_semantics_core::SemanticSourceTargetKind::Parameter
+                                    && !path.place.projection.is_empty()))
                 }) =>
             {
                 self.expression(expression, incoming, false)
@@ -758,6 +1100,127 @@ impl Builder<'_> {
                 reason: "ordinary argument requires inferred access or mutable binding facts".into(),
             }),
         }
+    }
+
+    /// Whether one ordinary mutable slot reads an exact whole cloneable mutable Local without taking ownership.
+    fn mutable_ordinary_local_argument(
+        &mut self,
+        expression: &Spanned<Expr>,
+        parameter: &CallableParam,
+        ordinary_callee: bool,
+    ) -> Result<bool, Unavailable> {
+        if !ordinary_callee
+            || !parameter.is_mut
+            || !self.checker.is_clone_type(&parameter.ty)
+            || self.checker.type_holds_borrow(&parameter.ty)
+            || self.checker.type_holds_native_loan(&parameter.ty)
+            || !self.checker.type_info.expr_type(expression.span).is_some_and(|actual| {
+                super::super::projection::same_checked_value_type_in(&self.nominal_scope, actual, &parameter.ty)
+            })
+        {
+            return Ok(false);
+        }
+        let Some(path) = self.optional_place(expression)? else {
+            return Ok(false);
+        };
+        if path.through.is_some() || !path.place.projection.is_empty() {
+            return Ok(false);
+        }
+        let Root::Binding(identity) = &path.place.root else {
+            return Ok(false);
+        };
+        Ok(identity.kind == incan_semantics_core::SemanticSourceTargetKind::Local
+            && !self.aliases.contains_key(identity)
+            && !self.aliases.values().any(|alias| alias.place.root == path.place.root)
+            && !self.borrowed_inputs.contains(&path.place.root)
+            && !self.graph.local_loans.contains_key(identity)
+            && !self.graph.dependent_locals.contains_key(identity)
+            && !self.graph.owned_locals.contains_key(identity)
+            && !self.constrained.contains(&path.place.root)
+            && self
+                .graph
+                .permissions
+                .get(&path.place.root)
+                .is_some_and(|permission| permission.exclusive && permission.writable && permission.transferable))
+    }
+
+    /// Whether one immutable ordinary slot receives exact fresh scalar storage rather than observing a stored place.
+    fn fresh_ordinary_argument(
+        &mut self,
+        expression: &Spanned<Expr>,
+        parameter: &CallableParam,
+        ordinary_callee: bool,
+    ) -> Result<bool, Unavailable> {
+        let literal = matches!(
+            expression.node,
+            Expr::Literal(Literal::Bytes(_) | Literal::String(_) | Literal::None)
+        );
+        let empty_option = matches!(expression.node, Expr::Literal(Literal::None)) && parameter.ty.is_option();
+        let checked_variant = matches!(expression.node, Expr::Field(..) | Expr::MethodCall(..))
+            && self
+                .checker
+                .type_info
+                .resolved_identity(expression.span)
+                .is_some_and(|identity| identity.kind == incan_semantics_core::SemanticSourceTargetKind::Variant)
+            && matches!(&parameter.ty,
+            ResolvedType::Named(owner) | ResolvedType::Generic(owner, _)
+                if matches!(self.checker.lookup_type_info(owner), Some(TypeInfo::Enum(_)))
+                    || super::super::projection::checked_nominal_identity_in(&self.nominal_scope, owner)
+                        .is_some_and(|identity| {
+                            identity.kind == incan_semantics_core::SemanticSourceTargetKind::Enum
+                        }));
+        if !literal && !checked_variant {
+            return Ok(false);
+        }
+        if !ordinary_callee
+            || parameter.is_mut
+            || !self.checker.type_info.expr_type(expression.span).is_some_and(|actual| {
+                super::super::projection::same_checked_value_type_in(&self.nominal_scope, actual, &parameter.ty)
+                    || (empty_option && actual.is_option())
+            })
+            || self.checker.type_holds_borrow(&parameter.ty)
+            || self.checker.type_holds_native_loan(&parameter.ty)
+        {
+            return Ok(false);
+        }
+        Ok(self.optional_place(expression)?.is_none())
+    }
+
+    /// Authenticate the only whole non-Copy Parameter observation currently retained by an ordinary inferred slot.
+    fn closed_enum_parameter_argument(
+        &mut self,
+        expression: &Spanned<Expr>,
+        parameter: &CallableParam,
+        ordinary_callee: bool,
+    ) -> Result<bool, Unavailable> {
+        if !ordinary_callee || parameter.is_mut {
+            return Ok(false);
+        }
+        let Some(path) = self.optional_place(expression)? else {
+            return Ok(false);
+        };
+        if path.through.is_some()
+            || !path.place.projection.is_empty()
+            || !matches!(&path.place.root, Root::Binding(identity)
+                if identity.kind == incan_semantics_core::SemanticSourceTargetKind::Parameter)
+        {
+            return Ok(false);
+        }
+        Ok(self.checker.type_info.expr_type(expression.span).is_some_and(|ty| {
+            super::super::projection::same_checked_value_type_in(&self.nominal_scope, ty, &parameter.ty)
+                && match &parameter.ty {
+                    ResolvedType::Named(owner) | ResolvedType::Generic(owner, _) => {
+                        matches!(self.checker.lookup_type_info(owner), Some(TypeInfo::Enum(_)))
+                            || super::super::projection::checked_nominal_identity_in(&self.nominal_scope, owner)
+                                .is_some_and(|identity| {
+                                    identity.kind == incan_semantics_core::SemanticSourceTargetKind::Enum
+                                })
+                    }
+                    _ => false,
+                }
+                && !self.checker.type_holds_borrow(ty)
+                && !self.checker.type_holds_native_loan(ty)
+        }))
     }
 
     /// A fresh scalar or owned byte-string expression, or a list literal of Copy scalars, may be borrowed for this
@@ -829,11 +1292,30 @@ impl Builder<'_> {
                             .selected_input_contract(call)
                             .is_ok_and(|contract| contract.is_some_and(|contract| contract.result_source.is_none())))
             });
+        let standard_path_join_result = match &expression.node {
+            Expr::MethodCall(inner_receiver, _, _, inner_arguments) => self
+                .checker
+                .type_info
+                .protocols
+                .explicit_input_calls
+                .get(&expression.span)
+                .is_some_and(|call| {
+                    self.checked_standard_path_join_result(
+                        Some(inner_receiver),
+                        inner_arguments,
+                        expression.span,
+                        call,
+                        ty,
+                    )
+                }),
+            _ => false,
+        };
         let independent_native_result = self.checker.native_result_is_independent(expression.span);
         if !plain_result(ty)
             && !matches!(expression.node, Expr::List(_))
             && !fresh_constructor
             && !independent_source_result
+            && !standard_path_join_result
             && !independent_native_result
         {
             return Err(Unavailable {
@@ -883,413 +1365,5 @@ impl Builder<'_> {
             span,
         });
         id
-    }
-
-    /// The place view an expression produces: a selected call returning a direct view, or `?` taking a carried view
-    /// out of its `Result` or `Option` success payload. A call returning a carried view is itself a carrier value, not
-    /// a place. `?` on a call whose error carries the view would pass that view on out of this body, and `?` in a body
-    /// whose own error carries its view would return another error; neither executes yet.
-    pub(super) fn view_relation(&self, expression: &Spanned<Expr>) -> Result<Option<ViewRelation>, Unavailable> {
-        match &expression.node {
-            Expr::Paren(inner) => self.view_relation(inner),
-            Expr::Try(inner) => match self.call_relation(inner)? {
-                Some(relation) if relation.carried == Some(1) => Err(Unavailable {
-                    span: expression.span,
-                    reason: "`?` passing on an error that carries a view".into(),
-                }),
-                _ if self.view_carried == Some(1) => Err(super::error_view_try(expression.span)),
-                Some(relation) if relation.carried == Some(0) => Ok(Some(ViewRelation {
-                    carried: None,
-                    ..relation
-                })),
-                _ => Ok(None),
-            },
-            _ => Ok(self
-                .call_relation(expression)?
-                .filter(|relation| relation.component.is_empty())),
-        }
-    }
-
-    /// The place view an expression produces, from a call as `view_relation` selects it or from `?` on a local still
-    /// holding a carried call. `?` on such a local takes the view out as `?` on the call does.
-    pub(super) fn view_source(&self, expression: &Spanned<Expr>) -> Result<Option<ViewSource>, Unavailable> {
-        if let Some(relation) = self.view_relation(expression)? {
-            return Ok(Some(ViewSource::Call(relation)));
-        }
-        match &expression.node {
-            Expr::Paren(inner) => self.view_source(inner),
-            Expr::Try(inner) => {
-                let Some((identity, payload)) = self.bound_carrier(inner) else {
-                    return Ok(None);
-                };
-                if payload != 0 {
-                    return Err(Unavailable {
-                        span: expression.span,
-                        reason: "`?` passing on an error that carries a view".into(),
-                    });
-                }
-                if self.view_carried == Some(1) {
-                    return Err(super::error_view_try(expression.span));
-                }
-                Ok(Some(ViewSource::Carrier(identity)))
-            }
-            _ => Ok(None),
-        }
-    }
-
-    /// Evaluate the place view `view_source` selected, then borrow the caller's place under its result loan.
-    pub(super) fn evaluate_view_source(
-        &mut self,
-        expression: &Spanned<Expr>,
-        source: ViewSource,
-        incoming: Vec<usize>,
-    ) -> Result<(Vec<usize>, Path), Unavailable> {
-        match (source, &expression.node) {
-            (ViewSource::Call(relation), _) => self.evaluate_view_call(expression, relation, incoming),
-            (source @ ViewSource::Carrier(_), Expr::Paren(inner)) => self.evaluate_view_source(inner, source, incoming),
-            (ViewSource::Carrier(identity), Expr::Try(inner)) => self.take_bound_view(inner, identity, incoming),
-            (ViewSource::Carrier(_), _) => Err(Unavailable {
-                span: expression.span,
-                reason: "bound carried view needs `?` or a match to take the view out".into(),
-            }),
-        }
-    }
-
-    /// The returned view relation of a selected call itself, direct or carried, read from its callee's contract
-    /// without its body. Await and grouping preserve the selected call's relationship.
-    pub(super) fn call_relation(&self, expression: &Spanned<Expr>) -> Result<Option<ViewRelation>, Unavailable> {
-        let expression = super::super::builtins::view_call(expression);
-        match &expression.node {
-            Expr::Call(..) | Expr::MethodCall(..) => {}
-            _ => return Ok(None),
-        }
-        let span = expression.span;
-        let Some(call) = self.checker.type_info.protocols.explicit_input_calls.get(&span) else {
-            return Ok(None);
-        };
-        let refusal = |reason: &'static str| Unavailable {
-            span,
-            reason: reason.into(),
-        };
-        let contract = self.checker.type_info.selected_input_contract(call).map_err(refusal)?;
-        Ok(crate::ownership_metadata::returned_view(contract)
-            .map_err(refusal)?
-            .map(|view| ViewRelation {
-                exclusive: view.access == IncanInputAccess::Exclusive,
-                slot: view.source.slot.clone(),
-                fields: view.source.fields.clone(),
-                component: view.component.to_vec(),
-                carried: view.carried,
-            }))
-    }
-
-    /// The retained dependency declared by a selected top-level `Owned[T] from source` result. Its source input
-    /// determines whether the result keeps shared or exclusive access; the owned result itself is ordinary value
-    /// storage, not an alias of that source.
-    pub(super) fn owned_relation(&self, expression: &Spanned<Expr>) -> Result<Option<ViewRelation>, Unavailable> {
-        let expression = super::super::builtins::view_call(expression);
-        if !matches!(expression.node, Expr::Call(..) | Expr::MethodCall(..)) {
-            return Ok(None);
-        }
-        let span = expression.span;
-        let Some(call) = self.checker.type_info.protocols.explicit_input_calls.get(&span) else {
-            return Ok(None);
-        };
-        let refusal = |reason: &'static str| Unavailable {
-            span,
-            reason: reason.into(),
-        };
-        let contract = self.checker.type_info.selected_input_contract(call).map_err(refusal)?;
-        let Some((_, source)) = crate::ownership_metadata::owned_result_source(contract).map_err(refusal)? else {
-            return Ok(None);
-        };
-        let exclusive = match source.slot {
-            SourceSlot::Receiver => call.receiver == Some(Receiver::Mutable),
-            SourceSlot::Parameter(slot) => contract
-                .and_then(|contract| {
-                    contract
-                        .modes
-                        .iter()
-                        .find(|mode| mode.component.parameter == Some(slot) && mode.component.children.is_empty())
-                })
-                .is_some_and(|mode| mode.mode == OwnershipMode::BorrowedMut),
-        };
-        Ok(Some(ViewRelation {
-            exclusive,
-            slot: source.slot.clone(),
-            fields: source.fields.clone(),
-            component: Vec::new(),
-            carried: None,
-        }))
-    }
-
-    /// The exact retained owners of a native call result, including a builtin carrier payload when one holds the
-    /// borrowed value. Static results return an empty source set and need no caller-owned loan.
-    pub(super) fn native_result_relation(
-        &self,
-        expression: &Spanned<Expr>,
-    ) -> Result<Option<super::super::native::NativeResultDependencies>, Unavailable> {
-        let expression = super::super::builtins::view_call(expression);
-        if !matches!(expression.node, Expr::Call(..) | Expr::MethodCall(..)) {
-            return Ok(None);
-        }
-        let is_native = self
-            .checker
-            .type_info
-            .protocols
-            .explicit_input_calls
-            .get(&expression.span)
-            .is_some_and(|call| call.kind == super::super::InputCallKind::Native);
-        if !is_native {
-            return Ok(None);
-        }
-        self.checker
-            .native_result_dependencies(expression.span)
-            .map_err(|reason| Unavailable {
-                span: expression.span,
-                reason,
-            })
-    }
-
-    /// Evaluate a native call once, then retain one result loan for every rustc-proven caller-owned input. The
-    /// invocation's temporary loans end with the call; each result loan starts from the same admitted source place.
-    pub(super) fn evaluate_native_result(
-        &mut self,
-        expression: &Spanned<Expr>,
-        relation: &super::super::native::NativeResultDependencies,
-        incoming: Vec<usize>,
-    ) -> Result<(Vec<usize>, Vec<super::LoanId>), Unavailable> {
-        let expression = super::super::builtins::view_call(expression);
-        let span = expression.span;
-        let incoming = match &expression.node {
-            Expr::MethodCall(receiver, _, _, arguments) => {
-                self.apply_call(Some(receiver), arguments, span, incoming)?
-            }
-            Expr::Call(callee, _, arguments) if matches!(callee.node, Expr::Ident(_)) => {
-                self.apply_call(None, arguments, span, incoming)?
-            }
-            _ => {
-                return Err(Unavailable {
-                    span,
-                    reason: "native borrowed result needs a checked call".into(),
-                });
-            }
-        };
-        let invocation = self.graph.invocations.get(&span).cloned().ok_or(Unavailable {
-            span,
-            reason: "native borrowed result has no checked invocation".into(),
-        })?;
-        let mut incoming = incoming;
-        let mut retained = Vec::with_capacity(relation.sources.len());
-        for source in &relation.sources {
-            let invocation_loans = match source {
-                SourceSlot::Receiver => invocation
-                    .receiver
-                    .into_iter()
-                    .chain(invocation.receiver_dependencies.iter().copied())
-                    .collect::<Vec<_>>(),
-                SourceSlot::Parameter(slot) => invocation
-                    .arguments
-                    .iter()
-                    .find(|argument| argument.slot == *slot)
-                    .and_then(|argument| argument.loan)
-                    .into_iter()
-                    .collect(),
-            };
-            if invocation_loans.is_empty() {
-                return Err(Unavailable {
-                    span,
-                    reason: "native borrowed result source is not an admitted borrowed input".into(),
-                });
-            }
-            for invocation_loan in invocation_loans {
-                let base = self.graph.loans.get(invocation_loan.0).cloned().ok_or(Unavailable {
-                    span,
-                    reason: "native borrowed result source is not an admitted borrowed input".into(),
-                })?;
-                if !matches!(base.source.root, Root::Binding(_)) {
-                    return Err(Unavailable {
-                        span,
-                        reason: format!("native call `{}` returns a borrow of temporary storage", relation.call),
-                    });
-                }
-                let exclusive = base.kind == super::LoanKind::Exclusive;
-                let loan = self.call_loan(
-                    Path {
-                        place: base.source,
-                        through: base.parent,
-                    },
-                    exclusive,
-                    base.writable,
-                    span,
-                );
-                incoming = self.event(incoming, Event::Borrow(loan), span);
-                retained.push(loan);
-            }
-        }
-        Ok((incoming, retained))
-    }
-
-    /// Evaluate a call that returns a view, then borrow the substituted place: the invocation's receiver or
-    /// argument source with the declared fields. The invocation's own loans cover the whole input during the call
-    /// and end with it; afterwards only the narrower result loan stays live, under the source's parent loan.
-    pub(super) fn evaluate_view_call(
-        &mut self,
-        expression: &Spanned<Expr>,
-        relation: ViewRelation,
-        incoming: Vec<usize>,
-    ) -> Result<(Vec<usize>, Path), Unavailable> {
-        let span = expression.span;
-        let aggregate = !relation.component.is_empty();
-        let incoming = match &expression.node {
-            // `?` continues on the carried view's place; its error path leaves the body carrying no loan.
-            Expr::Paren(inner) | Expr::Try(inner) => return self.evaluate_view_call(inner, relation, incoming),
-            Expr::Surface(surface) if super::super::builtins::awaited(surface).is_some() => {
-                let awaited = super::super::builtins::awaited(surface).ok_or(Unavailable {
-                    span,
-                    reason: "await has no returned-view expression".into(),
-                })?;
-                let call = super::super::builtins::view_call(awaited);
-                self.awaited.insert(call.span);
-                return self.evaluate_view_call(awaited, relation, incoming);
-            }
-            Expr::MethodCall(receiver, _, _, arguments) => {
-                self.apply_call(Some(receiver), arguments, span, incoming)?
-            }
-            Expr::Call(callee, _, arguments) if matches!(callee.node, Expr::Ident(_)) => {
-                self.apply_call(None, arguments, span, incoming)?
-            }
-            _ => {
-                return Err(Unavailable {
-                    span,
-                    reason: "returned view call needs a checked callee".into(),
-                });
-            }
-        };
-        let invocation = self.graph.invocations.get(&span).ok_or(Unavailable {
-            span,
-            reason: "returned view call has no checked invocation".into(),
-        })?;
-        let base = match relation.slot {
-            SourceSlot::Receiver => invocation.receiver,
-            SourceSlot::Parameter(slot) => invocation
-                .arguments
-                .iter()
-                .find(|argument| argument.slot == slot)
-                .and_then(|argument| argument.loan),
-        }
-        .and_then(|loan| self.graph.loans.get(loan.0))
-        .cloned()
-        .ok_or(Unavailable {
-            span,
-            reason: "returned view source was not borrowed by its invocation".into(),
-        })?;
-        if matches!(base.source.root, Root::Temporary { .. }) && !aggregate {
-            return Err(Unavailable {
-                span,
-                reason: "a returned view of a temporary cannot outlive its invocation".into(),
-            });
-        }
-        let mut place = base.source;
-        place
-            .projection
-            .extend(relation.fields.into_iter().map(Projection::Field));
-        let loan = self.call_loan(
-            Path {
-                place: place.clone(),
-                through: base.parent,
-            },
-            relation.exclusive,
-            relation.exclusive,
-            span,
-        );
-        let incoming = self.event(incoming, Event::Borrow(loan), span);
-        Ok((
-            incoming,
-            Path {
-                place,
-                through: Some(loan),
-            },
-        ))
-    }
-
-    /// Evaluate an aggregate returned view and retain both its immediate source storage and every dependency stored
-    /// by that source value. A cursor borrowing a selection therefore keeps the selection local alive and carries
-    /// the selection's graph loan forward; neither dependency may be reconstructed from the nominal field shape.
-    pub(super) fn evaluate_aggregate_view_call(
-        &mut self,
-        expression: &Spanned<Expr>,
-        relation: ViewRelation,
-        incoming: Vec<usize>,
-    ) -> Result<(Vec<usize>, Vec<LoanId>), Unavailable> {
-        let source_slot = relation.slot.clone();
-        let (mut incoming, path) = self.evaluate_view_call(expression, relation, incoming)?;
-        let direct = path.through.ok_or(Unavailable {
-            span: expression.span,
-            reason: "aggregate view has no retained source loan".into(),
-        })?;
-        let call = super::super::builtins::view_call(expression);
-        let invocation = self.graph.invocations.get(&call.span).ok_or(Unavailable {
-            span: call.span,
-            reason: "aggregate view call has no checked invocation".into(),
-        })?;
-        let source = match &source_slot {
-            SourceSlot::Receiver => invocation.receiver,
-            SourceSlot::Parameter(slot) => invocation
-                .arguments
-                .iter()
-                .find(|argument| argument.slot == *slot)
-                .and_then(|argument| argument.loan),
-        }
-        .and_then(|loan| self.graph.loans.get(loan.0))
-        .ok_or(Unavailable {
-            span: call.span,
-            reason: "aggregate view source was not borrowed by its invocation".into(),
-        })?;
-        let dependencies = match &source.source.root {
-            Root::Binding(root) => self.graph.dependent_locals.get(root).cloned().unwrap_or_default(),
-            Root::Temporary { .. } if source_slot == SourceSlot::Receiver => invocation.receiver_dependencies.clone(),
-            Root::Temporary { .. } => Vec::new(),
-        };
-        let mut loans = vec![direct];
-        for dependency in dependencies {
-            let (next, _, loan) = self.carry_dependency(dependency, call.span, incoming)?;
-            incoming = next;
-            loans.push(loan);
-        }
-        Ok((incoming, loans))
-    }
-
-    /// Recover the substituted source place of an already evaluated view call without creating another result loan.
-    /// Aggregate-return validation uses this after ordinary value evaluation so its graph matches the stored value's
-    /// execution while still proving the declaration's exact `from` relationship.
-    pub(super) fn evaluated_view_call_place(
-        &self,
-        expression: &Spanned<Expr>,
-        relation: &ViewRelation,
-    ) -> Result<Place, Unavailable> {
-        let expression = super::super::builtins::view_call(expression);
-        let invocation = self.graph.invocations.get(&expression.span).ok_or(Unavailable {
-            span: expression.span,
-            reason: "aggregate view call has no checked invocation".into(),
-        })?;
-        let base = match relation.slot {
-            SourceSlot::Receiver => invocation.receiver,
-            SourceSlot::Parameter(slot) => invocation
-                .arguments
-                .iter()
-                .find(|argument| argument.slot == slot)
-                .and_then(|argument| argument.loan),
-        }
-        .and_then(|loan| self.graph.loans.get(loan.0))
-        .ok_or(Unavailable {
-            span: expression.span,
-            reason: "aggregate view source was not borrowed by its invocation".into(),
-        })?;
-        let mut place = base.source.clone();
-        place
-            .projection
-            .extend(relation.fields.iter().cloned().map(Projection::Field));
-        Ok(place)
     }
 }
