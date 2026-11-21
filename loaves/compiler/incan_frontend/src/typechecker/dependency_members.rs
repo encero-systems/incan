@@ -198,12 +198,7 @@ impl TypeChecker {
         }
         self.restore_dependency_import_function_views(module_ast, &mut direct_symbols);
         let scope = self.checked_nominal_type_identities();
-        let remapping = scope
-            .iter()
-            .filter_map(|(name, identity)| {
-                incan_semantics_core::body_ir::nominal_carrier_key(identity).map(|key| (name.clone(), key))
-            })
-            .collect();
+        let remapping = Self::dependency_nominal_remapping(&scope);
         let mut retained_scope = false;
         for (name, kind) in &mut direct_symbols {
             if let Some(identity) = direct_identities.get(name) {
@@ -215,7 +210,7 @@ impl TypeChecker {
             }
         }
         if retained_scope {
-            self.retain_nominal_scope_carriers(&scope);
+            self.retain_nominal_scope_carriers(scope.values());
         }
         for declaration in &module_ast.declarations {
             let Declaration::TypeAlias(alias) = &declaration.node else {
@@ -226,7 +221,7 @@ impl TypeChecker {
             }
             if let Some(target) = self.type_aliases.get(&alias.name) {
                 let mut target = target.clone();
-                let bindings = remapping
+                let bindings: HashMap<_, _> = remapping
                     .iter()
                     .filter(|(name, _)| !target.type_params.contains(*name))
                     .map(|(name, qualified)| (name.clone(), qualified.clone()))
@@ -376,13 +371,25 @@ impl TypeChecker {
         newly_retained
     }
 
+    /// Map signature leaves through the declaring module's checked names on both fresh and restored imports.
+    pub(super) fn dependency_nominal_remapping(
+        scope: &std::collections::BTreeMap<String, CanonicalSymbolId>,
+    ) -> HashMap<String, String> {
+        scope
+            .iter()
+            .filter_map(|(name, identity)| {
+                incan_semantics_core::body_ir::nominal_carrier_key(identity).map(|key| (name.clone(), key))
+            })
+            .collect()
+    }
+
     /// Index a newly retained immutable scope once, retaining one spelling per canonical nominal. The scope registry
     /// never removes entries, so no discarded generation or source-scope snapshot is retained by this index.
-    pub(super) fn retain_nominal_scope_carriers(
+    pub(super) fn retain_nominal_scope_carriers<'a>(
         &mut self,
-        scope: &std::collections::BTreeMap<String, CanonicalSymbolId>,
+        identities: impl IntoIterator<Item = &'a CanonicalSymbolId>,
     ) {
-        for identity in scope.values() {
+        for identity in identities {
             if self.retained_nominal_carriers.contains_key(identity) {
                 continue;
             }
