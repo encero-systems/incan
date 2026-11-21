@@ -18,6 +18,7 @@ use crate::frame::{Builder, literal, place_type, read_place, temporary, track_rv
 use crate::layout_types::{native_source_type, shared_receiver_type};
 use crate::list_values::element_read;
 use crate::lists::{is_exclusive_borrow, is_list};
+use crate::matches::enum_payload_read;
 use crate::models::model_place;
 use crate::numerics::{numeric_carrier, numeric_constant};
 use crate::options::{carrier_payload_value, clone_tuple_operand};
@@ -473,7 +474,7 @@ fn borrowed_target_read(
         _ => {}
     }
     if let Projection::VariantField(..) = target.projection {
-        return Err(untranslated("matches::enum_payload_read"));
+        return enum_payload_read(builder, target, OwnershipFact::Borrow, span);
     }
     // A checked borrow of a value of an open type parameter, a field of a generic model say, reads a copy once the
     // instance makes it a concrete scalar, which owns nothing the borrow would protect.

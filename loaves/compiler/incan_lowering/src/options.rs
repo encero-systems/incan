@@ -1,5 +1,6 @@
 //! Concrete standard Option and Result layouts shared with native enum operations.
 
+use incan_lang::lang::surface::constructors::{ConstructorId, from_str as builtin_constructor};
 use incan_lang::lang::types::collections::{CollectionTypeId, from_str as collection_type};
 use incan_mir_plan_native::{
     CalleeKind, Carrier, EnumDeclaration, EnumVariant, ExternalFunction, Operand as PlanOperand, Place, PlanType,
@@ -9,9 +10,11 @@ use incan_semantics_core::body_ir::{
     Block, Body, BodyIrModule, CallableTarget, Callee, MatchArm, NamedCallableTarget, Operand, Rvalue, StatementKind,
     StaticInitializer,
 };
-use incan_semantics_core::{IncanType, SemanticSourceTargetKind, generic};
+use incan_semantics_core::body_ir::{Constant as SourceConstant, Pattern, ResultVariantKind};
+use incan_semantics_core::{IncanType, SemanticSourceTargetKind, SymbolOrigin, generic};
 
 use crate::compiler_record_adapters::{authored_plan_checked_type, semantic_key_matches_native};
+use crate::enums::validate_payload_patterns;
 use crate::frame::{
     Builder, cleanup_exit, drop_owned, forget_owned, place_type, read_place, temporary, terminate_call,
     track_rvalue_moves,
@@ -515,4 +518,57 @@ pub fn borrowed_native_value(
     );
     builder.owned.push(output.local);
     output
+}
+
+/// Match intrinsic Result facts; ordinary source constructor spellings never authorize a standard carrier.
+pub fn intrinsic_pattern(declaration: &EnumDeclaration, pattern: &Pattern) -> Result<i64, String> {
+    match pattern {
+        Pattern::Wildcard => return Ok(-1),
+        Pattern::Literal(value) => {
+            if declaration.carrier == Carrier::Option && *value == SourceConstant::None {
+                return Ok(0);
+            }
+        }
+        Pattern::Enum {
+            canonical: Some(canonical),
+            fields,
+            ..
+        } => {
+            // The checked identity names the builtin constructor; its written spelling decides nothing.
+            if declaration.carrier == Carrier::Option && canonical.origin == SymbolOrigin::Builtin {
+                let constructor = builtin_constructor(&canonical.declaration_name);
+                if constructor == Some(ConstructorId::Some) && fields.len() == 1 {
+                    validate_payload_patterns(fields)?;
+                    return Ok(1);
+                }
+                // A bare `None` constructor, as an `assert value is None` pattern spells it.
+                if constructor == Some(ConstructorId::None) && fields.is_empty() {
+                    return Ok(0);
+                }
+            }
+        }
+        Pattern::Result { variant, fields } => {
+            if declaration.carrier != Carrier::Result || fields.len() != 1 {
+                return Err("invalid Body IR Result pattern".into());
+            }
+            validate_payload_patterns(fields)?;
+            if *variant == ResultVariantKind::Ok {
+                return Ok(0);
+            }
+            return Ok(1);
+        }
+        _ => {}
+    }
+    Err("unsupported Body IR intrinsic carrier pattern".into())
+}
+
+/// Test a checked variant through the adapter's native discriminant comparison.
+pub fn variant_condition(builder: &mut Builder, source: &Place, slot: i64, span: &SourceSpan) -> PlanOperand {
+    let condition = temporary(builder, PlanType::Bool, span);
+    builder.emit(plan_assign(
+        condition.clone(),
+        RvalueKind::IsVariant(source.clone(), slot),
+        span,
+    ));
+    read_place(condition, false, span)
 }

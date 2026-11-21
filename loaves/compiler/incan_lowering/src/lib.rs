@@ -80,6 +80,7 @@ mod operators;
 mod options;
 mod pair_generators;
 mod parallel_ranges;
+mod patterns;
 mod pending;
 mod plan_product_inputs;
 mod program_context;

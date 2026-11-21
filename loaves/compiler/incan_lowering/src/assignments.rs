@@ -20,6 +20,7 @@ use crate::formatting::{lower_format, lower_string_assignment};
 use crate::frame::{Builder, cleanup_exit, literal, place_type, read_place, track_rvalue_moves, value_type};
 use crate::list_values::list_base_place;
 use crate::lists::is_list;
+use crate::matches::lower_enum_match;
 use crate::model_lists::structural_prefix;
 use crate::numerics::{integer_carrier, numeric_carrier, numeric_zero, sized_numeric};
 use crate::operators::scalar_rvalue;
@@ -72,8 +73,8 @@ pub fn lower_assignment(
         }
     }
     let target = assignment_place(builder, destination, span)?;
-    if let Rvalue::Match { .. } = value {
-        return Err(untranslated("matches::lower_enum_match"));
+    if let Rvalue::Match { scrutinee, arms } = value {
+        return lower_enum_match(module, builder, target, scrutinee, arms, span);
     }
     lower_local_assignment(module, builder, target.clone(), value, span)?;
     inherit_borrowed_item(builder, &target, value)
