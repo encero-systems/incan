@@ -778,14 +778,15 @@ fn compile_unit(
     }
 
     // ---- Exact native dependencies, including checked Loaf implementation layouts ----
+    let library_facades = crate::library_exports::resolve_facades(&plan, program.manifest.as_ref())?;
     let native_externs = crate::native_crates::link_externs(
         &plan,
+        &library_facades,
         &dependencies.externs,
         &loaves,
         &reached_names(&program),
         &dependencies.anchors,
     )?;
-    let library_facades = crate::library_exports::resolve_facades(&plan, program.manifest.as_ref())?;
     let publication = if let Some(mut manifest) = program.manifest.take() {
         publish_native_unions(&mut manifest, published_unions).map_err(|error| error.to_string())?;
         let directory = output.parent().ok_or("library output has no directory")?.to_path_buf();
