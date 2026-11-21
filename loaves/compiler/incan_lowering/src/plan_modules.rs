@@ -157,7 +157,7 @@ mod tests {
         encode_plan_module,
     };
 
-    use super::{admitted_page, read_admitted, report_admitted};
+    use super::{admitted_frames, admitted_page, read_admitted, report_admitted};
 
     /// A fresh directory for one test.
     fn directory(test: &str) -> PathBuf {
@@ -197,60 +197,84 @@ mod tests {
     }
 
     #[test]
-    fn a_whole_module_note_replaces_a_partial_one_and_reads_back() {
+    fn a_whole_module_note_replaces_a_partial_one_and_reads_back() -> Result<(), String> {
         let root = directory("notes");
         let (report, products) = (root.join("report"), root.join("products"));
-        std::fs::create_dir_all(&report).expect("report");
+        std::fs::create_dir_all(&report).map_err(|error| error.to_string())?;
         let module = "lone_alpha";
         let basename = hex::encode(module);
         let (report_text, products_text) = (report.to_string_lossy(), products.to_string_lossy());
         let partial = [restored("a", false)];
-        report_admitted(Some(&report_text), module, &partial, 2, false, Some(&products_text)).expect("partial");
+        report_admitted(
+            Some(&report_text),
+            module,
+            &partial,
+            &[Vec::new()],
+            2,
+            false,
+            Some(&products_text),
+        )?;
         assert_eq!(names(&report), [format!("{basename}.partially-admitted")]);
         let whole = [restored("a", false), restored("b", true)];
-        report_admitted(Some(&report_text), module, &whole, 2, true, Some(&products_text)).expect("whole");
+        let carried = [Vec::new(), vec!["helper".to_owned()]];
+        report_admitted(
+            Some(&report_text),
+            module,
+            &whole,
+            &carried,
+            2,
+            true,
+            Some(&products_text),
+        )?;
         assert_eq!(names(&report), [format!("{basename}.admitted")]);
+        let admissions = products.join("admissions");
         assert_eq!(
-            names(&products.join("admissions")),
-            [format!("{basename}.admitted"), format!("{basename}.admitted.placement")]
+            names(&admissions),
+            [
+                format!("{basename}.admitted"),
+                format!("{basename}.admitted.frames"),
+                format!("{basename}.admitted.placement")
+            ]
         );
-        let notes = read_admitted(&products.join("admissions")).expect("notes");
+        let notes = read_admitted(&admissions)?;
         assert_eq!(notes.len(), 1);
         assert!(notes[0].complete && notes[0].inspected);
         assert_eq!(notes[0].functions, whole);
-        report_admitted(Some(&report_text), module, &[], 2, true, Some(&products_text)).expect("none");
+        let frames = admitted_frames(&admissions, &notes[0])?;
+        assert_eq!(frames.get("a"), Some(&Vec::new()));
+        assert_eq!(frames.get("b"), Some(&vec!["helper".to_owned()]));
+        assert!(report_admitted(Some(&report_text), module, &whole, &[], 2, true, Some(&products_text)).is_err());
+        report_admitted(Some(&report_text), module, &[], &[], 2, true, Some(&products_text))?;
         assert!(names(&report).is_empty());
-        assert!(
-            read_admitted(&products.join("admissions"))
-                .expect("no notes")
-                .is_empty()
-        );
+        assert!(read_admitted(&admissions)?.is_empty());
         let _ = std::fs::remove_dir_all(&root);
+        Ok(())
     }
 
     #[test]
-    fn a_note_under_another_module_name_refuses() {
+    fn a_note_under_another_module_name_refuses() -> Result<(), String> {
         let root = directory("renamed");
         let (report, products) = (root.join("report"), root.join("products"));
-        std::fs::create_dir_all(&report).expect("report");
+        std::fs::create_dir_all(&report).map_err(|error| error.to_string())?;
         let (report_text, products_text) = (report.to_string_lossy(), products.to_string_lossy());
         report_admitted(
             Some(&report_text),
             "lone_alpha",
             &[restored("a", false)],
+            &[Vec::new()],
             1,
             false,
             Some(&products_text),
-        )
-        .expect("note");
+        )?;
         let admissions = products.join("admissions");
         let from = admissions.join(format!("{}.admitted", hex::encode("lone_alpha")));
         let to = admissions.join(format!("{}.admitted", hex::encode("lone_beta")));
-        std::fs::rename(&from, &to).expect("rename");
+        std::fs::rename(&from, &to).map_err(|error| error.to_string())?;
         // A note without changed placements and without inspection has no placement companion.
         assert!(!PathBuf::from(format!("{}.placement", from.display())).exists());
         assert!(read_admitted(&admissions).is_err());
         let _ = std::fs::remove_dir_all(&root);
+        Ok(())
     }
 
     #[test]
