@@ -809,6 +809,25 @@ mod tests {
         Ok(())
     }
 
+    /// A native identity reached as a requirement, such as a Rust trait's method that an adopter implements or a
+    /// Rust trait's provided default, has no Incan fragment: it resolves to nothing rather than to a missing package
+    /// declaration.
+    #[test]
+    fn a_native_requirement_needs_no_package_declaration() -> Result<(), Box<dyn std::error::Error>> {
+        let native = CanonicalSymbolId {
+            namespace: incan_semantics_core::SymbolNamespace::Member,
+            origin: SymbolOrigin::RustCrate(vec!["records".into(), "RecordSource".into(), "read".into()]),
+            declaration_name: "read".into(),
+            kind: SemanticSourceTargetKind::Method,
+            scope_discriminant: None,
+            declaration_span: HirSourceSpan::new(0, 0),
+        };
+        let resolved = resolve_loaf_declarations(&LoafIndex::default(), &BTreeSet::from([native]), &BTreeSet::new())
+            .map_err(|error| error.to_string())?;
+        assert!(resolved.modules.is_empty());
+        Ok(())
+    }
+
     /// Cyclic declaration requirements remain finite diagnostics and retain each canonical owner once.
     #[test]
     fn cyclic_requester_chain_stops_without_losing_the_required_declaration() {

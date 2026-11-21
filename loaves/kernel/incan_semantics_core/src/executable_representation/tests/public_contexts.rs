@@ -275,6 +275,78 @@ fn published_nominals_cover_their_declared_parameters() -> Result<(), Box<dyn st
     Ok(())
 }
 
+/// A nominal that adopts a Rust trait requires its own implementation of each slot and never the trait's native
+/// method: a native identity has no Incan fragment to require (Oven's `PreparedBodyRecordSource` adopts the Rust
+/// `RecordSource`, and a consumer of its Loaf could not resolve the trait's `read` as a package declaration).
+#[test]
+fn a_native_trait_adoption_requires_only_the_adopters_implementation() -> Result<(), Box<dyn std::error::Error>> {
+    let mut owner = identity("Holder", 2);
+    owner.kind = SemanticSourceTargetKind::Model;
+    owner.declaration_span = HirSourceSpan::new(200, 499);
+    let mut field = identity("value", 3);
+    field.kind = SemanticSourceTargetKind::Field;
+    field.namespace = SymbolNamespace::Member;
+    let mut method = body("get", 4);
+    let mut method_id = identity("get", 4);
+    method_id.kind = SemanticSourceTargetKind::Method;
+    method_id.namespace = SymbolNamespace::Member;
+    method.canonical = Some(method_id.clone());
+    method.return_type = IncanType::TypeVar("T".into());
+    let mut module = module(vec![method]);
+    module
+        .nominal_declarations
+        .push(generic_holder_declaration(owner.clone(), field.clone()));
+    let native = |path: &[&str], kind: SemanticSourceTargetKind, namespace: SymbolNamespace| CanonicalSymbolId {
+        namespace,
+        origin: SymbolOrigin::RustCrate(path.iter().map(|segment| (*segment).to_owned()).collect()),
+        declaration_name: path.last().map_or_else(String::new, |name| (*name).to_owned()),
+        kind,
+        scope_discriminant: None,
+        declaration_span: HirSourceSpan::new(0, 0),
+    };
+    let native_trait = native(
+        &["records", "RecordSource"],
+        SemanticSourceTargetKind::Trait,
+        SymbolNamespace::OrdinaryLexical,
+    );
+    let native_slot = native(
+        &["records", "RecordSource", "get"],
+        SemanticSourceTargetKind::Method,
+        SymbolNamespace::Member,
+    );
+    module.nominal_declarations[0]
+        .trait_adoptions
+        .push(crate::body_ir::TraitAdoption {
+            trait_identity: native_trait,
+            arguments: Vec::new(),
+            methods: Some(vec![native_slot.clone()]),
+            primitive_adapter: None,
+            fields: Vec::new(),
+        });
+    module.trait_implementations.push(crate::body_ir::TraitImplementation {
+        owner: owner.clone(),
+        method: native_slot.clone(),
+        implementation: method_id.clone(),
+        slot_arguments: Vec::new(),
+        type_arguments: Vec::new(),
+    });
+    let public = BTreeSet::from([owner.clone(), field, method_id.clone()]);
+    let bytes = publish(&module, &public)?;
+    let reader = SurfaceReader::open(&bytes)?;
+    let DeclarationCoverage::Covered { requirements, .. } = reader.index().coverage(&owner)? else {
+        return Err("the adopter of a native trait is uncovered".into());
+    };
+    assert!(
+        requirements.contains(&method_id),
+        "the adopter requires its own implementation"
+    );
+    assert!(
+        !requirements.contains(&native_slot),
+        "the native trait's method is no Incan declaration to require"
+    );
+    Ok(())
+}
+
 /// Class fields resolve through a covered class; a field cannot use an unrelated declaration kind as its owner.
 #[test]
 fn public_class_field_context_is_admitted() -> Result<(), Box<dyn std::error::Error>> {

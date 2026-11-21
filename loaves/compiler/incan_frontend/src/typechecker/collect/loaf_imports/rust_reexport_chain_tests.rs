@@ -12,11 +12,15 @@ use crate::library_exports::collect_checked_public_exports;
 use crate::library_manifest::{LibraryManifest, LibraryRustAbi};
 use crate::loaf_index::{LoafEntry, LoafIndex};
 use crate::typechecker::TypeChecker;
-use incan_lang::interop::{RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustTypeInfo, RustVisibility};
+use incan_lang::interop::{
+    RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustTypeInfo, RustTypeShape,
+    RustVisibility,
+};
+use incan_semantics_core::IncanType;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-/// The Rust crate `native`'s function `read_key(value: i64) -> i64` and type `RecordKey`.
+/// The Rust crate `native`'s record `RecordKey { value: i64 }` and function `read_key(key: &RecordKey) -> i64`.
 fn native_items() -> Vec<RustItemMetadata> {
     let function = RustItemMetadata {
         canonical_path: "native::read_key".into(),
@@ -27,8 +31,8 @@ fn native_items() -> Vec<RustItemMetadata> {
             type_params: Vec::new(),
             bounds: Vec::new(),
             params: vec![RustParam {
-                name: Some("value".into()),
-                type_display: "i64".into(),
+                name: Some("key".into()),
+                type_display: "&native::RecordKey".into(),
             }],
             return_type: "i64".into(),
             is_async: false,
@@ -39,7 +43,14 @@ fn native_items() -> Vec<RustItemMetadata> {
         canonical_path: "native::RecordKey".into(),
         definition_path: None,
         visibility: RustVisibility::Public,
-        kind: RustItemKind::Type(RustTypeInfo::default()),
+        kind: RustItemKind::Type(RustTypeInfo {
+            fields: vec![RustFieldInfo {
+                name: "value".into(),
+                type_display: "i64".into(),
+                type_shape: RustTypeShape::Int,
+            }],
+            ..RustTypeInfo::default()
+        }),
     };
     vec![function, record]
 }
@@ -122,8 +133,8 @@ fn reexport_chain(root: &Path) -> TestResult<(LoafEntry, LoafEntry)> {
     Ok((models_entry, installed(root, &facade)?))
 }
 
-/// Check a consumer of `facade` that reaches the Rust items through both re-exports.
-fn check_consumer(source: &str) -> TestResult {
+/// Check a consumer of `facade` that reaches the Rust items through both re-exports, and return its Body IR.
+fn check_consumer(source: &str) -> TestResult<incan_semantics_core::body_ir::BodyIrModule> {
     let root = tempfile::tempdir()?;
     let (models, facade) = reexport_chain(root.path())?;
     let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
@@ -134,7 +145,16 @@ fn check_consumer(source: &str) -> TestResult {
         let messages = errors.iter().map(|error| error.message.as_str()).collect::<Vec<_>>();
         format!("{messages:?}")
     })?;
-    Ok(())
+    let facts = checker.into_type_info();
+    let providers = crate::body_ir::ProviderOperationCatalog::new();
+    let context = crate::body_ir::BodyIrContext {
+        modules: crate::body_ir::ContextModules::default(),
+        provider_operations: &providers,
+        registry_package: None,
+        library_package: None,
+        include_inline_tests: false,
+    };
+    Ok(crate::body_ir::build_body_ir_module(&program, &[], &facts, &context))
 }
 
 /// A function and a type of a Rust crate, re-exported by one Loaf's module and again by another's, import by name from
@@ -142,14 +162,40 @@ fn check_consumer(source: &str) -> TestResult {
 #[test]
 fn rust_items_through_two_reexports_import_from_the_outer_module() -> TestResult {
     check_consumer(
-        "from pub::facade.store import RecordKey, read_key\n\ndef keep(key: RecordKey) -> RecordKey:\n    return key\n\ndef main() -> int:\n    return read_key(5)\n",
-    )
+        "from pub::facade.store import RecordKey, read_key\n\ndef keep(key: RecordKey) -> RecordKey:\n    return key\n",
+    )?;
+    Ok(())
 }
 
 /// The same Rust items resolve when the outer module is imported as a namespace and its members are named through it.
 #[test]
 fn rust_items_through_two_reexports_resolve_through_the_outer_namespace() -> TestResult {
     check_consumer(
-        "from pub::facade import store\n\ndef keep(key: store.RecordKey) -> store.RecordKey:\n    return key\n\ndef main() -> int:\n    return store.read_key(5)\n",
-    )
+        "from pub::facade import store\n\ndef keep(key: store.RecordKey) -> store.RecordKey:\n    return key\n",
+    )?;
+    Ok(())
+}
+
+/// A record of the Rust type, built through each route and kept in a local, and the Rust function called through each
+/// route on it, lower to Body IR at the Rust item's own type: no local is left without a type.
+#[test]
+fn rust_items_through_two_reexports_lower_to_body_ir() -> TestResult {
+    let module = check_consumer(
+        "from pub::facade.store import RecordKey, read_key\nfrom pub::facade import store\n\ndef main() -> int:\n    first = RecordKey(value=5)\n    second = store.RecordKey(value=6)\n    return read_key(first) + store.read_key(second)\n",
+    )?;
+    for body in &module.bodies {
+        for local in &body.locals {
+            assert!(
+                !matches!(local.ty, IncanType::Unknown),
+                "{}: local {:?} {:?} at {:?} has no type",
+                body.name,
+                local.id,
+                local.name,
+                local.span
+            );
+        }
+        let rendered = format!("{body:?}");
+        assert!(!rendered.contains("Unsupported"), "{}: {rendered}", body.name);
+    }
+    Ok(())
 }
