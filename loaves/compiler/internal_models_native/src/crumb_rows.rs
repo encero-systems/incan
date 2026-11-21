@@ -91,12 +91,22 @@ pub fn field_value(identity: &[u8], value: Value, canonical: bool) -> ValueField
 
 /// Encode one model's rows through the public Crumb API and enforce the caller's byte boundary.
 pub fn encode_rows(description: &Description, records: Vec<RowRecord>, maximum: i64) -> Result<Vec<u8>, String> {
-    let mut budget = operation_budget(maximum * 4)?;
-    let registry = empty_registry(&mut budget).map_err(|error| crumb_message(&error))?;
+    encode_rows_within(description, records, maximum, &mut operation_budget(maximum * 4)?)
+}
+
+/// Encode rows as [`encode_rows`] does, charging the caller's work budget, for a family whose records need more work
+/// per byte than the default allows.
+pub fn encode_rows_within(
+    description: &Description,
+    records: Vec<RowRecord>,
+    maximum: i64,
+    budget: &mut Budget,
+) -> Result<Vec<u8>, String> {
+    let registry = empty_registry(budget).map_err(|error| crumb_message(&error))?;
     // The standard row writer takes its description list by reference.
     let descriptions = vec![description.clone()];
     let encoded =
-        write_rows(&descriptions, &records, &registry, false, &mut budget).map_err(|error| crumb_message(&error))?;
+        write_rows(&descriptions, &records, &registry, false, budget).map_err(|error| crumb_message(&error))?;
     if encoded.len() as i64 > maximum {
         return Err(format!(
             "encoded Crumb rows need {} bytes, limit {maximum}",
