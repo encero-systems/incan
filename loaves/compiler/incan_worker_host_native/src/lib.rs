@@ -51,6 +51,10 @@ pub use record_snapshot::{
 #[cfg(test)]
 mod activation_tests;
 #[cfg(test)]
+mod escape_golden;
+#[cfg(test)]
+mod escape_tests;
+#[cfg(test)]
 mod host_tests;
 #[cfg(test)]
 mod snapshot_tests;
