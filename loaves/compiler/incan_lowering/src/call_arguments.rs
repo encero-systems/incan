@@ -3,7 +3,7 @@
 use incan_mir_plan_native::{Constant, Operand, PlanType, RvalueKind, SourceSpan, assign as plan_assign};
 use incan_semantics_core::IncanInputAccess;
 use incan_semantics_core::body_ir::{
-    ArgumentBinding, ArgumentElement, Body, BoundArgument, CallableParam, Operand as SourceOperand,
+    ArgumentBinding, ArgumentElement, Body, BoundArgument, CallableParam, Operand as SourceOperand, OwnershipFact,
 };
 
 use crate::builtin_calls::coerce_numeric_operand;
@@ -16,9 +16,10 @@ use crate::explicit_arguments::argument_access;
 use crate::formatting::display_operand;
 use crate::frame::{Builder, literal, place_type, read_place, temporary};
 use crate::frozen_equality::{borrow_frozen, frozen_place, frozen_reference_type};
-use crate::generators::is_generator_reference;
 use crate::generators::is_generator_type;
+use crate::generators::{generator_reference, is_generator_reference};
 use crate::layout_types::native_source_type;
+use crate::list_iteration::list_root_place;
 use crate::list_values::value_operand;
 use crate::lists::exclusive_reference;
 use crate::lists::is_list;
@@ -251,7 +252,14 @@ pub fn call_argument_operand(
         return Err(untranslated("list_values::checked_list_argument"));
     }
     if is_generator_reference(ty) {
-        return Err(untranslated("generators::generator_reference"));
+        let SourceOperand::Place(read) = value else {
+            return Err("unsupported Body IR constant generator argument".into());
+        };
+        if read.fact != OwnershipFact::MutBorrow {
+            return Err("unsupported Body IR generator argument without mutable borrow fact".into());
+        }
+        let root = list_root_place(builder, &read.place, span)?;
+        return generator_reference(builder, root, span);
     }
     if *ty == PlanType::String {
         let text = display_operand(builder, value, span)?;

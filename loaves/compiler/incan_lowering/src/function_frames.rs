@@ -26,7 +26,7 @@ use crate::defaults::default_type;
 use crate::explicit_arguments::direct_view_access;
 use crate::frame::{Builder, drop_all_owned, external_call, literal, read_place, temporary};
 use crate::frame_instances::entry_result;
-use crate::generators::generator_shape;
+use crate::generators::{generator_shape, producer_frame, producer_name};
 use crate::layout_types::native_source_type;
 use crate::list_iteration::frozen_list_snapshot_type;
 use crate::lists::{list_iterator_locals, list_parameter_type, taking_iterator_locals};
@@ -179,7 +179,11 @@ pub fn lower_function(
         return Err(untranslated("signature_lifetimes::signature_lifetimes"));
     }
     if body.is_generator() {
-        return Err(untranslated("generators::producer_frame"));
+        let Some((leaf, depth)) = generator_shape(&declared_type) else {
+            return Err("unsupported Body IR generator return type".into());
+        };
+        producer_frame(&mut function, builder.generator_handle, &leaf, depth);
+        function.name = producer_name(&function.name);
     }
     if is_program_entry(module, body) && return_type == PlanType::Int {
         let entry = integer_entry(&function, function_name(module, body));

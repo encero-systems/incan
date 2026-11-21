@@ -26,6 +26,7 @@ use crate::frame::{
     read_place, temporary, value_type,
 };
 use crate::frozen_plan::frozen_observation_type;
+use crate::generators::generator_collect;
 use crate::list_iteration::{frozen_list_snapshot_type, list_root_place};
 use crate::lists::{is_owned_list, list_element, list_shape, require_list_shape};
 use crate::model_lists::model_list_read;
@@ -119,7 +120,10 @@ pub fn checked_list_argument(
         if read.fact != OwnershipFact::Move && !read.last_use {
             return Err("unsupported Body IR list argument without an owned range".into());
         }
-        return Err(untranslated("generators::generator_collect"));
+        let snapshot = temporary(builder, PlanType::List(ListLeaf::Int, 1), span);
+        generator_collect(builder, root, snapshot.clone(), span)?;
+        builder.owned.push(snapshot.local);
+        return list_borrow(builder, snapshot, mutable, span);
     }
     list_borrow(builder, root, mutable, span)
 }
