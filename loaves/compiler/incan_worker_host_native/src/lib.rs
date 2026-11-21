@@ -1,9 +1,10 @@
 //! The compiler worker host in Rust, side by side with the Incan `incan_worker_host` until its swap.
 //!
 //! The host listens on the worker's private socket, admits one request at a time and applies the worker's lifecycle;
-//! the platform's sockets and trace channel are reached through `incan_worker_host_bindings`. The wire protocols: `incan.compiler-worker/1` compile documents, `incan.compiler-worker/2` record
-//! activations, and the version-three typed Crumb packets a `cw3-` worker generation speaks. Every frame is
-//! byte-identical to the reference worker host's, refusal texts included.
+//! the platform's sockets and trace channel are reached through `incan_worker_host_bindings`. The wire protocols are
+//! the `incan.compiler-worker/1` compile documents, the `incan.compiler-worker/2` record activations, and the
+//! version-three typed Crumb packets a `cw3-` worker generation speaks. Every frame is byte-identical to the reference
+//! worker host's, refusal texts included.
 
 #![forbid(unsafe_code)]
 

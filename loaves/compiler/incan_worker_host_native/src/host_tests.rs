@@ -44,7 +44,9 @@ fn discard(path: &str) {
 fn own_uid() -> Result<u32, String> {
     let path = socket_path("uid");
     std::fs::File::create(&path).map_err(|error| format!("cannot create {path}: {error}"))?;
-    let uid = std::fs::metadata(&path).map_err(|error| format!("cannot read {path}: {error}"))?.uid();
+    let uid = std::fs::metadata(&path)
+        .map_err(|error| format!("cannot read {path}: {error}"))?
+        .uid();
     discard(&path);
     Ok(uid)
 }
@@ -118,7 +120,11 @@ fn exit_of(document: &serde_json::Value) -> i64 {
 }
 
 fn reason_of(document: &serde_json::Value) -> String {
-    document.get("reason").and_then(serde_json::Value::as_str).unwrap_or_default().to_owned()
+    document
+        .get("reason")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_owned()
 }
 
 fn withdrawn(socket: &str) -> bool {
@@ -172,8 +178,17 @@ fn record_requests_cross_the_host_with_their_closed_replies() -> Outcome {
     });
     let mut preparing = record_caller(&socket, &prepare)?;
     assert!(matches!(served_record(&mut host)?, RecordMessage::Prepare(value) if value.stage == "local"));
-    complete_record(&mut host, RecordMessage::Prepared(Prepared { prepared_root: "prepared".into() }), -1, -1);
-    assert!(matches!(record_reply(&mut preparing)?, RecordMessage::Prepared(value) if value.prepared_root == "prepared"));
+    complete_record(
+        &mut host,
+        RecordMessage::Prepared(Prepared {
+            prepared_root: "prepared".into(),
+        }),
+        -1,
+        -1,
+    );
+    assert!(
+        matches!(record_reply(&mut preparing)?, RecordMessage::Prepared(value) if value.prepared_root == "prepared")
+    );
     let evaluate = RecordMessage::Evaluate(Evaluate {
         work_root: "work".into(),
         snapshot: "s".into(),
@@ -215,8 +230,9 @@ fn malformed_frames_are_refused_and_the_next_request_is_served() -> Outcome {
     );
     let mut import_discovery = caller(&socket, &imports)?;
     let mut valid = caller(&socket, &request_text(GENERATION, "--fmt", false))?;
-    let listing =
-        format!("{{\"schema\":\"{SCHEMA}\",\"generation\":\"{GENERATION}\",\"arguments\":[\"--source-files\",\"src\"],{SINKS}}}");
+    let listing = format!(
+        "{{\"schema\":\"{SCHEMA}\",\"generation\":\"{GENERATION}\",\"arguments\":[\"--source-files\",\"src\"],{SINKS}}}"
+    );
     let mut discovery = caller(&socket, &listing)?;
     let request = served(&mut host)?;
     check_is(&request, WorkerCommand::RustImports)?;
@@ -227,7 +243,13 @@ fn malformed_frames_are_refused_and_the_next_request_is_served() -> Outcome {
     check_is(&request, WorkerCommand::Format)?;
     assert_eq!(request.arguments, vec!["/p/unit.json", "src/main.incn", "--check"]);
     assert!(request.cwd == "/p" && request.stdout == "/p/r.out" && request.stderr == "/p/r.err");
-    for refused in [&mut not_a_length, &mut over_bound, &mut not_json, &mut unserved, &mut invalid_lifetime] {
+    for refused in [
+        &mut not_a_length,
+        &mut over_bound,
+        &mut not_json,
+        &mut unserved,
+        &mut invalid_lifetime,
+    ] {
         let document = reply(refused)?;
         assert_eq!(exit_of(&document), 1);
         assert!(!reason_of(&document).is_empty());
@@ -273,7 +295,10 @@ fn an_idle_worker_retires_and_withdraws_its_socket() -> Outcome {
 fn editor_check_keeps_the_worker_through_ordinary_idleness() -> Outcome {
     let socket = socket_path("editor-idle");
     let mut configuration = settings(&socket, 40, 16_777_216, None);
-    configuration.bounds = Bounds { retained_idle_millis: 300, ..Bounds::new(40, 16_777_216, FOOTPRINT_CEILING) };
+    configuration.bounds = Bounds {
+        retained_idle_millis: 300,
+        ..Bounds::new(40, 16_777_216, FOOTPRINT_CEILING)
+    };
     let mut host = host_for(&configuration)?;
     let editor = check_text(GENERATION).replace("\"/p/sysroot\"]", "\"/p/sysroot\",\"--retain-checked-modules\"]");
     let mut initial = caller(&socket, &editor)?;
@@ -301,7 +326,10 @@ fn editor_check_keeps_the_worker_through_ordinary_idleness() -> Outcome {
 fn saved_build_keeps_the_worker_through_ordinary_idleness() -> Outcome {
     let socket = socket_path("saved-build-idle");
     let mut configuration = settings(&socket, 40, FOOTPRINT_MARGIN, None);
-    configuration.bounds = Bounds { retained_idle_millis: 300, ..Bounds::new(40, FOOTPRINT_MARGIN, FOOTPRINT_CEILING) };
+    configuration.bounds = Bounds {
+        retained_idle_millis: 300,
+        ..Bounds::new(40, FOOTPRINT_MARGIN, FOOTPRINT_CEILING)
+    };
     let mut host = host_for(&configuration)?;
     let saved = unit_text(GENERATION).replace(
         "\"/p/sysroot\"]",
@@ -326,24 +354,44 @@ fn saved_build_keeps_the_worker_through_ordinary_idleness() -> Outcome {
 fn editor_checks_measure_growth_from_the_first_successful_project() {
     let bounds = Bounds::new(10000, 100, 5000);
     let mut policy = lifecycle(bounds);
-    assert_eq!(policy.settle(ActivationOutcome::Exited(0), 1000, false, 800).retirement, None);
+    assert_eq!(
+        policy.settle(ActivationOutcome::Exited(0), 1000, false, 800).retirement,
+        None
+    );
     policy.note_retained_activity(false);
-    assert_eq!(policy.settle(ActivationOutcome::Exited(1), 1000, false, 800).retirement, None);
+    assert_eq!(
+        policy.settle(ActivationOutcome::Exited(1), 1000, false, 800).retirement,
+        None
+    );
     for _version in 0..3 {
         policy.note_retained_activity(true);
-        assert_eq!(policy.settle(ActivationOutcome::Exited(0), 3200, false, 2400).retirement, None);
+        assert_eq!(
+            policy
+                .settle(ActivationOutcome::Exited(0), 3200, false, 2400)
+                .retirement,
+            None
+        );
     }
     policy.note_retained_activity(true);
-    assert_eq!(policy.settle(ActivationOutcome::Exited(0), 3350, false, 2520).retirement, None);
+    assert_eq!(
+        policy
+            .settle(ActivationOutcome::Exited(0), 3350, false, 2520)
+            .retirement,
+        None
+    );
     policy.note_retained_activity(true);
     assert_eq!(
-        policy.settle(ActivationOutcome::Exited(0), 3350, false, 2520).retirement,
+        policy
+            .settle(ActivationOutcome::Exited(0), 3350, false, 2520)
+            .retirement,
         Some(Retirement::Footprint)
     );
     let mut ceiling = lifecycle(bounds);
     ceiling.note_retained_activity(true);
     assert_eq!(
-        ceiling.settle(ActivationOutcome::Exited(0), 5001, false, 2400).retirement,
+        ceiling
+            .settle(ActivationOutcome::Exited(0), 5001, false, 2400)
+            .retirement,
         Some(Retirement::Footprint)
     );
 }
@@ -426,7 +474,12 @@ fn a_footprint_over_its_margin_for_two_activations_retires_the_worker() -> Outco
 fn a_footprint_back_within_its_margin_keeps_the_worker() {
     let mut policy = lifecycle(Bounds::new(10000, 100, FOOTPRINT_CEILING));
     for footprint in [1000, 1101, 1050, 1101, -1, 1101] {
-        assert_eq!(policy.settle(ActivationOutcome::Exited(0), footprint, false, -1).retirement, None);
+        assert_eq!(
+            policy
+                .settle(ActivationOutcome::Exited(0), footprint, false, -1)
+                .retirement,
+            None
+        );
     }
     assert_eq!(
         policy.settle(ActivationOutcome::Exited(0), 1101, false, -1).retirement,
@@ -438,16 +491,24 @@ fn a_footprint_back_within_its_margin_keeps_the_worker() {
 fn freed_heap_an_allocator_keeps_does_not_retire_the_worker() {
     let mut policy = lifecycle(Bounds::new(10000, 100, 5000));
     for _round in 0..4 {
-        assert_eq!(policy.settle(ActivationOutcome::Exited(0), 1500, false, 550).retirement, None);
+        assert_eq!(
+            policy.settle(ActivationOutcome::Exited(0), 1500, false, 550).retirement,
+            None
+        );
     }
-    assert_eq!(policy.settle(ActivationOutcome::Exited(0), 1500, false, 700).retirement, None);
+    assert_eq!(
+        policy.settle(ActivationOutcome::Exited(0), 1500, false, 700).retirement,
+        None
+    );
     assert_eq!(
         policy.settle(ActivationOutcome::Exited(0), 1500, false, 700).retirement,
         Some(Retirement::Footprint)
     );
     let mut ceiling = lifecycle(Bounds::new(10000, 100, 5000));
     assert_eq!(
-        ceiling.settle(ActivationOutcome::Exited(0), 5001, false, 550).retirement,
+        ceiling
+            .settle(ActivationOutcome::Exited(0), 5001, false, 550)
+            .retirement,
         Some(Retirement::Footprint)
     );
 }
@@ -456,13 +517,25 @@ fn freed_heap_an_allocator_keeps_does_not_retire_the_worker() {
 fn the_heap_a_worker_keeps_from_one_compile_to_the_next_does_not_retire_it() {
     let mut policy = lifecycle(Bounds::new(10000, FOOTPRINT_MARGIN, FOOTPRINT_CEILING));
     for _round in 0..8 {
-        assert_eq!(policy.settle(ActivationOutcome::Exited(0), 24_822_408, false, 19_549_776).retirement, None);
+        assert_eq!(
+            policy
+                .settle(ActivationOutcome::Exited(0), 24_822_408, false, 19_549_776)
+                .retirement,
+            None
+        );
     }
     let grown = 19_549_776 + FOOTPRINT_MARGIN + 1;
     let footprint = 24_822_408 + FOOTPRINT_MARGIN;
-    assert_eq!(policy.settle(ActivationOutcome::Exited(0), footprint, false, grown).retirement, None);
     assert_eq!(
-        policy.settle(ActivationOutcome::Exited(0), footprint, false, grown).retirement,
+        policy
+            .settle(ActivationOutcome::Exited(0), footprint, false, grown)
+            .retirement,
+        None
+    );
+    assert_eq!(
+        policy
+            .settle(ActivationOutcome::Exited(0), footprint, false, grown)
+            .retirement,
         Some(Retirement::Footprint)
     );
 }
@@ -470,10 +543,21 @@ fn the_heap_a_worker_keeps_from_one_compile_to_the_next_does_not_retire_it() {
 #[test]
 fn a_light_activation_neither_adds_to_nor_ends_a_run_of_excess() {
     let mut policy = lifecycle(Bounds::new(10000, 100, 5000));
-    assert_eq!(policy.settle(ActivationOutcome::Exited(0), 1000, false, -1).retirement, None);
-    assert_eq!(policy.settle(ActivationOutcome::Exited(0), 1101, false, -1).retirement, None);
+    assert_eq!(
+        policy.settle(ActivationOutcome::Exited(0), 1000, false, -1).retirement,
+        None
+    );
+    assert_eq!(
+        policy.settle(ActivationOutcome::Exited(0), 1101, false, -1).retirement,
+        None
+    );
     for footprint in [1101, 1050, -1] {
-        assert_eq!(policy.settle(ActivationOutcome::Exited(0), footprint, true, -1).retirement, None);
+        assert_eq!(
+            policy
+                .settle(ActivationOutcome::Exited(0), footprint, true, -1)
+                .retirement,
+            None
+        );
     }
     assert_eq!(
         policy.settle(ActivationOutcome::Exited(0), 1101, false, -1).retirement,
@@ -489,7 +573,10 @@ fn a_light_activation_neither_adds_to_nor_ends_a_run_of_excess() {
 #[test]
 fn a_footprint_over_the_ceiling_retires_the_worker_at_once() -> Outcome {
     let mut policy = lifecycle(Bounds::new(10000, FOOTPRINT_MARGIN, 5000));
-    assert_eq!(policy.settle(ActivationOutcome::Exited(0), 5000, false, -1).retirement, None);
+    assert_eq!(
+        policy.settle(ActivationOutcome::Exited(0), 5000, false, -1).retirement,
+        None
+    );
     assert_eq!(
         policy.settle(ActivationOutcome::Panicked, 5001, false, -1).retirement,
         Some(Retirement::Footprint)
@@ -510,7 +597,12 @@ fn a_footprint_over_the_ceiling_retires_the_worker_at_once() -> Outcome {
 fn a_footprint_over_the_ceiling_hands_rustc_to_the_host_and_retires() -> Outcome {
     let mut policy = lifecycle(Bounds::new(10000, FOOTPRINT_MARGIN, 5000));
     assert!(policy.hands_rustc_off(5001));
-    let settled = policy.settle(ActivationOutcome::HandedOff("/p/out/libunit.rustc-handoff".into()), 5001, false, -1);
+    let settled = policy.settle(
+        ActivationOutcome::HandedOff("/p/out/libunit.rustc-handoff".into()),
+        5001,
+        false,
+        -1,
+    );
     assert_eq!(settled.retirement, Some(Retirement::Footprint));
     let socket = socket_path("handoff");
     let mut host = host_for(&settings(&socket, 10000, FOOTPRINT_MARGIN, None))?;
@@ -637,10 +729,21 @@ fn current_compiler_and_record_activations_share_typed_socket_frames() -> Outcom
     let packet = record_frame(&request, generation)?;
     assert_eq!(&packet[..4], b"CRMB");
     send_frame(&mut preparing, &packet)?;
-    assert!(matches!(served_record(&mut host)?, RecordMessage::Prepare(value) if value.stage == "final" && value.snapshot == "s"));
-    complete_record(&mut host, RecordMessage::Prepared(Prepared { prepared_root: "prepared".into() }), -1, -1);
+    assert!(
+        matches!(served_record(&mut host)?, RecordMessage::Prepare(value) if value.stage == "final" && value.snapshot == "s")
+    );
+    complete_record(
+        &mut host,
+        RecordMessage::Prepared(Prepared {
+            prepared_root: "prepared".into(),
+        }),
+        -1,
+        -1,
+    );
     let answer = receive_frame(&mut preparing)?;
-    assert!(matches!(decode_record_message(&answer, generation)?, RecordMessage::Prepared(value) if value.prepared_root == "prepared"));
+    assert!(
+        matches!(decode_record_message(&answer, generation)?, RecordMessage::Prepared(value) if value.prepared_root == "prepared")
+    );
     assert!(decode_record_message(&answer, "cw3-another").is_err());
     assert!(decode_record_message(&answer[..12], generation).is_err());
     discard(&socket);
