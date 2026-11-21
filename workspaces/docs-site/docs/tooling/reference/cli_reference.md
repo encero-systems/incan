@@ -220,7 +220,7 @@ Trust controls only whether unattended preparation and the language server may r
 
 ## `oven run`
 
-`PATH` names an Incan entry source or a directory. A directory, or no `PATH`, selects the Loaf at or above it, whose program is selected as for [`oven build`](#oven-build); outside a Loaf the command exits `1`. On `incan run`, `-c CODE` or `--command CODE` runs `CODE`, a whole module, as direct source, as `--direct` runs a file; `oven run` refuses it. Arguments after `--` are passed to the program. `--argv0 TEXT` sets the program's argument zero. Repeatable `--program-entry PATH` adds program entries. The compiled program inherits stdin, stdout and stderr; its exit status is the command's exit status.
+`PATH` names an Incan entry source or a directory. A directory, or no `PATH`, selects the Loaf at or above it, whose program is selected as for [`oven build`](#oven-build); outside a Loaf the command exits `1`. On `incan run`, `-c CODE` or `--command CODE` runs `CODE`, a whole module, as direct source, as `--direct` runs a file; when `CODE` does not contain `def main`, the module also gets a `main` that does nothing. `oven run` refuses it. Arguments after `--` are passed to the program. `--argv0 TEXT` sets the program's argument zero. Repeatable `--program-entry PATH` adds program entries. The compiled program inherits stdin, stdout and stderr; its exit status is the command's exit status.
 
 With `INCAN_ENGINE=records`, `PATH` must name one ordinary program source file or a directory whose Loaf's program [`oven build`](#oven-build) selects, the profile must be `debug` or `release`, and vocabulary entries, foreign headers, feature-selection flags, substitutions, additional program entries and `--interop-target` are refused; a library is refused with `records engine requires an Incan program`. Editable Incan path dependencies are captured with the program. Build and run select the same compiled unit. The program runs only after successful capture and native selection. `--engine-report` retains a proof report and prints one JSON line before any program output. Without that flag, proof reporting adds no console output. The flag is refused in legacy mode.
 
@@ -267,7 +267,7 @@ Runner options select, order and report the collected tests. Each option that ta
 | `-v`, `--verbose` | Boolean, false | Prints `collected N test(s)` before the run and a summary line after it. |
 | `--format console\|json` | `console` | `json` prints one `incan.test.v1` record per test, naming its module relative to the working directory, and a final summary record instead of console lines. A parametrized case's record also carries `parameters`, its argument values as strings. |
 | `--junit PATH` | Path, none | Writes a JUnit XML report whose class names are modules relative to the working directory. Skipped tests and expected failures are skipped cases. |
-| `--feature NAME` | Name, repeatable | Enables a testing feature that `std.testing.feature(NAME)` observes during collection. A module compiled with a testing feature is compiled in this process rather than by a resident owner. |
+| `--feature NAME` | Name, repeatable | Enables a testing feature that `std.testing.feature(NAME)` observes during collection. A testing feature is no package feature: it needs no `[features]` entry, and the project's own modules beside its tests are built without it. A module compiled with a testing feature is compiled in this process rather than by a resident owner. |
 
 An expression combines terms with `and`, `or`, `not` and parentheses. With no test selected, the command prints `No tests collected`, also with `--list`, or only the summary record with `--format json`. Marker selection and `--strict-markers` require a compiler that reports test markers; another compiler's report is refused.
 
@@ -310,7 +310,9 @@ Writes the selected source's unit description as a JSON object. Execution-only o
 | `vocab_policy` | String | Vocabulary policy identity. |
 | `externs` | Array of objects | Exact native bindings, each with string `name` and `path`. |
 | `search`, `rust_abi` | Arrays of strings | Additional native search directories and Rust ABI cache paths. |
-| `search_index` | String or null | The toolchain generation's `incan.search-index/1` file, named by the SHA-256 of its content. `search` lists directories beyond this index. |
+| `search_index` | String or null | The toolchain generation's content-named search index. Current compilers use `incan.search-index/2` Crumb rows. Older toolchains use the `incan.search-index/1` JSON representation. The filename contains the SHA-256 of the exact file bytes. `search` lists directories beyond this index. |
+
+Public `describe-unit` defaults to the v1 JSON search index for independently installed readers. A consumer that reads both generations can set `INCAN_DESCRIBE_SEARCH_INDEX=crumb` for this command. Oven returns the Crumb index when the selected compiler supports it. The bundled language server requests this capability.
 
 ## `incan fmt`
 

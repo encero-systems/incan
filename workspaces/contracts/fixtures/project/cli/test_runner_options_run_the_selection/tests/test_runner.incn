@@ -1,8 +1,16 @@
 """Tests the runner selects, orders and reports."""
 
+from std.testing import feature, skipif
+from words import word
+
 
 def test_alpha() -> None:
     assert 1 + 1 == 2
+
+
+@skipif(not feature("extra"), "needs the extra testing feature")
+def test_alpha_feature() -> None:
+    assert word() == "alpha"
 
 
 def test_beta() -> None:

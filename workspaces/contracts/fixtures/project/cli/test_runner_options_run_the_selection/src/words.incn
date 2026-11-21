@@ -1,0 +1,5 @@
+"""A module beside the entry, so the project's tests link its shared library."""
+
+
+pub def word() -> str:
+    return "alpha"

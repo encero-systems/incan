@@ -47,10 +47,24 @@ pub def library_key(package: str) -> str:
     return package.replace("-", "_") + LIBRARY_SUFFIX
 
 
+pub def with_testing_features(unit: UnitDescription, features: list[str]) -> UnitDescription:
+    """
+    A test unit with each `--feature NAME` testing feature active, so its collection observes it. A name the unit
+    does not already have active is recorded as a testing feature, which its shared library does not take.
+    """
+    mut tested = unit
+    for feature in features:
+        if feature not in tested.active_features:
+            tested.active_features.append(feature)
+            tested.testing_features.append(feature)
+    return tested
+
+
 pub def shared_library(unit: UnitDescription, key: str) -> Result[UnitDescription, str]:
     """
-    The shared library a test unit links: the test unit's own project, features and Loaves, described as a library
-    of the project's modules under its own package, and checked as the project's program is.
+    The shared library a test unit links: the test unit's own project, package features and Loaves, described as a
+    library of the project's modules under its own package, and checked as the project's program is. The unit's
+    testing features stay its own: they are no feature of the package, as in 0.5.1.
     """
     mut library = unit
     library.kind = "library"
@@ -60,6 +74,8 @@ pub def shared_library(unit: UnitDescription, key: str) -> Result[UnitDescriptio
     library.program_checks = true
     library.program_entries = []
     library.test_batch = []
+    library.active_features = [feature for feature in unit.active_features if feature not in unit.testing_features]
+    library.testing_features = []
     return Ok(library)
 
 

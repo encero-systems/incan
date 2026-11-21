@@ -1,9 +1,17 @@
 """Clove units: their archives are part of the identity of every unit that reaches them, and entries select targets."""
 
+from rust::std::env import current_exe
 from rust::std::env::consts import ARCH
-from c_facet import CCompile
-from c_interop import host_triple
-from clove_units import CloveConfigurationUnit, CloveUnit, entry_applies
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from std.environ import get_or
+from std.fs import Path
+from c_facet import CCompile, CConfiguration, CFacet
+from c_interop import CArtifactKind, CInteropArtifact, CInteropTarget, LinkedArchive, host_triple, linked_archives
+from clove_units import CloveConfigurationUnit, CloveUnit, clove_unit, entry_applies
+from files import read, write
+from scratch import scratch_directory
+from trace_adapter import finish as finish_trace
 from unit import UnitDescription
 from unit_freshness import description_digest
 
@@ -29,8 +37,8 @@ def clove(root: str, identity: str, definitions: list[str]) -> CloveUnit:
     )
 
 
-def linking(cloves: list[CloveUnit]) -> UnitDescription:
-    """A program unit that reaches `cloves`, described with fixed locations."""
+def linking(cloves: list[CloveUnit], archives: list[LinkedArchive] = []) -> UnitDescription:
+    """A program unit that reaches `cloves` and declared static `archives`, described with fixed locations."""
     return UnitDescription(
         source="/checkout/project/src/main.incn",
         project_root="/checkout/project",
@@ -45,16 +53,18 @@ def linking(cloves: list[CloveUnit]) -> UnitDescription:
         contract_models=[],
         c_headers=[],
         cloves=cloves,
+        c_archives=archives,
     )
 
 
-pub def test_a_rebuilt_clove_archive_rekeys_the_units_that_reach_it() -> Result[None, str]:
+pub def test_a_rebuilt_clove_or_static_archive_rekeys_the_units_that_reach_it() -> Result[None, str]:
     """
-    A unit is compiled again when a Clove it reaches compiled different archive bytes or definitions.
+    A unit is compiled again when a Clove it reaches or a package-owned static archive has different bytes.
 
     1. Reaching a Clove changes the description digest.
     2. A rebuilt archive with different bytes, or different definitions, changes it again.
     3. The same archive at another location keeps it.
+    4. Editing a declared static archive changes its consumer's description digest.
     """
     # 1. The Clove is an input of the unit.
     first = description_digest(linking([clove("/checkout/project", "sha256:aa", ["SHIM_OFFSET=2"])]))?
@@ -64,6 +74,15 @@ pub def test_a_rebuilt_clove_archive_rekeys_the_units_that_reach_it() -> Result[
     assert description_digest(linking([clove("/checkout/project", "sha256:aa", ["SHIM_OFFSET=3"])]))? != first
     # 3. Locations are provenance, not identity.
     assert description_digest(linking([clove("/elsewhere/project", "sha256:aa", ["SHIM_OFFSET=2"])]))? == first
+    # 4. A package-owned archive's bytes are an input of every unit that links it.
+    scratch = scratch_directory()?
+    archive = scratch.path().joinpath("libbridge.a")
+    write(archive, "first archive generation")?
+    artifact = CInteropArtifact(name="bridge", kind=CArtifactKind.Static, path="libbridge.a", link_name="bridge")
+    target = CInteropTarget(target=host_triple(), artifacts=[artifact])
+    first_archive = description_digest(linking([], linked_archives(scratch.path().0, [target])?))?
+    write(archive, "second archive generation")?
+    assert description_digest(linking([], linked_archives(scratch.path().0, [target])?))? != first_archive
     return Ok(None)
 
 
@@ -83,3 +102,67 @@ pub def test_a_compile_entry_selects_the_host_by_exact_triple_or_cfg() -> Result
     # 3. The cfg form reads the host's facts.
     assert entry_applies(CCompile(sources=["a.c"], target=Some(f"cfg(target_arch = \"{ARCH}\")")))?
     return Ok(None)
+
+
+pub def test_editing_one_configuration_recompiles_only_that_clove_unit() -> Result[None, str]:
+    """
+    Editing one configuration's source compiles that configuration again and reuses every other configuration.
+
+    1. Build two configurations in a traced child process.
+    2. Edit only the default configuration's source and build both again.
+    3. Count three compiles total: default twice, alternate once, with alternate reused on the second build.
+    """
+    if get_or("INCAN_CLOVE_REBUILD_PROOF_CHILD", "") == "1":
+        return edit_one_configuration(get_or("INCAN_CLOVE_REBUILD_PROOF_ROOT", ""))
+
+    scratch = scratch_directory()?
+    trace = scratch.path().joinpath("clove.trace")
+    executable = current_exe().map_err((error) => str(error))?.to_string_lossy().into_owned()
+    outcome = Command
+        .new(executable)
+        .arg("--exact")
+        .arg("test_editing_one_configuration_recompiles_only_that_clove_unit")
+        .arg("--nocapture")
+        .arg("--test-threads=1")
+        .env("INCAN_CLOVE_REBUILD_PROOF_CHILD", "1")
+        .env("INCAN_CLOVE_REBUILD_PROOF_ROOT", scratch.path().0)
+        .env("INCAN_C_COMPILER", "host")
+        .env("OVEN_TRACE", trace.0)
+        .output()
+        .map_err((error) => str(error))?
+    if not outcome.status.success():
+        error = RustString.from_utf8_lossy(outcome.stderr).into_owned()
+        return Err(f"Clove rebuild proof child failed: {outcome.status.code()} {error}")
+    reasons = read(trace)?
+    assert occurrences(reasons, "oven: unit proof clove default: compiled") == 2
+    assert occurrences(reasons, "oven: unit proof clove alternate: compiled") == 1
+    assert occurrences(reasons, "oven: unit proof clove alternate: reused") == 1
+    assert occurrences(reasons, "oven: unit proof clove default: reused") == 0
+    return Ok(None)
+
+
+def edit_one_configuration(root: str) -> Result[None, str]:
+    """Build two configuration-specific sources, edit one, and build the Clove again."""
+    Path(root).joinpath("include").mkdir(true, true).map_err((error) => error.message())?
+    Path(root).joinpath("csrc").mkdir(true, true).map_err((error) => error.message())?
+    write(Path(root).joinpath("include/proof.h"), "int proof_value(void);\n")?
+    default_source = Path(root).joinpath("csrc/default.c")
+    write(default_source, "int proof_value(void) { return 1; }\n")?
+    write(Path(root).joinpath("csrc/alternate.c"), "int proof_value(void) { return 2; }\n")?
+    facet = CFacet(
+        library="proof",
+        public_headers=["include/proof.h"],
+        configurations={"alternate": CConfiguration(sources=["csrc/alternate.c"]), "default": CConfiguration(
+            sources=["csrc/default.c"],
+        )},
+    )
+    _ = clove_unit("proof", root, facet, "debug", root)?
+    write(default_source, "int proof_value(void) { return 3; }\n")?
+    _ = clove_unit("proof", root, facet, "debug", root)?
+    finish_trace()
+    return Ok(None)
+
+
+def occurrences(text: str, needle: str) -> int:
+    """How often one exact trace fragment occurs."""
+    return len(text.split(needle)) - 1

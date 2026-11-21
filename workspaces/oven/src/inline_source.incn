@@ -51,13 +51,19 @@ pub def inline_arguments(own: list[str], surface: str) -> Result[list[str], str]
 
 
 pub def inline_source(code: str) -> Result[Path, str]:
-    """The source file that holds inline CODE, named by its digest so an unchanged command reuses its program."""
-    digest = hexlify(sha256.digest(code.encode("utf-8")))
+    """The source file that holds inline CODE's module, named by its digest so an unchanged command reuses its program."""
+    module = inline_module(code)
+    digest = hexlify(sha256.digest(module.encode("utf-8")))
     directory = Path(str(temp_dir().display())).joinpath(f"incan_inline_command_{digest[:16]}")
     directory.mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
     source = directory.joinpath("main.incn")
     if not source.is_file():
-        source
-            .write_bytes(RustString.from(code + "\n").into_bytes())
-            .map_err((error) => f"cannot {error.message()}")?
+        source.write_bytes(RustString.from(module).into_bytes()).map_err((error) => f"cannot {error.message()}")?
     return Ok(source)
+
+
+pub def inline_module(code: str) -> str:
+    """The module inline CODE runs as: CODE, and, as in 0.5.1, a `main` that does nothing when CODE defines none."""
+    if "def main" in code:
+        return code + "\n"
+    return code + "\n\n\ndef main() -> None:\n    pass\n"

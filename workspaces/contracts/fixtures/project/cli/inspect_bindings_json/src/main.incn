@@ -1,0 +1,22 @@
+# behavior: `incan inspect bindings --format json PATH` prints the compiler-checked C binding declarations as the versioned JSON contract (#3137)
+# cli-commands:
+#   inspect bindings --format json .
+# expect-stdout:
+#   {"bindings":[{"binding_identity":"sha256:f345b7de5ec81d9fef154f384547ce7ea3a18323b8069deecdddafb1c00b3bdb","enums":[{"carrier":"c.i32","name":"Limit","variants":[{"name":"MAX","native":"BRIDGE_LIMIT"}]}],"file":"src/main.incn","header":"interop/include/bridge.h","link_capability":"system_library","name":"Bridge","resources":[],"structs":[],"symbols":[{"name":"absolute","native":"abs","outcomes":[],"parameters":[{"name":"value","type":{"kind":"scalar","spelling":"c.i32"}}],"return_type":{"kind":"scalar","spelling":"c.i32"}}],"system_library":"c"}],"schema":"incan.bindings/1"}
+
+from std.interop import c
+
+
+binding Bridge:
+    header = "interop/include/bridge.h"
+    link = c.system_library("c")
+
+    symbol absolute(value: c.i32) -> c.i32:
+        native = "abs"
+    enum Limit:
+        MAX: c.i32 = BRIDGE_LIMIT
+
+
+def main() -> None:
+    unsafe:
+        println(Bridge.absolute(-5))
