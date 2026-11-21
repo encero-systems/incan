@@ -459,3 +459,17 @@ fn two_phase_borrows_still_refuse_later_exclusive_uses() -> Result<(), Box<dyn s
     }
     Ok(())
 }
+
+/// A builtin collection method through a borrow reads, or for an exclusive borrow changes, the value the borrow
+/// names, in both spellings, as the explicit spelling did before the two spellings became one type: `append` through
+/// an exclusive borrow, `count`, `keys` and `len` through a shared one. Changing the value through a shared borrow is
+/// still refused, in both spellings.
+#[test]
+fn builtin_methods_reach_through_borrows() -> Result<(), Box<dyn std::error::Error>> {
+    let template = "def grow(mut items: {borrow_mut:list[int]}) -> None:\n    items.append(1)\n\ndef size(items: {borrow:list[int]}) -> int:\n    return items.count(1) + len(items)\n\ndef names(table: {borrow:dict[str, int]}) -> int:\n    return len(table.keys())\n\ndef main() -> int:\n    mut values = [1]\n    grow(values)\n    table = {\"a\": 1}\n    return size(values) + names(table)\n";
+    let checker = check_twins(template)?;
+    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+    let refused = check_twins("def bad(items: {borrow:list[int]}) -> None:\n    items.append(1)\n")?;
+    assert!(!refused.errors.is_empty(), "a shared borrow changed its list");
+    Ok(())
+}
