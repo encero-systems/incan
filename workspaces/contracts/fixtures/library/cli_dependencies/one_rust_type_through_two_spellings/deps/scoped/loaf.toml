@@ -1,0 +1,6 @@
+[project]
+name = "scoped"
+version = "0.1.0"
+
+[dependencies]
+records = { loaf = "records", path = "../records" }
