@@ -1,15 +1,22 @@
 //! Lazy generator layouts, producer frames and their runtime operations.
 
 use incan_mir_plan_native::{
-    Callee, CalleeKind, ExternalFunction, Function, ListLeaf, Local, Operand, OperandKind, Parameter, Place, PlanType,
-    Projection, RvalueKind, SourceSpan, StatementKind, TerminatorKind, Unwind, assign as plan_assign,
+    Callee, CalleeKind, EnumDeclaration, ExternalFunction, Function, ListLeaf, Local, Operand, OperandKind, Parameter,
+    Place, PlanType, Projection, RvalueKind, SourceSpan, StatementKind, TerminatorKind, Unwind, assign as plan_assign,
     block as plan_block, place as plan_place,
 };
 use incan_semantics_core::IncanType;
+use incan_semantics_core::body_ir::{Body, BodyIrModule};
 
+use crate::checked_values::location;
+use crate::classes::function_name;
 use crate::collections::{leaf_type, primitive_leaf};
 use crate::frame::{Builder, drop_owned, exhaust_loop, read_place, temporary, terminate_call, value_type};
+use crate::function_frames::frame_parameters;
+use crate::layout_types::native_source_type;
+use crate::native_type_identity::ConstructorIndex;
 use crate::tuples::{generic_tuple_type, tuple_type, type_name};
+use crate::unions::collect_unions;
 
 /// Admit primitive generators and flat pair iterators through their checked element layouts.
 pub fn generator_type(ty: &IncanType) -> Option<Result<PlanType, String>> {
@@ -212,6 +219,43 @@ fn swap_terminator(value: &mut TerminatorKind, handle: i64) {
 /// Use the frontend-reserved prefix so producer declarations and spawn callbacks cannot collide with source names.
 pub fn producer_name(name: &str) -> String {
     format!("__incan_generator_producer_{name}")
+}
+
+/// Retain the canonical lazy constructor beside its separately named producer in either entrypoint; the step
+/// `program_refusals::append_generator_constructor` names.
+pub fn append_generator_constructor(
+    constructors: &ConstructorIndex,
+    functions: &mut Vec<Function>,
+    module: &BodyIrModule,
+    body: &Body,
+    source: &str,
+    file: &str,
+    intrinsics: &[EnumDeclaration],
+) -> Result<(), String> {
+    if !body.is_generator() {
+        return Ok(());
+    }
+    let ty = native_source_type(
+        constructors,
+        &module.nominal_declarations,
+        &module.enum_declarations,
+        &collect_unions(module),
+        &body.return_type,
+        intrinsics,
+        "",
+    )?;
+    let Some((leaf, depth)) = generator_shape(&ty) else {
+        return Err("unsupported Body IR generator return type".into());
+    };
+    let parameters = frame_parameters(constructors, module, body, source, file, intrinsics)?;
+    functions.push(generator_constructor(
+        &function_name(module, body),
+        parameters,
+        &leaf,
+        depth,
+        &location(&body.span, source, file),
+    ));
+    Ok(())
 }
 
 /// Construct the lazy runtime wrapper without executing the producer's prefix.

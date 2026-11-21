@@ -15,6 +15,7 @@ use incan_semantics_core::body_ir::{
 };
 
 use crate::callable_calls::lower_callable_result;
+use crate::callable_values::call_closure;
 use crate::carrier_operands::boundary_plan_operand;
 use crate::checked_values::scalar_place;
 use crate::classes::{frame_type, function_name, parameter_local_index};
@@ -28,7 +29,6 @@ use crate::list_values::list_borrow;
 use crate::options::{
     assign_carrier, carrier_layout, carrier_payload_value, replace_owned_destination, variant_condition,
 };
-use crate::pending::untranslated;
 use crate::trait_links::contains;
 
 /// What a combinator does with the selected payload's callback result.
@@ -305,8 +305,6 @@ struct Callback {
 }
 
 /// Call the held callback at its checked ABI, retaining an owned payload through an implicit shared view.
-///
-/// A closure callback is called through `callable_calls::call_closure`, which refuses by name until it is in Rust.
 fn call_callback(
     module: &BodyIrModule,
     builder: &mut Builder,
@@ -327,7 +325,7 @@ fn call_callback(
         | PlanType::ClosureRef(_)
         | PlanType::BorrowingClosure(_)
         | PlanType::BorrowingClosureRef(_) => {
-            return Err(untranslated("callable_calls::call_closure"));
+            call_closure(builder, call.callback, &signature, vec![prepared], call.output, span)?;
         }
         _ => {
             let callee = CalleeKind::Value(read_place(call.callback, false, span));

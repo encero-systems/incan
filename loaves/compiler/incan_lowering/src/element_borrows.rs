@@ -11,6 +11,7 @@ use incan_semantics_core::body_ir::{
 };
 
 use crate::builtins::list_call;
+use crate::calls::instantiated_external_call;
 use crate::checked_values::scalar_operand;
 use crate::classes::frame_type;
 use crate::collections::{
@@ -24,7 +25,7 @@ use crate::list_values::{list_borrow, value_operand};
 use crate::lists::{is_exclusive_borrow, is_list, list_element, require_list_shape};
 use crate::model_lists::{prefix_place, structural_prefix};
 use crate::models::field_steps;
-use crate::pending::untranslated;
+use crate::operand_borrows::list_slice_view;
 use crate::tuples::is_tuple_type;
 
 /// Reach a checked shared list element loan without copying its owner or requiring Clone.
@@ -78,9 +79,6 @@ fn is_shared_list_path(builder: &Builder, source: &SourcePlace) -> Result<bool, 
 }
 
 /// Call the checked runtime accessor returning a shared element reference, with no owned element read.
-///
-/// The accessor takes the list's slice view from `operand_borrows::list_slice_view`, which refuses by name until it
-/// is in Rust.
 pub fn shared_list_element(
     builder: &mut Builder,
     container: Place,
@@ -88,9 +86,26 @@ pub fn shared_list_element(
     span: &SourceSpan,
 ) -> Result<Place, String> {
     let (leaf, depth) = require_list_shape(&place_type(&builder.locals, &container), "invalid shared list loan")?;
-    shared_receiver_type(list_element(&leaf, depth))?;
-    let _ = (index, span);
-    Err(untranslated("operand_borrows::list_slice_view"))
+    let element = list_element(&leaf, depth);
+    let reference = shared_receiver_type(element.clone())?;
+    let output = temporary(builder, reference.clone(), span);
+    let loan = list_borrow(builder, container, false, span)?;
+    let borrowed = list_slice_view(builder, loan, std::slice::from_ref(&element), false, span)?;
+    instantiated_external_call(
+        builder,
+        "incan_std_primitives::collections::list_get",
+        vec![element.clone()],
+        vec![PlanType::SliceRef(vec![element.clone()]), PlanType::Int],
+        reference,
+        vec![borrowed, index],
+        output.clone(),
+        span,
+    )?;
+    Ok(Place {
+        local: output.local,
+        projection: Projection::Deref(element),
+        span: span.clone(),
+    })
 }
 
 /// The model or source enum owner of a list or dictionary element receiver; `None` when a native place names it.

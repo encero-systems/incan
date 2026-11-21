@@ -12,6 +12,7 @@ use crate::classes::body_module_identity;
 use crate::decls::{library_enum_item, library_item};
 use crate::decorator_caches::{DecoratorFrame, validate_binding_policy};
 use crate::function_frames::lower_function;
+use crate::generators::append_generator_constructor;
 use crate::instance_products::InstanceProducts;
 use crate::layout_types::native_source_type;
 use crate::lowering::Inventories;
@@ -96,9 +97,6 @@ pub fn lower_instances(
         let constructors = program.constructors.clone();
         retain_body_carriers(&constructors, context, intrinsics, &body, &files[source_index])?;
         retain_generic_decorator_frames(context, &body)?;
-        if body.is_generator() {
-            return Err(untranslated("generators::append_generator_constructor"));
-        }
         let frame = InstanceFrame {
             request: &request,
             body: &body,
@@ -188,6 +186,15 @@ fn lower_instance_frame(
     retained_function.generic_loans = instance_loans(program, context, frame.request, runtime_unions, intrinsics)?;
     retain_instance(&mut inventories.functions, names, retained_function)?;
     append_synthesized(&mut inventories.functions, names, synthesized)?;
+    append_generator_constructor(
+        &program.constructors,
+        &mut inventories.functions,
+        context,
+        frame.body,
+        frame.source,
+        frame.file,
+        intrinsics,
+    )?;
     merge_externals(&mut inventories.externals, runtime)?;
     Ok(pending)
 }

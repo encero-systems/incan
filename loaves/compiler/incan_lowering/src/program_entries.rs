@@ -18,9 +18,8 @@ use crate::frame_instances::{
     append_synthesized, external_index, function_names, merge_externals, merge_indexed, named_functions,
 };
 use crate::function_frames::lower_function;
+use crate::generators::append_generator_constructor;
 use crate::lowering::Inventories;
-use crate::native_type_identity::ConstructorIndex;
-use crate::pending::untranslated;
 use crate::program_context::ProgramContext;
 use crate::trace_channel::emit;
 use crate::traits::is_lazy_method_body;
@@ -157,24 +156,19 @@ pub fn lower_ordinary_bodies(
             emitted_frames.record(body, position);
             append_synthesized(&mut inventories.functions, &mut names, synthesized)?;
             append_async_entry(context, body, &function, index == entry, tests, intrinsics, inventories)?;
-            append_generator_constructor(&program.constructors, context, body)?;
+            append_generator_constructor(
+                &program.constructors,
+                &mut inventories.functions,
+                context,
+                body,
+                &sources[index],
+                &files[index],
+                intrinsics,
+            )?;
             merge_indexed(&mut inventories.externals, &mut signatures, runtime)?;
         }
     }
     Ok(())
-}
-
-/// The canonical lazy constructor beside its separately named producer.
-fn append_generator_constructor(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    body: &Body,
-) -> Result<(), String> {
-    let _ = (constructors, module);
-    if !body.is_generator() {
-        return Ok(());
-    }
-    Err(untranslated("program_refusals::append_generator_constructor"))
 }
 
 /// Apply standalone entry naming against the current modules or their already validated retained bodies.

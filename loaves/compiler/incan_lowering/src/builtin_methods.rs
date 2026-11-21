@@ -11,7 +11,8 @@ use incan_lang::lang::surface::option_methods::OptionMethodId;
 use incan_lang::lang::surface::string_methods::StringMethodId;
 use incan_lang::lang::types::numerics::{IntegerHelperFamily, IntegerHelperOperation};
 use incan_mir_plan_native::{
-    BinaryOp, ListLeaf, Operand, Place, PlanType, Projection, RvalueKind, SourceSpan, assign as plan_assign,
+    BinaryOp, Carrier, ListLeaf, Operand, Place, PlanType, Projection, RvalueKind, SourceSpan, TerminatorKind,
+    TupleElement, assign as plan_assign,
 };
 use incan_semantics_core::body_ir::{
     ArgumentElement, MethodTarget, Operand as SourceOperand, OwnershipFact, Place as SourcePlace,
@@ -21,7 +22,7 @@ use crate::builtin_calls::{assign_text_result, coerce_numeric_operand};
 use crate::checked_values::{scalar_operand, scalar_place};
 use crate::derived_methods::lower_derived_clone;
 use crate::element_places::is_element_place;
-use crate::frame::{Builder, drop_owned, external_call, place_type, read_place, temporary, value_type};
+use crate::frame::{Builder, drop_owned, external_call, forget_owned, place_type, read_place, temporary, value_type};
 use crate::generator_adapters::generator_adapter;
 use crate::generator_consumers::{consumer_result, generator_consumer, is_generator_consumer};
 use crate::hashed_collections::{collection_contains, dictionary_method, set_method};
@@ -30,16 +31,17 @@ use crate::list_methods::{
     argument_place, argument_value, borrowed_list_argument, call_destination, lower_bytes_as_slice,
     lower_iterator_method, lower_list_builtin, lower_list_iter, lower_list_method,
 };
+use crate::list_values::list_borrow;
 use crate::lists::require_list_shape;
 use crate::numerics::{integer_carrier, numeric_carrier};
 use crate::operand_borrows::{borrow_text_operand, lower_text_helper};
-use crate::options::replace_owned_destination;
-use crate::pending::untranslated;
+use crate::options::{assign_carrier, carrier_layout, replace_owned_destination};
 use crate::resize::emit_resize;
 use crate::sequence_builtins::{argument_type, text_argument};
 use crate::strings::{emit_text_helper, text_method};
 use crate::text_ownership::drop_borrowed_text_temporaries;
-use crate::text_primitives::encode_utf8;
+use crate::text_primitives::{copy_frozen_bytes, decode_utf8, encode_utf8};
+use crate::tuples::tuple_fields;
 
 /// Dispatch retained builtin registry members to text, numeric resize, or collection boundaries.
 pub fn lower_builtin_method(
@@ -372,8 +374,6 @@ fn lower_string_slice(
 }
 
 /// Call the exact borrowed UTF-8 runtime boundary after the frontend fills all checked codec slots.
-///
-/// A decode reads its Result carrier through `options::carrier_layout`, which refuses by name until it is in Rust.
 fn lower_text_codec_method(
     builder: &mut Builder,
     frozen: bool,
@@ -412,8 +412,13 @@ fn lower_text_codec_method(
         let Some(place) = destination else {
             return Err("unsupported Body IR discarded codec result without a checked carrier".into());
         };
-        list_root_place(builder, place, span)?;
-        return Err(untranslated("options::carrier_layout"));
+        let output = list_root_place(builder, place, span)?;
+        let result = place_type(&builder.locals, &output);
+        validate_decode_carrier(builder, &result)?;
+        let local = output.local;
+        lower_primitive_decode(builder, frozen, operands, output, &result, span)?;
+        drop_borrowed_text_temporaries(builder, &incoming, local, span);
+        return Ok(());
     }
     let result = PlanType::List(ListLeaf::U8, 1);
     let output = call_destination(builder, destination, result.clone(), span)?;
@@ -423,6 +428,157 @@ fn lower_text_codec_method(
     let local = output.local;
     lower_primitive_encode(builder, frozen, operands, output, span);
     drop_borrowed_text_temporaries(builder, &incoming, local, span);
+    Ok(())
+}
+
+/// Require the decode destination to be `Result[str, ValidationError]`, with the standard library's error identity.
+fn validate_decode_carrier(builder: &Builder, result: &PlanType) -> Result<(), String> {
+    let (_, declaration) = carrier_layout(builder, result)?;
+    if declaration.carrier != Carrier::Result || declaration.variants[0].fields != [PlanType::String] {
+        return Err("unsupported Body IR decode result carrier".into());
+    }
+    let [error] = declaration.variants[1].fields.as_slice() else {
+        return Err("unsupported Body IR decode error carrier".into());
+    };
+    match error {
+        PlanType::ValidationError => Ok(()),
+        PlanType::Model(owner, _)
+            if builder.nominals()[*owner as usize].native_item
+                == "incan_std_primitives::validation::ValidationError" =>
+        {
+            Ok(())
+        }
+        _ => Err("unsupported Body IR decode error identity".into()),
+    }
+}
+
+/// Validate surface options before primitive decoding, then adapt only malformed UTF-8 to the public error carrier.
+///
+/// The frozen receiver first becomes an owned byte buffer. Both receivers then use the same primitive decoder and
+/// explicit `(accepted, payload)` result, so the primitive never owns codec labels or ValidationError construction.
+fn lower_primitive_decode(
+    builder: &mut Builder,
+    frozen: bool,
+    operands: Vec<Operand>,
+    output: Place,
+    result: &PlanType,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let [receiver, encoding, errors] = <[Operand; 3]>::try_from(operands)
+        .map_err(|_| "unsupported Body IR incomplete builtin codec arguments".to_string())?;
+    let policy_type = PlanType::Tuple(vec![TupleElement::Bool, TupleElement::Bool]);
+    let policy = temporary(builder, policy_type.clone(), span);
+    let labels = vec![PlanType::StringRef, PlanType::StringRef];
+    let options = vec![encoding.clone(), errors.clone()];
+    let path = "incan_native_runtime::decode_replacement_policy";
+    external_call(
+        builder,
+        path,
+        labels.clone(),
+        policy_type.clone(),
+        options,
+        policy.clone(),
+        span,
+    );
+    let policy_fields = tuple_fields(&policy, &policy_type, span)?;
+    let rejected = builder.new_block(span);
+    let accepted = builder.new_block(span);
+    let after = builder.new_block(span);
+    let rejects = read_place(policy_fields[0].clone(), false, span);
+    builder.finish(TerminatorKind::SwitchBool(rejects, rejected, accepted), span);
+    // Rejected options construct the legacy error without reading the receiver.
+    let policy_owners = builder.owned.clone();
+    builder.select(rejected);
+    let error = temporary(builder, PlanType::ValidationError, span);
+    let path = "incan_native_runtime::invalid_decoder_options";
+    external_call(
+        builder,
+        path,
+        labels,
+        PlanType::ValidationError,
+        vec![encoding, errors],
+        error.clone(),
+        span,
+    );
+    let (owner, _) = carrier_layout(builder, result)?;
+    assign_carrier(
+        builder,
+        output.clone(),
+        owner,
+        1,
+        vec![read_place(error, true, span)],
+        span,
+    );
+    builder.finish(TerminatorKind::Goto(after), span);
+    let retained = builder.owned.clone();
+    // Accepted options decode through one byte-level implementation, then adapt only its strict failure detail.
+    builder.select(accepted);
+    builder.owned = policy_owners;
+    let replace_invalid = read_place(policy_fields[1].clone(), false, span);
+    let byte_view = PlanType::ListRef(ListLeaf::U8, 1);
+    let decoded = if frozen {
+        let copied = copy_frozen_bytes(builder, receiver, span);
+        let local = copied.local;
+        let encoded = list_borrow(builder, copied, false, span)?;
+        let decoded = decode_utf8(builder, encoded, byte_view, replace_invalid, span);
+        drop_owned(builder, local, span);
+        decoded
+    } else {
+        decode_utf8(builder, receiver, byte_view, replace_invalid, span)
+    };
+    adapt_decoded(builder, decoded, output, owner, span)?;
+    builder.finish(TerminatorKind::Goto(after), span);
+    builder.select(after);
+    builder.owned = retained;
+    Ok(())
+}
+
+/// Branch on the primitive decoder's success flag: wrap its text in `Ok`, or adapt its detail into the public error.
+fn adapt_decoded(
+    builder: &mut Builder,
+    decoded: Place,
+    output: Place,
+    owner: i64,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let decoded_type = PlanType::Tuple(vec![TupleElement::Bool, TupleElement::String]);
+    let decoded_fields = tuple_fields(&decoded, &decoded_type, span)?;
+    let invalid = builder.new_block(span);
+    let valid = builder.new_block(span);
+    let decoded_after = builder.new_block(span);
+    let succeeded = read_place(decoded_fields[0].clone(), false, span);
+    builder.finish(TerminatorKind::SwitchBool(succeeded, invalid, valid), span);
+    forget_owned(builder, decoded.local);
+    let decoded_owners = builder.owned.clone();
+    builder.select(invalid);
+    let adapted = temporary(builder, PlanType::ValidationError, span);
+    let detail = read_place(decoded_fields[1].clone(), true, span);
+    external_call(
+        builder,
+        "incan_native_runtime::invalid_utf8_error",
+        vec![PlanType::String],
+        PlanType::ValidationError,
+        vec![detail],
+        adapted.clone(),
+        span,
+    );
+    assign_carrier(
+        builder,
+        output.clone(),
+        owner,
+        1,
+        vec![read_place(adapted, true, span)],
+        span,
+    );
+    builder.finish(TerminatorKind::Goto(decoded_after), span);
+    let decoded_retained = builder.owned.clone();
+    builder.select(valid);
+    builder.owned = decoded_owners;
+    let text = read_place(decoded_fields[1].clone(), true, span);
+    assign_carrier(builder, output, owner, 0, vec![text], span);
+    builder.finish(TerminatorKind::Goto(decoded_after), span);
+    builder.select(decoded_after);
+    builder.owned = decoded_retained;
     Ok(())
 }
 

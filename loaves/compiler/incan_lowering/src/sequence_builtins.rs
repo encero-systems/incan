@@ -14,16 +14,19 @@ use crate::builtins::{emit_power_operator, list_call, scalar_builtin};
 use crate::call_arguments::call_argument_operand;
 use crate::checked_values::scalar_place;
 use crate::collections::{borrow_collection, collection_call, collection_reference, is_collection};
+use crate::computed_statics::has_native_static_cell;
+use crate::decls::static_slot;
 use crate::element_places::{element_place_type, is_element_place};
 use crate::frame::{Builder, external_call, literal, place_type, read_place, temporary, value_type};
 use crate::list_iteration::shared_sequence_receiver;
 use crate::list_methods::{argument_value, borrowed_list_argument, call_destination, shared_receiver_place};
 use crate::list_values::{list_borrow, value_operand};
 use crate::lists::{is_list, list_element, require_list_shape};
+use crate::models::model_type;
 use crate::numerics::{integer_carrier, numeric_carrier, numeric_name};
 use crate::operand_borrows::borrow_text_operand;
 use crate::operators::scalar_operator_operand;
-use crate::pending::untranslated;
+use crate::static_storage::computed_static_type;
 use crate::text_ownership::drop_borrowed_text_temporaries;
 
 /// Read an argument's retained carrier before selecting a borrow, avoiding an accidental owned read.
@@ -53,8 +56,12 @@ pub fn source_operand_type(
     // 1. Select the exact place carrier or the constant's ordinary typed conversion.
     match value {
         SourceOperand::Place(read) => {
-            if read.place.global().is_some() {
-                return Err(untranslated("static_storage::computed_static_type"));
+            if let Some(global) = read.place.global() {
+                let slot = static_slot(&builder.program.statics, global)?;
+                if has_native_static_cell(&builder.program.statics[slot]) {
+                    return computed_static_type(builder, &read.place, global);
+                }
+                return model_type(builder.constructors(), builder.nominals(), &global.ty, "");
             }
             if is_element_place(builder, &read.place)? {
                 return element_place_type(builder, &read.place);

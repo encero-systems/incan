@@ -6,9 +6,7 @@ use incan_mir_plan_native::{
 use incan_semantics_core::body_ir::{
     ArgumentElement, Body, BodyIrModule, NamedCallableTarget, Place as SourcePlace, StringConversionContract,
 };
-use incan_semantics_core::{
-    CanonicalSymbolId, IncanType, SemanticSourceTargetKind, SymbolOrigin, canonical_module_identity,
-};
+use incan_semantics_core::{CanonicalSymbolId, IncanType, SymbolOrigin, canonical_module_identity};
 
 use crate::async_::{construct_future, is_future};
 use crate::builtin_calls::lower_builtin;
@@ -18,6 +16,7 @@ use crate::checked_values::scalar_place;
 use crate::classes::function_name;
 use crate::closures::{callable_copy_type, return_representation};
 use crate::collections::is_owned_collection;
+use crate::derived_defaults::{is_derived_default, lower_derived_default};
 use crate::enums::enum_type;
 use crate::explicit_arguments::validate_source_input_call;
 use crate::frame::{
@@ -29,6 +28,7 @@ use crate::list_methods::call_destination;
 use crate::model_values::{is_json_deserialize_method, lower_model_from_json};
 use crate::models::model_type;
 use crate::pending::untranslated;
+use crate::reflection::lower_static_field_metadata;
 use crate::statements::is_nominal_type;
 use crate::string_conversion_contracts::conversion_trait;
 use crate::traits::{close_trait_dispatch_arguments, instantiate_type, is_lazy_method_body};
@@ -97,12 +97,8 @@ pub fn lower_named_target(
     destination: &Option<SourcePlace>,
     span: &SourceSpan,
 ) -> Result<(), String> {
-    if let Some(identity) = &target.canonical
-        && identity.kind == SemanticSourceTargetKind::Method
-        && identity.declaration_name == "__fields__"
-        && target.receiver_type.is_some()
-    {
-        return Err(untranslated("reflection::lower_static_field_metadata"));
+    if lower_static_field_metadata(builder, target, arguments, destination, span)? {
+        return Ok(());
     }
     if let Some(builtin) = target.builtin {
         if !target.type_args.is_empty() {
@@ -112,6 +108,9 @@ pub fn lower_named_target(
     }
     if let Some(step) = special_named_target(module, builder, target)? {
         return Err(untranslated(step));
+    }
+    if is_derived_default(target) {
+        return lower_derived_default(module, builder, target, destination, span);
     }
     if is_json_deserialize_method(target) {
         return lower_model_from_json(module, builder, target, arguments, destination, span);
@@ -178,15 +177,8 @@ fn special_named_target(
     if has_adapter_slot(module, identity) {
         return Ok(Some("primitive_traits::normalized_primitive_static"));
     }
-    let method = identity.kind == SemanticSourceTargetKind::Method;
-    if method && identity.declaration_name == "__fields__" && target.receiver_type.is_some() {
-        return Ok(Some("reflection::lower_static_field_metadata"));
-    }
     if builder.constructors().validated_constructors.contains(identity) {
         return Ok(Some("callable_calls::lower_validated_constructor"));
-    }
-    if method && identity.declaration_name == "default" && identity_in(identity, "std", "derives", "copying") {
-        return Ok(Some("derived_defaults::lower_derived_default"));
     }
     if let StringConversionContract::Selected(selection) = &module.string_conversion_contract
         && selection.method_identity == *identity
@@ -195,23 +187,6 @@ fn special_named_target(
         return Ok(Some("string_conversion::string_conversion_callee"));
     }
     Ok(None)
-}
-
-/// Whether a canonical identity is declared in the standard module `std.<package>.<module>`, written in source or
-/// compiled into its standard Loaf.
-fn identity_in(identity: &CanonicalSymbolId, root: &str, package: &str, module: &str) -> bool {
-    match &identity.origin {
-        SymbolOrigin::Module(path) => path.len() == 3 && path[0] == root && path[1] == package && path[2] == module,
-        SymbolOrigin::Package { library, module_path } => {
-            let expected = if package == "derives" {
-                "incan_stdlib_primitives"
-            } else {
-                "incan_stdlib_data"
-            };
-            library == expected && module_path.len() == 2 && module_path[0] == package && module_path[1] == module
-        }
-        _ => false,
-    }
 }
 
 /// Authenticate an exact retained adapter slot before inspecting an unrelated call's operands.

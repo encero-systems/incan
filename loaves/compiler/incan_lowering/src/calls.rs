@@ -19,8 +19,10 @@ use crate::frame::Builder;
 use crate::layout_types::native_source_type;
 use crate::list_methods::call_destination;
 use crate::method_calls::lower_method_call;
+use crate::native_callables::native_callable_storage;
 use crate::pending::untranslated;
 use crate::tuples::type_name;
+use crate::type_metadata::lower_type_metadata;
 use crate::type_parameters::substitute;
 use crate::unions::require_native_union_signature;
 
@@ -57,11 +59,11 @@ pub fn lower_call(
         }
         Callee::Helper(helper) => lower_runtime_helper(builder, *helper, args, destination, span),
         Callee::ProviderOperation(_) => Err("unsupported Body IR ProviderOperation".into()),
-        Callee::TypeMetadata(_) => {
+        Callee::TypeMetadata(target) => {
             if !args.is_empty() {
                 return Err("invalid Body IR type metadata value arguments".into());
             }
-            Err(untranslated("type_metadata::lower_type_metadata"))
+            lower_type_metadata(builder, target, destination, span)
         }
         Callee::CheckedForeign(_) => Err(untranslated("foreign_calls::lower_foreign_call")),
         Callee::CheckedBridge(_) => Err(untranslated("c_bridges::lower_checked_bridge")),
@@ -242,8 +244,15 @@ fn lower_delegated_call(
     for argument in &native_arguments {
         type_arguments.push(resolve(builder, argument)?);
     }
-    if checked_rust && !delegation.native_callable_parameters.is_empty() {
-        return Err(untranslated("native_callables::native_callable_storage"));
+    if checked_rust {
+        (parameters, type_arguments) = native_callable_storage(
+            builder,
+            delegation,
+            arguments,
+            &target.binding,
+            parameters,
+            type_arguments,
+        )?;
     }
     let operands = library_call_operands(
         module,
