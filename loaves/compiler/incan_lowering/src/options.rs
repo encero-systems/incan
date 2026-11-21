@@ -1,5 +1,7 @@
 //! Concrete standard Option and Result layouts shared with native enum operations.
 
+use std::collections::HashSet;
+
 use incan_lang::lang::surface::constructors::{ConstructorId, from_str as builtin_constructor};
 use incan_lang::lang::surface::option_methods::OptionMethodId;
 use incan_lang::lang::surface::result_methods::ResultMethodId;
@@ -42,9 +44,10 @@ pub fn intrinsic_declarations(
     retained: Vec<EnumDeclaration>,
 ) -> Result<Vec<EnumDeclaration>, String> {
     let mut declarations = retained;
+    let mut pass = CarrierPass::new(constructors, module, &mut declarations, file);
     for ty in declaration_storage(module) {
         if closed_type(&ty) {
-            retain_carrier(constructors, module, &mut declarations, &ty, file)?;
+            pass.retain(&ty)?;
         }
     }
     for delegation in &module.loaf_callables {
@@ -53,29 +56,29 @@ pub fn intrinsic_declarations(
         }
         for parameter in &delegation.parameters {
             if closed_type(parameter) {
-                retain_carrier(constructors, module, &mut declarations, parameter, file)?;
+                pass.retain(parameter)?;
             }
         }
         // A checked native instantiation may still contain its enclosing source function's binders. Its closed
         // function frame schedules those carriers; the declaration template does not authorize an open layout.
         if closed_type(&delegation.return_type) {
-            retain_carrier(constructors, module, &mut declarations, &delegation.return_type, file)?;
+            pass.retain(&delegation.return_type)?;
         }
     }
     for declaration in &module.nominal_declarations {
         for ty in &declaration.field_types {
             // A Rust layout keeps a field without a carrier opaque; that field grants no read, write or construction.
             if native_owner(declaration) {
-                let _ = retain_carrier(constructors, module, &mut declarations, ty, file);
+                let _ = pass.retain(ty);
             } else {
-                retain_carrier(constructors, module, &mut declarations, ty, file)?;
+                pass.retain(ty)?;
             }
         }
     }
     for declaration in &module.enum_declarations {
         for variant in &declaration.variants {
             for ty in &variant.fields {
-                retain_carrier(constructors, module, &mut declarations, ty, file)?;
+                pass.retain(ty)?;
             }
         }
     }
@@ -83,12 +86,12 @@ pub fn intrinsic_declarations(
         if !body.type_parameters.is_empty() {
             continue;
         }
-        retain_body_carriers(constructors, module, &mut declarations, body, file)?;
+        pass.retain_body(body)?;
     }
     for declaration in &module.static_declarations {
-        retain_carrier(constructors, module, &mut declarations, &declaration.ty, file)?;
+        pass.retain(&declaration.ty)?;
         if let StaticInitializer::Computed(body) = &declaration.initial {
-            retain_body_carriers(constructors, module, &mut declarations, body, file)?;
+            pass.retain_body(body)?;
         }
     }
     Ok(declarations)
@@ -102,181 +105,188 @@ pub fn retain_body_carriers(
     body: &Body,
     file: &str,
 ) -> Result<(), String> {
-    retain_carrier(constructors, module, declarations, &body.return_type, file)
-        .map_err(|reason| format!("{reason} in {} return carrier", body.name))?;
-    for (index, local) in body.locals.iter().enumerate() {
-        retain_carrier(constructors, module, declarations, &local.ty, file)
-            .map_err(|reason| format!("{reason} in {} local {index} carrier", body.name))?;
-    }
-    let taking = taking_iterator_locals(&body.block);
-    retain_iteration_poll_carriers(constructors, module, declarations, body, &body.block, &taking, file)
-        .map_err(|reason| format!("{reason} in {} iteration carriers", body.name))
+    CarrierPass::new(constructors, module, declarations, file).retain_body(body)
 }
 
-/// Retain Iterator::next's Option output from a checked consuming loop's concrete item type before frame lowering.
-fn retain_iteration_poll_carriers(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    declarations: &mut Vec<EnumDeclaration>,
-    body: &Body,
-    block: &Block,
-    taking: &[i64],
-    file: &str,
-) -> Result<(), String> {
-    for statement in &block.stmts {
-        retain_iteration_poll_statement(constructors, module, declarations, body, &statement.kind, taking, file)?;
-    }
-    Ok(())
+/// One carrier inventory pass over a module context: the carriers it appends and the closed types it has retained.
+///
+/// A pass only appends carriers. Once [`retain_carrier`] has accepted a type, every later call for an equal type finds
+/// that type's carriers and changes nothing, so the pass skips the call instead of comparing the type with every
+/// carrier again; a whole-program inventory names the same types in thousands of frames. A refused type is not
+/// remembered and refuses again.
+struct CarrierPass<'a> {
+    constructors: &'a ConstructorIndex,
+    module: &'a BodyIrModule,
+    declarations: &'a mut Vec<EnumDeclaration>,
+    file: &'a str,
+    retained: HashSet<IncanType>,
 }
 
-fn retain_iteration_poll_statement(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    declarations: &mut Vec<EnumDeclaration>,
-    body: &Body,
-    kind: &StatementKind,
-    taking: &[i64],
-    file: &str,
-) -> Result<(), String> {
-    match kind {
-        StatementKind::Call {
-            callee: Callee::Function(CallableTarget::Named(target)),
-            ..
-        } => {
-            retain_call_carriers(constructors, module, declarations, target, file)?;
+impl<'a> CarrierPass<'a> {
+    fn new(
+        constructors: &'a ConstructorIndex,
+        module: &'a BodyIrModule,
+        declarations: &'a mut Vec<EnumDeclaration>,
+        file: &'a str,
+    ) -> Self {
+        Self {
+            constructors,
+            module,
+            declarations,
+            file,
+            retained: HashSet::new(),
         }
-        StatementKind::IterNext {
-            destination, iterator, ..
-        } => {
-            if let Operand::Place(read) = iterator
-                && let Some(local) = read.place.local_id()
-            {
-                let index = local.index() as i64 + 1;
-                if taking.contains(&index) {
-                    let Some(item) = destination.local_id() else {
-                        return Err("unsupported Body IR consuming iteration global item".into());
-                    };
-                    let ty = body.locals[item.index()].ty.clone();
-                    let output = generic("Option".into(), vec![ty]);
-                    retain_carrier(constructors, module, declarations, &output, file)?;
+    }
+
+    /// Retain one closed type's carriers, once per pass.
+    fn retain(&mut self, ty: &IncanType) -> Result<(), String> {
+        if self.retained.contains(ty) {
+            return Ok(());
+        }
+        retain_carrier(self.constructors, self.module, self.declarations, ty, self.file)?;
+        self.retained.insert(ty.clone());
+        Ok(())
+    }
+
+    /// Retain a frame's return, local and consuming-iteration carriers; a refusal names the frame and its position.
+    fn retain_body(&mut self, body: &Body) -> Result<(), String> {
+        self.retain(&body.return_type)
+            .map_err(|reason| format!("{reason} in {} return carrier", body.name))?;
+        for (index, local) in body.locals.iter().enumerate() {
+            self.retain(&local.ty)
+                .map_err(|reason| format!("{reason} in {} local {index} carrier", body.name))?;
+        }
+        let taking = taking_iterator_locals(&body.block);
+        self.retain_iteration_polls(body, &body.block, &taking)
+            .map_err(|reason| format!("{reason} in {} iteration carriers", body.name))
+    }
+
+    /// Retain Iterator::next's Option output from a checked consuming loop's concrete item type before frame lowering.
+    fn retain_iteration_polls(&mut self, body: &Body, block: &Block, taking: &[i64]) -> Result<(), String> {
+        for statement in &block.stmts {
+            self.retain_poll_statement(body, &statement.kind, taking)?;
+        }
+        Ok(())
+    }
+
+    /// Retain the carriers one statement's calls and consuming iterations need, descending into nested blocks.
+    fn retain_poll_statement(&mut self, body: &Body, kind: &StatementKind, taking: &[i64]) -> Result<(), String> {
+        match kind {
+            StatementKind::Call {
+                callee: Callee::Function(CallableTarget::Named(target)),
+                ..
+            } => {
+                self.retain_call(target)?;
+            }
+            StatementKind::IterNext {
+                destination, iterator, ..
+            } => {
+                if let Operand::Place(read) = iterator
+                    && let Some(local) = read.place.local_id()
+                {
+                    let index = local.index() as i64 + 1;
+                    if taking.contains(&index) {
+                        let Some(item) = destination.local_id() else {
+                            return Err("unsupported Body IR consuming iteration global item".into());
+                        };
+                        let ty = body.locals[item.index()].ty.clone();
+                        let output = generic("Option".into(), vec![ty]);
+                        self.retain(&output)?;
+                    }
                 }
             }
-        }
-        StatementKind::Assign {
-            rvalue: Rvalue::Match { arms, .. },
-            ..
-        } => {
-            for arm in arms {
-                retain_poll_arm(constructors, module, declarations, body, arm, taking, file)?;
+            StatementKind::Assign {
+                rvalue: Rvalue::Match { arms, .. },
+                ..
+            } => {
+                for arm in arms {
+                    self.retain_poll_arm(body, arm, taking)?;
+                }
             }
-        }
-        StatementKind::Race { arms, .. } => {
-            for arm in arms {
-                retain_iteration_poll_carriers(constructors, module, declarations, body, &arm.body, taking, file)?;
+            StatementKind::Race { arms, .. } => {
+                for arm in arms {
+                    self.retain_iteration_polls(body, &arm.body, taking)?;
+                }
             }
-        }
-        StatementKind::Loop { body: child } | StatementKind::UnsafeRegion { body: child, .. } => {
-            retain_iteration_poll_carriers(constructors, module, declarations, body, child, taking, file)?;
-        }
-        StatementKind::If {
-            then_block, else_block, ..
-        } => {
-            retain_iteration_poll_carriers(constructors, module, declarations, body, then_block, taking, file)?;
-            if let Some(child) = else_block {
-                retain_iteration_poll_carriers(constructors, module, declarations, body, child, taking, file)?;
+            StatementKind::Loop { body: child } | StatementKind::UnsafeRegion { body: child, .. } => {
+                self.retain_iteration_polls(body, child, taking)?;
             }
+            StatementKind::If {
+                then_block, else_block, ..
+            } => {
+                self.retain_iteration_polls(body, then_block, taking)?;
+                if let Some(child) = else_block {
+                    self.retain_iteration_polls(body, child, taking)?;
+                }
+            }
+            _ => {}
         }
-        _ => {}
+        Ok(())
     }
-    Ok(())
-}
 
-fn retain_poll_arm(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    declarations: &mut Vec<EnumDeclaration>,
-    body: &Body,
-    arm: &MatchArm,
-    taking: &[i64],
-    file: &str,
-) -> Result<(), String> {
-    for statement in arm.guard_stmts.iter().chain(&arm.body_stmts) {
-        retain_iteration_poll_statement(constructors, module, declarations, body, &statement.kind, taking, file)?;
+    /// Retain the carriers of a match arm's guard and body statements.
+    fn retain_poll_arm(&mut self, body: &Body, arm: &MatchArm, taking: &[i64]) -> Result<(), String> {
+        for statement in arm.guard_stmts.iter().chain(&arm.body_stmts) {
+            self.retain_poll_statement(body, &statement.kind, taking)?;
+        }
+        Ok(())
     }
-    Ok(())
-}
 
-/// Retain closed source and published free-function signatures, including carriers absent from locals.
-fn retain_call_carriers(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    declarations: &mut Vec<EnumDeclaration>,
-    target: &NamedCallableTarget,
-    file: &str,
-) -> Result<(), String> {
-    match &target.canonical {
-        Some(identity) if identity.kind != SemanticSourceTargetKind::Function => return Ok(()),
-        None => return Ok(()),
-        _ => {}
-    }
-    if !closed_arguments(&target.type_args) {
-        return Ok(());
-    }
-    for candidate in &module.bodies {
-        if target.canonical != candidate.canonical || candidate.type_parameters.len() != target.type_args.len() {
-            continue;
+    /// Retain closed source and published free-function signatures, including carriers absent from locals.
+    fn retain_call(&mut self, target: &NamedCallableTarget) -> Result<(), String> {
+        match &target.canonical {
+            Some(identity) if identity.kind != SemanticSourceTargetKind::Function => return Ok(()),
+            None => return Ok(()),
+            _ => {}
         }
-        let parameters: Vec<IncanType> = candidate.params.iter().map(|parameter| parameter.ty.clone()).collect();
-        retain_closed_signature(
-            constructors,
-            module,
-            declarations,
-            &parameters,
-            &candidate.return_type,
-            &candidate.type_parameters,
-            &target.type_args,
-            file,
-        )?;
-    }
-    for delegation in &module.loaf_callables {
-        if target.canonical.as_ref() != Some(&delegation.canonical) {
-            continue;
+        if !closed_arguments(&target.type_args) {
+            return Ok(());
         }
-        if target.type_args.len() != delegation.type_parameters.len() {
-            return Err("the standard library carrier type argument count is unsupported".into());
+        let module = self.module;
+        for candidate in &module.bodies {
+            if target.canonical != candidate.canonical || candidate.type_parameters.len() != target.type_args.len() {
+                continue;
+            }
+            let parameters: Vec<IncanType> = candidate.params.iter().map(|parameter| parameter.ty.clone()).collect();
+            self.retain_closed_signature(
+                &parameters,
+                &candidate.return_type,
+                &candidate.type_parameters,
+                &target.type_args,
+            )?;
         }
-        retain_closed_signature(
-            constructors,
-            module,
-            declarations,
-            &delegation.parameters,
-            &delegation.return_type,
-            &delegation.type_parameters,
-            &target.type_args,
-            file,
-        )?;
+        for delegation in &module.loaf_callables {
+            if target.canonical.as_ref() != Some(&delegation.canonical) {
+                continue;
+            }
+            if target.type_args.len() != delegation.type_parameters.len() {
+                return Err("the standard library carrier type argument count is unsupported".into());
+            }
+            self.retain_closed_signature(
+                &delegation.parameters,
+                &delegation.return_type,
+                &delegation.type_parameters,
+                &target.type_args,
+            )?;
+        }
+        Ok(())
     }
-    Ok(())
-}
 
-/// Close a retained callable's signature from checked type arguments before any operand needs its carrier.
-#[allow(clippy::too_many_arguments)]
-fn retain_closed_signature(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    declarations: &mut Vec<EnumDeclaration>,
-    parameters: &[IncanType],
-    result: &IncanType,
-    names: &[String],
-    arguments: &[IncanType],
-    file: &str,
-) -> Result<(), String> {
-    for parameter in parameters {
-        let instantiated = substitute(parameter, names, arguments)?;
-        retain_carrier(constructors, module, declarations, &instantiated, file)?;
+    /// Close a retained callable's signature from checked type arguments before any operand needs its carrier.
+    fn retain_closed_signature(
+        &mut self,
+        parameters: &[IncanType],
+        result: &IncanType,
+        names: &[String],
+        arguments: &[IncanType],
+    ) -> Result<(), String> {
+        for parameter in parameters {
+            let instantiated = substitute(parameter, names, arguments)?;
+            self.retain(&instantiated)?;
+        }
+        let closed_result = substitute(result, names, arguments)?;
+        self.retain(&closed_result)
     }
-    let closed_result = substitute(result, names, arguments)?;
-    retain_carrier(constructors, module, declarations, &closed_result, file)
 }
 
 /// Retain one concrete standard layout once; nested carriers precede their containing carrier.
