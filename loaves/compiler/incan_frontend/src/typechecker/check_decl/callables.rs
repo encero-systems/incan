@@ -606,6 +606,10 @@ impl TypeChecker {
             && !input
                 .as_ref()
                 .is_some_and(|contract| contract.mode == incan_lang::lang::types::ownership::OwnershipMode::Borrowed);
+        // An exclusive borrow parameter outside the whole-body proof still has its loan conflicts reported (RFC 164).
+        if input.is_none() && matches!(resolved_ty, ResolvedType::RefMut(_)) {
+            self.note_native_borrow_body();
+        }
         let value_type = input.map_or(resolved_ty, |contract| contract.underlying);
         let ty = local_type_for_param(param.node.kind, value_type);
         self.validate_protected_builtin_binding(&param.node.name, param.span);
