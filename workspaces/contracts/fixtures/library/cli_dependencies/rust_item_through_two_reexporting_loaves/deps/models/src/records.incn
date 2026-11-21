@@ -1,0 +1,3 @@
+"""The Rust key and its reader, re-exported from this library's own keys module."""
+
+pub from crate.keys import RecordKey, read_key

@@ -8,7 +8,8 @@ use crate::api_metadata::{
     CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
     materialize_api_alias_projections, materialize_checked_api_public_namespaces,
 };
-use crate::library_exports::collect_checked_public_exports;
+use crate::ast::Program;
+use crate::library_exports::{CheckedNamedExport, collect_checked_public_exports};
 use crate::library_manifest::{LibraryManifest, LibraryRustAbi};
 use crate::loaf_index::{LoafEntry, LoafIndex};
 use crate::typechecker::TypeChecker;
@@ -16,7 +17,7 @@ use incan_lang::interop::{
     RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustTypeInfo, RustTypeShape,
     RustVisibility,
 };
-use incan_semantics_core::IncanType;
+use incan_semantics_core::{CanonicalSymbolId, IncanType, SymbolOrigin};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -135,10 +136,8 @@ fn installed(root: &Path, manifest: &LibraryManifest) -> TestResult<LoafEntry> {
     Ok(LoafIndex::dependency(&manifest.name, &manifest.name, &directory)?)
 }
 
-/// `models.keys` publishes the Rust crate's items with `pub from rust::native import …` and ships their metadata;
-/// `facade.store` publishes them again with `pub from pub::models.keys import …`, and `rootfacade` does so at its
-/// package root. Returns the installed Loaves.
-fn reexport_chain(root: &Path) -> TestResult<[LoafEntry; 3]> {
+/// An index holding only the Rust facts of the crate `native`.
+fn native_facts() -> LoafIndex {
     let mut facts = LoafIndex::default();
     facts.add_rust_facts(
         &BTreeSet::new(),
@@ -147,11 +146,18 @@ fn reexport_chain(root: &Path) -> TestResult<[LoafEntry; 3]> {
             .map(|item| (item.canonical_path.clone(), item))
             .collect::<BTreeMap<_, _>>(),
     );
+    facts
+}
+
+/// `models.keys` publishes the Rust crate's items with `pub from rust::native import …` and ships their metadata;
+/// `facade.store` publishes them again with `pub from pub::models.keys import …`, and `rootfacade` does so at its
+/// package root. Returns the installed Loaves.
+fn reexport_chain(root: &Path) -> TestResult<[LoafEntry; 3]> {
     let models = published_module(
         "models",
         "keys",
         "pub from rust::native import RecordKey, read_key\n",
-        facts,
+        native_facts(),
         native_items(),
     )?;
     let models_entry = installed(root, &models)?;
@@ -257,6 +263,119 @@ fn rust_items_through_a_package_root_reexport_lower_to_body_ir() -> TestResult {
         }
         let rendered = format!("{body:?}");
         assert!(!rendered.contains("Unsupported"), "{}: {rendered}", body.name);
+    }
+    Ok(())
+}
+
+/// Check `source` as the module `module` of the library `package`, beside the library's source modules `siblings`,
+/// against the Rust facts of the crate `native`.
+fn checked_library_module(
+    package: &str,
+    module: &str,
+    source: &str,
+    siblings: &[(&str, &Program)],
+) -> TestResult<(Program, TypeChecker)> {
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker.set_current_package_identity(Some(package.into()));
+    checker.set_current_module_path(Some(vec![module.to_owned()]));
+    checker.set_loaves(Arc::new(native_facts()));
+    for (name, _) in siblings {
+        checker.register_dependency_module_path_segments(name, vec![(*name).to_owned()]);
+    }
+    checker
+        .check_with_imports(&program, siblings)
+        .map_err(|errors| format!("{package}.{module}: {errors:?}"))?;
+    Ok((program, checker))
+}
+
+/// The canonical identity a module's checked exports publish for `name`.
+fn published_identity(exports: &[CheckedNamedExport], name: &str) -> Option<CanonicalSymbolId> {
+    exports
+        .iter()
+        .find(|export| export.name == name)
+        .and_then(|export| export.identity.canonical.clone())
+}
+
+/// A library module that re-exports a Rust item another module of the same library re-exports from its crate (std.web's
+/// prelude taking `Html` from `std.web.response`, which takes it with `pub from rust::incan_std_web`) publishes the Rust
+/// item's own canonical identity: the chain ends at the `rust::` import. The library's manifest, with both modules, is
+/// valid, and a consumer importing the items from the second module checks and lowers with every local typed.
+#[test]
+fn a_rust_item_a_library_reexports_through_a_second_module_keeps_its_identity() -> TestResult {
+    let (vendor, vendor_checker) =
+        checked_library_module("web", "vendor", "pub from rust::native import RecordKey, read_key\n", &[])?;
+    let (facade, facade_checker) = checked_library_module(
+        "web",
+        "facade",
+        "pub from vendor import RecordKey, read_key\n",
+        &[("vendor", &vendor)],
+    )?;
+    let direct = collect_checked_public_exports(&vendor, &vendor_checker);
+    let through = collect_checked_public_exports(&facade, &facade_checker);
+    for name in ["RecordKey", "read_key"] {
+        let expected = published_identity(&direct, name).ok_or_else(|| format!("vendor: no identity for {name}"))?;
+        assert!(
+            matches!(expected.origin, SymbolOrigin::RustCrate(_)),
+            "{name}: {expected:?}"
+        );
+        assert_eq!(
+            published_identity(&through, name),
+            Some(expected),
+            "facade: {name} publishes the Rust item's identity"
+        );
+    }
+
+    let mut api = CheckedApiMetadataPackage {
+        schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+        package: None,
+        modules: vec![
+            collect_checked_api_metadata(&vendor, &vendor_checker, vec!["vendor".to_owned()]),
+            collect_checked_api_metadata(&facade, &facade_checker, vec!["facade".to_owned()]),
+        ],
+        public_namespaces: Vec::new(),
+    };
+    materialize_api_alias_projections(&mut api.modules);
+    materialize_checked_api_public_namespaces(&mut api)?;
+    let mut manifest = LibraryManifest::new("web", "0.1.0");
+    manifest.contract_metadata.identity_graph.extend_checked_api_exports(
+        "web",
+        &api,
+        &[
+            (vec!["vendor".to_owned()], direct),
+            (vec!["facade".to_owned()], through),
+        ],
+    )?;
+    manifest.contract_metadata.api = Some(api);
+    manifest.rust_abi = LibraryRustAbi::from_items(native_items());
+    let root = tempfile::tempdir()?;
+    // Reading the artifact back validates the manifest's identity graph.
+    let web = installed(root.path(), &manifest)?;
+
+    let source = "from pub::web.facade import RecordKey, read_key\n\ndef main() -> int:\n    key = RecordKey(value=5)\n    return read_key(key)\n";
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker.set_loaves(Arc::new(LoafIndex::new([web])?));
+    checker.check_program(&program).map_err(|errors| {
+        let messages = errors.iter().map(|error| error.message.as_str()).collect::<Vec<_>>();
+        format!("consumer: {messages:?}")
+    })?;
+    let facts = checker.into_type_info();
+    let providers = crate::body_ir::ProviderOperationCatalog::new();
+    let context = crate::body_ir::BodyIrContext {
+        modules: crate::body_ir::ContextModules::default(),
+        provider_operations: &providers,
+        registry_package: None,
+        library_package: None,
+        include_inline_tests: false,
+    };
+    let module = crate::body_ir::build_body_ir_module(&program, &[], &facts, &context);
+    for body in &module.bodies {
+        for local in &body.locals {
+            assert!(!matches!(local.ty, IncanType::Unknown), "{}: local {:?} has no type", body.name, local.name);
+        }
     }
     Ok(())
 }

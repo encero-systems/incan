@@ -1,15 +1,16 @@
-# behavior: a Rust type and function re-exported by one Loaf's module and again by a second Loaf, in a module and at its package root, are each one public declaration, the Rust item itself: the second Loaf builds with its root re-export naming the Rust item although it does not declare the crate, and the consumer, which declares neither the first Loaf nor the crate, imports them by name and through a namespace from both places
+# behavior: a Rust type and function re-exported by one Loaf's module and again by a second Loaf, in a module and at its package root, are each one public declaration, the Rust item itself: the second Loaf builds with its root re-export naming the Rust item although it does not declare the crate, and the consumer, which declares neither the first Loaf nor the crate, imports them by name and through a namespace from both places; the first Loaf's second module, which re-exports them from its own keys module, publishes them as the same Rust items, so the reader the facade takes from it reads a key built through the root
 # expect-stdout:
 #   5
 #   6
 #   7
 #   8
+#   9
 
 """Reach one Rust key and reader through two re-exporting Loaves, from a module and from the package root."""
 
 from pub::facade.store import RecordKey, read_key
 from pub::facade import store
-from pub::facade import RecordKey as RootKey, read_key as root_read_key
+from pub::facade import RecordKey as RootKey, read_key as root_read_key, records_read_key
 import pub::facade as facade
 
 
@@ -19,3 +20,4 @@ def main() -> None:
     println(store.read_key(store.RecordKey(value=6)))
     println(root_read_key(RootKey(value=7)))
     println(facade.read_key(facade.RecordKey(value=8)))
+    println(records_read_key(RootKey(value=9)))
