@@ -13,11 +13,15 @@ pub mod host;
 mod json_text;
 pub mod lifecycle;
 pub mod protocol;
+pub mod record_directory;
 pub mod record_protocol;
+pub mod record_snapshot;
 pub mod worker_packets;
 
 #[cfg(test)]
 mod host_tests;
+#[cfg(test)]
+mod snapshot_tests;
 #[cfg(test)]
 mod wire_golden;
 #[cfg(test)]
