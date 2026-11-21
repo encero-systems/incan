@@ -55,6 +55,7 @@ mod generic_layouts;
 mod instance_products;
 mod iterator_methods;
 mod layout_types;
+mod library_methods;
 mod library_model_arguments;
 mod list_iteration;
 mod list_methods;

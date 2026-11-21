@@ -15,6 +15,7 @@ use crate::decls::{library_enum_item, library_item};
 use crate::element_places::is_element_place;
 use crate::explicit_arguments::parameter_accesses;
 use crate::frame::{Builder, dereferenced_place, place_type, read_place, temporary};
+use crate::library_methods::lower_library_method;
 use crate::models::model_place;
 use crate::pending::untranslated;
 use crate::traits::{is_lazy_method_body, receiver_selects_slot_arguments};
@@ -64,8 +65,13 @@ fn lower_checked_method_call(
     let Some(receiver) = arguments.first() else {
         return Err("invalid Body IR Method missing receiver".into());
     };
-    if let Some(step) = special_method_route(module, builder, target, receiver, span)? {
-        return Err(untranslated(step));
+    match special_method_route(module, builder, target, receiver, span)? {
+        MethodRoute::Refused(step) => return Err(untranslated(step)),
+        MethodRoute::Library(index, selected) => {
+            let callable = &module.loaf_callables[index];
+            return lower_library_method(module, builder, callable, &selected, arguments, destination, span);
+        }
+        MethodRoute::Retained => {}
     }
     lower_retained_method_call(module, builder, target, arguments, destination, span)
 }
@@ -79,24 +85,27 @@ fn special_method_route(
     target: &MethodTarget,
     receiver: &ArgumentElement,
     span: &SourceSpan,
-) -> Result<Option<&'static str>, String> {
+) -> Result<MethodRoute, String> {
+    use MethodRoute::Refused;
     if let Some(SourceOperand::Place(read)) = receiver.as_one()
         && read.place.global().is_some()
     {
-        return Ok(Some("method_calls::lower_global_method"));
+        return Ok(Refused("method_calls::lower_global_method"));
     }
     match &target.operation {
         None | Some(ReflectionOperation::Builtin(_)) => {}
-        Some(_) => return Ok(Some("reflection::lower_reflection")),
+        Some(_) => return Ok(Refused("reflection::lower_reflection")),
     }
     if standard_slot(target) || is_std_primitives_method(target, "traits", "callable", "__call__") {
-        return Ok(Some("library_methods::lower_standard_slot"));
+        return Ok(Refused("library_methods::lower_standard_slot"));
     }
     let mut implementation = target.canonical.clone();
     if let Some(owner) = receiver_owner(module, builder, receiver, span)? {
         let selected = owner_method_identity(module, target, &owner)?;
-        if Some(&selected) != target.canonical.as_ref() && compiled_callable(module, &selected) {
-            return Ok(Some("library_methods::lower_library_method"));
+        if Some(&selected) != target.canonical.as_ref()
+            && let Some(index) = compiled_callable_index(module, &selected)
+        {
+            return Ok(MethodRoute::Library(index, implementation_target(target, selected)));
         }
         implementation = Some(selected);
     }
@@ -104,34 +113,34 @@ fn special_method_route(
         target.builtin_iterator(),
         Some(IteratorMethodId::Iter | IteratorMethodId::Collect)
     ) {
-        return Ok(Some("method_calls::retained_iterator_default"));
+        return Ok(Refused("method_calls::retained_iterator_default"));
     }
     if !target.has_valid_native_trait_selection() {
         return Err("the selected standard library trait signature is invalid".into());
     }
     if target.native_trait_delegation.is_some() {
-        return Ok(Some("method_calls::lower_selected_library_method"));
+        return Ok(Refused("method_calls::lower_selected_library_method"));
     }
     if let Some(SourceOperand::Place(read)) = receiver.as_one()
         && is_element_place(builder, &read.place)?
     {
-        return Ok(Some("element_borrows::element_method_owner"));
+        return Ok(Refused("element_borrows::element_method_owner"));
     }
     if let Some(enum_index) = receiver_enum_layout(builder, receiver, span)? {
         if generated_enum_member(module, target, enum_index, "message") {
-            return Ok(Some("value_enums::lower_enum_message"));
+            return Ok(Refused("value_enums::lower_enum_message"));
         }
         if target.loaf_trait.is_none() && value_enum_getter(module, target, enum_index) {
-            return Ok(Some("value_enum_methods::lower_value_enum_method"));
+            return Ok(Refused("value_enum_methods::lower_value_enum_method"));
         }
     }
     if !receiver_fills_source_slot(module, builder, target, receiver, span)?
-        && let Some(identity) = &implementation
-        && compiled_callable(module, identity)
+        && let Some(identity) = implementation
+        && let Some(index) = compiled_callable_index(module, &identity)
     {
-        return Ok(Some("library_methods::lower_library_method"));
+        return Ok(MethodRoute::Library(index, implementation_target(target, identity)));
     }
-    Ok(None)
+    Ok(MethodRoute::Retained)
 }
 
 /// Whether the checker selected a standard derive or comparison slot, which a derive or JSON protocol implements.
@@ -179,12 +188,31 @@ fn is_std_primitives_method(target: &MethodTarget, section: &str, module: &str, 
     }
 }
 
-/// Whether a compiled Loaf callable carries this exact canonical implementation.
-fn compiled_callable(module: &BodyIrModule, identity: &CanonicalSymbolId) -> bool {
+/// The compiled Loaf callable that carries this exact canonical implementation, if any.
+fn compiled_callable_index(module: &BodyIrModule, identity: &CanonicalSymbolId) -> Option<usize> {
     module
         .loaf_callables
         .iter()
-        .any(|callable| callable.canonical == *identity)
+        .position(|callable| callable.canonical == *identity)
+}
+
+/// Name the retained concrete implementation rather than its trait slot when calling an already compiled method.
+fn implementation_target(target: &MethodTarget, canonical: CanonicalSymbolId) -> MethodTarget {
+    let mut selected = target.clone();
+    if selected.canonical.as_ref() != Some(&canonical) {
+        // The selected item is the implementation's ordinary compiled entry, not the trait's native generic item.
+        selected.loaf_trait = None;
+        selected.native_trait_delegation = None;
+    }
+    selected.canonical = Some(canonical);
+    selected
+}
+
+/// How a method call lowers once its special routes are excluded.
+enum MethodRoute {
+    Refused(&'static str),
+    Library(usize, MethodTarget),
+    Retained,
 }
 
 /// The source enum layout a receiver place holds, if any.

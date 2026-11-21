@@ -41,7 +41,6 @@ pub fn lower_call(
             lower_named_target(module, builder, target, args, destination, span)
         }
         Callee::Function(CallableTarget::Local(_)) => Err(untranslated("callable_calls::lower_callable_value")),
-        Callee::Function(_) => Err("unsupported Body IR local callable value".into()),
         Callee::Method(target) => {
             if let Some(identity) = &target.canonical
                 && has_adapter_slot(module, identity)
