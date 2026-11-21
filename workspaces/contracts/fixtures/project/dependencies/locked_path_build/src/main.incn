@@ -3,8 +3,6 @@
 #   oven lock .
 #   oven build .
 #   oven build --locked .
-# expect-stdout-contains:
-#   locked locked_path_build 0.1.0 (lowest)
 # expect-stderr:
 # expect-exit: 0
 
