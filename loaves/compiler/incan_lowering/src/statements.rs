@@ -33,7 +33,6 @@ use crate::list_values::value_operand;
 use crate::loop_exits::exits_to;
 use crate::matches::join_branch_owners;
 use crate::operand_borrows::lower_discarded_operand;
-use crate::pending::untranslated;
 use crate::races::lower_native_race;
 use crate::result_carriers::lower_try_propagation;
 use crate::tuples::tuple_has_owners;

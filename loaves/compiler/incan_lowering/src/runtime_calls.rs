@@ -15,7 +15,6 @@ use crate::layout_types::native_source_type;
 use crate::native_type_identity::ConstructorIndex;
 use crate::nominal_instances::{NominalInstance, retain_frame_nominals};
 use crate::options::retain_body_carriers;
-use crate::pending::untranslated;
 use crate::program_context::{ProgramContext, retain_nominal_tables};
 use crate::runtime_arguments::{RuntimeTypes, runtime_argument};
 use crate::runtime_frames::runtime_frame_adapter;

@@ -11,7 +11,7 @@ use crate::call_arguments::call_parameter_type;
 use crate::callable_calls::checked_type_arguments;
 use crate::callable_values::lower_callable_bound_call;
 use crate::calls::{instantiated_external_call, library_call_operands, native_delegation};
-use crate::checked_values::scalar_place;
+use crate::checked_values::{clone_nominal_operand, scalar_place};
 use crate::closures::return_representation;
 use crate::derived_methods::{
     comparison_dunder, is_derived_clone, is_derived_display, lower_comparison_dunder, lower_derived_clone,
@@ -19,6 +19,7 @@ use crate::derived_methods::{
 };
 use crate::element_borrows::mutable_element_reference;
 use crate::element_places::is_element_place;
+use crate::fallible_factories::fallible_factory;
 use crate::frame::{Builder, place_type, read_place, temporary};
 use crate::json_builtins::lower_model_json_builtin;
 use crate::layout_types::{native_source_type, shared_receiver_type};
@@ -28,7 +29,6 @@ use crate::model_values::is_json_serialize_method;
 use crate::models::model_place;
 use crate::nominal_instances::{instance_arguments, template_base};
 use crate::operand_borrows::lower_display_str;
-use crate::pending::untranslated;
 use crate::sdk_generic_callables::{sdk_callable_type, sdk_callable_type_arguments, sdk_owned_callable_bindings};
 use crate::shared_callables::shared_sdk_operands;
 use crate::type_parameters::substitute;
@@ -109,8 +109,28 @@ pub fn lower_library_method(
     operands.extend(ordinary);
     let type_arguments = sdk_callable_type_arguments(builder, delegation, &names, &closed, &owned)?;
     let output = call_destination(builder, destination, result.clone(), span)?;
-    if fallible_factory_slot(target, &result) {
-        return Err(untranslated("fallible_factories::fallible_factory"));
+    // A published standard fallible-iterator default calls the standard primitives' factory on an owned copy of its
+    // source, at the concrete carrier's checked type arguments.
+    if let Some(factory) = fallible_factory(builder.constructors(), module, target, &result, &builder.intrinsics)? {
+        let PlanType::ModelRef(owner, name) = place_type(&builder.locals, &reference) else {
+            return Err("unsupported Body IR standard factory borrowed source".into());
+        };
+        let source = PlanType::Model(owner, name);
+        if factory.arguments.get(2) != Some(&source) {
+            return Err("unsupported Body IR standard factory source ABI".into());
+        }
+        parameters[0] = source;
+        operands[0] = clone_nominal_operand(builder, reference, span)?;
+        return instantiated_external_call(
+            builder,
+            &factory.path,
+            factory.arguments,
+            parameters,
+            result,
+            operands,
+            output,
+            span,
+        );
     }
     let Some(path) = delegation.rust_path() else {
         return Err("unsupported Body IR stdlib method native identity".into());
@@ -143,18 +163,6 @@ pub fn lower_library_method(
         output,
         span,
     )
-}
-
-/// Whether the target may be a published standard fallible-iterator factory, whose runtime ABI differs.
-fn fallible_factory_slot(target: &MethodTarget, result: &PlanType) -> bool {
-    let Some(slot) = &target.canonical else {
-        return false;
-    };
-    let named = matches!(
-        slot.declaration_name.as_str(),
-        "map" | "filter" | "flat_map" | "take" | "inspect" | "map_err" | "inspect_err"
-    );
-    named && matches!(result, PlanType::Model(..))
 }
 
 /// Close native Self from the concrete nominal frame or checked scalar receiver, then checked trait and method binders.

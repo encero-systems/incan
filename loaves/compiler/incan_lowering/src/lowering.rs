@@ -27,7 +27,6 @@ use crate::decorator_caches::validate_instance_binding;
 use crate::display_methods::display_functions;
 use crate::enum_instances::{specialize_enums, specialized_enum_layouts};
 use crate::enums::lower_enum_declarations;
-use crate::fallible_factories::retain_factory_callable_storage;
 use crate::frame_instances::{lower_instances, merge_externals};
 use crate::generic_enums::generic_enums;
 use crate::generic_layouts::{generic_models, referenced_templates};
@@ -1023,12 +1022,6 @@ fn finalize_plan_layouts(
     if publish {
         publish_local_layouts(&mut inventories.models, &mut inventories.enums);
     }
-    retain_factory_callable_storage(
-        context,
-        &mut inventories.functions,
-        &mut inventories.models,
-        &mut inventories.externals,
-    )?;
     validate_futures(constructors, context, intrinsics)?;
     Ok(())
 }

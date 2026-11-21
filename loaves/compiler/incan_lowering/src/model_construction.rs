@@ -23,7 +23,6 @@ use crate::frame::{
 use crate::layout_types::{native_source_type, stored_field_type};
 use crate::list_values::value_operand;
 use crate::models::constructor_index;
-use crate::pending::untranslated;
 use crate::ranges::range_aggregate;
 use crate::result_carriers::frozen_operand;
 use crate::statements::{authenticated_component_operand, borrowed_payload, carrier_payload};

@@ -34,7 +34,6 @@ use crate::lists::{is_list, is_mutable_list_reference};
 use crate::mutable_parameters::mutable_argument;
 use crate::numerics::numeric_carrier;
 use crate::operand_borrows::{borrow_scalar_operand, borrow_slice_operand, borrow_str_operand, borrow_text_operand};
-use crate::pending::untranslated;
 use crate::statements::is_nominal_type;
 use crate::text_plan::owned_literal;
 use crate::validation_errors::validation_error_reference;

@@ -9,6 +9,7 @@ mod cleanup_chains;
 mod compiler_record_adapters;
 mod explicit_arguments;
 mod explicit_input_storage;
+mod fallible_factories;
 mod indexed_field_reads;
 mod input_access;
 mod instance_products;
