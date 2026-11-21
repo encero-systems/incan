@@ -50,6 +50,11 @@ pub fn frame_product(outcome: &str, kind: &str, name: &str) {
     }
 }
 
+/// Whether frame product outcomes are traced, so a caller computes a miss's reason only for the channel.
+pub fn tracing_products() -> bool {
+    !channel().is_empty()
+}
+
 fn channel() -> String {
     std::env::var(CHANNEL).unwrap_or_default()
 }

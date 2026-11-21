@@ -31,9 +31,9 @@ use crate::producer_trace::{enter_producer, finish_producer};
 use crate::program_context::ProgramContext;
 use crate::scalar_store::{
     ProductEvent, admitted_function, admitted_payload, event_nodes, event_reference, report_scalar,
-    report_scalar_refusal, retained_scalar,
+    report_scalar_refusal, retained_scalar, scalar_miss,
 };
-use crate::trace_channel::{emit, frame_product};
+use crate::trace_channel::{emit, frame_product, tracing_products};
 use crate::traits::is_lazy_method_body;
 use crate::type_parameters::{Instance, merge_instance_requests, request_instance};
 
@@ -265,6 +265,9 @@ fn lower_ordinary_frame(
         Admission::Missed(reason) => {
             frame_product("unadmitted", "ordinary", &format!("{} {reason}", frame_label(body)));
         }
+        Admission::NoEvent if !admission.page.events.is_empty() => {
+            frame_product("unpaged", "ordinary", &frame_label(body));
+        }
         Admission::NoEvent => {}
     }
     let records = keyed.report.is_some();
@@ -302,6 +305,11 @@ fn lower_ordinary_frame(
             )?;
             frame_product("reused", "ordinary", &frame_label(body));
             return Ok((function, runtime, requests, frames));
+        }
+        // A witnessed body is lowered again although it may have a kept product: name why the product did not fit.
+        if tracing_products() {
+            let reason = scalar_miss(directory, witness, &keyed.nominals, Some(&current), positions);
+            frame_product("unreused", "ordinary", &format!("{} {reason}", frame_label(body)));
         }
     }
     let attempt = enter_producer(

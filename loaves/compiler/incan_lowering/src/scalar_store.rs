@@ -11,7 +11,7 @@ use incan_mir_plan_native::{
     NominalReference, PlacedRecord, PlanFunctionRecord, PositionChange, ProductNominal, SourceSpan, UnitNominals,
     WirePositions, decode_lowering_event, decode_plan_function_record, decode_product_parts, encode_lowering_event,
     encode_lowering_refusal, encode_plan_function_record, encode_product, matches_product, place_product_record,
-    plan_function_digest, positioned_product_requirements, product_nominals, resolve_nominals,
+    plan_function_digest, positioned_product_requirements, product_nominals, resolve_nominals, unresolved_nominal,
 };
 use incan_semantics_core::semantic_digest::semantic_digest;
 
@@ -97,6 +97,39 @@ pub fn retained_scalar(
     // 3. The record placed in step 2 restores directly; its placed bytes are never written or read.
     let (function, runtime, frames) = placed.restore(&resolved).ok()?;
     Some((function, runtime, resolved, frames, requests))
+}
+
+/// Say why [`retained_scalar`] restores no product for these inputs: none is stored under their key, or the stored one
+/// fails the step named. A diagnostic for the trace channel only; it repeats the lookup's reads.
+pub fn scalar_miss(
+    directory: &str,
+    inputs: &[String],
+    unit: &UnitNominals,
+    span: Option<&SourceSpan>,
+    positions: &[(i64, i64)],
+) -> &'static str {
+    let Ok(path) = scalar_path(directory, inputs) else {
+        return "its inputs have no product key";
+    };
+    let Ok(encoded) = std::fs::read(path) else {
+        return "no product is stored under its key";
+    };
+    let Ok(record) = decode_plan_function_record(&encoded) else {
+        return "its stored product does not decode";
+    };
+    if record.inputs != inputs {
+        return input_difference(&record.inputs, inputs);
+    }
+    let Some((placed, _)) = record_payload(&encoded, inputs, span, positions) else {
+        return "its stored product fails its digest or does not place at the body's nodes";
+    };
+    let Some(resolved) = resolve_nominals(placed.nominals(), unit) else {
+        return unresolved_nominal(placed.nominals(), unit).unwrap_or("a declaration it names does not resolve");
+    };
+    if placed.restore(&resolved).is_err() {
+        return "its stored product does not restore at the resolved declarations";
+    }
+    "a generic instance it requests is gone"
 }
 
 /// Publish a loss-checked native function without changing compilation's verdict.
