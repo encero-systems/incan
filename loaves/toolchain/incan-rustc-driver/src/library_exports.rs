@@ -23,6 +23,19 @@ pub(crate) struct LibraryFacade {
     path: String,
 }
 
+impl LibraryFacade {
+    /// The crate this facade's `::` path names, which the unit declares as it declares the crate a body calls into: a
+    /// root re-export of a Rust item names that item's own crate, which a library reaching it through another Loaf does
+    /// not declare. `None` for an item of this crate.
+    pub(crate) fn native_root(&self) -> Option<&str> {
+        self.path
+            .strip_prefix("::")?
+            .split("::")
+            .next()
+            .filter(|root| !root.is_empty())
+    }
+}
+
 /// Resolve checked library metadata into the compact aliases rustc needs, releasing the manifest before compilation.
 pub(crate) fn resolve_facades(
     plan: &Plan,

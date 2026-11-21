@@ -94,9 +94,15 @@ impl TypeChecker {
                     enum_name: enum_name.to_string(),
                     fields: fields.iter().map(resolved_type_from_manifest_type_ref).collect(),
                 }),
-                ManifestExportRef::Alias(export) => {
-                    self.symbol_kind_from_manifest_alias(&manifest, export, &mut HashSet::new())?
-                }
+                ManifestExportRef::Alias(export) => self
+                    .symbol_kind_from_manifest_alias(&manifest, export, &mut HashSet::new())
+                    .or_else(|| {
+                        let canonical = manifest
+                            .contract_metadata
+                            .identity_graph
+                            .canonical_for_public_name(member);
+                        self.rust_item_for_canonical(canonical.as_ref())
+                    })?,
             }
         };
         let canonical = manifest
