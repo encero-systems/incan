@@ -202,6 +202,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Select the checked binding carrier before lowering the assigned value. Explicit annotations and atomic
     /// newtype storage keep their contract; inferred ordinary bindings may use the retained executable result.
+    /// A Rust constant read binds at its checked type, as an annotated binding does: a `&'static str` constant is
+    /// Incan text, so the local owns text and a later Incan text value fits it.
     pub(super) fn assignment_binding_type(
         &mut self,
         assignment: &ast::AssignmentStmt,
@@ -222,6 +224,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .unwrap_or_else(|| self.resolve_ty(assignment.value.span));
         if assignment.ty.is_none()
             && !atomic_storage
+            && !self
+                .type_info
+                .rust
+                .checked_constants
+                .contains_key(&assignment.value.span)
             && let Some(returned) = self
                 .type_info
                 .expressions
