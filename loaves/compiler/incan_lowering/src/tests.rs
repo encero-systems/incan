@@ -21,6 +21,7 @@ mod model_types;
 mod module_statics;
 mod native_trait_adoptions;
 mod nested_carrier_conversions;
+mod nominal_tables;
 mod record_plan_outputs;
 mod record_positions;
 mod rust_runtime_calls;
