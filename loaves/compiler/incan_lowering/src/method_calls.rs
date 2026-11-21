@@ -843,7 +843,7 @@ pub fn instantiated_method_body(
     if !body.type_parameters.is_empty() {
         let closed = sdk_forwarded_type_arguments(module, builder, target, body, arguments, span)?;
         let mut typed = instantiate(body, &closed, &[])?;
-        let owned = owned_callable_slots(builder, body, arguments, &target.binding, 1)?;
+        let owned = owned_callable_slots(builder, body, &typed, arguments, &target.binding, 1)?;
         request_instance(&mut builder.instances, body, closed.clone(), owned.clone(), false);
         if !owned.is_empty() {
             typed = instantiate(body, &closed, &owned)?;
