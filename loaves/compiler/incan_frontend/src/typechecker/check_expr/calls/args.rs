@@ -45,6 +45,8 @@ struct CallArgumentBindings<'params, 'args, 'call> {
     context: CallArgumentValidationContext<'call>,
     /// Spans of owned arguments lent to an exclusive reference parameter, whose places need write access.
     exclusive_lends: Vec<Span>,
+    /// Spans of every argument bound to an exclusive reference parameter, owned or already a reference.
+    exclusive_slots: Vec<Span>,
 }
 
 impl<'params, 'args, 'call> CallArgumentBindings<'params, 'args, 'call> {
@@ -78,6 +80,7 @@ impl<'params, 'args, 'call> CallArgumentBindings<'params, 'args, 'call> {
             type_bindings,
             context,
             exclusive_lends: Vec::new(),
+            exclusive_slots: Vec::new(),
         }
     }
 
@@ -102,6 +105,9 @@ impl<'params, 'args, 'call> CallArgumentBindings<'params, 'args, 'call> {
         );
         if lends {
             self.exclusive_lends.push(span);
+        }
+        if matches!(param.ty, ResolvedType::RefMut(_)) {
+            self.exclusive_slots.push(span);
         }
     }
 
@@ -733,11 +739,19 @@ impl TypeChecker {
             }
         }
         let lends = std::mem::take(&mut bindings.exclusive_lends);
+        let exclusive_slots = std::mem::take(&mut bindings.exclusive_slots);
         bindings.finish(self);
         for arg in args {
             let argument = Self::call_arg_expr(arg);
-            if matches!(arg, CallArg::Positional(_) | CallArg::Named(..)) && lends.contains(&argument.span) {
+            if !matches!(arg, CallArg::Positional(_) | CallArg::Named(..)) {
+                continue;
+            }
+            if lends.contains(&argument.span) {
                 self.require_exclusive_lend(argument, context_callee);
+            }
+            // A place lent to an exclusive borrow outside the whole-body proof still has its loan conflicts checked.
+            if exclusive_slots.contains(&argument.span) && Self::written_place_root(argument).is_some() {
+                self.note_native_borrow_body();
             }
         }
     }
