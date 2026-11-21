@@ -578,14 +578,19 @@ fn dump_case(corpus: &Corpus, case: &Case, directory: &Path) -> Result<(), Strin
     Ok(())
 }
 
-fn main() {
-    let arguments: Vec<String> = std::env::args().collect();
-    let Some(root) = arguments.get(1) else {
-        eprintln!(
-            "usage: lowering-replay CORPUS [--case PREFIX] [--show N] [--describe] [--dump DIRECTORY] [--reuse [--base PREFIX]]"
-        );
-        std::process::exit(2);
-    };
+/// The replay's command-line options after the corpus root.
+struct Options {
+    prefix: String,
+    show: usize,
+    describe: bool,
+    dump: Option<PathBuf>,
+    report: bool,
+    records_keys: bool,
+    base_prefix: Option<String>,
+}
+
+/// Read the options; an unknown option ends the process with status 2.
+fn parse_options(arguments: &[String]) -> Options {
     let mut prefix = String::new();
     let mut show = 20usize;
     let mut describe = false;
@@ -593,7 +598,7 @@ fn main() {
     let mut report = false;
     let mut records_keys = false;
     let mut base_prefix: Option<String> = None;
-    let mut options = arguments[2..].iter();
+    let mut options = arguments.iter();
     while let Some(option) = options.next() {
         if option == "--describe" {
             describe = true;
@@ -618,6 +623,65 @@ fn main() {
             }
         }
     }
+    Options {
+        prefix,
+        show,
+        describe,
+        dump,
+        report,
+        records_keys,
+        base_prefix,
+    }
+}
+
+/// Print the mismatches, the per-call counts and the totals.
+fn print_tally(tally: &Tally, show: usize) {
+    for mismatch in tally.mismatches.iter().take(show) {
+        println!("MISMATCH {mismatch}");
+    }
+    for (call, (count, identical)) in &tally.by_call {
+        println!("call {call}: {identical} of {count} identical");
+    }
+    println!(
+        "cases {} (capture faults {}); layouts {}/{}; steps {}/{}; plans {}/{}; functions {}/{}; products {}/{}; report files {}/{}; publications {}/{}, files {}/{}",
+        tally.cases,
+        tally.case_faults,
+        tally.layouts_identical,
+        tally.layouts,
+        tally.steps_identical,
+        tally.steps,
+        tally.plans_identical,
+        tally.plans,
+        tally.functions_identical,
+        tally.functions,
+        tally.products_identical,
+        tally.products,
+        tally.reports_identical,
+        tally.reports,
+        tally.publications_identical,
+        tally.publications,
+        tally.publication_files_identical,
+        tally.publication_files
+    );
+}
+
+fn main() {
+    let arguments: Vec<String> = std::env::args().collect();
+    let Some(root) = arguments.get(1) else {
+        eprintln!(
+            "usage: lowering-replay CORPUS [--case PREFIX] [--show N] [--describe] [--dump DIRECTORY] [--reuse [--base PREFIX]]"
+        );
+        std::process::exit(2);
+    };
+    let Options {
+        prefix,
+        show,
+        describe,
+        dump,
+        report,
+        records_keys,
+        base_prefix,
+    } = parse_options(&arguments[2..]);
     let corpus = Corpus::open(Path::new(root));
     let scratch = std::env::temp_dir().join(format!("lowering-replay-{}", std::process::id()));
     let mut tally = Tally::default();
@@ -678,33 +742,7 @@ fn main() {
         }
     }
     let _ = std::fs::remove_dir_all(&scratch);
-    for mismatch in tally.mismatches.iter().take(show) {
-        println!("MISMATCH {mismatch}");
-    }
-    for (call, (count, identical)) in &tally.by_call {
-        println!("call {call}: {identical} of {count} identical");
-    }
-    println!(
-        "cases {} (capture faults {}); layouts {}/{}; steps {}/{}; plans {}/{}; functions {}/{}; products {}/{}; report files {}/{}; publications {}/{}, files {}/{}",
-        tally.cases,
-        tally.case_faults,
-        tally.layouts_identical,
-        tally.layouts,
-        tally.steps_identical,
-        tally.steps,
-        tally.plans_identical,
-        tally.plans,
-        tally.functions_identical,
-        tally.functions,
-        tally.products_identical,
-        tally.products,
-        tally.reports_identical,
-        tally.reports,
-        tally.publications_identical,
-        tally.publications,
-        tally.publication_files_identical,
-        tally.publication_files
-    );
+    print_tally(&tally, show);
     let complete = tally.mismatches.is_empty()
         && tally.products_identical == tally.products
         && tally.reports_identical == tally.reports
