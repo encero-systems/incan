@@ -21,7 +21,7 @@ use crate::checked_values::location;
 use crate::compiler_record_adapters::{checked_type, checked_type_matches_native, native_checked_type};
 use crate::nominal_records::retain_named_scalar;
 use crate::plan_product_inputs::{graph_owner, ordinary_product_inputs, producer_generation};
-use crate::scalar_store::{report_scalar, report_scalar_refusal, reported, retained_scalar};
+use crate::scalar_store::{ProductEvent, report_scalar, report_scalar_refusal, reported, retained_scalar};
 use crate::trace_channel::frame_product;
 use crate::type_parameters::{Instance, request_instance};
 
@@ -125,7 +125,7 @@ pub fn reused_instance(
     nominals: &UnitNominals,
 ) -> Result<Option<InstanceProduct>, String> {
     // 1. Only a module-level generic the checker witnessed has a product.
-    let Some((inputs, positions, _identity)) = instance_key(products, context, request, frame)? else {
+    let Some((inputs, positions, identity)) = instance_key(products, context, request, frame)? else {
         return Ok(None);
     };
     // A runtime retry drains the instances again. The first pass already reused or retained this product and reported
@@ -133,7 +133,7 @@ pub fn reused_instance(
     let settled = reported(products.report.as_deref(), &inputs);
     let current = location(&body.span, frame.source, frame.file);
     // 2. A missing or stale product, or a generic it requests that is gone, is an ordinary miss.
-    let Some((function, runtime, _references, frames, encoded)) =
+    let Some((function, runtime, references, frames, encoded)) =
         retained_scalar(&products.directory, &inputs, nominals, Some(&current), &positions)
     else {
         return Ok(None);
@@ -143,7 +143,18 @@ pub fn reused_instance(
     };
     // 3. Only the first pass that reads the product counts it.
     if !settled {
-        report_scalar(products.report.as_deref())?;
+        let event = ProductEvent {
+            products: &products.directory,
+            inputs: &inputs,
+            identity: &identity,
+            function: &function.name,
+            reused: true,
+            runtime: runtime.len(),
+            references: &references,
+            positions: &positions,
+            module: "",
+        };
+        report_scalar(products.report.as_deref(), &event)?;
     }
     frame_product("reused", "instance", &function.name);
     Ok(Some(InstanceProduct {
@@ -166,13 +177,18 @@ pub fn retain_instance_product(
     nominals: &UnitNominals,
 ) -> Result<(), String> {
     let report = products.report.as_deref();
-    let Some((inputs, positions, _identity)) = instance_key(products, context, request, frame)? else {
-        return report_scalar_refusal(report);
+    let Some((inputs, positions, identity)) = instance_key(products, context, request, frame)? else {
+        return report_scalar_refusal(
+            report,
+            "",
+            &function.name,
+            "generic instance has no checked body witness",
+        );
     };
     frame_product("lowered", "instance", &function.name);
     let encoded = match encode_requests(pending) {
         Ok(encoded) => encoded,
-        Err(_) => return report_scalar_refusal(report),
+        Err(reason) => return report_scalar_refusal(report, &identity, &function.name, &reason),
     };
     match retain_named_scalar(
         &products.directory,
@@ -184,8 +200,21 @@ pub fn retain_instance_product(
         frames,
         &encoded,
     ) {
-        Ok(_) => report_scalar(report),
-        Err(_) => report_scalar_refusal(report),
+        Ok(references) => {
+            let event = ProductEvent {
+                products: &products.directory,
+                inputs: &inputs,
+                identity: &identity,
+                function: &function.name,
+                reused: false,
+                runtime: runtime.len(),
+                references: &references,
+                positions: &positions,
+                module: "",
+            };
+            report_scalar(report, &event)
+        }
+        Err(reason) => report_scalar_refusal(report, &identity, &function.name, &reason),
     }
 }
 

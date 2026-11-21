@@ -4,8 +4,10 @@
 //! [--base PREFIX]`. Every case's layout request and lowering calls run in order; each answer is compared with the
 //! captured one: refusal text, runtime requests, census lines, published unions and the whole plan's bytes. Where both
 //! sides have a plan, every function is compared by name as well. The exit status is 0 only when every compared answer
-//! is identical. With `INCAN_ENGINE_TRACE` naming a directory, `--reuse` prints the keyed frames each call restored,
-//! lowered and kept, or lowered without a product, and `--base` names the case whose bodies an edit is compared with.
+//! is identical, and a records case's final plan, published as the driver publishes it, leaves the captured publication
+//! in its report, file for file. With `INCAN_ENGINE_TRACE` naming a directory, `--reuse` prints the keyed frames each
+//! call restored, lowered and kept, or lowered without a product, and `--base` names the case whose bodies an edit is
+//! compared with.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -14,8 +16,9 @@ use incan_lowering::corpus::{Case, Corpus, Outcome, Requirement, Step};
 use incan_lowering::reuse_proof::{FrameOutcomes, FrameTrace, changed_bodies};
 use incan_lowering::{
     Plan, RefusalPlanning, RuntimeRequirement, SourceInputs, UnitContinuation, UnitPlanning,
-    layout_runtime_requirements, program_refusals, resume_unit_plan, unit_plan,
+    layout_runtime_requirements, program_refusals, publish_plan_records, resume_unit_plan, unit_plan,
 };
+use sha2::{Digest, Sha256};
 
 /// What a replay prints beyond identity: the keyed frames each call reused or lowered, and a base capture to compare
 /// the edited bodies with.
@@ -41,6 +44,10 @@ struct Tally {
     products_identical: usize,
     reports: usize,
     reports_identical: usize,
+    publications: usize,
+    publications_identical: usize,
+    publication_files: usize,
+    publication_files_identical: usize,
     by_call: BTreeMap<String, (usize, usize)>,
     mismatches: Vec<String>,
 }
@@ -114,14 +121,15 @@ fn compare_directory(corpus: &Corpus, expected: &[(String, String)], directory: 
     (expected.len(), same)
 }
 
-/// A private directory holding one step's restored products and its fresh report.
+/// A case's private product and report directories. As in the driver's request, every call of a case shares them: a
+/// call's products are restored over the directory as it read them, and the report is emptied once, for the case.
 struct StepDirectories {
     products: PathBuf,
     report: PathBuf,
 }
 
-fn step_directories(scratch: &Path, index: usize) -> Result<StepDirectories, String> {
-    let root = scratch.join(format!("step-{index}"));
+fn case_directories(scratch: &Path) -> Result<StepDirectories, String> {
+    let root = scratch.join("case");
     if root.exists() {
         std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
     }
@@ -137,7 +145,7 @@ fn step_directories(scratch: &Path, index: usize) -> Result<StepDirectories, Str
 fn inputs(corpus: &Corpus, step: &Step, directories: &StepDirectories) -> Result<SourceInputs, String> {
     let scalar_products = match &step.scalar_products {
         Some(_) => {
-            corpus.restore(&step.products_before, &directories.products)?;
+            corpus.reset(&step.products_before, &directories.products)?;
             Some(directories.products.to_string_lossy().into_owned())
         }
         None => None,
@@ -229,9 +237,10 @@ fn replay_case(
         }
     }
     let mut continuation = None;
+    let directories = case_directories(scratch)?;
+    let mut published: Option<(Vec<u8>, Vec<u8>)> = None;
     for (index, step) in case.steps.iter().enumerate() {
         tally.steps += 1;
-        let directories = step_directories(scratch, index)?;
         let (actual, unions) = replay_step(corpus, step, &directories, &mut continuation)?;
         if let Some(cursor) = trace.as_mut() {
             report_reuse(corpus, name, index, step, &cursor.take(), evidence.base.as_ref())?;
@@ -289,6 +298,9 @@ fn replay_case(
             tally.plans += 1;
             match &actual {
                 Outcome::Complete(Some(produced)) => {
+                    if step.record_report.is_some() {
+                        published = Some((expected.clone(), produced.clone()));
+                    }
                     if produced == expected {
                         tally.plans_identical += 1;
                     } else {
@@ -299,6 +311,64 @@ fn replay_case(
                 _ => compare_functions(expected, &[], tally),
             }
         }
+    }
+    if let Some((expected, produced)) = published {
+        compare_publication(corpus, name, &expected, &produced, &directories, tally)?;
+    }
+    Ok(())
+}
+
+/// Publish a records case's final plan as the driver does and compare the report with the captured publication, file
+/// by file: the same names and the same bytes, and nothing else.
+fn compare_publication(
+    corpus: &Corpus,
+    name: &str,
+    expected: &[u8],
+    produced: &[u8],
+    directories: &StepDirectories,
+    tally: &mut Tally,
+) -> Result<(), String> {
+    let Some(captured) = corpus.publication(&hex::encode(Sha256::digest(expected)))? else {
+        return Ok(());
+    };
+    tally.publications += 1;
+    let plan: Plan = postcard::from_bytes(produced).map_err(|error| error.to_string())?;
+    if let Err(refusal) = publish_plan_records(
+        &plan,
+        directories.products.to_string_lossy().into_owned(),
+        directories.report.to_string_lossy().into_owned(),
+    ) {
+        tally.mismatches.push(format!("{name}: publication refused: {refusal}"));
+        return Ok(());
+    }
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+    for entry in std::fs::read_dir(&directories.report).map_err(|error| error.to_string())? {
+        let path = entry.map_err(|error| error.to_string())?.path();
+        if path.is_file() {
+            let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+            files.push((
+                path.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+                bytes,
+            ));
+        }
+    }
+    files.sort();
+    tally.publication_files += captured.len();
+    tally.publication_files_identical += captured.iter().filter(|file| files.contains(file)).count();
+    if files == captured {
+        tally.publications_identical += 1;
+    } else {
+        let names = |list: &[(String, Vec<u8>)]| list.iter().map(|(file, _)| file.clone()).collect::<Vec<_>>();
+        let differing: Vec<String> = captured
+            .iter()
+            .filter(|file| !files.contains(file))
+            .map(|(file, _)| file.clone())
+            .collect();
+        tally.mismatches.push(format!(
+            "{name}: publication differs: captured {:?}, published {:?}, differing {differing:?}",
+            names(&captured),
+            names(&files)
+        ));
     }
     Ok(())
 }
@@ -551,7 +621,7 @@ fn main() {
         println!("call {call}: {identical} of {count} identical");
     }
     println!(
-        "cases {} (capture faults {}); layouts {}/{}; steps {}/{}; plans {}/{}; functions {}/{}; products {}/{}; report files {}/{}",
+        "cases {} (capture faults {}); layouts {}/{}; steps {}/{}; plans {}/{}; functions {}/{}; products {}/{}; report files {}/{}; publications {}/{}, files {}/{}",
         tally.cases,
         tally.case_faults,
         tally.layouts_identical,
@@ -565,10 +635,15 @@ fn main() {
         tally.products_identical,
         tally.products,
         tally.reports_identical,
-        tally.reports
+        tally.reports,
+        tally.publications_identical,
+        tally.publications,
+        tally.publication_files_identical,
+        tally.publication_files
     );
     let complete = tally.mismatches.is_empty()
         && tally.products_identical == tally.products
-        && tally.reports_identical == tally.reports;
+        && tally.reports_identical == tally.reports
+        && tally.publications_identical == tally.publications;
     std::process::exit(if complete { 0 } else { 1 });
 }
