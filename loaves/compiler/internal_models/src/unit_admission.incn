@@ -1,0 +1,7 @@
+"""The private, path-bound proof of an imported artifact's producer and verified bytes. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
+
+pub from rust::internal_models_native import (
+    PayloadAdmission,
+    encode_unit_admission,
+    decode_unit_admission,
+)

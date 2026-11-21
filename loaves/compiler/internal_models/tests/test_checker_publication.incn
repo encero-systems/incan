@@ -1,0 +1,16 @@
+from checker_publication import CheckerRecordCounts, encode_checker_counts, decode_checker_counts
+pub def test_checker_publication_round_trip() -> Result[None, str]:
+    """One compiler admission preserves its counters and restored owners; malformed and old forms refuse."""
+    counted = CheckerRecordCounts(all_declarations=3, reusable_declarations=2, summary="2/3 reusable declarations",
+        artifact_refusals={"a": 2, "z": 1}, restored=["main"], restored_body_ir=["other"])
+    encoded = encode_checker_counts(counted)?
+    assert encoded[:4] == b"CRMB"
+    restored = decode_checker_counts(encoded)?
+    assert restored.artifact_refusals == counted.artifact_refusals and restored.restored == ["main"]
+    assert restored.restored_body_ir == ["other"]
+    assert encode_checker_counts(CheckerRecordCounts(all_declarations=2, reusable_declarations=2, restored_body_ir=["main", "main"])).is_err()
+    assert restored.reusable_declarations == 2 and restored.all_declarations == 3
+    assert encode_checker_counts(restored)? == encoded
+    assert decode_checker_counts(b'{"schema":"incan.checker-reuse/1"}').is_err()
+    assert encode_checker_counts(CheckerRecordCounts(all_declarations=1, reusable_declarations=2)).is_err()
+    return Ok(None)

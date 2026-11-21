@@ -1,0 +1,36 @@
+"""Early checking can only select a receipt from its exact prior output."""
+
+from namespace_order import encode_import_closures, read_import_closures, certified_namespace_order
+from std.encoding.hex import hexlify
+from std.hash import sha256
+from namespace_order import checking_basis_key, encode_checking_basis, read_checking_basis
+from records import RecordKey
+
+
+pub def test_checking_basis_requires_the_matching_output_and_digest() -> Result[None, str]:
+    local = RecordKey(family="local", identity_profile="stable", origin="project", identity="owner", facet="checked", context="first")
+    final = RecordKey(family="final", identity_profile="stable", origin="project", identity="owner", facet="checked", context="first")
+    root = hexlify(sha256.digest(b"completed receipt"))
+    assert checking_basis_key(local)?.startswith("incan.compiler.checking-basis/2\t")
+    encoded = encode_checking_basis(local, root)?
+    assert encoded[:4] == b"CRMB" and read_checking_basis(local, encoded)? == root
+    assert read_checking_basis(final, encoded).is_err()
+    assert read_checking_basis(local, root.encode("utf-8")).is_err()
+    short_root = root[:12]
+    assert encode_checking_basis(local, short_root).is_err()
+    return Ok(None)
+
+
+pub def test_compiler_import_closures_certify_modules_without_namespace_bodies() -> Result[None, str]:
+    """A scalar-only caller and provider still have the compiler's directed import order."""
+    rows = [["helpers.incn"], ["main.incn", "helpers.incn"]]
+    imports = read_import_closures(encode_import_closures(rows)?)?
+    order = certified_namespace_order("app", imports)?
+    assert order["helpers.incn"].rank == 0
+    assert order["main.incn"].rank == 1
+    assert order["main.incn"].covers(set(["helpers.incn", "main.incn"]))?
+    assert not order["main.incn"].covers(set(["unrelated.incn"]))?
+    assert not order["helpers.incn"].covers(set(["main.incn", "helpers.incn"]))?
+    assert read_import_closures(encode_import_closures([["main.incn", "absent.incn"]])?).is_err()
+    assert read_import_closures(encode_import_closures([["main.incn"], ["main.incn"]])?).is_err()
+    return Ok(None)

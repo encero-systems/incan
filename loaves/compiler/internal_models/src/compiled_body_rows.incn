@@ -1,0 +1,7 @@
+"""Independent Crumb rows for compiler-produced checker records and Body IR. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
+
+pub from rust::internal_models_native import (
+    CompiledBodyOutput,
+    encode_compiled_body_rows,
+    decode_compiled_body_row,
+)

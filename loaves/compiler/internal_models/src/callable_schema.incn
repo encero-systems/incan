@@ -1,0 +1,6 @@
+"""Typed Crumb vocabulary for private checked callable products and their exact selection witnesses. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
+
+pub from rust::internal_models_native import (
+    CALLABLE_PRODUCT,
+    callable_descriptions,
+)

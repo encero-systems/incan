@@ -1,0 +1,10 @@
+"""Pinned store frame references offered by Oven to one compiler request. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
+
+pub from rust::internal_models_native import (
+    NAMESPACE_IDENTITY_PROFILE,
+    NamespaceReference,
+    namespace_reference_filename,
+    namespace_key,
+    encode_namespace_references,
+    decode_namespace_references,
+)

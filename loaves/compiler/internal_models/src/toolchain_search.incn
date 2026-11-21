@@ -1,0 +1,6 @@
+"""The ordered directories that one content-named toolchain generation contributes to Rust library search. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
+
+pub from rust::internal_models_native import (
+    encode_search_paths,
+    decode_search_paths,
+)
