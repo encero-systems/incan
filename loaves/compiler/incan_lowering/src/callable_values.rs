@@ -10,9 +10,12 @@ use crate::call_arguments::{SlotPolicy, ordered_slot_operands};
 use crate::callable_calls::lower_callable_result;
 use crate::checked_values::{partial_flags, place_read, scalar_place};
 use crate::closures::{callable_signature, closure_arguments};
-use crate::frame::{Builder, drop_owned, forget_owned, place_type, read_place, temporary, track_rvalue_moves};
+use crate::frame::{
+    Builder, drop_owned, external_call, forget_owned, place_type, read_place, temporary, track_rvalue_moves, value_type,
+};
 use crate::method_calls::is_std_primitives_method;
 use crate::partial_callables::partial_call_operands;
+use crate::text_plan::owned_literal;
 
 /// Call an admitted function item or pointer; closure environments retain a distinct named refusal.
 pub fn lower_callable_value(
@@ -203,4 +206,46 @@ pub fn callable_object(
     let view = temporary(builder, view_type, span);
     builder.emit(plan_assign(view.clone(), RvalueKind::ClosureObject(callable), span));
     Ok(read_place(view, false, span))
+}
+
+/// Register an authenticated named read before a decorator or ordinary argument can observe its name.
+pub fn register_callable_item(
+    builder: &mut Builder,
+    value: Operand,
+    name: &str,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let address = callable_address(builder, value, span)?;
+    let module_identity = builder.module_identity.clone();
+    let module = owned_literal(builder, &module_identity, span);
+    let label = owned_literal(builder, name, span);
+    forget_owned(builder, module.local);
+    forget_owned(builder, label.local);
+    let output = temporary(builder, PlanType::Unit, span);
+    external_call(
+        builder,
+        "incan_native_runtime::register_callable_name",
+        vec![PlanType::String, PlanType::USize, PlanType::String],
+        PlanType::Unit,
+        vec![read_place(module, true, span), address, read_place(label, true, span)],
+        output,
+        span,
+    );
+    Ok(())
+}
+
+/// Expose the address of the exact checked pointer, reifying an item without replacing its signature.
+fn callable_address(builder: &mut Builder, value: Operand, span: &SourceSpan) -> Result<Operand, String> {
+    let pointer = match value_type(builder, &value)? {
+        PlanType::FunctionItem(_, signature) => {
+            let held = temporary(builder, PlanType::FunctionPointer(signature), span);
+            builder.emit(plan_assign(held.clone(), RvalueKind::ReifyFunction(value), span));
+            read_place(held, false, span)
+        }
+        PlanType::FunctionPointer(_) => value,
+        _ => return Err("unsupported Body IR callable-name receiver without a retained function pointer".into()),
+    };
+    let address = temporary(builder, PlanType::USize, span);
+    builder.emit(plan_assign(address.clone(), RvalueKind::FunctionAddress(pointer), span));
+    Ok(read_place(address, false, span))
 }

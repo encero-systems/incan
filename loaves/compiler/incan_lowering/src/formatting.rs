@@ -4,7 +4,6 @@ use incan_mir_plan_native::{
     CalleeKind, Carrier, Constant, Operand, OperandKind, Place, PlanType, Projection, RvalueKind, SourceSpan,
     assign as plan_assign, carrier_position,
 };
-use incan_semantics_core::SymbolOrigin;
 use incan_semantics_core::body_ir::{
     Constant as SourceConstant, FormatPart, FormatStyle, Operand as SourceOperand, OwnershipFact, Place as SourcePlace,
     Rvalue,
@@ -12,7 +11,6 @@ use incan_semantics_core::body_ir::{
 
 use crate::checked_values::scalar_place;
 use crate::collections::{is_collection, is_owned_collection};
-use crate::decls::library_enum_item;
 use crate::element_places::{element_place_type, is_element_place};
 use crate::enum_display::{display_enum_operand, native_enum_owner, native_enum_text};
 use crate::frame::{Builder, drop_owned, forget_owned, place_type, read_place, temporary, terminate_call, value_type};

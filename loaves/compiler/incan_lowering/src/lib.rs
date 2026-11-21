@@ -63,6 +63,7 @@ mod frozen_equality;
 mod frozen_list_equality;
 mod frozen_plan;
 mod function_frames;
+mod function_items;
 mod generator_adapters;
 mod generator_clauses;
 mod generator_consumers;

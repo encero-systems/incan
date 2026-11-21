@@ -6,7 +6,7 @@ use incan_semantics_core::body_ir::{
     ArgumentBinding, ArgumentElement, Body, BodyIrModule, MethodTarget, Operand as SourceOperand, OwnershipFact,
     Place as SourcePlace, ReflectionOperation,
 };
-use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 
 use crate::builtin_methods::lower_builtin_method;
 use crate::call_arguments::{SlotPolicy, call_parameter_type, has_defaulted_slots, ordered_slot_operands};
@@ -69,9 +69,9 @@ fn lower_checked_method_call(
     if identity.origin == SymbolOrigin::Builtin {
         return lower_builtin_origin_method(module, builder, target, arguments, destination, span);
     }
-    let Some(receiver) = arguments.first() else {
+    if arguments.is_empty() {
         return Err("invalid Body IR Method missing receiver".into());
-    };
+    }
     match special_method_route(module, builder, target, arguments, destination, span)? {
         MethodRoute::Refused(step) => return Err(untranslated(step)),
         MethodRoute::Lowered => return Ok(()),

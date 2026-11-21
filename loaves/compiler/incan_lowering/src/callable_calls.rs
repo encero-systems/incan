@@ -7,7 +7,7 @@ use incan_semantics_core::body_ir::{
     ArgumentElement, Body, BodyIrModule, NamedCallableTarget, Place as SourcePlace, StringConversionContract,
 };
 use incan_semantics_core::{
-    CanonicalSymbolId, IncanType, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin, canonical_module_identity,
+    CanonicalSymbolId, IncanType, SemanticSourceTargetKind, SymbolOrigin, canonical_module_identity,
 };
 
 use crate::async_::is_future;
