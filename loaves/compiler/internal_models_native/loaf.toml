@@ -1,0 +1,17 @@
+[project]
+name = "internal_models_native"
+version = "0.6.0-dev.9"
+description = "Side-by-side Rust implementation of the compiler record contracts"
+private = true
+
+[rust]
+name = "internal_models_native"
+type = "lib"
+edition = "2024"
+
+[dependencies]
+incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
+serde = { features = ["derive"], loaf = "crates-io/serde", version = "1" }
+serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
+sha2 = { loaf = "crates-io/sha2", version = "0.10" }
+internal_models_bindings = { path = "../internal_models_bindings" }
