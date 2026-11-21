@@ -57,6 +57,9 @@ impl TypeChecker {
         library: &str,
         manifest: &LibraryManifest,
     ) -> HashMap<String, String> {
+        #[cfg(test)]
+        self.dependency_interface_preparation_cache
+            .count_canonical_evaluation(library);
         let mut remapping = HashMap::new();
         let mut seen = HashSet::new();
         for entry in &manifest.contract_metadata.identity_graph.exports {

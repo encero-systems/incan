@@ -23,6 +23,29 @@ pub const MODULE_DEPENDENCY_INTERFACE_SNAPSHOT_VERSION: u32 = 6;
 #[derive(Clone, Debug, Default)]
 pub struct DependencyInterfacePreparationCache {
     pub(super) foreign_remappings: Arc<std::sync::Mutex<HashMap<String, Arc<PreparedForeignRemapping>>>>,
+    /// How often each compiled library's canonical type remapping was evaluated by the checkers sharing this cache.
+    #[cfg(test)]
+    pub(super) canonical_evaluations: Arc<std::sync::Mutex<std::collections::BTreeMap<String, usize>>>,
+}
+
+#[cfg(test)]
+impl DependencyInterfacePreparationCache {
+    /// Count one evaluation of `library`'s canonical type remapping.
+    pub(super) fn count_canonical_evaluation(&self, library: &str) {
+        let mut counts = self
+            .canonical_evaluations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *counts.entry(library.to_owned()).or_default() += 1;
+    }
+
+    /// The canonical type remapping evaluations of each compiled library, by library.
+    pub(crate) fn canonical_type_remapping_evaluations(&self) -> std::collections::BTreeMap<String, usize> {
+        self.canonical_evaluations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
 }
 
 /// One compiled Loaf's prepared foreign nominal remapping and the effects its installation replays.

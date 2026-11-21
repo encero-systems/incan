@@ -19,7 +19,7 @@ use incan_lang::interop::{
 };
 use incan_semantics_core::{CanonicalSymbolId, IncanType, SymbolOrigin};
 
-type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+pub(super) type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 /// The Rust crate `native`'s record `RecordKey { value: i64 }` and function `read_key(key: &RecordKey) -> i64`.
 fn native_items() -> Vec<RustItemMetadata> {
@@ -152,7 +152,7 @@ fn native_facts() -> LoafIndex {
 /// `models.keys` publishes the Rust crate's items with `pub from rust::native import …` and ships their metadata;
 /// `facade.store` publishes them again with `pub from pub::models.keys import …`, and `rootfacade` does so at its
 /// package root. Returns the installed Loaves.
-fn reexport_chain(root: &Path) -> TestResult<[LoafEntry; 3]> {
+pub(super) fn reexport_chain(root: &Path) -> TestResult<[LoafEntry; 3]> {
     let models = published_module(
         "models",
         "keys",
