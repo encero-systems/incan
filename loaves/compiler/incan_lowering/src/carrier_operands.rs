@@ -1,39 +1,42 @@
 //! Values at typed boundaries: carrier construction, native aliases and payload conversion.
 
+use incan_lang::lang::types::collections::{CollectionTypeId, from_str as collection_type};
 use incan_mir_plan_native::{
-    Carrier, FieldProjection, ListLeaf, Operand, OperandKind, Place, PlanType, Projection, RvalueKind, SourceSpan,
-    assign as plan_assign, carrier_position, place as plan_place,
+    Carrier, Constant, FieldProjection, ListLeaf, Operand, OperandKind, Place, PlanType, Projection, RvalueKind,
+    SourceSpan, assign as plan_assign, carrier_position, place as plan_place,
 };
 use incan_semantics_core::body_ir::{Operand as SourceOperand, OwnershipFact, Pattern};
+use incan_semantics_core::{IncanType, SemanticSourceTargetKind};
 
 use crate::builtin_calls::{clone_enum_reference, clone_model_reference, coerce_numeric_operand};
 use crate::callable_calls::carrier_callable_operand;
-use crate::checked_values::reference_read_fact;
+use crate::checked_values::{reference_read_fact, scalar_place};
 use crate::closures::function_assignment;
 use crate::compiler_record_adapters::semantic_key_matches_native;
 use crate::decls::library_enum_item;
 use crate::enums::enum_owner;
 use crate::formatting::display_plan_operand;
 use crate::frame::{
-    Builder, appended_field, bind_read_value, dereferenced_place, forget_moved_arguments, forget_owned, place_type,
-    read_place, temporary, track_rvalue_moves, value_type,
+    Builder, appended_field, bind_read_value, dereferenced_place, forget_moved_arguments, forget_owned, literal,
+    place_type, read_place, temporary, track_rvalue_moves, value_type,
 };
 use crate::frozen_plan::frozen_bytes_literal;
 use crate::generators::generator_shape;
-use crate::layout_types::native_alias_boundary;
 use crate::layout_types::shared_receiver_type;
+use crate::layout_types::{native_alias_boundary, native_source_type};
 use crate::list_values::sequence_read_storage;
 use crate::lists::exclusive_reference;
 use crate::lists::is_exclusive_borrow;
 use crate::lists::is_list;
 use crate::matches::{bind_enum_payload, bind_structural_pattern, enum_payload_read};
 use crate::numerics::numeric_carrier;
+use crate::operators::enum_comparison_tag;
 use crate::patterns::{carrier_pattern_slot, carrier_payload_types, pattern_binds};
 use crate::pending::untranslated;
 use crate::result_carriers::{frozen_operand, typed_carrier_operand};
 use crate::static_storage::snapshot_owns;
 use crate::text_plan::{clone_text_reference, owned_slice_text};
-use crate::unions::carrier_injection;
+use crate::unions::{carrier_injection, test_union_tag, union_test_slots};
 
 /// Preserve checked static literals and materialize carrier construction at a typed value boundary.
 pub fn boundary_operand(
@@ -68,6 +71,17 @@ pub fn element_operand(
     span: &SourceSpan,
 ) -> Result<Operand, String> {
     let operand = boundary_operand(builder, value, element, span)?;
+    coerce_numeric_operand(builder, operand, element, span)
+}
+
+/// Convert an already evaluated collection element to the element's checked carrier, as `element_operand` does.
+pub fn element_plan_operand(
+    builder: &mut Builder,
+    value: Operand,
+    element: &PlanType,
+    span: &SourceSpan,
+) -> Result<Operand, String> {
+    let operand = boundary_plan_operand(builder, value, element, span)?;
     coerce_numeric_operand(builder, operand, element, span)
 }
 
@@ -499,4 +513,99 @@ pub fn bind_payload_in_place(
         span,
     ));
     Ok(())
+}
+
+/// Inspect carrier tags or a statically known nominal identity without consuming storage; distinct class tests remain
+/// refused.
+pub fn lower_union_isinstance(
+    builder: &mut Builder,
+    value: &SourceOperand,
+    ty: &IncanType,
+    target: &IncanType,
+    span: &SourceSpan,
+) -> Result<RvalueKind, String> {
+    let source_ty = isinstance_source_type(builder, value, ty, span)?;
+    let member = native_source_type(
+        builder.constructors(),
+        builder.nominals(),
+        builder.enums(),
+        &builder.unions,
+        target,
+        &builder.intrinsics,
+        "",
+    )?;
+    let constant = |flag: bool| RvalueKind::Use(literal(Constant::Bool(flag), span));
+    let text = |ty: &PlanType| matches!(ty, PlanType::String | PlanType::FrozenStr);
+    match &source_ty {
+        PlanType::Int | PlanType::Float | PlanType::Bool => return Ok(constant(source_ty == member)),
+        PlanType::String | PlanType::FrozenStr => return Ok(constant(text(&member))),
+        PlanType::Model(owner, _) => {
+            if source_ty == member {
+                return Ok(constant(true));
+            }
+            let newtype = usize::try_from(*owner)
+                .ok()
+                .and_then(|slot| builder.nominals().get(slot))
+                .is_some_and(|declaration| declaration.canonical.kind == SemanticSourceTargetKind::Newtype);
+            if !newtype {
+                return Err("unsupported Body IR isinstance over a non-newtype nominal".into());
+            }
+            return Ok(constant(source_ty == member));
+        }
+        _ => {}
+    }
+    let owner = enum_owner(&source_ty)?;
+    if is_option_carrier(builder, owner) {
+        return Err(untranslated("option_tests::option_isinstance"));
+    }
+    let slots = union_test_slots(&builder.unions, owner, &member, &builder.intrinsics)?;
+    if slots.is_empty() {
+        return Ok(constant(false));
+    }
+    let source = isinstance_place(builder, value, span)?;
+    // The same discriminant read as `option_tests::enum_tag`.
+    let tag = enum_comparison_tag(builder, &source, span);
+    Ok(test_union_tag(builder, &tag, &slots, span))
+}
+
+/// Whether a retained enum owner is the intrinsic Option carrier rather than a source enum or a union; the predicate
+/// `option_tests::is_option_carrier` names.
+fn is_option_carrier(builder: &Builder, owner: i64) -> bool {
+    let index = carrier_position(owner);
+    usize::try_from(index)
+        .ok()
+        .and_then(|slot| builder.intrinsics.get(slot))
+        .is_some_and(|declaration| declaration.carrier == Carrier::Option)
+}
+
+/// Use retained place storage for carrier views, preserving full union indexes after a checker-proven narrowing.
+fn isinstance_source_type(
+    builder: &mut Builder,
+    value: &SourceOperand,
+    checked: &IncanType,
+    span: &SourceSpan,
+) -> Result<PlanType, String> {
+    if let IncanType::Generic { base, .. } = checked
+        && (checked.is_union() || collection_type(base) == Some(CollectionTypeId::Option))
+    {
+        let source = isinstance_place(builder, value, span)?;
+        return Ok(place_type(&builder.locals, &source));
+    }
+    native_source_type(
+        builder.constructors(),
+        builder.nominals(),
+        builder.enums(),
+        &builder.unions,
+        checked,
+        &builder.intrinsics,
+        "",
+    )
+}
+
+/// The storage whose tag `isinstance` reads in place.
+fn isinstance_place(builder: &mut Builder, value: &SourceOperand, span: &SourceSpan) -> Result<Place, String> {
+    match value {
+        SourceOperand::Place(read) => scalar_place(builder, &read.place, span),
+        SourceOperand::Constant(_) => Err("unsupported Body IR nonplace union isinstance".into()),
+    }
 }

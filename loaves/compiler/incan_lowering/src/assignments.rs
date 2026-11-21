@@ -1,26 +1,32 @@
 //! Lower assignments to locals, stored places, and elements, including checked integer updates.
 
 use incan_mir_plan_native::{
-    BinaryOp, Local, Place, PlanType, Projection, RvalueKind, SourceSpan, TerminatorKind, UnaryOp, Unwind,
+    BinaryOp, Local, Operand, Place, PlanType, Projection, RvalueKind, SourceSpan, TerminatorKind, UnaryOp, Unwind,
     assign as plan_assign, place as plan_place, sized_plan_type,
 };
 use incan_semantics_core::body_ir::{
     AggregateKind, BinOp, BodyIrModule, Constant as SourceConstant, Operand as SourceOperand, OwnershipFact,
-    Place as SourcePlace, Rvalue,
+    Place as SourcePlace, PlaceElem, Rvalue,
 };
 
 use crate::async_::is_future;
 use crate::builtin_calls::{lower_boolean_operator, lower_numeric_helper, validate_exact_float};
-use crate::carrier_operands::boundary_plan_operand;
+use crate::builtins::list_call;
+use crate::carrier_operands::{boundary_plan_operand, element_operand, element_plan_operand};
 use crate::checked_values::{scalar_operand, scalar_place};
 use crate::closure_lifting::{
     ClosureExpression, assign_callable, lower_closure, lower_generator_expression, move_closure, stored_callable,
 };
 use crate::closures::callable_copy_type;
-use crate::collections::is_collection;
-use crate::element_places::is_element_place;
+use crate::collections::{collection_arguments, insert_collection, is_collection, is_owned_collection};
+use crate::element_borrows::{mutable_element_place, mutable_element_prefix};
+use crate::element_places::{element_place_type, element_prefix_type, is_element_place};
+use crate::explicit_arguments::reference_contract;
 use crate::formatting::{lower_format, lower_string_assignment};
-use crate::frame::{Builder, cleanup_exit, literal, place_type, read_place, track_rvalue_moves, value_type};
+use crate::frame::{
+    Builder, cleanup_exit, dereferenced_place, literal, place_type, read_place, temporary, track_rvalue_moves,
+    value_type,
+};
 use crate::frozen_plan::frozen_bytes_literal;
 use crate::generators::generator_reference;
 use crate::hashed_collections::{collection_assignment, dictionary_entry_assignment, dictionary_index_assignment};
@@ -28,8 +34,8 @@ use crate::list_iteration::{
     inherit_borrowed_item, initialize_text_iterator, iterator_assignment, list_root_place, operand_list_place,
 };
 use crate::list_methods::{indexed_assignment, indexed_assignment_at};
-use crate::list_values::{frozen_list_assignment, list_assignment, list_base_place};
-use crate::lists::is_list;
+use crate::list_values::{frozen_list_assignment, list_assignment, list_base_place, list_borrow};
+use crate::lists::{is_exclusive_borrow, is_list, is_owned_list, list_element, require_list_shape};
 use crate::matches::lower_enum_match;
 use crate::model_lists::{prefix_place, structural_prefix};
 use crate::model_values::compare_models;
@@ -59,7 +65,7 @@ pub fn lower_assignment(
     }
     if !destination.projection.is_empty() {
         if is_element_place(builder, destination)? {
-            return Err(untranslated("assignments::element_assignment"));
+            return element_assignment(module, builder, destination, value, span);
         }
         let base = list_base_place(builder, destination, span)?;
         let ty = builder.locals[base.local as usize].ty.clone();
@@ -427,5 +433,91 @@ fn lower_checked_int_assignment(
         span,
     );
     builder.emit(plan_assign(target, RvalueKind::Use(result), span));
+    Ok(())
+}
+
+/// Evaluate a replacement before reborrowing checked element storage, then write its last index or structural field.
+fn element_assignment(
+    module: &BodyIrModule,
+    builder: &mut Builder,
+    destination: &SourcePlace,
+    value: &Rvalue,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let ty = element_place_type(builder, destination)?;
+    if is_exclusive_borrow(&ty) {
+        return exclusive_view_element_assignment(module, builder, destination, value, &ty, span);
+    }
+    let replacement = temporary(builder, ty.clone(), span);
+    lower_local_assignment(module, builder, replacement.clone(), value, span)?;
+    let owned = builder.owned.contains(&replacement.local);
+    let argument = element_plan_operand(builder, read_place(replacement, owned, span), &ty, span)?;
+    let last = destination.projection.len() - 1;
+    let container_type = element_prefix_type(builder, destination, last)?;
+    if let PlaceElem::Index(index) = &destination.projection[last] {
+        if is_list(&container_type) {
+            let subscript = scalar_operand(builder, index, span)?;
+            let container = mutable_element_prefix(builder, destination, last, span)?;
+            let (leaf, depth) = require_list_shape(&container_type, "invalid Body IR list write container")?;
+            let reference = list_borrow(builder, container, true, span)?;
+            let output = temporary(builder, PlanType::Unit, span);
+            list_call(
+                builder,
+                "set_list",
+                list_element(&leaf, depth),
+                vec![PlanType::ListMutRef(leaf, depth), PlanType::Int, ty],
+                PlanType::Unit,
+                vec![reference, subscript, argument],
+                output,
+                span,
+            );
+            return Ok(());
+        }
+        if is_collection(&container_type) {
+            let types = collection_arguments(&container_type);
+            if types.len() != 2 {
+                return Err("unsupported Body IR set indexing assignment".into());
+            }
+            let subscript = element_operand(builder, index, &types[0], span)?;
+            let container = mutable_element_prefix(builder, destination, last, span)?;
+            return insert_collection(builder, &container, vec![subscript, argument], span);
+        }
+    }
+    let target = mutable_element_place(builder, destination, span)?;
+    write_replacement(builder, target, &ty, argument, span);
+    Ok(())
+}
+
+/// Replace an owned destination's old value, or overwrite a plain one.
+fn write_replacement(builder: &mut Builder, target: Place, ty: &PlanType, argument: Operand, span: &SourceSpan) {
+    let operation = RvalueKind::Use(argument);
+    if *ty == PlanType::String || is_owned_list(ty) || is_owned_collection(ty) || is_nominal_type(ty) {
+        replace_owned_destination(builder, target, operation, span);
+    } else {
+        builder.emit(plan_assign(target, operation, span));
+    }
+}
+
+/// Replace the referent reached through a stored exclusive view without replacing or moving the list's reference slot.
+fn exclusive_view_element_assignment(
+    module: &BodyIrModule,
+    builder: &mut Builder,
+    destination: &SourcePlace,
+    value: &Rvalue,
+    reference_type: &PlanType,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let (referent, writable) = reference_contract(reference_type)?;
+    if !writable {
+        return Err("unsupported Body IR write through a shared stored view".into());
+    }
+    let replacement = temporary(builder, referent.clone(), span);
+    lower_local_assignment(module, builder, replacement.clone(), value, span)?;
+    let owned = builder.owned.contains(&replacement.local);
+    let argument = element_plan_operand(builder, read_place(replacement, owned, span), &referent, span)?;
+    let slot_reference = mutable_element_place(builder, destination, span)?;
+    let stored_reference = dereferenced_place(&slot_reference, reference_type.clone(), span)?;
+    let target = dereferenced_place(&stored_reference, referent.clone(), span)?;
+    write_replacement(builder, target, &referent, argument, span);
     Ok(())
 }

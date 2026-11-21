@@ -4,8 +4,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use incan_mir_plan_native::{
-    Carrier, EnumDeclaration, EnumVariant, ListLeaf, Operand, Place, PlanType, Projection, RvalueKind, SourceSpan,
-    carrier_position, list_leaf_type, source_span,
+    BinaryOp, Carrier, Constant, EnumDeclaration, EnumVariant, ListLeaf, Operand, Place, PlanType, Projection,
+    RvalueKind, SourceSpan, TerminatorKind, assign as plan_assign, carrier_position, list_leaf_type, source_span,
 };
 use incan_semantics_core::IncanType;
 use incan_semantics_core::body_ir::{
@@ -15,7 +15,7 @@ use incan_semantics_core::body_ir::{
 
 use crate::compiler_record_adapters::{authored_plan_checked_type, semantic_key_matches_native};
 use crate::enums::{enum_owner, validate_payload_patterns};
-use crate::frame::Builder;
+use crate::frame::{Builder, literal, read_place, temporary};
 use crate::layout_types::native_source_type;
 use crate::native_type_identity::ConstructorIndex;
 use crate::nominal_frames::declaration_storage;
@@ -596,4 +596,62 @@ pub fn union_pattern_slot(builder: &Builder, owner: i64, pattern: &Pattern) -> R
         }
         _ => Err("unsupported Body IR union pattern".into()),
     }
+}
+
+/// Match either string identity against both carriers while preserving exact construction and narrowing slots.
+pub fn union_test_slots(
+    unions: &[IncanType],
+    owner: i64,
+    member: &PlanType,
+    intrinsics: &[EnumDeclaration],
+) -> Result<Vec<i64>, String> {
+    retained_union(unions, owner, intrinsics)?;
+    let text = |ty: &PlanType| matches!(ty, PlanType::String | PlanType::FrozenStr);
+    let variants = &intrinsics[carrier_position(owner) as usize].variants;
+    let mut slots = Vec::new();
+    for (slot, variant) in variants.iter().enumerate() {
+        let payload = &variant.fields;
+        let same_string_identity = text(member) && payload.len() == 1 && text(&payload[0]);
+        if (payload.len() == 1 && payload[0] == *member) || same_string_identity {
+            slots.push(slot as i64);
+        }
+    }
+    Ok(slots)
+}
+
+/// Join tag comparisons through native boolean branches without consuming any union payload.
+pub fn test_union_tag(builder: &mut Builder, tag: &Place, slots: &[i64], span: &SourceSpan) -> RvalueKind {
+    let output = temporary(builder, PlanType::Bool, span);
+    builder.emit(plan_assign(
+        output.clone(),
+        RvalueKind::Use(literal(Constant::Bool(false), span)),
+        span,
+    ));
+    let matched = builder.new_block(span);
+    let joined = builder.new_block(span);
+    for slot in slots {
+        let condition = temporary(builder, PlanType::Bool, span);
+        let operation = RvalueKind::Binary(
+            BinaryOp::Equal,
+            read_place(tag.clone(), false, span),
+            literal(Constant::Int(*slot), span),
+        );
+        builder.emit(plan_assign(condition.clone(), operation, span));
+        let missed = builder.new_block(span);
+        builder.finish(
+            TerminatorKind::SwitchBool(read_place(condition, false, span), missed, matched),
+            span,
+        );
+        builder.select(missed);
+    }
+    builder.finish(TerminatorKind::Goto(joined), span);
+    builder.select(matched);
+    builder.emit(plan_assign(
+        output.clone(),
+        RvalueKind::Use(literal(Constant::Bool(true), span)),
+        span,
+    ));
+    builder.finish(TerminatorKind::Goto(joined), span);
+    builder.select(joined);
+    RvalueKind::Use(read_place(output, false, span))
 }
