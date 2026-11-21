@@ -130,7 +130,7 @@ fn retain_annotation_identities(body: &mut bir::Body, program: &ast::Program, fa
             IncanType::Generic { base, .. } => base,
             _ => continue,
         };
-        std::sync::Arc::make_mut(&mut body.named_type_identities).insert(name.clone(), identity.clone());
+        super::nominal_carriers::retain_binding(&mut body.named_type_identities, name, identity);
     }
 }
 

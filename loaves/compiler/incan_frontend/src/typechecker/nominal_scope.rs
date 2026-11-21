@@ -192,10 +192,51 @@ impl TypeChecker {
                 identities.insert(name.clone(), identity.clone());
             }
         }
-        if let Some(identity) = self.runtime_surface_native_identity(SurfaceTypeId::TaskJoinError) {
-            identities.insert(surface_types::TASK_JOIN_ERROR_TYPE_NAME.to_owned(), identity);
+        // A handle's Future output can introduce TaskJoinError without importing its name. Resolve the native
+        // carrier only for modules whose checked values or signatures can actually use that output.
+        let error = surface_types::TASK_JOIN_ERROR_TYPE_NAME;
+        let needs_error = identities.contains_key(error)
+            || self
+                .type_info
+                .expressions
+                .expr_types
+                .values()
+                .any(uses_task_join_carrier)
+            || self
+                .type_info
+                .calls
+                .inferred_call_result_types
+                .values()
+                .any(uses_task_join_carrier)
+            || self.type_info.declarations.function_bindings.values().any(|binding| {
+                uses_task_join_carrier(&binding.return_type)
+                    || binding
+                        .params
+                        .iter()
+                        .any(|parameter| uses_task_join_carrier(&parameter.ty))
+            });
+        if needs_error && let Some(identity) = self.runtime_surface_native_identity(SurfaceTypeId::TaskJoinError) {
+            identities.insert(error.to_owned(), identity);
         }
         identities
+    }
+
+    /// An inferred task result may first appear while checking an expression, after declaration preparation.
+    pub(super) fn retain_task_join_carrier(&mut self, ty: &ResolvedType) {
+        let error = surface_types::TASK_JOIN_ERROR_TYPE_NAME;
+        if !self
+            .type_info
+            .declarations
+            .body_ir_native_type_identities
+            .contains_key(error)
+            && uses_task_join_carrier(ty)
+            && let Some(identity) = self.runtime_surface_native_identity(SurfaceTypeId::TaskJoinError)
+        {
+            self.type_info
+                .declarations
+                .body_ir_native_type_identities
+                .insert(error.to_owned(), identity);
+        }
     }
 
     /// Return one runtime-owned surface type's native identity after authenticating its exact package declaration.
@@ -204,15 +245,28 @@ impl TypeChecker {
         let surface_module = surface_types::stdlib_module_path(surface)?;
         let namespace = surface_module.split('.').nth(1)?;
         let package = incan_lang::lang::stdlib::find_namespace(namespace)?.package?;
-        let manifest = self.loaves.manifest(package)?;
-        let public_path = std::iter::once(package.to_owned())
-            .chain(surface_module.split('.').skip(1).map(str::to_owned))
-            .chain(std::iter::once(surface_types::as_str(surface).to_owned()))
-            .collect::<Vec<_>>();
-        let canonical = manifest
-            .contract_metadata
-            .identity_graph
-            .canonical_for_public_path(&public_path)?;
+        let module: Vec<_> = surface_module.split('.').skip(1).map(str::to_owned).collect();
+        let name = surface_types::as_str(surface);
+        let canonical = self.loaves.type_scope(package, &module).ok()?.and_then(|scope| {
+            scope
+                .names
+                .get(name)
+                .filter(|declared| declared.name == name && declared.module == module)
+                .and_then(|declared| declared.identity.as_ref())
+                .and_then(crate::library_manifest::CanonicalIdentityExport::hydrate)
+        });
+        // Older installed sets and source providers may not publish an identity for this declaration.
+        let canonical = canonical.or_else(|| {
+            let public_path: Vec<_> = std::iter::once(package.to_owned())
+                .chain(module)
+                .chain(std::iter::once(name.to_owned()))
+                .collect();
+            self.loaves
+                .manifest(package)?
+                .contract_metadata
+                .identity_graph
+                .canonical_for_public_path(&public_path)
+        })?;
         let SymbolOrigin::Package { library, module_path } = &canonical.origin else {
             return None;
         };
@@ -363,5 +417,30 @@ impl TypeChecker {
             }
             self.errors.push(error);
         }
+    }
+}
+
+/// Task handles can introduce their join error even when it appears only inside an inferred container.
+fn uses_task_join_carrier(ty: &ResolvedType) -> bool {
+    let carrier = |name: &str| {
+        matches!(
+            surface_types::from_str(name).or_else(|| surface_types::from_runtime_rust_path(name)),
+            Some(SurfaceTypeId::JoinHandle | SurfaceTypeId::TaskJoinError)
+        )
+    };
+    match ty {
+        ResolvedType::Named(name) | ResolvedType::RustPath(name) => carrier(name),
+        ResolvedType::Generic(name, args) => carrier(name) || args.iter().any(uses_task_join_carrier),
+        ResolvedType::Tuple(parts) => parts.iter().any(uses_task_join_carrier),
+        ResolvedType::Function(params, result) => {
+            uses_task_join_carrier(result) || params.iter().any(|p| uses_task_join_carrier(&p.ty))
+        }
+        ResolvedType::Ref(inner)
+        | ResolvedType::RefMut(inner)
+        | ResolvedType::TypeToken(inner)
+        | ResolvedType::FrozenList(inner)
+        | ResolvedType::FrozenSet(inner) => uses_task_join_carrier(inner),
+        ResolvedType::FrozenDict(key, value) => uses_task_join_carrier(key) || uses_task_join_carrier(value),
+        _ => false,
     }
 }

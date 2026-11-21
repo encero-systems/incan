@@ -119,6 +119,7 @@ pub(super) fn build_module_seed_observed(
     bir::BodyIrModule {
         published_callables,
         runtime_callable_bindings: Vec::new(),
+        runtime_binding_scopes: Vec::new(),
         string_conversion_contract: bir::StringConversionContract::Unselected,
         decorated_bindings,
         entrypoint_effects: entrypoint_effects::collect(program),
@@ -277,6 +278,7 @@ pub(super) fn collect_published_constants(
                     | bir::Constant::TypedNumeric(_)
                     | bir::Constant::FrozenAggregate(..)
                     | bir::Constant::NumericNewtype(_)
+                    | bir::Constant::RustItem(..)
             )
         }))
         .map(|declaration| (declaration.canonical.clone(), declaration.value.clone()))
@@ -307,7 +309,7 @@ pub(super) fn lower_source_bodies(
                     vec![partials::lower_source_partial(partial, decl.span, facts)]
                 }
                 ast::Declaration::Function(function) => {
-                    if let Some(body) = facts.type_info.reused_callable_bodies.get(&decl.span) {
+                    if let Some(body) = facts.type_info.selected_callable_body(decl.span) {
                         return vec![body.clone()];
                     }
                     let body = lower_function_body(function, decl.span, facts);
