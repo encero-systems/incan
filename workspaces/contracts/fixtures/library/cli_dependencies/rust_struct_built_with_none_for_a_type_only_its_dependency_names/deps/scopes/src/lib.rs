@@ -23,3 +23,10 @@ pub struct Ranked {
     /// The level, a type of another crate.
     pub level: levels::Level,
 }
+
+pub use depths;
+
+/// The deepest scope, a type of a crate the caller reaches only through this re-export.
+pub fn deepest() -> depths::Depth {
+    depths::Depth { value: 9 }
+}

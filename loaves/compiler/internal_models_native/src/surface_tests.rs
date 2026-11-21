@@ -347,3 +347,40 @@ fn every_reference_field_default_is_published() {
     assert!(MethodReads::__incan_default_retained().is_empty());
     assert_eq!(RecordRequest::__incan_default_byte_limit(), DEFAULT_READ_BYTES);
 }
+
+/// The by-value field readers Incan callers use agree with the borrowing readers, values and refusals alike.
+#[test]
+fn by_value_field_readers_agree_with_borrowing_readers() {
+    use crate::graph_crumb_fields::{
+        integer, items, items_value, number, number_value, text, text_value, tuple_items, tuple_items_value,
+    };
+    use internal_models_bindings::Value;
+
+    let word = Value::Text("w".into());
+    let list = Value::List(vec![word.clone(), integer(3)]);
+    let pair = Value::Tuple(vec![word.clone(), integer(4)]);
+    assert_eq!(text_value(word.clone()), text(&word));
+    assert_eq!(text_value(integer(1)), text(&integer(1)));
+    assert_eq!(number_value(integer(3)), number(&integer(3)));
+    assert_eq!(number_value(word.clone()), number(&word));
+    assert_eq!(
+        format!("{:?}", items_value(list.clone())),
+        format!("{:?}", items(&list).cloned())
+    );
+    assert_eq!(
+        format!("{:?}", items_value(word.clone())),
+        format!("{:?}", items(&word).cloned())
+    );
+    assert_eq!(
+        format!("{:?}", tuple_items_value(pair.clone(), 2)),
+        format!("{:?}", tuple_items(&pair, 2).cloned())
+    );
+    assert_eq!(
+        format!("{:?}", tuple_items_value(pair.clone(), 3)),
+        format!("{:?}", tuple_items(&pair, 3).cloned())
+    );
+    assert_eq!(
+        format!("{:?}", tuple_items_value(pair.clone(), -1)),
+        format!("{:?}", tuple_items(&pair, usize::MAX).cloned())
+    );
+}

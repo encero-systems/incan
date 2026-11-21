@@ -1,12 +1,13 @@
-# behavior: a consumer constructs a Rust struct with `None` for an Option field whose type only its dependency names, then hands the struct to that dependency; and constructs a Rust struct reached through a library re-export whose field type another crate defines in a private module and re-exports
+# behavior: a consumer constructs a Rust struct with `None` for an Option field whose type only its dependency names, then hands the struct to that dependency; and constructs a Rust struct reached through a library re-export whose field type another crate defines in a private module and re-exports, and reads a struct of a crate it reaches only through a re-export
 # expect-stdout:
 #   7
 #   badge 7 depth -1
 #   2
+#   9
 
 from pub::badges import Ranked, described
 from rust::levels import Level
-from rust::scopes import Badge
+from rust::scopes import Badge, deepest
 
 
 def main() -> None:
@@ -16,3 +17,4 @@ def main() -> None:
     println(described(badge))
     ranked = Ranked(id=1, level=Level(depth=2))
     println(ranked.level.depth)
+    println(deepest().value)

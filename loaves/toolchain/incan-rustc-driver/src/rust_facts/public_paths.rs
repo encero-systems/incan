@@ -1,9 +1,10 @@
 //! Public paths for the nominals of crates a facts session reaches only through another crate.
 //!
-//! rustc shows an item of a crate the stub links directly by its visible path, but an item of an indirect crate by its
-//! definition path (`levels::private::Level`), which no source can name. The checker compares Rust types by path, so
-//! one item needs one spelling in every session: an indirect crate's type or trait is shown by the shortest public path
-//! its own crate's module tree gives it. The standard crates keep rustc's spelling, which the checker already reads.
+//! rustc shows an item of a crate the stub links directly by its visible path, and an item of an indirect crate through
+//! a direct crate's re-export when there is one; otherwise by its definition path (`levels::private::Level`), which no
+//! source can name. The checker compares Rust types by path, so one item needs one spelling in every session: such an
+//! item is shown by the shortest public path its own crate's module tree gives it. The standard crates keep rustc's
+//! spelling, which the checker already reads.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -63,9 +64,15 @@ impl PublicPaths {
     }
 }
 
-/// The public path of an indirect crate's type or trait, or `None` where rustc's own spelling already serves.
+/// The public path of an indirect crate's type or trait, or `None` where rustc's own spelling already serves. rustc
+/// shows an indirect crate's item through a direct crate's re-export when one exists (`hmac::digest::OutputSizeUser`);
+/// that spelling resolves publicly and stays, so only a private definition path is replaced.
 pub(super) fn public_path(tcx: TyCtxt<'_>, def: DefId) -> Option<String> {
     if def.is_local() || !indirect_crate(tcx, def.krate) {
+        return None;
+    }
+    let shown = ty::print::with_no_trimmed_paths!(tcx.def_path_str(def));
+    if super::resolve(tcx, &shown, false) == Some(def) {
         return None;
     }
     PUBLIC_PATHS.with(|memo| {
