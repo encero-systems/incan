@@ -241,7 +241,7 @@ pub(super) const RUST_BORROW_WITHOUT_LIFETIME_CONTRACT: DiagnosticCatalogEntry =
     summary: "A source return or field type names a lifetime-bearing Rust type without a retained lifetime contract.",
     explanation: "A lifetime-bearing Rust type borrows data from somewhere. A parameter of that type is accepted: each call binds its lifetimes independently. A returned value or a stored field needs the relationship between the value and the data it borrows, which no source type states, so DD-0006 refuses it before it reaches rustc.",
     examples: &[
-        "from rust::regex import Captures, Regex\n\ndef first(pattern: &Regex, text: str) -> Option[Captures]:\n    return pattern.captures(text)",
+        "from rust::regex import Captures, Regex\n\ndef first(pattern: Borrowed[Regex], text: str) -> Option[Captures]:\n    return pattern.captures(text)",
     ],
     common_causes: &["Returning a regex capture value from a helper function."],
     fixes: &[
@@ -354,16 +354,16 @@ pub(super) const OPERATOR_HAS_NO_TYPE_PARAMETER_BOUND: DiagnosticCatalogEntry = 
 
 pub(super) const METHOD_DECORATOR_RECEIVER_SPELLING: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-T0110",
-    title: "Method decorator spells the receiver with `&`",
+    title: "Method decorator spells the receiver as a borrow",
     severity: "error",
     phase: "typecheck",
-    summary: "A method decorator's shape writes the decorated method's receiver as `&Owner` or `&mut Owner` instead of the way the method writes it.",
-    explanation: "A decorator on a method receives the method as a callable whose first parameter is the receiver, and returns the callable that takes the method's place. Incan source spells that receiver the way the method does. A decorator on `def label(self, value: int) -> str` accepts `(Box, int) -> str`; a decorator on `def bump(mut self, value: int) -> int` accepts `(mut Box, int) -> int`, where `mut` marks the parameter whose changes the caller sees, as it does on a `def` parameter. A function a decorator returns in the method's place is declared the same way: `def parse(box: Box, value: int) -> int`, or `def grow(mut box: Box, value: int) -> int` for a `mut self` method. The compiler decides how the receiver is passed, so the `&Owner` and `&mut Owner` spellings are refused in that position; `&T` and `&mut T` stay available where a Rust signature needs them.",
+    summary: "A method decorator's shape writes the decorated method's receiver as `Borrowed[Owner]` or `BorrowedMut[Owner]` instead of the way the method writes it.",
+    explanation: "A decorator on a method receives the method as a callable whose first parameter is the receiver, and returns the callable that takes the method's place. Incan source spells that receiver the way the method does. A decorator on `def label(self, value: int) -> str` accepts `(Box, int) -> str`; a decorator on `def bump(mut self, value: int) -> int` accepts `(mut Box, int) -> int`, where `mut` marks the parameter whose changes the caller sees, as it does on a `def` parameter. A function a decorator returns in the method's place is declared the same way: `def parse(box: Box, value: int) -> int`, or `def grow(mut box: Box, value: int) -> int` for a `mut self` method. The compiler decides how the receiver is passed, so a borrow of the owner, `Borrowed[Owner]` or `BorrowedMut[Owner]`, is refused in that position; borrows stay available everywhere else.",
     examples: &[
-        "class Box:\n    value: int\n\n    @as_int\n    def label(self, value: int) -> str:\n        return \"value\"\n\ndef parse(box: &Box, value: int) -> int:\n    return value\n\ndef as_int(func: (&Box, int) -> str) -> (&Box, int) -> int:\n    return parse",
+        "class Box:\n    value: int\n\n    @as_int\n    def label(self, value: int) -> str:\n        return \"value\"\n\ndef parse(box: Borrowed[Box], value: int) -> int:\n    return value\n\ndef as_int(func: (Borrowed[Box], int) -> str) -> (Borrowed[Box], int) -> int:\n    return parse",
     ],
     common_causes: &[
-        "A method decorator written before the receiver spelling changed, when RFC 036 required `&Owner` and `&mut Owner`.",
+        "A method decorator written before the receiver spelling changed, when RFC 036 required `&Owner` and `&mut Owner` (now `Borrowed[Owner]` and `BorrowedMut[Owner]`).",
         "Carrying a Rust `&self` or `&mut self` signature over into an Incan callable type.",
     ],
     fixes: &[
