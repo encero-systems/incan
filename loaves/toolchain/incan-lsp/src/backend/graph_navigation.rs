@@ -36,6 +36,7 @@ impl GraphSnapshot {
         version: i32,
     ) -> std::result::Result<Self, Box<dyn std::error::Error>> {
         let records = collect_live_unit_codegraph(session, modules, analysis);
+        session.loaves().validate_demands()?;
         let mut declarations = HashMap::new();
         let mut canonical_declarations = BTreeMap::new();
         for (index, record) in records.iter().enumerate() {

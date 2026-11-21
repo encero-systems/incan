@@ -240,7 +240,9 @@ impl VocabExports {
 
     /// Decode one authenticated vocabulary record without exposing the private manifest wire type.
     pub(crate) fn decode_compiler_record_value(content: &[u8]) -> Result<Self, LibraryManifestError> {
-        LibraryManifest::decode_compiler_record_value::<RawVocabExports>(content).map(RawVocabExports::into_semantic)
+        let raw = LibraryManifest::decode_compiler_record_value::<RawVocabExports>(content)?;
+        super::validation::validate_vocabulary(&raw)?;
+        Ok(raw.into_semantic())
     }
 }
 
