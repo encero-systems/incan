@@ -20,7 +20,6 @@ use crate::namespace_order::{
 use crate::overload_members::{
     encode_method_lookups, encode_method_members, method_member_request, read_method_lookups, read_method_members,
 };
-use crate::plan_function_records::{encode_entry_record, verify_entry_record};
 use crate::record_scope::{ReadScope, RecordKey, RecordRead};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -180,24 +179,6 @@ fn compiler_import_closures_certify_modules_without_namespace_bodies() -> Result
         ])?)
         .is_err()
     );
-    Ok(())
-}
-
-#[test]
-fn entry_validation_depends_on_all_current_inputs() -> Result<(), String> {
-    let inputs = strings(&["incan.plan-entry/2", "toolchain", "main", "implicit-main", "callee-key"]);
-    let record = encode_entry_record("main", &inputs)?;
-    verify_entry_record(&record, "main", &inputs)?;
-    assert!(verify_entry_record(&record, "other", &inputs).is_err());
-    for index in 0..inputs.len() {
-        let mut changed = inputs.clone();
-        changed[index] = "different".into();
-        assert!(verify_entry_record(&record, "main", &changed).is_err());
-    }
-    let mut trailing = record.clone();
-    trailing.push(120);
-    assert!(verify_entry_record(&trailing, "main", &inputs).is_err());
-    assert!(verify_entry_record(b"invalid", "main", &inputs).is_err());
     Ok(())
 }
 

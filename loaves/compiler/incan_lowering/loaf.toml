@@ -1,0 +1,28 @@
+[project]
+description = "The lowering from checked Body IR to native plans"
+license = "Apache-2.0"
+name = "incan_lowering"
+private = true
+version = "0.6.0-dev.9"
+
+[rust]
+edition = "2024"
+name = "incan_lowering"
+type = "lib"
+
+# Replays the golden lowering corpus captured from the reference toolchain and reports byte identity.
+[[rust.bin]]
+name = "lowering-replay"
+path = "src/bin/lowering_replay.rs"
+
+[dependencies]
+hex = { loaf = "crates-io/hex", version = "0.4.3" }
+incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
+incan_mir_plan_native = { loaf = "incan_mir_plan_native", path = "../incan_mir_plan_native" }
+internal_models_native = { loaf = "internal_models_native", path = "../internal_models_native" }
+incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
+internal_models = { loaf = "internal_models", path = "../internal_models" }
+postcard = { default-features = false, features = ["use-std"], loaf = "crates-io/postcard", version = "1.1" }
+serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
+serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
+sha2 = { loaf = "crates-io/sha2", version = "0.10.9" }

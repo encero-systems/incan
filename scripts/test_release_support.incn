@@ -241,20 +241,16 @@ def test_seed_bridge_is_one_direct_child_with_only_the_authenticated_sources() -
     validate_seed_bridge(SHA, bridge, [SHA], paths)?
     readers = paths + [
         "loaves/compiler/internal_models/src/namespace_rows.incn",
-        "loaves/compiler/internal_models/src/plan_function_records.incn",
         "loaves/compiler/internal_models/src/plan_wire_rows.incn",
     ]
     blobs = [
         "a908ce5b343728c59734a0d049f6b6c98209fd24", "35b42a2864d4c11b76ab03efcdf7876c40072bc2",
-        "dca2fde766f04f0e2b6c77e829eb2543b72cf93e", "ca636435b970bb294d2bea384326bc259aa33c20",
         "4db20dca287cb21e8b5eae59606db5e7dc8d6bf3", "eea255210422c60d32935990c55cd20456efc44c",
     ]
     validate_seed_bridge(SHA, bridge, [SHA], readers, blobs)?
-    with_entry = ["57239d8f2e7e6abd83c3c8ed5b2e7c47c6c8c4ac", blobs[1],
-                  "ce47c433bb20d5c3d8f836c16ee274875cab183a", "b65b24bc0a2352efb7c6ea58e39d69ab38dbedfb",
-                  blobs[4], blobs[5]]
+    with_entry = ["57239d8f2e7e6abd83c3c8ed5b2e7c47c6c8c4ac", blobs[1], blobs[2], blobs[3]]
     validate_seed_bridge(SHA, bridge, [SHA], readers, with_entry)?
-    assert validate_seed_bridge(SHA, bridge, [SHA], readers, with_entry[:2] + blobs[2:]).is_err()
+    assert validate_seed_bridge(SHA, bridge, [SHA], readers, with_entry[:3] + [blobs[0]]).is_err()
     assert validate_seed_bridge(SHA, bridge, [SHA], readers).is_err()
     assert validate_seed_bridge(SHA, bridge, [SHA], readers, blobs[1:] + [blobs[0]]).is_err()
     assert validate_seed_bridge(SHA, bridge, [bridge], readers, blobs).is_err()

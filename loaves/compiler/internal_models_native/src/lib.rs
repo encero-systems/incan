@@ -35,10 +35,8 @@ pub mod namespace_references;
 pub mod namespace_rows;
 pub mod namespace_schema;
 pub mod overload_members;
-pub mod plan_function_records;
 pub mod plan_module_records;
 pub mod plan_wire_rows;
-pub mod plan_wire_schema;
 mod published_defaults;
 pub mod read_receipts;
 pub mod record_scope;
@@ -159,21 +157,12 @@ pub use overload_members::{
     encode_method_lookups, encode_method_members, method_lookup_suffix, method_member_request, read_method_lookups,
     read_method_members, scope_output_suffix,
 };
-pub use plan_function_records::{
-    LoweringDemands, PlanFunctionRecord, decode_plan_function_record, encode_entry_record, encode_lowering_demand,
-    encode_plan_function_record, plan_function_digest, verify_entry_record,
-};
 pub use plan_module_records::{
     ADMITTED_MODULE_NOTE, PARTIAL_MODULE_NOTE, PLAN_MODULE_FAMILY, PLAN_MODULE_PAGE, POSITIONED_MODULE_PAGE,
     PlanModuleFunction, PlanModuleValue, REPOSITION_MODULE_PAGE, decode_plan_module, encode_plan_module,
 };
 pub use plan_wire_rows::{
     PreparedWireReader, admit_wire, enum_schema, read_wire, variant_schema, wire_field, write_wire,
-};
-pub use plan_wire_schema::{
-    stored_external_descriptions, stored_function_descriptions, stored_instance_request_descriptions,
-    stored_layout_checked_type_descriptions, stored_layout_enum_declaration_descriptions,
-    stored_layout_model_declaration_descriptions, stored_layout_zip_carrier_descriptions, stored_product_descriptions,
 };
 pub use read_receipts::{RECEIPT_SCHEMA, decode_read_receipt, encode_read_receipt};
 pub use record_scope::{

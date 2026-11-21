@@ -1,0 +1,19 @@
+[project]
+name = "incan_mir_plan_native"
+version = "0.6.0-dev.9"
+description = "Native-plan records in Rust: plan types, keyed function products and the native-interface codec"
+license = "Apache-2.0"
+private = true
+
+[rust]
+name = "incan_mir_plan_native"
+type = "lib"
+edition = "2024"
+
+[dependencies]
+incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
+internal_models_native = { loaf = "internal_models_native", path = "../internal_models_native" }
+internal_models_bindings = { path = "../internal_models_bindings" }
+serde = { features = ["derive"], loaf = "crates-io/serde", version = "1" }
+serde_json = { loaf = "crates-io/serde_json", version = "1" }
+sha2 = { loaf = "crates-io/sha2", version = "0.10" }

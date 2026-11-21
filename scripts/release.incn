@@ -14,10 +14,8 @@ from native_build import (
     PendingToolBuild,
     StandardGeneration,
     StandardProfile,
-    build_runtime,
     build_candidate_standard_with_lsp,
     build_oven_with_standard_profile,
-    build_source_interfaces,
     build_source_tools,
     build_standard_packages,
     cancel_tool_build,
@@ -78,22 +76,20 @@ const SEED_BRIDGE_SOURCES: FrozenList[str] = [
     "loaves/compiler/internal_models/src/checker_records.incn",
     "loaves/compiler/internal_models/src/compiled_body_rows.incn",
 ]
-# The dev.8 seed exposes the checked RowSet interface. Its three compiler readers have
-# a bootstrap spelling using that interface. Authenticate both ends so that a change to
-# a qualified reader cannot silently compile through a stale seed implementation.
+# The dev.8 seed exposes the checked RowSet interface. Its two compiler readers have a bootstrap spelling using that
+# interface; the plan-function records are Rust in incan_mir_plan_native and have no Incan reader to bridge.
+# Authenticate both ends so that a change to a qualified reader cannot silently compile through a stale seed
+# implementation.
 const SEED_ROW_READERS: FrozenList[str] = [
     "loaves/compiler/internal_models/src/namespace_rows.incn",
-    "loaves/compiler/internal_models/src/plan_function_records.incn",
     "loaves/compiler/internal_models/src/plan_wire_rows.incn",
 ]
 const SEED_ROW_BLOBS: FrozenList[str] = [
     "a908ce5b343728c59734a0d049f6b6c98209fd24", "35b42a2864d4c11b76ab03efcdf7876c40072bc2",
-    "dca2fde766f04f0e2b6c77e829eb2543b72cf93e", "ca636435b970bb294d2bea384326bc259aa33c20",
     "4db20dca287cb21e8b5eae59606db5e7dc8d6bf3", "eea255210422c60d32935990c55cd20456efc44c",
 ]
 const SEED_ROW_BLOBS_WITH_ENTRY_VERIFICATION: FrozenList[str] = [
     "57239d8f2e7e6abd83c3c8ed5b2e7c47c6c8c4ac", "35b42a2864d4c11b76ab03efcdf7876c40072bc2",
-    "ce47c433bb20d5c3d8f836c16ee274875cab183a", "b65b24bc0a2352efb7c6ea58e39d69ab38dbedfb",
     "4db20dca287cb21e8b5eae59606db5e7dc8d6bf3", "eea255210422c60d32935990c55cd20456efc44c",
 ]
 const SEED_BRIDGE_SOURCE: str = "seed-bridge-source"
@@ -510,21 +506,13 @@ def apply_release_trust(source: Path, toolchain: Path) -> Result[None, str]:
 
 
 def build_source_closure(run: ReleaseRun) -> Result[Candidate, str]:
-    """Build the conductor and fresh support/runtime/standard source closure with the released seed."""
+    """Build the conductor and the fresh support (the Rust runtime included) and standard source closure with the seed."""
     seed_context = seed_tool_context(run)?
     conductor, helper = build_source_tools(seed_context, run.seed_home)?
     context = native_context(run, conductor, run.paths.home)
     withdraw_seed_providers(run)?
     readmit_build_home(context, helper, "source-home-readmit")?
     publish_support(context, helper)?
-    interfaces_started = Instant.now()
-    interfaces = build_source_interfaces(context, helper)?
-    append_timing(
-        run.paths.output.joinpath("timings.tsv"),
-        "source-interfaces",
-        interfaces_started.elapsed().as_secs_f64(),
-    )?
-    _ = build_runtime(context, helper, Some(interfaces), true, "candidate-")?
     require_unique_runtime_root(context)?
     build_standard_packages(context, helper, "", standard_profiles(StandardGeneration.SourceClosure))?
     return Ok(Candidate(context=context, oven=conductor, lsp=Path(""), pending_lsp=None))
@@ -644,7 +632,6 @@ def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Ca
             builder=candidate.oven.0,
             stdlib=run.paths.source.joinpath("loaves/stdlib").0,
             profile="release",
-            refresh=false,
             log=run.paths.output.joinpath("driver-build.log"),
         ),
     )
@@ -672,7 +659,6 @@ def build_bridge_compiler(run: ReleaseRun, candidate: Candidate) -> Result[None,
             builder=candidate.oven.0,
             stdlib=bridge.joinpath("loaves/stdlib").0,
             profile="release",
-            refresh=false,
             log=run.paths.output.joinpath("bridge-driver-build.log"),
             readmit=true,
             standard=true,
@@ -686,12 +672,8 @@ def build_bridge_compiler(run: ReleaseRun, candidate: Candidate) -> Result[None,
 
 
 def build_candidate_providers(context: NativeContext, helper: Path) -> Result[None, str]:
-    """Readmit the relinked compiler, then produce the candidate interfaces and runtime the providers link."""
+    """Readmit the relinked compiler for the candidate providers; the Rust runtime they link is native support."""
     readmit_build_home(context, helper, "candidate-driver-readmit")?
-    interfaces_started = Instant.now()
-    interfaces = build_source_interfaces(context, helper, "candidate-")?
-    append_timing(context.timings, "candidate-source-interfaces", interfaces_started.elapsed().as_secs_f64())?
-    _ = build_runtime(context, helper, Some(interfaces), true)?
     require_unique_runtime_root(context)?
     return Ok(None)
 

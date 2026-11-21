@@ -18,7 +18,7 @@ use incan_frontend::loaf_index::{LoafIndex, LoafNativeClosure, NativeAnchors};
 use incan_frontend::parsed_module::ParsedModule;
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_loaf_names::native_crate_name;
-use incan_mir_lowering::{
+use incan_lowering::{
     RefusalPlanning, RuntimeRequirement, SourceInputs, UnitPlanning, layout_runtime_requirements, program_refusals,
     resume_unit_plan, unit_plan,
 };
@@ -695,7 +695,7 @@ pub fn dependency_report(arguments: &[String]) -> Result<(), Box<dyn std::error:
         dependencies.graph_body_output,
         dependencies.collect_codegraph,
     )?;
-    lower_compilation_plan(
+    let plan = lower_compilation_plan(
         &mut program,
         kind,
         overflow_checks,
@@ -705,6 +705,7 @@ pub fn dependency_report(arguments: &[String]) -> Result<(), Box<dyn std::error:
         None,
         None,
     )?;
+    let native_runtime = native_runtime_operations(&plan, &program.dependencies.origins);
     // The dependency inspection's roots come from checked source and final planning, independently of the
     // storage reads of the measured build. Preserve canonical identities (including overloads) for replay.
     if tracing::enabled!(target: "incan::invocation", tracing::Level::TRACE) {
@@ -736,10 +737,53 @@ pub fn dependency_report(arguments: &[String]) -> Result<(), Box<dyn std::error:
             kind,
             &program.reached_loaves,
             &program.dependencies.origins,
+            &native_runtime,
             &project_root,
         )
     );
     Ok(())
+}
+
+/// The runtime functions a plan calls natively, each with the earliest site that calls it. A runtime operation that
+/// entered a runtime declaration is already a reached root; the Rust runtime publishes none, so its calls appear here.
+fn native_runtime_operations(
+    plan: &crate::plan::Plan,
+    origins: &BTreeMap<CanonicalSymbolId, RootOrigin>,
+) -> BTreeMap<String, RootOrigin> {
+    let entered: BTreeSet<&str> = origins
+        .values()
+        .filter_map(|origin| match origin {
+            RootOrigin::Runtime { path, .. } => Some(path.as_str()),
+            _ => None,
+        })
+        .collect();
+    let mut sites: BTreeMap<&str, (String, i64, i64)> = BTreeMap::new();
+    for external in &plan.externals {
+        let path = external.path.as_str();
+        if !path.starts_with("incan_native_runtime::") || entered.contains(path) {
+            continue;
+        }
+        let site = (external.span.file.to_string(), external.span.line, external.span.column);
+        match sites.get_mut(path) {
+            Some(kept) if site < *kept => *kept = site,
+            Some(_) => {}
+            None => {
+                sites.insert(path, site);
+            }
+        }
+    }
+    sites
+        .into_iter()
+        .map(|(path, (file, line, column))| {
+            let origin = RootOrigin::Runtime {
+                path: path.to_owned(),
+                file,
+                line,
+                column,
+            };
+            (path.to_owned(), origin)
+        })
+        .collect()
 }
 
 /// The names of the packages the checked declaration closure reaches.
@@ -907,7 +951,7 @@ fn compile_unit(
     timing.mark("plan_lowered");
     let tests = crate::test_unit::report(&program.tests, &plan.tests)?;
     if let (Some(products), Some(report)) = (&dependencies.plan_record_products, &dependencies.plan_record_report) {
-        incan_mir_lowering::publish_plan_records(
+        incan_lowering::publish_plan_records(
             &plan,
             products.to_string_lossy().into_owned(),
             report.to_string_lossy().into_owned(),
