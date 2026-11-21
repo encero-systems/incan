@@ -1,4 +1,4 @@
-# behavior: Rust interop preserves constructors (leaving out fields whose defaults the crate publishes), text constants, loans, trait calls, callbacks and facade macros (#2256)
+# behavior: Rust interop preserves constructors (leaving out fields whose defaults the crate publishes), text constants, re-exported types, loans, trait calls, callbacks and facade macros (#2256)
 # expect-stdout:
 #   1 2 3 2
 #   7
@@ -33,6 +33,7 @@
 #   sized 8 1
 #   hello!
 #   5
+#   3
 
 from rust::demo import (
     Builder,
@@ -49,6 +50,7 @@ from rust::demo import (
     FooBar2,
     GREETING,
     Gadget,
+    Holder,
     JoinRel,
     Kind,
     Mac,
@@ -61,6 +63,7 @@ from rust::demo import (
     Request,
     SessionContext,
     Static,
+    Token,
     Widget,
     WriteOptions,
     accept_f32,
@@ -301,3 +304,4 @@ def main() -> None:
     println(shout(GREETING))
     greeting: str = GREETING
     println(len(greeting))
+    println(Holder(token=Token(id=3)).token.id)

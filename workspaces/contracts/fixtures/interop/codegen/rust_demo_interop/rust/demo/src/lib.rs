@@ -203,6 +203,23 @@ pub struct JoinRel {
     pub type_: i64,
 }
 
+/// A definition reached through a re-export.
+pub mod inner {
+    /// A token defined in a submodule.
+    pub struct Token {
+        /// The token number.
+        pub id: i64,
+    }
+}
+
+pub use inner::Token;
+
+/// A holder whose field names the token by its definition path.
+pub struct Holder {
+    /// The held token.
+    pub token: inner::Token,
+}
+
 /// A text constant an Incan caller reads as `str`.
 pub const GREETING: &str = "hello";
 
