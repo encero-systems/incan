@@ -20,8 +20,21 @@ impl Builder<'_> {
                 reason: "missing checked assignment target".into(),
             })?
             .clone();
+        // A native local borrow of a value is the same loan its explicit spelling is (RFC 164).
         let mode = (root.declaration_span == assignment.name_span)
-            .then(|| self.checker.type_info.protocols.explicit_local_modes.get(&root))
+            .then(|| {
+                self.checker
+                    .type_info
+                    .protocols
+                    .explicit_local_modes
+                    .get(&root)
+                    .or_else(|| {
+                        self.checker
+                            .native_borrow_pass
+                            .then(|| self.checker.native_local_borrows.get(&root))
+                            .flatten()
+                    })
+            })
             .flatten();
         if mode.is_none()
             && root.declaration_span == assignment.name_span

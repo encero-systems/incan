@@ -24,7 +24,8 @@ impl Builder<'_> {
             span: expression.span,
             reason: "missing checked operand type".into(),
         })?;
-        if self.copy_value(ty) {
+        // A borrowed Copy value is read through its borrow and copied, in either spelling (RFC 164).
+        if self.copy_value(ty) || self.copy_value(&crate::typechecker::helpers::borrowed_value_type(ty.clone())) {
             return Ok((incoming, None));
         }
         let Some(path) = self.optional_place(expression)? else {
