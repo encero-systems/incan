@@ -587,7 +587,7 @@ impl TypeChecker {
             .body_ir_expr_types
             .insert(pattern.span, value.clone());
         match &pattern.node {
-            Pattern::Binding(name) => {
+            Pattern::Binding(name) | Pattern::MutBinding(name) => {
                 if let Some(identity) = self.type_info.resolved_write_identity(pattern.span, name).cloned() {
                     self.type_info
                         .expressions

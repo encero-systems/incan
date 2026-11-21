@@ -27,6 +27,8 @@ use crate::typechecker::check_stmt::{TupleShape, classify_tuple_shape};
 struct PatternBinding {
     ty: ResolvedType,
     span: Span,
+    /// Whether the alternative wrote the binding `mut name`; every alternative must agree.
+    is_mutable: bool,
 }
 
 /// Return a stable name list for binding-set comparison and diagnostics.

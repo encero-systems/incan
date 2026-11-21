@@ -104,7 +104,7 @@ impl<'a> Parser<'a> {
                 }
             }
             Pattern::Group(inner) => self.shift_spanned_pattern(inner, offset),
-            Pattern::Wildcard | Pattern::Binding(_) | Pattern::Literal(_) => {}
+            Pattern::Wildcard | Pattern::Binding(_) | Pattern::MutBinding(_) | Pattern::Literal(_) => {}
         }
     }
 

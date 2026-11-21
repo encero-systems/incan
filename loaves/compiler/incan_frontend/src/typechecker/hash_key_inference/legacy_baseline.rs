@@ -106,7 +106,7 @@ impl TypeChecker {
                 }
                 Expr::DictComp(comp) => {
                     let mut comp_env = env.clone();
-                    if let (Pattern::Binding(name), Some(item)) = (
+                    if let (Pattern::Binding(name) | Pattern::MutBinding(name), Some(item)) = (
                         &comp.pattern.node,
                         Self::scan_type(&comp.iter, &env)
                             .as_ref()

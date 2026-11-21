@@ -562,3 +562,45 @@ def f(result: Result[int, str]) -> int:
     );
     Ok(())
 }
+
+#[test]
+fn a_binding_pattern_may_be_written_mut() -> Result<(), String> {
+    let source = r#"
+def f(found: Result[tuple[list[int], int], str]) -> int:
+  match found:
+    Ok((mut items, extra)) => return extra
+    Err(mut message) => return 0
+"#;
+    let program = parse_str(source).map_err(|errors| format!("{errors:?}"))?;
+    let arms = sole_match_arms(&program)?;
+    let Pattern::Constructor(_, ok_args) = &arms[0].node.pattern.node else {
+        return Err("expected the Ok constructor pattern".into());
+    };
+    let [PatternArg::Positional(payload)] = ok_args.as_slice() else {
+        return Err("expected one positional payload".into());
+    };
+    let Pattern::Tuple(elements) = &payload.node else {
+        return Err("expected a tuple payload".into());
+    };
+    assert_eq!(elements[0].node, Pattern::MutBinding("items".to_string()));
+    assert_eq!(elements[1].node, Pattern::Binding("extra".to_string()));
+    // The writable binding's span covers `mut` and the name.
+    assert_eq!(&source[elements[0].span.start..elements[0].span.end], "mut items");
+    let Pattern::Constructor(_, err_args) = &arms[1].node.pattern.node else {
+        return Err("expected the Err constructor pattern".into());
+    };
+    assert!(matches!(
+        err_args.as_slice(),
+        [PatternArg::Positional(payload)] if payload.node == Pattern::MutBinding("message".to_string())
+    ));
+    Ok(())
+}
+
+#[test]
+fn mut_in_a_pattern_needs_a_plain_name() {
+    for pattern in ["mut _", "mut Some(value)", "mut 1"] {
+        let source = format!("def f(found: Option[int]) -> int:\n  match found:\n    {pattern} => return 0\n");
+        let errors = parse_str_err(&source, "`mut` must be followed by a plain name");
+        assert!(!errors.is_empty(), "expected `{pattern}` to be refused");
+    }
+}

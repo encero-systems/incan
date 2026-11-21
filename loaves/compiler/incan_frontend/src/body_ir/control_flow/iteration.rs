@@ -21,7 +21,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         reads: &dyn Fn(&str) -> usize,
     ) -> bir::LocalId {
         match &pattern.node {
-            ast::Pattern::Binding(name) => {
+            ast::Pattern::Binding(name) | ast::Pattern::MutBinding(name) => {
                 let total_reads = reads(name);
                 self.declare_new_local_with_reads(name.clone(), item_ty.clone(), loop_scope, span, total_reads)
             }
@@ -45,7 +45,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         reads: &dyn Fn(&str) -> usize,
         out: &mut Vec<bir::Statement>,
     ) {
-        if matches!(pattern.node, ast::Pattern::Binding(_)) {
+        if matches!(pattern.node, ast::Pattern::Binding(_) | ast::Pattern::MutBinding(_)) {
             return;
         }
         let item_place = bir::Place::from_local(item_local);
@@ -86,7 +86,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let span = hir_span(pattern.span);
         match &pattern.node {
             ast::Pattern::Wildcard => {}
-            ast::Pattern::Binding(name) => {
+            ast::Pattern::Binding(name) | ast::Pattern::MutBinding(name) => {
                 let (fact, last_use) = self.ownership_fact_for_place(place, expected_ty);
                 let element = bir::Operand::place(place.clone(), fact, last_use);
                 let total_reads = reads(name);

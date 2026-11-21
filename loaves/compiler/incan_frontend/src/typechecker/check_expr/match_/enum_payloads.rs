@@ -16,6 +16,7 @@ impl TypeChecker {
                     PatternBinding {
                         ty: info.ty.clone(),
                         span: symbol.span,
+                        is_mutable: info.is_mutable,
                     },
                 )),
                 _ => None,

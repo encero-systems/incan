@@ -116,7 +116,9 @@ impl TypeChecker {
             .into_iter()
             .filter(|(_, ty)| self.value_is_not_cloneable(ty))
             .filter_map(|(pattern, _)| match &pattern.node {
-                Pattern::Binding(name) => self.type_info.resolved_write_identity(pattern.span, name).cloned(),
+                Pattern::Binding(name) | Pattern::MutBinding(name) => {
+                    self.type_info.resolved_write_identity(pattern.span, name).cloned()
+                }
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -407,7 +409,7 @@ fn collect_pattern_bindings<'a>(
     bindings: &mut Vec<(&'a Spanned<Pattern>, ResolvedType)>,
 ) {
     match &pattern.node {
-        Pattern::Binding(_) => bindings.push((pattern, item_type.clone())),
+        Pattern::Binding(_) | Pattern::MutBinding(_) => bindings.push((pattern, item_type.clone())),
         Pattern::Tuple(items) => {
             let element_types = match classify_tuple_shape(item_type) {
                 TupleShape::Tuple(types) if types.len() == items.len() => types,

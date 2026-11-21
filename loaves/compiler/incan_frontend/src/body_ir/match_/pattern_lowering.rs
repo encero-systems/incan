@@ -62,7 +62,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
         match &pattern.node {
             ast::Pattern::Wildcard => bir::Pattern::Wildcard,
-            ast::Pattern::Binding(name) => {
+            ast::Pattern::Binding(name) | ast::Pattern::MutBinding(name) => {
                 let local = match seen.get(name) {
                     Some(&local) => local,
                     None => {
@@ -82,10 +82,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     last_use = true;
                     self.native_enum_payload_bindings.insert(local);
                 }
-                // An arm changes this part of the scrutinee through the name, so the name borrows the part itself.
+                // An arm changes this part of the scrutinee through the name, so the name borrows the part itself. A
+                // name written `mut` borrows a scalar part too: its assignments write through to the place (RFC 129).
                 if self.in_place_pattern
                     && !place.projection.is_empty()
-                    && !expected_ty.abi_v0_facts().ownership.is_trivially_copy()
+                    && (matches!(pattern.node, ast::Pattern::MutBinding(_))
+                        || !expected_ty.abi_v0_facts().ownership.is_trivially_copy())
                 {
                     fact = bir::OwnershipFact::MutBorrow;
                 }
