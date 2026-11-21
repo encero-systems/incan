@@ -1,3 +1,4 @@
 """A facade over the models library, re-exporting its Rust key and reader at the package root too."""
 
 pub from pub::models.keys import RecordKey, read_key
+pub from pub::models.records import read_key as records_read_key
