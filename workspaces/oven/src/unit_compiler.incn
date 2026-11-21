@@ -43,6 +43,8 @@ pub model PlanRecordCounts:
 
 # The schema of the sidecar a check writes with `--checked-bodies`.
 const CHECKED_BODIES_SCHEMA: str = "incan.checked-bodies/1"
+# The companion naming a staged page by the digest of its bytes, beside the page the compiler reads.
+pub const DIGEST_COMPANION: str = ".digest"
 
 
 pub def compile_prepared_unit(
@@ -133,6 +135,8 @@ pub def write_selected_records(
         clock = work_clock()
         size = len(page.value)
         publish_binary(directory.joinpath(page.key), page.value)?
+        if page.digest != "":
+            publish_binary(directory.joinpath(page.key + DIGEST_COMPANION), page.digest.encode("utf-8"))?
         work(Operation.EngineGraphStaging, "compiler-input\t" + page.key, clock, size)
     return Ok(None)
 
