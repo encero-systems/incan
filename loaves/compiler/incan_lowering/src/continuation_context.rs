@@ -48,7 +48,12 @@ pub fn continuation_inputs(
         !owners.iter().any(|known| known == owner) || adds_checked_facts(source_context, context, module)
     });
     if !changed {
-        return Ok(ContinuationInputs { modules: Arc::new(Vec::new()), sources: Vec::new(), files: Vec::new(), entry: 0 });
+        return Ok(ContinuationInputs {
+            modules: Arc::new(Vec::new()),
+            sources: Vec::new(),
+            files: Vec::new(),
+            entry: 0,
+        });
     }
     let mut additions = Vec::new();
     let mut addition_sources = Vec::new();
@@ -188,25 +193,59 @@ fn extend_nominal_instances(retained: &mut Vec<NominalInstance>, additions: &[No
 
 /// Detect a refreshed module whose declarations, bodies, or runtime storage are absent from retained context.
 fn adds_checked_facts(source: &BodyIrModule, context: &BodyIrModule, module: &BodyIrModule) -> bool {
-    module.nominal_declarations.iter().any(|declaration| !has_nominal(&source.nominal_declarations, declaration))
-        || module.enum_declarations.iter().any(|declaration| !has_enum(&source.enum_declarations, declaration))
-        || module.fieldless_enum_declarations.iter().any(|d| !context.fieldless_enum_declarations.contains(d))
-        || module.value_enum_declarations.iter().any(|d| !context.value_enum_declarations.contains(d))
-        || module.trait_declarations.iter().any(|d| !context.trait_declarations.contains(d))
-        || module.trait_implementations.iter().any(|d| !context.trait_implementations.contains(d))
+    module
+        .nominal_declarations
+        .iter()
+        .any(|declaration| !has_nominal(&source.nominal_declarations, declaration))
+        || module
+            .enum_declarations
+            .iter()
+            .any(|declaration| !has_enum(&source.enum_declarations, declaration))
+        || module
+            .fieldless_enum_declarations
+            .iter()
+            .any(|d| !context.fieldless_enum_declarations.contains(d))
+        || module
+            .value_enum_declarations
+            .iter()
+            .any(|d| !context.value_enum_declarations.contains(d))
+        || module
+            .trait_declarations
+            .iter()
+            .any(|d| !context.trait_declarations.contains(d))
+        || module
+            .trait_implementations
+            .iter()
+            .any(|d| !context.trait_implementations.contains(d))
         || module.bodies.iter().any(|body| !has_body(context, body))
-        || module.static_declarations.iter().any(|d| !context.static_declarations.contains(d))
-        || module.decorated_bindings.iter().any(|d| !context.decorated_bindings.contains(d))
-        || module.loaf_callables.iter().any(|d| !context.loaf_callables.contains(d))
-        || module.native_union_declarations.iter().any(|d| !context.native_union_declarations.contains(d))
+        || module
+            .static_declarations
+            .iter()
+            .any(|d| !context.static_declarations.contains(d))
+        || module
+            .decorated_bindings
+            .iter()
+            .any(|d| !context.decorated_bindings.contains(d))
+        || module
+            .loaf_callables
+            .iter()
+            .any(|d| !context.loaf_callables.contains(d))
+        || module
+            .native_union_declarations
+            .iter()
+            .any(|d| !context.native_union_declarations.contains(d))
 }
 
 fn has_nominal(declarations: &[NominalDeclaration], candidate: &NominalDeclaration) -> bool {
-    declarations.iter().any(|declaration| declaration.canonical == candidate.canonical)
+    declarations
+        .iter()
+        .any(|declaration| declaration.canonical == candidate.canonical)
 }
 
 fn has_enum(declarations: &[EnumDeclaration], candidate: &EnumDeclaration) -> bool {
-    declarations.iter().any(|declaration| declaration.canonical == candidate.canonical)
+    declarations
+        .iter()
+        .any(|declaration| declaration.canonical == candidate.canonical)
 }
 
 fn has_body(context: &BodyIrModule, candidate: &Body) -> bool {
@@ -217,8 +256,12 @@ fn has_body(context: &BodyIrModule, candidate: &Body) -> bool {
 fn has_body_prefix(context: &BodyIrModule, candidate: &Body, count: usize) -> bool {
     let prefix = &context.bodies[..count];
     match &candidate.canonical {
-        Some(identity) => prefix.iter().any(|retained| retained.canonical.as_ref() == Some(identity)),
-        None => prefix.iter().any(|retained| retained.canonical.is_none() && retained.name == candidate.name),
+        Some(identity) => prefix
+            .iter()
+            .any(|retained| retained.canonical.as_ref() == Some(identity)),
+        None => prefix
+            .iter()
+            .any(|retained| retained.canonical.is_none() && retained.name == candidate.name),
     }
 }
 
@@ -293,7 +336,10 @@ fn retains_source_nominal(declarations: &[NominalDeclaration], candidate: &Nomin
             continue;
         }
         if declaration != candidate {
-            return Err(format!("unsupported Body IR conflicting continuation nominal records {}", candidate.name));
+            return Err(format!(
+                "unsupported Body IR conflicting continuation nominal records {}",
+                candidate.name
+            ));
         }
         return Ok(true);
     }
@@ -306,14 +352,20 @@ fn retains_source_enum(declarations: &[EnumDeclaration], candidate: &EnumDeclara
             continue;
         }
         if declaration != candidate {
-            return Err(format!("unsupported Body IR conflicting continuation enum records {}", candidate.name));
+            return Err(format!(
+                "unsupported Body IR conflicting continuation enum records {}",
+                candidate.name
+            ));
         }
         return Ok(true);
     }
     Ok(false)
 }
 
-fn retains_concrete_nominal(declarations: &[NominalDeclaration], candidate: &NominalDeclaration) -> Result<bool, String> {
+fn retains_concrete_nominal(
+    declarations: &[NominalDeclaration],
+    candidate: &NominalDeclaration,
+) -> Result<bool, String> {
     for declaration in declarations {
         if declaration.canonical != candidate.canonical
             || declaration.native_type_arguments != candidate.native_type_arguments
@@ -321,7 +373,10 @@ fn retains_concrete_nominal(declarations: &[NominalDeclaration], candidate: &Nom
             continue;
         }
         if declaration != candidate {
-            return Err(format!("unsupported Body IR conflicting continuation nominal layouts {}", candidate.name));
+            return Err(format!(
+                "unsupported Body IR conflicting continuation nominal layouts {}",
+                candidate.name
+            ));
         }
         return Ok(true);
     }
@@ -336,7 +391,10 @@ fn retains_concrete_enum(declarations: &[EnumDeclaration], candidate: &EnumDecla
             continue;
         }
         if declaration != candidate {
-            return Err(format!("unsupported Body IR conflicting continuation enum layouts {}", candidate.name));
+            return Err(format!(
+                "unsupported Body IR conflicting continuation enum layouts {}",
+                candidate.name
+            ));
         }
         return Ok(true);
     }

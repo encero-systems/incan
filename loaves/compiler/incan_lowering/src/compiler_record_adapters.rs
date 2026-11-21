@@ -22,7 +22,9 @@ use serde::de::DeserializeOwned;
 
 /// Read a plan record as the record model with the same serde form.
 fn as_record_model<From: Serialize, To: DeserializeOwned>(value: &From) -> Option<To> {
-    postcard::to_allocvec(value).ok().and_then(|bytes| postcard::from_bytes(&bytes).ok())
+    postcard::to_allocvec(value)
+        .ok()
+        .and_then(|bytes| postcard::from_bytes(&bytes).ok())
 }
 
 fn valid_checked_type(ty: &CheckedType) -> bool {
@@ -62,7 +64,9 @@ pub fn hir_source_span(span: &NativeHirSourceSpan, source_file: &str) -> HirSour
         file: source_file.to_owned(),
         start: span.start as i64,
         end: span.end as i64,
-        expansion: span.expansion.map(|values| values.iter().map(|value| i64::from(*value)).collect()),
+        expansion: span
+            .expansion
+            .map(|values| values.iter().map(|value| i64::from(*value)).collect()),
     }
 }
 
@@ -76,7 +80,9 @@ pub fn native_canonical_symbol_id(identity: &CanonicalSymbolId) -> Result<Native
         origin: native_symbol_origin(&identity.origin),
         declaration_name: identity.declaration_name.clone(),
         kind: native_declaration_kind(&identity.kind),
-        scope_discriminant: identity.scope_discriminant.map(|value| ScopeDiscriminant(value as usize)),
+        scope_discriminant: identity
+            .scope_discriminant
+            .map(|value| ScopeDiscriminant(value as usize)),
         declaration_span: native_hir_source_span(&identity.declaration_span)?,
     })
 }
@@ -150,17 +156,26 @@ fn native_checked_type_unchecked(ty: &CheckedType) -> Result<IncanType, String> 
         CheckedType::Named(name) => IncanType::Named(name.clone()),
         CheckedType::Generic(base, arguments) => IncanType::Generic {
             base: base.clone(),
-            args: arguments.iter().map(native_checked_type_unchecked).collect::<Result<_, _>>()?,
+            args: arguments
+                .iter()
+                .map(native_checked_type_unchecked)
+                .collect::<Result<_, _>>()?,
         },
-        CheckedType::Decimal(precision, scale) => IncanType::Decimal { precision: *precision, scale: *scale },
+        CheckedType::Decimal(precision, scale) => IncanType::Decimal {
+            precision: *precision,
+            scale: *scale,
+        },
         CheckedType::Function(parameters, result) => IncanType::Function {
             params: native_checked_parameters(parameters)?,
             return_type: Box::new(first(result)?),
         },
         CheckedType::TypeToken(represented) => IncanType::TypeToken(Box::new(first(represented)?)),
-        CheckedType::Tuple(elements) => {
-            IncanType::Tuple(elements.iter().map(native_checked_type_unchecked).collect::<Result<_, _>>()?)
-        }
+        CheckedType::Tuple(elements) => IncanType::Tuple(
+            elements
+                .iter()
+                .map(native_checked_type_unchecked)
+                .collect::<Result<_, _>>()?,
+        ),
         CheckedType::TypeVar(name) => IncanType::TypeVar(name.clone()),
         CheckedType::SelfType => IncanType::SelfType,
         CheckedType::Ref(referent) => IncanType::Ref(Box::new(first(referent)?)),
@@ -172,15 +187,19 @@ fn native_checked_type_unchecked(ty: &CheckedType) -> Result<IncanType, String> 
         CheckedType::Unsupported(reason) => IncanType::Unsupported(reason.clone()),
         CheckedType::Infer => IncanType::Infer,
         CheckedType::Unknown => IncanType::Unknown,
-        CheckedType::NativeArray(element, length) => {
-            IncanType::NativeArray { element: Box::new(first(element)?), length: *length }
-        }
-        CheckedType::NativeTraitObject(path, send, sync) => {
-            IncanType::NativeTraitObject { path: path.clone(), send: *send, sync: *sync }
-        }
-        CheckedType::NativePointer(mutable, pointee) => {
-            IncanType::NativePointer { mutable: *mutable, pointee: Box::new(first(pointee)?) }
-        }
+        CheckedType::NativeArray(element, length) => IncanType::NativeArray {
+            element: Box::new(first(element)?),
+            length: *length,
+        },
+        CheckedType::NativeTraitObject(path, send, sync) => IncanType::NativeTraitObject {
+            path: path.clone(),
+            send: *send,
+            sync: *sync,
+        },
+        CheckedType::NativePointer(mutable, pointee) => IncanType::NativePointer {
+            mutable: *mutable,
+            pointee: Box::new(first(pointee)?),
+        },
         CheckedType::NativeCChar => IncanType::NativeCChar,
         CheckedType::Trait(identity) => IncanType::Trait(native_canonical_symbol_id(identity)?),
     })
@@ -259,8 +278,9 @@ fn complete_checked_type_provenance(
     source_files: &BTreeMap<String, String>,
     package_versions: &BTreeMap<String, String>,
 ) -> Result<CheckedType, String> {
-    let complete =
-        |inner: CheckedType| complete_checked_type_provenance(inner, fallback_source_file, source_files, package_versions);
+    let complete = |inner: CheckedType| {
+        complete_checked_type_provenance(inner, fallback_source_file, source_files, package_versions)
+    };
     let first = |types: Vec<CheckedType>| -> Result<Vec<CheckedType>, String> {
         let head = types.into_iter().next().ok_or("invalid authored checked type")?;
         Ok(vec![complete(head)?])
@@ -272,7 +292,10 @@ fn complete_checked_type_provenance(
         CheckedType::Function(parameters, result) => {
             let mut completed = Vec::with_capacity(parameters.len());
             for parameter in parameters {
-                completed.push(CheckedCallableParam { ty: complete(parameter.ty.clone())?, ..parameter });
+                completed.push(CheckedCallableParam {
+                    ty: complete(parameter.ty.clone())?,
+                    ..parameter
+                });
             }
             CheckedType::Function(completed, first(result)?)
         }
@@ -306,11 +329,25 @@ fn complete_authored_provenance(
         SymbolOrigin::Package(package, module_path) => match package_versions.get(&package.name) {
             Some(version) => {
                 if version.is_empty() {
-                    return Err(format!("Plan identity has an empty selected package version for {}", package.name));
+                    return Err(format!(
+                        "Plan identity has an empty selected package version for {}",
+                        package.name
+                    ));
                 }
-                SymbolOrigin::Package(PackageIdentity { name: package.name, version: version.clone() }, module_path)
+                SymbolOrigin::Package(
+                    PackageIdentity {
+                        name: package.name,
+                        version: version.clone(),
+                    },
+                    module_path,
+                )
             }
-            None => return Err(format!("Plan identity has no selected package version for {}", package.name)),
+            None => {
+                return Err(format!(
+                    "Plan identity has no selected package version for {}",
+                    package.name
+                ));
+            }
         },
         other => other,
     };
@@ -321,7 +358,12 @@ fn complete_authored_provenance(
         declaration_name: identity.declaration_name,
         kind: identity.kind,
         scope_discriminant: identity.scope_discriminant,
-        declaration_span: HirSourceSpan { file: source_file, start: span.start, end: span.end, expansion: span.expansion },
+        declaration_span: HirSourceSpan {
+            file: source_file,
+            start: span.start,
+            end: span.end,
+            expansion: span.expansion,
+        },
     })
 }
 
@@ -332,7 +374,9 @@ fn authored_source_file(
 ) -> Result<String, String> {
     let module = match origin {
         SymbolOrigin::Module(path) => Some(source_module_identity(path)),
-        SymbolOrigin::Package(package, path) => Some(format!("pub::{}::{}", package.name, source_module_identity(path))),
+        SymbolOrigin::Package(package, path) => {
+            Some(format!("pub::{}::{}", package.name, source_module_identity(path)))
+        }
         _ => None,
     };
     match module {
@@ -382,7 +426,10 @@ fn symbol_origin(origin: &NativeSymbolOrigin, package_version: &str) -> SymbolOr
     match origin {
         NativeSymbolOrigin::Module(path) => SymbolOrigin::Module(path.clone()),
         NativeSymbolOrigin::Package { library, module_path } => SymbolOrigin::Package(
-            PackageIdentity { name: library.clone(), version: package_version.to_owned() },
+            PackageIdentity {
+                name: library.clone(),
+                version: package_version.to_owned(),
+            },
             module_path.clone(),
         ),
         NativeSymbolOrigin::RustCrate(path) => SymbolOrigin::RustCrate(path.clone()),
@@ -420,7 +467,11 @@ fn declaration_kind(kind: &SemanticSourceTargetKind) -> DeclarationKind {
     }
 }
 
-fn checked_parameters(parameters: &[IncanCallableParam], source_file: &str, package_version: &str) -> Vec<CheckedCallableParam> {
+fn checked_parameters(
+    parameters: &[IncanCallableParam],
+    source_file: &str,
+    package_version: &str,
+) -> Vec<CheckedCallableParam> {
     parameters
         .iter()
         .map(|parameter| CheckedCallableParam {
@@ -491,9 +542,10 @@ fn native_symbol_namespace(namespace: &SymbolNamespace) -> NativeSymbolNamespace
 fn native_symbol_origin(origin: &SymbolOrigin) -> NativeSymbolOrigin {
     match origin {
         SymbolOrigin::Module(path) => NativeSymbolOrigin::Module(path.clone()),
-        SymbolOrigin::Package(package, path) => {
-            NativeSymbolOrigin::Package { library: package.name.clone(), module_path: path.clone() }
-        }
+        SymbolOrigin::Package(package, path) => NativeSymbolOrigin::Package {
+            library: package.name.clone(),
+            module_path: path.clone(),
+        },
         SymbolOrigin::RustCrate(path) => NativeSymbolOrigin::RustCrate(path.clone()),
         SymbolOrigin::Builtin => NativeSymbolOrigin::Builtin,
     }

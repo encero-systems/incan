@@ -38,7 +38,10 @@ mod tests {
 
     #[test]
     fn balanced_ranges_are_contiguous_and_cover_source_order() {
-        assert_eq!(balanced_module_ranges(&[8, 1, 1, 6, 2, 1], 3), vec![(0, 1), (1, 4), (4, 6)]);
+        assert_eq!(
+            balanced_module_ranges(&[8, 1, 1, 6, 2, 1], 3),
+            vec![(0, 1), (1, 4), (4, 6)]
+        );
     }
 
     #[test]

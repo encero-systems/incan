@@ -63,7 +63,11 @@ pub fn extend_constructor_index(constructors: &mut ConstructorIndex, declaration
                 .entry(base)
                 .or_insert(declaration.type_parameter_count as usize);
         }
-        constructors.named.entry(declaration.name.clone()).or_default().push(position);
+        constructors
+            .named
+            .entry(declaration.name.clone())
+            .or_default()
+            .push(position);
         if let Some(contract) = &declaration.validated_constructor {
             constructors.validated_constructors.insert(contract.constructor.clone());
         }
@@ -129,11 +133,18 @@ fn representation_types(
     constructors: &ConstructorIndex,
     types: &[IncanType],
 ) -> Vec<IncanType> {
-    types.iter().map(|ty| representation_type(declarations, constructors, ty)).collect()
+    types
+        .iter()
+        .map(|ty| representation_type(declarations, constructors, ty))
+        .collect()
 }
 
 /// Erase callable binding metadata recursively while retaining distinct authored nominal instantiations.
-fn representation_type(declarations: &[NominalDeclaration], constructors: &ConstructorIndex, ty: &IncanType) -> IncanType {
+fn representation_type(
+    declarations: &[NominalDeclaration],
+    constructors: &ConstructorIndex,
+    ty: &IncanType,
+) -> IncanType {
     let close = |inner: &IncanType| representation_type(declarations, constructors, inner);
     match ty {
         IncanType::Function { params, return_type } => {
@@ -163,9 +174,10 @@ fn representation_type(declarations: &[NominalDeclaration], constructors: &Const
         IncanType::RefMut(inner) => IncanType::RefMut(Box::new(close(inner))),
         IncanType::TypeToken(inner) => IncanType::TypeToken(Box::new(close(inner))),
         IncanType::NativeArray { element, length } => native_array_type(close(element), *length),
-        IncanType::NativePointer { mutable, pointee } => {
-            IncanType::NativePointer { mutable: *mutable, pointee: Box::new(close(pointee)) }
-        }
+        IncanType::NativePointer { mutable, pointee } => IncanType::NativePointer {
+            mutable: *mutable,
+            pointee: Box::new(close(pointee)),
+        },
         _ => ty.clone(),
     }
 }

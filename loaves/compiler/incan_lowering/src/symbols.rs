@@ -50,7 +50,12 @@ pub fn type_component(ty: &IncanType) -> String {
         IncanType::Unknown => symbol_component("?"),
         IncanType::NativeArray { element, length } => format!("_native_array_{length}{}", type_component(element)),
         IncanType::NativeTraitObject { path, send, sync } => {
-            format!("_trait_object{}{}{}", symbol_component(path), flag_component(*send), flag_component(*sync))
+            format!(
+                "_trait_object{}{}{}",
+                symbol_component(path),
+                flag_component(*send),
+                flag_component(*sync)
+            )
         }
         IncanType::NativePointer { mutable, pointee } => {
             format!("_native_pointer{}{}", flag_component(*mutable), type_component(pointee))
@@ -104,7 +109,11 @@ fn function_component(parameters: &[IncanCallableParam], result: &IncanType) -> 
 
 /// Encode all equality-bearing parameter fields, including the collection ownership and partial-preset facts.
 fn parameter_component(parameter: &IncanCallableParam) -> String {
-    let mut encoded = format!("_param{}{}", type_component(&parameter.ty), parameter_kind_component(parameter.kind));
+    let mut encoded = format!(
+        "_param{}{}",
+        type_component(&parameter.ty),
+        parameter_kind_component(parameter.kind)
+    );
     match &parameter.name {
         None => encoded.push_str("_unnamed"),
         Some(name) => {

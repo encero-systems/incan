@@ -33,12 +33,18 @@ fn collect_member_block(body: &Body, block: &Block, selected: &mut Vec<SelectedM
 
 fn collect_member_statement(body: &Body, kind: &StatementKind, selected: &mut Vec<SelectedMember>) {
     match kind {
-        StatementKind::Call { callee: Callee::Method(target), args, .. } => {
+        StatementKind::Call {
+            callee: Callee::Method(target),
+            args,
+            ..
+        } => {
             if let Some(first) = args.first() {
                 collect_member_target(body, target, first, selected);
             }
         }
-        StatementKind::If { then_block, else_block, .. } => {
+        StatementKind::If {
+            then_block, else_block, ..
+        } => {
             collect_member_block(body, then_block, selected);
             if let Some(nested) = else_block {
                 collect_member_block(body, nested, selected);
@@ -64,15 +70,26 @@ fn collect_member_value(body: &Body, value: &Rvalue, selected: &mut Vec<Selected
     }
 }
 
-fn collect_member_target(body: &Body, target: &MethodTarget, argument: &ArgumentElement, selected: &mut Vec<SelectedMember>) {
+fn collect_member_target(
+    body: &Body,
+    target: &MethodTarget,
+    argument: &ArgumentElement,
+    selected: &mut Vec<SelectedMember>,
+) {
     let Some(receiver) = selected_receiver_type(body, argument) else {
         return;
     };
     if let Some(identity) = &target.canonical {
-        if selected.iter().any(|retained| retained.identity == *identity && retained.receiver == receiver) {
+        if selected
+            .iter()
+            .any(|retained| retained.identity == *identity && retained.receiver == receiver)
+        {
             return;
         }
-        selected.push(SelectedMember { identity: identity.clone(), receiver });
+        selected.push(SelectedMember {
+            identity: identity.clone(),
+            receiver,
+        });
     }
 }
 
@@ -182,7 +199,9 @@ pub fn nominal_frames(constructors: &ConstructorIndex, module: &BodyIrModule) ->
 
 /// Methods and properties close their owner's placeholders through the receiver; plain functions never do.
 fn owner_dependent(body: &Body) -> bool {
-    body.canonical.as_ref().is_some_and(|identity| identity.kind != SemanticSourceTargetKind::Function)
+    body.canonical
+        .as_ref()
+        .is_some_and(|identity| identity.kind != SemanticSourceTargetKind::Function)
 }
 
 fn schedule_block(
@@ -195,7 +214,15 @@ fn schedule_block(
     ancestors: &[String],
 ) -> Result<(), String> {
     for statement in &block.stmts {
-        schedule_statement(constructors, module, &statement.kind, names, arguments, pending, ancestors)?;
+        schedule_statement(
+            constructors,
+            module,
+            &statement.kind,
+            names,
+            arguments,
+            pending,
+            ancestors,
+        )?;
     }
     Ok(())
 }
@@ -213,17 +240,44 @@ fn schedule_statement(
         StatementKind::Call { callee, .. } => match callee {
             Callee::Function(CallableTarget::Named(target)) => {
                 let call_types = indexed_static_type_arguments(constructors, target)?;
-                schedule_call(module, &target.canonical, &call_types, names, arguments, pending, ancestors)?;
+                schedule_call(
+                    module,
+                    &target.canonical,
+                    &call_types,
+                    names,
+                    arguments,
+                    pending,
+                    ancestors,
+                )?;
             }
             Callee::Method(target) => {
-                schedule_call(module, &target.canonical, &target.type_args, names, arguments, pending, ancestors)?;
+                schedule_call(
+                    module,
+                    &target.canonical,
+                    &target.type_args,
+                    names,
+                    arguments,
+                    pending,
+                    ancestors,
+                )?;
             }
             _ => {}
         },
-        StatementKind::Assign { rvalue: Rvalue::Match { arms, .. }, .. } => {
+        StatementKind::Assign {
+            rvalue: Rvalue::Match { arms, .. },
+            ..
+        } => {
             for arm in arms {
                 for statement in arm.guard_stmts.iter().chain(&arm.body_stmts) {
-                    schedule_statement(constructors, module, &statement.kind, names, arguments, pending, ancestors)?;
+                    schedule_statement(
+                        constructors,
+                        module,
+                        &statement.kind,
+                        names,
+                        arguments,
+                        pending,
+                        ancestors,
+                    )?;
                 }
             }
         }
@@ -232,11 +286,15 @@ fn schedule_statement(
                 schedule_block(constructors, module, &arm.body, names, arguments, pending, ancestors)?;
             }
         }
-        StatementKind::Loop { body } => schedule_block(constructors, module, body, names, arguments, pending, ancestors)?,
+        StatementKind::Loop { body } => {
+            schedule_block(constructors, module, body, names, arguments, pending, ancestors)?
+        }
         StatementKind::UnsafeRegion { body, .. } => {
             schedule_block(constructors, module, body, names, arguments, pending, ancestors)?
         }
-        StatementKind::If { then_block, else_block, .. } => {
+        StatementKind::If {
+            then_block, else_block, ..
+        } => {
             schedule_block(constructors, module, then_block, names, arguments, pending, ancestors)?;
             if let Some(nested) = else_block {
                 schedule_block(constructors, module, nested, names, arguments, pending, ancestors)?;
@@ -293,7 +351,11 @@ fn schedule_call(
         return Ok(());
     }
     pending.seen.insert(key);
-    pending.pending.push_back(ScheduledFrame { body, arguments: closed, ancestors: ancestors.to_vec() });
+    pending.pending.push_back(ScheduledFrame {
+        body,
+        arguments: closed,
+        ancestors: ancestors.to_vec(),
+    });
     Ok(())
 }
 

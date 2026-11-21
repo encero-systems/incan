@@ -227,3 +227,60 @@ pub fn runtime_body(module: &BodyIrModule, path: &str) -> Result<Option<Body>, S
     }
     Ok(found)
 }
+
+#[cfg(test)]
+mod tests {
+    use incan_mir_plan_native::{ExternalFunction, PlanType, source_span};
+    use incan_semantics_core::body_ir::{BodyIrModule, RuntimeCallableBinding};
+    use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind};
+
+    use super::{layout_runtime_requirements, selected_runtime_requirements};
+
+    /// The entry's runtime facade table names `initialize_binding`, but nothing in the program calls it.
+    #[test]
+    fn undecorated_program_reads_no_binding_state_layouts() {
+        let mut entry = BodyIrModule::declarations_only("main".into());
+        entry.runtime_callable_bindings.push(RuntimeCallableBinding {
+            path: "incan_native_runtime::initialize_binding".into(),
+            canonical: CanonicalSymbolId::module_declaration(
+                vec!["generic_decorators".into()],
+                "initialize_binding",
+                SemanticSourceTargetKind::Function,
+                HirSourceSpan::new(0, 0),
+            ),
+        });
+        let requirements = layout_runtime_requirements(&[entry], "main.incn");
+        assert!(
+            requirements.is_empty(),
+            "an undecorated program loaded the generic-decorator binding layouts"
+        );
+    }
+
+    /// Unreached paths do no work. A selected native-only path is queried once and remains external on retry.
+    #[test]
+    fn planning_requests_the_one_selected_sealed_runtime_path() -> Result<(), String> {
+        let mut entry = BodyIrModule::declarations_only("main".into());
+        let used = "incan_native_runtime::used";
+        let external = "incan_native_runtime::unpublished";
+        let span = source_span("main.incn", 1, 1);
+        let calls: Vec<ExternalFunction> = [used, used, external, "unrelated::external"]
+            .iter()
+            .map(|path| ExternalFunction {
+                path: (*path).into(),
+                type_arguments: Vec::new(),
+                parameters: Vec::new(),
+                return_type: PlanType::Unit,
+                span: span.clone(),
+            })
+            .collect();
+        entry.runtime_binding_scopes = vec![("incan_native_runtime".into(), Vec::new())];
+        let first = selected_runtime_requirements(&entry, &calls, &[])?;
+        let paths: Vec<&str> = first.iter().map(|request| request.path.as_str()).collect();
+        assert_eq!(paths, vec![used, external]);
+        entry.runtime_binding_scopes = vec![("incan_native_runtime".into(), vec![external.into()])];
+        let retry = selected_runtime_requirements(&entry, &calls, &[])?;
+        assert_eq!(retry.len(), 1);
+        assert!(retry[0].path == used && retry[0].canonical.is_none());
+        Ok(())
+    }
+}

@@ -84,7 +84,12 @@ pub fn request_instance(
     {
         return;
     }
-    instances.push(Instance { body: body.clone(), arguments, owned_callable_slots, original_callable });
+    instances.push(Instance {
+        body: body.clone(),
+        arguments,
+        owned_callable_slots,
+        original_callable,
+    });
 }
 
 /// Merge independent request lists in first-occurrence order, retaining each checked frame once.
@@ -132,7 +137,9 @@ pub fn indexed_static_type_arguments(
         match constructors.generic_arities.get(base) {
             Some(arity) => {
                 if *arity != args.len() {
-                    return Err(format!("unsupported Body IR static owner type argument arity on {base}"));
+                    return Err(format!(
+                        "unsupported Body IR static owner type argument arity on {base}"
+                    ));
                 }
             }
             None => return Err(format!("unsupported Body IR static receiver {base}")),
@@ -153,7 +160,9 @@ fn static_owner_arguments(module: &BodyIrModule, target: &NamedCallableTarget) -
             continue;
         }
         if declaration.type_parameters.len() != args.len() {
-            return Err(format!("unsupported Body IR static owner type argument arity on {base}"));
+            return Err(format!(
+                "unsupported Body IR static owner type argument arity on {base}"
+            ));
         }
         return Ok(args.clone());
     }
@@ -176,7 +185,10 @@ pub fn substitute(ty: &IncanType, names: &[String], arguments: &[IncanType]) -> 
                     return Ok(arguments[index].clone());
                 }
             }
-            Err(format!("{UNBOUND_TYPE_PARAMETER} {name} in binding scope {}", list_text(names)))
+            Err(format!(
+                "{UNBOUND_TYPE_PARAMETER} {name} in binding scope {}",
+                list_text(names)
+            ))
         }
         IncanType::Named(_) => Ok(ty.clone()),
         IncanType::Ref(inner) => Ok(IncanType::Ref(Box::new(close(inner)?))),
@@ -310,7 +322,11 @@ fn owns_instantiated_collection(formal: &IncanType, mutable: bool, concrete: &In
 }
 
 /// Read selected generic value slots and preserve their owned ABI throughout nested native arguments.
-pub fn callable_storage_arguments(body: &Body, arguments: &[IncanType], slots: &[i64]) -> Result<Vec<IncanType>, String> {
+pub fn callable_storage_arguments(
+    body: &Body,
+    arguments: &[IncanType],
+    slots: &[i64],
+) -> Result<Vec<IncanType>, String> {
     let names = owned_callable_parameters(body, slots)?;
     let mut storage = Vec::with_capacity(arguments.len());
     for (index, argument) in arguments.iter().enumerate() {
@@ -331,7 +347,10 @@ fn source_nominal_storage(owners: &BTreeMap<String, CanonicalSymbolId>, ty: &Inc
             let source = source_nominal_owner(owners, base);
             let mut retained = Vec::with_capacity(args.len());
             for argument in args {
-                if let IncanType::Generic { base: marker, args: signature } = argument
+                if let IncanType::Generic {
+                    base: marker,
+                    args: signature,
+                } = argument
                     && source
                     && marker == OWNED_CALLABLE_STORAGE
                     && signature.len() == 1
@@ -489,7 +508,11 @@ fn pointer_instantiation(ty: &IncanType, names: &[String], arguments: &[IncanTyp
 }
 
 fn without_locals(locals: &[LocalId], excluded: &[LocalId]) -> Vec<LocalId> {
-    locals.iter().filter(|local| !has_local(excluded, local)).copied().collect()
+    locals
+        .iter()
+        .filter(|local| !has_local(excluded, local))
+        .copied()
+        .collect()
 }
 
 fn has_local(locals: &[LocalId], sought: &LocalId) -> bool {

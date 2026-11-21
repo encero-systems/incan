@@ -43,7 +43,10 @@ pub fn instance_arguments(declaration: &NominalDeclaration) -> Result<Vec<IncanT
     if declaration.type_parameter_count == 0 {
         return Ok(Vec::new());
     }
-    Err(format!("standard library type {} has no checked type arguments", declaration.name))
+    Err(format!(
+        "standard library type {} has no checked type arguments",
+        declaration.name
+    ))
 }
 
 /// Collect closed frame carriers, then append missing native layouts while preserving existing owner indices.
@@ -182,8 +185,15 @@ pub fn specialize_nominals_with_instances(
         lineage.push(instance.declaration.canonical.render_compact());
         let previous = selected.len();
         let waiting = std::mem::take(&mut pending[cursor]);
-        pending[cursor] =
-            collect_owner_body_types(constructors, module, &instance, &waiting, &mut instances, &lineage, &mut selected)?;
+        pending[cursor] = collect_owner_body_types(
+            constructors,
+            module,
+            &instance,
+            &waiting,
+            &mut instances,
+            &lineage,
+            &mut selected,
+        )?;
         cursor += 1;
         if selected.len() != previous {
             cursor = 0;
@@ -198,12 +208,18 @@ pub fn specialize_nominals_with_instances(
     for (position, instance) in instances.iter().enumerate() {
         let declaration = close_layout(instance)?;
         if retained_names.contains_key(&declaration.name) {
-            return Err(format!("unsupported Body IR nominal instance symbol collision {}", declaration.name));
+            return Err(format!(
+                "unsupported Body IR nominal instance symbol collision {}",
+                declaration.name
+            ));
         }
         retained_names.insert(declaration.name.clone(), true);
         declarations.push(declaration);
         append_closed_implementations(module, instance, &mut implementations)?;
-        owner_instances.entry(instance.declaration.canonical.render_compact()).or_default().push(position);
+        owner_instances
+            .entry(instance.declaration.canonical.render_compact())
+            .or_default()
+            .push(position);
     }
     let mut bodies: Vec<Body> = inherited;
     for (index, body) in module.bodies.iter().enumerate() {
@@ -232,7 +248,11 @@ pub fn specialize_nominals_with_instances(
 
 /// Each body's open receiver template as a declaration index, read once.
 fn owner_templates(constructors: &ConstructorIndex, module: &BodyIrModule) -> Result<Vec<Option<usize>>, String> {
-    module.bodies.iter().map(|body| owner_template(constructors, module, body)).collect()
+    module
+        .bodies
+        .iter()
+        .map(|body| owner_template(constructors, module, body))
+        .collect()
 }
 
 /// Collect one instance's field instances, then return the owner frames, in module order, it may close.
@@ -305,11 +325,16 @@ fn append_closed_implementations(
         let mut closed = implementation.clone();
         closed.slot_arguments.clear();
         for original in &implementation.slot_arguments {
-            closed.slot_arguments.push(substitute(original, names, &instance.arguments)?);
+            closed
+                .slot_arguments
+                .push(substitute(original, names, &instance.arguments)?);
         }
         for index in 0..closed.type_arguments.len() {
-            closed.type_arguments[index].argument =
-                substitute(&implementation.type_arguments[index].argument, names, &instance.arguments)?;
+            closed.type_arguments[index].argument = substitute(
+                &implementation.type_arguments[index].argument,
+                names,
+                &instance.arguments,
+            )?;
         }
         retained.push(closed);
     }
@@ -553,7 +578,10 @@ fn retain_nominal_instance(
         return Ok(());
     }
     if ancestors.contains(&declaration.canonical.render_compact()) {
-        return Err(format!("unsupported Body IR recursive nominal field instantiation on {}", declaration.name));
+        return Err(format!(
+            "unsupported Body IR recursive nominal field instantiation on {}",
+            declaration.name
+        ));
     }
     instances.push(NominalInstance {
         declaration: declaration.clone(),
@@ -600,7 +628,11 @@ pub fn close_layout(instance: &NominalInstance) -> Result<NominalDeclaration, St
 }
 
 /// Locate an open receiver in the native table, borrowing each declaration instead of copying it.
-fn owner_template(constructors: &ConstructorIndex, module: &BodyIrModule, body: &Body) -> Result<Option<usize>, String> {
+fn owner_template(
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+    body: &Body,
+) -> Result<Option<usize>, String> {
     if body.locals.is_empty() || !matches!(body.locals[0].origin, LocalOrigin::Receiver { .. }) {
         return Ok(None);
     }
@@ -616,7 +648,11 @@ fn owner_template(constructors: &ConstructorIndex, module: &BodyIrModule, body: 
 }
 
 /// Positions of the declarations with this name, read from the index that covers this module's table.
-fn named_declarations(constructors: &ConstructorIndex, module: &BodyIrModule, name: &str) -> Result<Vec<usize>, String> {
+fn named_declarations(
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+    name: &str,
+) -> Result<Vec<usize>, String> {
     if constructors.count != module.nominal_declarations.len() {
         return Err("invalid Body IR nominal index for its declaration table".into());
     }
@@ -637,7 +673,9 @@ pub fn close_owner_body(body: &Body, instance: &NominalInstance) -> Result<Body,
     let mut arguments = instance.arguments.clone();
     for name in &body.type_parameters {
         if names.contains(name) {
-            return Err(format!("unsupported Body IR shadowed nominal and method type parameter {name}"));
+            return Err(format!(
+                "unsupported Body IR shadowed nominal and method type parameter {name}"
+            ));
         }
         names.push(name.clone());
         arguments.push(IncanType::TypeVar(name.clone()));
@@ -648,10 +686,14 @@ pub fn close_owner_body(body: &Body, instance: &NominalInstance) -> Result<Body,
         .type_parameters
         .iter()
         .zip(&instance.arguments)
-        .map(|(parameter, argument)| TraitTypeArgument { parameter: parameter.clone(), argument: argument.clone() })
+        .map(|(parameter, argument)| TraitTypeArgument {
+            parameter: parameter.clone(),
+            argument: argument.clone(),
+        })
         .collect();
     result.set_nominal_instantiation(owner_bindings);
-    result.trait_default_instantiation = close_trait_environment(&body.trait_default_instantiation, &names, &arguments)?;
+    result.trait_default_instantiation =
+        close_trait_environment(&body.trait_default_instantiation, &names, &arguments)?;
     for local in &mut result.locals {
         local.ty = substitute(&local.ty, &names, &arguments)?;
     }

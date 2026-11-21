@@ -36,7 +36,11 @@ pub fn project_context_parallel(
             .collect();
         workers
             .into_iter()
-            .map(|worker| worker.join().unwrap_or_else(|payload| std::panic::resume_unwind(payload)))
+            .map(|worker| {
+                worker
+                    .join()
+                    .unwrap_or_else(|payload| std::panic::resume_unwind(payload))
+            })
             .collect()
     });
     // Workers are joined last range first, so the last failing range names the refusal.
@@ -111,8 +115,12 @@ fn merge_project_modules(context: &mut BodyIrModule, projections: Vec<BodyIrModu
                 context.enum_declarations.push(declaration);
             }
         }
-        context.fieldless_enum_declarations.extend(projection.fieldless_enum_declarations);
-        context.value_enum_declarations.extend(projection.value_enum_declarations);
+        context
+            .fieldless_enum_declarations
+            .extend(projection.fieldless_enum_declarations);
+        context
+            .value_enum_declarations
+            .extend(projection.value_enum_declarations);
         context.trait_declarations.extend(projection.trait_declarations);
         context.trait_implementations.extend(projection.trait_implementations);
         context.static_declarations.extend(projection.static_declarations);
@@ -122,7 +130,9 @@ fn merge_project_modules(context: &mut BodyIrModule, projections: Vec<BodyIrModu
                 context.loaf_callables.push(declaration);
             }
         }
-        context.native_union_declarations.extend(projection.native_union_declarations);
+        context
+            .native_union_declarations
+            .extend(projection.native_union_declarations);
     }
     Ok(owners)
 }
@@ -137,12 +147,18 @@ fn retains_nominal(context: &BodyIrModule, candidate: &NominalDeclaration) -> Re
     for declaration in &context.nominal_declarations {
         if declaration.canonical == candidate.canonical {
             if declaration != candidate {
-                return Err(format!("unsupported Body IR conflicting project nominal records {}", candidate.name));
+                return Err(format!(
+                    "unsupported Body IR conflicting project nominal records {}",
+                    candidate.name
+                ));
             }
             return Ok(true);
         }
         if declaration.name == candidate.name {
-            return Err(format!("unsupported Body IR ambiguous project nominal carrier {}", candidate.name));
+            return Err(format!(
+                "unsupported Body IR ambiguous project nominal carrier {}",
+                candidate.name
+            ));
         }
     }
     Ok(false)
@@ -153,12 +169,18 @@ fn retains_enum(context: &BodyIrModule, candidate: &EnumDeclaration) -> Result<b
     for declaration in &context.enum_declarations {
         if declaration.canonical == candidate.canonical {
             if declaration != candidate {
-                return Err(format!("unsupported Body IR conflicting project enum records {}", candidate.name));
+                return Err(format!(
+                    "unsupported Body IR conflicting project enum records {}",
+                    candidate.name
+                ));
             }
             return Ok(true);
         }
         if declaration.carrier_name() == candidate.carrier_name() {
-            return Err(format!("unsupported Body IR ambiguous project enum carrier {}", candidate.name));
+            return Err(format!(
+                "unsupported Body IR ambiguous project enum carrier {}",
+                candidate.name
+            ));
         }
     }
     Ok(false)

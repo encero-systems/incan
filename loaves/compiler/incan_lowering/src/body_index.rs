@@ -37,7 +37,10 @@ pub fn body_index(module: &BodyIrModule) -> BodyIndex {
             entries.entry(identity.clone()).or_default().push(index);
         }
     }
-    BodyIndex { entries: Arc::new(entries), count: module.bodies.len() }
+    BodyIndex {
+        entries: Arc::new(entries),
+        count: module.bodies.len(),
+    }
 }
 
 /// Index bodies appended since the retained context generation without revisiting earlier executable frames.
@@ -47,7 +50,10 @@ pub fn extend_body_index(index: &mut BodyIndex, module: &BodyIrModule) -> Result
     }
     for position in index.count..module.bodies.len() {
         if let Some(identity) = &module.bodies[position].canonical {
-            Arc::make_mut(&mut index.entries).entry(identity.clone()).or_default().push(position);
+            Arc::make_mut(&mut index.entries)
+                .entry(identity.clone())
+                .or_default()
+                .push(position);
         }
     }
     index.count = module.bodies.len();

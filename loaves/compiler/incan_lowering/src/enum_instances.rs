@@ -49,7 +49,10 @@ pub fn specialized_enum_layouts(module: &BodyIrModule) -> Result<Vec<EnumDeclara
         lineage.push(instances[cursor].declaration.canonical.render_compact());
         cursor += 1;
         if layouts.iter().any(|retained| retained.name == declaration.name) {
-            return Err(format!("unsupported Body IR enum instance symbol collision {}", declaration.name));
+            return Err(format!(
+                "unsupported Body IR enum instance symbol collision {}",
+                declaration.name
+            ));
         }
         for variant in &declaration.variants {
             for field in &variant.fields {
@@ -90,7 +93,9 @@ fn collect_type(
                     return Err(format!("unsupported Body IR enum type argument arity on {base}"));
                 }
                 if ancestors.contains(&declaration.canonical.render_compact()) {
-                    return Err(format!("unsupported Body IR recursive enum payload instantiation on {base}"));
+                    return Err(format!(
+                        "unsupported Body IR recursive enum payload instantiation on {base}"
+                    ));
                 }
                 retain_instance(declaration, args.clone(), instances, ancestors);
                 return Ok(());
@@ -120,7 +125,11 @@ fn retain_instance(
     {
         return;
     }
-    instances.push(EnumInstance { declaration: declaration.clone(), arguments, ancestors: ancestors.to_vec() });
+    instances.push(EnumInstance {
+        declaration: declaration.clone(),
+        arguments,
+        ancestors: ancestors.to_vec(),
+    });
 }
 
 /// Keep unresolved placeholders out of executable enum layouts, including nested aggregate arguments.
@@ -148,7 +157,11 @@ fn close_layout(instance: &EnumInstance) -> Result<EnumDeclaration, String> {
         let mut closed = variant.clone();
         closed.fields.clear();
         for field in &variant.fields {
-            closed.fields.push(substitute(field, &instance.declaration.type_parameters, &instance.arguments)?);
+            closed.fields.push(substitute(
+                field,
+                &instance.declaration.type_parameters,
+                &instance.arguments,
+            )?);
         }
         result.variants.push(closed);
     }
