@@ -3,6 +3,8 @@
 from rust::std::fs import OpenOptions, Permissions, metadata, remove_dir_all, rename, set_permissions
 from rust::std::os::unix::fs import PermissionsExt
 from rust::std::process import Command
+from rust::std::thread import sleep
+from rust::std::time import Duration
 from std.fs import Path
 from std.json import JsonValue
 from std.fs.locking import FileLock
@@ -32,6 +34,7 @@ from store_path_conversion import payload_path, put_payload, readmit_payload, sn
 from files import json_text, make_directory, read, write as write_file
 from incan_units import compile_executable, obtain_executable
 from scratch import scratch_directory
+from trace_adapter import count_work, finish_counting
 from toolchain import Toolchain
 from unit import UnitDescription
 from unit_freshness import Key, fingerprint
@@ -180,6 +183,38 @@ pub def test_a_claimed_identity_is_baked_once_and_waiters_find_it() -> Result[No
     # 2. Under the claim the unit is found, so the waiter does not bake again.
     assert not bake(store, identity, "baked twice")?
     assert payload_text(store, identity, "payload")? == "baked once"
+    return Ok(None)
+
+
+pub def test_a_payload_an_earlier_process_verified_is_not_hashed_again() -> Result[None, str]:
+    """
+    A unit's payloads are hashed once per settled file generation, not once per process: a later process finds the
+    unit without hashing them again, and a payload whose metadata changed since is hashed and, when damaged, refused.
+    """
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("bakery")
+    identity = digest_of("d4")
+    assert bake(store, identity, "verified once")?
+    # A file generation is trusted only once it is older than the settle window.
+    sleep(Duration.from_secs(3))
+    forget_verified()
+    count_work(store.0)
+    assert found(find(store, identity)?)
+    assert finish_counting().hashes == 1, "the first process to find a unit did not verify its payload"
+    forget_verified()
+    count_work(store.0)
+    assert found(find(store, identity)?)
+    assert finish_counting().hashes == 0, "a later process hashed a payload whose file generation was verified"
+    payload = stored_payload(store, identity, "payload")?
+    damage(payload, "damaged once!")?
+    forget_verified()
+    count_work(store.0)
+    match find(store, identity):
+        Ok(_) =>
+            assert false, "a changed payload was trusted by its earlier verification"
+        Err(error) =>
+            assert "integrity" in error, error
+    assert finish_counting().hashes == 1, "a changed payload was not hashed again"
     return Ok(None)
 
 

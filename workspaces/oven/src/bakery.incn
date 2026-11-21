@@ -35,7 +35,8 @@ pub from home_paths import bakery
 from pub::incan_platform.trace import Operation
 from jec import begin as begin_work, record as record_work
 from json_fields import required_text
-from observation import SETTLE_SECONDS, file_metadata, observe, trace
+from observation import SETTLE_SECONDS, file_metadata, observe, settled_since, trace
+from publication import publish_binary
 from unit_publication import record_path, record_verified_payload, source_origins
 from storage_admission import extend, release, reserve, tree_bytes
 from pub::incan_platform.store import (
@@ -134,23 +135,41 @@ def checked_fact(store: Path, identity: str, value: bytes) -> Result[Option[Fact
 
 
 def payload_current(store: Path, file: FactFile) -> bool:
-    """Whether a payload matches its digest, revalidated whenever its metadata observation changes."""
+    """
+    Whether a payload matches its digest, revalidated whenever its metadata observation changes. A settled file
+    generation verified once keeps a receipt of its metadata beside the store, so a later process trusts it as this one
+    does; any write changes the metadata, and the payload is hashed again.
+    """
     path = payload_path(store, file.digest)
     match metadata(path.0):
         Err(_) => return false
         Ok(info) =>
             if int(info.len()) != file.size:
                 return false
-    stamp = match observe(path):
-        Ok(observed) => observed.stamp
+    observed = match observe(path):
+        Ok(value) => value
         Err(_) => return false
 
-    if verified.get(file.digest, "") == stamp:
+    if verified.get(file.digest, "") == observed.stamp:
         return true
-    if not payload_intact(store, file.digest):
+    receipt = verified_receipt(store, file.digest)
+    if receipt.read_text("utf-8", "strict").unwrap_or("") == observed.stamp:
+        verified[file.digest] = observed.stamp
+        return true
+    hashing = begin_work()
+    intact = payload_intact(store, file.digest)
+    record_work(Operation.FileHash, path.0, hashing, file.size)
+    if not intact:
         return false
-    verified[file.digest] = stamp
+    verified[file.digest] = observed.stamp
+    if settled_since(observed.newest, SETTLE_SECONDS) and receipt.parent().mkdir(true, true).is_ok():
+        _ = publish_binary(receipt, observed.stamp.encode("utf-8"))
     return true
+
+
+def verified_receipt(store: Path, digest: str) -> Path:
+    """Where the metadata of a payload's verified file generation is kept between processes."""
+    return store.joinpath("verified-payloads").joinpath(digest)
 
 
 pub def claim(store: Path, identity: str) -> Result[LockGuard, str]:
