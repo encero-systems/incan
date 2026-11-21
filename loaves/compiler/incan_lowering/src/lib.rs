@@ -253,6 +253,11 @@ pub fn layout_runtime_requirements(modules: &[BodyIrModule], file: String) -> Ve
     runtime_calls::layout_runtime_requirements(modules, &file)
 }
 
+/// Whether a closure capture of this carrier is an owned snapshot the environment moves in and clones per call.
+pub fn owned_capture(ty: PlanType) -> bool {
+    closures::owned_capture(&ty)
+}
+
 /// Whether a plan type is an ordinary or sized numeric carrier, shared with native owned-result validation.
 pub fn numeric_carrier(ty: &PlanType) -> bool {
     numerics::numeric_carrier(ty)
