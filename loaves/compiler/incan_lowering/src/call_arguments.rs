@@ -36,6 +36,7 @@ use crate::operand_borrows::{borrow_scalar_operand, borrow_slice_operand, borrow
 use crate::pending::untranslated;
 use crate::statements::is_nominal_type;
 use crate::text_plan::owned_literal;
+use crate::validation_errors::validation_error_reference;
 
 /// A deferred producer owns its value parameters; ordinary frames retain the shared collection ABI.
 ///
@@ -244,7 +245,13 @@ pub fn call_argument_operand(
         }
         PlanType::StringRef => return borrow_text_operand(builder, value, span),
         PlanType::StrRef => return borrow_str_operand(builder, value, span),
-        PlanType::ValidationErrorRef => return Err(untranslated("validation_errors::validation_error_reference")),
+        PlanType::ValidationErrorRef => {
+            let SourceOperand::Place(read) = value else {
+                return Err("unsupported Body IR validation error reference without a place".into());
+            };
+            let source = scalar_place(builder, &read.place, span)?;
+            return validation_error_reference(builder, source, span);
+        }
         PlanType::SliceRef(_) | PlanType::SliceMutRef(_) => {
             return borrow_slice_operand(
                 builder,

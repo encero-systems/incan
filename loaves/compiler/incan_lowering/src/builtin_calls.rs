@@ -39,6 +39,7 @@ use crate::sequence_builtins::{
 use crate::strings::text_helper;
 use crate::text_plan::{format_parts, owned_literal};
 use crate::tuple_iterators::{enumerated_element, zip_call, zip_shape};
+use crate::validation_errors::lower_validation_error;
 use incan_semantics_core::body_ir::Operand as SourceOperand;
 
 /// Keep exact f32 values finite at assignment and parameter boundaries, as legacy does.
@@ -500,9 +501,8 @@ pub fn lower_runtime_helper(
             Err(untranslated("newtype_hooks::lower_newtype_hook_result"))
         }
         HelperOp::NewtypeSumAdd | HelperOp::NewtypeSumExtract => Err(untranslated("newtype_sums::newtype sums")),
-        HelperOp::ValidationErrorNew | HelperOp::ValidationErrorWithCode => {
-            Err(untranslated("validation_errors::lower_validation_error"))
-        }
+        HelperOp::ValidationErrorNew => lower_validation_error(builder, arguments, destination, false, span),
+        HelperOp::ValidationErrorWithCode => lower_validation_error(builder, arguments, destination, true, span),
         _ => Err(format!("unsupported Body IR Helper {helper:?}")),
     }
 }
@@ -539,7 +539,7 @@ fn lower_raise_value_error(
 }
 
 /// Read already ordered positional elements, refusing spreading by name.
-fn fixed_arguments(
+pub fn fixed_arguments(
     builder: &mut Builder,
     elements: &[ArgumentElement],
     span: &SourceSpan,

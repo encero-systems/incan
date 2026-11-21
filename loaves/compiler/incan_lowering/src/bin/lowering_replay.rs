@@ -323,8 +323,21 @@ fn replay_case(
             entry.1 += 1;
             tally.steps_identical += 1;
         } else {
+            let union_note = if unions == step.unions {
+                String::new()
+            } else {
+                let first = unions.iter().zip(&step.unions).position(|(left, right)| left != right);
+                format!(
+                    "; unions expected {} ({} distinct) got {}, first difference at {first:?}: expected {:?} got {:?}",
+                    step.unions.len(),
+                    step.unions.iter().map(|union| format!("{:?}", union.ty)).collect::<std::collections::BTreeSet<_>>().len(),
+                    unions.len(),
+                    step.unions.iter().take(4).map(|union| format!("{:?}/{}", union.ty, union.rust_item)).collect::<Vec<_>>(),
+                    unions.iter().take(4).map(|union| format!("{:?}/{}", union.ty, union.rust_item)).collect::<Vec<_>>()
+                )
+            };
             tally.mismatches.push(format!(
-                "{name} step {index} ({}): expected {}; got {}",
+                "{name} step {index} ({}): expected {}; got {}{union_note}",
                 step.call,
                 short(&step.outcome),
                 short(&actual)

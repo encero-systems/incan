@@ -17,11 +17,12 @@ use crate::derived_methods::{
     comparison_dunder, is_derived_clone, is_derived_display, lower_comparison_dunder, lower_derived_clone,
     receiver_declares_method, slot_name,
 };
+use crate::element_borrows::mutable_element_reference;
 use crate::element_places::is_element_place;
 use crate::frame::{Builder, place_type, read_place, temporary};
 use crate::json_builtins::lower_model_json_builtin;
 use crate::layout_types::{native_source_type, shared_receiver_type};
-use crate::list_methods::call_destination;
+use crate::list_methods::{call_destination, materialized_receiver};
 use crate::method_calls::{is_json_serialize_method, receiver_fills_slot, receiver_method_identity};
 use crate::models::model_place;
 use crate::nominal_instances::{instance_arguments, template_base};
@@ -308,7 +309,7 @@ fn library_receiver(
         return Err("unsupported Body IR stdlib method nonplace receiver".into());
     };
     if is_element_place(builder, &read.place)? {
-        return Err(untranslated("library_methods::library_receiver element"));
+        return element_library_receiver(builder, declared, &read.place, span);
     }
     let _ = module;
     let mut receiver = model_place(
@@ -393,4 +394,26 @@ pub fn lower_standard_slot(
         return Ok(true);
     }
     lower_callable_bound_call(builder, target, arguments, destination, span)
+}
+
+/// Borrow an indexed receiver as the stdlib method declares it: exclusively in place, or shared through its copy.
+fn element_library_receiver(
+    builder: &mut Builder,
+    declared: &IncanType,
+    source: &SourcePlace,
+    span: &SourceSpan,
+) -> Result<Place, String> {
+    match declared {
+        IncanType::RefMut(_) => mutable_element_reference(builder, source, span),
+        IncanType::Ref(_) => {
+            let copied = materialized_receiver(builder, source, span)?;
+            let PlanType::Model(owner, name) = place_type(&builder.locals, &copied) else {
+                return Err("the standard library element receiver requires a nominal layout".into());
+            };
+            let reference = temporary(builder, PlanType::ModelRef(owner, name), span);
+            builder.emit(plan_assign(reference.clone(), RvalueKind::Borrow(copied), span));
+            Ok(reference)
+        }
+        _ => Err("the standard library method cannot consume this element receiver".into()),
+    }
 }

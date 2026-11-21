@@ -110,7 +110,9 @@ fn retain_union(
             for argument in args {
                 retain_union(unions, retained, added, argument);
             }
-            if ty.is_union() && !retained.contains(ty) && !added.contains(ty) {
+            // The reference passes `added` by value, so its insertions never reach a later visit: each occurrence of
+            // an unretained union appends, and only `retained` deduplicates. Publication reproduces those entries.
+            if ty.is_union() && !retained.contains(ty) {
                 added.insert(ty.clone());
                 unions.push(ty.clone());
             }
