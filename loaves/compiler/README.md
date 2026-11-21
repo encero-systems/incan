@@ -14,7 +14,9 @@ The checked source pipeline, native lowering and runtime. Compiler units depend 
 | `incan_format/` | Source formatter. |
 | `incan_semantics_stdlib/` | Standard-library semantics packs used by the compiler. |
 | `incan_driver/` | Compilation sessions, module graphs, library publication and inspection. |
-| `incan_worker_host/` | Incan-authored host of one compiler worker process: the `incan.compiler-worker/1` protocol and the worker lifecycle. |
+| `incan_worker_host/` | Incan binding over the Rust worker host: the worker protocols and snapshot descriptors under their reference module paths, for Oven. |
+| `incan_worker_host_native/` | Rust host of one compiler worker process, run by the rustc adapter: the worker protocols, the worker lifecycle, and checking activations. |
+| `incan_worker_host_bindings/` | Platform sockets, store and trace items the Rust worker host reaches by stable Rust names. |
 | `internal_models/` | Incan-authored compiler record contracts: canonical checker records, scoped record reads and the producer interface. |
 
 The rustc adapter lives in `loaves/toolchain/incan-rustc-driver/`. Layer boundaries are documented in `workspaces/docs-site/docs/contributing/explanation/layering.md`.

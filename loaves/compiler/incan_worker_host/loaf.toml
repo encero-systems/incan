@@ -1,11 +1,10 @@
 [project]
 name = "incan_worker_host"
 version = "0.6.0-dev.9"
-description = "The compiler worker host: versioned compile and record protocols and the worker process lifecycle"
+description = "The compiler worker protocols for Incan callers: a binding over the Rust worker host"
 
 [dependencies]
-incan_platform = { path = "../../platform" }
-internal_models = { path = "../internal_models" }
+incan_worker_host_native = { loaf = "incan_worker_host_native", path = "../incan_worker_host_native" }
 
 [build]
 rust-edition = "2024"

@@ -1,0 +1,11 @@
+[project]
+name = "incan_worker_host_bindings"
+version = "0.6.0-dev.9"
+description = "Public names of the platform socket and trace items used by the Rust compiler worker host"
+private = true
+
+[dependencies]
+incan_platform = { path = "../../platform" }
+
+[build]
+rust-edition = "2024"

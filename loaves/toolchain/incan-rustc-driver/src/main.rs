@@ -133,22 +133,20 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
         },
         |bytes| {
             let facts = internal_models::decode_compiler_contributors(&bytes.to_vec())?;
-            Ok(
-                incan_frontend::library_manifest::capabilities::Contributors {
-                    profile: facts.profile,
-                    scope: facts.scope,
-                    vocabulary: facts.vocabulary,
-                    operations: facts.operations,
-                },
-            )
+            Ok(incan_frontend::library_manifest::capabilities::Contributors {
+                profile: facts.profile,
+                scope: facts.scope,
+                vocabulary: facts.vocabulary,
+                operations: facts.operations,
+            })
         },
     );
     incan_frontend::loaf_index::install_directory_reader(|path, top, seal, prefix, maximum| {
-        let answer = incan_worker_host::read_directory(
-            path.to_owned(),
-            &top.to_owned(),
-            &seal.to_owned(),
-            &prefix.to_owned(),
+        let answer = incan_worker_host_native::read_directory(
+            path,
+            top,
+            seal,
+            prefix,
             i64::try_from(maximum).map_err(|e| e.to_string())?,
         )?;
         Ok((
@@ -293,10 +291,7 @@ fn rust_abi(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         search: &search,
         scope: rust_facts::RustFactsScope::Crates(crates),
     })?;
-    std::fs::write(
-        output,
-        incan_frontend::rust_abi_cache::encode_rust_abi_cache(&facts)?,
-    )?;
+    std::fs::write(output, incan_frontend::rust_abi_cache::encode_rust_abi_cache(&facts)?)?;
     Ok(())
 }
 
@@ -306,10 +301,8 @@ fn checked_bodies_report(
     bodies: &incan_driver::check::CheckedBodies,
     decoded: usize,
 ) -> Result<String, incan_driver::error::CliError> {
-    let failure =
-        |error: serde_json::Error| incan_driver::error::CliError::failure(error.to_string());
-    let mut report: serde_json::Value =
-        serde_json::from_str(&bodies.to_json()?).map_err(failure)?;
+    let failure = |error: serde_json::Error| incan_driver::error::CliError::failure(error.to_string());
+    let mut report: serde_json::Value = serde_json::from_str(&bodies.to_json()?).map_err(failure)?;
     report["decoded"] = serde_json::json!(decoded);
     serde_json::to_string(&report).map_err(failure)
 }
@@ -338,13 +331,8 @@ pub(crate) fn check(arguments: &[String]) -> Result<i32, Box<dyn std::error::Err
     };
     let (certificate, options) = certified_options(rest);
     let (bodies_report, options) = match options {
-        [flag, report, options @ ..]
-            if flag == "--checked-bodies" || flag == "--checked-body-counts" =>
-        {
-            (
-                Some((Path::new(report), flag == "--checked-body-counts")),
-                options,
-            )
+        [flag, report, options @ ..] if flag == "--checked-bodies" || flag == "--checked-body-counts" => {
+            (Some((Path::new(report), flag == "--checked-body-counts")), options)
         }
         options => (None, options),
     };
@@ -380,18 +368,13 @@ pub(crate) fn check(arguments: &[String]) -> Result<i32, Box<dyn std::error::Err
                 checked_bodies_report(&bodies, decoded)?.into_bytes()
             };
             std::fs::write(report, bytes).map_err(|error| {
-                incan_driver::error::CliError::failure(format!(
-                    "cannot write {}: {error}",
-                    report.display()
-                ))
+                incan_driver::error::CliError::failure(format!("cannot write {}: {error}", report.display()))
             })?;
         }
         Ok(output)
     });
     let reproducible = checked.as_ref().is_ok_and(|report| report.reproducible);
-    let status = status_of(
-        checked.and_then(|report| command_diagnostics::render_check_report(report, format)),
-    );
+    let status = status_of(checked.and_then(|report| command_diagnostics::render_check_report(report, format)));
     if reproducible && let Some(certificate) = certificate {
         // A receipt that cannot be written only means the next unchanged check runs again.
         let _ = std::fs::write(certificate, CHECK_CERTIFICATE);
@@ -403,9 +386,7 @@ pub(crate) fn check(arguments: &[String]) -> Result<i32, Box<dyn std::error::Err
 /// their receipt when unchanged inputs reproduce the outcome exactly; the remaining options are returned as they are.
 pub(crate) fn certified_options(options: &[String]) -> (Option<&Path>, &[String]) {
     match options {
-        [flag, certificate, options @ ..] if flag == "--certify" => {
-            (Some(Path::new(certificate)), options)
-        }
+        [flag, certificate, options @ ..] if flag == "--certify" => (Some(Path::new(certificate)), options),
         options => (None, options),
     }
 }

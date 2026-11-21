@@ -12,7 +12,8 @@ tracing = { loaf = "crates-io/tracing", version = "0.1" }
 incan_lowering = { loaf = "incan_lowering", path = "../../compiler/incan_lowering" }
 incan_mir_plan_native = { loaf = "incan_mir_plan_native", path = "../../compiler/incan_mir_plan_native" }
 internal_models = { loaf = "internal_models", path = "../../compiler/internal_models" }
-incan_worker_host = { loaf = "incan_worker_host", path = "../../compiler/incan_worker_host" }
+incan_worker_host_native = { loaf = "incan_worker_host_native", path = "../../compiler/incan_worker_host_native" }
+internal_models_native = { loaf = "internal_models_native", path = "../../compiler/internal_models_native" }
 incan_platform = { loaf = "incan_platform", path = "../../platform" }
 incan_format = { loaf = "incan_format", path = "../../compiler/incan_format" }
 

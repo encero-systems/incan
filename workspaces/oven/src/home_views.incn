@@ -75,7 +75,7 @@ def bound_view(descriptor: Path, store: Path, identity: str) -> Result[Option[st
     """
     if not descriptor.is_file():
         return Ok(None)
-    selected = select_store_view(descriptor)?
+    selected = select_store_view(descriptor.0)?
     bound = selected.binding
     if bound.store_id != identity:
         return Err(f"{descriptor.0} binds bakery {bound.store_id} at {bound.locator}, not {identity} at {store.0}")
