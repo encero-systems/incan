@@ -201,8 +201,6 @@ pub from rust::incan_mir_plan_native import (
     encode_native_interface,
     native_interface_filename,
     placed_admission,
-    read_module_admission,
-    write_module_placement,
 )
 pub from rust::incan_mir_plan_native import (
     ADMITTED_MODULE_NOTE,
@@ -216,3 +214,18 @@ pub from rust::incan_mir_plan_native import (
     decode_plan_module,
     encode_plan_module,
 )
+from std.fs import Path
+from rust::incan_mir_plan_native import (
+    read_module_admission as read_module_admission_at,
+    write_module_placement as write_module_placement_at,
+)
+
+
+pub def read_module_admission(path: Path) -> Result[AdmittedModule, str]:
+    """Read the module admission note at `path` with its sparse placement companion."""
+    return read_module_admission_at(path.0)
+
+
+pub def write_module_placement(path: Path, note: AdmittedModule) -> Result[None, str]:
+    """Store a module admission's changed placements at the companion `path`, or remove a stale companion."""
+    return write_module_placement_at(path.0, note)

@@ -2,7 +2,7 @@
 //!
 //! Body IR v0 is the backend-facing, target-agnostic representation of one function/method body. It sits between
 //! typechecked source (AST + [`crate::SemanticFactStore`] / declaration-level [`crate::HirModule`]) and the
-//! target-specific native lowering in `loaves/compiler/incan_mir_lowering` — it must be consumable by a backend
+//! target-specific native lowering in `loaves/compiler/incan_lowering` — it must be consumable by a backend
 //! without that backend needing to read private compiler internals.
 //!
 //! Body IR v0 deliberately models a **normalized** statement/control-flow vocabulary rather than a flattened

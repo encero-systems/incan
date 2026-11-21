@@ -115,7 +115,7 @@ fn write_admitted_note(path: &Path, diagnostic: &Path, note: &AdmittedModule) ->
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    write_module_placement(&PathBuf::from(format!("{}.placement", path.display())), note)?;
+    write_module_placement(&format!("{}.placement", path.display()), note)?;
     std::fs::write(path, &encoded).map_err(|error| error.to_string())?;
     // The usual descriptor-scoped note is retained for external observers. Publication reads the private pair above.
     std::fs::write(diagnostic, &encoded).map_err(|error| error.to_string())
@@ -137,7 +137,7 @@ pub fn read_admitted(directory: &Path) -> Result<Vec<AdmittedModule>, String> {
         if !text.ends_with(ADMITTED_MODULE_NOTE) && !text.ends_with(PARTIAL_MODULE_NOTE) {
             continue;
         }
-        let note = read_module_admission(&path)?;
+        let note = read_module_admission(&path.to_string_lossy())?;
         let name = path.file_name().map(|name| name.to_string_lossy().into_owned());
         let expected = format!("{}{}", hex::encode(note.module.as_bytes()), note_suffix(note.complete));
         if name.as_deref() != Some(expected.as_str()) {
