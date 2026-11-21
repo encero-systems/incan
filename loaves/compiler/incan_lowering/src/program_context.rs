@@ -11,6 +11,7 @@ use incan_semantics_core::body_ir::{
 
 use crate::body_index::{BodyIndex, empty_body_index, extend_body_index};
 use crate::native_type_identity::{ConstructorIndex, extend_constructor_index};
+use crate::nominal_records::DescribedNominals;
 
 /// One validated source body or SDK item rendering a retained nominal through a shared receiver.
 #[derive(Clone, Debug, PartialEq)]
@@ -39,6 +40,8 @@ pub struct ProgramContext {
     pub overflow_checks: bool,
     /// The diagnostic policy, observed once per context rather than for every frame.
     pub observe_work: bool,
+    /// The rows of these tables a product nominal table has described, shared by the contexts that copy this one.
+    pub described: Arc<DescribedNominals>,
 }
 
 /// Module storage but no dispatch mappings for external-only synthetic frames.
@@ -56,6 +59,7 @@ pub fn synthetic_program_context(module: &BodyIrModule, constructors: Arc<Constr
         decorated_bindings: Arc::new(Vec::new()),
         overflow_checks: true,
         observe_work: std::env::var_os("INCAN_NATIVE_TIMING").is_some(),
+        described: Arc::default(),
     }
 }
 
