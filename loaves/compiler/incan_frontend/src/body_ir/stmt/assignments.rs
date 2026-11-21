@@ -220,8 +220,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .map(|ty| self.checked_type(ty))
             .or_else(|| self.callable_value_ty(&assignment.value))
             .unwrap_or_else(|| self.resolve_ty(assignment.value.span));
+        // A `mut` local owns what it holds: a native `&'static str` constant initializes owned text storage, so a
+        // later text value can replace it, rather than fixing the local to the constant's native `&str`.
+        let mutable_static_text = assignment.binding == ast::BindingKind::Mutable
+            && self
+                .type_info
+                .rust
+                .checked_constants
+                .contains_key(&assignment.value.span);
         if assignment.ty.is_none()
             && !atomic_storage
+            && !mutable_static_text
             && let Some(returned) = self
                 .type_info
                 .expressions
