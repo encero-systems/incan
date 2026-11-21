@@ -22,6 +22,7 @@ use crate::explicit_arguments::validate_source_input_call;
 use crate::frame::{
     Builder, drop_owned, forget_moved_arguments, place_type, read_place, temporary, terminate_call, value_type,
 };
+use crate::generic_callables::owned_callable_slots;
 use crate::layout_types::native_source_type;
 use crate::list_methods::call_destination;
 use crate::models::model_type;
@@ -29,7 +30,7 @@ use crate::pending::untranslated;
 use crate::statements::is_nominal_type;
 use crate::string_conversion_contracts::conversion_trait;
 use crate::traits::{close_trait_dispatch_arguments, instantiate_type, is_lazy_method_body};
-use crate::type_parameters::{request_instance, substitute};
+use crate::type_parameters::{indexed_static_type_arguments, instantiate, request_instance, substitute};
 
 /// Fill an environment-owning payload selected by the retained union declaration, preserving captured values.
 pub fn carrier_callable_operand(
@@ -119,7 +120,7 @@ pub fn lower_named_target(
     };
     let body = &module.bodies[index];
     if !body.type_parameters.is_empty() {
-        return Err(untranslated("callable_calls::lower_type_parameter_call"));
+        return lower_type_parameter_call(module, builder, target, body, arguments, destination, span);
     }
     if !target.type_args.is_empty() {
         return Err("unsupported Body IR type arguments on a function without type parameters".into());
@@ -129,6 +130,25 @@ pub fn lower_named_target(
         request_instance(&mut builder.instances, body, Vec::new(), Vec::new(), false);
     }
     lower_local_call(module, builder, target, body, arguments, destination, span)
+}
+
+/// Schedule the checker-selected closed frame, refusing every unadmitted type argument before use.
+fn lower_type_parameter_call(
+    module: &BodyIrModule,
+    builder: &mut Builder,
+    target: &NamedCallableTarget,
+    body: &Body,
+    arguments: &[ArgumentElement],
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    static_receiver_owner(builder, module, target)?;
+    let indexed = indexed_static_type_arguments(builder.constructors(), target)?;
+    let closed = checked_type_arguments(builder, &indexed)?;
+    let typed_body = instantiate(body, &closed, &[])?;
+    let owned = owned_callable_slots(builder, body, arguments, &target.binding, 0)?;
+    request_instance(&mut builder.instances, body, closed, owned, false);
+    lower_local_call(module, builder, target, &typed_body, arguments, destination, span)
 }
 
 /// The special call route a named target selects before ordinary dispatch, if any: primitive adapters, generated

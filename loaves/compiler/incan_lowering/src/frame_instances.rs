@@ -3,21 +3,30 @@
 use std::collections::BTreeMap;
 
 use incan_mir_plan_native::{
-    Carrier, EnumDeclaration, ExternalFunction, Function, PlanType, StaticCell, carrier_position,
+    Carrier, EnumDeclaration, ExternalFunction, Function, GenericLoan, PlanType, StaticCell, carrier_position,
 };
 use incan_semantics_core::IncanType;
-use incan_semantics_core::body_ir::BodyIrModule;
+use incan_semantics_core::body_ir::{Body, BodyIrModule, DecoratedInitialization};
 
+use crate::classes::body_module_identity;
 use crate::decls::{library_enum_item, library_item};
+use crate::decorator_caches::{DecoratorFrame, validate_binding_policy};
+use crate::function_frames::lower_function;
 use crate::instance_products::InstanceProducts;
+use crate::layout_types::native_source_type;
 use crate::lowering::Inventories;
 use crate::native_type_identity::ConstructorIndex;
 use crate::nominal_instances::NominalInstance;
+use crate::nominal_instances::retain_frame_nominals;
+use crate::options::retain_body_carriers;
 use crate::pending::untranslated;
 use crate::program_context::ProgramContext;
+use crate::program_context::retain_nominal_tables;
 use crate::runtime_calls::{RuntimeInventories, redirect_runtime_calls, retain_runtime_instances, runtime_redirects};
 use crate::runtime_requirements::RuntimeRetention;
-use crate::type_parameters::Instance;
+use crate::signature_lifetimes::{generic_loans, signature_lifetimes};
+use crate::type_parameters::{Instance, callable_storage_arguments, enqueue_instances, instance_queue, instantiate};
+use crate::unions::collect_unions;
 
 /// Drain checked instances through an explicit mutable loan and append native layouts in place.
 #[allow(clippy::too_many_arguments)]
@@ -37,17 +46,10 @@ pub fn lower_instances(
     cells: &mut Vec<StaticCell>,
     products: Option<&InstanceProducts>,
 ) -> Result<RuntimeRetention, String> {
-    let _ = (
-        template_constructors,
-        templates,
-        unions,
-        sources,
-        files,
-        nominal_instances,
-        cells,
-        products,
-    );
+    let mut queue = instance_queue();
+    let mut runtime_unions = unions.to_vec();
     let mut redirects = runtime_redirects();
+    let mut names = function_names();
     let governed_runtime = !context.runtime_callable_bindings.is_empty()
         || !context.runtime_binding_scopes.is_empty()
         || governed_runtime_module(owners);
@@ -57,13 +59,69 @@ pub fn lower_instances(
             functions: &mut inventories.functions,
             externals: &mut inventories.externals,
             intrinsics,
-            unions,
+            unions: &runtime_unions,
         };
         retain_runtime_instances(&constructors, context, runtime, &mut redirects)?;
     }
-    if !instances.is_empty() {
-        return Err(untranslated("frame_instances::lower_instance_frame"));
+    let mut source_indexes: BTreeMap<String, usize> = BTreeMap::new();
+    for (index, owner) in owners.iter().enumerate() {
+        source_indexes.insert(owner.clone(), index);
     }
+    enqueue_instances(&mut queue, instances);
+    while let Some(request) = queue.pending.pop_front() {
+        if products.is_some() {
+            return Err(untranslated("instance_products::reused_instance"));
+        }
+        let body = instantiate(&request.body, &request.arguments, &request.owned_callable_slots)?;
+        let storage_arguments =
+            callable_storage_arguments(&request.body, &request.arguments, &request.owned_callable_slots)?;
+        let lifetimes = signature_lifetimes(&request.body, &request.arguments)?;
+        let declarations = retain_frame_nominals(template_constructors, context, templates, &body, nominal_instances)?;
+        let added = !declarations.is_empty();
+        context.nominal_declarations.extend(declarations);
+        if added {
+            runtime_unions = collect_unions(context);
+        }
+        let (role, source_index) = instance_frame_selection(&body, request.original_callable, &source_indexes)?;
+        retain_nominal_tables(program, context)?;
+        let constructors = program.constructors.clone();
+        retain_body_carriers(&constructors, context, intrinsics, &body, &files[source_index])?;
+        retain_generic_decorator_frames(context, &body)?;
+        if body.is_generator() {
+            return Err(untranslated("generators::append_generator_constructor"));
+        }
+        let frame = InstanceFrame {
+            request: &request,
+            body: &body,
+            role,
+            storage_arguments: &storage_arguments,
+            lifetimes,
+            source: &sources[source_index],
+            file: &files[source_index],
+        };
+        let mut scheduled = lower_instance_frame(
+            context,
+            program,
+            &frame,
+            unions,
+            &runtime_unions,
+            intrinsics,
+            inventories,
+            &mut names,
+        )?;
+        enqueue_instances(&mut queue, &mut scheduled);
+        if governed_runtime {
+            let constructors = program.constructors.clone();
+            let runtime = RuntimeInventories {
+                functions: &mut inventories.functions,
+                externals: &mut inventories.externals,
+                intrinsics,
+                unions: &runtime_unions,
+            };
+            retain_runtime_instances(&constructors, context, runtime, &mut redirects)?;
+        }
+    }
+    let _ = cells;
     // Runtime declarations are preflighted before plan construction. Retain this check as a fail-closed assertion
     // against a future lowering operation bypassing that authenticated facade inventory.
     if !redirects.missing.is_empty() {
@@ -71,6 +129,118 @@ pub fn lower_instances(
     }
     redirect_runtime_calls(&mut inventories.functions, &redirects)?;
     Ok(RuntimeRetention::Complete)
+}
+
+/// One closed instance and the source frame it lowers in.
+struct InstanceFrame<'a> {
+    request: &'a Instance,
+    body: &'a Body,
+    role: DecoratorFrame,
+    storage_arguments: &'a [IncanType],
+    lifetimes: Vec<Vec<String>>,
+    source: &'a str,
+    file: &'a str,
+}
+
+/// Lower one closed instance frame, retain it with the functions it synthesizes, and return its own requests.
+#[allow(clippy::too_many_arguments)]
+fn lower_instance_frame(
+    context: &BodyIrModule,
+    program: &ProgramContext,
+    frame: &InstanceFrame<'_>,
+    unions: &[IncanType],
+    runtime_unions: &[IncanType],
+    intrinsics: &mut Vec<EnumDeclaration>,
+    inventories: &mut Inventories,
+    names: &mut FunctionNames,
+) -> Result<Vec<Instance>, String> {
+    let diagnostic_context = format!("{} at {}", frame.body.name, frame.file);
+    let (function, runtime, pending, synthesized) = lower_function(
+        context,
+        program,
+        frame.body,
+        unions,
+        frame.source,
+        frame.file,
+        intrinsics,
+        frame.storage_arguments,
+        frame.role,
+    )
+    .map_err(|reason| format!("{reason} in {diagnostic_context}"))?;
+    let mut retained_function = function;
+    retained_function.signature_lifetimes = frame.lifetimes.clone();
+    retained_function.generic_loans = instance_loans(program, context, frame.request, runtime_unions, intrinsics)?;
+    retain_instance(&mut inventories.functions, names, retained_function)?;
+    append_synthesized(&mut inventories.functions, names, synthesized)?;
+    merge_externals(&mut inventories.externals, runtime)?;
+    Ok(pending)
+}
+
+/// Retain the same canonical argument storage used by native instantiation for signature-loan verification.
+fn instance_loans(
+    program: &ProgramContext,
+    context: &BodyIrModule,
+    request: &Instance,
+    unions: &[IncanType],
+    intrinsics: &[EnumDeclaration],
+) -> Result<Vec<GenericLoan>, String> {
+    let mut retained = Vec::with_capacity(request.arguments.len());
+    for argument in &request.arguments {
+        retained.push(native_source_type(
+            &program.constructors,
+            &context.nominal_declarations,
+            &context.enum_declarations,
+            unions,
+            argument,
+            intrinsics,
+            "",
+        )?);
+    }
+    Ok(generic_loans(&request.body, &retained))
+}
+
+/// Keep the checked execution role and last matching source owner, refusing an instance without provenance.
+fn instance_frame_selection(
+    body: &Body,
+    original_callable: bool,
+    source_indexes: &BTreeMap<String, usize>,
+) -> Result<(DecoratorFrame, usize), String> {
+    let role = if original_callable {
+        DecoratorFrame::Original
+    } else {
+        DecoratorFrame::Normal
+    };
+    let owner = body_module_identity(body)?;
+    match source_indexes.get(&owner) {
+        Some(index) => Ok((role, *index)),
+        None => Err("unsupported Body IR instance without source provenance".into()),
+    }
+}
+
+/// A generic decorated wrapper closes its original and initializer per instantiation; those frames await translation.
+fn retain_generic_decorator_frames(module: &BodyIrModule, body: &Body) -> Result<(), String> {
+    for binding in &module.decorated_bindings {
+        if binding.original_body.canonical != body.canonical {
+            continue;
+        }
+        validate_binding_policy(binding)?;
+        if binding.initialization == DecoratedInitialization::PerInstantiation && binding.initializer.is_some() {
+            return Err(untranslated("frame_instances::retain_generic_decorator_frames"));
+        }
+    }
+    Ok(())
+}
+
+/// Refuse a native instance symbol that collides with another retained source declaration.
+fn retain_instance(functions: &mut Vec<Function>, names: &mut FunctionNames, function: Function) -> Result<(), String> {
+    if !named_functions(names, functions, &function.name).is_empty() {
+        return Err(format!(
+            "unsupported Body IR type parameter instance symbol collision {}",
+            function.name
+        ));
+    }
+    functions.push(function);
+    Ok(())
 }
 
 /// Whether the unit lowers the runtime itself, which governs its own instances.
