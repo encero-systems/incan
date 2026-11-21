@@ -4,7 +4,7 @@ use incan_mir_plan_native::{Constant, Operand, Place, PlanType, RvalueKind, Sour
 use incan_semantics_core::IncanInputAccess;
 use incan_semantics_core::body_ir::{
     ArgumentBinding, ArgumentElement, Body, BoundArgument, CallableParam, Constant as SourceConstant,
-    Operand as SourceOperand, OwnershipFact,
+    Operand as SourceOperand, OwnershipFact, PlaceOperand,
 };
 
 use crate::builtin_calls::coerce_numeric_operand;
@@ -409,7 +409,7 @@ fn explicit_argument_operand(
                 return Err("unsupported Body IR explicit argument from static storage".into());
             }
             if is_element_place(builder, &read.place)? {
-                return Err(untranslated("call_arguments::explicit indexed argument"));
+                return explicit_indexed_argument(builder, read, ty, access, span);
             }
             let source = scalar_place(builder, &read.place, span)?;
             explicit_place_argument(builder, source, read.fact, ty, access, span)
@@ -656,5 +656,26 @@ fn slice_elements(ty: &PlanType) -> &[PlanType] {
         | PlanType::ScalarRef(elements)
         | PlanType::ScalarMutRef(elements) => elements,
         _ => &[],
+    }
+}
+
+/// Lend retained shared indexed storage to an explicit shared input, never a copy of the element.
+fn explicit_indexed_argument(
+    builder: &mut Builder,
+    read: &PlaceOperand,
+    ty: &PlanType,
+    access: IncanInputAccess,
+    span: &SourceSpan,
+) -> Result<Operand, String> {
+    if access != IncanInputAccess::Shared || read.fact != OwnershipFact::Borrow {
+        return Err("unsupported Body IR explicit argument requires retained shared indexed storage".into());
+    }
+    let (referent, writable) = reference_contract(ty)?;
+    if writable || element_place_type(builder, &read.place)? != referent {
+        return Err("unsupported Body IR explicit indexed argument carrier mismatch".into());
+    }
+    match shared_element_place(builder, &read.place, span)? {
+        Some(source) => explicit_place_argument(builder, source, read.fact, ty, access, span),
+        None => Err("unsupported Body IR explicit argument requires retained list element storage".into()),
     }
 }

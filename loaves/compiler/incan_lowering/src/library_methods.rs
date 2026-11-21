@@ -1,11 +1,12 @@
 //! Lower calls to library methods with their receivers, arguments, and results.
 
-use incan_mir_plan_native::{Place, PlanType, RvalueKind, SourceSpan, assign as plan_assign};
+use incan_mir_plan_native::{CalleeKind, Place, PlanType, RvalueKind, SourceSpan, assign as plan_assign};
 use incan_semantics_core::body_ir::{
     ArgumentElement, BodyIrModule, LoafCallable, MethodTarget, Operand as SourceOperand, Place as SourcePlace,
 };
 use incan_semantics_core::{IncanType, generic};
 
+use crate::async_::construct_boxed_future;
 use crate::call_arguments::call_parameter_type;
 use crate::callable_calls::checked_type_arguments;
 use crate::callable_values::lower_callable_bound_call;
@@ -113,8 +114,21 @@ pub fn lower_library_method(
     let Some(path) = delegation.rust_path() else {
         return Err("unsupported Body IR stdlib method native identity".into());
     };
-    if let PlanType::Future(_) = result {
-        return Err(untranslated("async_::construct_boxed_future"));
+    if let PlanType::Future(outputs) = &result {
+        let [output_type] = outputs.as_slice() else {
+            return Err("the standard library method future requires exactly one output type".into());
+        };
+        if target.loaf_trait.is_some() {
+            return Err("a standard library trait method cannot return this future type".into());
+        }
+        // A compiled source method is exported as a crate-root function whose first argument is the receiver loan.
+        // Only a native inherent method keeps the owner on the callable path.
+        let callee = if delegation.declaration_frame().is_some() {
+            CalleeKind::Instantiated(path, type_arguments)
+        } else {
+            CalleeKind::FutureMethod(path, type_arguments)
+        };
+        return construct_boxed_future(builder, callee, parameters, output_type.clone(), operands, output, span);
     }
     // Like a source method's, an owned result (text, an enum, a model, a collection) gets an owner in the caller, so a
     // discarded or matched result is dropped as well.

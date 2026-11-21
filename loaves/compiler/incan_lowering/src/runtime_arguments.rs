@@ -9,10 +9,9 @@ use incan_semantics_core::{
 };
 
 use crate::collections::is_owned_collection;
-use crate::compiler_record_adapters::semantic_key_matches_native;
+use crate::compiler_record_adapters::{native_canonical_symbol_id, semantic_key_matches_native};
 use crate::layout_types::carrier_name;
 use crate::nominal_instances::{instance_arguments, template_base};
-use crate::pending::untranslated;
 
 /// The tables a native argument resolves its owners against.
 pub struct RuntimeTypes<'a> {
@@ -99,7 +98,7 @@ pub fn runtime_argument(types: &RuntimeTypes<'_>, ty: &PlanType) -> Result<Incan
             }
             IncanType::TypeToken(Box::new(runtime_argument(types, &represented[0])?))
         }
-        PlanType::Trait(_) => return Err(untranslated("runtime_calls::runtime_argument trait")),
+        PlanType::Trait(identity) => IncanType::Trait(native_canonical_symbol_id(identity)?),
         PlanType::Generator(leaf, depth) => generic(
             "Generator".into(),
             vec![nested_lists(runtime_argument(types, &list_leaf_type(leaf))?, *depth)],

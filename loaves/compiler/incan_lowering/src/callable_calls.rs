@@ -35,6 +35,7 @@ use crate::traits::{close_trait_dispatch_arguments, instantiate_type, is_lazy_me
 use crate::type_parameters::{indexed_static_type_arguments, instantiate, request_instance, substitute};
 use crate::validated_constructors::lower_validated_constructor;
 use crate::value_enum_methods::lower_value_enum_from_value;
+use crate::value_enum_methods::lower_value_enum_ordinal_encoding;
 use crate::value_enums::value_enum_from_value_owner;
 
 /// Fill an environment-owning payload selected by the retained union declaration, preserving captured values.
@@ -130,6 +131,9 @@ pub fn lower_named_target(
             return Err("unsupported Body IR string conversion Result destination".into());
         }
         return lower_callable_result(builder, callee, operands, output, result, span);
+    }
+    if lower_value_enum_ordinal_encoding(module, builder, target, arguments, destination, span)? {
+        return Ok(());
     }
     if let Some(owner) = value_enum_from_value_owner(module, target)? {
         return lower_value_enum_from_value(builder, owner, arguments, destination, span);
