@@ -207,7 +207,8 @@ mod tests {
     /// Declaration contracts and refused body projections retain their distinct complete record payloads.
     #[test]
     fn checked_ownership_records_round_trip() -> Result<(), Box<dyn std::error::Error>> {
-        let source = "def view(value: Borrowed[str]) -> Borrowed[str] from value:\n    return value\n";
+        let source =
+            "def view(value: Borrowed[str], marker: Owned[int] = 0) -> Borrowed[str] from value:\n    return value\n";
         let moved = format!("# moved source\n{source}");
         let fields = fixture_record(source, "view", true)?;
         assert!(
