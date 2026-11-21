@@ -181,6 +181,9 @@ pub model EditCutoff:
 
     pub active: bool = false
     pub stale: set[str] = set()
+    # The unit's modules captured with the bytes their selected projection was made from: their source records are
+    # the selected graph's, so a retained owner's current source need not be projected to be compared with them.
+    pub carried: set[str] = set()
 
     pub def revalidates(self, value_key: str) -> bool:
         """Whether the evaluation of this output must have its witnesses read back before it is reused."""

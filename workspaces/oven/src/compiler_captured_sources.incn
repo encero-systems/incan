@@ -32,6 +32,8 @@ pub model PreparedSourceInputs:
     pub transaction: Transaction
     pub keys: list[RecordKey]
     pub positioned: Dict[str, bytes] = {}
+    # The unit's own modules whose selected projection was carried rather than projected again.
+    pub carried: set[str] = set()
 
 
 pub def publish_captured_source_inputs(
@@ -55,6 +57,7 @@ pub def prepare_captured_source_inputs(
     mut prepared = transaction
     mut changed: list[RecordKey] = []
     mut positioned: Dict[str, bytes] = {}
+    mut carried: set[str] = set()
     engine = observe(Path(executable()?))?.stamp
     for input in inputs:
         if input.path.endswith(".incn") and input.role in [InputRole.Root, InputRole.Member, InputRole.Resolved]:
@@ -73,6 +76,8 @@ pub def prepare_captured_source_inputs(
                 # A module captured with the bytes, features and engine its selected projection was made from projects
                 # to the same records: its positioned record is carried and nothing is projected again.
                 if carried_projection(selected, capture, identity, positioned)?:
+                    if identity[0] == source_origin(unit):
+                        carried.add(identity[1])
                     continue
                 stage_put(prepared, encode_record_key(capture.key)?, capture.encoded()?)
                 source = Path(input.path).read_text("utf-8", "strict").map_err((error) => error.message())?
@@ -108,7 +113,7 @@ pub def prepare_captured_source_inputs(
                         key = encode_record_key(record.key)?
                         if stage_changed_projection(selected, prepared, key, record, positioned)?:
                             changed.append(record.key)
-    return Ok(PreparedSourceInputs(transaction=prepared, keys=changed, positioned=positioned))
+    return Ok(PreparedSourceInputs(transaction=prepared, keys=changed, positioned=positioned, carried=carried))
 
 
 def capture_marker(engine: str, digest: str, declared: list[str], active: Option[list[str]]) -> str:
