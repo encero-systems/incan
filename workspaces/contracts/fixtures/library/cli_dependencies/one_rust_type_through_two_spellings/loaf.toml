@@ -1,0 +1,11 @@
+[project]
+name = "one_rust_type_through_two_spellings"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+keyring = { path = "deps/keyring" }
+scoped = { path = "deps/scoped" }
+records = { loaf = "records", path = "deps/records" }
