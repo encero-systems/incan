@@ -32,7 +32,7 @@ use crate::lists::exclusive_reference;
 use crate::lists::{is_list, is_mutable_list_reference};
 use crate::mutable_parameters::mutable_argument;
 use crate::numerics::numeric_carrier;
-use crate::operand_borrows::{borrow_str_operand, borrow_text_operand};
+use crate::operand_borrows::{borrow_scalar_operand, borrow_slice_operand, borrow_str_operand, borrow_text_operand};
 use crate::pending::untranslated;
 use crate::statements::is_nominal_type;
 use crate::text_plan::owned_literal;
@@ -246,10 +246,22 @@ pub fn call_argument_operand(
         PlanType::StrRef => return borrow_str_operand(builder, value, span),
         PlanType::ValidationErrorRef => return Err(untranslated("validation_errors::validation_error_reference")),
         PlanType::SliceRef(_) | PlanType::SliceMutRef(_) => {
-            return Err(untranslated("operand_borrows::borrow_slice_operand"));
+            return borrow_slice_operand(
+                builder,
+                value,
+                slice_elements(ty),
+                matches!(ty, PlanType::SliceMutRef(_)),
+                span,
+            );
         }
         PlanType::ScalarRef(_) | PlanType::ScalarMutRef(_) => {
-            return Err(untranslated("operand_borrows::borrow_scalar_operand"));
+            return borrow_scalar_operand(
+                builder,
+                value,
+                slice_elements(ty),
+                matches!(ty, PlanType::ScalarMutRef(_)),
+                span,
+            );
         }
         PlanType::FrozenCollectionRef(..) => return frozen_reference_argument(builder, value, ty, span),
         _ => {}
@@ -625,4 +637,15 @@ fn loop_variable_copy(
         return Ok(Some(cloned_list(builder, root, span)?));
     }
     Ok(None)
+}
+
+/// The element types a slice or scalar reference carrier names.
+fn slice_elements(ty: &PlanType) -> &[PlanType] {
+    match ty {
+        PlanType::SliceRef(elements)
+        | PlanType::SliceMutRef(elements)
+        | PlanType::ScalarRef(elements)
+        | PlanType::ScalarMutRef(elements) => elements,
+        _ => &[],
+    }
 }

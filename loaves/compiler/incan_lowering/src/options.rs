@@ -576,7 +576,7 @@ pub fn variant_condition(builder: &mut Builder, source: &Place, slot: i64, span:
 }
 
 /// Require a retained concrete Result carrier before reading its variant payload layout.
-fn result_layout(builder: &Builder, ty: &PlanType) -> Result<(i64, EnumDeclaration), String> {
+pub fn result_layout(builder: &Builder, ty: &PlanType) -> Result<(i64, EnumDeclaration), String> {
     if let PlanType::Enum(owner, _) = ty
         && *owner >= builder.enums().len() as i64
     {

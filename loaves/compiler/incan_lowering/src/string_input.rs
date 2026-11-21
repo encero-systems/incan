@@ -1,0 +1,93 @@
+//! Owned String ingress frames shared by checked reconstruction and raw source conversions.
+
+use std::sync::Arc;
+
+use incan_mir_plan_native::{EnumDeclaration, Local, PlanType, SourceSpan};
+use incan_semantics_core::IncanInputAccess;
+use incan_semantics_core::body_ir::BodyIrModule;
+
+use crate::frame::Builder;
+use crate::native_type_identity::ConstructorIndex;
+use crate::program_context::synthetic_program_context;
+
+/// Keep the sole input owned until a planned call or construction consumes it, with one local cleanup ledger.
+pub fn owned_string_frame(
+    constructors: Arc<ConstructorIndex>,
+    module: &BodyIrModule,
+    name: &str,
+    result: PlanType,
+    intrinsics: &[EnumDeclaration],
+    span: &SourceSpan,
+) -> Builder {
+    let mut builder = Builder {
+        program: synthetic_program_context(module, constructors),
+        locals: vec![
+            Local {
+                ty: result,
+                span: span.clone(),
+            },
+            Local {
+                ty: PlanType::String,
+                span: span.clone(),
+            },
+        ],
+        parameter_count: 1,
+        blocks: Vec::new(),
+        current: 0,
+        source: String::new(),
+        file: span.file.to_string(),
+        line_starts: Vec::new(),
+        module_identity: module.module_id.path().to_string(),
+        callable_identity: None,
+        loops: Vec::new(),
+        loop_owners: Vec::new(),
+        externals: Vec::new(),
+        owned: vec![1],
+        cleanup_chains: Vec::new(),
+        closed: Vec::new(),
+        iterators: Vec::new(),
+        borrowed_items: Vec::new(),
+        in_place_items: Vec::new(),
+        partial_callables: Vec::new(),
+        scalar_closures: Vec::new(),
+        unproven_closures: Vec::new(),
+        unions: Vec::new(),
+        local_offset: 0,
+        consuming_closure_frame: false,
+        intrinsics: intrinsics.to_vec(),
+        generator_handle: -1,
+        instances: Vec::new(),
+        type_parameters: Vec::new(),
+        type_arguments: Vec::new(),
+        callable_type_arguments: Vec::new(),
+        trait_environment: None,
+        function_pointer_locals: Vec::new(),
+        name: name.to_string(),
+        synthesized: Vec::new(),
+        materialized_closures: Vec::new(),
+        step_element: None,
+        anchor: None,
+        iteration_locals: Vec::new(),
+        step_bindings: Vec::new(),
+        step_clauses: Vec::new(),
+        scoped_locals: Vec::new(),
+        scope_parents: Vec::new(),
+        loop_scopes: Vec::new(),
+        loop_exit_blocks: Vec::new(),
+        loop_exit_owners: Vec::new(),
+        forbidden_reads: Vec::new(),
+        moved_tuple_fields: Vec::new(),
+        body_identity: None,
+        checked_local_types: Vec::new(),
+        initializing_decorator: None,
+        cached_decorator: -1,
+        callable_name_dynamic_profile: false,
+        reference_values: Vec::new(),
+        returned_view: IncanInputAccess::Inferred,
+        carries_view: false,
+        invocation_storage: Vec::new(),
+        released: Vec::new(),
+    };
+    builder.new_block(span);
+    builder
+}
