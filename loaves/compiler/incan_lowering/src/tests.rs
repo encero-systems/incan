@@ -8,6 +8,7 @@ mod carrier_identities;
 mod cleanup_chains;
 mod compiler_record_adapters;
 mod corpus_recording;
+mod enum_layouts;
 mod explicit_arguments;
 mod explicit_input_storage;
 mod fallible_factories;
