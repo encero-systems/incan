@@ -4,6 +4,8 @@
 //! product-local ordinal. The product names each ordinal's declaration by stable identity, so it never retains a
 //! position in the unit's tables. Places, operands, operations and statements cross [`crate::records::body`].
 
+use std::collections::BTreeSet;
+
 use incan_semantics_core::body_ir::loaf_item_path;
 use incan_semantics_core::{SemanticSourceTargetKind, SymbolNamespace, decode_incan_symbol_identity};
 
@@ -42,6 +44,10 @@ const SCHEMA: i64 = 7;
 /// Source import prefixes retained by the scalar product.
 const RUST_BINDING: &str = "rust::";
 const PACKAGE_BINDING: &str = "pub::";
+/// The one host function of a crate other than Rust's own that the bounded identities name.
+const JSON_HOST_FUNCTION: &str = "incan_std_data::json::__private::stringify_or_raise";
+/// Why an external has no identity this codec can store.
+const UNBOUND_EXTERNAL: &str = "scalar function products refuse an external without an Incan binding identity";
 
 /// A restored product: its function, runtime demand, resolved positions and helper frames.
 pub type NamedProduct = (Function, Vec<ExternalFunction>, Vec<NominalReference>, Vec<Function>);
@@ -147,6 +153,14 @@ pub fn decode_frames(text: &[u8], references: &[NominalReference]) -> Result<Vec
 
 /// Restore the helper frames of one admitted product.
 fn restore_frames(stored: &StoredProduct, references: &[NominalReference]) -> Result<Vec<Function>, String> {
+    restore_noted_frames(stored, references).map(|(frames, _)| frames)
+}
+
+/// Restore the helper frames of one admitted product, with the linked crates their bindings name.
+fn restore_noted_frames(
+    stored: &StoredProduct,
+    references: &[NominalReference],
+) -> Result<(Vec<Function>, Vec<String>), String> {
     if stored.schema != SCHEMA {
         return Err("unknown native product schema".to_owned());
     }
@@ -154,11 +168,12 @@ fn restore_frames(stored: &StoredProduct, references: &[NominalReference]) -> Re
         return Err("plan product declaration identities differ from their resolved positions".to_owned());
     }
     let mut remap = binding_remap(references.to_vec());
-    stored
+    let frames = stored
         .frames
         .iter()
         .map(|frame| restore_function(frame, &mut remap))
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((frames, remap.crates))
 }
 
 /// Restore both parts of a native product without repeating dependency selection.
@@ -179,6 +194,14 @@ fn restore_product(
     stored: &StoredProduct,
     references: &[NominalReference],
 ) -> Result<(Function, Vec<ExternalFunction>), String> {
+    restore_noted_product(stored, references).map(|(function, runtime, _)| (function, runtime))
+}
+
+/// Restore an admitted product's function and runtime demand, with the linked crates their bindings name.
+fn restore_noted_product(
+    stored: &StoredProduct,
+    references: &[NominalReference],
+) -> Result<(Function, Vec<ExternalFunction>, Vec<String>), String> {
     if stored.schema != SCHEMA {
         return Err("unknown native product schema".to_owned());
     }
@@ -200,15 +223,32 @@ fn restore_product(
     for value in &stored.runtime {
         restored.push(restore_external(value, &mut remap)?);
     }
-    Ok((function, restored))
+    Ok((function, restored, remap.crates))
+}
+
+/// Restore a product for a unit that links `linked`: its function, runtime demand and helper frames, refused when a
+/// function or constant it names belongs to another crate.
+fn restore_for_unit(
+    stored: &StoredProduct,
+    references: &[NominalReference],
+    linked: &BTreeSet<String>,
+) -> Result<(Function, Vec<ExternalFunction>, Vec<Function>), String> {
+    let (function, runtime, mut crates) = restore_noted_product(stored, references)?;
+    let (frames, frame_crates) = restore_noted_frames(stored, references)?;
+    crates.extend(frame_crates);
+    if let Some(name) = crates.iter().find(|name| !linked.contains(*name)) {
+        return Err(format!(
+            "plan product names crate {name}, which this unit does not link"
+        ));
+    }
+    Ok((function, runtime, frames))
 }
 
 /// Bind a retained product to this unit and restore its function and helper frames from one typed decode.
 pub fn restore_named_product(encoded: &[u8], unit: &UnitNominals) -> Option<NamedProduct> {
     let stored = decode_product_record(encoded).ok()?;
     let resolved = resolve_nominals(&stored.nominals, unit)?;
-    let (function, runtime) = restore_product(&stored, &resolved).ok()?;
-    let frames = restore_frames(&stored, &resolved).ok()?;
+    let (function, runtime, frames) = restore_for_unit(&stored, &resolved, &BTreeSet::new()).ok()?;
     Some((function, runtime, resolved, frames))
 }
 
@@ -240,6 +280,10 @@ pub fn encode_runtime(runtime: &[ExternalFunction]) -> Result<Vec<Vec<u8>>, Stri
     let mut encoded = Vec::with_capacity(runtime.len());
     for value in runtime {
         let stored = store_external(value, &mut remap)?;
+        // A unit's inventory travels in its native interface without the product's linked-crate restore check.
+        if linked_crate(&stored.path).is_some() {
+            return Err(UNBOUND_EXTERNAL.to_owned());
+        }
         encoded.push(write_wire(
             EXTERNAL_ROOT,
             &STORED_EXTERNAL_SCHEMA,
@@ -324,13 +368,14 @@ impl PlacedRecord {
 
     /// Restore the function, its runtime demand and its helper frames with each ordinal bound to the unit position
     /// `references` resolved for it.
+    ///
+    /// A product that names a function of a crate outside `linked`, the crates the restoring unit links, is refused.
     pub fn restore(
         &self,
         references: &[NominalReference],
+        linked: &BTreeSet<String>,
     ) -> Result<(Function, Vec<ExternalFunction>, Vec<Function>), String> {
-        let (function, runtime) = restore_product(&self.stored, references)?;
-        let frames = restore_frames(&self.stored, references)?;
-        Ok((function, runtime, frames))
+        restore_for_unit(&self.stored, references, linked)
     }
 
     /// Whether the product restores with every declaration bound to its own product-local ordinal.
@@ -565,7 +610,7 @@ fn store_external(value: &ExternalFunction, remap: &mut NominalRemap) -> Result<
 /// Select the native implementation only after the Incan-facing record has been accepted.
 fn restore_external(value: &StoredExternal, remap: &mut NominalRemap) -> Result<ExternalFunction, String> {
     Ok(ExternalFunction {
-        path: restore_binding(&value.path)?,
+        path: restore_named_binding(&value.path, remap)?,
         type_arguments: restore_types(&value.arguments, remap)?,
         parameters: restore_types(&value.parameters, remap)?,
         return_type: restore_type(&value.result, remap)?,
@@ -574,7 +619,7 @@ fn restore_external(value: &StoredExternal, remap: &mut NominalRemap) -> Result<
 }
 
 /// Translate the bounded scalar adapter's implementation paths to stable Incan identities.
-fn store_binding(path: &str) -> Result<String, String> {
+pub(crate) fn store_binding(path: &str) -> Result<String, String> {
     if path.contains("::__incan_v") {
         let parts: Vec<&str> = path.split("::").collect();
         let [_, symbol] = parts.as_slice() else {
@@ -589,7 +634,7 @@ fn store_binding(path: &str) -> Result<String, String> {
         "incan_native_runtime::initialize_panic_hook" => return Ok("builtin::runtime_initialize".to_owned()),
         "incan_native_runtime::println_text" => return Ok("builtin::print".to_owned()),
         // The native model serializer imports this host function at this exact Rust path.
-        "incan_std_data::json::__private::stringify_or_raise" => return Ok(format!("{RUST_BINDING}{path}")),
+        JSON_HOST_FUNCTION => return Ok(format!("{RUST_BINDING}{path}")),
         _ => {}
     }
     if let Some(rest) = path.strip_prefix("incan_native_runtime::") {
@@ -602,14 +647,32 @@ fn store_binding(path: &str) -> Result<String, String> {
         return Ok(format!("std::{rest}"));
     }
     // A Rust standard-library function keeps the identity Incan source imports it by, as a runtime generic's
-    // `from rust::std::vec import Vec` does. Other crates stay outside this bounded schema.
-    if ["std", "core", "alloc"]
-        .iter()
-        .any(|root| path.starts_with(&format!("{root}::")))
-    {
+    // `from rust::std::vec import Vec` does. A function of another crate the unit links, as a Loaf's Rust facet
+    // exports one, keeps the path that crate exports it at: a product is restored only under the producer profile
+    // that keyed it, which fingerprints every dependency interface and Rust facet, and only by a unit that links the
+    // crate (`PlacedRecord::restore`).
+    if native_crate(path).is_some() {
         return Ok(format!("{RUST_BINDING}{path}"));
     }
-    Err("scalar function products refuse an external without an Incan binding identity".to_owned())
+    Err(UNBOUND_EXTERNAL.to_owned())
+}
+
+/// The crate a native item path `<crate>::<item>` names, when its first segment is a Rust crate name.
+pub fn native_crate(path: &str) -> Option<&str> {
+    let (name, item) = path.split_once("::")?;
+    let mut characters = name.chars();
+    let leading = characters.next()?;
+    let valid = (leading.is_ascii_alphabetic() || leading == '_')
+        && characters.all(|character| character.is_ascii_alphanumeric() || character == '_');
+    (valid && !item.is_empty()).then_some(name)
+}
+
+/// The crate a stored binding identity names when it is a crate the unit links, rather than Rust's own crates, the
+/// runtime, the standard library or an emitted package; `None` for every other identity.
+fn linked_crate(identity: &str) -> Option<&str> {
+    let path = identity.strip_prefix(RUST_BINDING)?;
+    let name = native_crate(path)?;
+    (path != JSON_HOST_FUNCTION && !["std", "core", "alloc"].contains(&name)).then_some(name)
 }
 
 /// Recover the package's native item from the compiler's complete canonical symbol projection.
@@ -627,6 +690,14 @@ fn package_item(symbol: &str) -> Result<String, String> {
         return Err("noncanonical emitted Incan package binding".to_owned());
     }
     Ok(path)
+}
+
+/// Select the native implementation of an admitted binding identity, noting in `remap` the linked crate it names.
+pub(crate) fn restore_named_binding(identity: &str, remap: &mut NominalRemap) -> Result<String, String> {
+    if let Some(name) = linked_crate(identity) {
+        remap.crates.push(name.to_owned());
+    }
+    restore_binding(identity)
 }
 
 /// Select one native implementation for an admitted Incan binding identity at adapter time.
@@ -780,6 +851,15 @@ fn store_target(target: &CalleeKind, remap: &mut NominalRemap) -> Result<StoredT
         CalleeKind::CloneEnum(owner, name) => {
             StoredTarget::CloneEnum(remap.slot(NominalKind::Enum, *owner, name)?.index)
         }
+        // The formatted carrier names its model or enum by product-local ordinal, like any stored type.
+        CalleeKind::FormatValue(ty, debug) => StoredTarget::FormatValue(store_type(ty, remap)?, *debug),
+        // A static cell is named by its declaration, through a product-local ordinal like a model or enum.
+        CalleeKind::StaticLoad(slot) => StoredTarget::StaticLoad(remap.slot(NominalKind::Static, *slot, "")?.index),
+        CalleeKind::StaticStore(slot) => StoredTarget::StaticStore(remap.slot(NominalKind::Static, *slot, "")?.index),
+        CalleeKind::StaticForce(slot) => StoredTarget::StaticForce(remap.slot(NominalKind::Static, *slot, "")?.index),
+        CalleeKind::StaticMethod(slot, name) => {
+            StoredTarget::StaticMethod(remap.slot(NominalKind::Static, *slot, "")?.index, name.clone())
+        }
         _ => return store_closure_target(target, remap),
     })
 }
@@ -805,10 +885,11 @@ fn store_closure_target(target: &CalleeKind, remap: &mut NominalRemap) -> Result
 fn restore_target(target: &StoredTarget, remap: &mut NominalRemap) -> Result<CalleeKind, String> {
     Ok(match target {
         StoredTarget::Planned(name) => CalleeKind::Planned(name.clone()),
-        StoredTarget::External(identity) => CalleeKind::External(restore_binding(identity)?),
-        StoredTarget::Instantiated(identity, arguments) => {
-            CalleeKind::Instantiated(restore_binding(identity)?, restore_types(arguments, remap)?)
-        }
+        StoredTarget::External(identity) => CalleeKind::External(restore_named_binding(identity, remap)?),
+        StoredTarget::Instantiated(identity, arguments) => CalleeKind::Instantiated(
+            restore_named_binding(identity, remap)?,
+            restore_types(arguments, remap)?,
+        ),
         StoredTarget::CloneModel(ordinal) => {
             let slot = remap.slot(NominalKind::Model, *ordinal, "")?;
             CalleeKind::CloneModel(slot.index, slot.name)
@@ -827,6 +908,19 @@ fn restore_target(target: &StoredTarget, remap: &mut NominalRemap) -> Result<Cal
         StoredTarget::SharedCallableBody(signature) => CalleeKind::SharedCallableBody(restore_types(signature, remap)?),
         StoredTarget::CloneClosure(signature) => CalleeKind::CloneClosure(restore_types(signature, remap)?),
         StoredTarget::Value(operand) => CalleeKind::Value(restore_operand(operand, remap)?),
+        StoredTarget::FormatValue(ty, debug) => CalleeKind::FormatValue(restore_type(ty, remap)?, *debug),
+        StoredTarget::StaticLoad(ordinal) => {
+            CalleeKind::StaticLoad(remap.slot(NominalKind::Static, *ordinal, "")?.index)
+        }
+        StoredTarget::StaticStore(ordinal) => {
+            CalleeKind::StaticStore(remap.slot(NominalKind::Static, *ordinal, "")?.index)
+        }
+        StoredTarget::StaticForce(ordinal) => {
+            CalleeKind::StaticForce(remap.slot(NominalKind::Static, *ordinal, "")?.index)
+        }
+        StoredTarget::StaticMethod(ordinal, name) => {
+            CalleeKind::StaticMethod(remap.slot(NominalKind::Static, *ordinal, "")?.index, name.clone())
+        }
     })
 }
 

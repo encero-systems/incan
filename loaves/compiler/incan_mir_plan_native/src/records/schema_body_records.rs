@@ -36,6 +36,14 @@ pub(crate) static SHAPE_BODY_RECORDS_STORED_CONSTANT: Shape = Shape {
             "TypeToken",
             &[field(b"_\xec\xebf\xff\xc8", "0", "list<enum@234b6c9b62c7>")],
         ),
+        variant(
+            b"\xd2\xe4u\xb0\x0b\xf0",
+            "RustItem",
+            &[
+                field(b"_\xec\xebf\xff\xc8", "0", "string"),
+                field(b"k\x86\xb2s\xff4", "1", "enum@234b6c9b62c7"),
+            ],
+        ),
     ]),
 };
 
@@ -47,6 +55,31 @@ pub(crate) static SHAPE_BODY_RECORDS_STORED_FIELD_STEP: Shape = Shape {
         field(b"O\x9d\xb7\xf8\xe5\x06", "ty", "enum@234b6c9b62c7"),
         field(b"\xcb{\xf5bB\x0b", "variant", "i64"),
         field(b"3\x8e0\xd7\xaa\x17", "dereferences", "i64"),
+    ]),
+};
+
+pub(crate) static SHAPE_BODY_RECORDS_STORED_FROZEN_VALUE: Shape = Shape {
+    selector: b"\xe3F!u\xe3\xf6\x00",
+    path: "incan.native-plan/5.body_records.StoredFrozenValue",
+    body: ShapeBody::Enum(&[
+        variant(
+            b"C\x81\x9c`\xb3\xbd",
+            "Scalar",
+            &[field(b"_\xec\xebf\xff\xc8", "0", "enum@bc85504365c3")],
+        ),
+        variant(
+            b"M\x80\x000\x1f\xcc",
+            "Bytes",
+            &[field(b"_\xec\xebf\xff\xc8", "0", "list<i64>")],
+        ),
+        variant(
+            b"{y\x07\x08\xff\x1b",
+            "Collection",
+            &[
+                field(b"_\xec\xebf\xff\xc8", "0", "enum@234b6c9b62c7"),
+                field(b"k\x86\xb2s\xff4", "1", "list<enum@e3462175e3f6>"),
+            ],
+        ),
     ]),
 };
 
@@ -301,6 +334,14 @@ pub(crate) static SHAPE_BODY_RECORDS_STORED_RVALUE: Shape = Shape {
             &[
                 field(b"_\xec\xebf\xff\xc8", "0", "string"),
                 field(b"k\x86\xb2s\xff4", "1", "record@533bfbed0457"),
+            ],
+        ),
+        variant(
+            b"`ar\x85\xa4\xcb",
+            "FrozenCollection",
+            &[
+                field(b"_\xec\xebf\xff\xc8", "0", "enum@234b6c9b62c7"),
+                field(b"k\x86\xb2s\xff4", "1", "list<enum@e3462175e3f6>"),
             ],
         ),
     ]),

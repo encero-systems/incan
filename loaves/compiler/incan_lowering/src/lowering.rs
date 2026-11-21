@@ -295,6 +295,7 @@ fn lowered_plan(
     let mut emitted_frames = no_emitted_frames();
     // 2. Lower ordinary frames and static initializers exactly once.
     let instance_products = instance_transport(
+        &context,
         inputs.scalar_products.clone(),
         &scalar_bodies,
         inputs.record_report.clone(),

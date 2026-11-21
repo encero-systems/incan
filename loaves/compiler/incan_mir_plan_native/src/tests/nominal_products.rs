@@ -1,12 +1,13 @@
 //! Keyed plan products name models and enums by declaration identity, never by a position in the unit's tables.
 
-use super::support::{block, local, returning};
-use crate::body::Parameter;
+use super::support::{block, local, place_at, returning};
+use crate::body::{Callee, CalleeKind, Parameter, Projection, Terminator, TerminatorKind, Unwind};
 use crate::nominal::{
     NominalKind, NominalReference, ProductNominal, UnitNominals, describe_nominals, resolve_nominals, unit_nominals,
 };
 use crate::plan::{ExternalFunction, Function};
 use crate::records::function::{decode_product, encode_product, product_identities, product_nominals};
+use crate::records::lowering_events::{EventReference, LoweringEvent, decode_lowering_event, encode_lowering_event};
 use crate::types::{ListLeaf, PlanType, SourceSpan, source_span};
 
 /// A product captured with `Point` at model 0 binds to model 1 after an unrelated model is declared before it.
@@ -96,6 +97,171 @@ fn product_refuses_a_nominal_without_an_identity() -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+/// A call that formats a value through rustc's Debug or Display implementation keeps its carrier type: a model's
+/// carrier is named by declaration, so the restored call formats the model at the position it has now.
+#[test]
+fn product_keeps_a_formatted_value_call() -> Result<(), String> {
+    let span = source_span("nominal_products.incn", 3, 1);
+    let before = unit(vec![point("v1")], vec![shape("v1")], &["Point_0_37"], &["Shape_39_75"]);
+    let captured = formatting_function(0, "Point_0_37", &span);
+    let product = keyed_product(&captured, &[], &before)?;
+    let after = unit(
+        vec![line_model(), point("v1")],
+        vec![shape("v1")],
+        &["Line_0_20", "Point_22_59"],
+        &["Shape_92_128"],
+    );
+    let references = resolve_nominals(&product_identities(&product)?, &after)
+        .ok_or("an unrelated declaration made a formatting product miss")?;
+    let (restored, _) = decode_product(&product, &references)?;
+    assert!(
+        restored == formatting_function(1, "Point_22_59", &span),
+        "a formatted value call did not restore at the model's current position"
+    );
+    Ok(())
+}
+
+/// A function that formats a `Point` reference with Display, then a string with Debug.
+fn formatting_function(model_position: i64, point_name: &str, span: &SourceSpan) -> Function {
+    let format = |ty: PlanType, debug: bool, target: i64| Terminator {
+        kind: TerminatorKind::Call(
+            Callee {
+                kind: CalleeKind::FormatValue(ty, debug),
+                span: span.clone(),
+            },
+            Vec::new(),
+            place_at(0, Projection::Whole, span),
+            target,
+            Unwind::Continue,
+        ),
+        span: span.clone(),
+    };
+    Function::new(
+        "show".to_owned(),
+        Vec::new(),
+        PlanType::Unit,
+        vec![local(PlanType::String, span)],
+        vec![
+            block(
+                Vec::new(),
+                format(PlanType::ModelRef(model_position, point_name.to_owned()), false, 1),
+                span,
+            ),
+            block(Vec::new(), format(PlanType::String, true, 2), span),
+            block(Vec::new(), returning(span), span),
+        ],
+        span.clone(),
+    )
+}
+
+/// A product that reads, writes, forces or calls a method on module storage names each cell by its declaration: a cell
+/// another module's new static moves restores at its new slot, and a changed or removed cell makes the product a miss.
+#[test]
+fn product_names_static_cells_by_declaration() -> Result<(), String> {
+    let span = source_span("nominal_products.incn", 3, 1);
+    let before =
+        unit(Vec::new(), Vec::new(), &[], &[]).with_statics(vec![cell("app::first", "v1"), cell("app::counter", "v1")]);
+    let captured = static_function(1, &span);
+    let references = product_nominals(&captured, &[], &[])?;
+    let product = encode_product(&captured, &[], &describe_nominals(&references, &before)?, &[])?;
+    let identities = product_identities(&product)?;
+    let moved = unit(Vec::new(), Vec::new(), &[], &[]).with_statics(vec![
+        cell("lib::moved", "v1"),
+        cell("app::first", "v1"),
+        cell("app::counter", "v1"),
+    ]);
+    let resolved =
+        resolve_nominals(&identities, &moved).ok_or("a static moved by another declaration made the product miss")?;
+    let (restored, _) = decode_product(&product, &resolved)?;
+    assert!(
+        restored == static_function(2, &span),
+        "a static cell did not restore at its current slot"
+    );
+    let changed =
+        unit(Vec::new(), Vec::new(), &[], &[]).with_statics(vec![cell("app::first", "v1"), cell("app::counter", "v2")]);
+    assert!(
+        resolve_nominals(&identities, &changed).is_none(),
+        "a changed static cell was reused"
+    );
+    let removed = unit(Vec::new(), Vec::new(), &[], &[]).with_statics(vec![cell("app::first", "v1")]);
+    assert!(
+        resolve_nominals(&identities, &removed).is_none(),
+        "a removed static cell was reused"
+    );
+    Ok(())
+}
+
+/// A lowering event names the static cells its product binds, beside its models and enums, so a module page that
+/// restores the product reads the event back.
+#[test]
+fn a_lowering_event_names_static_cells() -> Result<(), String> {
+    let event = LoweringEvent {
+        identity: "app::count".to_owned(),
+        key: "key".to_owned(),
+        function: "count".to_owned(),
+        product: vec![1, 2, 3],
+        references: vec![
+            EventReference {
+                kind: "model".to_owned(),
+                index: 0,
+                name: "Point".to_owned(),
+            },
+            EventReference {
+                kind: "static".to_owned(),
+                index: 2,
+                name: String::new(),
+            },
+        ],
+        ..LoweringEvent::default()
+    };
+    assert!(decode_lowering_event(&encode_lowering_event(&event)?)? == event);
+    Ok(())
+}
+
+/// One static cell declaration at one checked meaning.
+fn cell(identity: &str, version: &str) -> ProductNominal {
+    ProductNominal {
+        kind: NominalKind::Static,
+        identity: format!("static:{identity}"),
+        digest: format!("{identity}-{version}"),
+    }
+}
+
+/// A function that loads, stores, forces and pushes to static slot `slot`.
+fn static_function(slot: i64, span: &SourceSpan) -> Function {
+    let call = |kind: CalleeKind, target: i64| Terminator {
+        kind: TerminatorKind::Call(
+            Callee {
+                kind,
+                span: span.clone(),
+            },
+            Vec::new(),
+            place_at(0, Projection::Whole, span),
+            target,
+            Unwind::Continue,
+        ),
+        span: span.clone(),
+    };
+    Function::new(
+        "count".to_owned(),
+        Vec::new(),
+        PlanType::Unit,
+        vec![local(PlanType::Int, span)],
+        vec![
+            block(Vec::new(), call(CalleeKind::StaticLoad(slot), 1), span),
+            block(Vec::new(), call(CalleeKind::StaticStore(slot), 2), span),
+            block(Vec::new(), call(CalleeKind::StaticForce(slot), 3), span),
+            block(
+                Vec::new(),
+                call(CalleeKind::StaticMethod(slot, "push".to_owned()), 4),
+                span,
+            ),
+            block(Vec::new(), returning(span), span),
+        ],
+        span.clone(),
+    )
 }
 
 /// Capture a product the way lowering does: name every referenced position, then encode.

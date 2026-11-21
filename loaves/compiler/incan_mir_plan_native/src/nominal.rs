@@ -9,19 +9,21 @@ use std::collections::HashMap;
 
 use crate::types::{ListLeaf, PlanType, TupleElement};
 
-/// The unit table a plan type's nominal position selects.
+/// The unit table a plan position selects: a model or enum of a type, or a static cell of a storage operation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum NominalKind {
     Model,
     Enum,
+    Static,
 }
 
 impl NominalKind {
-    /// The kind's stored spelling: `model` or `enum`.
+    /// The kind's stored spelling: `model`, `enum` or `static`.
     pub fn value(self) -> &'static str {
         match self {
             NominalKind::Model => "model",
             NominalKind::Enum => "enum",
+            NominalKind::Static => "static",
         }
     }
 }
@@ -67,6 +69,8 @@ pub struct NominalRemap {
     pub references: Vec<NominalReference>,
     pub preserve: bool,
     pub fold: i64,
+    /// The crates, other than Rust's own, that the binding identities restored through this remap name.
+    pub crates: Vec<String>,
 }
 
 impl NominalRemap {
@@ -136,6 +140,7 @@ pub fn capture_remap() -> NominalRemap {
         references: Vec::new(),
         preserve: false,
         fold: -1,
+        crates: Vec::new(),
     }
 }
 
@@ -146,6 +151,7 @@ pub fn binding_remap(references: Vec<NominalReference>) -> NominalRemap {
         references,
         preserve: false,
         fold: -1,
+        crates: Vec::new(),
     }
 }
 
@@ -156,6 +162,7 @@ pub fn preserving_remap() -> NominalRemap {
         references: Vec::new(),
         preserve: true,
         fold: -1,
+        crates: Vec::new(),
     }
 }
 
@@ -166,6 +173,7 @@ pub fn folding_remap(sources: i64) -> NominalRemap {
         references: Vec::new(),
         preserve: false,
         fold: sources,
+        crates: Vec::new(),
     }
 }
 
@@ -370,9 +378,24 @@ pub struct UnitNominals {
     pub enum_positions: HashMap<String, i64>,
     pub carriers: Vec<ProductNominal>,
     pub carrier_names: Vec<String>,
+    /// Each static cell slot's declaration; a cell has no native name of its own.
+    pub statics: Vec<ProductNominal>,
+    pub static_positions: HashMap<String, i64>,
 }
 
 impl UnitNominals {
+    /// Describe the unit's static cells, slot by slot, keeping each identity's first slot.
+    pub fn with_statics(mut self, statics: Vec<ProductNominal>) -> Self {
+        self.static_positions.clear();
+        for (index, declaration) in statics.iter().enumerate() {
+            self.static_positions
+                .entry(declaration.identity.clone())
+                .or_insert(ordinal_index(index));
+        }
+        self.statics = statics;
+        self
+    }
+
     /// Describe the next standard carrier lowering admitted, at its lowering position.
     pub fn append_carrier(&mut self, nominal: ProductNominal, name: String) {
         let position = carrier_index(ordinal_index(self.carriers.len()));
@@ -420,6 +443,8 @@ pub fn unit_nominals(
         enum_positions,
         carriers: Vec::new(),
         carrier_names: Vec::new(),
+        statics: Vec::new(),
+        static_positions: HashMap::new(),
     }
 }
 
@@ -429,7 +454,13 @@ pub fn unit_nominals(
 pub fn resolve_nominals(stored: &[ProductNominal], unit: &UnitNominals) -> Option<Vec<NominalReference>> {
     let mut references = Vec::with_capacity(stored.len());
     for nominal in stored {
-        if nominal.kind == NominalKind::Model {
+        if nominal.kind == NominalKind::Static {
+            let position = *unit.static_positions.get(&nominal.identity)?;
+            if unit.statics.get(usize::try_from(position).ok()?)?.digest != nominal.digest {
+                return None;
+            }
+            references.push(NominalReference::unnamed(NominalKind::Static, position));
+        } else if nominal.kind == NominalKind::Model {
             let position = *unit.model_positions.get(&nominal.identity)?;
             let index = usize::try_from(position).ok()?;
             if unit.models.get(index)?.digest != nominal.digest {
@@ -453,6 +484,18 @@ pub fn resolve_nominals(stored: &[ProductNominal], unit: &UnitNominals) -> Optio
 /// every declaration resolves.
 pub fn unresolved_nominal(stored: &[ProductNominal], unit: &UnitNominals) -> Option<&'static str> {
     for nominal in stored {
+        if nominal.kind == NominalKind::Static {
+            let described = unit
+                .static_positions
+                .get(&nominal.identity)
+                .and_then(|position| usize::try_from(*position).ok())
+                .and_then(|index| unit.statics.get(index));
+            match described {
+                Some(described) if described.digest == nominal.digest => continue,
+                Some(_) => return Some("names a static cell whose meaning changed"),
+                None => return Some("names a static cell the unit does not describe"),
+            }
+        }
         if nominal.kind == NominalKind::Model {
             let Some(index) = unit
                 .model_positions
@@ -493,7 +536,15 @@ pub fn unresolved_nominal(stored: &[ProductNominal], unit: &UnitNominals) -> Opt
 pub fn describe_nominals(references: &[NominalReference], unit: &UnitNominals) -> Result<Vec<ProductNominal>, String> {
     let mut nominals = Vec::with_capacity(references.len());
     for reference in references {
-        if reference.kind == NominalKind::Model {
+        if reference.kind == NominalKind::Static {
+            let described = usize::try_from(reference.index)
+                .ok()
+                .and_then(|position| unit.statics.get(position));
+            let Some(described) = described else {
+                return Err("plan product names a static cell the unit does not describe".to_owned());
+            };
+            nominals.push(described.clone());
+        } else if reference.kind == NominalKind::Model {
             let position = usize::try_from(reference.index)
                 .ok()
                 .filter(|position| *position < unit.models.len());

@@ -114,11 +114,14 @@ published_defaults!(NominalReference {
 published_defaults!(NominalRemap {
     __incan_default_preserve -> bool = false,
     __incan_default_fold -> i64 = -1,
+    __incan_default_crates -> Vec<String> = Vec::new(),
 });
 
 published_defaults!(UnitNominals {
     __incan_default_carriers -> Vec<ProductNominal> = Vec::new(),
     __incan_default_carrier_names -> Vec<String> = Vec::new(),
+    __incan_default_statics -> Vec<ProductNominal> = Vec::new(),
+    __incan_default_static_positions -> std::collections::HashMap<String, i64> = std::collections::HashMap::new(),
 });
 
 published_defaults!(WirePositions {

@@ -1,14 +1,17 @@
 //! Native per-declaration products preserve the formatting frame of an unchanged program entry, and name Incan
 //! identities only, ported from the reference lowering's `test_scalar_products`.
 
+use std::collections::BTreeSet;
+
 use super::support::{assign_at, block, copy_at, empty_function, local, place_at, returning};
 use crate::body::{
-    Callee, CalleeKind, Constant, Operand, OperandKind, Projection, RvalueKind, Terminator, TerminatorKind, Unwind,
+    Callee, CalleeKind, Constant, FrozenValue, Operand, OperandKind, Projection, RvalueKind, Terminator,
+    TerminatorKind, Unwind,
 };
 use crate::plan::{ExternalFunction, Function};
 use crate::positions::{PositionChange, WirePositions};
 use crate::records::function::{
-    decode_product, decode_scalar, encode_product, encode_scalar, transform_product_positions,
+    decode_product, decode_scalar, encode_product, encode_scalar, place_product_record, transform_product_positions,
 };
 use crate::types::{PlanType, SourceSpan, source_span};
 
@@ -107,6 +110,37 @@ fn native_product_round_trips_formatting_frame() -> Result<(), String> {
     Ok(())
 }
 
+/// An effect-free static collection, as a module's frozen list of option names lowers to, keeps every value, nested
+/// collection and its carrier type in its product.
+#[test]
+fn native_product_keeps_a_frozen_collection() -> Result<(), String> {
+    let span = source_span("frozen.incn", 4, 1);
+    let carrier = PlanType::FrozenCollection("FrozenList".to_owned(), vec![PlanType::StaticText]);
+    let nested = PlanType::FrozenCollection("FrozenList".to_owned(), vec![carrier.clone()]);
+    let values = vec![
+        FrozenValue::Collection(
+            carrier.clone(),
+            vec![
+                FrozenValue::Scalar(Constant::Text("--profile".to_owned())),
+                FrozenValue::Scalar(Constant::Text("--features".to_owned())),
+            ],
+        ),
+        FrozenValue::Collection(carrier.clone(), Vec::new()),
+        FrozenValue::Bytes(vec![0, 255]),
+    ];
+    let mut function = empty_function("options", nested.clone(), &span);
+    function.blocks[0].statements = vec![assign_at(
+        0,
+        Projection::Whole,
+        RvalueKind::FrozenCollection(nested, values),
+        &span,
+    )];
+    let product = encode_product(&function, &[], &[], &[])?;
+    let (restored, _) = decode_product(&product, &[])?;
+    assert!(restored == function, "a frozen collection did not survive its product");
+    Ok(())
+}
+
 fn external(path: &str, parameters: Vec<PlanType>, return_type: PlanType, span: &SourceSpan) -> ExternalFunction {
     ExternalFunction {
         path: path.to_owned(),
@@ -123,7 +157,7 @@ fn contains(haystack: &[u8], needle: &str) -> bool {
 
 /// The stored product names Incan identities, never a native crate path or carrier name. A call into Rust's `std`,
 /// `core` or `alloc`, whose paths the toolchain pins, keeps the `rust::<path>` identity Incan source imports it by. A
-/// call into any other Rust crate is refused.
+/// call into any other Rust crate keeps `rust::<path>` too, and restores only in a unit that links that crate.
 #[test]
 fn native_product_records_expose_only_incan_identities() -> Result<(), String> {
     let span = source_span("interface_audit.incn", 1, 1);
@@ -193,9 +227,18 @@ fn native_product_records_expose_only_incan_identities() -> Result<(), String> {
         PlanType::String,
         &span,
     )];
+    let stored = encode_product(&function, &other_crate, &[], &[])?;
     assert!(
-        encode_product(&function, &other_crate, &[], &[]).is_err(),
-        "stored product admitted a Rust crate outside std, core and alloc"
+        contains(&stored, "rust::serde_json::to_string"),
+        "stored product does not name a linked crate's function by its path"
     );
+    let placed = place_product_record(&stored, &WirePositions::preserve())?;
+    assert!(
+        placed.restore(&[], &BTreeSet::new()).is_err(),
+        "stored product restored a function of a crate its unit does not link"
+    );
+    let linked: BTreeSet<String> = ["serde_json".to_owned()].into_iter().collect();
+    let (restored_other, restored_externals, _) = placed.restore(&[], &linked)?;
+    assert!(restored_other == function && restored_externals == other_crate);
     Ok(())
 }

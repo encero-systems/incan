@@ -43,7 +43,7 @@ pub use records::codec::{
 };
 pub use records::function::{
     NamedProduct, PlacedProduct, PlacedRecord, ProductParts, decode_frames, decode_product, decode_product_parts,
-    decode_runtime, decode_scalar, encode_product, encode_runtime, encode_scalar, matches_product,
+    decode_runtime, decode_scalar, encode_product, encode_runtime, encode_scalar, matches_product, native_crate,
     place_product_record, positioned_product_requirements, product_frame_names, product_identities, product_nominals,
     restore_named_product, transform_product_positions, valid_ordinal_product,
 };
