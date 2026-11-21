@@ -155,6 +155,9 @@ impl TypeChecker {
     /// [`ResolvedType::SelfType`] in a trait method signature means the receiver type for this call site.
     pub(super) fn concrete_type_for_trait_self(&self, receiver: &ResolvedType) -> ResolvedType {
         match receiver {
+            // RFC 164: a method called through a shared or exclusive borrow is called on the value the borrow names,
+            // so `Self` is that value's type, not the borrow's.
+            ResolvedType::Ref(referent) | ResolvedType::RefMut(referent) => self.concrete_type_for_trait_self(referent),
             ResolvedType::Generic(name, args) => ResolvedType::Generic(name.clone(), args.clone()),
             ResolvedType::Named(name) => {
                 let n_params = self

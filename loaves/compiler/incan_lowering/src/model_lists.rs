@@ -52,6 +52,13 @@ pub fn structural_prefix(builder: &Builder, source: &SourcePlace) -> Result<Opti
             through_tuple = true;
         }
         match projection {
+            // RFC 164: a reference root's dereference reaches the same referent its fields are projected from.
+            PlaceElem::Deref
+                if count == 0 && !matches!(root, PlanType::Model(..) | PlanType::Enum(..) | PlanType::Tuple(_)) =>
+            {
+                count += 1;
+                continue;
+            }
             PlaceElem::Field { .. } | PlaceElem::OptionPayload { .. } | PlaceElem::UnionMember { .. } => {}
             PlaceElem::Index(_) => {
                 if !is_tuple_type(&ty) {

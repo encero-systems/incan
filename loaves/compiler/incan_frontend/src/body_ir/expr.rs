@@ -644,6 +644,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Lower an expression that is being used as a place base (the target of `.field`/`[index]` projection or a
     /// bare name), synthesizing a temporary to hold the value when the expression is not itself place-shaped.
+    /// RFC 164: a projection of what a whole borrow local borrows (`*x` named by an alias of a borrowed input) is a
+    /// projection of the borrow local itself, whose fields and elements are reached through it.
+    fn project_through_reference(&self, place: &mut bir::Place) {
+        let reference = place
+            .local_id()
+            .and_then(|id| self.locals.get(id.index()))
+            .is_some_and(|local| matches!(local.ty, IncanType::Ref(_) | IncanType::RefMut(_)));
+        if reference && matches!(place.projection.as_slice(), [bir::PlaceElem::Deref]) {
+            place.projection.clear();
+        }
+    }
+
     pub(super) fn lower_expr_to_place(
         &mut self,
         expr: &ast::Spanned<ast::Expr>,
@@ -737,6 +749,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     return place;
                 }
                 let mut place = self.lower_checked_field_base(base, expr.span, scope, out);
+                self.project_through_reference(&mut place);
                 place
                     .projection
                     .extend(self.lower_checked_field_projections(base, name, expr.span));
@@ -746,6 +759,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             ast::Expr::Index(base, index) if self.type_info.resolved_operator_call(expr.span).is_none() => {
                 let index_operand = self.lower_checked_index_operand(base, index, scope, out);
                 let mut place = self.lower_expr_to_place(base, scope, out);
+                self.project_through_reference(&mut place);
                 place.projection.push(bir::PlaceElem::Index(Box::new(index_operand)));
                 place
             }

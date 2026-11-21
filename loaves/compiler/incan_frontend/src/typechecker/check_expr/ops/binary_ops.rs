@@ -259,7 +259,9 @@ impl TypeChecker {
             self.validate_exact_float_literals_in_arithmetic(right, expected_ty);
         }
         // RFC 164: an operator reads a borrowed operand through its borrow, whichever way the borrow is spelled.
-        let left_ty = crate::typechecker::helpers::borrowed_value_type(self.check_expr(left));
+        let left_checked = self.check_expr(left);
+        let probe_is_shared_borrow = matches!(left_checked, ResolvedType::Ref(_));
+        let left_ty = crate::typechecker::helpers::borrowed_value_type(left_checked);
         let right_ty = crate::typechecker::helpers::borrowed_value_type(self.check_expr(right));
 
         match op {
@@ -285,7 +287,9 @@ impl TypeChecker {
             BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::Gt | BinaryOp::LtEq | BinaryOp::GtEq => {
                 self.check_comparison_binary((left, left_ty), op, (right, right_ty), span)
             }
-            BinaryOp::In | BinaryOp::NotIn => self.check_membership_binary((left, left_ty), op, right_ty, span),
+            BinaryOp::In | BinaryOp::NotIn => {
+                self.check_membership_binary((left, left_ty, probe_is_shared_borrow), op, right_ty, span)
+            }
             BinaryOp::And | BinaryOp::Or | BinaryOp::Is | BinaryOp::IsNot => ResolvedType::Bool,
         }
     }
@@ -645,12 +649,12 @@ impl TypeChecker {
     /// Check container membership and retain any numeric widening destination for the written probe.
     pub(super) fn check_membership_binary(
         &mut self,
-        left: (&Spanned<Expr>, ResolvedType),
+        left: (&Spanned<Expr>, ResolvedType, bool),
         op: BinaryOp,
         right_ty: ResolvedType,
         span: Span,
     ) -> ResolvedType {
-        let (left, left_ty) = left;
+        let (left, left_ty, probe_is_shared_borrow) = left;
         let lhs_is_str = is_str_like(&left_ty);
         let rhs_is_str = is_str_like(&right_ty);
 
@@ -685,7 +689,12 @@ impl TypeChecker {
         if let ResolvedType::Generic(name, args) = &right_ty {
             match collection_type_id(name.as_str()) {
                 Some(CollectionTypeId::List | CollectionTypeId::Set) if !args.is_empty() => {
-                    let elem_ty = &args[0];
+                    // RFC 164: a collection of shared borrows is probed with a shared borrow of the same referent,
+                    // which it compares as it holds it: by the values the borrows name.
+                    let elem_ty = match &args[0] {
+                        ResolvedType::Ref(referent) if probe_is_shared_borrow => referent.as_ref(),
+                        element => element,
+                    };
                     if self.types_compatible(&left_ty, elem_ty) || matches!(left_ty, ResolvedType::Unknown) {
                         // A numeric probe of a narrower type is widened to the element type where it is
                         // lowered (RFC 009).

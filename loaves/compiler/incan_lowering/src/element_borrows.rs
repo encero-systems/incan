@@ -271,6 +271,66 @@ pub fn borrow_element_mut(
     Ok(output)
 }
 
+/// Reborrow what an exclusive reference stored as a list element borrows (RFC 164): an exclusive borrow of
+/// `values[i]` (or of `values[i].*`) binds `&mut *values[i]`, the stored reference's own referent, rather than a
+/// reference to the stored reference, since a borrow of a borrow is the one borrow. Any other place is left to the
+/// ordinary element reborrow.
+pub fn reborrow_stored_element(
+    builder: &mut Builder,
+    source: &SourcePlace,
+    span: &SourceSpan,
+) -> Result<Option<Place>, String> {
+    let (prefix, index) = match source.projection.as_slice() {
+        [prefix @ .., PlaceElem::Index(index), PlaceElem::Deref] | [prefix @ .., PlaceElem::Index(index)] => {
+            (prefix, index)
+        }
+        _ => return Ok(None),
+    };
+    let mut container_source = source.clone();
+    container_source.projection = prefix.to_vec();
+    let container = if prefix.is_empty() {
+        local_root(builder, &container_source, span)?
+    } else {
+        mutable_element_place(builder, &container_source, span)?
+    };
+    let ty = place_type(&builder.locals, &container);
+    let Ok((leaf, depth)) = require_list_shape(&ty, "") else {
+        return Ok(None);
+    };
+    let element = list_element(&leaf, depth);
+    let Some(referent) = exclusive_referent(&element) else {
+        return Ok(None);
+    };
+    let argument = scalar_operand(builder, index, span)?;
+    let reference = list_borrow(builder, container, true, span)?;
+    let output = temporary(builder, element.clone(), span);
+    list_call(
+        builder,
+        "reborrow_list_mut",
+        referent,
+        vec![PlanType::ListMutRef(leaf, depth), PlanType::Int],
+        element,
+        vec![reference, argument],
+        output.clone(),
+        span,
+    );
+    Ok(Some(output))
+}
+
+/// The value an exclusive reference names, for the reference kinds a list stores.
+fn exclusive_referent(reference: &PlanType) -> Option<PlanType> {
+    Some(match reference {
+        PlanType::StringMutRef => PlanType::String,
+        PlanType::ModelMutRef(owner, name) => PlanType::Model(*owner, name.clone()),
+        PlanType::EnumMutRef(owner, name) => PlanType::Enum(*owner, name.clone()),
+        PlanType::TupleMutRef(elements) => PlanType::Tuple(elements.clone()),
+        PlanType::ListMutRef(leaf, depth) => PlanType::List(leaf.clone(), *depth),
+        PlanType::DictMutRef(key, value) => PlanType::Dict(key.clone(), value.clone()),
+        PlanType::SetMutRef(leaf) => PlanType::Set(leaf.clone()),
+        _ => return None,
+    })
+}
+
 /// Count the structural steps before the first element index; a list or dictionary root has none.
 fn element_start(builder: &Builder, source: &SourcePlace) -> Result<usize, String> {
     let Some(local) = source.local_id() else {
@@ -279,6 +339,10 @@ fn element_start(builder: &Builder, source: &SourcePlace) -> Result<usize, Strin
     let root = &builder.locals[(local.index() as i64 + 1 + builder.local_offset) as usize].ty;
     if is_list(root) || is_collection(root) {
         return Ok(0);
+    }
+    // RFC 164: what an exclusive borrow local borrows is reborrowed through its dereference, as a structural step.
+    if matches!(source.projection.first(), Some(PlaceElem::Deref)) && crate::lists::is_exclusive_borrow(root) {
+        return Ok(1);
     }
     if let Some((count, _)) = structural_prefix(builder, source)?
         && count > 0
