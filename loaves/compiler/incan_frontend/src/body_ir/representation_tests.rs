@@ -10,6 +10,7 @@ mod carriers;
 mod comparison;
 mod equality;
 mod metadata;
+mod native_defaults;
 mod read_patterns;
 mod seed;
 mod shared_loans;
