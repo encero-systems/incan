@@ -605,13 +605,16 @@ impl TypeChecker {
             return result;
         }
         let (base_ty, receiver_surface) = self.check_method_receiver(&call);
+        // RFC 164: a builtin list, dict or set method reaches through a borrow to the value it names, as the explicit
+        // spelling's value type did; changing that value still needs an exclusive borrow bound `mut`.
+        let reached = builtin_collection_through_borrow(&base_ty);
 
         // If the receiver type is Unknown, be permissive and do not error on methods.
         if matches!(base_ty, ResolvedType::Unknown) {
             self.check_call_args(args);
             return ResolvedType::Unknown;
         }
-        self.check_method_receiver_use(&call, &base_ty);
+        self.check_method_receiver_use(&call, reached.as_ref().unwrap_or(&base_ty));
 
         if let Some(result) = self.check_registry_method_call(&call, &base_ty) {
             return result;
@@ -622,6 +625,7 @@ impl TypeChecker {
         {
             return *inner;
         }
+        let base_ty = reached.unwrap_or(base_ty);
 
         if let Some(result) = self.resolve_source_method_before_arguments(&call, &base_ty, receiver_surface) {
             return result;
@@ -695,4 +699,17 @@ impl TypeChecker {
 
         self.check_method_fallback(&call, &base_ty, &arg_types)
     }
+}
+
+/// The builtin list, dict or set a shared or exclusive borrow names, for its methods.
+fn builtin_collection_through_borrow(base_ty: &ResolvedType) -> Option<ResolvedType> {
+    let (ResolvedType::Ref(inner) | ResolvedType::RefMut(inner)) = base_ty else {
+        return None;
+    };
+    matches!(inner.as_ref(), ResolvedType::Generic(name, _)
+    if matches!(
+        collection_type_id(name.as_str()),
+        Some(CollectionTypeId::List | CollectionTypeId::Dict | CollectionTypeId::Set)
+    ))
+    .then(|| inner.as_ref().clone())
 }
