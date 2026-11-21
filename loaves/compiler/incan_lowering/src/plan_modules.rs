@@ -211,13 +211,18 @@ pub fn read_admitted(directory: &Path) -> Result<Vec<AdmittedModule>, String> {
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
+    use std::sync::Arc;
 
     use incan_mir_plan_native::{
-        AdmittedFunction, AdmittedPlacement, EventPosition, EventReference, PlanModuleFunction, PlanModuleValue,
-        encode_plan_module,
+        AdmittedFunction, AdmittedPlacement, EventPosition, EventReference, Function, Local, LoweringEvent,
+        PlanModuleFunction, PlanModuleValue, PlanType, TerminatorKind, block, encode_plan_module, encode_product,
+        source_span,
     };
 
     use super::{admitted_frames, admitted_page, read_admitted, report_admitted};
+    use crate::record_positions::{indexed_product, placed_record};
+    use crate::resident_products::RestoreInputs;
+    use crate::scalar_store::AdmittedPayload;
 
     /// A fresh directory for one test.
     fn directory(test: &str) -> PathBuf {
@@ -371,5 +376,107 @@ mod tests {
                 .is_empty()
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A placed product for a restored page entry, its requests and the event it came from.
+    fn restored_payload() -> Result<AdmittedPayload, String> {
+        let owner = source_span("resident.incn", 10, 1);
+        let exit = block(Vec::new(), TerminatorKind::Return, &source_span("resident.incn", 11, 5));
+        let locals = vec![Local {
+            ty: PlanType::Unit,
+            span: owner.clone(),
+        }];
+        let function = Function::new("a".into(), Vec::new(), PlanType::Unit, locals, vec![exit], owner);
+        let wire = encode_product(&function, &[], &[], &[])?;
+        let stored = indexed_product(&wire, &[(0, 1), (1, 5)], "resident.incn", 10)?;
+        let placed = placed_record(&stored, &[(0, 1), (1, 5)], "resident.incn", 30)?;
+        let event = LoweringEvent {
+            identity: "pub::resident_gamma::a".into(),
+            key: "cd".repeat(32),
+            function: "a".into(),
+            product: Vec::new(),
+            reused: false,
+            admitted: true,
+            module: "resident_gamma".into(),
+            role: "ordinary".into(),
+            demand: String::new(),
+            runtime_requirements: 0,
+            references: Vec::new(),
+            positions: Vec::new(),
+        };
+        Ok((placed, Vec::new(), event))
+    }
+
+    /// A resident worker reads an unchanged page once and restores each of its products once per restore inputs.
+    #[test]
+    fn a_resident_worker_reads_an_unchanged_page_once() -> Result<(), String> {
+        let root = directory("resident");
+        let products = root.to_string_lossy().into_owned();
+        let page = PlanModuleValue {
+            module: "resident_gamma".into(),
+            functions: vec![PlanModuleFunction {
+                identity: "pub::resident_gamma::a".into(),
+                symbol: "pub::resident_gamma::a".into(),
+                function: "a".into(),
+                key: "cd".repeat(32),
+                event: vec![2],
+            }],
+        };
+        let encoded = encode_plan_module(&page)?;
+        let basename = hex::encode("resident_gamma");
+        let reposition = root.join(format!("{basename}.incnmodule.reposition"));
+        std::fs::write(&reposition, &encoded).map_err(|error| error.to_string())?;
+        let first = admitted_page(Some(&products), "resident_gamma", Some("profile"));
+        let again = admitted_page(Some(&products), "resident_gamma", Some("profile"));
+        assert!(Arc::ptr_eq(&first, &again), "an unchanged page was read again");
+        assert!(first.inspect_placement && first.event("a").is_some());
+        // The same bytes under another module name stay refused, and placed bytes are another page.
+        let other = root.join(format!("{}.incnmodule.positioned", hex::encode("resident_delta")));
+        std::fs::write(&other, &encoded).map_err(|error| error.to_string())?;
+        assert!(
+            admitted_page(Some(&products), "resident_delta", Some("profile"))
+                .events
+                .is_empty()
+        );
+        let positioned = root.join(format!("{basename}.incnmodule.positioned"));
+        std::fs::write(&positioned, &encoded).map_err(|error| error.to_string())?;
+        let placed = admitted_page(Some(&products), "resident_gamma", Some("profile"));
+        assert!(!Arc::ptr_eq(&first, &placed) && !placed.inspect_placement);
+        let inputs = RestoreInputs {
+            frame: "a".into(),
+            file: "resident.incn".into(),
+            line: 30,
+            overflow: true,
+            reads: "reads".into(),
+            generation: "profile".into(),
+            positions: Some(vec![(0, 1), (1, 5)]),
+        };
+        let mut restores = 0;
+        let made = first.restored(&inputs, || {
+            restores += 1;
+            restored_payload()
+        })?;
+        let kept = first.restored(&inputs, || {
+            restores += 1;
+            restored_payload()
+        })?;
+        assert!(
+            Arc::ptr_eq(&made, &kept) && restores == 1,
+            "a kept product was restored again"
+        );
+        let moved = RestoreInputs {
+            line: 31,
+            ..inputs.clone()
+        };
+        first.restored(&moved, || {
+            restores += 1;
+            restored_payload()
+        })?;
+        assert_eq!(
+            restores, 2,
+            "a product restored at another line was read from the worker"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
     }
 }
