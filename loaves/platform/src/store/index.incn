@@ -3,8 +3,8 @@ The store's copy-on-write B+tree directory: immutable, content-checked index pag
 
 Part of the storage substrate with `crate.store`; it names no Oven type. A view's index is one root page. A lookup
 reads only the pages on its path from that root to one leaf, and each page is checked against its content digest.
-Pages are mapped and read in place: a lookup copies out only the keys it compares and the location it finds. A write
-copies the pages on the paths it changes and leaves every other page shared with older roots and other views.
+Pages are mapped and read in place. A lookup compares borrowed keys and copies only the selected references and
+frame location. A write copies the pages on its changed paths and shares the other pages with older views.
 
 Packs: every page one commit writes goes into one pack file, `indexes/<sha256>.pack`, named by its content, so a
 commit installs one index file however many leaves its keys reach. A page reference is `pack:offset:length:digest`;
@@ -25,8 +25,10 @@ cannot reach an answer.
 """
 
 from rust::std::cell import RefCell
+from rust::std::str import from_utf8
 from rust::std::ops import Deref, DerefMut
 from rust::std::rc import Rc
+from rust::std::sync import Arc
 from rust::std::string import String as RustString
 from std.primitives.hash import sha256
 from std.primitives.hex import hexlify
@@ -96,7 +98,7 @@ model Layout:
 
     view: MappedView
     level: int
-    spans: list[Span]
+    spans: Arc[list[Span]]
     version: int
     pack: str
 
@@ -161,6 +163,11 @@ static pages_read: dict[str, int] = {}
 static CHECKED: CheckedPages = CheckedPages()
 
 
+pub def page_checked_bytes() -> int:
+    """Physical bytes hashed on first access to immutable index pages in this process."""
+    return pages_read.get("checked_bytes", 0)
+
+
 pub def page_reads() -> int:
     """How many index pages this process has read."""
     return pages_read.get("pages", 0)
@@ -172,7 +179,7 @@ pub def pages_checked() -> int:
 
 
 pub def copied_index_bytes() -> int:
-    """How many bytes this process copied out of mapped index pages: compared keys and decoded entries."""
+    """Count bytes copied from mapped index pages to return decoded keys, child references, and frame locations."""
     return pages_read.get("copied", 0)
 
 
@@ -249,28 +256,36 @@ pub def find(root: Path, top: str, key: str) -> Result[Option[Location], IndexEr
     """
     The location `key` has under the index rooted at `top`; an empty root is an empty index.
 
-    Each page on the path is read in place; only the keys compared and the one location found are copied out.
+    Compare keys in place and copy only the references and frame location the search selects.
     """
-    return Ok(search(root, top, key)?.location)
+    mut pages: list[str] = []
+    return find_location(root, top, key, false, pages)
 
 
 pub def search(root: Path, top: str, key: str) -> Result[SearchResult, IndexError]:
     """Find one location and bind the answer to every authenticated page examined on its search path."""
+    mut pages: list[str] = []
+    found = find_location(root, top, key, true, pages)?
+    return Ok(SearchResult(location=found, path_digest=search_digest(pages, key)))
+
+
+def find_location(root: Path, top: str, key: str, record_path: bool, mut pages: list[str]) -> Result[Option[Location], IndexError]:
+    """Share the point lookup, retaining root-to-leaf evidence only for a caller that consumes it."""
     if top == "":
-        return Ok(SearchResult(location=None, path_digest=search_digest([], key)))
+        return Ok(None)
     mut name = top
-    mut names: list[str] = []
     loop:
-        names.append(page_digest(name))
+        if record_path:
+            pages.append(page_digest(name))
         page = mapped_page(root, name)?
         if page.level == 0:
-            match leaf_span(page, key).map_err((detail) => malformed_at(name, detail))?:
-                None => return Ok(SearchResult(location=None, path_digest=search_digest(names, key)))
+            match select_span(page, key, false).map_err((detail) => malformed_at(name, detail))?:
+                None => return Ok(None)
                 Some(span) =>
                     found = location_at(page.view, span).map_err((detail) => malformed_at(name, detail))?
-                    return Ok(SearchResult(location=Some(found), path_digest=search_digest(names, key)))
-        match covering_span(page, key).map_err((detail) => malformed_at(name, detail))?:
-            None => return Ok(SearchResult(location=None, path_digest=search_digest(names, key)))
+                    return Ok(Some(found))
+        match select_span(page, key, true).map_err((detail) => malformed_at(name, detail))?:
+            None => return Ok(None)
             Some(span) => name = child_at(page, span).map_err((detail) => malformed_at(name, detail))?
 
 
@@ -279,24 +294,33 @@ def search_digest(path: list[str], key: str) -> str:
     return hexlify(sha256.digest(("\n".join(path) + "\n" + key).encode("utf-8")))
 
 
-def leaf_span(page: Layout, key: str) -> Result[Option[Span], str]:
-    """The leaf entry under `key`; only keys of its length are copied out to compare."""
-    wanted = key.encode("utf-8")
-    for span in page.spans:
-        if span.size == len(wanted) and copied(page.view, span.key, span.size)? == wanted:
-            return Ok(Some(span))
+def select_span(page: &Layout, wanted: str, floor: bool) -> Result[Option[Span], str]:
+    """Search the checked key directory for an exact leaf or the inner child covering the key."""
+    position, exact = seek_position(page, wanted)?
+    if exact:
+        return Ok(Some(page.spans.as_ref()[position]))
+    if floor and position > 0:
+        return Ok(Some(page.spans.as_ref()[position - 1]))
     return Ok(None)
 
 
-def covering_span(page: Layout, key: str) -> Result[Option[Span], str]:
-    """The inner entry whose child's key range holds `key`."""
-    mut chosen: Option[Span] = None
-    for span in page.spans:
-        if key_at(page.view, span)? <= key:
-            chosen = Some(span)
+def seek_position(page: &Layout, wanted: str) -> Result[tuple[int, bool], str]:
+    """Find a key or its insertion point using the authenticated key spans in place."""
+    mut lower = 0
+    mut upper = len(page.spans.as_ref())
+    while lower < upper:
+        middle = (lower + upper) // 2
+        span = page.spans.as_ref()[middle]
+        candidate = key_view(page.view, span)?
+        text = from_utf8(candidate.0.as_bytes()).map_err((_) => "key is not valid UTF-8")?
+        if text < wanted:
+            lower = middle + 1
+        elif text > wanted:
+            upper = middle
         else:
-            break
-    return Ok(chosen)
+            return Ok((middle, true))
+    return Ok((lower, false))
+
 
 
 pub def entries(root: Path, top: str) -> Result[list[Entry], IndexError]:
@@ -312,31 +336,72 @@ pub def entries(root: Path, top: str) -> Result[list[Entry], IndexError]:
     return Ok(result)
 
 
-pub def entries_with_prefix(root: Path, top: str, prefix: str) -> Result[list[Entry], IndexError]:
-    """
-    The leaf entries whose keys start with `prefix`, sorted by key, reading only the pages whose range can hold one.
+pub def first_stored_key(root: Path, top: str, lower: str) -> Result[Option[str], IndexError]:
+    """Seek the first physical key at or above a lower bound, including keys whose current value is deleted."""
+    if top == "":
+        return Ok(None)
+    page = mapped_page(root, top)?
+    position, exact = seek_position(page, lower).map_err((detail) => malformed_at(top, detail))?
+    if page.level == 0:
+        if position == len(page.spans.as_ref()):
+            return Ok(None)
+        key = key_at(page.view, page.spans.as_ref()[position]).map_err((detail) => malformed_at(top, detail))?
+        return Ok(Some(key))
+    mut start = position
+    if not exact and start > 0:
+        start -= 1
+    for index in range(start, len(page.spans.as_ref())):
+        child = child_at(page, page.spans.as_ref()[index]).map_err((detail) => malformed_at(top, detail))?
+        match first_stored_key(root, child, lower)?:
+            Some(key) => return Ok(Some(key))
+            None => pass
+    return Ok(None)
 
-    An inner entry's key is the least key below it. A child is skipped when its next sibling starts at or before
-    `prefix`, since every key below it is then less than `prefix`; the walk stops at the first child whose least key
-    is past `prefix` without starting with it, since every key from there on is greater than any key with the prefix.
-    """
+
+pub def entries_with_prefix(root: Path, top: str, prefix: str) -> Result[list[Entry], IndexError]:
+    """Collect the complete prefix range, retaining the existing three-argument store interface."""
+    return limited_entries_with_prefix(root, top, prefix, 0)
+
+
+pub def limited_entries_with_prefix(root: Path, top: str, prefix: str, limit: int) -> Result[list[Entry], IndexError]:
+    """Walk the matching key range in place. Copy only selected leaf entries and traversed child references."""
     mut result: list[Entry] = []
     if top == "":
         return Ok(result)
-    page = read_page(root, top)?
+    page = mapped_page(root, top)?
+    boundary, exact = seek_position(page, prefix).map_err((detail) => malformed_at(top, detail))?
     if page.level == 0:
-        for entry in page.entries:
-            if entry.key.startswith(prefix):
-                result.append(entry)
+        for index in range(boundary, len(page.spans.as_ref())):
+            span = page.spans.as_ref()[index]
+            if not has_key_prefix(page.view, span, prefix).map_err((detail) => malformed_at(top, detail))?:
+                break
+            result.append(entry_at(page, span).map_err((detail) => malformed_at(top, detail))?)
+            if limit > 0 and len(result) == limit:
+                break
         return Ok(result)
-    for position in range(len(page.entries)):
-        entry = page.entries[position]
-        if entry.key > prefix and not entry.key.startswith(prefix):
+    # The child immediately before the insertion point may contain the first match.
+    mut start = boundary
+    if not exact and start > 0:
+        start -= 1
+    for index in range(start, len(page.spans.as_ref())):
+        span = page.spans.as_ref()[index]
+        if index >= boundary and not has_key_prefix(page.view, span, prefix).map_err((detail) => malformed_at(top, detail))?:
             break
-        if position + 1 < len(page.entries) and page.entries[position + 1].key <= prefix:
-            continue
-        result.extend(entries_with_prefix(root, entry.child, prefix)?)
+        child = child_at(page, span).map_err((detail) => malformed_at(top, detail))?
+        mut remaining = 0
+        if limit > 0:
+            remaining = limit - len(result)
+        result.extend(limited_entries_with_prefix(root, child, prefix, remaining)?)
+        if limit > 0 and len(result) == limit:
+            break
     return Ok(result)
+
+
+def has_key_prefix(view: MappedView, span: Span, prefix: str) -> Result[bool, str]:
+    """Compare a prevalidated key in place without allocating an owned string."""
+    candidate = key_view(view, span)?
+    text = from_utf8(candidate.0.as_bytes()).map_err((_) => "key is not valid UTF-8")?
+    return Ok(text.startswith(prefix))
 
 
 pub def entries_for_keys(root: Path, top: str, keys: list[str]) -> Result[list[Entry], IndexError]:
@@ -378,7 +443,7 @@ pub def read_page(root: Path, reference: str) -> Result[Page, IndexError]:
     """One page, checked against its content digest and decoded into owned entries, children named absolutely."""
     page = mapped_page(root, reference)?
     mut result: list[Entry] = []
-    for span in page.spans:
+    for span in page.spans.as_ref():
         result.append(entry_at(page, span).map_err((detail) => malformed_at(reference, detail))?)
     return Ok(Page(level=page.level, entries=result))
 
@@ -406,6 +471,7 @@ def mapped_page(root: Path, reference: str) -> Result[Layout, IndexError]:
         None => return Err(malformed(path, "the page lies outside its file"))
         Some(view) =>
             pages_read["checked"] = pages_read.get("checked", 0) + 1
+            pages_read["checked_bytes"] = pages_read.get("checked_bytes", 0) + view.len()
             if hexlify(view_digest(view)) != location.digest:
                 return Err(IndexError(object=path.value, detail="index page does not match its digest"))
             CHECKED.keep(
@@ -433,7 +499,7 @@ pub def view_digest(view: MappedView) -> bytes:
 
 
 def layout(view: MappedView, pack: str) -> Result[Layout, str]:
-    """Where each entry of a page lies, refusing any length or field that does not fit; nothing is copied."""
+    """Validate the ordered UTF-8 keys and record the bounds of each entry in the checked page."""
     if view.len() < 24:
         return Err("not an index page")
     magic = scalar(view, 0)?
@@ -448,6 +514,7 @@ def layout(view: MappedView, pack: str) -> Result[Layout, str]:
     count = scalar(view, 16)?
     mut offset = 24
     mut spans: list[Span] = []
+    mut previous: Option[MappedView] = None
     for _position in range(count):
         size = scalar(view, offset)?
         field = offset + 8 + size
@@ -462,11 +529,19 @@ def layout(view: MappedView, pack: str) -> Result[Layout, str]:
             width = 8 + scalar(view, field)?
         if field + width > view.len():
             return Err("entry runs past the page")
-        spans.append(Span(key=offset + 8, size=size, field=field))
+        span = Span(key=offset + 8, size=size, field=field)
+        key = key_view(view, span)?
+        title = from_utf8(key.0.as_bytes()).map_err((_) => "key is not valid UTF-8")?
+        if let Some(prior) = previous:
+            earlier = from_utf8(prior.0.as_bytes()).map_err((_) => "key is not valid UTF-8")?
+            if earlier >= title:
+                return Err("index keys are out of order")
+        previous = Some(key)
+        spans.append(span)
         offset = field + width
     if offset != view.len():
         return Err("trailing bytes")
-    return Ok(Layout(view=view, level=level, spans=spans, version=version, pack=pack))
+    return Ok(Layout(view=view, level=level, spans=Arc.new(spans), version=version, pack=pack))
 
 
 def entry_at(page: Layout, span: Span) -> Result[Entry, str]:
@@ -475,6 +550,13 @@ def entry_at(page: Layout, span: Span) -> Result[Entry, str]:
     if page.level == 0:
         return Ok(Entry(key=key, location=Some(location_at(page.view, span)?), child=""))
     return Ok(Entry(key=key, location=None, child=child_at(page, span)?))
+
+
+def key_view(view: MappedView, span: Span) -> Result[MappedView, str]:
+    """Borrow the key's checked extent within this immutable page."""
+    match view.slice(span.key, span.size):
+        Some(key) => return Ok(key)
+        None => return Err("key runs past the page")
 
 
 def key_at(view: MappedView, span: Span) -> Result[str, str]:
