@@ -5,7 +5,8 @@ use std::collections::BTreeSet;
 
 use super::support::{assign_at, block, copy_at, empty_function, local, place_at, returning};
 use crate::body::{
-    Callee, CalleeKind, Constant, Operand, OperandKind, Projection, RvalueKind, Terminator, TerminatorKind, Unwind,
+    Callee, CalleeKind, Constant, FrozenValue, Operand, OperandKind, Projection, RvalueKind, Terminator,
+    TerminatorKind, Unwind,
 };
 use crate::plan::{ExternalFunction, Function};
 use crate::positions::{PositionChange, WirePositions};
@@ -106,6 +107,37 @@ fn native_product_round_trips_formatting_frame() -> Result<(), String> {
     assert!(runtime.is_empty());
     let (original, _runtime) = decode_product(&relocate_product(&relative, "formatting_frame.incn", 1)?, &[])?;
     assert!(original == function);
+    Ok(())
+}
+
+/// An effect-free static collection, as a module's frozen list of option names lowers to, keeps every value, nested
+/// collection and its carrier type in its product.
+#[test]
+fn native_product_keeps_a_frozen_collection() -> Result<(), String> {
+    let span = source_span("frozen.incn", 4, 1);
+    let carrier = PlanType::FrozenCollection("FrozenList".to_owned(), vec![PlanType::StaticText]);
+    let nested = PlanType::FrozenCollection("FrozenList".to_owned(), vec![carrier.clone()]);
+    let values = vec![
+        FrozenValue::Collection(
+            carrier.clone(),
+            vec![
+                FrozenValue::Scalar(Constant::Text("--profile".to_owned())),
+                FrozenValue::Scalar(Constant::Text("--features".to_owned())),
+            ],
+        ),
+        FrozenValue::Collection(carrier.clone(), Vec::new()),
+        FrozenValue::Bytes(vec![0, 255]),
+    ];
+    let mut function = empty_function("options", nested.clone(), &span);
+    function.blocks[0].statements = vec![assign_at(
+        0,
+        Projection::Whole,
+        RvalueKind::FrozenCollection(nested, values),
+        &span,
+    )];
+    let product = encode_product(&function, &[], &[], &[])?;
+    let (restored, _) = decode_product(&product, &[])?;
+    assert!(restored == function, "a frozen collection did not survive its product");
     Ok(())
 }
 
