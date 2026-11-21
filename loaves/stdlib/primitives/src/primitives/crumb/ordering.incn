@@ -13,7 +13,7 @@ from crate.primitives.hex import hexlify
 from crate.primitives.text import encode_utf8
 
 
-pub def omitted(field: &ValueField, projection: Projection) -> bool:
+pub def omitted(field: Borrowed[ValueField], projection: Projection) -> bool:
     """Only declared outer absence or collection emptiness omits a field, before recursive projection."""
     if projection == Projection.Canonical and not field.canonical:
         return true
@@ -25,7 +25,7 @@ pub def omitted(field: &ValueField, projection: Projection) -> bool:
 
 
 pub def fields_in_order(
-    fields: &list[ValueField],
+    fields: Borrowed[list[ValueField]],
     projection: Projection,
     mut budget: Budget,
 ) -> Result[list[int], CrumbError]:
@@ -259,7 +259,7 @@ def text_order(left: str, right: str) -> int:
     return 0
 
 
-pub def order_values(items: &list[Value], projection: Projection, mut budget: Budget) -> Result[list[int], CrumbError]:
+pub def order_values(items: Borrowed[list[Value]], projection: Projection, mut budget: Budget) -> Result[list[int], CrumbError]:
     """Merge-sort indices, retaining original values and keeping projected-equal entries distinct."""
     budget.charge_elements(len(items))?
     for _ in range(8):
@@ -296,7 +296,7 @@ pub def order_values(items: &list[Value], projection: Projection, mut budget: Bu
 
 
 pub def order_entries(
-    items: &list[MapEntry],
+    items: Borrowed[list[MapEntry]],
     projection: Projection,
     mut budget: Budget,
 ) -> Result[list[int], CrumbError]:
@@ -338,7 +338,7 @@ pub def order_entries(
     return Ok(indices)
 
 
-def entries_in_order(items: &list[MapEntry], projection: Projection, mut budget: Budget) -> Result[bool, CrumbError]:
+def entries_in_order(items: Borrowed[list[MapEntry]], projection: Projection, mut budget: Budget) -> Result[bool, CrumbError]:
     for index in range(1, len(items)):
         if compare_entries(items[index - 1], items[index], projection, budget)? > 0:
             return Ok(false)

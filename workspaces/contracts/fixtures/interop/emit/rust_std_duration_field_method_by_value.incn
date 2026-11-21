@@ -80,7 +80,7 @@ def show_field_assignment() -> None:
     println(timer.delay.as_secs())
 
 
-def copy_value[T with Clone](value: &T) -> T:
+def copy_value[T with Clone](value: Borrowed[T]) -> T:
     """Call the receiver's authored Clone slot through its generic bound."""
     return value.clone()
 

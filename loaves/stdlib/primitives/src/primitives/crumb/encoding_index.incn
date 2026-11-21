@@ -96,7 +96,7 @@ pub def selected(index: CellIndex, position: int, mut budget: Budget) -> Result[
 
 
 pub def read_record_index(
-    fields: &list[StoredField],
+    fields: Borrowed[list[StoredField]],
     mut cursor: EncodingCursor,
     mut budget: Budget,
 ) -> Result[RecordIndex, BinaryError]:

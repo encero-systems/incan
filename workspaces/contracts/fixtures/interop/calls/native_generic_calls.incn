@@ -128,7 +128,7 @@ def render[T with (Display, ToString)](value: T) -> str:
     return value.to_string()
 
 
-def first[T](values: &list[T]) -> &T:
+def first[T](values: Borrowed[list[T]]) -> Borrowed[T] from values:
     """Return the first element of a source collection through Rust's checked Index signature."""
     slot: usize = 0.wrapping_resize()
     return Index.index(values, slot)
@@ -311,9 +311,9 @@ def native_mapping() -> HashMap[RustString, int]:
     return HashMap.new()
 
 
-def borrowed_tuple_is_poisoned(value: &Tuple[Mutex[int], int]) -> bool:
+def borrowed_tuple_is_poisoned(value: Borrowed[Tuple[Mutex[int], int]]) -> bool:
     """Borrow a foreign element through the checked shared tuple-parameter frame."""
-    handle: &Mutex[int] = value[0]
+    handle: Borrowed[Mutex[int]] = value[0]
     return handle.is_poisoned()
 
 
@@ -325,13 +325,13 @@ def check_foreign_values() -> None:
     handles = (Mutex.new(3), 7)
     assert not handles.0.is_poisoned()
     assert not handles.0.is_poisoned()
-    handle: &Mutex[int] = handles.0
+    handle: Borrowed[Mutex[int]] = handles.0
     assert not handle.is_poisoned()
     assert not handles.0.is_poisoned()
-    indexed: &Mutex[int] = handles[0]
+    indexed: Borrowed[Mutex[int]] = handles[0]
     assert not indexed.is_poisoned()
     typed_tuple: Tuple[Mutex[int], int] = (Mutex.new(4), 8)
-    typed_view: &Mutex[int] = typed_tuple[0]
+    typed_view: Borrowed[Mutex[int]] = typed_tuple[0]
     assert not typed_view.is_poisoned()
     assert not borrowed_tuple_is_poisoned(handles)
     mut state = DefaultHasher.new()

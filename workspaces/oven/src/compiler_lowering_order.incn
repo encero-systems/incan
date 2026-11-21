@@ -29,7 +29,7 @@ pub class LoweringOrders:
             return LoweringOrder(rank=order.rank, evidence=order.evidence)
         return LoweringOrder()
 
-    pub def covering_certificate(self, sources: &set[str], namespace: int) -> Result[str, str]:
+    pub def covering_certificate(self, sources: Borrowed[set[str]], namespace: int) -> Result[str, str]:
         """Bind the native interface to a current compiler closure covering all its source modules."""
         for module in sorted([file for file in sources]):
             if module in self.current:
@@ -38,7 +38,7 @@ pub class LoweringOrders:
                     return Ok(order.evidence)
         return Ok(LoweringOrder().evidence)
 
-    pub def retained(mut self, graph: Snapshot, module: str, result: &ReusableEvaluation) -> Result[LoweringOrder, str]:
+    pub def retained(mut self, graph: Snapshot, module: str, result: Borrowed[ReusableEvaluation]) -> Result[LoweringOrder, str]:
         """Require the selected producer's origin, owning module, numeric rank and content-addressed namespace page."""
         return self.selected_order(graph, module, result.receipt.preparation.output.origin, result.namespace, result.receipt.preparation.rank_certificate)
 

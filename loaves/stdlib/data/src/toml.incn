@@ -65,7 +65,7 @@ pub enum TomlKind(str):
         return self.value()
 
 
-def _value_kind(value: &EditValue) -> TomlKind:
+def _value_kind(value: Borrowed[EditValue]) -> TomlKind:
     """Classify a borrowed TOML value without copying its contents."""
     match value:
         EditValue.String(_) => return TomlKind.String
@@ -166,7 +166,7 @@ pub class TomlValue:
     @staticmethod
     pub def parse(source: str) -> Result[Self, TomlError]:
         """Parse a complete document, preserving the source spans needed by subsequent typed lookups."""
-        parsed: Result[SpannedDocument[&str], SpanParseError] = SpannedDocument.parse(source)
+        parsed: Result[SpannedDocument[Borrowed[str]], SpanParseError] = SpannedDocument.parse(source)
         document = parsed.map_err((error) => _span_parse_error(source, error))?
         return Ok(TomlValue(_item=document.into_item(), _source=Arc.new(RustString.from(source)), _path=""))
 
@@ -306,14 +306,14 @@ pub class TomlValue:
         """Create an owned public snapshot only after borrowed path selection has succeeded."""
         return self._lookup_with[TomlValue](path, (owner, item, selected) => owner._snapshot_at(item, selected))
 
-    def _snapshot_at(self, item: &SpannedItem, path: str) -> Result[TomlValue, TomlError]:
+    def _snapshot_at(self, item: Borrowed[SpannedItem], path: str) -> Result[TomlValue, TomlError]:
         """Copy only the selected node when the public contract requests an owned dynamic snapshot."""
         return Ok(TomlValue(_item=item.clone(), _source=self._source.clone(), _path=path))
 
     def _lookup_with[T](
         self,
         path: str,
-        select: (&TomlValue, &SpannedItem, str) -> Result[T, TomlError],
+        select: (Borrowed[TomlValue], Borrowed[SpannedItem], str) -> Result[T, TomlError],
     ) -> Result[Option[T], TomlError]:
         """Validate a table-only path before traversal so absence cannot hide malformed syntax."""
         keys = path.split(".")
@@ -331,9 +331,9 @@ pub class TomlValue:
 
     def _traverse_with[T](
         self,
-        item: &SpannedItem,
+        item: Borrowed[SpannedItem],
         keys: list[str],
-        select: (&TomlValue, &SpannedItem, str) -> Result[T, TomlError],
+        select: (Borrowed[TomlValue], Borrowed[SpannedItem], str) -> Result[T, TomlError],
     ) -> Result[Option[T], TomlError]:
         """
         Consume a borrowed selection within its owner's lifetime, creating only the requested result.
@@ -378,7 +378,7 @@ pub class TomlValue:
         """Decode this snapshot using the same borrowed selection boundary as typed path lookups."""
         return self._decode_at[T](self._item, self._path)
 
-    def _decode_at[T with DeserializeOwned](self, item: &SpannedItem, path: str) -> Result[T, TomlError]:
+    def _decode_at[T with DeserializeOwned](self, item: Borrowed[SpannedItem], path: str) -> Result[T, TomlError]:
         """Use a serde document slot to decode scalars and containers without losing original spans."""
         mut table = EditTable.new()
         table.insert("value", item.clone())
@@ -395,7 +395,7 @@ pub class TomlValue:
         """Read this snapshot without copying it into another dynamic value."""
         return self._read_at[T](self._item, self._path)
 
-    def _read_at[T with (DeserializeOwned, RustSerialize)](self, item: &SpannedItem, path: str) -> Result[T, TomlError]:
+    def _read_at[T with (DeserializeOwned, RustSerialize)](self, item: Borrowed[SpannedItem], path: str) -> Result[T, TomlError]:
         """Reject serde's kind coercions by checking the decoded value's TOML shape against the source tree."""
         decoded = self._decode_at[T](item, path)?
         self._validate_decoded_at(decoded, item, path)?
@@ -403,8 +403,8 @@ pub class TomlValue:
 
     def _validate_decoded_at[T with RustSerialize](
         self,
-        decoded: &T,
-        item: &SpannedItem,
+        decoded: Borrowed[T],
+        item: Borrowed[SpannedItem],
         path: str,
     ) -> Result[None, TomlError]:
         """
@@ -419,7 +419,7 @@ pub class TomlValue:
             Ok(encoded) => return self._validate_kinds_at(encoded, item, path)
             Err(error) => return Err(self._error(TomlErrorKind.Type, str(error), path, self._location_at(item)))
 
-    def _validate_kinds_at(self, expected: &EditValue, item: &SpannedItem, path: str) -> Result[None, TomlError]:
+    def _validate_kinds_at(self, expected: Borrowed[EditValue], item: Borrowed[SpannedItem], path: str) -> Result[None, TomlError]:
         """Validate the selected subtree, including every collection member, without reparsing TOML text."""
         expected_kind = _value_kind(expected)
         if _item_kind(item) != expected_kind:
@@ -441,7 +441,7 @@ pub class TomlValue:
                     self._validate_kinds_at(value, child, _key_path(path, str(key)))?
         return Ok(None)
 
-    def _decode_failure_at(self, error: EditDecodeError, relative: str, item: &SpannedItem, selected: str) -> TomlError:
+    def _decode_failure_at(self, error: EditDecodeError, relative: str, item: Borrowed[SpannedItem], selected: str) -> TomlError:
         """Remove the private serde slot from the error path and retain the original failing token's span."""
         mut path = selected
         if relative.startswith("value."):
@@ -456,7 +456,7 @@ pub class TomlValue:
             location = _span_location(self._source.as_str(), span.start, span.end)
         return self._error(TomlErrorKind.Type, str(error.message()), path, location)
 
-    def _location_at(self, item: &SpannedItem) -> Option[TomlLocation]:
+    def _location_at(self, item: Borrowed[SpannedItem]) -> Option[TomlLocation]:
         """Locate a borrowed internal selection in the shared original source."""
         if let Some(span) = item.span():
             return _span_location(self._source.as_str(), span.start, span.end)
@@ -472,7 +472,7 @@ pub class TomlValue:
         return _located_error(kind, detail, Some(path), location)
 
 
-def _item_kind(item: &SpannedItem) -> TomlKind:
+def _item_kind(item: Borrowed[SpannedItem]) -> TomlKind:
     """
     Classify the parsed Rust enum, combining authored and inline container representations.
 

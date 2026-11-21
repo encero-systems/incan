@@ -18,7 +18,7 @@ def decoded() -> Result[str, NativeError]:
     return Err(NativeError.with_code("bad", "invalid"))
 
 
-def inspect(value: &Option[int], result: &Result[int, int]) -> None:
+def inspect(value: Borrowed[Option[int]], result: Borrowed[Result[int, int]]) -> None:
     """Read each borrowed standard variant without consuming its owner."""
     match value:
         Some(number) => println(number.clone())
@@ -28,7 +28,7 @@ def inspect(value: &Option[int], result: &Result[int, int]) -> None:
         Err(message) => println(message.clone())
 
 
-def describe(value: &NativeError) -> str:
+def describe(value: Borrowed[NativeError]) -> str:
     """Format the native error through its shared carrier."""
     return str(value)
 

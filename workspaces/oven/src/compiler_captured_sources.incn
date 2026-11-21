@@ -89,7 +89,7 @@ pub def prepare_captured_source_inputs(
     return Ok(PreparedSourceInputs(transaction=prepared, keys=changed, positioned=positioned))
 
 
-def stage_census_members(selected: Snapshot, mut transaction: Transaction, census: &SourceProjectionRecord, current: &Dict[str, list[str]]) -> Result[list[RecordKey], str]:
+def stage_census_members(selected: Snapshot, mut transaction: Transaction, census: Borrowed[SourceProjectionRecord], current: Borrowed[Dict[str, list[str]]]) -> Result[list[RecordKey], str]:
     """Publish a module census and update exactly the previously observed names whose bindings changed."""
     slot = encode_record_key(census.key)?
     previous = get(selected, slot).map_err((error) => error.message())?

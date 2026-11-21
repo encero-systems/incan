@@ -38,12 +38,12 @@ pub def serde_roundtrip() -> bool:
                 Err(_error) => return false
 
 
-pub def shared_copy[T with Clone](value: &T) -> T:
+pub def shared_copy[T with Clone](value: Borrowed[T]) -> T:
     """Resolve a shared referent's bound method with the referent as Self."""
     return value.clone()
 
 
-pub def native_shared_copy[T with RuntimeClone](value: &T) -> T:
+pub def native_shared_copy[T with RuntimeClone](value: Borrowed[T]) -> T:
     """Close a qualified native trait's Self to the shared type parameter's referent."""
     return RuntimeClone.clone(value)
 
@@ -60,7 +60,7 @@ pub def one_value[T](value: T) -> list[T]:
     return values
 
 
-pub def count_values[T](values: &Vec[T]) -> int:
+pub def count_values[T](values: Borrowed[Vec[T]]) -> int:
     """Read a native method's length through its published governed signature."""
     return int(values.len())
 

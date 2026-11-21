@@ -623,7 +623,7 @@ pub def read_frame_cached(
     return read_placed_frame(path, mapped, key, location)
 
 
-def read_placed_frame(path: Path, mapped: &MappedFile, key: str, location: Location) -> Result[Lookup, StoreError]:
+def read_placed_frame(path: Path, mapped: Borrowed[MappedFile], key: str, location: Location) -> Result[Lookup, StoreError]:
     """Verify an indexed frame from its established immutable backing and retain only the bounded value view."""
     frame = part(path, mapped.view(location.offset, location.length), "frame runs past its segment")?
     counted["records"] = counted.get("records", 0) + 1
@@ -1009,7 +1009,7 @@ def pending_each(latest: Snapshot, writes: list[Write]) -> Result[list[Write], S
     return Ok(remaining)
 
 
-def kept(write: &Write, found: Result[Lookup, StoreError]) -> Result[bool, StoreError]:
+def kept(write: Borrowed[Write], found: Result[Lookup, StoreError]) -> Result[bool, StoreError]:
     """Whether `write` stays pending given its key's lookup, refusing it when its precondition no longer holds."""
     match found:
         Err(error) =>
@@ -1019,7 +1019,7 @@ def kept(write: &Write, found: Result[Lookup, StoreError]) -> Result[bool, Store
         Ok(outcome) => return needed(write, outcome)
 
 
-def needed(write: &Write, found: Lookup) -> Result[bool, StoreError]:
+def needed(write: Borrowed[Write], found: Lookup) -> Result[bool, StoreError]:
     """Whether `write` changes what is committed, refusing it when its precondition no longer holds."""
     match found:
         Lookup.Found(value) =>

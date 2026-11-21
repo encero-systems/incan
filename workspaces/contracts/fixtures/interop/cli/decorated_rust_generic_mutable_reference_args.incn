@@ -14,18 +14,18 @@ def adapted(value: int) -> int:
     return value
 
 
-def to_int(function: (ProviderHandle[tuple[&mut int, &mut int]]) -> int) -> ((int) -> int):
+def to_int(function: (ProviderHandle[tuple[BorrowedMut[int], BorrowedMut[int]]]) -> int) -> ((int) -> int):
     return adapted
 
 
 class Container:
     @preserve()
-    pub def replace(self, mut items: ProviderHandle[tuple[&mut int, &mut int]]) -> None:
+    pub def replace(self, mut items: ProviderHandle[tuple[BorrowedMut[int], BorrowedMut[int]]]) -> None:
         pass
 
 
 @to_int
-def transformed(mut items: ProviderHandle[tuple[&mut int, &mut int]]) -> int:
+def transformed(mut items: ProviderHandle[tuple[BorrowedMut[int], BorrowedMut[int]]]) -> int:
     return 0
 
 

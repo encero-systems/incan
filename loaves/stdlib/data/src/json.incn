@@ -614,7 +614,7 @@ def _index_error(detail: str) -> JsonError:
     return JsonError(kind_value=JsonErrorKind.Index, detail_value=detail)
 
 
-def _select_pointer(root: &RustJsonValue, path: str) -> Result[Option[JsonValue], JsonError]:
+def _select_pointer(root: Borrowed[RustJsonValue], path: str) -> Result[Option[JsonValue], JsonError]:
     """Walk borrowed nodes, preserving validation order, and copy only the final owned result."""
     mut current = root.as_serde()
     for raw_segment in _json_pointer_segments(path):

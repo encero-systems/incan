@@ -57,7 +57,7 @@ model SegmentEntry:
     length: int
 
 
-pub def encoded_frames(writes: &list[Write]) -> Result[Encoded, StoreError]:
+pub def encoded_frames(writes: Borrowed[list[Write]]) -> Result[Encoded, StoreError]:
     """Index each distinct frame and copy its payload once into the final, canonical segment."""
     mut entries: Dict[str, SegmentEntry] = {}
     for position in range(len(writes)):
@@ -99,7 +99,7 @@ pub def encoded_frames(writes: &list[Write]) -> Result[Encoded, StoreError]:
     return Ok(result)
 
 
-pub def matches_value_frame(write: &Write, location: Location) -> Result[bool, StoreError]:
+pub def matches_value_frame(write: Borrowed[Write], location: Location) -> Result[bool, StoreError]:
     """Whether a staged value supplies the exact full key and bytes authenticated in this live index location."""
     if location.tombstone or write.kind != KIND_VALUE:
         return Ok(false)
@@ -117,7 +117,7 @@ def frame_prefix(key: bytes) -> Result[bytes, StoreError]:
     return Ok(buffer)
 
 
-def frame_digest(prefix: bytes, write: &Write) -> bytes:
+def frame_digest(prefix: bytes, write: Borrowed[Write]) -> bytes:
     mut hasher = sha256.new()
     hasher.update(prefix)
     if write.kind == KIND_VALUE:
@@ -142,7 +142,7 @@ def write_u64(mut buffer: list[u8], value: int) -> Result[None, StoreError]:
     return append_u64(buffer, value, "segment").map_err((detail) => failure("format", "segment", detail))
 
 
-pub def leaf_entries(encoded: &Encoded, segment: str) -> list[Entry]:
+pub def leaf_entries(encoded: Borrowed[Encoded], segment: str) -> list[Entry]:
     """Index entries locating each frame of an encoded segment."""
     mut result: list[Entry] = []
     for position in range(len(encoded.keys)):

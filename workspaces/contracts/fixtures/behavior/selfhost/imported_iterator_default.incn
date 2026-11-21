@@ -35,7 +35,7 @@ type NativeBox[R] = rusttype Box[R]:
     """Retain a generic native owner inside a source list."""
 
 
-pub def clone_and_change(value: &NativePath) -> Result[PathBuf, str]:
+pub def clone_and_change(value: Borrowed[NativePath]) -> Result[PathBuf, str]:
     """1. Clone the carrier. 2. Mutate the owned copy. 3. Return its inspected native Result identity."""
     # 1. Select the native carrier's Clone implementation.
     mut copied = value.clone()
@@ -67,11 +67,11 @@ def preserve_adopter[T with Clone](values: ListIterator[T]) -> Iterator[T]:
 def inspect_tuple[T with Static](values: FrozenDict[T, int]) -> None:
     """Keep the reference on each component of a borrowed iterator item."""
     for value, index in values.iter():
-        retained: &T = value
-        position: &int = index
+        retained: Borrowed[T] = value
+        position: Borrowed[int] = index
 
 
-def inspect_keys[T](values: &BTreeMap[str, T]) -> None:
+def inspect_keys[T](values: Borrowed[BTreeMap[str, T]]) -> None:
     """Infer each query from the native iterator's retained item type."""
     for key in values.keys():
         found = values.get(key)
@@ -107,7 +107,7 @@ def sorted_native_float_slice(values: list[float]) -> list[float]:
     return owned
 
 
-def compare_native_float(left: &float, right: &float) -> Ordering:
+def compare_native_float(left: Borrowed[float], right: Borrowed[float]) -> Ordering:
     """Keep the exact borrowed scalar inputs and native ordering result of a function item."""
     if left.clone() < right.clone():
         return Ordering.Less
@@ -138,7 +138,7 @@ def poll_native_generator_guard() -> None:
     native: NativeGenerator[int] = NativeGenerator.new(IntoIterator.into_iter([9]))
     cell: RefCell[NativeGenerator[int]] = RefCell.new(native)
     mut loan: RefMut[NativeGenerator[int]] = cell.borrow_mut()
-    mut iterator: &mut NativeGenerator[int] = loan.deref_mut()
+    mut iterator: BorrowedMut[NativeGenerator[int]] = loan.deref_mut()
     assert iterator.next() == Some(9)
 
 
@@ -152,7 +152,7 @@ def copy_native_byte_slice(value: NativeFrozenBytes) -> bytes:
     return value.as_slice().to_vec()
 
 
-def inspect_native_text_slice(value: &str) -> None:
+def inspect_native_text_slice(value: Borrowed[str]) -> None:
     """Resolve the public primitive alias's native whitespace iterator."""
     mut count = 0
     for piece in NativeStr.split_whitespace(value):
@@ -228,17 +228,17 @@ def main() -> None:
     inspect_collection_returns()
 
 
-def observe_info(_info: &PanicHookInfo) -> None:
+def observe_info(_info: Borrowed[PanicHookInfo]) -> None:
     """Admit the metadata lifetime on a native input without erasing its signature binder."""
     pass
 
 
-def has_path(paths: list[PathBuf], sought: &PathBuf) -> bool:
+def has_path(paths: list[PathBuf], sought: Borrowed[PathBuf]) -> bool:
     """Compare the native needle in place without moving or cloning it."""
     return paths.contains(sought)
 
 
-def has_reference(value: &int) -> bool:
+def has_reference(value: Borrowed[int]) -> bool:
     """Borrow a shared reference value when comparing a collection of references."""
-    values: list[&int] = [value]
+    values: list[Borrowed[int]] = [value]
     return value in values
