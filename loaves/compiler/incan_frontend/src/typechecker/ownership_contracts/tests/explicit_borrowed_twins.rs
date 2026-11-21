@@ -580,12 +580,12 @@ fn api_metadata_publishes_borrows_as_their_reference_twins() -> Result<(), Box<d
             .map(|declaration| format!("{declaration:?}"))
             .collect())
     };
-    let native = published(&spelled(template, NATIVE))?;
+    // The Rust spelling is refused in Incan source, so only the Incan spelling publishes; a borrow-only function's
+    // borrows are the native reference there, as its checked signature says.
     let explicit = published(&spelled(template, EXPLICIT))?;
-    assert_eq!(explicit, native);
     assert!(
-        native.iter().all(|declaration| !declaration.contains("\"Borrowed\"")),
-        "{native:?}"
+        explicit.iter().all(|declaration| !declaration.contains("\"Borrowed\"")),
+        "{explicit:?}"
     );
     Ok(())
 }
