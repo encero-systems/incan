@@ -3,7 +3,7 @@
 from rust::incan_loaf_names import native_crate_name
 from rust::std::process import Command, Stdio
 from rust::std::fs import remove_dir_all
-from pub::internal_models.lowering_events import INTERFACE_REPORT, decode_lowering_event, decode_native_interface
+from pub::incan_mir_plan import INTERFACE_REPORT, decode_lowering_event, decode_native_interface
 pub from pub::internal_models.checked_body_counts import CheckedBodyCounts
 from pub::internal_models.checked_body_counts import decode_checked_body_counts
 pub from pub::internal_models.checker_publication import CheckerRecordCounts

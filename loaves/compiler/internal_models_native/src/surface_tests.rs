@@ -1,11 +1,6 @@
 //! The public record surface: every reference model's fields by name and type, and its defaults.
 
-use crate::lowering_events::{
-    AdmittedDefinition, AdmittedFunction, AdmittedModule, AdmittedPlacement, EventPosition, EventReference,
-    LoweringEvent, LoweringRefusal, NativeInterface,
-};
 use crate::overload_members::{MethodLookup, MethodReads};
-use crate::plan_module_records::{PlanModuleFunction, PlanModuleValue};
 use crate::{
     CheckedBodyCounts, CheckerRecordCounts, CompiledBodyDependencyRead, CompiledBodyFallback, CompiledBodyOutput,
     CompiledBodyOutputs, CompiledBodyValue, CompiledNamespaceValue, CompilerContributors, CompilerExportMember,
@@ -138,70 +133,10 @@ fn compiled_outputs_carry_every_reference_field() {
     assert!(fields.local.is_empty());
 }
 
-/// Lowering, plan and namespace records carry every reference field.
+/// Method lookup and namespace records carry every reference field. The lowering events and plan module records are
+/// the plan Loaf's, and its tests cover them.
 #[test]
-fn lowering_plan_and_namespace_records_carry_every_reference_field() {
-    let reference = EventReference {
-        kind: "model".into(),
-        index: 0,
-        name: "M".into(),
-    };
-    let position = EventPosition { line: 1, column: 2 };
-    let event = LoweringEvent {
-        identity: "i".into(),
-        key: "k".into(),
-        function: "f".into(),
-        product: vec![],
-        reused: false,
-        admitted: false,
-        module: String::new(),
-        role: String::new(),
-        demand: String::new(),
-        runtime_requirements: 0,
-        references: vec![reference.clone()],
-        positions: vec![position],
-    };
-    let refusal = LoweringRefusal {
-        identity: "i".into(),
-        function: "f".into(),
-        refusal: "r".into(),
-    };
-    let interface = NativeInterface {
-        entry: "e".into(),
-        plan: vec![],
-    };
-    let definition = AdmittedDefinition {
-        function: "f".into(),
-        identity: "i".into(),
-        key: "k".into(),
-        digest: "d".into(),
-    };
-    let placement = AdmittedPlacement {
-        key: "k".into(),
-        positions: vec![position],
-    };
-    let function = AdmittedFunction {
-        function: "f".into(),
-        identity: "i".into(),
-        references: vec![reference],
-        placement: Some(placement),
-    };
-    let module = AdmittedModule {
-        module: "m".into(),
-        complete: true,
-        functions: vec![function],
-        inspected: false,
-    };
-    let plan = PlanModuleValue {
-        module: "m".into(),
-        functions: vec![PlanModuleFunction {
-            identity: "i".into(),
-            symbol: "s".into(),
-            function: "f".into(),
-            key: "k".into(),
-            event: vec![],
-        }],
-    };
+fn lookup_and_namespace_records_carry_every_reference_field() {
     let lookup = MethodLookup {
         reader: "r".into(),
         module: "m".into(),
@@ -232,8 +167,6 @@ fn lowering_plan_and_namespace_records_carry_every_reference_field() {
         frame_digest: vec![],
         value_digest: "v".into(),
     };
-    assert!(event.references.len() == 1 && module.functions.len() == 1 && plan.functions.len() == 1);
-    assert!(refusal.refusal == "r" && interface.entry == "e" && definition.digest == "d");
     assert!(lookup.candidates.is_empty() && identity.path.is_empty() && publication.interface.is_empty());
     assert!(matches!(atom, NamespaceAtom::Fields(_)) && reference.offset == 0);
 }
@@ -295,10 +228,9 @@ fn every_reference_field_default_is_published() {
         CheckedBodyCounts::__incan_default_decoded(),
         CheckerRecordCounts::__incan_default_reusable_declarations(),
         CheckerRecordCounts::__incan_default_all_declarations(),
-        LoweringEvent::__incan_default_runtime_requirements(),
         NamespaceOrder::__incan_default_rank(),
     ];
-    assert_eq!(counts, [0; 7]);
+    assert_eq!(counts, [0; 6]);
     assert_eq!(
         CheckerRecordCounts::__incan_default_summary(),
         "0/0 reusable declarations"
@@ -326,20 +258,12 @@ fn every_reference_field_default_is_published() {
     assert!(CompilerContributors::__incan_default_operations().is_empty());
     assert_eq!(HirSourceSpan::__incan_default_expansion(), None);
     assert!(ModelField::__incan_default_canonical());
-    assert!(!LoweringEvent::__incan_default_admitted());
     let texts = [
-        LoweringEvent::__incan_default_module(),
-        LoweringEvent::__incan_default_role(),
-        LoweringEvent::__incan_default_demand(),
         RecordKey::__incan_default_context(),
         PayloadAdmission::__incan_default_facts(),
         PayloadAdmission::__incan_default_refusal(),
     ];
     assert!(texts.iter().all(String::is_empty));
-    assert!(LoweringEvent::__incan_default_references().is_empty());
-    assert!(LoweringEvent::__incan_default_positions().is_empty());
-    assert_eq!(AdmittedFunction::__incan_default_placement(), None);
-    assert!(!AdmittedModule::__incan_default_inspected());
     assert_eq!(NamespaceOrder::__incan_default_evidence(), "compiled-check");
     assert!(NamespaceOrder::__incan_default_members().is_empty());
     assert!(NamespaceOrder::__incan_default_certificate().is_empty());

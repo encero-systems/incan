@@ -6,7 +6,7 @@ from pub::incan_platform.store import Snapshot, get
 from pub::internal_models import GraphBodyValue, ProducerRank, encode_graph_body_values, encode_graph_checking_pair
 from pub::internal_models.namespace_references import NamespaceReference, encode_namespace_references, namespace_reference_filename
 from pub::internal_models.records import ReadReceipt, RecordKey, encode_record_key
-from pub::internal_models.lowering_events import LoweringEvent
+from pub::incan_mir_plan import LoweringEvent
 from pub::internal_models.namespace_order import NamespaceOrder, decode_namespace_order
 from compiler_body_keys import IDENTITY_PROFILE, NAMESPACE_IDENTITY_PROFILE
 from compiler_owner_records import read_body_frame

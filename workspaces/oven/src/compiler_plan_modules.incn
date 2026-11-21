@@ -4,10 +4,10 @@ from pub::incan_platform.trace import enter_producer, finish_producer
 from std.fs import Path
 from std.primitives.hash import sha256
 from std.encoding.hex import hexlify, unhexlify
-from pub::internal_models.lowering_events import AdmittedFunction, AdmittedModule, LoweringEvent, decode_lowering_event, encode_lowering_event, placed_admission, read_module_admission
+from pub::incan_mir_plan import AdmittedFunction, AdmittedModule, LoweringEvent, decode_lowering_event, encode_lowering_event, placed_admission, read_module_admission
 from pub::incan_platform.store import Snapshot, Transaction
 from pub::internal_models import ProducerRank, ProducerStage
-from pub::internal_models.plan_module_records import (
+from pub::incan_mir_plan import (
     ADMITTED_MODULE_NOTE,
     PARTIAL_MODULE_NOTE,
     PLAN_MODULE_FAMILY,

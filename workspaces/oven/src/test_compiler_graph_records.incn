@@ -65,7 +65,7 @@ from compiler_ranked_build import RankedBuildInputs, contextual_ranked_pages
 from compiler_body_keys import body_key, namespace_key, project_declaration_slot
 from compiler_plan_values import LOWERING_PROFILE, select_plan_modules
 from compiler_plan_modules import plan_module_key
-from pub::internal_models.plan_module_records import PlanModuleFunction, PlanModuleValue, encode_plan_module
+from pub::incan_mir_plan import PlanModuleFunction, PlanModuleValue, encode_plan_module
 from compiler_owner_records import encode_body_frame, read_body_frame, read_eligibility
 from compiler_body_values import (
     invalid_namespace_modules,
@@ -89,7 +89,7 @@ from compiler_body_publication import (
 )
 from engine_capture import CapturedInput, InputRole
 from observation import file_metadata
-from pub::internal_models.lowering_events import LoweringEvent, LoweringRefusal, encode_lowering_event, encode_lowering_refusal
+from pub::incan_mir_plan import LoweringEvent, LoweringRefusal, encode_lowering_event, encode_lowering_refusal
 from std.primitives.crumb.descriptions import Description, DescriptionMode
 from std.primitives.crumb.values import Value
 from pub::internal_models.crumb_rows import ModelField, model_description, required_value
