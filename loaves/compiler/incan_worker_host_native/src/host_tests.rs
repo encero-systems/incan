@@ -623,6 +623,52 @@ fn a_footprint_over_the_ceiling_hands_rustc_to_the_host_and_retires() -> Outcome
     Ok(())
 }
 
+/// A worker that handed rustc off has released the checking and lowering heap before it settles; when what it then
+/// holds is within the ceiling it stays for the next edit of a saved build, past the ordinary idle period that
+/// rustc in the caller's fresh process outlasts.
+#[test]
+fn a_saved_build_handed_to_rustc_keeps_its_worker_within_the_ceiling() -> Outcome {
+    let mut policy = lifecycle(Bounds::new(10000, FOOTPRINT_MARGIN, 5000));
+    let settled = policy.settle(
+        ActivationOutcome::HandedOff("/p/out/libunit.rustc-handoff".into()),
+        5000,
+        false,
+        -1,
+    );
+    assert_eq!(settled.retirement, None);
+    let socket = socket_path("saved-handoff");
+    let mut configuration = settings(&socket, 40, FOOTPRINT_MARGIN, None);
+    configuration.bounds = Bounds {
+        retained_idle_millis: 300,
+        ..Bounds::new(40, FOOTPRINT_MARGIN, FOOTPRINT_CEILING)
+    };
+    let mut host = host_for(&configuration)?;
+    let saved = unit_text(GENERATION).replace(
+        "\"/p/sysroot\"]",
+        "\"/p/sysroot\",\"--graph-body-output\",\"/p/bodies\",\"--plan-record-products\",\"/p/products\"]",
+    );
+    let mut initial = caller(&socket, &saved)?;
+    check_is(&served(&mut host)?, WorkerCommand::Unit)?;
+    complete(
+        &mut host,
+        &ActivationOutcome::HandedOff("/p/out/libunit.rustc-handoff".into()),
+        FOOTPRINT_CEILING,
+        -1,
+    );
+    let answered = reply(&mut initial)?;
+    assert_eq!(handoff(&answered).as_deref(), Some("/p/out/libunit.rustc-handoff"));
+    assert!(!retired(&answered));
+    assert!(!withdrawn(&socket));
+    sleep(Duration::from_millis(90));
+    let mut renewed = caller(&socket, &saved)?;
+    check_is(&served(&mut host)?, WorkerCommand::Unit)?;
+    complete(&mut host, &ActivationOutcome::Exited(0), 1000, -1);
+    assert!(!retired(&reply(&mut renewed)?));
+    assert!(ended(&mut host));
+    assert!(withdrawn(&socket));
+    Ok(())
+}
+
 #[test]
 fn a_footprint_within_the_ceiling_keeps_rustc_in_the_warm_worker() -> Outcome {
     let policy = lifecycle(Bounds::new(10000, FOOTPRINT_MARGIN, 5000));
