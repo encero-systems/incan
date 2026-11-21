@@ -3,9 +3,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use incan_mir_plan_native::{
-    AdmittedFunction, AdmittedPlacement, Carrier, EnumDeclaration, Function, GenericEnumDeclaration,
-    GenericModelDeclaration, ModelDeclaration, NominalReference, PlanExport, PlanType, UnitNominals, resolve_nominals,
-    unresolved_nominal,
+    AdmittedFunction, AdmittedPlacement, Carrier, EnumDeclaration, EventPosition, Function, GenericEnumDeclaration,
+    GenericModelDeclaration, ModelDeclaration, NominalReference, PlanExport, PlanType, UnitNominals,
+    decode_lowering_event, resolve_nominals, unresolved_nominal,
 };
 use incan_semantics_core::body_ir::{Body, BodyIrModule};
 use incan_semantics_core::{
@@ -555,12 +555,23 @@ fn restore_admitted(
         return Admission::Missed("a generic instance it requests is gone");
     };
     let references: Vec<_> = resolved.iter().map(event_reference).collect();
-    let nodes = match &current {
-        Some(positions) => event_nodes(positions),
-        None => previous.positions.clone(),
+    let moved = current_identity != previous.identity || references != previous.references || !payload.3;
+    // A moved function's note names its nodes: the body's current ones, or those its page event recorded.
+    let placement = if moved {
+        let nodes = match &current {
+            Some(positions) => event_nodes(positions),
+            None => match recorded_nodes(admission.page, &name) {
+                Some(nodes) => nodes,
+                None => return Admission::Missed("its page event does not decode"),
+            },
+        };
+        Some(AdmittedPlacement {
+            key: previous.key.clone(),
+            positions: nodes,
+        })
+    } else {
+        None
     };
-    let moved =
-        current_identity != previous.identity || references != previous.references || nodes != previous.positions;
     admission
         .frames
         .push(frames.iter().map(|frame| frame.name.clone()).collect());
@@ -568,12 +579,15 @@ fn restore_admitted(
         function: function.name.clone(),
         identity: current_identity,
         references,
-        placement: moved.then(|| AdmittedPlacement {
-            key: previous.key.clone(),
-            positions: nodes,
-        }),
+        placement,
     });
     Admission::Restored((function, runtime, requests, frames))
+}
+
+/// The node positions the page event of `function` recorded, read from this request's page.
+fn recorded_nodes(page: &ModulePage, function: &str) -> Option<Vec<EventPosition>> {
+    let event = decode_lowering_event(page.event_bytes(function)?).ok()?;
+    Some(event.positions)
 }
 
 /// A traced frame's module and source name, as the reuse proof matches bodies across captures.

@@ -503,7 +503,7 @@ mod tests {
             references: Vec::new(),
             positions: Vec::new(),
         };
-        Ok((placed, Vec::new(), event))
+        Ok((placed, Vec::new(), event, true))
     }
 
     /// A resident worker reads an unchanged page once and restores each of its products once per restore inputs.
