@@ -1,8 +1,8 @@
 //! Checked source locations, places and operands read into the native frame.
 
 use incan_mir_plan_native::{
-    Constant, Operand, OperandKind, Place, PlanType, Projection, RvalueKind, SourceSpan, assign as plan_assign,
-    place as plan_place, source_span, tuple_element_type,
+    CalleeKind, Constant, Operand, OperandKind, Place, PlanType, Projection, RvalueKind, SourceSpan,
+    assign as plan_assign, place as plan_place, source_span, tuple_element_type,
 };
 use incan_semantics_core::body_ir::{
     Constant as SourceConstant, Operand as SourceOperand, OwnershipFact, Place as SourcePlace, PlaceElem,
@@ -11,11 +11,12 @@ use incan_semantics_core::body_ir::{
 use incan_semantics_core::{HirSourceSpan, IncanType};
 
 use crate::builtin_calls::{clone_enum_reference, clone_model_reference};
+use crate::callable_values::callable_object;
 use crate::carrier_operands::boundary_operand;
 use crate::closures::callable_copy_type;
 use crate::decimal_plan::decimal_literal;
 use crate::element_places::is_element_place;
-use crate::frame::{Builder, literal, place_type, read_place, temporary, track_rvalue_moves};
+use crate::frame::{Builder, literal, place_type, read_place, temporary, terminate_call, track_rvalue_moves};
 use crate::frozen_plan::{frozen_collection_literal, frozen_literal, frozen_observation_type};
 use crate::layout_types::{native_source_type, shared_receiver_type};
 use crate::list_values::element_read;
@@ -322,7 +323,7 @@ pub fn target_read(
             }
             Ok(read_place(target, true, span))
         }
-        PlanType::Closure(_) => closure_read(builder, target, fact, span),
+        PlanType::Closure(signature) => closure_read(builder, target, signature, fact, span),
         _ => owned_target_read(builder, target, fact, span),
     }
 }
@@ -331,6 +332,7 @@ pub fn target_read(
 fn closure_read(
     builder: &mut Builder,
     target: Place,
+    signature: &[PlanType],
     fact: OwnershipFact,
     span: &SourceSpan,
 ) -> Result<Operand, String> {
@@ -338,7 +340,7 @@ fn closure_read(
         match target.projection {
             Projection::VariantField(..) => return target_read(builder, target, OwnershipFact::Clone, span),
             Projection::Field(..) | Projection::Fields(_) | Projection::DerefField(..) | Projection::DerefFields(_) => {
-                return Err(untranslated("callable_calls::callable_object"));
+                return callable_object(builder, target, signature, span);
             }
             _ => {}
         }
@@ -350,7 +352,15 @@ fn closure_read(
             }
             Ok(read_place(target, true, span))
         }
-        OwnershipFact::Clone => Err(untranslated("callable_calls::callable_object")),
+        OwnershipFact::Clone => {
+            let receiver = callable_object(builder, target, signature, span)?;
+            let result = temporary(builder, PlanType::Closure(signature.to_vec()), span);
+            let local = result.local;
+            let callee = CalleeKind::CloneClosure(signature.to_vec());
+            terminate_call(builder, callee, vec![receiver], result.clone(), span);
+            builder.owned.push(local);
+            Ok(read_place(result, true, span))
+        }
         _ => {
             let site = format!("{}:{}:{} in {}", builder.file, span.line, span.column, builder.name);
             Err(format!(
