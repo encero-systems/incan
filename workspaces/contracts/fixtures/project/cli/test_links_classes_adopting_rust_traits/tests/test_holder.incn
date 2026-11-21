@@ -1,0 +1,18 @@
+"""Tests that name the classes of the project's shared library and lend them to Rust."""
+
+from rust::tiny import ask
+from holder import Named, Prefixed, lookup
+
+
+def test_a_project_class_fills_the_required_method() -> None:
+    source = Prefixed.open("a")
+    assert ask(source, 7) == "host a7"
+
+
+def test_a_project_class_overrides_the_provided_method() -> None:
+    source = Named(name="named")
+    assert ask(source, 7) == "named 7"
+
+
+def test_a_project_function_reads_through_a_class_it_builds() -> None:
+    assert lookup("b", 8) == "host b8"

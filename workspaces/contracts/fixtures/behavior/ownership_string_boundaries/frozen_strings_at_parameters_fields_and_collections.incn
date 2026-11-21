@@ -1,4 +1,4 @@
-# behavior: frozen text retains parameter, field, collection and tuple values, displays as ordinary text when printed or formatted from a shared parameter (incan-4.4), and shares checked text methods (#2256); a `str` constant in a `tuple[str, str]` becomes owned text (once refused in lowering with `expected String, found FrozenStr`)
+# behavior: frozen text retains parameter, field, collection and tuple values, displays as ordinary text when printed or formatted from a shared parameter (incan-4.4), and shares checked text methods (#2256); a `str` constant in a `tuple[str, str]` becomes owned text (once refused in lowering with `expected String, found FrozenStr`), in a list too, beside a tuple of literals (once refused with `tuple value with differing checked field carriers`)
 # expect-stdout:
 #   strict
 #   [strict]
@@ -10,6 +10,7 @@
 #   <named>
 #   strict
 #   2 strict
+#   local named, final literal
 #   named value
 
 """Observe frozen text across parameters, fields, collections and shared text operations."""
@@ -67,6 +68,8 @@ def main() -> None:
     println(f"{len(names)} {names[0]}")
     for family, profile in [("local", NAME)]:
         assert family == "local" and profile == NAME
+    pairs = [("local", NAME), ("final", "literal")]
+    println(f"{pairs[0][0]} {pairs[0][1]}, {pairs[1][0]} {pairs[1][1]}")
     first, second = labeled()
     println(f"{first} {second}")
 

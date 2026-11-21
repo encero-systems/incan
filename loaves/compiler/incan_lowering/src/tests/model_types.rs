@@ -49,7 +49,11 @@ fn carrier_key(owner: &CanonicalSymbolId) -> Result<String, String> {
 }
 
 /// One complete fieldless source model exposing only the identity facts each control varies.
-fn nominal(owner: CanonicalSymbolId, name: &str, identities: &[(&str, &CanonicalSymbolId)]) -> NominalDeclaration {
+pub(super) fn nominal(
+    owner: CanonicalSymbolId,
+    name: &str,
+    identities: &[(&str, &CanonicalSymbolId)],
+) -> NominalDeclaration {
     let named: BTreeMap<String, CanonicalSymbolId> = identities
         .iter()
         .map(|(key, identity)| ((*key).to_owned(), (*identity).clone()))
