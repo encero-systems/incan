@@ -128,6 +128,7 @@ pub fn lower_ordinary_bodies(
             page: &page,
             placement_lines: &placement_lines,
             restored: Vec::new(),
+            frames: Vec::new(),
         };
         let mut ordinary = 0;
         for position in positions {
@@ -203,6 +204,7 @@ pub fn lower_ordinary_bodies(
             keyed.report,
             owner,
             &admission.restored,
+            &admission.frames,
             ordinary,
             page.inspect_placement,
             keyed.directory,
@@ -228,11 +230,12 @@ pub struct FrameSource<'a> {
 }
 
 /// One module's admitted plan record as its ordinary frames read it: the page, the line index an inspected placement
-/// borrows, and the functions restored from the page so far.
+/// borrows, the functions restored from the page so far and the helper frames each restored product carries.
 pub struct ModuleAdmission<'a> {
     pub page: &'a AdmittedPage,
     pub placement_lines: &'a [i64],
     pub restored: Vec<AdmittedFunction>,
+    pub frames: Vec<Vec<String>>,
 }
 
 /// Read only producer-admitted products, or lower normally and retain an exact witnessed result.
@@ -528,6 +531,9 @@ fn restore_admitted(
     };
     let moved =
         current_identity != previous.identity || references != previous.references || nodes != previous.positions;
+    admission
+        .frames
+        .push(frames.iter().map(|frame| frame.name.clone()).collect());
     admission.restored.push(AdmittedFunction {
         function: function.name.clone(),
         identity: current_identity,

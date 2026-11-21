@@ -15,7 +15,7 @@ use incan_mir_plan_native::{
 };
 use incan_semantics_core::semantic_digest::semantic_digest;
 
-use crate::plan_modules::{module_page, read_admitted};
+use crate::plan_modules::{admitted_frames, module_page, read_admitted};
 use crate::producer_trace::{enter_producer, finish_producer};
 use crate::record_positions::positioned_product;
 use crate::scalar_store::{event_positions, event_references, finalized_plan_product, report_scalar_refusal};
@@ -24,10 +24,15 @@ use crate::scalar_store::{event_positions, event_references, finalized_plan_prod
 pub fn publish_plan_records(plan: &Plan, products: &str, report: &str) -> Result<(), String> {
     let report_path = Path::new(report);
     let mut events = scalar_events(report_path)?;
-    append_admitted_events(&mut events, products, report_path)?;
+    let restored_frames = append_admitted_events(&mut events, products, report_path)?;
     // Every keyed declaration retains its whole-plan function, including in a unit that publishes no interface. Only a
     // unit whose every function has an event can publish one; otherwise no placed product is kept for it.
     let publishable = events.len() == plan.functions.len();
+    let admitted = if publishable {
+        AdmittedProducts::Placed
+    } else {
+        AdmittedProducts::Framed(&restored_frames)
+    };
     let mut references = Vec::new();
     let mut carried = Vec::new();
     let keyed = keyed_plan_products(
@@ -35,7 +40,7 @@ pub fn publish_plan_records(plan: &Plan, products: &str, report: &str) -> Result
         products,
         report_path,
         &events,
-        publishable,
+        admitted,
         &mut references,
         &mut carried,
     )?;
@@ -141,6 +146,16 @@ fn refuse_interface(plan: &Plan, report: &str, events: &[LoweringEvent], carried
     Err("native-interface refuses generated functions without graph body witnesses".into())
 }
 
+/// How plan publication treats the products restored from admitted module pages.
+#[derive(Clone, Copy)]
+enum AdmittedProducts<'a> {
+    /// The unit publishes its native interface: each admitted product is placed at its declaration's positions.
+    Placed,
+    /// The interface is refused: only the helper frames each admitted function carries are named, as lowering
+    /// recorded them beside the module's note.
+    Framed(&'a HashMap<String, Vec<String>>),
+}
+
 /// Make each keyed product byte-identical to its whole-plan function, relocated to the declaration's position.
 ///
 /// Lowering captures a product before unit-level runtime resolution rewrites its calls. A fresh product therefore
@@ -149,14 +164,14 @@ fn refuse_interface(plan: &Plan, report: &str, events: &[LoweringEvent], carried
 /// keyed product, the positions its declaration ordinals take in this unit, and `carried` the names of the helper
 /// frames those products carry.
 ///
-/// An admitted product is final already; it is placed at its declaration's positions only for a `publishable`
-/// interface, the one consumer of those bytes. Otherwise only the helper frames it carries are read.
+/// An admitted product is final already; it is placed at its declaration's positions only for an interface the unit
+/// can publish, the one consumer of those bytes. Otherwise only the helper frames it carries are named.
 fn keyed_plan_products(
     plan: &Plan,
     products: &str,
     report: &Path,
     events: &[LoweringEvent],
-    publishable: bool,
+    admitted: AdmittedProducts<'_>,
     references: &mut Vec<Vec<NominalReference>>,
     carried: &mut Vec<String>,
 ) -> Result<Vec<Vec<u8>>, String> {
@@ -188,19 +203,28 @@ fn keyed_plan_products(
         let nodes = event_positions(reported);
         let file = function.span.file.to_string();
         if reported.admitted {
-            let product = decode_plan_function_record(&reported.product)?.function;
             let mut names = Vec::new();
-            let positioned = if publishable {
-                Some(positioned_product(
-                    &product,
-                    &nodes,
-                    &file,
-                    function.span.line,
-                    &mut names,
-                )?)
-            } else {
-                names = product_frame_names(&product)?;
-                None
+            let positioned = match admitted {
+                AdmittedProducts::Placed => {
+                    let product = decode_plan_function_record(&reported.product)?.function;
+                    Some(positioned_product(
+                        &product,
+                        &nodes,
+                        &file,
+                        function.span.line,
+                        &mut names,
+                    )?)
+                }
+                AdmittedProducts::Framed(frames) => {
+                    let Some(listed) = frames.get(&reported.function) else {
+                        return Err(format!(
+                            "admitted plan function {} has no helper frame list",
+                            reported.function
+                        ));
+                    };
+                    names.clone_from(listed);
+                    None
+                }
             };
             for name in names {
                 if !function_indexes.contains_key(name.as_str()) {
@@ -360,11 +384,19 @@ fn plan_positions(plan: &Plan, base: usize, references: &[NominalReference]) -> 
 /// Such a function reported no event. Its event comes from the module's page, marked `admitted`, with the positions its
 /// declarations resolved to in this request in place of the ones the page recorded. A function that also took the
 /// keyed route keeps the event it reported. The native adapter fingerprints each definition by its product key and
-/// digest; it reads them from one list.
-fn append_admitted_events(events: &mut Vec<LoweringEvent>, products: &str, report: &Path) -> Result<(), String> {
+/// digest; it reads them from one list. Returns, by native function name, the helper frames each added function's
+/// product carries, as lowering recorded them beside the module's note.
+fn append_admitted_events(
+    events: &mut Vec<LoweringEvent>,
+    products: &str,
+    report: &Path,
+) -> Result<HashMap<String, Vec<String>>, String> {
     let mut reported: HashSet<String> = events.iter().map(|event| event.function.clone()).collect();
     let mut definitions = Vec::new();
-    for note in read_admitted(&Path::new(products).join("admissions"))? {
+    let mut carried = HashMap::new();
+    let admissions = Path::new(products).join("admissions");
+    for note in read_admitted(&admissions)? {
+        let mut frames = admitted_frames(&admissions, &note)?;
         let path = module_page(products, &note.module);
         if path.to_string_lossy().ends_with(REPOSITION_MODULE_PAGE) && !note.inspected {
             return Err("inspected module lacks its placement report".into());
@@ -398,6 +430,10 @@ fn append_admitted_events(events: &mut Vec<LoweringEvent>, products: &str, repor
             });
             events.push(event);
             reported.insert(function.function.clone());
+            carried.insert(
+                function.function.clone(),
+                frames.remove(&function.function).unwrap_or_default(),
+            );
         }
     }
     let listed = report.join(ADMITTED_DEFINITIONS);
@@ -406,7 +442,7 @@ fn append_admitted_events(events: &mut Vec<LoweringEvent>, products: &str, repor
     } else if listed.is_file() {
         std::fs::remove_file(&listed).map_err(|error| error.to_string())?;
     }
-    Ok(())
+    Ok(carried)
 }
 
 #[cfg(test)]
