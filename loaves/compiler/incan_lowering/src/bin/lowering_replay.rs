@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use incan_lowering::corpus::{Case, Corpus, Outcome, Requirement, Step};
-use incan_lowering::reuse_proof::{FrameOutcomes, FrameTrace, changed_bodies};
+use incan_lowering::reuse_proof::{FrameOutcomes, FrameTrace, changed_bodies, check_records_keys};
 use incan_lowering::{
     Plan, RefusalPlanning, RuntimeRequirement, SourceInputs, UnitContinuation, UnitPlanning,
     layout_runtime_requirements, program_refusals, resume_unit_plan, unit_plan,
@@ -303,6 +303,43 @@ fn replay_case(
     Ok(())
 }
 
+/// Key every ordinary body of each records call as the lowering keys it and check the products the reference left.
+fn check_case_records_keys(corpus: &Corpus, name: &str, case: &Case, scratch: &Path) -> Result<(), String> {
+    for (index, step) in case.steps.iter().enumerate() {
+        if step.record_report.is_none() || step.call != "unit" {
+            continue;
+        }
+        let directory = scratch.join(format!("records-keys-{index}"));
+        if directory.exists() {
+            std::fs::remove_dir_all(&directory).map_err(|error| error.to_string())?;
+        }
+        corpus.restore(&step.products_after, &directory)?;
+        let modules = corpus.modules(&step.modules)?;
+        let directories = StepDirectories {
+            products: directory.clone(),
+            report: directory.join("report"),
+        };
+        let inputs = inputs(corpus, step, &directories)?;
+        corpus.restore(&step.products_after, &directory)?;
+        let products = directory.to_string_lossy().into_owned();
+        let report = check_records_keys(&modules, &inputs, step.entry, &step.kind, &products)?;
+        println!(
+            "RECORDS-KEYS {name} step {index}: keyed {}, stored {}, round trips {}, failures {}",
+            report.keyed,
+            report.stored,
+            report.round_trips,
+            report.failures.len()
+        );
+        for (label, file) in &report.stored_products {
+            println!("  stored {label} {file}");
+        }
+        for failure in &report.failures {
+            println!("  {failure}");
+        }
+    }
+    Ok(())
+}
+
 /// Print which keyed frames one step restored or lowered and, against a base capture of the same unit, which bodies
 /// changed: the evidence that an edit lowers only the functions whose Body IR changed.
 fn report_reuse(
@@ -471,6 +508,7 @@ fn main() {
     let mut describe = false;
     let mut dump: Option<PathBuf> = None;
     let mut report = false;
+    let mut records_keys = false;
     let mut base_prefix: Option<String> = None;
     let mut options = arguments[2..].iter();
     while let Some(option) = options.next() {
@@ -480,6 +518,10 @@ fn main() {
         }
         if option == "--reuse" {
             report = true;
+            continue;
+        }
+        if option == "--records-keys" {
+            records_keys = true;
             continue;
         }
         match (option.as_str(), options.next()) {
@@ -525,6 +567,15 @@ fn main() {
             if let Err(error) = corpus
                 .case(&path)
                 .and_then(|case| dump_case(&corpus, &case, &directory.join(&name)))
+            {
+                eprintln!("{name}: {error}");
+            }
+            continue;
+        }
+        if records_keys {
+            if let Err(error) = corpus
+                .case(&path)
+                .and_then(|case| check_case_records_keys(&corpus, &name, &case, &scratch))
             {
                 eprintln!("{name}: {error}");
             }
