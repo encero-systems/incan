@@ -64,6 +64,7 @@ mod loop_exits;
 mod lowering;
 mod marker_traits;
 mod matches;
+mod method_calls;
 mod model_construction;
 mod model_lists;
 mod models;

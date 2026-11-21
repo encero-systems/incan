@@ -14,6 +14,7 @@ use crate::explicit_arguments::{parameter_accesses, validate_source_input_call};
 use crate::frame::Builder;
 use crate::layout_types::native_source_type;
 use crate::list_methods::call_destination;
+use crate::method_calls::lower_method_call;
 use crate::pending::untranslated;
 use crate::tuples::type_name;
 use crate::type_parameters::substitute;
@@ -47,7 +48,7 @@ pub fn lower_call(
             {
                 return Err(untranslated("primitive_traits::normalized_primitive_receiver"));
             }
-            Err(untranslated("method_calls::lower_method_call"))
+            lower_method_call(module, builder, target, args, destination, span)
         }
         Callee::Helper(_) => Err(untranslated("builtin_calls::lower_runtime_helper")),
         Callee::ProviderOperation(_) => Err("unsupported Body IR ProviderOperation".into()),
