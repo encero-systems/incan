@@ -138,6 +138,7 @@ mod record_positions;
 mod redo_counts;
 mod reflection;
 mod reflection_carriers;
+pub mod resident_products;
 mod resize;
 mod result_carriers;
 mod result_combinators;
