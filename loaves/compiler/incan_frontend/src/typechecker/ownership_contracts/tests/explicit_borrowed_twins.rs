@@ -229,6 +229,29 @@ fn callable_and_imported_borrows_check_as_their_reference_twins() -> Result<(), 
     Ok(())
 }
 
+/// A borrow nested in a callable type, in a Rust type's argument or inside a parameter or binding annotation is the
+/// native reference in both spellings: a callback over a borrowed item, given a function and a closure; a Rust
+/// generic over exclusive borrows, as a parameter and as a result; and a local list of borrows.
+#[test]
+fn nested_borrows_check_as_their_reference_twins() -> Result<(), Box<dyn std::error::Error>> {
+    let callback = format!(
+        "{ITEM}def apply(select: ({{borrow:Item}}, int) -> int, item: Item) -> int:\n    return select(item, 1)\n\ndef pick(item: {{borrow:Item}}, step: int) -> int:\n    return item.count + step\n\ndef main() -> int:\n    item = Item(name=\"a\", count=1)\n    return apply(pick, item) + apply((it, step) => len(it.label()) + step, item)\n"
+    );
+    let checker = check_twins(&callback)?;
+    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+    let rust = "from rust::std::vec import Vec as Handle\n\ndef keep(mut items: Handle[tuple[{borrow_mut:int}, {borrow_mut:int}]]) -> None:\n    pass\n\ndef escaped() -> Handle[{borrow_mut:int}]:\n    return Handle.new()\n\ndef gather(value: {borrow:int}) -> int:\n    values: list[{borrow:int}] = [value]\n    return len(values)\n";
+    let checker = check_twins(rust)?;
+    assert!(
+        !checker
+            .errors
+            .iter()
+            .any(|error| error.stable_code() == Some("INCAN-T0123")),
+        "{:?}",
+        checker.errors
+    );
+    Ok(())
+}
+
 /// A borrow's loan conflicts are refused with INCAN-T0126 outside the whole-body proof too, in both spellings: a
 /// call that reads a place while another operand lends it exclusively, the same through a local exclusive borrow, and
 /// a closure holding a local borrow while its owner is edited.
