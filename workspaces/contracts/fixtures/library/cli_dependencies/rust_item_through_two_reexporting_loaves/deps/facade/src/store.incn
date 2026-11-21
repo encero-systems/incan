@@ -1,0 +1,3 @@
+"""The models' Rust key and reader, re-exported once more."""
+
+pub from pub::models.keys import RecordKey, read_key

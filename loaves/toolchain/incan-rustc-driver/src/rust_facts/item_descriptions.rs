@@ -29,7 +29,7 @@ pub(super) fn signature_display<'tcx>(tcx: TyCtxt<'tcx>, item: DefId, value: Ty<
         tcx,
         environment: ty::TypingEnv::non_body_analysis(tcx, item),
     });
-    display(value)
+    display(tcx, value)
 }
 
 /// One item's metadata; the nominal types its signatures name join `named`.
@@ -44,7 +44,7 @@ pub(super) fn describe(tcx: TyCtxt<'_>, def: DefId, path: &str, named: &mut Hash
         | DefKind::AssocConst { .. }
         | DefKind::Static { .. }
         | DefKind::Ctor(_, rustc_hir::def::CtorKind::Const) => RustItemKind::Constant {
-            type_display: display(tcx.type_of(def).instantiate_identity().skip_normalization()),
+            type_display: display(tcx, tcx.type_of(def).instantiate_identity().skip_normalization()),
         },
         DefKind::Trait => {
             let mut info = trait_info(tcx, def, named);
@@ -93,7 +93,7 @@ pub(super) fn type_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>)
                 }
                 RustFieldInfo {
                     name: field.name.to_string(),
-                    type_display: display(ty),
+                    type_display: display(tcx, ty),
                     type_shape: type_shape(tcx, ty),
                 }
             })
@@ -111,7 +111,7 @@ pub(super) fn type_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>)
                 for field in &variant.fields {
                     let ty = tcx.type_of(field.did).instantiate_identity().skip_normalization();
                     note_named(ty, named);
-                    field_type_displays.push(display(ty));
+                    field_type_displays.push(display(tcx, ty));
                     let (shape, carrier) = match ty.kind() {
                         ty::Adt(owner, args) if owner.is_box() => {
                             (type_shape(tcx, args.type_at(0)), RustPayloadCarrier::Boxed)
@@ -193,7 +193,7 @@ pub(super) fn alias_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>
         has_lifetime_params: has_lifetime_parameters(tcx, def),
         type_params,
         type_param_defaults,
-        alias_target: Some(display(target)),
+        alias_target: Some(display(tcx, target)),
         methods: inherent_methods(tcx, &crate::callees::type_inherent_impls(tcx, target), named),
         implemented_traits: trait_impls(tcx, target, named),
         ..RustTypeInfo::default()
@@ -220,6 +220,7 @@ pub(super) fn type_parameters(tcx: TyCtxt<'_>, def: DefId) -> (Vec<String>, Vec<
         .iter()
         .map(|parameter| match parameter.kind {
             ty::GenericParamDefKind::Type { has_default: true, .. } => Some(display(
+                tcx,
                 tcx.type_of(parameter.def_id)
                     .instantiate_identity()
                     .skip_normalization(),
@@ -262,7 +263,7 @@ pub(super) fn inherent_methods(
             impl_self_type: tcx
                 .generics_of(item)
                 .parent
-                .map(|parent| display(tcx.type_of(parent).instantiate_identity().skip_normalization())),
+                .map(|parent| display(tcx, tcx.type_of(parent).instantiate_identity().skip_normalization())),
         })
         .collect()
 }
@@ -301,7 +302,7 @@ pub(super) fn closed_auto_trait_impls<'tcx>(
             named.insert(trait_id);
             Some(RustImplementedTrait {
                 path: visible_path(tcx, trait_id),
-                self_type: display(owner),
+                self_type: display(tcx, owner),
                 mutable_reference: false,
                 type_params: Vec::new(),
                 type_arguments: Vec::new(),
@@ -322,7 +323,7 @@ pub(super) fn type_shape<'tcx>(tcx: TyCtxt<'tcx>, field: Ty<'tcx>) -> RustTypeSh
         ty::Int(ty::IntTy::I64) => RustTypeShape::Int,
         ty::Float(ty::FloatTy::F64) => RustTypeShape::Float,
         ty::Int(_) | ty::Uint(_) | ty::Float(_) => RustTypeShape::RustPath {
-            path: display(field),
+            path: display(tcx, field),
             args: Vec::new(),
         },
         ty::Str => RustTypeShape::Str,
@@ -362,6 +363,13 @@ pub(super) fn signature(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>)
         .skip_normalization()
         .skip_binder();
     let receiver = tcx.def_kind(def) == DefKind::AssocFn && tcx.associated_item(def).is_method();
+    // A function written in Rust keeps its parameter names, so a caller can name its arguments. A constructor has
+    // none, and a parameter bound by a pattern or by `_` stays positional.
+    let names: &[Option<rustc_span::Ident>] = if matches!(tcx.def_kind(def), DefKind::Fn | DefKind::AssocFn) {
+        tcx.fn_arg_idents(def)
+    } else {
+        &[]
+    };
     let params = signature
         .inputs()
         .iter()
@@ -369,14 +377,21 @@ pub(super) fn signature(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>)
         .map(|(index, input)| {
             note_named(*input, named);
             let type_display = if receiver && index == 0 {
-                receiver_display(*input)
+                receiver_display(tcx, *input)
             } else {
                 signature_display(tcx, def, *input)
             };
-            RustParam {
-                name: (receiver && index == 0).then(|| "self".to_owned()),
-                type_display,
-            }
+            let name = if receiver && index == 0 {
+                Some("self".to_owned())
+            } else {
+                names
+                    .get(index)
+                    .copied()
+                    .flatten()
+                    .map(|name| name.to_string())
+                    .filter(|name| name != "_" && name != "self")
+            };
+            RustParam { name, type_display }
         })
         .collect();
     let is_async = !matches!(tcx.def_kind(def), DefKind::Ctor(..)) && tcx.asyncness(def).is_async();
@@ -425,9 +440,9 @@ pub(super) fn trait_bounds(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefI
             note_named(argument, named);
         }
         bounds.push(RustTraitBound {
-            self_type: display(reference.self_ty()),
+            self_type: display(tcx, reference.self_ty()),
             path: visible_path(tcx, reference.def_id),
-            type_arguments: reference.args.types().skip(1).map(display).collect(),
+            type_arguments: reference.args.types().skip(1).map(|ty| display(tcx, ty)).collect(),
             associated_type_bindings: Vec::new(),
         });
     }
@@ -445,17 +460,17 @@ pub(super) fn trait_bounds(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefI
             continue;
         };
         let path = visible_path(tcx, projection.trait_def_id(tcx));
-        let self_type = display(projection.self_ty());
+        let self_type = display(tcx, projection.self_ty());
         let arguments = projection
             .projection_term
             .args
             .types()
             .skip(1)
-            .map(display)
+            .map(|ty| display(tcx, ty))
             .collect::<Vec<_>>();
         let binding = RustAssociatedTypeBinding {
             name: name.to_string(),
-            value_path: display(value),
+            value_path: display(tcx, value),
         };
         if let Some(bound) = bounds
             .iter_mut()
@@ -553,7 +568,7 @@ pub(super) fn trait_impl_template(
             note_named(value, named);
             Some(RustAssociatedTypeBinding {
                 name: tcx.opt_item_name(item)?.to_string(),
-                value_path: display(value),
+                value_path: display(tcx, value),
             })
         })
         .collect();
@@ -561,7 +576,7 @@ pub(super) fn trait_impl_template(
     Some(RustImplementedTrait {
         path: visible_path(tcx, reference.def_id),
         mutable_reference: matches!(reference.self_ty().kind(), ty::Ref(_, _, ty::Mutability::Mut)),
-        self_type: display(reference.self_ty()),
+        self_type: display(tcx, reference.self_ty()),
         type_params: tcx
             .generics_of(implementation)
             .own_params
@@ -569,7 +584,7 @@ pub(super) fn trait_impl_template(
             .filter(|parameter| matches!(parameter.kind, ty::GenericParamDefKind::Type { .. }))
             .map(|parameter| parameter.name.to_string())
             .collect(),
-        type_arguments: reference.args.types().skip(1).map(display).collect(),
+        type_arguments: reference.args.types().skip(1).map(|ty| display(tcx, ty)).collect(),
         bounds: trait_bounds(tcx, implementation, named),
         associated_type_bindings,
     })
@@ -645,12 +660,12 @@ pub(super) fn concrete_impl_may_apply<'tcx>(tcx: TyCtxt<'tcx>, implementation: D
 }
 
 /// A method receiver as written: `&self`, `&mut self`, or `self` (and a typed receiver as its type).
-pub(super) fn receiver_display(input: Ty<'_>) -> String {
+pub(super) fn receiver_display<'tcx>(tcx: TyCtxt<'tcx>, input: Ty<'tcx>) -> String {
     match input.kind() {
         ty::Ref(_, _, ty::Mutability::Not) => "&self".to_owned(),
         ty::Ref(_, _, ty::Mutability::Mut) => "&mut self".to_owned(),
         ty::Adt(..) | ty::Param(_) => "self".to_owned(),
-        _ => display(input),
+        _ => display(tcx, input),
     }
 }
 
@@ -705,7 +720,7 @@ pub(super) fn trait_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>
                     DefKind::AssocTy => Some(RustTraitAssoc::TypeAlias { name }),
                     DefKind::AssocConst { .. } => Some(RustTraitAssoc::Constant {
                         name,
-                        type_display: display(tcx.type_of(item).instantiate_identity().skip_normalization()),
+                        type_display: display(tcx, tcx.type_of(item).instantiate_identity().skip_normalization()),
                     }),
                     _ => None,
                 }

@@ -8,3 +8,4 @@ main = "src/main.incn"
 [dependencies]
 badges = { path = "deps/badges" }
 scopes = { loaf = "scopes", path = "deps/scopes" }
+levels = { loaf = "levels", path = "deps/levels" }
