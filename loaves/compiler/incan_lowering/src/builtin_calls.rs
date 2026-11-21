@@ -1,14 +1,14 @@
 //! Builtin function calls and their scalar boundary checks.
 
 use incan_mir_plan_native::{
-    CalleeKind, Constant, ExternalFunction, Operand, Place, PlanType, RvalueKind, SourceSpan, TerminatorKind,
-    assign as plan_assign,
+    CalleeKind, Constant, ExternalFunction, ListLeaf, Operand, Place, PlanType, RvalueKind, SourceSpan, TerminatorKind,
+    TupleElement, assign as plan_assign, tuple_element_type,
 };
 use incan_semantics_core::body_ir::{
     ArgumentElement, BuiltinFnId, Constant as SourceConstant, HelperOp, Place as SourcePlace,
 };
 
-use crate::builtins::{emit_boolean_operator, scalar_builtin};
+use crate::builtins::{emit_boolean_operator, list_call, scalar_builtin};
 use crate::checked_values::scalar_operand;
 use crate::checked_values::scalar_place;
 use crate::decls::library_enum_item;
@@ -17,21 +17,28 @@ use crate::frame::{
     Builder, drop_owned, external_call, forget_owned, literal, place_type, read_place, temporary, terminate_call,
     value_type,
 };
+use crate::generator_adapters::zip_generators;
+use crate::generators::generator_shape;
 use crate::hashed_collections::collection_contains;
 use crate::json_builtins::lower_model_json_builtin;
-use crate::list_methods::{argument_value, call_destination, lower_list_builtin, lower_list_helper};
-use crate::list_values::value_operand;
+use crate::list_methods::{
+    argument_place, argument_value, borrowed_list_argument, call_destination, lower_list_builtin, lower_list_helper,
+    shared_receiver_place,
+};
+use crate::list_values::{list_borrow, sequence_read_storage, value_operand};
+use crate::lists::{list_element, list_shape, require_list_shape};
 use crate::numerics::{float_conversion, integer_conversion};
 use crate::numerics::{has_sized_numeric, numeric_carrier, numeric_name};
 use crate::operand_borrows::{borrow_str_operand, lower_text_helper};
-use crate::operators::scalar_operator_operand;
+use crate::operators::{operand_type, scalar_operator_operand};
 use crate::pending::untranslated;
 use crate::sequence_builtins::{
-    lower_join_helper, lower_list_concat, lower_list_repeat, lower_sequence_builtin, lower_split_helper,
-    lower_truth_builtin, source_operand_type,
+    argument_type, lower_join_helper, lower_list_concat, lower_list_repeat, lower_sequence_builtin, lower_split_helper,
+    lower_truth_builtin, source_operand_type, text_argument,
 };
 use crate::strings::text_helper;
 use crate::text_plan::{format_parts, owned_literal};
+use crate::tuple_iterators::{enumerated_element, zip_call, zip_shape};
 use incan_semantics_core::body_ir::Operand as SourceOperand;
 
 /// Keep exact f32 values finite at assignment and parameter boundaries, as legacy does.
@@ -176,8 +183,8 @@ pub fn lower_builtin(
         }
         BuiltinFnId::Min | BuiltinFnId::Max => Err(untranslated("builtin_calls::lower_extrema_builtin")),
         BuiltinFnId::ReadFile | BuiltinFnId::WriteFile => Err(untranslated("builtin_calls::lower_file_builtin")),
-        BuiltinFnId::Zip => Err(untranslated("builtin_calls::lower_zip_builtin")),
-        BuiltinFnId::Enumerate => Err(untranslated("builtin_calls::lower_enumerate_builtin")),
+        BuiltinFnId::Zip => lower_zip_builtin(builder, arguments, destination, span),
+        BuiltinFnId::Enumerate => lower_enumerate_builtin(builder, arguments, destination, span),
         BuiltinFnId::Len => lower_list_builtin(builder, arguments, destination, span),
         BuiltinFnId::JsonStringify => lower_model_json_builtin(builder, arguments, destination, span),
         BuiltinFnId::Range => Err(untranslated("builtin_calls::lower_range_builtin")),
@@ -545,4 +552,154 @@ fn fixed_arguments(
         }
     }
     Ok(result)
+}
+
+/// Construct lazy zip only from canonical identity and two checked primitive-list arguments.
+fn lower_zip_builtin(
+    builder: &mut Builder,
+    arguments: &[ArgumentElement],
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    if arguments.len() != 2 {
+        return Err("unsupported Body IR zip arity".into());
+    }
+    let output = call_destination(builder, destination, PlanType::Unit, span)?;
+    let checked = builder.locals[output.local as usize].ty.clone();
+    // The frame lays out zip over two iterators as a generator of pairs, which draws from both lazily.
+    if generator_shape(&checked).is_some() {
+        let first = argument_value(builder, arguments, 0, span)?;
+        let second = argument_value(builder, arguments, 1, span)?;
+        drop_owned(builder, output.local, span);
+        let local = output.local;
+        zip_generators(builder, first, second, output, span)?;
+        builder.owned.push(local);
+        return Ok(());
+    }
+    let Some((left, right)) = zip_shape(&checked) else {
+        return Err("unsupported Body IR zip checked destination".into());
+    };
+    let first = argument_value(builder, arguments, 0, span)?;
+    let second = argument_value(builder, arguments, 1, span)?;
+    let first_type = operand_type(builder, &first)?;
+    let second_type = operand_type(builder, &second)?;
+    if list_shape(&first_type).is_none() || list_shape(&second_type).is_none() {
+        return Err("unsupported Body IR zip non-list operands".into());
+    }
+    let (first_leaf, first_depth) = require_list_shape(&first_type, "unsupported Body IR zip left")?;
+    let (second_leaf, second_depth) = require_list_shape(&second_type, "unsupported Body IR zip right")?;
+    if list_element(&first_leaf, first_depth) != tuple_element_type(&left)
+        || list_element(&second_leaf, second_depth) != tuple_element_type(&right)
+    {
+        return Err("unsupported Body IR zip checked operand type".into());
+    }
+    drop_owned(builder, output.local, span);
+    let local = output.local;
+    let result = PlanType::ZipIterator(left.clone(), right.clone());
+    zip_call(
+        builder,
+        "zip_lists",
+        &left,
+        &right,
+        vec![first_type, second_type],
+        result,
+        vec![first, second],
+        output,
+        span,
+    );
+    builder.owned.push(local);
+    Ok(())
+}
+
+/// Materialize the checked builtin's zero-based tuple list from admitted list or text inputs.
+fn lower_enumerate_builtin(
+    builder: &mut Builder,
+    arguments: &[ArgumentElement],
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    if arguments.len() != 1 {
+        return Err("invalid Body IR enumerate arity".into());
+    }
+    let source_type = argument_type(builder, arguments, 0, span)?;
+    let text_source = matches!(
+        source_type,
+        PlanType::String | PlanType::StringRef | PlanType::FrozenStr
+    );
+    let byte_source = source_type == PlanType::FrozenBytes
+        || matches!(
+            &source_type,
+            PlanType::List(ListLeaf::U8, 1)
+                | PlanType::ListRef(ListLeaf::U8, 1)
+                | PlanType::ListMutRef(ListLeaf::U8, 1)
+        );
+    let element_type = if text_source {
+        PlanType::String
+    } else if byte_source {
+        PlanType::Int
+    } else {
+        let (leaf, depth) = require_list_shape(&source_type, "unsupported Body IR enumerate non-list or text source")?;
+        list_element(&leaf, depth)
+    };
+    let element = enumerated_element(&element_type)?;
+    let result = PlanType::List(ListLeaf::Tuple(vec![TupleElement::Int, element]), 1);
+    let output = call_destination(builder, destination, result.clone(), span)?;
+    if place_type(&builder.locals, &output) != result {
+        return Err("unsupported Body IR enumerate checked destination".into());
+    }
+    drop_owned(builder, output.local, span);
+    let local = output.local;
+    if text_source {
+        let reference = text_argument(builder, arguments, 0, span)?;
+        let path = "incan_native_runtime::enumerate_text";
+        external_call(
+            builder,
+            path,
+            vec![PlanType::StringRef],
+            result,
+            vec![reference],
+            output,
+            span,
+        );
+        builder.owned.push(local);
+        return Ok(());
+    }
+    if byte_source {
+        let reference = enumerated_byte_argument(builder, arguments, &source_type, span)?;
+        let path = "incan_native_runtime::enumerate_bytes";
+        let parameters = vec![PlanType::ListRef(ListLeaf::U8, 1)];
+        external_call(builder, path, parameters, result, vec![reference], output, span);
+        builder.owned.push(local);
+        return Ok(());
+    }
+    let receiver = shared_receiver_place(builder, arguments, 0, span)?;
+    let (leaf, depth) = require_list_shape(&source_type, "unsupported Body IR enumerate source layout")?;
+    let reference = list_borrow(builder, receiver, false, span)?;
+    let parameters = vec![PlanType::ListRef(leaf, depth)];
+    list_call(
+        builder,
+        "enumerate_list",
+        element_type,
+        parameters,
+        result,
+        vec![reference],
+        output,
+        span,
+    );
+    Ok(())
+}
+
+/// Borrow owned byte storage or a literal, materializing only a frozen wrapper's immutable bytes.
+fn enumerated_byte_argument(
+    builder: &mut Builder,
+    arguments: &[ArgumentElement],
+    ty: &PlanType,
+    span: &SourceSpan,
+) -> Result<Operand, String> {
+    if *ty != PlanType::FrozenBytes {
+        return borrowed_list_argument(builder, arguments, 0, false, span);
+    }
+    let source = argument_place(builder, arguments, 0, span)?;
+    let snapshot = sequence_read_storage(builder, source, span)?;
+    list_borrow(builder, snapshot, false, span)
 }

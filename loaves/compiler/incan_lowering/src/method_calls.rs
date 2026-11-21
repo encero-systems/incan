@@ -14,10 +14,12 @@ use crate::callable_calls::{checked_type_arguments, emit_selected_body_call};
 use crate::classes::{frame_type, function_name, receiver_mode};
 use crate::decls::{library_enum_item, library_item};
 use crate::defaults::{DefaultCall, default_arguments};
+use crate::element_borrows::{element_method_owner, element_method_receiver};
 use crate::element_places::{element_place_type, is_element_place};
 use crate::explicit_arguments::parameter_accesses;
 use crate::frame::{Builder, dereferenced_place, place_type, read_place, temporary};
 use crate::library_methods::{lower_library_method, lower_standard_slot};
+use crate::list_methods::materialized_receiver;
 use crate::models::model_place;
 use crate::pending::untranslated;
 use crate::reflection::lower_reflection;
@@ -26,8 +28,8 @@ use crate::sequence_builtins::argument_type;
 use crate::static_storage::computed_static_type;
 use crate::traits::{is_lazy_method_body, receiver_selects_slot_arguments};
 use crate::type_parameters::request_instance;
-use crate::value_enum_methods::{lower_enum_message, lower_value_enum_method};
-use crate::value_enums::{enum_message_layout, value_method_owner};
+use crate::value_enum_methods::{lower_enum_message, lower_value_enum_getter_from, lower_value_enum_method};
+use crate::value_enums::{enum_message_layout, value_getter_owner, value_method_owner};
 
 /// Close retained source trait arguments in the caller's checked frame before choosing an implementation.
 pub fn lower_method_call(
@@ -88,6 +90,9 @@ fn lower_checked_method_call(
         MethodRoute::ValueGetter(owner) => {
             return lower_value_enum_method(builder, owner, arguments, destination, span);
         }
+        MethodRoute::Element(owner) => {
+            return lower_element_method(module, builder, target, owner, arguments, destination, span);
+        }
         MethodRoute::Retained => {}
     }
     lower_retained_method_call(module, builder, target, arguments, destination, span)
@@ -143,10 +148,9 @@ fn special_method_route(
     if target.native_trait_delegation.is_some() {
         return Ok(Refused("method_calls::lower_selected_library_method"));
     }
-    if let Some(SourceOperand::Place(read)) = receiver.as_one()
-        && is_element_place(builder, &read.place)?
-    {
-        return Ok(Refused("element_borrows::element_method_owner"));
+    // A list or dictionary element receiver is reborrowed in its container; no native place names it.
+    if let Some(owner) = element_method_owner(builder, receiver)? {
+        return element_route(module, target, owner);
     }
     if let Some(index) = enum_message_layout(module, builder, target, receiver, span)? {
         return Ok(MethodRoute::EnumMessage(index));
@@ -161,6 +165,75 @@ fn special_method_route(
         return Ok(MethodRoute::Library(index, implementation_target(target, identity)));
     }
     Ok(MethodRoute::Retained)
+}
+
+/// The route of a method on a list or dictionary element: a retained SDK model element calls its authenticated SDK
+/// method (`lower_sdk_element_method`); any other nominal element borrows itself in its container.
+fn element_route(module: &BodyIrModule, target: &MethodTarget, owner: PlanType) -> Result<MethodRoute, String> {
+    let sdk_model = match &owner {
+        PlanType::Model(index, _) => usize::try_from(*index)
+            .ok()
+            .and_then(|slot| module.nominal_declarations.get(slot))
+            .is_some_and(|declaration| !library_item(declaration).is_empty()),
+        _ => false,
+    };
+    if sdk_model {
+        let selected = owner_method_identity(module, target, &owner)?;
+        if let Some(index) = compiled_callable_index(module, &selected) {
+            return Ok(MethodRoute::Library(index, implementation_target(target, selected)));
+        }
+    }
+    Ok(MethodRoute::Element(owner))
+}
+
+/// Call a method on a list or dictionary element: a value enum's generated `value()` reads the element once; any other
+/// method borrows the element as the selected body's receiver.
+fn lower_element_method(
+    module: &BodyIrModule,
+    builder: &mut Builder,
+    target: &MethodTarget,
+    owner: PlanType,
+    arguments: &[ArgumentElement],
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    if lower_element_value_getter(module, builder, target, &owner, arguments, destination, span)? {
+        return Ok(());
+    }
+    let index = owner_method_index(module, target, &owner, builder)?;
+    let reference = element_method_receiver(module, builder, index, &arguments[0], span)?;
+    call_method_body(module, builder, target, index, reference, arguments, destination, span)
+}
+
+/// Answer a value enum's generated `value()` on a list or dictionary element's enum, `items[index].phase.value()`, from
+/// one read of that element: the getter has no body to call (#2995). Declared methods keep the element route.
+fn lower_element_value_getter(
+    module: &BodyIrModule,
+    builder: &mut Builder,
+    target: &MethodTarget,
+    owner: &PlanType,
+    arguments: &[ArgumentElement],
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<bool, String> {
+    let PlanType::Enum(layout, _) = owner else {
+        return Ok(false);
+    };
+    let Some(identity) = &target.canonical else {
+        return Ok(false);
+    };
+    if identity.declaration_name != "value" || identity.kind != SemanticSourceTargetKind::Method {
+        return Ok(false);
+    }
+    let Some(getter) = value_getter_owner(module, target, *layout)? else {
+        return Ok(false);
+    };
+    let Some(SourceOperand::Place(read)) = arguments[0].as_one() else {
+        return Ok(false);
+    };
+    let source = materialized_receiver(builder, &read.place, span)?;
+    lower_value_enum_getter_from(builder, getter, source, destination, span)?;
+    Ok(true)
 }
 
 /// Whether the checker selected a standard derive or comparison slot, which a derive or JSON protocol implements.
@@ -221,6 +294,7 @@ enum MethodRoute {
     Reflection,
     EnumMessage(usize),
     ValueGetter(usize),
+    Element(PlanType),
     Retained,
 }
 

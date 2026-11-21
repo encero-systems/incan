@@ -31,6 +31,7 @@ use crate::lists::is_list;
 use crate::matches::{bind_enum_payload, bind_structural_pattern, enum_payload_read};
 use crate::numerics::numeric_carrier;
 use crate::operators::enum_comparison_tag;
+use crate::option_tests::option_isinstance;
 use crate::patterns::{carrier_pattern_slot, carrier_payload_types, pattern_binds};
 use crate::pending::untranslated;
 use crate::result_carriers::{frozen_operand, typed_carrier_operand};
@@ -556,7 +557,8 @@ pub fn lower_union_isinstance(
     }
     let owner = enum_owner(&source_ty)?;
     if is_option_carrier(builder, owner) {
-        return Err(untranslated("option_tests::option_isinstance"));
+        let option = isinstance_place(builder, value, span)?;
+        return option_isinstance(builder, option, owner, &member, span);
     }
     let slots = union_test_slots(&builder.unions, owner, &member, &builder.intrinsics)?;
     if slots.is_empty() {
