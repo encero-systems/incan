@@ -689,7 +689,7 @@ pub(super) fn assert_builtin_method_identities() -> Result<(), Box<dyn std::erro
         IntegerHelperFamily, IntegerHelperOperation, NumericResizeMethodId, NumericTypeId,
     };
 
-    let source = "def operations() -> None:\n    mut values: list[int] = []\n    values.append(1)\n    values.count(1)\n    values.iter().take(1).collect()\n    numbers().collect()\n    mut labels: dict[str, int] = {}\n    labels.insert(\"one\", 1)\n    labels.keys()\n    mut seen: set[int] = set()\n    seen.add(1)\n    seen.contains(1)\n    \"value\".encode()\n    b\"value\".decode()\n    Some(1).is_some()\n    result: Result[int, str] = Ok(1)\n    result.is_ok()\n    1u8.checked_add(1u8)\n    resized: u16 = 1u8.resize()\n    1.0.sqrt()\n\n\ndef numbers() -> Generator[int]:\n    yield 1\n\n\ndef clone_number(value: &int) -> int:\n    return value.clone()\n";
+    let source = "def operations() -> None:\n    mut values: list[int] = []\n    values.append(1)\n    values.count(1)\n    values.iter().take(1).collect()\n    numbers().collect()\n    mut labels: dict[str, int] = {}\n    labels.insert(\"one\", 1)\n    labels.keys()\n    mut seen: set[int] = set()\n    seen.add(1)\n    seen.contains(1)\n    \"value\".encode()\n    b\"value\".decode()\n    Some(1).is_some()\n    result: Result[int, str] = Ok(1)\n    result.is_ok()\n    1u8.checked_add(1u8)\n    resized: u16 = 1u8.resize()\n    1.0.sqrt()\n\n\ndef numbers() -> Generator[int]:\n    yield 1\n\n\ndef clone_number(value: Borrowed[int]) -> int:\n    return value.clone()\n";
     let (_, facts, module) = checked_seed(source)?;
     let expected = [
         BuiltinMethodId::List(ListMethodId::Append),

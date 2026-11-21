@@ -358,6 +358,7 @@ impl TypeChecker {
     pub(super) fn check_program_declaration_bodies(&mut self, program: &Program) {
         // Second pass: check consts first so their resolved types are available to later checks.
         self.validate_source_type_names = true;
+        self.borrow_spellings_examined.clear();
         for decl in &program.declarations {
             if matches!(decl.node, Declaration::Const(_)) {
                 self.check_environment_declaration(decl);

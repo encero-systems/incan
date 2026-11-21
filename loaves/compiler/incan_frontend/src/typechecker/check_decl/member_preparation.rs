@@ -179,6 +179,7 @@ impl TypeChecker {
         self.current_type_param_bound_details.push(active_bounds);
         let previous_annotation_owner = self.enter_annotation_owner(&method.name, &method.type_params);
         let receiver = method.receiver_binding.as_ref().map(|binding| binding.node.as_str());
+        self.refuse_rust_borrow_spellings(&method.return_type);
         let route = self.result_route(&method.params, &method.return_type, method.result_source.as_ref());
         let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(
             &method.params,

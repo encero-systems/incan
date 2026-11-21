@@ -34,6 +34,7 @@ impl TypeChecker {
     /// constrain them. Retain the value's checked carrier for Body IR, but no local ownership or alias facts.
     pub(super) fn check_discard_assignment(&mut self, assign: &AssignmentStmt, span: Span) {
         let annotated_ty = assign.ty.as_ref().map(|annotation| {
+            self.refuse_rust_borrow_spellings(annotation);
             let canonical = self.canonical_borrow_annotation(annotation, false);
             self.resolve_type_checked(canonical.as_ref().unwrap_or(annotation))
         });
@@ -66,6 +67,7 @@ impl TypeChecker {
             .current_body_identity()
             .is_some_and(|owner| self.type_info.declarations.ownership_contracts.contains_key(owner));
         let annotated_ty = assign.ty.as_ref().map(|ty_ann| {
+            self.refuse_rust_borrow_spellings(ty_ann);
             let annotation = self.canonical_borrow_annotation(ty_ann, explicit_borrows);
             let resolved = self.resolve_type_checked_for_input(annotation.as_ref().unwrap_or(ty_ann), defer_local);
             self.canonical_borrow_type(resolved, explicit_borrows)
