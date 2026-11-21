@@ -4,7 +4,7 @@
 from rust::std::io import Cursor, Read
 
 
-def borrow_temporary(marker: Borrowed[int]) -> None:
+def borrow_temporary(marker: Owned[int]) -> None:
     reader = Read.by_ref(Cursor.new(b"abc"))
     println(marker)
     reader.take(1u64)

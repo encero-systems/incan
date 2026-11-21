@@ -338,7 +338,7 @@ fn native_value_types_roundtrip_by_local_identity() -> Result<(), Box<dyn std::e
 /// A graph with an invalid entry restores only as its exact recomputed refusal, never as successful analysis.
 #[test]
 fn invalid_graph_restore_requires_the_exact_analysis_fault() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def together(left: Borrowed[int], right: Borrowed[int]) -> bool:\n    return left == right\n";
+    let source = "def together(left: Borrowed[int], right: Borrowed[int], proof: Owned[int] = 0) -> bool:\n    return left == right\n";
     let (program, checker, owner) = fixture(source, "together")?;
     let positions = Positions::new(&checker, &program, owner, false)?;
     let fields = checker
@@ -456,8 +456,7 @@ fn owned_initializer_restore_requires_the_exact_source_event() -> Result<(), Box
 /// authorize missing completion or consumption nodes after restoration.
 #[test]
 fn operation_dependency_restore_requires_its_exact_analysis_fault() -> Result<(), Box<dyn std::error::Error>> {
-    let source =
-        "def observe(value: Borrowed[str]) -> int:\n    let view: Borrowed[str] = value\n    return len(view)\n";
+    let source = "def observe(value: Borrowed[str], proof: Owned[int] = 0) -> int:\n    let view: Borrowed[str] = value\n    return len(view)\n";
     let (program, checker, owner) = fixture(source, "observe")?;
     let positions = Positions::new(&checker, &program, owner, false)?;
     let fields = checker
@@ -522,7 +521,7 @@ fn operation_dependency_restore_requires_its_exact_analysis_fault() -> Result<()
 /// input authority or a differently labeled fault.
 #[test]
 fn invocation_evaluation_restore_requires_its_exact_analysis_fault() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def read(value: Borrowed[int]) -> int:\n    return value\ndef forward(value: Borrowed[int]) -> int:\n    return read(value)\n";
+    let source = "def read(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return value\ndef forward(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return read(value)\n";
     let (program, checker, owner) = fixture(source, "forward")?;
     let positions = Positions::new(&checker, &program, owner, false)?;
     let view = checker.checked_body(owner).ok_or("missing invocation body")?;
@@ -706,7 +705,7 @@ fn legacy_input_schemas_are_not_restored() -> Result<(), Box<dyn std::error::Err
 /// classification has a wire representation. The next activation therefore checks the body afresh.
 #[test]
 fn current_source_value_uses_are_not_projected_as_record_authority() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "enum Family:\n    Local\ndef read_family(value: str) -> Result[Family, str]:\n    return Ok(Family.Local)\ndef collect(seed: Borrowed[int], rows: list[list[str]]) -> Result[Family, str]:\n    header = rows[0]\n    family = read_family(header[3])?\n    return Ok(family)\n";
+    let source = "enum Family:\n    Local\ndef read_family(value: str) -> Result[Family, str]:\n    return Ok(Family.Local)\ndef collect(seed: Borrowed[int], rows: list[list[str]], proof: Owned[int] = 0) -> Result[Family, str]:\n    header = rows[0]\n    family = read_family(header[3])?\n    return Ok(family)\n";
     let (program, checker, owner) = fixture(source, "collect")?;
     let positions = Positions::new(&checker, &program, owner, false)?;
     let view = checker.checked_body(owner).ok_or("missing classified owner body")?;
@@ -746,8 +745,7 @@ fn current_source_value_uses_are_not_projected_as_record_authority() -> Result<(
 /// A conflict is an explicit None requirement, not an absent parameter; duplicate or nonparameter keys refuse.
 #[test]
 fn parameter_requirements_preserve_conflicts_and_identity() -> Result<(), Box<dyn std::error::Error>> {
-    let source =
-        "def add(value: int) -> int:\n    return value\ndef use(value: Borrowed[int]) -> int:\n    return add(value)\n";
+    let source = "def add(value: int) -> int:\n    return value\ndef use(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return add(value)\n";
     let (program, checker, owner) = fixture(source, "use")?;
     let positions = Positions::new(&checker, &program, owner, false)?;
     let fields = checker

@@ -219,7 +219,7 @@ impl TypeChecker {
     /// needs an owned `T` takes a clone of it, and is refused there when `T` has no clone
     /// ([`Self::refuse_borrowed_value_without_clone`]).
     pub(in crate::typechecker) fn borrowed_source_value_materializes(&self, borrowed: &ResolvedType) -> bool {
-        let ResolvedType::Ref(inner) = borrowed else {
+        let (ResolvedType::Ref(inner) | ResolvedType::RefMut(inner)) = borrowed else {
             return false;
         };
         !matches!(

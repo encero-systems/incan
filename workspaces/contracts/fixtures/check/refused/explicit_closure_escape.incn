@@ -1,5 +1,5 @@
-# behavior: a closure that borrows an explicit body's input cannot be returned because its callable annotation carries no source relationship (#2500).
-# expect-diagnostic: INCAN-T0123
+# behavior: a closure that borrows an input cannot be returned because its callable annotation carries no source relationship (#2500, RFC 164).
+# expect-diagnostic: INCAN-T0001
 
 class Counter:
     pub value: int

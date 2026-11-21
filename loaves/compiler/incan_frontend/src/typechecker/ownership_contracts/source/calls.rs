@@ -278,7 +278,13 @@ impl Builder<'_> {
                     });
                 }
             };
-            let ty = self.checker.type_info.expr_type(expression.span);
+            // A borrowed operand is observed through its borrow, in either spelling (RFC 164).
+            let observed = self
+                .checker
+                .type_info
+                .expr_type(expression.span)
+                .map(|ty| crate::typechecker::helpers::borrowed_value_type(ty.clone()));
+            let ty = observed.as_ref();
             let supported = match builtin {
                 BuiltinFnId::Len => {
                     matches!(
@@ -682,7 +688,13 @@ impl Builder<'_> {
                         .iter()
                         .find(|mode| mode.component.parameter == Some(slot))
                 })
-                .map(|mode| mode.mode);
+                .map(|mode| mode.mode)
+                // A native reference slot borrows its argument as the same explicit mode does (RFC 164).
+                .or_else(|| match &call.parameters[slot].ty {
+                    ResolvedType::Ref(_) => Some(OwnershipMode::Borrowed),
+                    ResolvedType::RefMut(_) => Some(OwnershipMode::BorrowedMut),
+                    _ => None,
+                });
             // A closure local passed on is read where it is passed, through the borrow it holds.
             if let Some(closure) = self.closure_local(expression) {
                 let (outgoing, argument) =

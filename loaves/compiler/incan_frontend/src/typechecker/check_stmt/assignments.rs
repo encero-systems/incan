@@ -31,10 +31,10 @@ impl TypeChecker {
     /// Each discard owns its type independently; open Rust generics must resolve here because no later read can
     /// constrain them. Retain the value's checked carrier for Body IR, but no local ownership or alias facts.
     pub(super) fn check_discard_assignment(&mut self, assign: &AssignmentStmt, span: Span) {
-        let annotated_ty = assign
-            .ty
-            .as_ref()
-            .map(|annotation| self.resolve_type_checked(annotation));
+        let annotated_ty = assign.ty.as_ref().map(|annotation| {
+            let canonical = self.canonical_borrow_annotation(annotation, false);
+            self.resolve_type_checked(canonical.as_ref().unwrap_or(annotation))
+        });
         let value_ty = self.check_expr_with_expected(&assign.value, annotated_ty.as_ref());
         let ty = self.new_assignment_binding_type(assign, annotated_ty, value_ty);
         self.record_assignment_binding_type(span, ty);
@@ -58,10 +58,16 @@ impl TypeChecker {
                         | incan_semantics_core::SemanticSourceTargetKind::Method
                 )
             });
-        let annotated_ty = assign
-            .ty
-            .as_ref()
-            .map(|ty_ann| self.resolve_type_checked_for_input(ty_ann, defer_local));
+        // A local borrow takes the spelling its callable's parameters take: explicit where the signature needs the
+        // proof.
+        let explicit_borrows = self
+            .current_body_identity()
+            .is_some_and(|owner| self.type_info.declarations.ownership_contracts.contains_key(owner));
+        let annotated_ty = assign.ty.as_ref().map(|ty_ann| {
+            let annotation = self.canonical_borrow_annotation(ty_ann, explicit_borrows);
+            let resolved = self.resolve_type_checked_for_input(annotation.as_ref().unwrap_or(ty_ann), defer_local);
+            self.canonical_borrow_type(resolved, explicit_borrows)
+        });
         let explicit_mode = assign
             .ty
             .as_ref()
@@ -87,11 +93,19 @@ impl TypeChecker {
             })
             .flatten();
         let value_ty = if let Some(var_ty) = reassignment_ty.as_ref() {
-            self.check_expr_with_expected(&assign.value, Some(var_ty))
+            // A write through an exclusive borrow expects its referent (RFC 164).
+            let expected = match var_ty {
+                ResolvedType::RefMut(referent) => referent.as_ref(),
+                other => other,
+            };
+            self.check_expr_with_expected(&assign.value, Some(expected))
         } else {
             self.check_new_binding_value(assign, annotated_ty.as_ref())
         };
-        self.refuse_mut_param_held_by(&assign.value);
+        // A local borrow lends its value for the borrow's life (RFC 164); it does not hold a `mut` parameter's value.
+        if !matches!(annotated_ty, Some(ResolvedType::Ref(_) | ResolvedType::RefMut(_))) {
+            self.refuse_mut_param_held_by(&assign.value);
+        }
 
         // A `const` is registered as a module-scope variable, so the scope-chain walk below finds it. Answer the
         // more specific question first: reassigning a const is not a mutability mistake to be fixed with `mut`, it
@@ -110,15 +124,23 @@ impl TypeChecker {
         {
             let is_mutable = var_info.is_mutable;
             let var_ty = var_info.ty.clone();
+            // RFC 164: assigning a value to an exclusive borrow writes through it, as for `BorrowedMut[T]`; only a
+            // reference value rebinds the name.
+            let through = written_through_referent(&var_ty, &value_ty);
 
             if !is_mutable {
                 self.errors
                     .push(errors::mutation_without_mut(&assign.name, target_span));
-            } else {
+            } else if through.is_none() {
                 self.refuse_caller_visible_mut_param_rebinding(&assign.name, target_span);
             }
             self.note_local_reassignment(&assign.name);
-            if !self.types_compatible(&value_ty, &var_ty) {
+            let value_view = crate::typechecker::helpers::borrowed_value_type(value_ty.clone());
+            let compatible = match through {
+                Some(referent) => self.types_compatible(&value_view, referent),
+                None => self.types_compatible(&value_ty, &var_ty),
+            };
+            if !compatible {
                 let error = self.reassignment_mismatch(&assign.name, &var_ty, &value_ty, assign.value.span);
                 self.errors.push(error);
             }
@@ -148,7 +170,9 @@ impl TypeChecker {
             return;
         }
 
-        if explicit_mode.is_none() {
+        // A local borrow takes a reference to the place rather than copying it, so it is not a place copy.
+        let local_borrow = matches!(annotated_ty, Some(ResolvedType::Ref(_) | ResolvedType::RefMut(_)));
+        if explicit_mode.is_none() && !local_borrow {
             self.warn_place_binding_migration(assign);
         }
 
@@ -323,8 +347,21 @@ impl TypeChecker {
                     assign.value.span,
                 ));
             }
+            // RFC 164: a local borrow binds a reference to its value, shared or exclusive, as a parameter does.
+            let borrows = match (&ann_ty, &value_ty) {
+                (_, ResolvedType::Ref(_) | ResolvedType::RefMut(_)) => false,
+                (ResolvedType::Ref(referent) | ResolvedType::RefMut(referent), _) => {
+                    self.types_compatible(&value_ty, referent)
+                }
+                _ => false,
+            };
+            if borrows && matches!(ann_ty, ResolvedType::RefMut(_)) {
+                self.refuse_write_through_read_only_binding(&assign.value, assign.value.span);
+                self.note_mut_param_exclusive_use(&assign.value);
+            }
             // Check value matches annotation
-            if !self.types_compatible(&value_ty, &ann_ty)
+            if !borrows
+                && !self.types_compatible(&value_ty, &ann_ty)
                 && !self.record_validated_newtype_coercion_if_possible(&value_ty, &ann_ty, assign.value.span)
             {
                 self.errors.push(errors::assignment_type_mismatch(
@@ -575,5 +612,18 @@ impl TypeChecker {
         if let Some((identity, ty)) = resolved {
             self.type_info.record_resolved_write_identity(span, name, identity, ty);
         }
+    }
+}
+
+/// The referent an assignment writes through: a value assigned to an exclusive borrow (`&mut T`, `BorrowedMut[T]`)
+/// replaces what it borrows (RFC 164). Assigning another reference rebinds the name instead.
+pub(in crate::typechecker) fn written_through_referent<'a>(
+    target: &'a ResolvedType,
+    value: &ResolvedType,
+) -> Option<&'a ResolvedType> {
+    match (target, value) {
+        (_, ResolvedType::Ref(_) | ResolvedType::RefMut(_)) => None,
+        (ResolvedType::RefMut(referent), _) => Some(referent.as_ref()),
+        _ => None,
     }
 }

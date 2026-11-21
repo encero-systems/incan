@@ -601,7 +601,7 @@ impl TypeChecker {
             | (ResolvedType::RefMut(a), ResolvedType::Ref(b))
             | (ResolvedType::RefMut(a), ResolvedType::RefMut(b)) => self.nested_types_compatible(a, b),
             // A borrowed source model or class becomes an owned value where one is required; Body IR clones it there.
-            (ResolvedType::Ref(inner), expected)
+            (ResolvedType::Ref(inner) | ResolvedType::RefMut(inner), expected)
                 if !matches!(expected, ResolvedType::Ref(_) | ResolvedType::RefMut(_))
                     && self.borrowed_source_value_materializes(actual) =>
             {
@@ -800,7 +800,10 @@ impl TypeChecker {
 
     /// RFC 164 one type: a callable's `Borrowed[T]` or `BorrowedMut[T]` parameter is the `&T` or `&mut T` parameter
     /// a native signature spells, so both spellings name one callable type. Other parameters keep their own type.
-    fn callable_view_parameter_type<'a>(&self, ty: &'a ResolvedType) -> std::borrow::Cow<'a, ResolvedType> {
+    pub(in crate::typechecker) fn callable_view_parameter_type<'a>(
+        &self,
+        ty: &'a ResolvedType,
+    ) -> std::borrow::Cow<'a, ResolvedType> {
         if let ResolvedType::Generic(name, arguments) = ty
             && let [value] = arguments.as_slice()
         {

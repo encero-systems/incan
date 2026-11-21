@@ -111,7 +111,7 @@ impl BodyBuilder<'_, '_> {
             _ => self.resolve_ty(expr.span),
         };
         match &source {
-            IncanType::Ref(borrowed)
+            IncanType::Ref(borrowed) | IncanType::RefMut(borrowed)
                 if !matches!(destination, IncanType::Ref(_) | IncanType::RefMut(_))
                     && !self.borrowed_rust_copy(borrowed)
                     && self.same_nominal_carrier(borrowed, &destination) =>
@@ -163,9 +163,21 @@ impl BodyBuilder<'_, '_> {
                 .map_or_else(|| self.resolve_ty(expr.span), |local| local.ty.clone()),
             _ => self.resolve_ty(expr.span),
         };
+        // RFC 164: an owned use of a borrowed Copy scalar copies the value it borrows, read through the reference.
+        if let IncanType::Ref(borrowed) | IncanType::RefMut(borrowed) = &source
+            && !matches!(destination, IncanType::Ref(_) | IncanType::RefMut(_))
+            && super::operators::borrowed_scalar(borrowed)
+            && matches!(&operand, bir::Operand::Place(read) if read.place.projection.is_empty())
+        {
+            let value = super::operators::read_through_scalar_borrow(&source, operand);
+            return match numeric_destination(borrowed, destination) {
+                Some(member) => self.push_assign_temp(bir::Rvalue::Use(value), member, scope, hir_span(expr.span), out),
+                None => value,
+            };
+        }
         // RFC 164: a `Borrowed[T]` value at a destination that owns a `T` receives a clone, for every `T`; the checker
         // refused the owned destinations whose `T` has no clone.
-        if let IncanType::Ref(borrowed) = &source
+        if let IncanType::Ref(borrowed) | IncanType::RefMut(borrowed) = &source
             && !matches!(destination, IncanType::Ref(_) | IncanType::RefMut(_))
             && !self.borrowed_rust_copy(borrowed)
             && self.same_nominal_carrier(borrowed, destination)

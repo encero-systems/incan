@@ -561,6 +561,7 @@ fn retain_place(place: &mut bir::Place, identities: &Identities) {
                 }
             }
             bir::PlaceElem::Field { .. } => {}
+            bir::PlaceElem::Deref => {}
         }
     }
 }

@@ -246,6 +246,11 @@ pub fn model_prefix(
         })
     };
     let slot_type = &locals[(index + offset) as usize].ty;
+    // RFC 164: a whole reference-valued local read or written through its reference (`*x`) names its referent.
+    if count == 1 && matches!(value.projection.first(), Some(PlaceElem::Deref)) {
+        let (referent, _) = crate::explicit_arguments::reference_contract(slot_type)?;
+        return place(Projection::Deref(referent));
+    }
     if let Some((owner, name)) = receiver_owner(slot_type) {
         if count == 0 {
             return place(Projection::Deref(PlanType::Model(owner, name)));

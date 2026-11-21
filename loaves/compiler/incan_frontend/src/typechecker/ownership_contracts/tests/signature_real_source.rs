@@ -194,7 +194,7 @@ fn require_module_diagnostic_at(consumer: &str, code: &str, stop: &str) -> Resul
 #[test]
 fn real_source_encode_map_err_accepts_fresh_description_row_and_const_arguments()
 -> Result<(), Box<dyn std::error::Error>> {
-    let encode = "from views import Description, Record, RowRecord, encode_rows\n\nconst MAX_BYTES: int = 4096\nenum Fault:\n    Bad\ndef checker_description() -> Description:\n    return Description(profile=\"profile\")\ndef record_value(record: Borrowed[Record]) -> Result[str, Fault]:\n    return Ok(\"logical\")\ndef encode_record(record: Borrowed[Record]) -> Result[bytes, Fault]:\n    logical = record_value(record)?\n    return encode_rows(checker_description(), [RowRecord(value=logical)], MAX_BYTES).map_err((_) => Fault.Bad)\n";
+    let encode = "from views import Description, Record, RowRecord, encode_rows\n\nconst MAX_BYTES: int = 4096\nenum Fault:\n    Bad\ndef checker_description() -> Description:\n    return Description(profile=\"profile\")\ndef record_value(record: Borrowed[Record], proof: Owned[int] = 0) -> Result[str, Fault]:\n    return Ok(\"logical\")\ndef encode_record(record: Borrowed[Record], proof: Owned[int] = 0) -> Result[bytes, Fault]:\n    logical = record_value(record)?\n    return encode_rows(checker_description(), [RowRecord(value=logical)], MAX_BYTES).map_err((_) => Fault.Bad)\n";
     require_replayed_body(
         encode,
         "encode_record",
@@ -211,20 +211,20 @@ fn real_source_encode_map_err_accepts_fresh_description_row_and_const_arguments(
 
 #[test]
 fn real_source_constructor_local_move_keeps_post_move_use_closed() -> Result<(), Box<dyn std::error::Error>> {
-    let post_move = "from views import Description, Record, RowRecord, encode_rows\n\nconst MAX_BYTES: int = 4096\nenum Fault:\n    Bad\ndef checker_description() -> Description:\n    return Description(profile=\"profile\")\ndef record_value(record: Borrowed[Record]) -> Result[str, Fault]:\n    return Ok(\"logical\")\ndef encode_record(record: Borrowed[Record]) -> Result[bytes, Fault]:\n    logical = record_value(record)?\n    return encode_rows(checker_description(), [RowRecord(value=logical)], MAX_BYTES + len(logical)).map_err((_) => Fault.Bad)\n";
+    let post_move = "from views import Description, Record, RowRecord, encode_rows\n\nconst MAX_BYTES: int = 4096\nenum Fault:\n    Bad\ndef checker_description() -> Description:\n    return Description(profile=\"profile\")\ndef record_value(record: Borrowed[Record], proof: Owned[int] = 0) -> Result[str, Fault]:\n    return Ok(\"logical\")\ndef encode_record(record: Borrowed[Record], proof: Owned[int] = 0) -> Result[bytes, Fault]:\n    logical = record_value(record)?\n    return encode_rows(checker_description(), [RowRecord(value=logical)], MAX_BYTES + len(logical)).map_err((_) => Fault.Bad)\n";
     require_module_diagnostic_at(post_move, "INCAN-T0126", "logical")
 }
 
 #[test]
 fn real_source_budget_map_err_accepts_zero_argument_result() -> Result<(), Box<dyn std::error::Error>> {
-    let budget = "from views import Record, operation_budget\n\nenum Fault:\n    Bad\ndef observe(record: Borrowed[Record]) -> int:\n    return len(record.owner)\ndef semantic_digest(record: Record) -> Result[int, Fault]:\n    mut budget = operation_budget().map_err((_) => Fault.Bad)?\n    return Ok(budget + observe(record))\n";
+    let budget = "from views import Record, operation_budget\n\nenum Fault:\n    Bad\ndef observe(record: Borrowed[Record], proof: Owned[int] = 0) -> int:\n    return len(record.owner)\ndef semantic_digest(record: Record) -> Result[int, Fault]:\n    mut budget = operation_budget().map_err((_) => Fault.Bad)?\n    return Ok(budget + observe(record))\n";
     require_module_bodies(budget, &["semantic_digest"])
 }
 
 #[test]
 fn real_source_decode_map_err_accepts_fresh_description_list_and_const_arguments()
 -> Result<(), Box<dyn std::error::Error>> {
-    let decode = "from views import Description, Family, Record, decode_rows\n\nconst MAX_BYTES: int = 4096\nenum Fault:\n    Bad\ndef checker_description() -> Description:\n    return Description(profile=\"profile\")\ndef validate(record: Borrowed[Record]) -> Result[None, Fault]:\n    return Ok(None)\ndef decoded_record(encoded: bytes) -> Result[int, Fault]:\n    rows = decode_rows(encoded, [checker_description()], MAX_BYTES).map_err((_) => Fault.Bad)?\n    record = Record(profile=\"profile\", owner=\"owner\", root=\"root\", family=Family.Local, fields=[])\n    validate(record)?\n    return Ok(len(rows))\n";
+    let decode = "from views import Description, Family, Record, decode_rows\n\nconst MAX_BYTES: int = 4096\nenum Fault:\n    Bad\ndef checker_description() -> Description:\n    return Description(profile=\"profile\")\ndef validate(record: Borrowed[Record], proof: Owned[int] = 0) -> Result[None, Fault]:\n    return Ok(None)\ndef decoded_record(encoded: bytes) -> Result[int, Fault]:\n    rows = decode_rows(encoded, [checker_description()], MAX_BYTES).map_err((_) => Fault.Bad)?\n    record = Record(profile=\"profile\", owner=\"owner\", root=\"root\", family=Family.Local, fields=[])\n    validate(record)?\n    return Ok(len(rows))\n";
     require_replayed_body(
         decode,
         "decoded_record",
@@ -238,17 +238,17 @@ fn real_source_decode_map_err_accepts_fresh_description_list_and_const_arguments
 
 #[test]
 fn real_source_decode_owned_argument_keeps_move_boundaries_closed() -> Result<(), Box<dyn std::error::Error>> {
-    let post_move = "from views import Description, Family, Record, decode_rows\n\nconst MAX_BYTES: int = 4096\nenum Fault:\n    Bad\ndef checker_description() -> Description:\n    return Description(profile=\"profile\")\ndef validate(record: Borrowed[Record]) -> Result[None, Fault]:\n    return Ok(None)\ndef decoded_record(encoded: bytes) -> Result[int, Fault]:\n    rows = decode_rows(encoded, [checker_description()], MAX_BYTES).map_err((_) => Fault.Bad)?\n    record = Record(profile=\"profile\", owner=\"owner\", root=\"root\", family=Family.Local, fields=[])\n    validate(record)?\n    return Ok(len(rows) + len(encoded))\n";
+    let post_move = "from views import Description, Family, Record, decode_rows\n\nconst MAX_BYTES: int = 4096\nenum Fault:\n    Bad\ndef checker_description() -> Description:\n    return Description(profile=\"profile\")\ndef validate(record: Borrowed[Record], proof: Owned[int] = 0) -> Result[None, Fault]:\n    return Ok(None)\ndef decoded_record(encoded: bytes) -> Result[int, Fault]:\n    rows = decode_rows(encoded, [checker_description()], MAX_BYTES).map_err((_) => Fault.Bad)?\n    record = Record(profile=\"profile\", owner=\"owner\", root=\"root\", family=Family.Local, fields=[])\n    validate(record)?\n    return Ok(len(rows) + len(encoded))\n";
     require_module_diagnostic_at(post_move, "INCAN-T0126", "encoded")?;
-    let borrowed = "from views import Description, Family, Record, decode_rows\n\nconst MAX_BYTES: int = 4096\nenum Fault:\n    Bad\ndef checker_description() -> Description:\n    return Description(profile=\"profile\")\ndef validate(record: Borrowed[Record]) -> Result[None, Fault]:\n    return Ok(None)\ndef decoded_record(encoded: Borrowed[bytes]) -> Result[int, Fault]:\n    rows = decode_rows(encoded, [checker_description()], MAX_BYTES).map_err((_) => Fault.Bad)?\n    record = Record(profile=\"profile\", owner=\"owner\", root=\"root\", family=Family.Local, fields=[])\n    validate(record)?\n    return Ok(len(rows))\n";
+    let borrowed = "from views import Description, Family, Record, decode_rows\n\nconst MAX_BYTES: int = 4096\nenum Fault:\n    Bad\ndef checker_description() -> Description:\n    return Description(profile=\"profile\")\ndef validate(record: Borrowed[Record], proof: Owned[int] = 0) -> Result[None, Fault]:\n    return Ok(None)\ndef decoded_record(encoded: Borrowed[bytes], proof: Owned[int] = 0) -> Result[int, Fault]:\n    rows = decode_rows(encoded, [checker_description()], MAX_BYTES).map_err((_) => Fault.Bad)?\n    record = Record(profile=\"profile\", owner=\"owner\", root=\"root\", family=Family.Local, fields=[])\n    validate(record)?\n    return Ok(len(rows))\n";
     require_module_diagnostic_at(borrowed, "INCAN-T0123", "encoded")?;
-    let returned_view = "from views import Description, Family, Record, decode_rows\n\nconst MAX_BYTES: int = 4096\nenum Fault:\n    Bad\ndef checker_description() -> Description:\n    return Description(profile=\"profile\")\ndef view(encoded: Borrowed[bytes]) -> Borrowed[bytes] from encoded:\n    return encoded\ndef validate(record: Borrowed[Record]) -> Result[None, Fault]:\n    return Ok(None)\ndef decoded_record(encoded: Borrowed[bytes]) -> Result[int, Fault]:\n    rows = decode_rows(view(encoded), [checker_description()], MAX_BYTES).map_err((_) => Fault.Bad)?\n    record = Record(profile=\"profile\", owner=\"owner\", root=\"root\", family=Family.Local, fields=[])\n    validate(record)?\n    return Ok(len(rows))\n";
+    let returned_view = "from views import Description, Family, Record, decode_rows\n\nconst MAX_BYTES: int = 4096\nenum Fault:\n    Bad\ndef checker_description() -> Description:\n    return Description(profile=\"profile\")\ndef view(encoded: Borrowed[bytes]) -> Borrowed[bytes] from encoded:\n    return encoded\ndef validate(record: Borrowed[Record], proof: Owned[int] = 0) -> Result[None, Fault]:\n    return Ok(None)\ndef decoded_record(encoded: Borrowed[bytes], proof: Owned[int] = 0) -> Result[int, Fault]:\n    rows = decode_rows(view(encoded), [checker_description()], MAX_BYTES).map_err((_) => Fault.Bad)?\n    record = Record(profile=\"profile\", owner=\"owner\", root=\"root\", family=Family.Local, fields=[])\n    validate(record)?\n    return Ok(len(rows))\n";
     require_module_diagnostic_at(returned_view, "INCAN-T0123", "view(encoded)")
 }
 
 #[test]
 fn real_source_try_call_is_an_ordinary_argument_call_result() -> Result<(), Box<dyn std::error::Error>> {
-    let consumer = "from views import Record, sha256\n\nenum Fault:\n    Bad\ndef encode_record(record: Borrowed[Record]) -> Result[bytes, Fault]:\n    return Ok(b\"encoded\")\ndef content_digest(record: Record) -> Result[bytes, Fault]:\n    return Ok(sha256.digest(encode_record(record)?))\n";
+    let consumer = "from views import Record, sha256\n\nenum Fault:\n    Bad\ndef encode_record(record: Borrowed[Record], proof: Owned[int] = 0) -> Result[bytes, Fault]:\n    return Ok(b\"encoded\")\ndef content_digest(record: Record) -> Result[bytes, Fault]:\n    return Ok(sha256.digest(encode_record(record)?))\n";
     require_replayed_body(
         consumer,
         "content_digest",
@@ -259,7 +259,7 @@ fn real_source_try_call_is_an_ordinary_argument_call_result() -> Result<(), Box<
 
 #[test]
 fn direct_selected_call_uses_one_persisted_call_result_authority() -> Result<(), Box<dyn std::error::Error>> {
-    let consumer = "def produce() -> str:\n    return \"value\"\ndef observe(value: str) -> int:\n    return len(value)\ndef use(seed: Borrowed[int]) -> int:\n    return observe(produce())\n";
+    let consumer = "def produce() -> str:\n    return \"value\"\ndef observe(value: str) -> int:\n    return len(value)\ndef use(seed: Owned[int]) -> int:\n    return observe(produce())\n";
     require_replayed_body(consumer, "use", &[PersistedUse::CallResult("produce()")], false)
 }
 
@@ -267,7 +267,7 @@ fn direct_selected_call_uses_one_persisted_call_result_authority() -> Result<(),
 /// a second use or an attempt to move the contents of a borrowed parameter.
 #[test]
 fn constructor_records_single_transfer_of_plain_text_parameter() -> Result<(), Box<dyn std::error::Error>> {
-    let accepted = "from views import RowRecord\n\ndef collect(seed: Borrowed[int], text: str) -> RowRecord:\n    return RowRecord(value=text)\n";
+    let accepted = "from views import RowRecord\n\ndef collect(seed: Owned[int], text: str) -> RowRecord:\n    return RowRecord(value=text)\n";
     require_replayed_body(
         accepted,
         "collect",
@@ -290,17 +290,17 @@ fn constructor_records_single_transfer_of_plain_text_parameter() -> Result<(), B
 /// projections cannot borrow that authority, and reusing the enum remains a graph conflict.
 #[test]
 fn imported_enum_parameter_constructor_move_is_exact_and_single_use() -> Result<(), Box<dyn std::error::Error>> {
-    let accepted = "from views import Family\n\nmodel Field:\n    family: Family\ndef collect(seed: Borrowed[int], family: Family) -> Field:\n    return Field(family=family)\n";
+    let accepted = "from views import Family\n\nmodel Field:\n    family: Family\ndef collect(seed: Owned[int], family: Family) -> Field:\n    return Field(family=family)\n";
     require_module_bodies(accepted, &["collect"])?;
 
-    let non_enum = "from views import Record\n\nmodel Envelope:\n    record: Record\ndef collect(seed: Borrowed[int], record: Record) -> Envelope:\n    return Envelope(record=record)\n";
+    let non_enum = "from views import Record\n\nmodel Envelope:\n    record: Record\ndef collect(seed: Owned[int], record: Record) -> Envelope:\n    return Envelope(record=record)\n";
     require_module_diagnostic_at(non_enum, "INCAN-T0123", "record")?;
-    let borrowed = "from views import Family\n\nmodel Field:\n    family: Family\ndef collect(seed: Borrowed[int], family: Borrowed[Family]) -> Field:\n    return Field(family=family)\n";
+    let borrowed = "from views import Family\n\nmodel Field:\n    family: Family\ndef collect(seed: Owned[int], family: Borrowed[Family]) -> Field:\n    return Field(family=family)\n";
     require_module_diagnostic_at(borrowed, "INCAN-T0123", "family")?;
-    let projected = "from views import Family\n\nmodel Holder:\n    family: Family\nmodel Field:\n    family: Family\ndef collect(seed: Borrowed[int], holder: Owned[Holder]) -> Field:\n    return Field(family=holder.family)\n";
+    let projected = "from views import Family\n\nmodel Holder:\n    family: Family\nmodel Field:\n    family: Family\ndef collect(seed: Owned[int], holder: Owned[Holder]) -> Field:\n    return Field(family=holder.family)\n";
     require_module_diagnostic_at(projected, "INCAN-T0123", "holder.family")?;
 
-    let reused = "from views import Family\n\nmodel Field:\n    family: Family\ndef collect(seed: Borrowed[int], family: Family) -> Field:\n    first = Field(family=family)\n    second = Field(family=family)\n    return second\n";
+    let reused = "from views import Family\n\nmodel Field:\n    family: Family\ndef collect(seed: Owned[int], family: Family) -> Field:\n    first = Field(family=family)\n    second = Field(family=family)\n    return second\n";
     for (route, checker) in super::one_type::consumer_checkers(PROVIDER, reused)? {
         assert!(
             !checker.errors.is_empty()
@@ -319,7 +319,7 @@ fn imported_enum_parameter_constructor_move_is_exact_and_single_use() -> Result<
 fn same_leaf_different_origins_refuse_call_result_and_fresh_model_admission() -> Result<(), Box<dyn std::error::Error>>
 {
     let provider = "@derive(Eq)\npub model Description:\n    pub profile: str\npub def observe(value: Description) -> int:\n    return len(value.profile)\npub def observe_many(values: list[Description]) -> int:\n    return len(values)\n";
-    let consumer = "from views import Description, observe, observe_many\n\ndef fresh() -> Description:\n    return Description(profile=\"profile\")\ndef direct(seed: Borrowed[int]) -> int:\n    return observe(fresh())\ndef listed(seed: Borrowed[int]) -> int:\n    return observe_many([fresh()])\n";
+    let consumer = "from views import Description, observe, observe_many\n\ndef fresh() -> Description:\n    return Description(profile=\"profile\")\ndef direct(seed: Owned[int]) -> int:\n    return observe(fresh())\ndef listed(seed: Owned[int]) -> int:\n    return observe_many([fresh()])\n";
     let mut checkers = super::one_type::consumer_checkers(provider, consumer)?;
     checkers.extend(super::one_type::package_consumer_checkers(provider, consumer)?);
     for (route, mut checker) in checkers {
@@ -353,7 +353,7 @@ fn same_leaf_different_origins_refuse_call_result_and_fresh_model_admission() ->
 
 #[test]
 fn real_source_imported_plain_enum_is_an_ordinary_observation() -> Result<(), Box<dyn std::error::Error>> {
-    let consumer = "from views import Family\n\nmodel ObservedFamily:\n    name: str\n    family: Family\ndef family_name(family: Family) -> str:\n    match family:\n        Family.Declaration => return \"declaration\"\n        Family.Local => return \"local\"\n        Family.Final => return \"final\"\ndef from_family(seed: Borrowed[int], family: Family) -> ObservedFamily:\n    name = family_name(family)\n    return ObservedFamily(name=name, family=family)\n";
+    let consumer = "from views import Family\n\nmodel ObservedFamily:\n    name: str\n    family: Family\ndef family_name(family: Family) -> str:\n    match family:\n        Family.Declaration => return \"declaration\"\n        Family.Local => return \"local\"\n        Family.Final => return \"final\"\ndef from_family(seed: Owned[int], family: Family) -> ObservedFamily:\n    name = family_name(family)\n    return ObservedFamily(name=name, family=family)\n";
     let mut checkers = super::one_type::consumer_checkers(PROVIDER, consumer)?;
     checkers.extend(super::one_type::package_consumer_checkers(PROVIDER, consumer)?);
     for (route, checker) in checkers {
@@ -407,50 +407,48 @@ fn real_source_imported_plain_enum_is_an_ordinary_observation() -> Result<(), Bo
         assert!(checker.errors.is_empty(), "{route}: {:?}", checker.errors);
     }
 
-    let mutable = "from views import Family\n\ndef family_name(mut family: Family) -> str:\n    return \"family\"\ndef from_family(seed: Borrowed[int], family: Family) -> str:\n    return family_name(family)\n";
+    let mutable = "from views import Family\n\ndef family_name(mut family: Family) -> str:\n    return \"family\"\ndef from_family(seed: Owned[int], family: Family) -> str:\n    return family_name(family)\n";
     require_module_refusal(mutable, "from_family", "family")
 }
 
 #[test]
 fn real_source_public_and_private_constants_are_immutable_operands() -> Result<(), Box<dyn std::error::Error>> {
-    let public_constant = "from views import Record\n\npub const PROFILE: str = \"profile\"\nenum Fault:\n    Bad\ndef validate(record: Borrowed[Record]) -> Result[None, Fault]:\n    if record.profile != PROFILE:\n        return Err(Fault.Bad)\n    return Ok(None)\n";
+    let public_constant = "from views import Record\n\npub const PROFILE: str = \"profile\"\nenum Fault:\n    Bad\ndef validate(record: Borrowed[Record], proof: Owned[int] = 0) -> Result[None, Fault]:\n    if record.profile != PROFILE:\n        return Err(Fault.Bad)\n    return Ok(None)\n";
     require_module_bodies(public_constant, &["validate"])?;
-    let private_constant = "from views import Outputs\n\nconst MAX_FIELDS: int = 4096\nenum Fault:\n    Bad\ndef encode_outputs(outputs: Borrowed[Outputs]) -> Result[int, Fault]:\n    output_count = len(outputs.namespaces) + len(outputs.values) + len(outputs.fallbacks)\n    if output_count > MAX_FIELDS:\n        return Err(Fault.Bad)\n    return Ok(output_count)\n";
+    let private_constant = "from views import Outputs\n\nconst MAX_FIELDS: int = 4096\nenum Fault:\n    Bad\ndef encode_outputs(outputs: Borrowed[Outputs], proof: Owned[int] = 0) -> Result[int, Fault]:\n    output_count = len(outputs.namespaces) + len(outputs.values) + len(outputs.fallbacks)\n    if output_count > MAX_FIELDS:\n        return Err(Fault.Bad)\n    return Ok(output_count)\n";
     require_module_bodies(private_constant, &["encode_outputs"])
 }
 
 #[test]
 fn real_source_package_enum_list_compound_materializes_elements() -> Result<(), Box<dyn std::error::Error>> {
-    let consumer = "from views import Logical, Record\n\nenum Fault:\n    Bad\ndef record_value(record: Borrowed[Record]) -> Result[list[Logical], Fault]:\n    mut flattened: list[Logical] = []\n    for field in record.fields:\n        flattened += [Logical.Text(field.family), Logical.Text(field.node)]\n    return Ok(flattened)\n";
+    let consumer = "from views import Logical, Record\n\nenum Fault:\n    Bad\ndef record_value(record: Borrowed[Record], proof: Owned[int] = 0) -> Result[list[Logical], Fault]:\n    mut flattened: list[Logical] = []\n    for field in record.fields:\n        flattened += [Logical.Text(field.family), Logical.Text(field.node)]\n    return Ok(flattened)\n";
     require_package_body(consumer, "record_value")
 }
 
 #[test]
 fn real_source_builtin_slice_is_a_fresh_iteration_producer() -> Result<(), Box<dyn std::error::Error>> {
-    let consumer = "from views import Record\n\ndef from_native_fields(record: Borrowed[Record], rows: list[list[str]]) -> int:\n    mut count = 0\n    for row in rows[1:]:\n        count += len(row)\n    return count\n";
+    let consumer = "from views import Record\n\ndef from_native_fields(record: Borrowed[Record], rows: list[list[str]], proof: Owned[int] = 0) -> int:\n    mut count = 0\n    for row in rows[1:]:\n        count += len(row)\n    return count\n";
     require_module_bodies(consumer, &["from_native_fields"])
 }
 
 #[test]
 fn real_source_retained_owner_fields_materialize_full_header() -> Result<(), Box<dyn std::error::Error>> {
-    let consumer = "from views import Family, Record\n\nenum Fault:\n    Bad\ndef family_name(family: Family) -> str:\n    match family:\n        Family.Declaration => return \"declaration\"\n        Family.Local => return \"local\"\n        Family.Final => return \"final\"\ndef validate(record: Borrowed[Record]) -> Result[None, Fault]:\n    return Ok(None)\ndef native_fields(record: Record) -> Result[list[list[str]], Fault]:\n    validate(record)?\n    rows = [[\"header\", record.owner, record.root, family_name(record.family), record.profile]]\n    return Ok(rows)\n";
+    let consumer = "from views import Family, Record\n\nenum Fault:\n    Bad\ndef family_name(family: Family) -> str:\n    match family:\n        Family.Declaration => return \"declaration\"\n        Family.Local => return \"local\"\n        Family.Final => return \"final\"\ndef validate(record: Borrowed[Record], proof: Owned[int] = 0) -> Result[None, Fault]:\n    return Ok(None)\ndef native_fields(record: Record) -> Result[list[list[str]], Fault]:\n    validate(record)?\n    rows = [[\"header\", record.owner, record.root, family_name(record.family), record.profile]]\n    return Ok(rows)\n";
     require_module_bodies(consumer, &["native_fields"])
 }
 
 #[test]
 fn real_source_routes_keep_capability_boundaries_closed() -> Result<(), Box<dyn std::error::Error>> {
-    let captureful = "from views import Description, Record, RowRecord, encode_rows\n\nconst MAX_BYTES: int = 4096\nenum Fault:\n    Bad(str)\ndef checker_description() -> Description:\n    return Description(profile=\"profile\")\ndef encode_record(record: Borrowed[Record]) -> Result[bytes, Fault]:\n    owner = record.owner\n    return encode_rows(checker_description(), [RowRecord(value=record.owner)], MAX_BYTES).map_err((_) => Fault.Bad(owner))\n";
+    let captureful = "from views import Description, Record, RowRecord, encode_rows\n\nconst MAX_BYTES: int = 4096\nenum Fault:\n    Bad(str)\ndef checker_description() -> Description:\n    return Description(profile=\"profile\")\ndef encode_record(record: Borrowed[Record], proof: Owned[int] = 0) -> Result[bytes, Fault]:\n    owner = record.owner\n    return encode_rows(checker_description(), [RowRecord(value=record.owner)], MAX_BYTES).map_err((_) => Fault.Bad(owner))\n";
     require_module_refusal(captureful, "encode_record", "encode_rows")?;
-    let mutable_static =
-        "static LIMIT: int = 4096\ndef validate(value: Borrowed[int]) -> bool:\n    return value > LIMIT\n";
+    let mutable_static = "static LIMIT: int = 4096\ndef validate(value: Borrowed[int], proof: Owned[int] = 0) -> bool:\n    return value > LIMIT\n";
     require_module_refusal(mutable_static, "validate", "LIMIT")?;
-    let whole_model =
-        "from views import Record\n\ndef collect(record: Borrowed[Record]) -> list[Record]:\n    return [record]\n";
+    let whole_model = "from views import Record\n\ndef collect(record: Borrowed[Record], proof: Owned[int] = 0) -> list[Record]:\n    return [record]\n";
     require_module_refusal(whole_model, "collect", "record")?;
-    let stored_result = "from views import Record, sha256\n\nenum Fault:\n    Bad\ndef encode_record(record: Borrowed[Record]) -> Result[bytes, Fault]:\n    return Ok(b\"encoded\")\ndef content_digest(record: Borrowed[Record]) -> Result[bytes, Fault]:\n    encoded = encode_record(record)\n    return Ok(sha256.digest(encoded?))\n";
+    let stored_result = "from views import Record, sha256\n\nenum Fault:\n    Bad\ndef encode_record(record: Borrowed[Record], proof: Owned[int] = 0) -> Result[bytes, Fault]:\n    return Ok(b\"encoded\")\ndef content_digest(record: Borrowed[Record], proof: Owned[int] = 0) -> Result[bytes, Fault]:\n    encoded = encode_record(record)\n    return Ok(sha256.digest(encoded?))\n";
     require_package_refusal(stored_result, "content_digest", "encoded?")?;
-    let model_argument = "from views import Record\n\ndef consume(record: Record) -> int:\n    return len(record.owner)\ndef inspect(record: Borrowed[Record]) -> int:\n    return consume(record)\n";
+    let model_argument = "from views import Record\n\ndef consume(record: Record) -> int:\n    return len(record.owner)\ndef inspect(record: Borrowed[Record], proof: Owned[int] = 0) -> int:\n    return consume(record)\n";
     require_module_refusal(model_argument, "inspect", "record")?;
-    let user_slice = "class Shelf:\n    pub rows: list[list[str]]\n    def __getslice__(self, start: Option[int], end: Option[int], step: Option[int]) -> list[list[str]]:\n        return self.rows\ndef collect(shelf: Borrowed[Shelf]) -> int:\n    mut count = 0\n    for row in shelf[1:]:\n        count += len(row)\n    return count\n";
+    let user_slice = "class Shelf:\n    pub rows: list[list[str]]\n    def __getslice__(self, start: Option[int], end: Option[int], step: Option[int]) -> list[list[str]]:\n        return self.rows\ndef collect(shelf: Borrowed[Shelf], proof: Owned[int] = 0) -> int:\n    mut count = 0\n    for row in shelf[1:]:\n        count += len(row)\n    return count\n";
     require_module_refusal(user_slice, "collect", "shelf[1:]")
 }

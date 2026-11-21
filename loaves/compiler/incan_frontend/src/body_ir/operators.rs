@@ -146,6 +146,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return self.lower_operator_dispatch(&method, lhs, &[rhs], result_ty, span, scope, out);
         }
 
+        // RFC 164: an operator reads a borrowed operand through its borrow; the operation is on the borrowed values.
+        let (lhs_ty, rhs_ty) = (borrowed_operand_view(&lhs_ty), borrowed_container_view(op, &rhs_ty));
         if !Self::binary_op_is_supported(op, &lhs_ty, &rhs_ty) {
             return self.unsupported_operand(format!("binary operator {op:?}"), scope, hir_span_value, out);
         }
@@ -157,8 +159,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         } else {
             Default::default()
         };
-        let lhs_ty = self.resolve_ty(lhs.span);
-        let rhs_ty = self.resolve_ty(rhs.span);
+        let lhs_checked = self.resolve_ty(lhs.span);
+        let rhs_checked = self.resolve_ty(rhs.span);
+        let (lhs_ty, rhs_ty) = (
+            borrowed_operand_view(&lhs_checked),
+            borrowed_container_view(op, &rhs_checked),
+        );
         let (lhs_operand, rhs_operand) = if collection_equality_borrows(op, &lhs_ty, &rhs_ty) {
             (
                 self.lower_collection_equality_operand(lhs, scope, out),
@@ -178,6 +184,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.lower_binary_operand(rhs, scope, out),
             )
         };
+        let lhs_operand = read_through_scalar_borrow(&lhs_checked, lhs_operand);
+        let rhs_operand = read_through_scalar_borrow(&rhs_checked, rhs_operand);
         self.restore_constructor_argument_carriers(contextual_types);
         self.lower_binary_from_operands(
             op,
@@ -712,4 +720,48 @@ fn is_numeric_carrier(ty: &IncanType) -> bool {
 /// or a protocol hook is still decided by the recorded operator dispatch checked before this admission gate.
 fn binary_operand_types_are_resolved(lhs_ty: &IncanType, rhs_ty: &IncanType) -> bool {
     !matches!(lhs_ty, IncanType::Unknown | IncanType::Infer) && !matches!(rhs_ty, IncanType::Unknown | IncanType::Infer)
+}
+
+/// The type an operator reads from one operand (RFC 164): a shared or exclusive borrow of a Copy scalar is read
+/// through, so `x + 1` adds the borrowed `int`. Any other operand keeps its checked type, borrows included.
+pub(super) fn borrowed_operand_view(ty: &IncanType) -> IncanType {
+    match ty {
+        IncanType::Ref(inner) | IncanType::RefMut(inner) if borrowed_scalar(inner) => inner.as_ref().clone(),
+        other => other.clone(),
+    }
+}
+
+/// Read a borrowed Copy scalar operand through its reference (`*x`), copying the value it borrows. Every other
+/// operand, and any value that is not a whole place, is returned as lowered.
+pub(super) fn read_through_scalar_borrow(checked: &IncanType, operand: bir::Operand) -> bir::Operand {
+    let (IncanType::Ref(inner) | IncanType::RefMut(inner)) = checked else {
+        return operand;
+    };
+    match operand {
+        bir::Operand::Place(mut read) if borrowed_scalar(inner) && read.place.projection.is_empty() => {
+            read.place.projection.push(bir::PlaceElem::Deref);
+            read.fact = bir::OwnershipFact::Copy;
+            read.last_use = false;
+            bir::Operand::Place(read)
+        }
+        other => other,
+    }
+}
+
+/// Whether a borrowed referent is a Copy scalar an operator or an owned use reads through its reference.
+pub(super) fn borrowed_scalar(referent: &IncanType) -> bool {
+    numeric_carrier_id(referent).is_some() || matches!(referent, IncanType::Primitive(IncanPrimitiveType::Bool))
+}
+
+/// The type membership probes on its right: a borrowed collection is probed through its borrow (RFC 164), so
+/// `"a" in names` asks the borrowed dictionary. Other operators read the right operand as any operand.
+fn borrowed_container_view(op: ast::BinaryOp, ty: &IncanType) -> IncanType {
+    match (op, ty) {
+        (ast::BinaryOp::In | ast::BinaryOp::NotIn, IncanType::Ref(inner) | IncanType::RefMut(inner))
+            if super::primitives::builtin_collection_id(inner).is_some() =>
+        {
+            inner.as_ref().clone()
+        }
+        _ => borrowed_operand_view(ty),
+    }
 }
