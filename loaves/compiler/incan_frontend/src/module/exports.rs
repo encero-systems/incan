@@ -85,9 +85,11 @@ pub fn exported_symbols(ast: &Program) -> Vec<ExportedSymbol> {
                 }
             }
             Declaration::Import(import) => {
-                // Both `from module import X` and `from rust::crate import X` are treated as re-exports. This lets
-                // stdlib files like `response.incn` expose axum types (`from rust::axum import Json`) to importers
-                // without needing a newtype wrapper.
+                // A `pub` import re-exports its names, from a source module, a Loaf or a Rust crate; an import
+                // without `pub` binds them for the module alone (RFC 176).
+                if !matches!(import.visibility, Visibility::Public) {
+                    continue;
+                }
                 let items = match &import.kind {
                     ImportKind::From { items, .. } => Some(items.as_slice()),
                     ImportKind::RustFrom { items, .. } => Some(items.as_slice()),
