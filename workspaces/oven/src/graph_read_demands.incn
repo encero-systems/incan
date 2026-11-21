@@ -1,0 +1,60 @@
+"""Record the meaning and immutable view of a request's graph selections before the store answers them."""
+
+from std.json import JsonValue
+from pub::incan_platform.store import Snapshot
+
+
+pub model GraphDemand:
+    """An engine-selected key in a committed snapshot. The store supplies its revision and length independently."""
+
+    pub role: str
+    pub store: str
+    pub generation: int
+    pub manifest: str
+    pub view: str
+    pub key: str
+
+    pub def to_json(self) -> JsonValue:
+        """Encode selectors only; the physical-read counter has its own evidence and lifecycle."""
+        return JsonValue.object({
+            "role": JsonValue.string(self.role), "store": JsonValue.string(self.store),
+            "generation": JsonValue.int(self.generation), "manifest": JsonValue.string(self.manifest),
+            "view": JsonValue.string(self.view), "key": JsonValue.string(self.key),
+        })
+
+
+class DemandLog:
+    """The single active engine request owns this optional log for the same interval as physical frame measurement."""
+
+    enabled: bool = false
+    items: list[GraphDemand] = []
+
+    pub def begin(mut self, enabled: bool) -> None:
+        self.items = []
+        self.enabled = enabled
+
+    pub def select(mut self, role: str, view: Snapshot, key: str) -> None:
+        if self.enabled:
+            self.items.append(GraphDemand(role=role, store=view.root.value, generation=view.generation,
+                manifest=view.digest, view=view.view, key=key))
+
+    pub def finish(mut self) -> list[GraphDemand]:
+        self.enabled = false
+        result = list(self.items)
+        self.items = []
+        return result
+
+
+static DEMANDS: DemandLog = DemandLog()
+
+
+pub def begin_graph_demands(enabled: bool) -> None:
+    DEMANDS.begin(enabled)
+
+
+pub def note_graph_demand(role: str, view: Snapshot, key: str) -> None:
+    DEMANDS.select(role, view, key)
+
+
+pub def finish_graph_demands() -> list[GraphDemand]:
+    return DEMANDS.finish()

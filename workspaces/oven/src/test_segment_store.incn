@@ -10,7 +10,7 @@ from std.encoding.hex import hexlify
 from std.hash import file_digest, sha256
 from std.io import BytesIO
 from pub::incan_platform.store.index import Entry, Location
-from pub::incan_platform.store.index import write_index, entries as index_entries, pages_written
+from pub::incan_platform.store.index import write_index, entries as index_entries, pages_written, copied_index_bytes
 from store_path_conversion import collect_layouts, store_path
 from std.fs import Path
 from pub::incan_platform.durability import sync_ordered
@@ -30,12 +30,16 @@ from pub::incan_platform.store import (
     commit_pinned,
     delete,
     get,
+    first_stored_key,
     keys,
+    keys_with_prefix,
     lookup,
     owned,
     put,
     fork,
     read_counts,
+    measure_frame_reads,
+    finish_frame_reads,
     lease,
     view_snapshot,
     durable_syncs,
@@ -49,7 +53,10 @@ from pub::incan_platform.store import snapshot as placed_snapshot
 from pub::incan_platform.store.memory import root as memory_root
 from pub::incan_platform.store.path import StorePath
 from store_path_conversion import compact, payload_intact, payload_path, put_payload, snapshot
+from compiler_graph_rows import encode_pointer
 from compiler_graph_records import (
+    OutputSlots,
+    family_outputs,
     family_listing,
     prepare_evaluation,
     readers_of,
@@ -228,7 +235,9 @@ pub def test_concurrent_disjoint_writes_both_land_and_conflicting_writes_are_ref
     segment_files = count_files(root.joinpath("segments"))
     retained = retained_inventory(root)?
     size_before = retained_bytes(root)?
+    decoded_before = read_counts().decoded
     unchanged = commit(same).map_err((error) => error.message())?
+    assert read_counts().decoded == decoded_before, "equal writes must compare the existing mapped value in place"
     assert unchanged.generation == landed.generation
     assert count_files(root.joinpath("segments")) == segment_files
     assert retained_inventory(root)? == retained
@@ -390,8 +399,8 @@ pub def test_a_family_selection_reads_its_range_however_many_records_earlier_edi
     exactly the keys a whole listing would.
     """
     scratch = scratch_directory()?
-    output = "incan.engine.output\tp\tbody-ir\tprofile\torigin\tfunction:main\tfacet"
-    edge = "incan.engine.edge-in\tbody-ir\tprofile\torigin\tfunction:main\tfacet\t"
+    output = "incan.engine.output/2\tp\tbody-ir\tprofile\torigin\tfunction:main\tfacet"
+    edge = "incan.engine.edge-in/3\tbody-ir\tprofile\torigin\tfunction:main\tfacet\t"
     target = RecordKey(
         family="body-ir",
         identity="function:main",
@@ -403,14 +412,16 @@ pub def test_a_family_selection_reads_its_range_however_many_records_earlier_edi
     mut pages: list[int] = []
     for scale in [1, 100]:
         root = scratch.path().joinpath(f"store-{scale}")
-        _ = write_one(root, output, encode_record_key(target)?).map_err((error) => error.message())?
+        pointer = encode_pointer(encode_record_key(target)?)?
+        seeded = put(begin(snapshot(root).map_err((error) => error.message())?), output, pointer)
+        _ = commit(seeded).map_err((error) => error.message())?
         for batch in range(scale):
             mut transaction = begin(snapshot(root).map_err((error) => error.message())?)
             for item in range(10):
                 transaction = put(transaction, f"incan.engine.receipt\t{batch}-{item}", b"earlier edit")
                 transaction = put(
                     transaction,
-                    f"incan.engine.output\tp\tlocal\tprofile\torigin\tfunction:{batch}-{item}\tfacet\tchecked",
+                    f"incan.engine.output/2\tp\tlocal\tprofile\torigin\tfunction:{batch}-{item}\tfacet\tchecked",
                     b"other family",
                 )
             commit(transaction).map_err((error) => error.message())?
@@ -419,8 +430,34 @@ pub def test_a_family_selection_reads_its_range_however_many_records_earlier_edi
         assert len(reusable_family_records(latest, "body-ir", "p")?) == 0
         assert len(readers_of(latest, [target], "p")?) == 0
         pages.append(read_counts().pages - before.pages)
+        # The project asks for one owner. Unrelated index entries must never be materialized.
+        mut neighbors = begin(latest)
+        neighbors = put(neighbors, "incan.engine.output/2\tp\tbody-ir\tprofile\torigin\tother\tfacet", b"unrelated pointer")
+        neighbors = put(neighbors, "incan.engine.output/2\tp\tbody-ir\tprofile\tanother\tfunction:main\tfacet", b"foreign pointer")
+        with_neighbors = commit(neighbors).map_err((error) => error.message())?
+        wanted = encode_record_key(target)?
+        slots = OutputSlots(origin=target.origin, identity_profile=target.identity_profile, included=Some([target.identity]))
+        prior = read_counts()
+        measure_frame_reads(true)
+        assert family_outputs(with_neighbors, target.family, "p", Some(slots))? == [wanted]
+        measured = finish_frame_reads()
+        assert len(measured) == 1 and measured[0].reads == 1 and measured[0].key == output
+        assert measured[0].value_bytes == len(pointer)
+        assert measured[0].frame_bytes == 8 + len(output.encode()) + len(pointer)
+        observed = read_counts()
+        assert observed.records - prior.records == 1
+        assert observed.decoded - prior.decoded == len(pointer)
+        # A module page already supplied this exact output. Selection reads the current pointer to confirm its
+        # context and skips the individual evaluation, receipt, value and dependency witnesses.
+        carried = OutputSlots(origin=target.origin, identity_profile=target.identity_profile,
+            included=Some([target.identity]), excluded_outputs=[wanted])
+        prior_carried = read_counts()
+        assert len(reusable_family_records(with_neighbors, target.family, "p", Some(carried))?) == 0
+        after_carried = read_counts()
+        assert after_carried.records - prior_carried.records == 1
+        assert after_carried.decoded - prior_carried.decoded == len(pointer)
         every = keys(latest).map_err((error) => error.message())?
-        for prefix in ["incan.engine.output\tp\tbody-ir\t", "incan.engine.output\tp\t", "incan.engine.receipt\t5", edge]:
+        for prefix in ["incan.engine.output/2\tp\tbody-ir\t", "incan.engine.output/2\tp\t", "incan.engine.receipt\t5", edge]:
             assert keys_with_prefix(latest, prefix).map_err((error) => error.message())? == [
                 key for key in every if key.startswith(prefix)
             ], prefix
@@ -549,7 +586,7 @@ pub def test_an_edited_declaration_s_output_index_entry_is_written_in_place() ->
         output = graph_key("body-ir", "function:main", f"edit {edit}")
         publish_reader(snapshot(root).map_err((error) => error.message())?, output, [read])?
     latest = snapshot(root).map_err((error) => error.message())?
-    indexed = indexed_keys(root, latest, "incan.engine.output\t")?
+    indexed = indexed_keys(root, latest, "incan.engine.output/2\t")?
     assert len(indexed) == 1, f"after 12 edits of one declaration the output index holds {len(indexed)} entries"
     records = reusable_family_records(latest, "body-ir", "profile")?
     assert len(records) == 1 and records[0].key == output
@@ -621,12 +658,39 @@ pub def test_an_edit_leaves_the_incoming_entry_of_an_unchanged_read_as_it_is() -
     return Ok(None)
 
 
+pub def test_retirement_reuses_only_identical_staged_forward_edges() -> Result[None, str]:
+    """One unchanged edge needs no old frame. A same-width changed edge still retires its old reader."""
+    before = placed_snapshot(memory_root()).map_err((error) => error.message())?
+    reader = graph_key("body-ir", "function:main", "checked")
+    requests = [RecordRequest(key=graph_key("final", name, "checked"), selection=RecordSelection.Field("value"))
+        for name in ["alpha", "bravo", "delta"]]
+    mut seed = begin(before)
+    for request in requests:
+        seed = put(seed, encode_record_key(request.key)?, b"same")
+    source = commit(seed).map_err((error) => error.message())?
+    rank = ProducerRank(namespace=2, stage=ProducerStage.CheckBody, dependency=1)
+    mut first = begin(source)
+    _ = prepare_evaluation(first, "claim", rank, b"initial", edge_receipt(source, reader, requests[:2])?)?
+    selected = commit(first).map_err((error) => error.message())?
+    mut next = begin(selected)
+    _ = prepare_evaluation(next, "claim", rank, b"changed", edge_receipt(source, reader, [requests[0], requests[2]])?)?
+    measure_frame_reads(true)
+    supersede_outputs(selected, next)?
+    opened = finish_frame_reads()
+    assert len(opened) == 1 and opened[0].reads == 1 and opened[0].key.endswith("\t1")
+    latest = commit(next).map_err((error) => error.message())?
+    assert readers_of(latest, [requests[0].key], "profile")? == [reader]
+    assert len(readers_of(latest, [requests[1].key], "profile")?) == 0
+    assert readers_of(latest, [requests[2].key], "profile")? == [reader]
+    return Ok(None)
+
+
 def incoming_segments(root: Path) -> Result[list[str], str]:
     """The segment that holds each incoming edge entry's frame in the store's latest generation, in key order."""
     latest = snapshot(root).map_err((error) => error.message())?
     mut found: list[str] = []
     for entry in index_entries(store_path(root), latest.index).map_err((error) => error.detail)?:
-        if entry.key.startswith("incan.engine.edge-in\t"):
+        if entry.key.startswith("incan.engine.edge-in/3\t"):
             if let Some(location) = entry.location:
                 found.append(location.segment)
     return Ok(found)
@@ -795,20 +859,35 @@ pub def test_a_lookup_checks_no_index_page_an_earlier_lookup_checked() -> Result
     scratch = scratch_directory()?
     root = scratch.path().joinpath("store")
     mut transaction = begin(snapshot(root).map_err((error) => error.message())?)
+    prefix = "".join(list.repeat("é", 768))
     for item in range(1000):
-        transaction = put(transaction, f"k-{1000 + item}", f"value {item}".encode("utf-8"))
+        transaction = put(transaction, f"{prefix}-{1000 + item}", f"value {item}".encode("utf-8"))
     commit(transaction).map_err((error) => error.message())?
     latest = snapshot(root).map_err((error) => error.message())?
     before = read_counts()
-    assert text(lookup(latest, "k-1500")) == "value 500"
+    assert text(lookup(latest, prefix + "-1500")) == "value 500"
     first = read_counts()
-    assert text(lookup(latest, "k-1500")) == "value 500"
-    assert text(lookup(latest, "k-1501")) == "value 501"
+    index_copied = copied_index_bytes()
+    assert text(lookup(latest, prefix + "-1500")) == "value 500"
+    assert text(lookup(latest, prefix + "-1501")) == "value 501"
     second = read_counts()
+    copies = copied_index_bytes() - index_copied
+    assert copies < len(prefix.encode("utf-8")), f"repeated lookups copied {copies} index bytes for long keys"
     assert first.checked > before.checked, "the first lookup checked no index page"
     assert second.pages > first.pages, "the later lookups read no index page"
     again = second.checked - first.checked
     assert again == 0, f"lookups on a path already checked checked {again} pages again"
+    # Warm both leaves the ten-key prefix can occupy, then measure only index copies of the range and successor.
+    assert text(lookup(latest, prefix + "-1509")) == "value 509"
+    before_range = read_counts()
+    copied_before_range = copied_index_bytes()
+    matches = keys_with_prefix(latest, prefix + "-150").map_err((error) => error.message())?
+    assert matches == [f"{prefix}-{1500 + index}" for index in range(10)]
+    successor = first_stored_key(latest, prefix + "-1502-next").map_err((error) => error.message())?
+    assert successor == Some(prefix + "-1503")
+    range_copies = copied_index_bytes() - copied_before_range
+    assert range_copies < 15 * len(prefix.encode("utf-8")), f"range selection copied {range_copies} index bytes"
+    assert read_counts().records == before_range.records
     return Ok(None)
 
 

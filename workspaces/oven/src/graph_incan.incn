@@ -6,7 +6,7 @@ from std.fs import Path
 from features import FeatureRequest
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
-from files import make_directory, read, read_json, remove
+from files import make_directory, read, remove
 from graph_cache import content_facts, interface_inputs, is_unchecked, publish_unchecked
 from graph_exports import claim_export, exported, pending_export, publish_export as admit_export
 from publication import publish, publish_binary
@@ -24,7 +24,7 @@ from unit_freshness import (
     unit_key,
     vocabulary_facts,
 )
-from json_fields import required_text
+from bakery_views import read_view
 from unit_compiler import crate_name, run_compiler, write_unit
 from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription, UnitLoaf, describe
@@ -133,7 +133,7 @@ pub def inspect_prepared(ready: UnitDescription, toolchain: Toolchain, owner: Op
     directory = interface_directory(pending_entry)
     interface = directory.joinpath(f"{artifact_stem(ready.package)}.incnlib")
     # 3. The compiler writes its output beside the entry's name, so a failed export leaves nothing at the entry itself.
-    description = write_unit(ready, crate_name(ready), Some(cache_root))?
+    description = write_unit(ready, crate_name(ready), Some(cache_root), typed=toolchain.unit_descriptor_crumb)?
     output = Path(f"{pending_entry.0}.{id()}.analysis")
     pending = Path(f"{interface.0}.{id()}.analysis")
     mut arguments = ["--codegraph", description.0, toolchain.sysroot, output.0]
@@ -165,13 +165,14 @@ pub def publish_prepared_graph(
     if is_unchecked(cached):
         return Err(f"{ready.package}: cannot publish an unchecked graph")
     key = unit_key(ready, toolchain)?
-    marker = directory.joinpath("fact.json")
+    marker = read_view(directory)?
     release = directory.joinpath(".oven-inputs.sha256")
     mut current_native = false
-    if marker.is_file():
-        current_native = required_text(read_json(marker)?, "identity")? == key.digest
-    elif release.is_file():
-        current_native = staleness(artifact_files(directory, ready.package)?, release, key)? == ""
+    match marker:
+        Some(selection) => current_native = selection.identity == key.digest
+        None =>
+            if release.is_file():
+                current_native = staleness(artifact_files(directory, ready.package)?, release, key)? == ""
     if not current_native:
         return Ok(false)
     graph = directory.joinpath(f"{artifact_stem(ready.package)}.incngraph")
