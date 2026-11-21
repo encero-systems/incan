@@ -121,7 +121,10 @@ pub(super) fn project_references(
                 ]);
                 identity
             }
-            None => positions.identity(canonical)?,
+            None => positions.read_identity(
+                canonical,
+                canonical.kind == SemanticSourceTargetKind::Field && local.rust.field_values.contains_key(span),
+            )?,
         };
         fields.push(vec![
             "reference".into(),
@@ -235,6 +238,104 @@ pub(super) fn project_calls(
     Ok(())
 }
 
+/// Select complete supported expression maps. Their native field names are schema selectors, not memory offsets.
+pub(super) fn project_expressions(
+    positions: &Positions,
+    local: &BodyLocal,
+    fields: &mut Fields,
+) -> Result<(), NodeBindingError> {
+    let expressions = &local.expressions;
+    for (selector, values) in [
+        ("expr", &expressions.expr_types),
+        ("body-expr", &expressions.body_ir_expr_types),
+        ("assignment", &expressions.assignment_binding_types),
+        ("destination", &expressions.value_destination_types),
+    ] {
+        for (span, ty) in values {
+            let mut row = vec!["type".into(), positions.nodes.anchor(*span)?.path, selector.into()];
+            type_fields(ty, &mut row)?;
+            fields.push(row);
+        }
+    }
+    for (binding, ty) in &expressions.body_ir_binding_types {
+        let mut row = vec![
+            "binding-type".into(),
+            positions.nodes.anchor(span_of(binding))?.path,
+            "body".into(),
+            positions.identity(binding)?,
+        ];
+        type_fields(ty, &mut row)?;
+        fields.push(row);
+    }
+    for (binding, requirement) in &expressions.body_ir_parameter_requirements {
+        if binding.kind != incan_semantics_core::SemanticSourceTargetKind::Parameter {
+            return Err(NodeBindingError::WrongOwner);
+        }
+        let mut row = vec![
+            "binding-type".into(),
+            positions.nodes.anchor(span_of(binding))?.path,
+            "parameter-requirement".into(),
+            positions.identity(binding)?,
+        ];
+        match requirement {
+            Some(ty) => {
+                row.push("some".into());
+                type_fields(ty, &mut row)?;
+            }
+            None => row.push("none".into()),
+        }
+        fields.push(row);
+    }
+    for (span, kind) in &expressions.ident_kinds {
+        let tag = match kind {
+            crate::typechecker::type_info::IdentKind::Value => "value",
+            crate::typechecker::type_info::IdentKind::Static => "static",
+            crate::typechecker::type_info::IdentKind::TypeName => "type-name",
+            crate::typechecker::type_info::IdentKind::Variant => "variant",
+            crate::typechecker::type_info::IdentKind::Module => "module",
+            crate::typechecker::type_info::IdentKind::RustImport => "rust-import",
+            crate::typechecker::type_info::IdentKind::RustValue => "rust-value",
+            crate::typechecker::type_info::IdentKind::Trait => "trait",
+        };
+        fields.push(vec![
+            "identifier".into(),
+            positions.nodes.anchor(*span)?.path,
+            "kind".into(),
+            tag.into(),
+        ]);
+    }
+    for (span, target) in &expressions.source_targets {
+        let mut row = vec![
+            "target".into(),
+            positions.nodes.anchor(*span)?.path,
+            "source".into(),
+            target.name.clone(),
+            target.kind.clone(),
+        ];
+        row.extend(target.module_path.iter().cloned());
+        fields.push(row);
+    }
+    for (span, identities) in &expressions.expression_type_identities {
+        for (path, identity) in identities {
+            fields.push(vec![
+                "type-identity".into(),
+                positions.nodes.anchor(*span)?.path,
+                type_identity_path(path),
+                positions.type_identity(identity)?,
+            ]);
+        }
+    }
+    Ok(())
+}
+
+/// Encode one nested type-component path as a canonical field selector; `root` names the expression type itself.
+fn type_identity_path(path: &[usize]) -> String {
+    if path.is_empty() {
+        return "root".into();
+    }
+    path.iter().map(usize::to_string).collect::<Vec<_>>().join(".")
+}
+
 /// Every unrepresented family is explicitly refused before a canonical value can escape.
 pub(super) fn validate(view: &CheckedBodyView) -> Result<(), NodeBindingError> {
     if !view.effect_reads.is_empty()
@@ -270,7 +371,7 @@ pub(super) fn project_signature(
 ) -> Result<(), NodeBindingError> {
     let binding = checker
         .declaration_view()
-        .function(owner)
+        .callable(owner)
         .ok_or(NodeBindingError::MissingOwner)?;
     let mut row = vec![
         "signature".into(),
@@ -281,27 +382,20 @@ pub(super) fn project_signature(
     parameter_fields(&binding.params, &mut row)?;
     type_fields(&binding.return_type, &mut row)?;
     fields.push(row);
-    let declaration = program
-        .declarations
-        .iter()
-        .find(|declaration| declaration.span == owner)
-        .ok_or(NodeBindingError::MissingOwner)?;
-    if let crate::ast::Declaration::Function(function) = &declaration.node {
-        for parameter in &function.params {
-            if let Some(default) = &parameter.node.default {
-                let selected = checker
-                    .checked_declaration(owner)
-                    .ok_or(NodeBindingError::MissingOwner)?;
-                if !selected.expressions().expr_types.contains_key(&default.span) {
-                    return Err(NodeBindingError::Unsupported("default writer"));
-                }
-                fields.push(vec![
-                    "default".into(),
-                    positions.nodes.anchor(default.span)?.path,
-                    parameter.node.name.clone(),
-                    positions.nodes.owner().render_compact(),
-                ]);
+    for parameter in callable_params(program, owner)? {
+        if let Some(default) = &parameter.node.default {
+            let selected = checker
+                .checked_declaration(owner)
+                .ok_or(NodeBindingError::MissingOwner)?;
+            if !selected.expressions().expr_types.contains_key(&default.span) {
+                return Err(NodeBindingError::Unsupported("default writer"));
             }
+            fields.push(vec![
+                "default".into(),
+                positions.nodes.anchor(default.span)?.path,
+                parameter.node.name.clone(),
+                positions.nodes.owner().render_compact(),
+            ]);
         }
     }
     Ok(())

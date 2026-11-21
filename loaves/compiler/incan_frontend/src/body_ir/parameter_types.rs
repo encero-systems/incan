@@ -384,11 +384,16 @@ pub(super) fn retained_type_identities(
             identities.entry(name).or_insert(identity);
         }
     }
+    // Structural Rust storage includes the actual arguments selected for a native owner, including omitted
+    // arguments the accepting checker completed from its ABI. Keep those identities even when no source spelling
+    // named that argument on its own.
+    let mut native_types = std::collections::BTreeMap::new();
     for storage in facts.rust.storage_types.values() {
-        if let IncanType::Named(name) = storage
-            && let Some(identity) = bir::rust_item_identity(name)
-        {
-            identities.entry(name.clone()).or_insert(identity);
+        bir::record_held_rust_items(storage, &mut native_types);
+    }
+    for name in native_types.into_keys() {
+        if let Some(identity) = bir::rust_item_identity(&name) {
+            identities.entry(name).or_insert(identity);
         }
     }
     for call in facts.rust.checked_calls.values().chain(

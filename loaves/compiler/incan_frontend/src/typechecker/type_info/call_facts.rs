@@ -314,6 +314,15 @@ pub struct ResolvedMethodCall {
     pub method: String,
     /// How the backend should emit this method call.
     pub dispatch: ResolvedMethodDispatch,
+    /// Declarations actually enumerated before argument and result matching at this call site.
+    pub(crate) lookup: Option<std::sync::Arc<MethodLookup>>,
+}
+
+/// Receiver-scoped membership consulted by a successful source overload selection.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct MethodLookup {
+    pub receiver: CanonicalSymbolId,
+    pub candidates: Vec<CanonicalSymbolId>,
 }
 
 /// Semantic dispatch target for a resolved method call.

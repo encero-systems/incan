@@ -190,6 +190,11 @@ impl TypeChecker {
                 let dispatch = self.method_dispatch_substituting_call_site_self(dispatch, receiver_ty);
                 self.type_info
                     .record_resolved_method_call(call_site_span, method, dispatch);
+                if let Some(lookup) = self.method_lookup(receiver_ty, candidates)
+                    && let Some(call) = self.type_info.calls.resolved_method_calls.get_mut(&call_site_span)
+                {
+                    call.lookup = Some(std::sync::Arc::new(lookup));
+                }
                 let (params, _) = self.method_types_substituting_call_site_self(&candidate.info, receiver_ty);
                 self.type_info
                     .record_call_site_callable_params_for_dispatch(call_site_span, &params);
@@ -209,6 +214,24 @@ impl TypeChecker {
         self.errors
             .push(errors::ambiguous_trait_method_call(method, call_site_span));
         Some(ResolvedType::Unknown)
+    }
+
+    /// Preserve source declaration identities from the actual candidate list, before match scoring discarded siblings.
+    fn method_lookup(
+        &self,
+        receiver: &ResolvedType,
+        candidates: &[MethodCandidate],
+    ) -> Option<crate::typechecker::type_info::MethodLookup> {
+        let name = match receiver {
+            ResolvedType::Named(name) | ResolvedType::Generic(name, _) => name,
+            _ => return None,
+        };
+        let receiver = self.symbols.module_type_identity(name)?.clone();
+        let candidates = candidates
+            .iter()
+            .map(|value| value.info.identity.clone())
+            .collect::<Option<Vec<_>>>()?;
+        Some(crate::typechecker::type_info::MethodLookup { receiver, candidates })
     }
 
     /// Authenticate a builtin receiver or the exact standard trait declaration its registered interface names. A

@@ -273,13 +273,13 @@ impl TypeChecker {
             CallArg::Positional(end.as_ref().clone()),
         ];
         let fields = ["start".to_owned(), "end".to_owned()];
-        self.retain_rust_construction(path, info, &arguments, &fields, expression.span)
+        self.retain_rust_construction(path, info, &arguments, &fields, &[], expression.span)
             .is_some()
     }
 
     /// Retain one canonical Copy layout across modules. Readable owners keep their complete field layout; owners
     /// with no public fields remain opaque, so a by-value method grants no access to internal storage.
-    pub(in crate::typechecker::check_expr) fn retain_rust_copy_owner(&mut self, path: &str, info: &RustTypeInfo) {
+    pub(in crate::typechecker) fn retain_rust_copy_owner(&mut self, path: &str, info: &RustTypeInfo) {
         if info
             .fields
             .iter()
@@ -306,15 +306,26 @@ impl TypeChecker {
     /// storage for adapter validation; source reads and construction require their own metadata authority.
     pub(in crate::typechecker::check_expr) fn retain_rust_layout(&mut self, path: &str, info: &RustTypeInfo) {
         let path = Self::rust_generic_base_and_args(path).map_or(path, |(base, _)| base);
-        // A layout already retained for this owner, with the same field count and type parameters, is the same one.
-        if self.type_info.rust.checked_layouts.get(path).is_some_and(|layout| {
+        let existing = self.type_info.rust.checked_layouts.get(path);
+        if let Some(layout) = self.rust_layout_from_metadata(path, info, existing) {
+            self.type_info.rust.checked_layouts.insert(path.to_owned(), layout);
+        }
+    }
+
+    /// Build a shared native layout from admitted metadata when the retained definition needs its fields.
+    pub(in crate::typechecker) fn rust_layout_from_metadata(
+        &self,
+        path: &str,
+        info: &RustTypeInfo,
+        existing: Option<&RustCheckedLayout>,
+    ) -> Option<RustCheckedLayout> {
+        // An opaque Copy layout can be upgraded when a later field access admits the complete definition.
+        if existing.is_some_and(|layout| {
             layout.fields.len() == info.fields.len() && layout.type_parameters == info.type_params
         }) {
-            return;
+            return None;
         }
-        let Some(owner) = body_ir::rust_item_identity(path) else {
-            return;
-        };
+        let owner = body_ir::rust_item_identity(path)?;
         let fields = info
             .fields
             .iter()
@@ -334,27 +345,25 @@ impl TypeChecker {
             .iter()
             .map(|field| Self::synthetic_member_identity(&owner, &field.name, SemanticSourceTargetKind::Field))
             .collect();
-        self.type_info.rust.checked_layouts.insert(
-            path.to_owned(),
-            RustCheckedLayout {
-                field_public: info
-                    .fields
-                    .iter()
-                    .map(|field| info.metadata_completeness.field_is_public(&field.name))
-                    .collect(),
-                is_copy: self.derive_support(
-                    &ResolvedType::RustPath(path.into()),
-                    incan_lang::lang::derives::DeriveId::Copy,
-                ) == crate::typechecker::derive_requirements::DeriveSupport::Supported,
-                type_parameters: info.type_params.clone(),
-                fields,
-                field_identities,
-            },
-        );
+        Some(RustCheckedLayout {
+            field_public: info
+                .fields
+                .iter()
+                .map(|field| info.metadata_completeness.field_is_public(&field.name))
+                .collect(),
+            is_copy: self.derive_support(
+                &ResolvedType::RustPath(path.into()),
+                incan_lang::lang::derives::DeriveId::Copy,
+            ) == crate::typechecker::derive_requirements::DeriveSupport::Supported,
+            type_parameters: info.type_params.clone(),
+            fields,
+            field_identities,
+        })
     }
 
     /// Close the native owner from the already checked field arguments and retain the ordinary constructor slots.
-    /// A missing/default-filled field or unresolved type binder grants no executable construction. A nongeneric
+    /// A field left out grants an executable construction only through the default its record publishes; its slot is
+    /// retained as defaulted. A field filled through `Default` or an unresolved type binder grants none. A nongeneric
     /// declaration retains its bare owner identity rather than acquiring an empty generic application.
     pub(super) fn retain_rust_construction(
         &mut self,
@@ -362,9 +371,10 @@ impl TypeChecker {
         info: &RustTypeInfo,
         args: &[CallArg],
         selected: &[String],
+        defaulted: &[usize],
         span: Span,
     ) -> Option<ResolvedType> {
-        if args.len() != info.fields.len() || selected.len() != args.len() {
+        if args.len() + defaulted.len() != info.fields.len() || selected.len() != args.len() {
             return None;
         }
         self.retain_rust_layout(path, info);
@@ -411,7 +421,7 @@ impl TypeChecker {
                 body_ir::rust_item_identity(base)?,
                 ConstructorFieldBinding {
                     argument_slots: slots,
-                    defaulted_slots: Vec::new(),
+                    defaulted_slots: defaulted.to_vec(),
                     field_count: info.fields.len(),
                 },
             ),
