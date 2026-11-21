@@ -93,6 +93,37 @@ fn published_module(
     Ok(manifest)
 }
 
+/// Check `source` as the root module of `package` against `loaves` and publish its root exports as that package's
+/// manifest, as a Loaf whose `lib.incn` re-exports names publishes them.
+fn published_root(package: &str, source: &str, loaves: LoafIndex) -> TestResult<LibraryManifest> {
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let path = vec!["lib".to_owned()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_package_identity(Some(package.into()));
+    checker.set_current_module_path(Some(path.clone()));
+    checker.set_loaves(Arc::new(loaves));
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("{package}: {errors:?}"))?;
+    let exports = collect_checked_public_exports(&program, &checker);
+    let mut api = CheckedApiMetadataPackage {
+        schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+        package: None,
+        modules: vec![collect_checked_api_metadata(&program, &checker, path.clone())],
+        public_namespaces: Vec::new(),
+    };
+    materialize_api_alias_projections(&mut api.modules);
+    materialize_checked_api_public_namespaces(&mut api)?;
+    let mut manifest = LibraryManifest::from_checked_exports(package, "0.1.0", &exports);
+    manifest
+        .contract_metadata
+        .identity_graph
+        .extend_checked_api_exports(package, &api, &[(path, exports)])?;
+    manifest.contract_metadata.api = Some(api);
+    Ok(manifest)
+}
+
 /// Write `manifest` where the index reads a dependency's compiled artifact and admit it under its own name.
 fn installed(root: &Path, manifest: &LibraryManifest) -> TestResult<LoafEntry> {
     let directory = root.join(&manifest.name);
@@ -105,8 +136,9 @@ fn installed(root: &Path, manifest: &LibraryManifest) -> TestResult<LoafEntry> {
 }
 
 /// `models.keys` publishes the Rust crate's items with `pub from rust::native import …` and ships their metadata;
-/// `facade.store` publishes them again with `pub from pub::models.keys import …`. Returns both installed Loaves.
-fn reexport_chain(root: &Path) -> TestResult<(LoafEntry, LoafEntry)> {
+/// `facade.store` publishes them again with `pub from pub::models.keys import …`, and `rootfacade` does so at its
+/// package root. Returns the installed Loaves.
+fn reexport_chain(root: &Path) -> TestResult<[LoafEntry; 3]> {
     let mut facts = LoafIndex::default();
     facts.add_rust_facts(
         &BTreeSet::new(),
@@ -130,17 +162,22 @@ fn reexport_chain(root: &Path) -> TestResult<(LoafEntry, LoafEntry)> {
         LoafIndex::new([models_entry.clone()])?,
         Vec::new(),
     )?;
-    Ok((models_entry, installed(root, &facade)?))
+    let root_facade = published_root(
+        "rootfacade",
+        "pub from pub::models.keys import RecordKey, read_key\n",
+        LoafIndex::new([models_entry.clone()])?,
+    )?;
+    Ok([installed(root, &facade)?, models_entry, installed(root, &root_facade)?])
 }
 
-/// Check a consumer of `facade` that reaches the Rust items through both re-exports, and return its Body IR.
+/// Check a consumer of the facades that reaches the Rust items through both re-exports, and return its Body IR.
 fn check_consumer(source: &str) -> TestResult<incan_semantics_core::body_ir::BodyIrModule> {
     let root = tempfile::tempdir()?;
-    let (models, facade) = reexport_chain(root.path())?;
+    let loaves = reexport_chain(root.path())?;
     let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
     let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
     let mut checker = TypeChecker::new();
-    checker.set_loaves(Arc::new(LoafIndex::new([facade, models])?));
+    checker.set_loaves(Arc::new(LoafIndex::new(loaves)?));
     checker.check_program(&program).map_err(|errors| {
         let messages = errors.iter().map(|error| error.message.as_str()).collect::<Vec<_>>();
         format!("{messages:?}")
@@ -182,6 +219,30 @@ fn rust_items_through_two_reexports_resolve_through_the_outer_namespace() -> Tes
 fn rust_items_through_two_reexports_lower_to_body_ir() -> TestResult {
     let module = check_consumer(
         "from pub::facade.store import RecordKey, read_key\nfrom pub::facade import store\n\ndef main() -> int:\n    first = RecordKey(value=5)\n    second = store.RecordKey(value=6)\n    return read_key(first) + store.read_key(second)\n",
+    )?;
+    for body in &module.bodies {
+        for local in &body.locals {
+            assert!(
+                !matches!(local.ty, IncanType::Unknown),
+                "{}: local {:?} {:?} at {:?} has no type",
+                body.name,
+                local.id,
+                local.name,
+                local.span
+            );
+        }
+        let rendered = format!("{body:?}");
+        assert!(!rendered.contains("Unsupported"), "{}: {rendered}", body.name);
+    }
+    Ok(())
+}
+
+/// The same Rust items re-exported again at a Loaf's package root import by name from the root and resolve through the
+/// package namespace, as the Rust items themselves, and lower to Body IR with every local typed.
+#[test]
+fn rust_items_through_a_package_root_reexport_lower_to_body_ir() -> TestResult {
+    let module = check_consumer(
+        "from pub::rootfacade import RecordKey, read_key\nimport pub::rootfacade as rf\n\ndef main() -> int:\n    first = RecordKey(value=5)\n    second = rf.RecordKey(value=6)\n    return read_key(first) + rf.read_key(second)\n",
     )?;
     for body in &module.bodies {
         for local in &body.locals {

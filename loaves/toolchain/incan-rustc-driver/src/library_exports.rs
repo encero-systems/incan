@@ -207,7 +207,7 @@ fn export_path(path: &str, span: Span) -> ast::Path {
 
 #[cfg(test)]
 mod tests {
-    use super::public_names;
+    use super::{LibraryFacade, public_names};
     use incan_frontend::library_manifest::{
         AliasExport, CanonicalIdentityExport, ExportIdentity, ExportIdentityKind, ExportIdentityProjection,
         LibraryManifest, TypeRef,
@@ -292,5 +292,18 @@ mod tests {
         assert_eq!(manifest.exports.aliases.len(), 4);
         assert_eq!(manifest.contract_metadata.identity_graph.exports.len(), 4);
         Ok(())
+    }
+
+    /// A root re-export of a Rust item names that item's own crate, which the library declares as it declares a crate
+    /// its bodies call; an item of this crate or of a Loaf names its own root the same way, and `crate::` names none.
+    #[test]
+    fn root_reexports_name_the_crate_they_need_declared() {
+        let facade = |path: &str| LibraryFacade {
+            name: "read_key".into(),
+            path: path.into(),
+        };
+        assert_eq!(facade("::native::read_key").native_root(), Some("native"));
+        assert_eq!(facade("::models::__incan_symbol").native_root(), Some("models"));
+        assert_eq!(facade("crate::read_key").native_root(), None);
     }
 }
