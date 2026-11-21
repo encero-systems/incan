@@ -123,6 +123,7 @@ mod pending;
 mod plan_modules;
 mod plan_product_inputs;
 mod primitive_traits;
+mod producer_trace;
 mod program_context;
 mod program_entries;
 mod program_refusals;

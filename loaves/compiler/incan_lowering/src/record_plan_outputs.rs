@@ -16,6 +16,7 @@ use incan_mir_plan_native::{
 use incan_semantics_core::semantic_digest::semantic_digest;
 
 use crate::plan_modules::{module_page, read_admitted};
+use crate::producer_trace::{enter_producer, finish_producer};
 use crate::record_positions::positioned_product;
 use crate::scalar_store::{event_positions, event_references, finalized_plan_product, report_scalar_refusal};
 
@@ -34,7 +35,9 @@ pub fn publish_plan_records(plan: &Plan, products: &str, report: &str) -> Result
     if keyed.len() != plan.functions.len() {
         return Err("native-interface has an unwitnessed plan-function member".into());
     }
+    let interface_attempt = enter_producer("compiler", "native-interface", report, "encode");
     let encoded = encode_record_plan_products(plan, keyed, references)?;
+    finish_producer(interface_attempt, "produced");
     let main = ordinary_entry(plan)?;
     let matches: Vec<&LoweringEvent> = events.iter().filter(|event| event.function == main).collect();
     let [selected] = matches.as_slice() else {
@@ -61,7 +64,9 @@ pub fn publish_plan_records(plan: &Plan, products: &str, report: &str) -> Result
         verify_entry_record(&value, &main, &inputs)?;
         value
     } else {
+        let entry_attempt = enter_producer("compiler", "plan-function", &selected.identity, "entry");
         let value = encode_entry_record(&main, &inputs)?;
+        finish_producer(entry_attempt, "produced");
         std::fs::write(&path, &value).map_err(|error| error.to_string())?;
         value
     };
@@ -185,6 +190,7 @@ fn keyed_plan_products(
             continue;
         }
         let frames = carried_frames(plan, &function_indexes, &event.product, carried)?;
+        let attempt = enter_producer("compiler", "plan-function-finalize", &event.identity, &event.key);
         let (last, positions, positioned) = finalized_plan_product(
             products,
             &event.key,
@@ -195,6 +201,7 @@ fn keyed_plan_products(
             &frames,
             &event.product,
         )?;
+        finish_producer(attempt, "produced");
         if last != event.product {
             event.product = last;
             write(

@@ -16,6 +16,7 @@ use incan_mir_plan_native::{
 };
 use incan_semantics_core::semantic_digest::semantic_digest;
 
+use crate::producer_trace::{enter_producer, finish_producer};
 use crate::record_positions::{
     index_positions, indexed_product, place_positions, positioned_product, relocate_product,
 };
@@ -432,6 +433,7 @@ pub fn finalized_plan_product(
             }
         }
     }
+    let retried = enter_producer("compiler", "plan-function-reencode", &function.name, key);
     let last = encoded_record(
         &record.inputs,
         function,
@@ -441,6 +443,7 @@ pub fn finalized_plan_product(
         frames,
         &record.requests,
     )?;
+    finish_producer(retried, "produced");
     if last == encoded {
         return Ok((encoded, whole, current));
     }

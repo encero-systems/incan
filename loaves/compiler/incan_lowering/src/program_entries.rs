@@ -26,6 +26,7 @@ use crate::lowering::Inventories;
 use crate::nominal_records::{product_nominal_table, retain_named_scalar, sync_carriers};
 use crate::plan_modules::{AdmittedPage, admitted_page, report_admitted};
 use crate::plan_product_inputs::{ordinary_product_inputs, producer_generation};
+use crate::producer_trace::{enter_producer, finish_producer};
 use crate::program_context::ProgramContext;
 use crate::scalar_store::{
     ProductEvent, admitted_function, admitted_payload, event_nodes, event_reference, report_scalar,
@@ -294,6 +295,12 @@ fn lower_ordinary_frame(
             return Ok((function, runtime, requests, frames));
         }
     }
+    let attempt = enter_producer(
+        "compiler",
+        "plan-function",
+        &owner.identity,
+        &format!("body:{}", body.name),
+    );
     let lowered = lower_function(
         context,
         program,
@@ -305,6 +312,7 @@ fn lower_ordinary_frame(
         &[],
         DecoratorFrame::Normal,
     )?;
+    finish_producer(attempt, "produced");
     let (function, runtime, pending, synthesized) = &lowered;
     let mut kept = false;
     match encode_requests(pending) {
