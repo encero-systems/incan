@@ -14,6 +14,7 @@ pub mod carriers;
 pub mod nominal;
 pub mod plan;
 pub mod positions;
+mod published_defaults;
 pub mod record_types;
 pub mod records;
 pub mod span_file;

@@ -10,7 +10,14 @@ use crate::types::{PlanType, source_span};
 #[test]
 fn published_defaults_match_the_constructors() {
     let span = source_span("defaults.incn", 1, 1);
-    let function = Function::new("f".to_owned(), Vec::new(), PlanType::Unit, Vec::new(), Vec::new(), span.clone());
+    let function = Function::new(
+        "f".to_owned(),
+        Vec::new(),
+        PlanType::Unit,
+        Vec::new(),
+        Vec::new(),
+        span.clone(),
+    );
     assert!(function.is_async == Function::__incan_default_is_async());
     assert!(function.future_callee == Function::__incan_default_future_callee());
     assert!(function.attributes == Function::__incan_default_attributes());
