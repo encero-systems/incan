@@ -4,10 +4,12 @@
 //! stays more than `FOOTPRINT_MARGIN` bytes above the least it has retained after a compile for `FOOTPRINT_STRIKES`
 //! compiling activations in a row; at once when its physical footprint after an activation exceeds
 //! `FOOTPRINT_CEILING`; when a request of another protocol or generation reaches it; when nothing can reach it any
-//! more; and when the process could not be restored after an activation. A contained compiler panic does not retire it.
+//! more; and when the process could not be restored after an activation. A contained compiler panic does not retire it,
+//! and neither does a rustc handoff whose footprint after the released heap is within those bounds.
 //!
-//! An editor check or a successful build that publishes compiler records keeps its worker for 15 minutes of idleness;
-//! the first successful retained-project activation establishes its memory baseline. A light activation (formatting, a
+//! An editor check or a successful build that publishes compiler records keeps its worker for 15 minutes of idleness,
+//! as does such a build that handed rustc to its caller after lowering; the first successful retained-project
+//! activation establishes its memory baseline. A light activation (formatting, a
 //! source listing, an import collection) is held only to the ceiling. What a worker retains is its live heap when the
 //! entry can read it, else its physical footprint, judged against the least it kept after a compile.
 
@@ -146,8 +148,10 @@ impl Lifecycle {
     }
 
     /// The reply to an ended activation and whether the worker retires after it: an unrestored process retires at
-    /// once; a panic is a compiler fault and the worker stays; a rustc handoff retires it; the footprint and live heap
-    /// decide the rest, an unknown footprint retiring nothing and a light activation held only to the ceiling.
+    /// once; a panic is a compiler fault and the worker stays; the footprint and live heap decide the rest, an unknown
+    /// footprint retiring nothing and a light activation held only to the ceiling. A rustc handoff is judged like any
+    /// compile: the entry released the checking and lowering heap before it settled, so what the worker still holds
+    /// decides whether it stays for the next edit.
     pub fn settle(&mut self, outcome: ActivationOutcome, footprint: i64, light: bool, live: i64) -> Settled {
         self.touch();
         let reply = match outcome {
@@ -157,12 +161,7 @@ impl Lifecycle {
                     retirement: Some(Retirement::Unsafe),
                 };
             }
-            ActivationOutcome::HandedOff(path) => {
-                return Settled {
-                    reply: Reply::HandedOff(path),
-                    retirement: Some(Retirement::Footprint),
-                };
-            }
+            ActivationOutcome::HandedOff(path) => Reply::HandedOff(path),
             ActivationOutcome::Exited(code) => Reply::Completed(code),
             ActivationOutcome::Unavailable(reason) => Reply::Refused(reason),
             ActivationOutcome::Panicked => Reply::CompilerFault(Fault::Panicked),
