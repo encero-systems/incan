@@ -9,12 +9,16 @@ impl TypeChecker {
         let type_params: Vec<String> = func.type_params.iter().map(|tp| tp.name.clone()).collect();
         let (type_param_bounds, type_param_bound_details) = self.collect_function_type_param_bounds(&func.type_params);
 
+        let explicit_borrows =
+            self.signature_keeps_explicit_borrows(&func.params, &func.return_type, func.result_source.as_ref());
         let params: Vec<_> = func
             .params
             .iter()
             .map(|p| {
                 let surface_type_name = self.alias_surface_type_name(&p.node.ty.node);
-                let ty = self.resolve_type_checked(&p.node.ty);
+                let annotation = self.parameter_annotation(p, explicit_borrows);
+                let ty = self.resolve_type_checked(&annotation);
+                let ty = self.canonical_borrow_type(ty, explicit_borrows);
                 let is_mut = self.def_param_shows_changes_to_caller(&p.node, &ty);
                 CallableParam::named_with_default(p.node.name.clone(), ty, p.node.kind, p.node.default.is_some())
                     .with_mut(is_mut)

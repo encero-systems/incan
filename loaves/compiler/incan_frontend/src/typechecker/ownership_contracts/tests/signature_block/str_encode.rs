@@ -5,7 +5,7 @@
 /// an explicit invocation. Fresh concatenation stays source-less; an existing string local is replayed as one Read.
 #[test]
 fn signature_block_admits_exact_str_encode_builtin_and_replays_receiver() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def fresh(seed: Borrowed[int], left: str, right: str) -> bytes:\n    return (left + \"\\n\" + right).encode()\ndef stored(seed: Borrowed[int], value: str) -> bytes:\n    saved = value\n    return saved.encode()\n";
+    let source = "def fresh(seed: Owned[int], left: str, right: str) -> bytes:\n    return (left + \"\\n\" + right).encode()\ndef stored(seed: Owned[int], value: str) -> bytes:\n    saved = value\n    return saved.encode()\n";
     let checker = checked(source)?;
     require_checked(&checker, "fresh")?;
     require_checked(&checker, "stored")?;
@@ -89,13 +89,13 @@ fn signature_block_admits_exact_str_encode_builtin_and_replays_receiver() -> Res
 fn signature_block_keeps_encode_arguments_and_source_methods_off_builtin_route()
 -> Result<(), Box<dyn std::error::Error>> {
     require_unavailable(
-        "def encode(seed: Borrowed[int], value: str) -> bytes:\n    return value.encode(\"utf-8\")\n",
+        "def encode(seed: Owned[int], value: str) -> bytes:\n    return value.encode(\"utf-8\")\n",
         "encode",
         "call has no selected explicit input access facts",
         "value.encode(\"utf-8\")",
     )?;
 
-    let source = "class Encoder:\n    pub marker: int\n    pub def encode(self) -> int:\n        return self.marker\ndef inspect(seed: Borrowed[int], encoder: Encoder) -> int:\n    return encoder.encode()\n";
+    let source = "class Encoder:\n    pub marker: int\n    pub def encode(self) -> int:\n        return self.marker\ndef inspect(seed: Owned[int], encoder: Encoder) -> int:\n    return encoder.encode()\n";
     let checker = checked(source)?;
     require_checked(&checker, "inspect")?;
     let (span, call) = checker
@@ -127,7 +127,7 @@ fn signature_block_keeps_encode_arguments_and_source_methods_off_builtin_route()
 /// including converting the receiver to `FrozenStr`, closes the builtin route before source construction.
 #[test]
 fn signature_block_str_encode_fact_tampering_refuses_builtin_route() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def encode(seed: Borrowed[int], value: str) -> bytes:\n    return value.encode()\n";
+    let source = "def encode(seed: Owned[int], value: str) -> bytes:\n    return value.encode()\n";
     let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
     let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
     let declaration = program
@@ -206,7 +206,7 @@ fn signature_block_str_encode_fact_tampering_refuses_builtin_route() -> Result<(
 /// dependency or changing its completion, operand or loan cannot survive graph analysis and current-source replay.
 #[test]
 fn signature_block_str_encode_operation_tampering_refuses_replay() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "model Holder:\n    value: str\ndef encode(holder: Borrowed[Holder]) -> bytes:\n    return holder.value.encode()\n";
+    let source = "model Holder:\n    value: str\ndef encode(holder: Borrowed[Holder], proof: Owned[int] = 0) -> bytes:\n    return holder.value.encode()\n";
     let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
     let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
     let declaration = program

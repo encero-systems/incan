@@ -180,6 +180,13 @@ impl TypeChecker {
         let previous_annotation_owner = self.enter_annotation_owner(&method.name, &method.type_params);
         let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(
             &method.params,
+            // A trait slot declares its borrows as explicit input obligations its implementations inherit.
+            matches!(self_ty, ResolvedType::SelfType)
+                || self.signature_keeps_explicit_borrows(
+                    &method.params,
+                    &method.return_type,
+                    method.result_source.as_ref(),
+                ),
             super::ownership_contracts::method_input_header(method),
         );
         let resolved_param_types =

@@ -437,21 +437,21 @@ enum Fault:
 enum Value:
     Text(str)
 
-def produce_value(seed: Borrowed[int]) -> Result[Value, Fault]:
+def produce_value(seed: Owned[int]) -> Result[Value, Fault]:
     return Ok(Value.Text("value"))
 
-def produce_rows(seed: Borrowed[int]) -> Result[list[bytes], str]:
+def produce_rows(seed: Owned[int]) -> Result[list[bytes], str]:
     return Ok([b"row"])
 
-def direct(seed: Borrowed[int]) -> Result[Value, Fault]:
+def direct(seed: Owned[int]) -> Result[Value, Fault]:
     value = produce_value(seed)?
     return Ok(value)
 
-def mapped(seed: Borrowed[int]) -> Result[list[bytes], str]:
+def mapped(seed: Owned[int]) -> Result[list[bytes], str]:
     rows = produce_rows(seed).map_err((fault) => fault)?
     return Ok(rows)
 
-def matched(seed: Borrowed[int]) -> int:
+def matched(seed: Owned[int]) -> int:
     match produce_rows(seed):
         Ok(rows) => return len(rows)
         Err(_) => return 0

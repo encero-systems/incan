@@ -339,15 +339,20 @@ mod tests {
         let direct = signatures("def take(value: Borrowed[int]) -> int:\n    return 1\n")?;
         let aliased = signatures("type Input = Borrowed[int]\ndef take(value: Input) -> int:\n    return 1\n")?;
         assert_eq!(direct.get("take"), aliased.get("take"));
+        let native = signatures("def take(value: &int) -> int:\n    return 1\n")?;
+        assert_eq!(direct.get("take"), native.get("take"));
         let parameter = incan_semantics_core::IncanCallableParam {
             name: Some("value".into()),
-            ty: incan_semantics_core::IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Int),
+            // RFC 164: a `Borrowed[int]` parameter is the native `&int` parameter, with no contract mode of its own.
+            ty: incan_semantics_core::IncanType::Ref(Box::new(incan_semantics_core::IncanType::Primitive(
+                incan_semantics_core::IncanPrimitiveType::Int,
+            ))),
             kind: incan_semantics_core::IncanCallableParamKind::Normal,
             has_default: false,
             is_partial_preset: false,
             is_mut: false,
             native_owned: false,
-            input_access: incan_semantics_core::IncanInputAccess::Shared,
+            input_access: incan_semantics_core::IncanInputAccess::Inferred,
         };
         let nominals = BTreeMap::new();
         let expected = super::SourceSignatureContext {

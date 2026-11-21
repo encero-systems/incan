@@ -196,11 +196,10 @@ impl CheckedInputBody<'_> {
         &self,
         function: CallableSource<'_>,
     ) -> Result<BTreeSet<CanonicalSymbolId>, &'static str> {
-        let contract = self.facts.declarations.ownership_contracts.get(self.canonical_owner());
         let mut parameters = BTreeSet::new();
         for (slot, parameter) in function.params().iter().enumerate() {
             if matches!(
-                crate::ownership_metadata::direct_input_access(contract, slot)?,
+                self.facts.body_input_access(self.canonical_owner(), slot)?,
                 IncanInputAccess::Shared | IncanInputAccess::Exclusive
             ) {
                 let identity = self
