@@ -22,6 +22,7 @@ use crate::compiler_record_adapters::{checked_type, checked_type_matches_native,
 use crate::nominal_records::retain_named_scalar;
 use crate::plan_product_inputs::{graph_owner, ordinary_product_inputs, producer_generation};
 use crate::scalar_store::{report_scalar, report_scalar_refusal, reported, retained_scalar};
+use crate::trace_channel::frame_product;
 use crate::type_parameters::{Instance, request_instance};
 
 /// Separates a closed instance's request identity from its generic body's checked witness in the product key.
@@ -144,6 +145,7 @@ pub fn reused_instance(
     if !settled {
         report_scalar(products.report.as_deref())?;
     }
+    frame_product("reused", "instance", &function.name);
     Ok(Some(InstanceProduct {
         function,
         runtime,
@@ -167,6 +169,7 @@ pub fn retain_instance_product(
     let Some((inputs, positions, _identity)) = instance_key(products, context, request, frame)? else {
         return report_scalar_refusal(report);
     };
+    frame_product("lowered", "instance", &function.name);
     let encoded = match encode_requests(pending) {
         Ok(encoded) => encoded,
         Err(_) => return report_scalar_refusal(report),
