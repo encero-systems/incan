@@ -1,6 +1,8 @@
 //! Native per-declaration products preserve the formatting frame of an unchanged program entry, and name Incan
 //! identities only, ported from the reference lowering's `test_scalar_products`.
 
+use std::collections::BTreeSet;
+
 use super::support::{assign_at, block, copy_at, empty_function, local, place_at, returning};
 use crate::body::{
     Callee, CalleeKind, Constant, Operand, OperandKind, Projection, RvalueKind, Terminator, TerminatorKind, Unwind,
@@ -8,7 +10,7 @@ use crate::body::{
 use crate::plan::{ExternalFunction, Function};
 use crate::positions::{PositionChange, WirePositions};
 use crate::records::function::{
-    decode_product, decode_scalar, encode_product, encode_scalar, transform_product_positions,
+    decode_product, decode_scalar, encode_product, encode_scalar, place_product_record, transform_product_positions,
 };
 use crate::types::{PlanType, SourceSpan, source_span};
 
@@ -123,7 +125,7 @@ fn contains(haystack: &[u8], needle: &str) -> bool {
 
 /// The stored product names Incan identities, never a native crate path or carrier name. A call into Rust's `std`,
 /// `core` or `alloc`, whose paths the toolchain pins, keeps the `rust::<path>` identity Incan source imports it by. A
-/// call into any other Rust crate is refused.
+/// call into any other Rust crate keeps `rust::<path>` too, and restores only in a unit that links that crate.
 #[test]
 fn native_product_records_expose_only_incan_identities() -> Result<(), String> {
     let span = source_span("interface_audit.incn", 1, 1);
@@ -193,9 +195,18 @@ fn native_product_records_expose_only_incan_identities() -> Result<(), String> {
         PlanType::String,
         &span,
     )];
+    let stored = encode_product(&function, &other_crate, &[], &[])?;
     assert!(
-        encode_product(&function, &other_crate, &[], &[]).is_err(),
-        "stored product admitted a Rust crate outside std, core and alloc"
+        contains(&stored, "rust::serde_json::to_string"),
+        "stored product does not name a linked crate's function by its path"
     );
+    let placed = place_product_record(&stored, &WirePositions::preserve())?;
+    assert!(
+        placed.restore(&[], &BTreeSet::new()).is_err(),
+        "stored product restored a function of a crate its unit does not link"
+    );
+    let linked: BTreeSet<String> = ["serde_json".to_owned()].into_iter().collect();
+    let (restored_other, restored_externals, _) = placed.restore(&[], &linked)?;
+    assert!(restored_other == function && restored_externals == other_crate);
     Ok(())
 }
