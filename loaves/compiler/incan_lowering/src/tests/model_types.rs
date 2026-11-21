@@ -219,6 +219,37 @@ fn stored_layout_identity_follows_nested_arguments_across_a_source_move() -> Res
     Ok(())
 }
 
+/// Retaining a type whose carriers a pass already holds appends nothing, for an option, a result and a union.
+///
+/// A carrier inventory pass remembers each type it has retained and skips it in later frames; that is exact only
+/// while a second retention of the same type is a no-op, which this test pins.
+#[test]
+fn a_retained_carrier_type_is_retained_again_without_a_new_carrier() -> Result<(), String> {
+    let owner = imported_identity("CanonicalSymbolId");
+    let carrier = carrier_key(&owner)?;
+    let mut module = BodyIrModule::declarations_only("app".into());
+    module.nominal_declarations = vec![nominal(owner.clone(), "CanonicalSymbolId", &[(&carrier, &owner)])];
+    let constructors = constructor_index(&module.nominal_declarations);
+    let int = IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Int);
+    let text = IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Str);
+    let types = [
+        generic("Option".into(), vec![IncanType::Named(carrier)]),
+        generic("Result".into(), vec![text.clone(), int.clone()]),
+        generic(incan_lang::lang::types::UNION_TYPE_NAME.into(), vec![int, text]),
+    ];
+    let mut intrinsics: Vec<EnumDeclaration> = Vec::new();
+    for ty in &types {
+        retain_carrier(&constructors, &module, &mut intrinsics, ty, "src/main.incn")?;
+    }
+    let first = intrinsics.len();
+    assert_eq!(first, 3, "each type should add one carrier");
+    for ty in types.iter().rev() {
+        retain_carrier(&constructors, &module, &mut intrinsics, ty, "src/main.incn")?;
+    }
+    assert_eq!(intrinsics.len(), first, "retaining a held type appended a carrier");
+    Ok(())
+}
+
 /// A changed variant payload changes the version of the same closed enum specialization.
 #[test]
 fn native_enum_layout_authenticates_its_variant_payload() -> Result<(), String> {
