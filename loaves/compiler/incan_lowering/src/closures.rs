@@ -2,7 +2,7 @@
 
 use incan_mir_plan_native::{
     Callee, CalleeKind, Function, ListLeaf, Local, Operand, OperandKind, Parameter, PlanType, RvalueKind, SourceSpan,
-    TerminatorKind, Unwind, assign as plan_assign, block as plan_block, place as plan_place,
+    TerminatorKind, Unwind, assign, block as plan_block, place as plan_place,
 };
 use incan_semantics_core::body_ir::Body;
 use incan_semantics_core::{IncanCallableParam, IncanCallableParamKind, IncanInputAccess, IncanType};
@@ -521,31 +521,78 @@ pub fn function_assignment(
     }
 }
 
+/// The operand a forwarder passes for one input: owned text, an owned model or enum, and the exclusive borrow a `mut`
+/// input receives move on; every other input is copied.
+fn forwarded_input(ty: &PlanType, local: i64, span: &SourceSpan) -> Operand {
+    let place = plan_place(local, span);
+    let kind = if *ty == PlanType::String || is_exclusive_borrow(ty) || owned_nominal_input(ty) {
+        OperandKind::Move(place)
+    } else {
+        OperandKind::Copy(place)
+    };
+    Operand {
+        kind,
+        span: span.clone(),
+    }
+}
+
 /// Forward a copied function pointer and its inputs through a closure's lifted body.
-pub fn pointer_forwarder(name: &str, signature: &[PlanType], span: &SourceSpan) -> Result<Function, String> {
+pub fn pointer_forwarder(name: &str, signature: &[PlanType], span: &SourceSpan) -> Function {
     let pointer = PlanType::FunctionPointer(signature.to_vec());
-    let (result, locals, parameters, operands) = forwarded_inputs("__incan_pointer", pointer, signature, span)?;
+    let result = signature[signature.len() - 1].clone();
+    let mut locals = vec![
+        Local {
+            ty: result.clone(),
+            span: span.clone(),
+        },
+        Local {
+            ty: pointer.clone(),
+            span: span.clone(),
+        },
+    ];
+    let mut parameters = vec![Parameter {
+        name: "__incan_pointer".into(),
+        ty: pointer,
+        span: span.clone(),
+    }];
+    let mut operands = Vec::with_capacity(signature.len() - 1);
+    for (index, ty) in signature[..signature.len() - 1].iter().enumerate() {
+        locals.push(Local {
+            ty: ty.clone(),
+            span: span.clone(),
+        });
+        parameters.push(Parameter {
+            name: format!("__incan_argument_{index}"),
+            ty: ty.clone(),
+            span: span.clone(),
+        });
+        operands.push(forwarded_input(ty, index as i64 + 2, span));
+    }
     let pointer_value = Operand {
         kind: OperandKind::Copy(plan_place(1, span)),
         span: span.clone(),
     };
-    let callee = Callee {
-        kind: CalleeKind::Value(pointer_value),
-        span: span.clone(),
-    };
-    let call = TerminatorKind::Call(callee, operands, plan_place(0, span), 1, Unwind::Continue);
-    let blocks = vec![
-        plan_block(Vec::new(), call, span),
-        plan_block(Vec::new(), TerminatorKind::Return, span),
-    ];
-    Ok(Function::new(
-        name.to_owned(),
+    let call = TerminatorKind::Call(
+        Callee {
+            kind: CalleeKind::Value(pointer_value),
+            span: span.clone(),
+        },
+        operands,
+        plan_place(0, span),
+        1,
+        Unwind::Continue,
+    );
+    Function::new(
+        name.to_string(),
         parameters,
         result,
         locals,
-        blocks,
+        vec![
+            plan_block(Vec::new(), call, span),
+            plan_block(Vec::new(), TerminatorKind::Return, span),
+        ],
         span.clone(),
-    ))
+    )
 }
 
 /// Forward a shared callable through a call-owned borrowing envelope with the same signature.
@@ -566,87 +613,72 @@ pub fn borrowed_callable_forwarder(
             CalleeKind::CallClosure(signature.to_vec()),
         )
     };
-    let (result, mut locals, parameters, operands) = forwarded_inputs("__incan_callable", source, signature, span)?;
+    let result = signature[signature.len() - 1].clone();
+    let mut locals = vec![
+        Local {
+            ty: result.clone(),
+            span: span.clone(),
+        },
+        Local {
+            ty: source.clone(),
+            span: span.clone(),
+        },
+    ];
+    let mut parameters = vec![Parameter {
+        name: "__incan_callable".into(),
+        ty: source,
+        span: span.clone(),
+    }];
+    let mut operands = Vec::with_capacity(signature.len() - 1);
+    for (index, ty) in signature[..signature.len() - 1].iter().enumerate() {
+        locals.push(Local {
+            ty: ty.clone(),
+            span: span.clone(),
+        });
+        parameters.push(Parameter {
+            name: format!("__incan_argument_{index}"),
+            ty: ty.clone(),
+            span: span.clone(),
+        });
+        operands.push(forwarded_input(ty, index as i64 + 2, span));
+    }
     let inputs = closure_arguments(signature)?;
     let packed = locals.len() as i64;
     locals.push(Local {
         ty: PlanType::CallableArguments(inputs),
         span: span.clone(),
     });
-    let pack = plan_assign(plan_place(packed, span), RvalueKind::Tuple(operands), span);
+    let pack = assign(plan_place(packed, span), RvalueKind::Tuple(operands), span);
     let receiver = Operand {
         kind: OperandKind::Copy(plan_place(1, span)),
         span: span.clone(),
     };
-    let packed_inputs = Operand {
-        kind: OperandKind::Move(plan_place(packed, span)),
-        span: span.clone(),
-    };
-    let callee = Callee {
-        kind: callee,
-        span: span.clone(),
-    };
+    let arguments = vec![
+        receiver,
+        Operand {
+            kind: OperandKind::Move(plan_place(packed, span)),
+            span: span.clone(),
+        },
+    ];
     let call = TerminatorKind::Call(
-        callee,
-        vec![receiver, packed_inputs],
+        Callee {
+            kind: callee,
+            span: span.clone(),
+        },
+        arguments,
         plan_place(0, span),
         1,
         Unwind::Continue,
     );
-    let blocks = vec![
-        plan_block(vec![pack], call, span),
-        plan_block(Vec::new(), TerminatorKind::Return, span),
-    ];
     Ok(Function::new(
-        name.to_owned(),
+        name.to_string(),
         parameters,
         result,
         locals,
-        blocks,
+        vec![
+            plan_block(vec![pack], call, span),
+            plan_block(Vec::new(), TerminatorKind::Return, span),
+        ],
         span.clone(),
     ))
-}
-
-/// The result, frame locals, parameters and forwarded input operands of a forwarder whose first parameter holds the
-/// callable: owned text, an owned model or enum, and the exclusive borrow a `mut` input receives move on; every other
-/// input is copied.
-fn forwarded_inputs(
-    held_name: &str,
-    held: PlanType,
-    signature: &[PlanType],
-    span: &SourceSpan,
-) -> Result<(PlanType, Vec<Local>, Vec<Parameter>, Vec<Operand>), String> {
-    let Some((result, inputs)) = signature.split_last() else {
-        return Err("invalid Body IR callable signature without return type".into());
-    };
-    let local = |ty: &PlanType| Local {
-        ty: ty.clone(),
-        span: span.clone(),
-    };
-    let mut locals = vec![local(result), local(&held)];
-    let mut parameters = vec![Parameter {
-        name: held_name.to_owned(),
-        ty: held,
-        span: span.clone(),
-    }];
-    let mut operands = Vec::with_capacity(inputs.len());
-    for (index, ty) in inputs.iter().enumerate() {
-        locals.push(local(ty));
-        parameters.push(Parameter {
-            name: format!("__incan_argument_{index}"),
-            ty: ty.clone(),
-            span: span.clone(),
-        });
-        let place = plan_place(index as i64 + 2, span);
-        let kind = if *ty == PlanType::String || is_exclusive_borrow(ty) || owned_nominal_input(ty) {
-            OperandKind::Move(place)
-        } else {
-            OperandKind::Copy(place)
-        };
-        operands.push(Operand {
-            kind,
-            span: span.clone(),
-        });
-    }
-    Ok((result.clone(), locals, parameters, operands))
 }

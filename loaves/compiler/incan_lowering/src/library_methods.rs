@@ -294,29 +294,6 @@ fn library_receiver_arguments(builder: &Builder, receiver: &Place, names: &[Stri
     Err("the standard library method owner type arguments are unsupported".into())
 }
 
-/// Borrow a list or dictionary element as the stdlib method's receiver: exclusive in place, or shared over one
-/// materialized copy of the nominal element.
-fn library_element_receiver(
-    builder: &mut Builder,
-    declared: &IncanType,
-    source: &SourcePlace,
-    span: &SourceSpan,
-) -> Result<Place, String> {
-    match declared {
-        IncanType::RefMut(_) => mutable_element_reference(builder, source, span),
-        IncanType::Ref(_) => {
-            let copied = materialized_receiver(builder, source, span)?;
-            let PlanType::Model(owner, name) = place_type(&builder.locals, &copied) else {
-                return Err("the standard library element receiver requires a nominal layout".into());
-            };
-            let reference = temporary(builder, PlanType::ModelRef(owner, name), span);
-            builder.emit(plan_assign(reference.clone(), RvalueKind::Borrow(copied), span));
-            Ok(reference)
-        }
-        _ => Err("the standard library method cannot consume this element receiver".into()),
-    }
-}
-
 /// Borrow the receiver place as the stdlib method declares it, shared or exclusive, never moving its owner.
 fn library_receiver(
     module: &BodyIrModule,
@@ -332,7 +309,7 @@ fn library_receiver(
         return Err("unsupported Body IR stdlib method nonplace receiver".into());
     };
     if is_element_place(builder, &read.place)? {
-        return library_element_receiver(builder, declared, &read.place, span);
+        return element_library_receiver(builder, declared, &read.place, span);
     }
     let _ = module;
     let mut receiver = model_place(
@@ -417,4 +394,26 @@ pub fn lower_standard_slot(
         return Ok(true);
     }
     lower_callable_bound_call(builder, target, arguments, destination, span)
+}
+
+/// Borrow an indexed receiver as the stdlib method declares it: exclusively in place, or shared through its copy.
+fn element_library_receiver(
+    builder: &mut Builder,
+    declared: &IncanType,
+    source: &SourcePlace,
+    span: &SourceSpan,
+) -> Result<Place, String> {
+    match declared {
+        IncanType::RefMut(_) => mutable_element_reference(builder, source, span),
+        IncanType::Ref(_) => {
+            let copied = materialized_receiver(builder, source, span)?;
+            let PlanType::Model(owner, name) = place_type(&builder.locals, &copied) else {
+                return Err("the standard library element receiver requires a nominal layout".into());
+            };
+            let reference = temporary(builder, PlanType::ModelRef(owner, name), span);
+            builder.emit(plan_assign(reference.clone(), RvalueKind::Borrow(copied), span));
+            Ok(reference)
+        }
+        _ => Err("the standard library method cannot consume this element receiver".into()),
+    }
 }

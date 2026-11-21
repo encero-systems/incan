@@ -11,7 +11,7 @@ use incan_semantics_core::body_ir::{
 };
 
 use crate::builtins::list_call;
-use crate::callable_calls::owned_callable_value;
+use crate::callable_values::owned_callable_value;
 use crate::checked_values::{partial_flags, scalar_place, target_read};
 use crate::closures::{
     callable_signature, closure_arguments, closure_capture_type, closure_constructor, function_assignment,

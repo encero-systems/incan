@@ -8,7 +8,7 @@ use incan_semantics_core::body_ir::{
 };
 
 use crate::builtin_calls::coerce_numeric_operand;
-use crate::callable_calls::callable_argument;
+use crate::callable_values::callable_argument;
 use crate::carrier_operands::boundary_operand;
 use crate::checked_values::{scalar_constant, scalar_place};
 use crate::closures::{function_assignment, packed_input, parameter_representation};
@@ -37,6 +37,7 @@ use crate::operand_borrows::{borrow_scalar_operand, borrow_slice_operand, borrow
 use crate::pending::untranslated;
 use crate::statements::is_nominal_type;
 use crate::text_plan::owned_literal;
+use crate::validation_errors::validation_error_reference;
 
 /// A deferred producer owns its value parameters; ordinary frames retain the shared collection ABI.
 ///
@@ -246,7 +247,13 @@ pub fn call_argument_operand(
         }
         PlanType::StringRef => return borrow_text_operand(builder, value, span),
         PlanType::StrRef => return borrow_str_operand(builder, value, span),
-        PlanType::ValidationErrorRef => return Err(untranslated("validation_errors::validation_error_reference")),
+        PlanType::ValidationErrorRef => {
+            let SourceOperand::Place(read) = value else {
+                return Err("unsupported Body IR validation error reference without a place".into());
+            };
+            let source = scalar_place(builder, &read.place, span)?;
+            return validation_error_reference(builder, source, span);
+        }
         PlanType::SliceRef(_) | PlanType::SliceMutRef(_) => {
             return borrow_slice_operand(
                 builder,

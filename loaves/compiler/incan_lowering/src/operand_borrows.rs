@@ -157,19 +157,15 @@ fn borrow_element_text(
         let owner = display_plan_operand(builder, operand, span)?;
         return Ok(borrow_string(builder, owner, span));
     }
-    match operand.kind {
-        OperandKind::Move(owner) => {
-            let ty = place_type(&builder.locals, &owner);
-            if ty != PlanType::String {
-                return Err(unsupported_text_operand(builder, &ty, span));
-            }
-            Ok(borrow_string(builder, owner, span))
+    if let OperandKind::Move(owner) = &operand.kind {
+        let ty = place_type(&builder.locals, owner);
+        if ty != PlanType::String {
+            return Err(unsupported_text_operand(builder, &ty, span));
         }
-        _ => {
-            let ty = value_type(builder, &operand)?;
-            Err(unsupported_text_operand(builder, &ty, span))
-        }
+        return Ok(borrow_string(builder, owner.clone(), span));
     }
+    let ty = value_type(builder, &operand)?;
+    Err(unsupported_text_operand(builder, &ty, span))
 }
 
 /// A shared reference to one owned string place.

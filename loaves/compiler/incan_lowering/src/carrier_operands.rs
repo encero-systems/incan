@@ -9,7 +9,8 @@ use incan_semantics_core::body_ir::{Operand as SourceOperand, OwnershipFact, Pat
 use incan_semantics_core::{IncanType, SemanticSourceTargetKind};
 
 use crate::builtin_calls::{clone_enum_reference, clone_model_reference, coerce_numeric_operand};
-use crate::callable_calls::{carrier_callable_operand, owned_callable_value};
+use crate::callable_calls::carrier_callable_operand;
+use crate::callable_values::owned_callable_value;
 use crate::checked_values::{reference_read_fact, scalar_place};
 use crate::closures::function_assignment;
 use crate::compiler_record_adapters::semantic_key_matches_native;

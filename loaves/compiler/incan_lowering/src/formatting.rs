@@ -21,11 +21,11 @@ use crate::model_values::{debug_model_operand, display_model_operand};
 use crate::numerics::{has_sized_numeric, numeric_carrier, numeric_name};
 use crate::option_tests::is_union_carrier;
 use crate::options::{clone_tuple_operand, format_carrier};
-use crate::pending::untranslated;
 use crate::text_plan::{
     clone_text, clone_text_reference, format_parts, owned_borrowed_text, owned_literal, owned_slice_text,
 };
 use crate::tuples::{display_tuple, is_tuple_type, tuple_debug_formatted};
+use crate::validation_errors::{display_validation_error, validation_error_reference};
 use crate::value_enum_methods::{select_value_enum_raw, value_enum_raw_type};
 
 /// Lower an f-string, retaining literal boundaries and the checked display or nominal Debug style.
@@ -90,7 +90,8 @@ fn debug_operand(builder: &mut Builder, value: &SourceOperand, span: &SourceSpan
                 PlanType::Model(..) => return debug_model_operand(builder, value, span),
                 PlanType::Enum(owner, _) => return debug_enum_operand(builder, place, owner, span),
                 PlanType::ValidationError | PlanType::ValidationErrorRef => {
-                    return Err(untranslated("validation_errors::validation_error_reference"));
+                    let reference = validation_error_reference(builder, place, span)?;
+                    return debug_plan_operand(builder, reference, span);
                 }
                 PlanType::StringRef | PlanType::StrRef => {
                     return debug_plan_operand(builder, read_place(place, false, span), span);
@@ -188,7 +189,7 @@ fn display_value_operand(
         }
         match &ty {
             PlanType::ValidationError | PlanType::ValidationErrorRef => {
-                return Err(untranslated("validation_errors::display_validation_error"));
+                return display_validation_error(builder, place, span);
             }
             PlanType::Enum(owner, _) => {
                 if *owner >= builder.enums().len() as i64
@@ -364,29 +365,6 @@ fn exclusive_text_display(builder: &mut Builder, operand: Operand, span: &Source
     Ok(owned_borrowed_text(builder, read_place(shared, false, span), span))
 }
 
-/// Borrow a source enum's checked Debug implementation; unions and text Options retain their existing rendering.
-fn debug_enum_operand(builder: &mut Builder, place: Place, owner: i64, span: &SourceSpan) -> Result<Place, String> {
-    let declared = usize::try_from(owner).ok().and_then(|index| builder.enums().get(index));
-    if let Some(declaration) = declared
-        && declaration.derives.iter().any(|derive| derive == "Debug")
-    {
-        let name = declaration.name.to_string();
-        return borrowed_enum_debug(builder, place, owner, &name, span);
-    }
-    if is_union_carrier(builder, owner) {
-        let copied = clone_nominal_operand(builder, place, span)?;
-        return debug_plan_operand(builder, copied, span);
-    }
-    if is_carrier_index(owner)
-        && let Some(declaration) = builder.intrinsics.get(carrier_position(owner) as usize)
-        && matches!(declaration.carrier, Carrier::Option | Carrier::Result)
-    {
-        let name = declaration.name.clone();
-        return borrowed_enum_debug(builder, place, owner, &name, span);
-    }
-    Err("unsupported Body IR nonmodel FormatStyle.Debug".into())
-}
-
 /// Invoke legacy Debug on an admitted carrier after its read ownership has been materialized.
 fn debug_plan_operand(builder: &mut Builder, operand: Operand, span: &SourceSpan) -> Result<Place, String> {
     native_format_text(builder, operand, true, span)
@@ -485,4 +463,28 @@ pub fn lower_string_assignment(
     ));
     builder.owned.push(destination.local);
     Ok(())
+}
+
+/// Borrow a source enum's checked Debug implementation; unions and text Options retain their existing rendering.
+fn debug_enum_operand(builder: &mut Builder, place: Place, owner: i64, span: &SourceSpan) -> Result<Place, String> {
+    if let Some(declaration) = usize::try_from(owner).ok().and_then(|slot| builder.enums().get(slot))
+        && declaration.derives.iter().any(|derive| derive == "Debug")
+    {
+        let name = declaration.name.clone();
+        return borrowed_enum_debug(builder, place, owner, &name, span);
+    }
+    if is_union_carrier(builder, owner) {
+        let copied = clone_nominal_operand(builder, place, span)?;
+        return debug_plan_operand(builder, copied, span);
+    }
+    if is_carrier_index(owner)
+        && let Some(declaration) = usize::try_from(carrier_position(owner))
+            .ok()
+            .and_then(|slot| builder.intrinsics.get(slot))
+        && matches!(declaration.carrier, Carrier::Option | Carrier::Result)
+    {
+        let name = declaration.name.clone();
+        return borrowed_enum_debug(builder, place, owner, &name, span);
+    }
+    Err("unsupported Body IR nonmodel FormatStyle.Debug".into())
 }

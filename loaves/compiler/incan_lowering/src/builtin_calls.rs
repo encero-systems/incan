@@ -46,6 +46,7 @@ use crate::strings::text_helper;
 use crate::text_ownership::drop_borrowed_text_temporaries;
 use crate::text_plan::{format_parts, owned_literal};
 use crate::tuple_iterators::{enumerated_element, zip_call, zip_shape};
+use crate::validation_errors::lower_validation_error;
 use incan_semantics_core::body_ir::Operand as SourceOperand;
 
 /// Keep exact f32 values finite at assignment and parameter boundaries, as legacy does.
@@ -508,9 +509,8 @@ pub fn lower_runtime_helper(
         HelperOp::NewtypeHookExtract => lower_newtype_hook_result(builder, arguments, destination, false, span),
         HelperOp::NewtypeFieldHookExtract => lower_newtype_hook_result(builder, arguments, destination, true, span),
         HelperOp::NewtypeSumAdd | HelperOp::NewtypeSumExtract => Err(untranslated("newtype_sums::newtype sums")),
-        HelperOp::ValidationErrorNew | HelperOp::ValidationErrorWithCode => {
-            Err(untranslated("validation_errors::lower_validation_error"))
-        }
+        HelperOp::ValidationErrorNew => lower_validation_error(builder, arguments, destination, false, span),
+        HelperOp::ValidationErrorWithCode => lower_validation_error(builder, arguments, destination, true, span),
         _ => Err(format!("unsupported Body IR Helper {helper:?}")),
     }
 }
