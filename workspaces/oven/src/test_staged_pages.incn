@@ -1,0 +1,48 @@
+"""Staged compiler inputs: a page the store verified by its digest is named by that digest beside it."""
+
+from scratch import scratch_directory
+from compiler_body_values import SelectedBodyPage
+from unit import UnitDescription
+from unit_compiler import DIGEST_COMPANION, write_selected_records
+
+const NAMED: str = "6e616d6564.incnmodule.positioned"
+const DIGEST: str = "abababababababababababababababababababababababababababababababab"
+
+
+def staged_unit() -> UnitDescription:
+    """A unit with the compiler context that records staging requires."""
+    mut unit = UnitDescription(
+        source="/checkout/project/src/main.incn",
+        project_root="/checkout/project",
+        source_root="/checkout/project/src",
+        package="app",
+        version="0.1.0",
+        profile="debug",
+        declared_features=[],
+        active_features=[],
+        loaves=[],
+        rust_crates=[],
+        contract_models=[],
+        c_headers=[],
+    )
+    unit.checked_context = Some("checked-context")
+    return unit
+
+
+pub def test_a_staged_page_with_a_known_digest_is_named_by_it() -> Result[None, str]:
+    """
+    A page selected with its verified digest is staged with a companion holding that digest, so a resident compiler
+    finds the content it already read without reading or hashing the page; a page without one has no companion.
+    """
+    scratch = scratch_directory()?
+    directory = scratch.path().joinpath("records")
+    pages = [
+        SelectedBodyPage(key=NAMED, value=b"module page", digest=DIGEST),
+        SelectedBodyPage(key="namespace-page", value=b"namespace page"),
+    ]
+    write_selected_records(directory, staged_unit(), pages)?
+    named = directory.joinpath(NAMED + DIGEST_COMPANION).read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert named == DIGEST
+    assert directory.joinpath(NAMED).read_bytes().map_err((error) => error.message())? == b"module page"
+    assert not directory.joinpath("namespace-page" + DIGEST_COMPANION).exists()
+    return Ok(None)
