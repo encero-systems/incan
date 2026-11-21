@@ -269,3 +269,22 @@ impl TypeChecker {
         true
     }
 }
+
+impl TypeChecker {
+    /// The parameter and result annotations a free function's checked signature resolves (RFC 164): each borrow as
+    /// the signature rule respells it and the result as its route does. Metadata that resolves written annotations
+    /// reads these, so it publishes a borrow the same way in both spellings.
+    pub(crate) fn canonical_function_annotations<'a>(
+        &self,
+        function: &'a FunctionDecl,
+    ) -> (Vec<Cow<'a, Spanned<Type>>>, Cow<'a, Spanned<Type>>) {
+        let route = self.result_route(&function.params, &function.return_type, function.result_source.as_ref());
+        let explicit = self.signature_keeps_explicit_borrows(&function.params, &route.result, route.source);
+        let parameters = function
+            .params
+            .iter()
+            .map(|parameter| self.parameter_annotation(parameter, explicit))
+            .collect();
+        (parameters, route.result)
+    }
+}

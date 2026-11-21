@@ -418,3 +418,90 @@ fn proof_bodies_call_borrow_only_callees() -> Result<(), Box<dyn std::error::Err
     assert!(checker.errors.is_empty(), "{:?}", checker.errors);
     Ok(())
 }
+
+const TRACE_STATE: &str = "class State:\n    pub active: str\n    pub count: int\n    pub items: list[int]\n\ndef write_end(mut state: {borrow_mut:State}, identifier: str) -> int:\n    state.count += 1\n    return len(identifier)\n\ndef check(mut state: {borrow_mut:State}, flag: bool) -> int:\n    state.count += 1\n    return state.count\n\ndef bump(mut state: {borrow_mut:State}) -> str:\n    state.count += 1\n    return state.active\n\ndef take_first(mut items: {borrow_mut:list[int]}) -> str:\n    return \"first\"\n\nclass Counter:\n    pub value: int\n\n    pub def add(mut self, step: int) -> None:\n        self.value += step\n\n";
+
+/// Rust makes the implicit reborrow of a `&mut` binding passed as an argument, or of a method's receiver, a two-phase
+/// borrow: it is reserved while the later arguments are evaluated and activated at the call. So an exclusive borrow
+/// (a parameter or a local) passed first and a shared read, clone or comparison of its field in a later argument
+/// check in both spellings, and so does a `mut self` receiver whose argument reads it. This is the release trace's
+/// `trace_write_end(state, state.active_phase)` shape. A body that needs the whole-body proof keeps its borrows at the
+/// argument, as the explicit route always did.
+#[test]
+fn two_phase_borrows_allow_later_reads_of_the_borrowed_place() -> Result<(), Box<dyn std::error::Error>> {
+    let template = format!(
+        "{TRACE_STATE}def phase(mut state: {{borrow_mut:State}}) -> int:\n    mut total = write_end(state, state.active)\n    total += write_end(state, state.active.clone())\n    total += check(state, state.count == 1)\n    return total\n\ndef held(mut owned: State) -> int:\n    mut view: {{borrow_mut:State}} = owned\n    return write_end(view, view.active)\n\ndef grow(mut counter: {{borrow_mut:Counter}}) -> None:\n    counter.add(counter.value)\n"
+    );
+    let checker = check_twins(&template)?;
+    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+    Ok(())
+}
+
+/// The reservation is a shared borrow: a later argument that passes the same place exclusively again, or borrows its
+/// field exclusively, is still refused with INCAN-T0126 in both spellings, as rustc refuses it. An owned place lent
+/// exclusively is an explicit borrow, not a reborrow, so a later read of it stays refused too.
+#[test]
+fn two_phase_borrows_still_refuse_later_exclusive_uses() -> Result<(), Box<dyn std::error::Error>> {
+    for body in [
+        "def again(mut state: {borrow_mut:State}) -> int:\n    return write_end(state, bump(state))\n",
+        "def field(mut state: {borrow_mut:State}) -> int:\n    return write_end(state, take_first(state.items))\n",
+        "def lent(start: int) -> int:\n    mut owned = State(active=\"a\", count=start, items=[])\n    return write_end(owned, owned.active)\n",
+    ] {
+        let checker = check_twins(&format!("{TRACE_STATE}{body}"))?;
+        assert!(
+            checker
+                .errors
+                .iter()
+                .any(|error| error.stable_code() == Some("INCAN-T0126")),
+            "{body}: {:?}",
+            checker.errors
+        );
+    }
+    Ok(())
+}
+
+/// A builtin collection method through a borrow reads, or for an exclusive borrow changes, the value the borrow
+/// names, in both spellings, as the explicit spelling did before the two spellings became one type: `append` through
+/// an exclusive borrow, `count`, `keys` and `len` through a shared one. Changing the value through a shared borrow is
+/// still refused, in both spellings.
+#[test]
+fn builtin_methods_reach_through_borrows() -> Result<(), Box<dyn std::error::Error>> {
+    let template = "def grow(mut items: {borrow_mut:list[int]}) -> None:\n    items.append(1)\n\ndef size(items: {borrow:list[int]}) -> int:\n    return items.count(1) + len(items)\n\ndef names(table: {borrow:dict[str, int]}) -> int:\n    return len(table.keys())\n\ndef main() -> int:\n    mut values = [1]\n    grow(values)\n    table = {\"a\": 1}\n    return size(values) + names(table)\n";
+    let checker = check_twins(template)?;
+    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+    let refused = check_twins("def bad(items: {borrow:list[int]}) -> None:\n    items.append(1)\n")?;
+    assert!(!refused.errors.is_empty(), "a shared borrow changed its list");
+    Ok(())
+}
+
+/// A package's API metadata, which a consumer in another package reads for a module's functions, publishes a borrow
+/// the same way in both spellings: a borrow-only function's borrowed parameter and result are the native reference, as
+/// its checked signature says. (A `Borrowed[str]` parameter published as an explicit contract mode made a consumer
+/// refuse an owned argument: "expected 'Borrowed[Str]', found 'Str'".)
+#[test]
+fn api_metadata_publishes_borrows_as_their_reference_twins() -> Result<(), Box<dyn std::error::Error>> {
+    let template = "pub model Write:\n    pub key: int\n\npub def append(destination: str, text: {borrow:str}) -> int:\n    return len(destination) + len(text)\n\npub def matches(mut write: {borrow_mut:Write}, key: int) -> bool:\n    write.key += 1\n    return write.key == key\n\npub def first(values: {borrow:list[int]}) -> {borrow:list[int]} from values:\n    return values\n";
+    let published = |source: &str| -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_package_identity(Some("provider".into()));
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let api = crate::api_metadata::collect_checked_api_metadata(&program, &checker, vec!["views".to_owned()]);
+        Ok(api
+            .declarations
+            .iter()
+            .map(|declaration| format!("{declaration:?}"))
+            .collect())
+    };
+    let native = published(&spelled(template, NATIVE))?;
+    let explicit = published(&spelled(template, EXPLICIT))?;
+    assert_eq!(explicit, native);
+    assert!(
+        native.iter().all(|declaration| !declaration.contains("\"Borrowed\"")),
+        "{native:?}"
+    );
+    Ok(())
+}
