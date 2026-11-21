@@ -60,9 +60,9 @@ pub(in crate::body_ir) fn collect_local_receiver_methods(
     methods
 }
 
-/// Retain checker-evaluated constants, checked literal integer arithmetic and static literal aggregates once. Computed
-/// or symbolic values remain absent. These
-/// Body IR facts never update legacy evaluation tables.
+/// Retain checker-evaluated constants, checked literal integer arithmetic, static literal aggregates and consts that
+/// name one scalar Rust constant once. Computed or symbolic values remain absent. These Body IR facts never update
+/// legacy evaluation tables.
 pub(in crate::body_ir) fn collect_constants(
     program: &ast::Program,
     type_info: &TypeCheckInfo,
@@ -88,16 +88,42 @@ pub(in crate::body_ir) fn collect_constants(
                 None if type_info.expr_type(item.value.span) == Some(&ResolvedType::Int) => {
                     bir::Constant::Int(literal_integer_constant(&item.value.node)?)
                 }
-                _ => checked_newtype_constant(&item.value, type_info, nominals).or_else(|| {
-                    frozen_literal_constant(
-                        &item.value.node,
-                        &semantic_type_from_resolved(type_info.expr_type(item.value.span)?),
-                    )
-                })?,
+                _ => checked_newtype_constant(&item.value, type_info, nominals)
+                    .or_else(|| rust_item_constant(&item.value, type_info))
+                    .or_else(|| {
+                        frozen_literal_constant(
+                            &item.value.node,
+                            &semantic_type_from_resolved(type_info.expr_type(item.value.span)?),
+                        )
+                    })?,
             };
             Some(bir::ConstantDeclaration { canonical, value })
         })
         .collect()
+}
+
+/// Retain a const whose whole initializer reads one Rust constant as that Rust item.
+///
+/// rustc evaluates the item, so the const has no storage and nothing to initialize: every read of it is the item, in
+/// this module and in a consumer. Only a numeric or boolean value qualifies, the carriers a plan constant copies; a
+/// Rust constant of any other type, and any expression over one, keeps its computed initializer. The checker refuses
+/// a parenthesized const initializer, so there is no wrapper to look through.
+pub(super) fn rust_item_constant(
+    expression: &ast::Spanned<ast::Expr>,
+    type_info: &TypeCheckInfo,
+) -> Option<bir::Constant> {
+    let path = type_info.rust.checked_constants.get(&expression.span)?;
+    let ty = semantic_type_from_resolved(type_info.expr_type(expression.span)?);
+    matches!(
+        ty,
+        IncanType::Primitive(
+            IncanPrimitiveType::Int
+                | IncanPrimitiveType::Float
+                | IncanPrimitiveType::Numeric(_)
+                | IncanPrimitiveType::Bool
+        )
+    )
+    .then(|| bir::Constant::RustItem(path.clone(), ty))
 }
 
 /// Bind the const checker's exact numeric value to its already retained source newtype layout.
@@ -237,7 +263,7 @@ pub(in crate::body_ir) fn collect_type_aliases(
             Some(bir::TypeAliasDeclaration {
                 canonical,
                 ty: parameter_types::checked_semantic_type(type_info.type_alias_target(&item.name)?, type_info),
-                named_type_identities: parameter_types::retained_type_identities(type_info),
+                named_type_identities: std::sync::Arc::clone(parameter_types::shared_retained_type_identities(type_info)),
             })
         })
         .collect()

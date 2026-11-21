@@ -1,0 +1,20 @@
+# behavior: indexing a Rust container that implements `Index`, a `VecDeque[int]` at a `usize`, reads the element its `Index` impl selects as a copy, leaving the container whole (#2977)
+# expect-stdout:
+#   7
+#   2
+#   9
+
+from rust::std::collections import VecDeque
+
+
+def selected(value: VecDeque[int], index: usize) -> int:
+    return value[index]
+
+
+def main() -> None:
+    mut queue: VecDeque[int] = VecDeque.new()
+    queue.push_back(7)
+    queue.push_back(9)
+    println(queue[0usize])
+    println(queue.len())
+    println(selected(queue, 1usize))

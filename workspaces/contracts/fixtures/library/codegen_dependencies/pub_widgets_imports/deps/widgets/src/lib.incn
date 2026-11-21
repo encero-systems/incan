@@ -1,8 +1,16 @@
+from rust::std::f64::consts import TAU as RUST_TAU
+
 pub model Widget:
     pub name: str
 
 
 pub const DEFAULT_NAME: str = "default"
+pub const FULL_TURN: float = RUST_TAU
+
+
+pub def half_turn() -> float:
+    """Read a const that is a Rust constant inside the Loaf that declares it."""
+    return FULL_TURN / 2.0
 
 
 pub def make_widget(name: str) -> Widget:

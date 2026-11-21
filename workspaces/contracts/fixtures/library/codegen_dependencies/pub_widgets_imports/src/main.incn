@@ -1,4 +1,4 @@
-# behavior: multiple public and private generic enum instances preserve scalar and nested payloads across a compiled producer, alias imports, and consumer-only instantiation (#2512); a dependency's generic declarations and exports reach its consumers: a library model stores a callback using its owner type parameters and separate instantiations preserve the callback's input and result types, a dependency publishes the generic supertrait implied by a bare generic subtrait adoption so consumers can use both contracts, and a dependency's model, function and const are usable through `from pub::… import`, with an item alias, and through `import pub::… as` module alias
+# behavior: multiple public and private generic enum instances preserve scalar and nested payloads across a compiled producer, alias imports, and consumer-only instantiation (#2512); a dependency's generic declarations and exports reach its consumers: a library model stores a callback using its owner type parameters and separate instantiations preserve the callback's input and result types, a dependency publishes the generic supertrait implied by a bare generic subtrait adoption so consumers can use both contracts, and a dependency's model, function, const and const that is a Rust constant are usable through `from pub::… import`, with an item alias, and through `import pub::… as` module alias
 # expect-stdout:
 #   8
 #   v:7
@@ -7,6 +7,8 @@
 #   ok
 #   default
 #   aliased
+#   6.283185307179586
+#   true
 #   1
 #   one
 #   2:two
@@ -27,7 +29,7 @@ from pub::widgets import (
     outcome_echo,
     private_summary,
 )
-from pub::widgets import Signal, empty_signal, Envelope, wrapped_outcome
+from pub::widgets import Signal, empty_signal, Envelope, wrapped_outcome, FULL_TURN, half_turn
 import pub::widgets as widgets_alias
 
 
@@ -66,6 +68,8 @@ def show_import_spellings() -> None:
     d: PublicWidget = make_widget(DEFAULT_NAME)
     println(d.name)
     println(widgets_alias.make_widget("aliased").name)
+    println(FULL_TURN)
+    println(widgets_alias.FULL_TURN == half_turn() * 2.0)
 
 
 def show_generic_outcomes() -> None:

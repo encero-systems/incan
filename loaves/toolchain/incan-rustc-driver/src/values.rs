@@ -13,7 +13,9 @@ use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_span::Span;
 
 /// Preserve ownership across checked plan aliases only when rustc resolves both to the identical native type.
-/// This is an identity move, with no cast, layout assumption, or conversion between distinct carriers.
+/// This is an identity move, with no cast, layout assumption, or conversion between distinct carriers. The one
+/// exception is an owner of a sized value aliased to the same owner of a trait object, such as `Box<Original>` to
+/// `Box<dyn Any>`: that alias is the pointer's unsizing coercion, which rustc must prove first (#2945).
 fn native_alias<'tcx>(
     tcx: TyCtxt<'tcx>,
     sources: &Sources<'_>,
@@ -25,6 +27,12 @@ fn native_alias<'tcx>(
     let source_type = native_type(tcx, source)?;
     let target_type = native_type(tcx, target)?;
     let destination_type = native_type(tcx, destination)?;
+    if source_type != target_type
+        && target_type == destination_type
+        && let Ok(unsized_owner) = trait_object_rvalue(tcx, sources, value, source, target, destination)
+    {
+        return Ok(unsized_owner);
+    }
     if source_type != target_type || target_type != destination_type {
         return Err(PlanError::Invalid {
             function: "native alias".into(),

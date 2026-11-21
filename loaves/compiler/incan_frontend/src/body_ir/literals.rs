@@ -487,6 +487,46 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         })
     }
 
+    /// Materialize a checked native index, `container[index]` on a Rust container, as its already selected call to
+    /// the container's `Index` impl (#2977). The index is evaluated before the borrowed container, as a built-in index
+    /// is; the call returns the element as a copy the container keeps.
+    pub(super) fn lower_checked_native_index(
+        &mut self,
+        base: &ast::Spanned<ast::Expr>,
+        index: &ast::Spanned<ast::Expr>,
+        call: &crate::typechecker::RustCheckedCall,
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let selected = self.lower_expr_to_operand(index, scope, out);
+        let selected = self.retain_evaluated_value_read(index, selected, scope, out);
+        let mut receiver = match self.lower_native_adjustment_value(base, &call.receiver_adjustments, scope, out) {
+            Ok(value) => value,
+            Err(reason) => return self.unsupported_operand(reason, scope, hir_span(span), out),
+        };
+        if let bir::Operand::Place(read) = &mut receiver {
+            self.retain_argument_borrow(read, false);
+        }
+        let arguments = vec![bir::ArgumentElement::One(receiver), bir::ArgumentElement::One(selected)];
+        self.emit_checked_rust_call(
+            call,
+            arguments,
+            bir::ArgumentBinding::resolved_positional(2),
+            span,
+            scope,
+            out,
+        )
+        .unwrap_or_else(|| {
+            self.unsupported_operand(
+                "native index without checked storage".to_string(),
+                scope,
+                hir_span(span),
+                out,
+            )
+        })
+    }
+
     /// Lower `expr?` (`ast::Expr::Try`) into a single [`bir::StatementKind::TryPropagate`] primitive rather than
     /// decomposing it into explicit `is_err`/`unwrap`-shaped calls -- see that variant's own docs for the full
     /// rationale (it mirrors the same #653-criterion-3 compiler-owned-primitive treatment as
