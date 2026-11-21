@@ -1097,4 +1097,80 @@ mod tests {
         assert_ne!(carriers[0], carriers[1]);
         Ok(())
     }
+
+    /// A name one module imports without `pub` is importable from it by another module of the project, as a cold
+    /// check of the sources accepts (Oven's `toolchain` takes `PayloadAdmission` from `unit_publication`, which
+    /// imports it from `payload_types`). A warm check of the importer against the published namespaces accepts it too.
+    #[test]
+    fn a_private_import_is_importable_from_the_published_namespace() -> Result<(), String> {
+        fn program(source: &str) -> Result<Program, String> {
+            let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+            crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))
+        }
+        fn configured(module: &str) -> TypeChecker {
+            let mut checker = TypeChecker::new();
+            checker.set_current_module_path(Some(vec![module.to_owned()]));
+            for name in ["payload_types", "unit_publication", "toolchain"] {
+                checker.register_dependency_module_path_segments(name, vec![name.to_owned()]);
+            }
+            checker
+        }
+        fn published(
+            name: &str,
+            program: &Program,
+            checker: &TypeChecker,
+        ) -> Result<CheckedNamespaceInterface, String> {
+            let retained = CheckedNamespaceInterface::from_checked(name, &[name.to_owned()], program, checker)?
+                .ok_or_else(|| format!("{name} published no namespace"))?;
+            CheckedNamespaceInterface::from_wire_value(retained.wire_value()?)
+        }
+
+        let payload_types = program("pub model PayloadAdmission:\n    pub identity: str\n")?;
+        let unit_publication = program(
+            "from payload_types import PayloadAdmission\n\npub def admitted(identity: str) -> PayloadAdmission:\n    return PayloadAdmission(identity=identity)\n",
+        )?;
+        let toolchain = program(
+            "from unit_publication import PayloadAdmission, admitted\n\npub model Toolchain:\n    pub payloads: list[PayloadAdmission]\n\npub def first() -> Toolchain:\n    return Toolchain(payloads=[admitted(\"unit\")])\n",
+        )?;
+        configured("toolchain")
+            .check_with_imports(
+                &toolchain,
+                &[
+                    ("unit_publication", &unit_publication),
+                    ("payload_types", &payload_types),
+                ],
+            )
+            .map_err(|errors| format!("cold: {errors:?}"))?;
+
+        let mut provider = configured("payload_types");
+        provider
+            .check_program(&payload_types)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let types = published("payload_types", &payload_types, &provider)?;
+        let mut provider = configured("unit_publication");
+        provider
+            .check_with_imports(&unit_publication, &[("payload_types", &payload_types)])
+            .map_err(|errors| format!("{errors:?}"))?;
+        let publication = published("unit_publication", &unit_publication, &provider)?;
+        assert!(
+            !publication
+                .installable()?
+                .exports
+                .iter()
+                .any(|export| matches!(export, ExportedSymbol::Reexported(name) if name == "PayloadAdmission")),
+            "a private import is no export of its module"
+        );
+
+        // The selected interfaces stand for the dependency closure in its order, with no provider source.
+        let mut consumer = configured("toolchain");
+        consumer.select_dependency_interfaces(vec![types.installable()?, publication.installable()?]);
+        let empty = program("")?;
+        consumer
+            .check_with_imports(&toolchain, &[("payload_types", &empty), ("unit_publication", &empty)])
+            .map_err(|errors| {
+                let messages = errors.iter().map(|error| error.message.as_str()).collect::<Vec<_>>();
+                format!("warm: {messages:?}")
+            })?;
+        Ok(())
+    }
 }
