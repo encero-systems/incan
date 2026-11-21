@@ -52,6 +52,7 @@ use crate::result_carriers::{
 };
 use crate::sequence_builtins::lower_power_operator;
 use crate::statements::{is_nominal_type, is_owned_callable};
+use crate::static_storage::write_static;
 use crate::tuple_iterators::initialize_zip_iterator;
 
 /// Assign a checked value to a local, routing strings, formatting and runtime-semantics operators first.
@@ -62,8 +63,8 @@ pub fn lower_assignment(
     value: &Rvalue,
     span: &SourceSpan,
 ) -> Result<(), String> {
-    if destination.global().is_some() {
-        return Err(untranslated("static_storage::write_static"));
+    if let Some(global) = destination.global() {
+        return write_static(module, builder, destination, global, value, span);
     }
     if !destination.projection.is_empty() {
         if is_element_place(builder, destination)? {
