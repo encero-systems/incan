@@ -33,7 +33,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         Some(Err(reason)) => self.unsupported_operand(reason, scope, hir_span(item.span), out),
                         None => self.lower_expr_to_operand(item, scope, out),
                     };
-                    let value = self.retain_evaluated_value_read(item, value, scope, out);
+                    let value = if self.aggregate_holds_borrow(span, 0) {
+                        value
+                    } else {
+                        self.retain_evaluated_value_read(item, value, scope, out)
+                    };
                     elements.push(bir::ArgumentElement::One(value));
                 }
                 ast::ListEntry::Spread(source) => {
@@ -70,6 +74,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         )
     }
 
+    /// Whether the aggregate at `span` holds a borrow at `position` (RFC 164): the element is the borrow itself, so a
+    /// borrowed scalar is not read through its reference into it.
+    fn aggregate_holds_borrow(&self, span: ast::Span, position: usize) -> bool {
+        let ty = self.resolve_ty(span);
+        let element = match &ty {
+            IncanType::Tuple(items) => items.get(position),
+            other => other.collection().and_then(|(_, arguments)| arguments.first()),
+        };
+        matches!(element, Some(IncanType::Ref(_) | IncanType::RefMut(_)))
+    }
+
     /// Lower one spread source into a [`bir::ArgumentElement::Spread`].
     ///
     /// The source is read through the ordinary ownership path, so a spliced source carries the same
@@ -102,9 +117,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let hir_span_value = hir_span(span);
         let pending_start = self.pending_argument_reads.len();
         let mut operands = Vec::with_capacity(items.len());
-        for item in items {
+        for (position, item) in items.iter().enumerate() {
             let value = self.lower_expr_to_operand(item, scope, out);
-            let value = self.retain_evaluated_value_read(item, value, scope, out);
+            let value = if self.aggregate_holds_borrow(span, position) {
+                value
+            } else {
+                self.retain_evaluated_value_read(item, value, scope, out)
+            };
             self.retain_pending_operand_read(&value);
             operands.push(value);
         }

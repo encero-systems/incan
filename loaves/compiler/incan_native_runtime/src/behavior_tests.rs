@@ -390,6 +390,16 @@ mod lists_and_collections {
     }
 
     #[test]
+    fn stored_exclusive_references_are_reborrowed_to_their_referent() {
+        let mut first = String::from("ada");
+        let mut second = String::from("grace");
+        let mut views: Vec<&mut String> = vec![&mut first, &mut second];
+        reborrow_list_mut(&mut views, -1).push('!');
+        *reborrow_list_mut(&mut views, 0) = String::from("Leiden");
+        assert_eq!((first.as_str(), second.as_str()), ("Leiden", "grace!"));
+    }
+
+    #[test]
     fn list_errors_keep_their_messages() {
         assert_eq!(
             panic_message(|| get_list(&vec![1, 2], 5)).as_deref(),

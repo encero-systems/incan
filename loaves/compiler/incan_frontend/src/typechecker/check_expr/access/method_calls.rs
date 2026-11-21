@@ -606,8 +606,10 @@ impl TypeChecker {
         }
         let (base_ty, receiver_surface) = self.check_method_receiver(&call);
         // RFC 164: a builtin list, dict or set method reaches through a borrow to the value it names, as the explicit
-        // spelling's value type did; changing that value still needs an exclusive borrow bound `mut`.
-        let reached = builtin_collection_through_borrow(&base_ty);
+        // spelling's value type did; changing that value still needs an exclusive borrow bound `mut`. Any other method
+        // keeps the borrow as its receiver, so a native method of the borrowed value still resolves on it.
+        let reached = builtin_collection_through_borrow(&base_ty)
+            .filter(|collection| Self::compiler_builtin_method_identity(collection, method).is_some());
 
         // If the receiver type is Unknown, be permissive and do not error on methods.
         if matches!(base_ty, ResolvedType::Unknown) {

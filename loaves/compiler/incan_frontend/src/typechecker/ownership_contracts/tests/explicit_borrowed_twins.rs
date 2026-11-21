@@ -505,3 +505,89 @@ fn api_metadata_publishes_borrows_as_their_reference_twins() -> Result<(), Box<d
     );
     Ok(())
 }
+
+/// Membership of a borrow in a list of borrows compares borrows, in both spellings (the iterator fixture's
+/// `value in values` with `values: list[&int]`).
+#[test]
+fn borrows_are_members_of_lists_of_borrows() -> Result<(), Box<dyn std::error::Error>> {
+    let template = "def has_reference(value: {borrow:int}) -> bool:\n    values: list[{borrow:int}] = [value]\n    return value in values\n";
+    let checker = check_twins(template)?;
+    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+    Ok(())
+}
+
+/// A method the builtin dictionary does not define keeps the borrow as its receiver, so it resolves as a native method
+/// of the borrowed value, in both spellings. No Rust metadata is loaded here, so the native method's own signature is
+/// what remains unadmitted, not the method on the builtin dictionary.
+#[test]
+fn native_methods_of_a_borrowed_collection_keep_the_borrow() -> Result<(), Box<dyn std::error::Error>> {
+    let template = "def empty(entries: {borrow_mut:dict[str, int]}) -> bool:\n    return entries.is_empty()\n";
+    let checker = check_twins(template)?;
+    assert_eq!(
+        messages(&checker),
+        vec!["Rust method `rust::std::collections::HashMap::is_empty` has no admitted callable signature"],
+        "{:?}",
+        checker.errors
+    );
+    Ok(())
+}
+
+/// A task bound by a runtime future capability may outlive the call that starts it, so an async call that lends a
+/// borrow is refused with `INCAN-T0123` in the checker, in both spellings; an owned argument is not.
+#[test]
+fn a_spawned_task_cannot_hold_a_borrow() -> Result<(), Box<dyn std::error::Error>> {
+    let template = "from rust::incan_std_primitives::task import RuntimeFuture\n\nmodel Buffer:\n    items: list[int]\n\ndef spawn[T, TaskFuture with RuntimeFuture[T]](task: TaskFuture) -> None:\n    pass\n\nasync def measure(buffer: {borrow:Buffer}) -> int:\n    return len(buffer.items)\n\nasync def measure_owned(buffer: Buffer) -> int:\n    return len(buffer.items)\n\nasync def start(buffer: {borrow:Buffer}) -> None:\n    spawn(measure(buffer))\n\nasync def start_owned(buffer: Buffer) -> None:\n    spawn(measure_owned(buffer))\n";
+    let checker = check_twins(template)?;
+    let codes: Vec<_> = checker.errors.iter().map(|error| error.stable_code()).collect();
+    assert_eq!(codes, vec![Some("INCAN-T0123")], "{:?}", checker.errors);
+    Ok(())
+}
+
+/// One type (RFC 164): an owned `Err` payload takes a clone of a borrowed value, so a borrowed generic argument whose
+/// type parameter has no `Clone` bound is refused in the checker, in both spellings; a borrowed value with a clone, a
+/// bounded type parameter's included, is admitted.
+#[test]
+fn a_borrowed_value_without_a_clone_is_not_an_owned_error_payload() -> Result<(), Box<dyn std::error::Error>> {
+    let template = "def borrowed_error[E](error: {borrow:E}) -> Result[None, E]:\n    return Err(error)\n\ndef borrowed_text(error: {borrow:str}) -> Result[None, str]:\n    return Err(error)\n\ndef bounded_error[E with Clone](error: {borrow:E}) -> Result[None, E]:\n    return Err(error)\n";
+    let checker = check_twins(template)?;
+    assert_eq!(checker.errors.len(), 1, "{:?}", checker.errors);
+    assert!(
+        checker.errors[0].message.starts_with("This use needs its own 'E'"),
+        "{:?}",
+        checker.errors
+    );
+    Ok(())
+}
+
+/// Library metadata keeps an exclusive borrow exclusive (RFC 164): a borrow-only function's `BorrowedMut[T]` parameter
+/// is published, in both spellings, as a form a consumer in another package reads back as the exclusive borrow, not
+/// as a shared one, so a call lends its argument exclusively instead of passing a copy.
+#[test]
+fn library_metadata_keeps_an_exclusive_borrow_exclusive() -> Result<(), Box<dyn std::error::Error>> {
+    use crate::library_manifest::{resolved_type_from_manifest_type_ref, type_ref_from_resolved};
+    let exclusive = ResolvedType::RefMut(Box::new(ResolvedType::Generic("List".into(), vec![ResolvedType::Int])));
+    let shared = ResolvedType::Ref(Box::new(ResolvedType::Str));
+    assert_eq!(
+        resolved_type_from_manifest_type_ref(&type_ref_from_resolved(&exclusive)),
+        exclusive
+    );
+    assert_eq!(
+        resolved_type_from_manifest_type_ref(&type_ref_from_resolved(&shared)),
+        shared
+    );
+    let template =
+        "pub def advance(mut cursor: {borrow_mut:list[int]}) -> bool:\n    cursor.append(1)\n    return true\n";
+    for spelling in [NATIVE, EXPLICIT] {
+        let tokens = crate::lexer::lex(&spelled(template, spelling)).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_package_identity(Some("provider".into()));
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let api = crate::api_metadata::collect_checked_api_metadata(&program, &checker, vec!["cursors".to_owned()]);
+        let published = format!("{:?}", api.declarations);
+        assert!(published.contains("Ref { inner: MutParam { inner:"), "{published}");
+    }
+    Ok(())
+}

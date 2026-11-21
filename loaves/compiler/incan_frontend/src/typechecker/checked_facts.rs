@@ -247,6 +247,45 @@ impl TypeChecker {
         true
     }
 
+    /// Refuse a borrowed value as the owned payload of an `Ok` or `Err` (RFC 164): the payload takes a clone, so a
+    /// value whose type has none is refused, and so is a type parameter whose bounds give it no `Clone`. Returns
+    /// whether the payload was refused.
+    pub(in crate::typechecker) fn refuse_borrowed_payload_without_clone(
+        &mut self,
+        value_ty: &ResolvedType,
+        destination: &ResolvedType,
+        span: Span,
+    ) -> bool {
+        if let ResolvedType::Ref(inner) = value_ty
+            && !matches!(destination, ResolvedType::Ref(_) | ResolvedType::RefMut(_))
+            && self.type_parameter_without_clone(inner)
+        {
+            self.errors.push(errors::borrowed_value_without_clone(
+                &value_ty.to_string(),
+                &inner.to_string(),
+                span,
+            ));
+            return true;
+        }
+        self.refuse_borrowed_value_without_clone(value_ty, destination, span)
+    }
+
+    /// Whether `ty` is a type parameter whose bounds give it no clone (RFC 164): a type parameter has one only where
+    /// it is bounded `with Clone`, directly or through a supertrait.
+    fn type_parameter_without_clone(&self, ty: &ResolvedType) -> bool {
+        let Some(name) = self.generic_placeholder_name(ty) else {
+            return false;
+        };
+        if self.derive_support(ty, DeriveId::Clone) == super::derive_requirements::DeriveSupport::Supported {
+            return false;
+        }
+        !self.innermost_type_param_bounds(name).is_some_and(|bounds| {
+            bounds
+                .iter()
+                .any(|bound| self.bound_reaches_trait(bound, incan_lang::lang::traits::TraitId::Clone))
+        })
+    }
+
     /// Refuse an owned use of a `Borrowed[T]` value when `T` has no clone: the use needs its own `T`, and the borrow
     /// cannot give one. Returns whether the use was refused.
     pub(in crate::typechecker) fn refuse_borrowed_value_without_clone(

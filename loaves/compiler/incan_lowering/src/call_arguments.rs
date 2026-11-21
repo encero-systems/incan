@@ -4,7 +4,7 @@ use incan_mir_plan_native::{Constant, Operand, Place, PlanType, RvalueKind, Sour
 use incan_semantics_core::IncanInputAccess;
 use incan_semantics_core::body_ir::{
     ArgumentBinding, ArgumentElement, Body, BoundArgument, CallableParam, Constant as SourceConstant,
-    Operand as SourceOperand, OwnershipFact, PlaceOperand,
+    Operand as SourceOperand, OwnershipFact, PlaceElem, PlaceOperand,
 };
 
 use crate::builtin_calls::coerce_numeric_operand;
@@ -407,7 +407,9 @@ fn explicit_argument_operand(
             if read.place.global().is_some() {
                 return Err("unsupported Body IR explicit argument from static storage".into());
             }
-            if is_element_place(builder, &read.place)? {
+            // RFC 164: what a whole borrow local borrows (`*x`) is lent through that borrow, not as an element.
+            let through_borrow = matches!(read.place.projection.as_slice(), [PlaceElem::Deref]);
+            if !through_borrow && is_element_place(builder, &read.place)? {
                 return explicit_indexed_argument(builder, read, ty, access, span);
             }
             let source = scalar_place(builder, &read.place, span)?;
