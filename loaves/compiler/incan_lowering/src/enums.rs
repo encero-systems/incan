@@ -134,3 +134,11 @@ fn value_enum_raw_values(
     }
     Ok((String::new(), Vec::new()))
 }
+
+/// Require an enum-plan scrutinee; scalar, Option and Result matches stay named refusals.
+pub fn enum_owner(ty: &PlanType) -> Result<i64, String> {
+    match ty {
+        PlanType::Enum(index, _) => Ok(*index),
+        _ => Err("unsupported Body IR Match outside source enums".into()),
+    }
+}

@@ -13,10 +13,11 @@ use incan_semantics_core::{
 
 use crate::async_::{async_entry, async_test_name, boxed_future_constructor, evaluator_name};
 use crate::classes::{body_module_identity, function_name, is_program_entry};
+use crate::decorator_caches::DecoratorFrame;
 use crate::frame_instances::{
     append_synthesized, external_index, function_names, merge_externals, merge_indexed, named_functions,
 };
-use crate::function_frames::{DecoratorFrame, lower_function};
+use crate::function_frames::lower_function;
 use crate::lowering::Inventories;
 use crate::native_type_identity::ConstructorIndex;
 use crate::pending::untranslated;

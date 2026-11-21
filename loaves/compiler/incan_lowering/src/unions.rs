@@ -4,15 +4,18 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use incan_mir_plan_native::{
-    Carrier, EnumDeclaration, EnumVariant, ListLeaf, PlanType, carrier_position, list_leaf_type, source_span,
+    Carrier, EnumDeclaration, EnumVariant, ListLeaf, Operand, Place, PlanType, Projection, RvalueKind, SourceSpan,
+    carrier_position, list_leaf_type, source_span,
 };
 use incan_semantics_core::IncanType;
 use incan_semantics_core::body_ir::{
     Body, BodyIrModule, EnumDeclaration as SourceEnumDeclaration, NativeUnionDeclaration, NominalDeclaration,
-    StaticInitializer,
+    Place as SourcePlace, PlaceElem, StaticInitializer,
 };
 
 use crate::compiler_record_adapters::{authored_plan_checked_type, semantic_key_matches_native};
+use crate::enums::enum_owner;
+use crate::frame::Builder;
 use crate::layout_types::native_source_type;
 use crate::native_type_identity::ConstructorIndex;
 use crate::nominal_frames::declaration_storage;
@@ -461,4 +464,112 @@ pub fn retained_union(unions: &[IncanType], owner: i64, intrinsics: &[EnumDeclar
         }
     }
     Err("invalid Body IR unretained union layout".into())
+}
+
+/// Find one exact normalized member; widening and unrepresented narrowing stay refused.
+pub fn union_slot(
+    unions: &[IncanType],
+    owner: i64,
+    member: &PlanType,
+    intrinsics: &[EnumDeclaration],
+) -> Result<i64, String> {
+    let slot = union_test_slot(unions, owner, member, intrinsics)?;
+    if slot < 0 {
+        return Err("unsupported Body IR union member conversion".into());
+    }
+    Ok(slot)
+}
+
+/// A primitive target absent from the union is always false; source enum tests remain refused.
+pub fn union_test_slot(
+    unions: &[IncanType],
+    owner: i64,
+    member: &PlanType,
+    intrinsics: &[EnumDeclaration],
+) -> Result<i64, String> {
+    retained_union(unions, owner, intrinsics)?;
+    let variants = &intrinsics[carrier_position(owner) as usize].variants;
+    for (slot, variant) in variants.iter().enumerate() {
+        if variant.fields.len() == 1 && variant.fields[0] == *member {
+            return Ok(slot as i64);
+        }
+        if let PlanType::FunctionPointer(signature) = member
+            && variant.fields.len() == 1
+            && variant.fields[0] == PlanType::Closure(signature.clone())
+        {
+            return Ok(slot as i64);
+        }
+    }
+    Ok(-1)
+}
+
+/// Borrow the frame to map a checker-selected union member; ordinary locals never copy declaration tables or frame
+/// locals just to decline this projection.
+pub fn union_projection(builder: &Builder, value: &SourcePlace, span: &SourceSpan) -> Result<Option<Place>, String> {
+    if value.projection.len() != 1 {
+        return Ok(None);
+    }
+    let Some(ty) = projected_member(&value.projection[0]) else {
+        return Ok(None);
+    };
+    let Some(local) = value.local_id() else {
+        return Err("unsupported Body IR global union narrowing".into());
+    };
+    let index = local.index() as i64 + 1 + builder.local_offset;
+    let owner = enum_owner(&builder.locals[index as usize].ty)?;
+    let member = native_source_type(
+        builder.constructors(),
+        builder.nominals(),
+        builder.enums(),
+        &builder.unions,
+        ty,
+        &builder.intrinsics,
+        "",
+    )?;
+    let slot = union_slot(&builder.unions, owner, &member, &builder.intrinsics)?;
+    let payload = builder.intrinsics[carrier_position(owner) as usize].variants[slot as usize].fields[0].clone();
+    Ok(Some(Place {
+        local: index,
+        projection: Projection::VariantField(slot, 0, payload),
+        span: span.clone(),
+    }))
+}
+
+/// Read the checker-selected payload type from one explicit union projection.
+fn projected_member(projection: &PlaceElem) -> Option<&IncanType> {
+    match projection {
+        PlaceElem::UnionMember { ty } => Some(ty),
+        _ => None,
+    }
+}
+
+/// Inject an exact checked Option payload or union member at the shared assignment, argument and return boundary.
+pub fn carrier_injection(
+    builder: &Builder,
+    operand: Operand,
+    source: &PlanType,
+    target: &PlanType,
+) -> Result<RvalueKind, String> {
+    let PlanType::Enum(owner, _) = target else {
+        return Ok(RvalueKind::Use(operand));
+    };
+    if *owner < builder.enums().len() as i64 || source == target {
+        return Ok(RvalueKind::Use(operand));
+    }
+    let index = carrier_position(*owner);
+    if index < 0 || index as usize >= builder.intrinsics.len() {
+        return Err("invalid Body IR union destination owner".into());
+    }
+    let declaration = &builder.intrinsics[index as usize];
+    if declaration.carrier == Carrier::Option {
+        if declaration.variants[1].fields.len() != 1 || declaration.variants[1].fields[0] != *source {
+            return Err("unsupported Body IR implicit Option payload type".into());
+        }
+        return Ok(RvalueKind::Enum(*owner, 1, vec![operand]));
+    }
+    if declaration.carrier != Carrier::Declared {
+        return Ok(RvalueKind::Use(operand));
+    }
+    let slot = union_slot(&builder.unions, *owner, source, &builder.intrinsics)?;
+    Ok(RvalueKind::Enum(*owner, slot, vec![operand]))
 }

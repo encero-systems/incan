@@ -1,12 +1,17 @@
 //! Source coroutines: their identities, captures, boxed futures and async entries.
 
-use incan_mir_plan_native::{CalleeKind, EnumDeclaration, ExternalFunction, Function, PlanType, SourceSpan};
+use incan_mir_plan_native::{
+    Callee, CalleeKind, EnumDeclaration, ExternalFunction, Function, Local, PlanType, SourceSpan, TerminatorKind,
+    Unwind, block as plan_block, place as plan_place,
+};
 use incan_semantics_core::body_ir::{Body, BodyIrModule};
 use incan_semantics_core::{IncanPrimitiveType, IncanType, SemanticSourceTargetKind};
 
 use crate::classes::{function_name, is_program_entry};
+use crate::layout_types::native_source_type;
 use crate::native_type_identity::ConstructorIndex;
 use crate::pending::untranslated;
+use crate::unions::collect_unions;
 
 /// Validate source coroutine identities and captures before native storage is selected by rustc.
 pub fn validate_futures(
@@ -74,4 +79,73 @@ pub fn async_entry(
 ) -> Result<(Function, Function, ExternalFunction), String> {
     let _ = (module, body, intrinsics, entry_name);
     Err(untranslated("async_::async_entry"))
+}
+
+/// Use the same retained output ABI for source and SDK futures; construction identity stays with the call.
+pub fn future_type(
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+    ty: &IncanType,
+    intrinsics: &[EnumDeclaration],
+) -> Result<Option<PlanType>, String> {
+    let IncanType::Generic { base, args } = ty else {
+        return Ok(None);
+    };
+    if base != "Awaitable" {
+        return Ok(None);
+    }
+    if args.len() != 1 {
+        return Err("unsupported Body IR async future output arity".into());
+    }
+    let unions = collect_unions(module);
+    let carrier = native_source_type(
+        constructors,
+        &module.nominal_declarations,
+        &module.enum_declarations,
+        &unions,
+        ty,
+        intrinsics,
+        "",
+    )?;
+    Ok(Some(carrier))
+}
+
+/// Identify owned pinned future storage independently of its retained output layout.
+pub fn is_future(ty: &PlanType) -> bool {
+    matches!(ty, PlanType::Future(_))
+}
+
+/// Run the checked integer main for its effects; its value is program metadata, never the process exit code.
+pub fn integer_entry(body: &Function, entry_name: String) -> Function {
+    let span = &body.span;
+    let call = TerminatorKind::Call(
+        Callee {
+            kind: CalleeKind::Planned(body.name.clone()),
+            span: span.clone(),
+        },
+        Vec::new(),
+        plan_place(1, span),
+        1,
+        Unwind::Continue,
+    );
+    Function::new(
+        entry_name,
+        Vec::new(),
+        PlanType::Unit,
+        vec![
+            Local {
+                ty: PlanType::Unit,
+                span: span.clone(),
+            },
+            Local {
+                ty: body.return_type.clone(),
+                span: span.clone(),
+            },
+        ],
+        vec![
+            plan_block(Vec::new(), call, span),
+            plan_block(Vec::new(), TerminatorKind::Return, span),
+        ],
+        span.clone(),
+    )
 }
