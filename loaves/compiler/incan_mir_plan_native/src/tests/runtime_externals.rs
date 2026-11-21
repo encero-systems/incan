@@ -7,8 +7,10 @@ use incan_semantics_core::{
     encode_incan_symbol_identity,
 };
 
-use super::support::{block, local, place_at, returning};
-use crate::body::{Callee, CalleeKind, Projection, Terminator, TerminatorKind, Unwind};
+use super::support::{assign_at, block, empty_function, local, place_at, returning};
+use crate::body::{
+    Callee, CalleeKind, Constant, Operand, OperandKind, Projection, RvalueKind, Terminator, TerminatorKind, Unwind,
+};
 use crate::plan::{ExternalFunction, Function};
 use crate::positions::WirePositions;
 use crate::records::function::{
@@ -154,6 +156,47 @@ fn a_restored_product_names_only_crates_its_unit_links() -> Result<(), String> {
     assert!(
         encode_runtime(&runtime).is_err(),
         "a runtime inventory kept a linked-crate identity"
+    );
+    Ok(())
+}
+
+/// A Rust constant, of Rust's own crates or of a Loaf's Rust facet, round-trips by the path its crate exports it at,
+/// and a product reading a Loaf's constant restores only in a unit that links that Loaf's crate.
+#[test]
+fn product_keeps_a_rust_constant() -> Result<(), String> {
+    let span = source_span("profiles.incn", 7, 5);
+    let constant = |path: &str| Operand {
+        kind: OperandKind::Literal(Constant::RustItem(path.to_owned(), PlanType::StaticText)),
+        span: span.clone(),
+    };
+    let mut reader = empty_function("profile", PlanType::StaticText, &span);
+    reader.blocks[0].statements = vec![
+        assign_at(
+            0,
+            Projection::Whole,
+            RvalueKind::Use(constant("std::env::consts::OS")),
+            &span,
+        ),
+        assign_at(
+            0,
+            Projection::Whole,
+            RvalueKind::Use(constant("internal_models_native::CHECKER_PROFILE")),
+            &span,
+        ),
+    ];
+    let product = encode_product(&reader, &[], &[], &[])?;
+    let (restored, _) = decode_product(&product, &[])?;
+    assert!(restored == reader, "a Rust constant did not survive its product");
+    let placed = place_product_record(&product, &WirePositions::preserve())?;
+    assert!(
+        placed.restore(&[], &BTreeSet::new()).is_err(),
+        "a product reading a Loaf's constant restored in a unit that does not link its crate"
+    );
+    let linked: BTreeSet<String> = ["internal_models_native".to_owned()].into_iter().collect();
+    let (linked_reader, _, _) = placed.restore(&[], &linked)?;
+    assert!(
+        linked_reader == reader,
+        "a product reading a linked crate's constant did not restore"
     );
     Ok(())
 }
