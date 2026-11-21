@@ -85,7 +85,67 @@ impl TypeChecker {
             span,
             BuiltinMethodId::Clone(incan_lang::lang::surface::clone_methods::CloneMethodId::Clone),
         );
+        self.record_selected_clone_input_call(span);
         Some(inner.as_ref().clone())
+    }
+
+    /// Clone a builtin value type whose own method table has no `clone` through the builtin Clone contract: text,
+    /// bool, bytes and their frozen forms, the unit value, tuples, dict, set, Result and the frozen collections. The
+    /// result is an independent value of the receiver's type (RFC 129's copy spelling). List and Option keep their
+    /// own table entries, and numbers clone through their native method.
+    pub(super) fn clone_builtin_value(
+        &mut self,
+        receiver: &ResolvedType,
+        method: &str,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        span: Span,
+    ) -> Option<ResolvedType> {
+        if method != trait_bounds::rust::CLONE_METHOD {
+            return None;
+        }
+        let builtin = match receiver {
+            ResolvedType::Str
+            | ResolvedType::Bool
+            | ResolvedType::Bytes
+            | ResolvedType::FrozenStr
+            | ResolvedType::FrozenBytes
+            | ResolvedType::Unit
+            | ResolvedType::Tuple(_)
+            | ResolvedType::FrozenList(_)
+            | ResolvedType::FrozenDict(_, _)
+            | ResolvedType::FrozenSet(_) => true,
+            ResolvedType::Generic(name, _) => matches!(
+                collection_type_id(name.as_str()),
+                Some(CollectionTypeId::Dict | CollectionTypeId::Set | CollectionTypeId::Result)
+            ),
+            _ => false,
+        };
+        if !builtin {
+            return None;
+        }
+        if !self.validate_rust_method_type_arg_arity(method, &[], type_args, span) {
+            return Some(ResolvedType::Unknown);
+        }
+        if !args.is_empty() {
+            self.errors.push(errors::builtin_arity("clone", 0, args.len(), span));
+            return Some(ResolvedType::Unknown);
+        }
+        if !self.is_clone_type(receiver) {
+            self.errors
+                .push(errors::value_clone_requires_clone(&receiver.to_string(), span));
+            return Some(ResolvedType::Unknown);
+        }
+        self.type_info.record_resolved_identity(
+            span,
+            Self::compiler_builtin_member_identity(core_traits::as_str(TraitId::Clone), method),
+        );
+        self.type_info.record_resolved_builtin_method_call(
+            span,
+            BuiltinMethodId::Clone(incan_lang::lang::surface::clone_methods::CloneMethodId::Clone),
+        );
+        self.record_selected_clone_input_call(span);
+        Some(receiver.clone())
     }
 
     /// Retain the accepted inferred Clone requirement only for a rigid parameter's zero-argument fallback. Source
@@ -113,6 +173,7 @@ impl TypeChecker {
             span,
             BuiltinMethodId::Clone(incan_lang::lang::surface::clone_methods::CloneMethodId::Clone),
         );
+        self.record_selected_clone_input_call(span);
     }
 
     /// Build a compiler-synthesized member identity from the canonical identity of its owning declaration.
