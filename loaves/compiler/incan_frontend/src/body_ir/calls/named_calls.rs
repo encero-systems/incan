@@ -698,3 +698,99 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
     }
 }
+
+impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
+    /// Call the callable a receiver's field holds, `self.callback(value)`, when the checker marked the call with that
+    /// field's identity because the receiver's type declares no method of the name (#2948). The field is read in place
+    /// and the value it holds is called; its arguments bind to the callable's checked parameters.
+    pub(super) fn lower_stored_callable_method_call(
+        &mut self,
+        recv: &ast::Spanned<ast::Expr>,
+        name: &str,
+        call: &CallLoweringSite<'_>,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<bir::Operand> {
+        let (args, span, scope) = (call.args, call.span, call.scope);
+        self.type_info
+            .resolved_identity(span)
+            .filter(|identity| identity.kind == SemanticSourceTargetKind::Field)?;
+        let slots = self
+            .type_info
+            .body_ir_call_site_callable_params(span)?
+            .iter()
+            .map(DeclaredSlot::from_checked_param)
+            .collect::<Vec<_>>();
+        let mut place = self.lower_checked_field_base(recv, span, scope, out);
+        place
+            .projection
+            .extend(self.lower_checked_field_projections(recv, name, span));
+        Some(self.call_stored_callable(place, slots, args, span, scope, out))
+    }
+
+    /// Call the callable a field expression reads, `(self.callback)(value)`: the field is read in place rather than
+    /// evaluated into an owned temporary, and the value it holds is called (#2948).
+    pub(super) fn lower_stored_callable_expression_call(
+        &mut self,
+        expression: &ast::Spanned<ast::Expr>,
+        args: &[ast::CallArg],
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<bir::Operand> {
+        let mut field = expression;
+        while let ast::Expr::Paren(inner) = &field.node {
+            field = inner;
+        }
+        let ast::Expr::Field(base, name) = &field.node else {
+            return None;
+        };
+        let IncanType::Function { params, .. } = self.resolve_ty(field.span) else {
+            return None;
+        };
+        if params
+            .iter()
+            .any(|parameter| parameter.kind != IncanCallableParamKind::Normal)
+        {
+            return None;
+        }
+        let slots = params.iter().map(DeclaredSlot::from_semantic_param).collect::<Vec<_>>();
+        let mut place = self.lower_checked_field_base(base, field.span, scope, out);
+        place
+            .projection
+            .extend(self.lower_checked_field_projections(base, name, field.span));
+        Some(self.call_stored_callable(place, slots, args, span, scope, out))
+    }
+
+    /// Bind a stored callable's arguments and call the value its place holds, borrowing that place for the call.
+    fn call_stored_callable(
+        &mut self,
+        place: bir::Place,
+        slots: Vec<DeclaredSlot>,
+        args: &[ast::CallArg],
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let hir_span_value = hir_span(span);
+        let shared = slots
+            .iter()
+            .enumerate()
+            .filter_map(|(index, slot)| matches!(slot.ty, IncanType::Ref(_)).then_some(index))
+            .collect::<Vec<_>>();
+        let (mut operands, binding) = match self.bind_declared_args("stored callable", Some(slots), args, scope, out) {
+            Ok(bound) => bound,
+            Err(description) => return self.unsupported_operand(description, scope, hir_span_value, out),
+        };
+        self.share_argument_slots(&mut operands, &binding, &shared);
+        let callee = bir::Callee::Function(bir::CallableTarget::Local(bir::LocalCallableTarget {
+            operand: bir::PlaceOperand {
+                place,
+                fact: bir::OwnershipFact::Borrow,
+                last_use: false,
+            },
+            binding,
+        }));
+        let ty = self.resolve_ty(span);
+        self.push_call_temp(callee, operands, ty, scope, hir_span_value, false, out)
+    }
+}

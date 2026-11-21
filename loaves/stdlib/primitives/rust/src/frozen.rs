@@ -474,3 +474,20 @@ impl<K: fmt::Debug, V: fmt::Debug> fmt::Display for FrozenDict<K, V> {
         fmt::Debug::fmt(self, f)
     }
 }
+
+/// Return whether any element of a frozen list has `needle`'s text, comparing each static element in place: no
+/// element is copied or formatted (#2944).
+///
+/// Native lowering lends an Incan `str` as `&String`, so the needle keeps that type.
+#[must_use]
+#[allow(clippy::ptr_arg)]
+pub fn frozen_list_contains_text<T: Borrow<str> + 'static>(value: FrozenList<T>, needle: &String) -> bool {
+    value.as_slice().iter().any(|item| item.borrow() == needle.as_str())
+}
+
+/// Return whether any element of a frozen set has `needle`'s text, scanning its baked slice in place (#2944).
+#[must_use]
+#[allow(clippy::ptr_arg)]
+pub fn frozen_set_contains_text<T: Borrow<str> + 'static>(value: FrozenSet<T>, needle: &String) -> bool {
+    value.as_slice().iter().any(|item| item.borrow() == needle.as_str())
+}

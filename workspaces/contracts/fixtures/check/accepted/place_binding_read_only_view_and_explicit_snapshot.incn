@@ -1,0 +1,16 @@
+# behavior: a bare local declared from a place is a read-only view that ends at its last use, so the owner may change afterward; an explicit clone is an owned snapshot that outlives any change to the owner (RFC 129 read-only local borrowing, #1846).
+# expect-accepted:
+
+class Cart:
+    pub items: list[str]
+
+
+def main() -> None:
+    mut cart = Cart(items=["apple"])
+    view = cart.items
+    let same = cart.items
+    println(f"{view} {same}")
+    cart.items.append("plum")
+    before = cart.items.clone()
+    cart.items.append("kiwi")
+    println(f"{before} {cart.items}")

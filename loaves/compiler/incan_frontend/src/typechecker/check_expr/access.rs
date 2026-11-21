@@ -759,6 +759,9 @@ impl TypeChecker {
                 return result;
             }
         }
+        if let Some(result) = self.check_stored_callable_call(call, base_ty, arg_types) {
+            return result;
+        }
         let display = base_ty.to_string();
         let surface = surface_types::from_str(display.as_str());
         let open_runtime = surface.is_some_and(surface_accepts_unknown_methods);
