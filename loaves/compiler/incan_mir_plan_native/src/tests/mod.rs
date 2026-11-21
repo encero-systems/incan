@@ -7,6 +7,7 @@ mod instance_loans;
 mod nominal_operations;
 mod nominal_products;
 mod plan_entry;
+mod published_defaults;
 mod record_codec;
 mod runtime_externals;
 mod support;
