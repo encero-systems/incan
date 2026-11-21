@@ -1,0 +1,3 @@
+"""The typed Crumb packet generation of the worker protocols. Implemented in Rust by `incan_worker_host_native`; this module keeps the reference import path."""
+
+pub from rust::incan_worker_host_native import PREFIX
