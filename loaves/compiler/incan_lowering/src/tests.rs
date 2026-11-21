@@ -11,5 +11,6 @@ mod explicit_arguments;
 mod explicit_input_storage;
 mod indexed_field_reads;
 mod input_access;
+mod instance_products;
 mod instance_requests;
 mod scalar_reads;
