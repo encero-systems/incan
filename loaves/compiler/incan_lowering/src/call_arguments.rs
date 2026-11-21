@@ -1,29 +1,34 @@
 //! Call argument storage: the parameter representation each frame slot holds and each call materializes.
 
-use incan_mir_plan_native::{Constant, Operand, PlanType, RvalueKind, SourceSpan, assign as plan_assign};
+use incan_mir_plan_native::{Constant, Operand, Place, PlanType, RvalueKind, SourceSpan, assign as plan_assign};
 use incan_semantics_core::IncanInputAccess;
 use incan_semantics_core::body_ir::{
-    ArgumentBinding, ArgumentElement, Body, BoundArgument, CallableParam, Operand as SourceOperand,
+    ArgumentBinding, ArgumentElement, Body, BoundArgument, CallableParam, Constant as SourceConstant,
+    Operand as SourceOperand, OwnershipFact,
 };
 
 use crate::builtin_calls::coerce_numeric_operand;
 use crate::carrier_operands::boundary_operand;
-use crate::checked_values::scalar_place;
+use crate::checked_values::{scalar_constant, scalar_place};
 use crate::closures::{packed_input, parameter_representation};
 use crate::collections::is_collection;
 use crate::element_places::is_element_place;
-use crate::explicit_arguments::argument_access;
+use crate::explicit_arguments::{argument_access, explicit_place_argument, reference_contract};
 use crate::formatting::display_operand;
-use crate::frame::{Builder, literal, place_type, read_place, temporary};
+use crate::frame::{
+    Builder, forget_moved_arguments, lend_invocation_storage, literal, place_type, read_place, temporary, value_type,
+};
 use crate::generators::is_generator_reference;
 use crate::generators::is_generator_type;
 use crate::layout_types::native_source_type;
 use crate::list_values::value_operand;
 use crate::lists::exclusive_reference;
 use crate::lists::is_list;
+use crate::numerics::numeric_carrier;
 use crate::operand_borrows::{borrow_str_operand, borrow_text_operand};
 use crate::pending::untranslated;
 use crate::statements::is_nominal_type;
+use crate::text_plan::owned_literal;
 
 /// A deferred producer owns its value parameters; ordinary frames retain the shared collection ABI.
 ///
@@ -224,7 +229,7 @@ pub fn call_argument_operand(
 ) -> Result<Operand, String> {
     let _ = owned;
     if input_access != IncanInputAccess::Inferred {
-        return Err(untranslated("call_arguments::explicit_argument_operand"));
+        return explicit_argument_operand(builder, value, ty, span, input_access);
     }
     match ty {
         PlanType::ClosureRef(_) | PlanType::BorrowingClosure(_) | PlanType::BorrowingClosureRef(_) => {
@@ -315,4 +320,166 @@ pub fn shared_nominal_argument(
     let reference = temporary(builder, ty.clone(), span);
     builder.emit(plan_assign(reference.clone(), RvalueKind::Borrow(receiver), span));
     Ok(read_place(reference, false, span))
+}
+
+/// Consume checked storage or materialize fresh inferred-shared and owned literals for this invocation.
+fn explicit_argument_operand(
+    builder: &mut Builder,
+    value: &SourceOperand,
+    ty: &PlanType,
+    span: &SourceSpan,
+    access: IncanInputAccess,
+) -> Result<Operand, String> {
+    if access == IncanInputAccess::InferredShared {
+        return inferred_shared_argument(builder, value, ty, span);
+    }
+    match value {
+        SourceOperand::Place(read) => {
+            if read.place.global().is_some() {
+                return Err("unsupported Body IR explicit argument from static storage".into());
+            }
+            if is_element_place(builder, &read.place)? {
+                return Err(untranslated("call_arguments::explicit indexed argument"));
+            }
+            let source = scalar_place(builder, &read.place, span)?;
+            explicit_place_argument(builder, source, read.fact, ty, access, span)
+        }
+        SourceOperand::Constant(constant) => explicit_constant_argument(builder, constant, ty, access, span),
+    }
+}
+
+/// Lend a plain input whose callee published shared access.
+///
+/// That access already decided to lend, so the read's ownership fact, which describes a by-value call, decides
+/// nothing here. Only this frame's plan types are exact after instantiation.
+///
+/// 1. Lend a stored owner of the selected type, a reference to it, or a shared list element directly.
+/// 2. Use the ordinary lending route of a carrier that has one; it applies conversions such as a range becoming a list.
+/// 3. Apply any other checked conversion to fresh storage and lend that.
+fn inferred_shared_argument(
+    builder: &mut Builder,
+    value: &SourceOperand,
+    expected: &PlanType,
+    span: &SourceSpan,
+) -> Result<Operand, String> {
+    let Ok((referent, writable)) = reference_contract(expected) else {
+        return call_argument_operand(builder, value, expected, span, false, IncanInputAccess::Inferred);
+    };
+    if writable {
+        return Err("invalid Body IR inferred shared reference carrier".into());
+    }
+    // 1. Exact storage needs no copy and no conversion.
+    if let Some(source) = exact_shared_storage(builder, value, &referent, span)? {
+        return explicit_place_argument(
+            builder,
+            source,
+            OwnershipFact::Borrow,
+            expected,
+            IncanInputAccess::InferredShared,
+            span,
+        );
+    }
+    // 2. These carriers already lend through the route an ordinary parameter of that carrier takes.
+    if has_ordinary_lending_route(expected) {
+        return call_argument_operand(builder, value, expected, span, false, IncanInputAccess::Inferred);
+    }
+    // 3. A union member becoming its union, for example, has no storage of the selected type yet.
+    materialized_shared_argument(builder, value, expected, referent, span)
+}
+
+/// Reach storage that already holds the selected type, or a reference to it, without copying or converting.
+fn exact_shared_storage(
+    builder: &mut Builder,
+    value: &SourceOperand,
+    referent: &PlanType,
+    span: &SourceSpan,
+) -> Result<Option<Place>, String> {
+    let SourceOperand::Place(read) = value else {
+        return Ok(None);
+    };
+    if read.place.global().is_some() {
+        return Ok(None);
+    }
+    if is_element_place(builder, &read.place)? {
+        return Err(untranslated("element_places::element_place_type"));
+    }
+    let source = scalar_place(builder, &read.place, span)?;
+    let actual = place_type(&builder.locals, &source);
+    if actual == *referent {
+        return Ok(Some(source));
+    }
+    if let Ok((held, _)) = reference_contract(&actual)
+        && held == *referent
+    {
+        return Ok(Some(source));
+    }
+    Ok(None)
+}
+
+/// Whether `call_argument_operand` lends this reference carrier itself, including its call-site conversions.
+fn has_ordinary_lending_route(ty: &PlanType) -> bool {
+    is_list(ty)
+        || is_collection(ty)
+        || matches!(
+            ty,
+            PlanType::ValidationErrorRef | PlanType::SliceRef(_) | PlanType::ScalarRef(_)
+        )
+}
+
+/// Apply a checked conversion to fresh owned storage, then lend that exact storage for this invocation.
+///
+/// The frame owns that storage only for the call: it is dropped when the call returns, and by the call's unwind
+/// cleanup. An inferred-shared input is never the source of a returned view, so nothing reads it afterward.
+fn materialized_shared_argument(
+    builder: &mut Builder,
+    value: &SourceOperand,
+    expected: &PlanType,
+    referent: PlanType,
+    span: &SourceSpan,
+) -> Result<Operand, String> {
+    let materialized = call_argument_operand(builder, value, &referent, span, false, IncanInputAccess::Inferred)?;
+    if value_type(builder, &materialized)? != referent {
+        return Err("unsupported Body IR inferred shared materialization mismatch".into());
+    }
+    let storage = temporary(builder, referent, span);
+    forget_moved_arguments(builder, std::slice::from_ref(&materialized));
+    builder.emit(plan_assign(storage.clone(), RvalueKind::Use(materialized), span));
+    let lent = explicit_place_argument(
+        builder,
+        storage.clone(),
+        OwnershipFact::Borrow,
+        expected,
+        IncanInputAccess::InferredShared,
+        span,
+    )?;
+    lend_invocation_storage(builder, &storage, &lent);
+    Ok(lent)
+}
+
+/// Give an inferred-shared fresh literal invocation storage; explicit loans still require authored storage.
+fn explicit_constant_argument(
+    builder: &mut Builder,
+    constant: &SourceConstant,
+    expected: &PlanType,
+    access: IncanInputAccess,
+    span: &SourceSpan,
+) -> Result<Operand, String> {
+    if access != IncanInputAccess::Owned {
+        return Err("unsupported Body IR borrowed constant without retained local storage".into());
+    }
+    if let SourceConstant::Str(text) = constant {
+        if *expected != PlanType::String {
+            return Err("unsupported Body IR owned text literal carrier mismatch".into());
+        }
+        return Ok(read_place(owned_literal(builder, text, span), true, span));
+    }
+    if !numeric_carrier(expected) && !matches!(expected, PlanType::Bool | PlanType::Unit) {
+        return Err("unsupported Body IR explicit owned constant carrier".into());
+    }
+    let literal = scalar_constant(constant, span)?;
+    let converted = coerce_numeric_operand(builder, literal, expected, span)?;
+    if value_type(builder, &converted)? != *expected {
+        return Err("unsupported Body IR explicit owned constant carrier mismatch".into());
+    }
+    Ok(converted)
 }
