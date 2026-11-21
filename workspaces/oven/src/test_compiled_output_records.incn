@@ -44,7 +44,7 @@ from compiler_captured_sources import publish_captured_source_inputs
 from compiler_body_projection import projection_refusals
 from compiler_body_publication import prepare_captured_source_inputs, prepare_compiled_bodies, publish_compiled_bodies
 from engine_capture import CapturedInput, InputRole
-from observation import file_metadata
+from observation import file_digest, file_metadata
 from pub::incan_mir_plan import LoweringEvent, LoweringRefusal, encode_lowering_event, encode_lowering_refusal
 from std.fs import Path
 from compiler_body_fallbacks import fallback_reasons, namespace_witnessed_event
@@ -532,15 +532,54 @@ pub def test_a_rechecked_namespace_reads_imports_whose_bodies_were_retained() ->
 
 
 def verify_linked_capture(mut unit: UnitDescription, root: Path) -> Result[None, str]:
-    """Physical source paths must retain project and dependency identities through symlinked described roots."""
+    """
+    Physical source paths must retain project and dependency identities through symlinked described roots, and a
+    module captured with the bytes its selected projection was made from is carried, never projected again.
+    """
     project = root.joinpath("linked-project")
     project.symlink_to(Path(unit.project_root)).map_err((error) => error.message())?
     provider = root.joinpath("linked-provider")
     provider.symlink_to(root.joinpath("provider/src")).map_err((error) => error.message())?
     unit.project_root = project.0
     unit.loaves[0].source_root = Some(provider.0)
+    paths = [project.joinpath("src/main.incn"), provider.joinpath("lib.incn")]
+    inputs = captured(paths)?
+    empty = store_snapshot(memory_root()).map_err((error) => error.message())?
+    prepared = prepare_captured_source_inputs(empty, begin(empty), unit, inputs)?
+    declarations = [key for key in prepared.keys if key.family == "declaration-index"]
+    assert len(declarations) == 2, "symlinked roots dropped captured declaration witnesses"
+    assert declarations[0].origin == "app" and declarations[0].identity == "src/main.incn"
+    assert declarations[1].origin == "provider" and declarations[1].identity == "lib"
+    first = commit(prepared.transaction).map_err((error) => error.message())?
+    path = paths[0]
+    original = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    # The capture vouches for the bytes: a module captured as before is not read, even if its file no longer decodes.
+    publish_binary(path, b"\xff\xfe not utf-8")?
+    carried = prepare_captured_source_inputs(first, begin(first), unit, inputs)?
+    assert len(carried.keys) == 0, "an unchanged capture reported changed source records"
+    assert len(carried.positioned) == 2, "an unchanged capture dropped a positioned record"
+    for slot in carried.positioned.keys():
+        assert Some(carried.positioned[slot]) == get(first, slot).map_err((error) => error.message())?
+    extra = "\n\ndef additional(value: int) -> int:\n    return value\n"
+    path.write_text(original + extra, "utf-8", "strict", None).map_err((error) => error.message())?
+    added = publish_captured_source_inputs(first, unit, captured(paths)?)?
+    added_memberships = [key for key in added.keys if key.family == "owner-census"]
+    assert len(added_memberships) == 1 and added_memberships[0].origin == "app"
+    signature = extra.replace("value: int", "number: int").replace("return value", "return number")
+    path.write_text(original + signature, "utf-8", "strict", None).map_err((error) => error.message())?
+    renamed = publish_captured_source_inputs(added.snapshot, unit, captured(paths)?)?
+    assert len([key for key in renamed.keys if key.family == "declaration-signature"]) == 1
+    assert len([key for key in renamed.keys if key.family == "owner-census"]) == 0
+    path.write_text(original, "utf-8", "strict", None).map_err((error) => error.message())?
+    removed = publish_captured_source_inputs(renamed.snapshot, unit, captured(paths)?)?
+    assert [key for key in removed.keys if key.family == "owner-census"] == added_memberships
+    return Ok(None)
+
+
+def captured(paths: list[Path]) -> Result[list[CapturedInput], str]:
+    """Capture each source file with its metadata and the digest of its current bytes, as an epoch does."""
     mut inputs: list[CapturedInput] = []
-    for path in [project.joinpath("src/main.incn"), provider.joinpath("lib.incn")]:
+    for path in paths:
         metadata = match file_metadata(path)?:
             Some(value) => value
             None => return Err("linked source fixture is missing")
@@ -550,33 +589,11 @@ def verify_linked_capture(mut unit: UnitDescription, root: Path) -> Result[None,
                 path=path.0,
                 role=InputRole.Resolved,
                 metadata=metadata,
-                digest="capture-fixture",
+                digest=file_digest(path)?,
                 settled=false,
             ),
         )
-    empty = store_snapshot(memory_root()).map_err((error) => error.message())?
-    prepared = prepare_captured_source_inputs(empty, begin(empty), unit, inputs)?
-    declarations = [key for key in prepared.keys if key.family == "declaration-index"]
-    assert len(declarations) == 2, "symlinked roots dropped captured declaration witnesses"
-    assert declarations[0].origin == "app" and declarations[0].identity == "src/main.incn"
-    assert declarations[1].origin == "provider" and declarations[1].identity == "lib"
-    first = commit(prepared.transaction).map_err((error) => error.message())?
-    path = project.joinpath("src/main.incn")
-    original = path.read_text("utf-8", "strict").map_err((error) => error.message())?
-    extra = "\n\ndef additional(value: int) -> int:\n    return value\n"
-    path.write_text(original + extra, "utf-8", "strict", None).map_err((error) => error.message())?
-    added = publish_captured_source_inputs(first, unit, inputs)?
-    added_memberships = [key for key in added.keys if key.family == "owner-census"]
-    assert len(added_memberships) == 1 and added_memberships[0].origin == "app"
-    signature = extra.replace("value: int", "number: int").replace("return value", "return number")
-    path.write_text(original + signature, "utf-8", "strict", None).map_err((error) => error.message())?
-    renamed = publish_captured_source_inputs(added.snapshot, unit, inputs)?
-    assert len([key for key in renamed.keys if key.family == "declaration-signature"]) == 1
-    assert len([key for key in renamed.keys if key.family == "owner-census"]) == 0
-    path.write_text(original, "utf-8", "strict", None).map_err((error) => error.message())?
-    removed = publish_captured_source_inputs(renamed.snapshot, unit, inputs)?
-    assert [key for key in removed.keys if key.family == "owner-census"] == added_memberships
-    return Ok(None)
+    return Ok(inputs)
 
 
 def publish_compiled_output(output: Path, outputs: CompiledBodyOutputs) -> Result[None, str]:
