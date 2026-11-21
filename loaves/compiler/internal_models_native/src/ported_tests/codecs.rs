@@ -252,6 +252,22 @@ fn checker_publication_round_trip() -> Result<(), String> {
     Ok(())
 }
 
+/// A facts record round-trips a payload close to its 128 MiB bound.
+///
+/// The decoded facts of a dependency whose manifest embeds a large Rust ABI (internal_models: 176 MB of JSON) are
+/// retained in this record. Its codec work budget must cover every byte of a record the family admits, or the cache is
+/// never written and each compiler request parses the JSON again.
+#[test]
+fn a_facts_record_near_its_bound_round_trips() -> Result<(), String> {
+    let guard = Sha256::digest(b"observed source and compiler").to_vec();
+    let digest = Sha256::digest(b"public manifest").to_vec();
+    let payload: Vec<u8> = (0..120 * 1024 * 1024).map(|index: usize| (index % 251) as u8).collect();
+    let facts = encode_manifest_cache("facts", &guard, &digest, &payload)?;
+    let recovered = decode_manifest_cache("facts", &guard, &facts)?;
+    assert!(recovered.digest == digest && recovered.payload == payload);
+    Ok(())
+}
+
 #[test]
 fn retained_manifest_evidence() -> Result<(), String> {
     let guard = Sha256::digest(b"observed source and compiler").to_vec();
