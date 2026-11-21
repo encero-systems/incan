@@ -22,7 +22,7 @@ class Source with RecordSource:
         """Create a configured source while keeping its response field private."""
         return Source(result=result)
 
-    def read(self, scope: &ReadScope, request: &RecordRequest) -> RecordRead:
+    def read(self, scope: Borrowed[ReadScope], request: Borrowed[RecordRequest]) -> RecordRead:
         """Return the configured response, including deliberately invalid bindings for negative controls."""
         return self.result
 

@@ -49,7 +49,7 @@ pub def release_tree_bytes_json(measured: ReleaseTreeBytes) -> JsonValue:
     )
 
 
-pub def write_difference(path: Path, left: &BaselineReport, right: &BaselineReport) -> Result[None, str]:
+pub def write_difference(path: Path, left: Borrowed[BaselineReport], right: Borrowed[BaselineReport]) -> Result[None, str]:
     """Retain deterministic differing case outcomes without calling an external diff tool."""
     mut lines: list[str] = []
     keys = sorted(list(set(left.result_keys + right.result_keys)))

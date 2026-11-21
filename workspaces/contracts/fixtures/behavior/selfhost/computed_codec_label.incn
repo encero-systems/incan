@@ -8,7 +8,7 @@ const TEXT: FrozenStr = "abc"
 const UNICODE: FrozenStr = "hé🦀"
 
 
-def encode(value: FrozenStr, encoding: &RustString) -> bytes:
+def encode(value: FrozenStr, encoding: Borrowed[RustString]) -> bytes:
     """Exercise a computed label at the builtin codec boundary."""
     return value.encode(str(encoding.as_str()))
 

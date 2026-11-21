@@ -3,6 +3,6 @@
 from index_owner import Index
 
 
-pub def observes_positions(index: &Index) -> bool:
+pub def observes_positions(index: Borrowed[Index]) -> bool:
     """Require both source mappings to retain their published values."""
     return index.owners.get("first") == Some(7) and index.generic_owners.get("generic") == Some(9)

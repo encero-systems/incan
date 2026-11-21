@@ -34,7 +34,7 @@ pub def mapped_index() -> Result[dict[str, Arc[Index]], str]:
     return Ok({"entry": owner})
 
 
-pub def owner_value(owner: &Arc[Index]) -> int:
+pub def owner_value(owner: Borrowed[Arc[Index]]) -> int:
     """Read the retained source mapping through a borrowed native owner."""
-    index: &Index = owner.as_ref()
+    index: Borrowed[Index] = owner.as_ref()
     return index.owners["first"]

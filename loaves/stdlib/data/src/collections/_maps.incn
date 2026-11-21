@@ -890,29 +890,29 @@ def _entry_index[K with (Clone, Eq), V with Clone](entries: list[_MapEntry[K, V]
     return -1
 
 
-def _entry_keys[K with Clone, V with Clone](entries: &list[_MapEntry[K, V]]) -> list[K]:
+def _entry_keys[K with Clone, V with Clone](entries: Borrowed[list[_MapEntry[K, V]]]) -> list[K]:
     """Copy keys into their owned result without copying entries or their values."""
     mut out: list[K] = []
     for index in range(len(entries)):
-        entry: &_MapEntry[K, V] = list_get(entries, index)
+        entry: Borrowed[_MapEntry[K, V]] = list_get(entries, index)
         out.append(entry.key)
     return out
 
 
-def _entry_values[K with Clone, V with Clone](entries: &list[_MapEntry[K, V]]) -> list[V]:
+def _entry_values[K with Clone, V with Clone](entries: Borrowed[list[_MapEntry[K, V]]]) -> list[V]:
     """Copy values into their owned result without copying entries or their keys."""
     mut out: list[V] = []
     for index in range(len(entries)):
-        entry: &_MapEntry[K, V] = list_get(entries, index)
+        entry: Borrowed[_MapEntry[K, V]] = list_get(entries, index)
         out.append(entry.value)
     return out
 
 
-def _entry_items[K with Clone, V with Clone](entries: &list[_MapEntry[K, V]]) -> list[Tuple[K, V]]:
+def _entry_items[K with Clone, V with Clone](entries: Borrowed[list[_MapEntry[K, V]]]) -> list[Tuple[K, V]]:
     """Copy each requested key/value pair once from borrowed entry storage."""
     mut out: list[Tuple[K, V]] = []
     for index in range(len(entries)):
-        entry: &_MapEntry[K, V] = list_get(entries, index)
+        entry: Borrowed[_MapEntry[K, V]] = list_get(entries, index)
         out.append((entry.key, entry.value))
     return out
 

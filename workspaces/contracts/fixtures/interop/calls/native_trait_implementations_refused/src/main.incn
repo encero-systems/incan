@@ -14,7 +14,7 @@ class WrongReceiver with Callbacks:
 
     marker: int = 0
 
-    def config(self, config: &mut Config) -> None:
+    def config(self, config: BorrowedMut[Config]) -> None:
         """Deliberately take a shared receiver."""
         pass
 

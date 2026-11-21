@@ -294,7 +294,7 @@ def search_digest(path: list[str], key: str) -> str:
     return hexlify(sha256.digest(("\n".join(path) + "\n" + key).encode("utf-8")))
 
 
-def select_span(page: &Layout, wanted: str, floor: bool) -> Result[Option[Span], str]:
+def select_span(page: Borrowed[Layout], wanted: str, floor: bool) -> Result[Option[Span], str]:
     """Search the checked key directory for an exact leaf or the inner child covering the key."""
     position, exact = seek_position(page, wanted)?
     if exact:
@@ -304,7 +304,7 @@ def select_span(page: &Layout, wanted: str, floor: bool) -> Result[Option[Span],
     return Ok(None)
 
 
-def seek_position(page: &Layout, wanted: str) -> Result[tuple[int, bool], str]:
+def seek_position(page: Borrowed[Layout], wanted: str) -> Result[tuple[int, bool], str]:
     """Find a key or its insertion point using the authenticated key spans in place."""
     mut lower = 0
     mut upper = len(page.spans.as_ref())
@@ -746,7 +746,7 @@ def write_page(writer: PageWriter, page: Page) -> Result[str, IndexError]:
     return Ok(writer.place(data))
 
 
-def placed_page(data: bytes, mut state: &mut PackState) -> str:
+def placed_page(data: bytes, mut state: BorrowedMut[PackState]) -> str:
     """Append a page to the pack unless equal bytes already lie in it; returns its reference inside the pack."""
     digest = hexlify(sha256.digest(data))
     if digest in state.placed:
@@ -782,7 +782,7 @@ pub def install_pack(root: Path, writer: PageWriter, staged: Path) -> Result[str
     return Ok(name)
 
 
-def pack_bytes(state: &PackState) -> bytes:
+def pack_bytes(state: Borrowed[PackState]) -> bytes:
     """The pages of a pack, in the order they were placed."""
     mut data: list[u8] = []
     for page in state.pages:

@@ -25,7 +25,7 @@ pub def member_key(origin: str, identity: str) -> RecordKey:
     return body_key("namespace-member", origin, identity, "lowering", "semantic/1")
 
 
-pub def member_plan_inputs(origin: str, module: str, event: str, members: &Dict[str, tuple[str, str]]) -> Result[list[RecordRequest], str]:
+pub def member_plan_inputs(origin: str, module: str, event: str, members: Borrowed[Dict[str, tuple[str, str]]]) -> Result[list[RecordRequest], str]:
     """Join the current native event to a checked stable owner, or retain the complete namespace as its witness."""
     if not members.contains_key(event):
         return Ok([prepared_product_request(namespace_key(origin, module))])
@@ -108,7 +108,7 @@ pub model ExecutableCallInputs:
 
 
 pub def stage_call_contracts(mut transaction: Transaction, mut source: PreparedBodyRecordSource,
-    origin: str, namespaces: &list[CompiledNamespaceValue]) -> Result[ExecutableCallInputs, str]:
+    origin: str, namespaces: Borrowed[list[CompiledNamespaceValue]]) -> Result[ExecutableCallInputs, str]:
     """Capture the native settlement boundary before authenticating executable consumers from its results."""
     mut result = ExecutableCallInputs()
     mut supplied: Dict[str, str] = {}

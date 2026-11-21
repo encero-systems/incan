@@ -160,7 +160,7 @@ def owner_record_message(error: OwnerRecordFault, name: str) -> str:
 
 
 pub def dependency_owner(
-    projection: &SourceProjection,
+    projection: Borrowed[SourceProjection],
     module: str,
     name: str,
     identity: str,
@@ -205,7 +205,7 @@ pub def lowering_symbol(identity: str, body_ir: bytes) -> Result[str, str]:
 
 
 pub def dependency_read_key(
-    projections: &Dict[str, SourceProjection],
+    projections: Borrowed[Dict[str, SourceProjection]],
     unit: UnitDescription,
     origin: str,
     dependency: CompiledBodyDependencyRead,
@@ -254,7 +254,7 @@ def project_signature_record(
 
 
 pub def dependency_signature_key(
-    projections: &Dict[str, SourceProjection],
+    projections: Borrowed[Dict[str, SourceProjection]],
     unit: UnitDescription,
     origin: str,
     dependency: CompiledBodyDependencyRead,

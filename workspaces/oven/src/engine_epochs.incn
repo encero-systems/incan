@@ -145,7 +145,7 @@ pub def prepare_submit(store: Path, submit: Submit, discover_standalone: bool = 
             )
 
 
-def first_standalone_reach(source: Path, profile: str, selected: &SelectedHome) -> Result[Option[SourceGraph], str]:
+def first_standalone_reach(source: Path, profile: str, selected: Borrowed[SelectedHome]) -> Result[Option[SourceGraph], str]:
     """
     Use the compiler's collection before capturing an ordinary file beside unrelated standalone programs.
 

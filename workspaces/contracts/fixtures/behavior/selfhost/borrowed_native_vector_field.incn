@@ -15,7 +15,7 @@ from rust::std::io import BufRead, Cursor
 from rust::std::process import Output
 
 
-def size(values: &list[RustMethodSig]) -> int:
+def size(values: Borrowed[list[RustMethodSig]]) -> int:
     """Read a list through a shared source parameter."""
     return len(values)
 

@@ -162,7 +162,7 @@ pub def staged_plan(
 
 def restored_plans(
     mut source: PreparedBodyRecordSource, mut orders: LoweringOrders, graph: Snapshot,
-    module: &AdmittedPlanModule, note: AdmittedModule, keyed: list[StagedPlan], cutoff: EditCutoff = EditCutoff(),
+    module: Borrowed[AdmittedPlanModule], note: AdmittedModule, keyed: list[StagedPlan], cutoff: EditCutoff = EditCutoff(),
 ) -> Result[list[StagedPlan], str]:
     """
     Rebind only the functions restored in this compile to their selected scalar products and rank evidence. A
@@ -221,7 +221,7 @@ def bind_source_position(source: PreparedBodyRecordSource, origin: str, file: st
 
 def rebind_complete_module(
     mut prepared: Transaction, mut source: PreparedBodyRecordSource, scope: ReadScope, graph: Snapshot,
-    module: &AdmittedPlanModule, note: AdmittedModule, order: LoweringOrder,
+    module: Borrowed[AdmittedPlanModule], note: AdmittedModule, order: LoweringOrder,
 ) -> Result[Option[RecordKey], str]:
     """Publish the current placement of selected immutable functions without reopening their normalized plans."""
     if module.admitted_snapshot != graph.digest or prepared.root.value != graph.root.value or prepared.root.placement != graph.root.placement or prepared.base != graph.generation or prepared.view != graph.view:

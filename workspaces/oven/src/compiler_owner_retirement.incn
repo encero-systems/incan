@@ -13,7 +13,7 @@ from compiler_source_projection import SourceProjection, owner_placement_key, ow
 
 pub def retire_missing_functions(
     selected: Snapshot, mut transaction: Transaction, origin: str,
-    changes: &list[RecordKey], projections: &Dict[str, SourceProjection], rechecked: &list[str], outputs: &CompiledBodyOutputs,
+    changes: Borrowed[list[RecordKey]], projections: Borrowed[Dict[str, SourceProjection]], rechecked: Borrowed[list[str]], outputs: Borrowed[CompiledBodyOutputs],
 ) -> Result[None, str]:
     """Use changed source slots and the compiler's checked free-function census in the same source module."""
     mut changed: Dict[str, list[RecordKey]] = {}

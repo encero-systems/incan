@@ -169,7 +169,7 @@ def authenticate_compiled_bodies(
     retained: list[SelectedBodyRecord],
     restored: list[str],
     restored_body_ir: list[str],
-    covered: &CoveredBodyOwners,
+    covered: Borrowed[CoveredBodyOwners],
 ) -> Result[AuthenticatedCompiledBodies, str]:
     """Authenticate one compiler row directory, consume it and count the owners checked or restored this activation."""
     authenticating = begin_work()
@@ -352,14 +352,14 @@ def stage_compiled_body_values(
     scope: ReadScope,
     mut projections: Dict[str, SourceProjection],
     values: list[CompiledBodyValue],
-    methods: &MethodReads,
+    methods: Borrowed[MethodReads],
     selected: Option[Snapshot],
     unit: UnitDescription,
     origin: str,
     editable_packages: list[str],
     checked_namespaces: set[str],
-    order: &Dict[str, NamespaceOrder],
-    executable: &ExecutableCallInputs,
+    order: Borrowed[Dict[str, NamespaceOrder]],
+    executable: Borrowed[ExecutableCallInputs],
 ) -> Result[int, str]:
     """Stage each compiler-produced local, final and Body IR value with its exact source and dependency witnesses."""
     mut published = 0
@@ -458,11 +458,11 @@ def stage_compiled_namespaces(
     mut prepared: Transaction,
     mut source: PreparedBodyRecordSource,
     scope: ReadScope,
-    projections: &Dict[str, SourceProjection],
+    projections: Borrowed[Dict[str, SourceProjection]],
     namespaces: list[CompiledNamespaceValue],
     origin: str,
-    order: &Dict[str, NamespaceOrder],
-    executable: &ExecutableCallInputs,
+    order: Borrowed[Dict[str, NamespaceOrder]],
+    executable: Borrowed[ExecutableCallInputs],
 ) -> Result[None, str]:
     """
     Stage every checked namespace row with its projection owners and imported declaration indexes as witnesses.
@@ -586,7 +586,7 @@ def stage_compiled_body_sources(
     unit: UnitDescription,
     origin: str,
     outputs: CompiledBodyOutputs,
-    methods: &MethodReads,
+    methods: Borrowed[MethodReads],
 ) -> Result[StagedCompiledBodySources, str]:
     """Stage source, dependency, declaration and eligibility records that authenticate compiler output rows."""
     scope = ReadScope(snapshot=transaction.id, profile=CHECKER_PROFILE)
@@ -627,7 +627,7 @@ def stage_compiled_body_sources(
 def stage_compiled_projection_sources(
     mut prepared: Transaction,
     mut source: PreparedBodyRecordSource,
-    projections: &Dict[str, SourceProjection],
+    projections: Borrowed[Dict[str, SourceProjection]],
     outputs: CompiledBodyOutputs,
     origin: str,
     unit: UnitDescription,
@@ -689,7 +689,7 @@ def stage_source_projection(
 def stage_compiled_dependency_sources(
     mut prepared: Transaction,
     mut source: PreparedBodyRecordSource,
-    projections: &Dict[str, SourceProjection],
+    projections: Borrowed[Dict[str, SourceProjection]],
     values: list[CompiledBodyValue],
     editable_packages: list[str],
     origin: str,
@@ -726,7 +726,7 @@ def stage_project_dependency_source(
     mut prepared: Transaction,
     mut source: PreparedBodyRecordSource,
     mut slots: Dict[str, str],
-    projections: &Dict[str, SourceProjection],
+    projections: Borrowed[Dict[str, SourceProjection]],
     value: CompiledBodyValue,
     dependency: CompiledBodyDependencyRead,
     origin: str,
@@ -1153,7 +1153,7 @@ def prepare_native_interface(
     plans: list[RecordKey],
     covered_modules: list[str],
     namespace: int,
-    orders: &LoweringOrders,
+    orders: Borrowed[LoweringOrders],
     carried_digests: Dict[str, str],
 ) -> Result[None, str]:
     """Witness the complete loss-checked native plan against its exact function members and current source positions."""

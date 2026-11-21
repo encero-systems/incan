@@ -255,7 +255,7 @@ pub model LocalFacet:
         return self.project == project and self.domain == DependencyDomain.Target and self.purpose == purpose
 
 
-pub def root_purpose(facets: &list[LocalFacet], project: str) -> ActivationPurpose:
+pub def root_purpose(facets: Borrowed[list[LocalFacet]], project: str) -> ActivationPurpose:
     """A dependency can reach the production copy of the requested test package."""
     for facet in facets:
         if facet.is_root(project, ActivationPurpose.Test):
@@ -414,7 +414,7 @@ def canonical_demand(demand: LocalDemand) -> LocalDemand:
     )
 
 
-def borrowed_selection(selections: &list[FacetSelection], position: int) -> &FacetSelection:
+def borrowed_selection(selections: Borrowed[list[FacetSelection]], position: int) -> Borrowed[FacetSelection] from selections:
     """Borrow a row whose nonnegative index was issued by this session's append-only activation registry."""
     slot: usize = position.wrapping_resize()
     return Index.index(selections, slot)

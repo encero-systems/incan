@@ -240,7 +240,7 @@ pub class TypedColumnReader:
 def write_typed_group(
     description_index: int,
     dictionary: Dictionary,
-    rows: &list[TypedColumnRow],
+    rows: Borrowed[list[TypedColumnRow]],
     start: int,
     end: int,
     mut budget: Budget,
@@ -260,7 +260,7 @@ def write_typed_group(
 
 def write_typed_column(
     description: StoredDescription,
-    rows: &list[TypedColumnRow],
+    rows: Borrowed[list[TypedColumnRow]],
     start: int,
     end: int,
     field_index: int,
@@ -281,7 +281,7 @@ def write_typed_column(
 
 def write_typed_block(
     description: StoredDescription,
-    rows: &list[TypedColumnRow],
+    rows: Borrowed[list[TypedColumnRow]],
     start: int,
     end: int,
     field_index: int,

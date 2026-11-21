@@ -3,7 +3,7 @@
 from rust::messages import CopyNumber
 
 
-pub def borrowed_copy(value: &CopyNumber) -> int:
+pub def borrowed_copy(value: Borrowed[CopyNumber]) -> int:
     """Copy a by-value native receiver without invoking its observable Clone implementation."""
     return value.into_value()
 

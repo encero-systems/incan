@@ -100,7 +100,7 @@ pub def project(
 
 
 pub def project_value(
-    group: &GroupData,
+    group: Borrowed[GroupData],
     position: int,
     identity: bytes,
     dictionary: Dictionary,
