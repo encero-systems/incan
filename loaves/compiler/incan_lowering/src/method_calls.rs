@@ -20,6 +20,7 @@ use crate::frame::{Builder, dereferenced_place, place_type, read_place, temporar
 use crate::library_methods::lower_library_method;
 use crate::models::model_place;
 use crate::pending::untranslated;
+use crate::reflection::lower_reflection;
 use crate::result_combinators::{lower_result_combinator, result_combinator};
 use crate::sequence_builtins::argument_type;
 use crate::traits::{is_lazy_method_body, receiver_selects_slot_arguments};
@@ -77,6 +78,10 @@ fn lower_checked_method_call(
             let callable = &module.loaf_callables[index];
             return lower_library_method(module, builder, callable, &selected, arguments, destination, span);
         }
+        MethodRoute::Reflection => {
+            lower_reflection(builder, target, arguments, destination, span)?;
+            return Ok(());
+        }
         MethodRoute::EnumMessage(index) => return lower_enum_message(builder, index, arguments, destination, span),
         MethodRoute::ValueGetter(owner) => {
             return lower_value_enum_method(builder, owner, arguments, destination, span);
@@ -104,7 +109,7 @@ fn special_method_route(
     }
     match &target.operation {
         None | Some(ReflectionOperation::Builtin(_)) => {}
-        Some(_) => return Ok(Refused("reflection::lower_reflection")),
+        Some(_) => return Ok(MethodRoute::Reflection),
     }
     if standard_slot(target) || is_std_primitives_method(target, "traits", "callable", "__call__") {
         return Ok(Refused("library_methods::lower_standard_slot"));
@@ -220,6 +225,7 @@ fn implementation_target(target: &MethodTarget, canonical: CanonicalSymbolId) ->
 enum MethodRoute {
     Refused(&'static str),
     Library(usize, MethodTarget),
+    Reflection,
     EnumMessage(usize),
     ValueGetter(usize),
     Retained,

@@ -28,6 +28,7 @@ use crate::list_methods::call_destination;
 use crate::model_values::{is_json_deserialize_method, lower_model_from_json};
 use crate::models::model_type;
 use crate::pending::untranslated;
+use crate::reflection::lower_static_field_metadata;
 use crate::statements::is_nominal_type;
 use crate::string_conversion_contracts::conversion_trait;
 use crate::traits::{close_trait_dispatch_arguments, instantiate_type, is_lazy_method_body};
@@ -96,12 +97,8 @@ pub fn lower_named_target(
     destination: &Option<SourcePlace>,
     span: &SourceSpan,
 ) -> Result<(), String> {
-    if let Some(identity) = &target.canonical
-        && identity.kind == SemanticSourceTargetKind::Method
-        && identity.declaration_name == "__fields__"
-        && target.receiver_type.is_some()
-    {
-        return Err(untranslated("reflection::lower_static_field_metadata"));
+    if lower_static_field_metadata(builder, target, arguments, destination, span)? {
+        return Ok(());
     }
     if let Some(builtin) = target.builtin {
         if !target.type_args.is_empty() {
@@ -178,9 +175,6 @@ fn special_named_target(
         return Ok(Some("primitive_traits::normalized_primitive_static"));
     }
     let method = identity.kind == SemanticSourceTargetKind::Method;
-    if method && identity.declaration_name == "__fields__" && target.receiver_type.is_some() {
-        return Ok(Some("reflection::lower_static_field_metadata"));
-    }
     if builder.constructors().validated_constructors.contains(identity) {
         return Ok(Some("callable_calls::lower_validated_constructor"));
     }
