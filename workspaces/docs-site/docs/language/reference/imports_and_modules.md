@@ -170,9 +170,11 @@ class Counter:
 A module exports:
 
 - each module-level declaration marked `pub`, and each variant and variant alias of a `pub` enum;
-- each name that a `from M import ...` of the module binds, with or without `pub`, and each name a `from rust::... import ...` binds.
+- each name that a `pub from ... import ...` of the module binds, from a source module, a Loaf or a Rust crate ([Re-exports](#re-exports)).
 
-`from M import X`, and `import M::X` where `M::X` is not a module, bind `X` only when `M` exports it. Refused (`INCAN-I0001`): a name `M` does not export, such as a declaration without `pub`, or a module that `M` binds with `import`.
+A name a module imports without `pub` is bound in that module alone. A namespace's own module, its `prelude.incn`, follows the same rule: `from std.fs import Path` binds `Path` because the `std.fs` prelude re-exports it with `pub from`.
+
+`from M import X`, and `import M::X` where `M::X` is not a module, bind `X` only when `M` exports it. Refused (`INCAN-I0001`): a name `M` does not export, such as a declaration without `pub`, a name `M` imports without `pub`, or a module that `M` binds with `import`.
 
 ```incan
 # a.incn
@@ -185,6 +187,11 @@ def hidden() -> int:
 
 ```incan
 # b.incn
+pub from a import f
+```
+
+```incan
+# c.incn
 from a import f
 ```
 
@@ -192,6 +199,7 @@ from a import f
 # main.incn
 from b import f          # accepted
 import a::f              # accepted
+from c import f          # refused: c imports f without pub (INCAN-I0001)
 from a import hidden     # refused: hidden is not pub (INCAN-I0001)
 import a::hidden         # refused: hidden is not pub (INCAN-I0001)
 ```
