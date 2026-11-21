@@ -19,9 +19,15 @@ use crate::element_places::is_element_place;
 use crate::formatting::{lower_format, lower_string_assignment};
 use crate::frame::{Builder, cleanup_exit, literal, place_type, read_place, track_rvalue_moves, value_type};
 use crate::frozen_plan::frozen_bytes_literal;
+use crate::generators::generator_reference;
+use crate::hashed_collections::{collection_assignment, dictionary_entry_assignment, dictionary_index_assignment};
+use crate::list_iteration::{
+    inherit_borrowed_item, initialize_text_iterator, iterator_assignment, list_root_place, operand_list_place,
+};
+use crate::list_methods::{indexed_assignment, indexed_assignment_at};
 use crate::list_values::{frozen_list_assignment, list_assignment, list_base_place};
 use crate::lists::is_list;
-use crate::model_lists::structural_prefix;
+use crate::model_lists::{prefix_place, structural_prefix};
 use crate::numerics::{integer_carrier, numeric_carrier, numeric_zero, sized_numeric};
 use crate::operators::scalar_rvalue;
 use crate::options::replace_owned_destination;
@@ -29,6 +35,7 @@ use crate::owned_lists::initialize_owned_list_iterator;
 use crate::pending::untranslated;
 use crate::result_carriers::{frozen_operand, retained_reference_value};
 use crate::statements::{is_nominal_type, is_owned_callable};
+use crate::tuple_iterators::initialize_zip_iterator;
 
 /// Assign a checked value to a local, routing strings, formatting and runtime-semantics operators first.
 pub fn lower_assignment(
@@ -48,17 +55,21 @@ pub fn lower_assignment(
         let base = list_base_place(builder, destination, span)?;
         let ty = builder.locals[base.local as usize].ty.clone();
         if is_collection(&ty) {
-            return Err(untranslated("hashed_collections::dictionary_index_assignment"));
+            return dictionary_index_assignment(builder, destination, value, span);
         }
         if is_list(&ty) {
-            return Err(untranslated("list_methods::indexed_assignment"));
+            return indexed_assignment(builder, destination, value, span);
         }
         // A list held by a model field or tuple element is written at its list indexes after that structural prefix.
         if let Some((count, _)) = structural_prefix(builder, destination)?
             && count > 0
             && count < destination.projection.len()
         {
-            return Err(untranslated("list_methods::indexed_assignment_at"));
+            let receiver = prefix_place(builder, destination, count, span)?;
+            if is_collection(&place_type(&builder.locals, &receiver)) {
+                return dictionary_entry_assignment(builder, destination, receiver, count, value, span);
+            }
+            return indexed_assignment_at(builder, destination, count, value, span);
         }
     }
     if destination.projection.is_empty()
@@ -78,7 +89,8 @@ pub fn lower_assignment(
         return Err(untranslated("matches::lower_enum_match"));
     }
     lower_local_assignment(module, builder, target.clone(), value, span)?;
-    inherit_borrowed_item(builder, &target, value)
+    inherit_borrowed_item(builder, &target, value);
+    Ok(())
 }
 
 /// Replace a checked reference value's own slot; source receiver and projected writes still address their referents.
@@ -92,23 +104,6 @@ pub fn assignment_place(builder: &mut Builder, destination: &SourcePlace, span: 
         }
     }
     scalar_place(builder, destination, span)
-}
-
-/// A list bound out of a snapshot iteration item is part of that snapshot, so it stays unchangeable too.
-fn inherit_borrowed_item(builder: &mut Builder, target: &Place, value: &Rvalue) -> Result<(), String> {
-    if target.projection != Projection::Whole || !is_list(&place_type(&builder.locals, target)) {
-        return Ok(());
-    }
-    if let Rvalue::Use(SourceOperand::Place(read)) = value
-        && !read.place.projection.is_empty()
-        && let Some(local) = read.place.local_id()
-        && builder
-            .borrowed_items
-            .contains(&(local.index() as i64 + 1 + builder.local_offset))
-    {
-        return Err(untranslated("list_iteration::borrow_iteration_item"));
-    }
-    Ok(())
 }
 
 /// Handle callable and iteration bindings before assigning an ordinary stored value with checked ownership.
@@ -169,10 +164,27 @@ fn assign_stored_value(
             let source = scalar_place(builder, &read.place, span)?;
             return initialize_owned_list_iterator(builder, &target, &source, span);
         }
-        PlanType::ZipIteratorMutRef(..) => return Err(untranslated("tuple_iterators::initialize_zip_iterator")),
-        PlanType::GeneratorMutRef(..) => return Err(untranslated("generators::generator_reference")),
+        PlanType::ZipIteratorMutRef(..) => {
+            let Rvalue::Use(SourceOperand::Place(read)) = value else {
+                return Err("unsupported Body IR zip iterator initialization".into());
+            };
+            if read.fact != OwnershipFact::Borrow {
+                return Err("unsupported Body IR zip iteration source ownership".into());
+            }
+            let source = list_root_place(builder, &read.place, span)?;
+            return initialize_zip_iterator(builder, target, source, span);
+        }
+        PlanType::GeneratorMutRef(..) => {
+            let Rvalue::Use(value) = value else {
+                return Err("unsupported Body IR generator iterator initialization".into());
+            };
+            let source = operand_list_place(builder, value, span)?;
+            let reference = generator_reference(builder, source, span)?;
+            builder.emit(plan_assign(target, RvalueKind::Use(reference), span));
+            return Ok(());
+        }
         PlanType::SetRef(_) | PlanType::DictRef(..) | PlanType::ListRef(..) => {
-            return Err(untranslated("list_iteration::iterator_assignment"));
+            return iterator_assignment(builder, target, value, span);
         }
         PlanType::FrozenCollection(name, _) => {
             if name == "FrozenList"
@@ -185,13 +197,13 @@ fn assign_stored_value(
     }
     let ty = place_type(&builder.locals, &target);
     if is_collection(&ty) {
-        return Err(untranslated("hashed_collections::collection_assignment"));
+        return collection_assignment(builder, target, value, span);
     }
     if is_list(&ty) {
         return list_assignment(builder, target, value, span);
     }
     if matches!(ty, PlanType::String | PlanType::StringRef) && builder.iteration_locals.contains(&target.local) {
-        return Err(untranslated("list_iteration::initialize_text_iterator"));
+        return initialize_text_iterator(builder, target, value, span);
     }
     if ty == PlanType::String {
         return lower_string_assignment(builder, target, value, span);

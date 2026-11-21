@@ -27,7 +27,13 @@ use crate::frame::{
 };
 use crate::frozen_plan::frozen_observation_type;
 use crate::generators::generator_collect;
-use crate::list_iteration::{frozen_list_snapshot_type, list_root_place};
+use crate::hashed_collections::{
+    cloned_collection, collection_place_value, collection_value, dictionary_index_read, read_dictionary_element,
+};
+use crate::list_iteration::{
+    frozen_dictionary_element, frozen_list_snapshot, frozen_list_snapshot_type, list_root_place,
+};
+use crate::list_methods::materialized_receiver;
 use crate::lists::{is_owned_list, list_element, list_shape, require_list_shape};
 use crate::model_lists::model_list_read;
 use crate::models::field_steps;
@@ -37,7 +43,7 @@ use crate::pending::untranslated;
 use crate::statements::is_nominal_type;
 use crate::strings::emit_text_helper;
 use crate::text_plan::{clone_text, clone_text_reference, owned_literal};
-use crate::tuple_iterators::zip_shape;
+use crate::tuple_iterators::{clone_zip, zip_shape};
 use crate::tuples::is_tuple_type;
 
 /// Borrow an owner or reborrow a parameter; frozen bytes materialize only for shared access.
@@ -109,7 +115,8 @@ pub fn checked_list_argument(
         // A shared parameter and a fresh projected owner read through a copy that stays owned until its scope ends.
         // A slice is such an owner: its Move fact distinguishes it from stored indexed list storage.
         if !mutable || read.fact == OwnershipFact::Move || sliced {
-            return Err(untranslated("list_methods::materialized_receiver"));
+            let copied = materialized_receiver(builder, &read.place, span)?;
+            return list_borrow(builder, copied, mutable, span);
         }
         // An exclusive argument reaches the list stored in the container, so its change lands there.
         let stored = mutable_element_place(builder, &read.place, span)?;
@@ -182,19 +189,19 @@ pub fn value_operand(builder: &mut Builder, value: &SourceOperand, span: &Source
     }
     let base = list_base_place(builder, &read.place, span)?;
     if is_collection(&builder.locals[base.local as usize].ty) {
-        return Err(untranslated("hashed_collections::collection_value"));
+        return collection_value(builder, read, span);
     }
     let place = scalar_place(builder, &read.place, span)?;
     let ty = place_type(&builder.locals, &place);
     if is_collection(&ty) {
-        return Err(untranslated("hashed_collections::collection_place_value"));
+        return collection_place_value(builder, place, read.fact, span);
     }
     if zip_shape(&ty).is_some() {
         if read.fact == OwnershipFact::Move {
             return Ok(read_place(place, true, span));
         }
         if read.fact == OwnershipFact::Clone || read.fact == OwnershipFact::Borrow {
-            return Err(untranslated("tuple_iterators::clone_zip"));
+            return clone_zip(builder, place, span);
         }
         return Err("unsupported Body IR zip value ownership".into());
     }
@@ -273,7 +280,7 @@ pub fn element_read(builder: &mut Builder, source: &SourcePlace, span: &SourceSp
     }
     let base = list_base_place(builder, source, span)?;
     if is_collection(&builder.locals[base.local as usize].ty) {
-        return Err(untranslated("hashed_collections::dictionary_index_read"));
+        return Ok(Some(dictionary_index_read(builder, source, span)?));
     }
     Ok(Some(indexed_read(builder, source, span)?))
 }
@@ -358,14 +365,16 @@ fn read_indexed_element(
         }
         PlanType::FrozenCollection(name, _) => {
             if name == "FrozenDict" {
-                return Err(untranslated("list_iteration::frozen_dictionary_element"));
+                return frozen_dictionary_element(builder, place, source, slot, span);
             }
-            return Err(untranslated("list_iteration::frozen_list_snapshot"));
+            let snapshot = frozen_list_snapshot(builder, read_place(place, false, span), span, false)?;
+            let argument = list_index_operand(builder, source, slot, span)?;
+            return read_list_element(builder, snapshot, argument, span);
         }
         _ => {}
     }
     if is_collection(&ty) {
-        return Err(untranslated("hashed_collections::read_dictionary_element"));
+        return read_dictionary_element(builder, place, source, slot, span);
     }
     let argument = list_index_operand(builder, source, slot, span)?;
     if ty == PlanType::String {
@@ -599,7 +608,10 @@ fn materialize_element_field(builder: &mut Builder, field: Place, span: &SourceS
         return Ok(output);
     }
     if is_owned_collection(&ty) {
-        return Err(untranslated("hashed_collections::cloned_collection"));
+        return match cloned_collection(builder, field, span)?.kind {
+            OperandKind::Move(cloned) => Ok(cloned),
+            _ => Err("invalid Body IR cloned collection element field".into()),
+        };
     }
     // Static frozen handles copy only their shared backing pointer, never their elements or the containing record.
     if !numeric_carrier(&ty) && ty != PlanType::Bool && !callable_copy_type(&ty) && !frozen_observation_type(&ty) {

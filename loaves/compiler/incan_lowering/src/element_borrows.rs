@@ -19,6 +19,7 @@ use crate::collections::{
 use crate::element_places::{element_place_type, element_prefix_type, is_element_place};
 use crate::frame::{Builder, appended_field, place_type, temporary};
 use crate::layout_types::shared_receiver_type;
+use crate::list_methods::materialized_receiver;
 use crate::list_values::{list_borrow, value_operand};
 use crate::lists::{is_exclusive_borrow, is_list, list_element, require_list_shape};
 use crate::model_lists::{prefix_place, structural_prefix};
@@ -143,9 +144,6 @@ pub fn element_method_receiver(
 }
 
 /// Borrow the selected element in place when list storage can provide a checked shared loan.
-///
-/// Otherwise the receiver is a materialized copy from `list_methods::materialized_receiver`, which refuses by name
-/// until it is in Rust.
 fn shared_element_receiver(
     builder: &mut Builder,
     source: &SourcePlace,
@@ -157,7 +155,10 @@ fn shared_element_receiver(
         builder.emit(plan_assign(reference.clone(), RvalueKind::Borrow(selected), span));
         return Ok(reference);
     }
-    Err(untranslated("list_methods::materialized_receiver"))
+    let copied = materialized_receiver(builder, source, span)?;
+    let reference = temporary(builder, receiver_type, span);
+    builder.emit(plan_assign(reference.clone(), RvalueKind::Borrow(copied), span));
+    Ok(reference)
 }
 
 /// Reborrow the nominal element, or a nominal field inside it, that a list or dictionary place selects.

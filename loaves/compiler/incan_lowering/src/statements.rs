@@ -21,6 +21,7 @@ use crate::frame::{
     Builder, drop_all_owned, drop_owned, finish_fallthrough, forget_owned, literal, place_type, read_place,
     track_rvalue_moves,
 };
+use crate::list_iteration::list_next;
 use crate::list_values::value_operand;
 use crate::loop_exits::exits_to;
 use crate::matches::join_branch_owners;
@@ -203,7 +204,11 @@ pub fn lower_statement(
         SourceStatementKind::Yield { .. } => Err(untranslated("statements::lower_yield")),
         SourceStatementKind::Assert { .. } => Err(untranslated("assertions::lower_assertion")),
         SourceStatementKind::TryPropagate { .. } => Err(untranslated("result_carriers::lower_try_propagation")),
-        SourceStatementKind::IterNext { .. } => Err(untranslated("list_iteration::list_next")),
+        SourceStatementKind::IterNext {
+            destination,
+            iterator,
+            protocol,
+        } => list_next(builder, destination, iterator, protocol, &span),
         SourceStatementKind::Unsupported { description } => {
             Err(format!("unsupported Body IR Unsupported: {description}"))
         }
