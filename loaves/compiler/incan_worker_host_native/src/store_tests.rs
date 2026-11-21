@@ -179,6 +179,29 @@ fn snapshot_descriptors_are_staged_resolved_and_scoped_by_digest() -> Result<(),
         let stored = get(&outputs.snapshot, staged_key(kind, root)).map_err(store_text)?;
         assert_eq!(stored.as_deref(), Some(expected));
     }
+    // An Incan caller reads the same values as bytes, with no platform store type crossing the binding.
+    assert_eq!(
+        opened.read_value(ALLOWED).map_err(|fault| fault.message())?.as_deref(),
+        Some(b"old".as_slice())
+    );
+    assert_eq!(
+        opened
+            .read_value("compiler.input\tmissing")
+            .map_err(|fault| fault.message())?,
+        None
+    );
+    assert_eq!(
+        outputs.staged_page("value")?.as_deref(),
+        Some(b"local-value".as_slice())
+    );
+    assert_eq!(
+        outputs.staged_page("counter")?.as_deref(),
+        Some(b"evaluations=1".as_slice())
+    );
+    assert_eq!(
+        outputs.staged_page("other").err().as_deref(),
+        Some("compiler outputs stage no `other` page")
+    );
 
     let wrong = stage_snapshot(
         &home,
