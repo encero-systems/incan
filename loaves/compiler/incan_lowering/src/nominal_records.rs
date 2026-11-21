@@ -1,0 +1,140 @@
+//! Bind keyed native products to source declarations and closed specializations through their checked versions.
+
+use incan_mir_plan_native::{
+    EnumDeclaration, ExternalFunction, Function, NominalKind, NominalReference, ProductNominal, UnitNominals,
+    describe_nominals, encode_checked_layout, product_nominals, unit_nominals,
+};
+use incan_semantics_core::CanonicalSymbolId;
+use incan_semantics_core::semantic_digest::{enum_layout_witness, model_layout_witness, semantic_digest};
+use incan_semantics_core::stable_identity::StableDeclarationId;
+use sha2::{Digest, Sha256};
+
+use crate::program_context::ProgramContext;
+use crate::scalar_store::retain_scalar;
+use crate::symbols::model_symbol;
+
+/// Describe the unit's tables only for a request that reads or retains plan products.
+pub fn product_nominal_table(
+    program: &ProgramContext,
+    intrinsics: &[EnumDeclaration],
+    products: Option<&str>,
+) -> UnitNominals {
+    if products.is_none() {
+        return unit_nominals(Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    }
+    unit_product_nominals(program, intrinsics)
+}
+
+/// Describe every model and enum position of the program's tables, then each intrinsic carrier at its carrier position.
+///
+/// A declaration without a stable identity is described with an empty identity, which a product refuses to name.
+pub fn unit_product_nominals(program: &ProgramContext, intrinsics: &[EnumDeclaration]) -> UnitNominals {
+    let mut models = Vec::with_capacity(program.nominals.len());
+    let mut model_names = Vec::with_capacity(program.nominals.len());
+    for declaration in program.nominals.iter() {
+        let witness = model_layout_witness(declaration).map_err(|error| error.to_string());
+        models.push(source_nominal(NominalKind::Model, &declaration.canonical, witness));
+        model_names.push(model_symbol(&declaration.name));
+    }
+    let mut described = Vec::with_capacity(program.enums.len());
+    let mut enum_names = Vec::with_capacity(program.enums.len());
+    for declaration in program.enums.iter() {
+        let carrier = declaration.carrier_name();
+        let witness = enum_layout_witness(declaration).map_err(|error| error.to_string());
+        described.push(source_nominal(NominalKind::Enum, &declaration.canonical, witness));
+        enum_names.push(model_symbol(&carrier));
+    }
+    let mut unit = unit_nominals(models, described, model_names, enum_names);
+    sync_carriers(&mut unit, intrinsics);
+    unit
+}
+
+/// Describe intrinsic carriers lowering admitted since the table was described, each at its carrier position.
+pub fn sync_carriers(unit: &mut UnitNominals, intrinsics: &[EnumDeclaration]) {
+    while unit.carriers.len() < intrinsics.len() {
+        let declaration = &intrinsics[unit.carriers.len()];
+        unit.append_carrier(carrier_nominal(declaration), declaration.name.clone());
+    }
+}
+
+/// Retain a fresh product, with the helper frames and generic instance requests its lowering made, naming each model
+/// and enum it uses by declaration; return their current positions.
+#[allow(clippy::too_many_arguments)]
+pub fn retain_named_scalar(
+    directory: &str,
+    inputs: &[String],
+    function: &Function,
+    runtime: &[ExternalFunction],
+    unit: &UnitNominals,
+    positions: &[(i64, i64)],
+    frames: &[Function],
+    requests: &[Vec<u8>],
+) -> Result<Vec<NominalReference>, String> {
+    let references = product_nominals(function, runtime, frames)?;
+    let nominals = describe_nominals(&references, unit)?;
+    retain_scalar(
+        directory, inputs, function, runtime, &nominals, positions, frames, requests,
+    )?;
+    Ok(references)
+}
+
+/// Combine the existing stable declaration identity with its closed specialization and complete checked version.
+fn source_nominal(
+    kind: NominalKind,
+    canonical: &CanonicalSymbolId,
+    witness: Result<(String, String), String>,
+) -> ProductNominal {
+    let unnamed = ProductNominal {
+        kind,
+        identity: String::new(),
+        digest: String::new(),
+    };
+    let Some(stable) = StableDeclarationId::from_canonical(canonical, None, None) else {
+        return unnamed;
+    };
+    let Ok((specialization, version)) = witness else {
+        return unnamed;
+    };
+    ProductNominal {
+        kind,
+        identity: format!("{}#{specialization}", stable.render_compact()),
+        digest: version,
+    }
+}
+
+/// Name a standard carrier by the checked type it lays out; its variants and derives are its checked meaning.
+///
+/// The native name numbers carriers in admission order, which another module's types change, so it never names one.
+/// A carrier without an encodable checked type stays unnamed, and a product refuses to name it.
+pub fn carrier_nominal(declaration: &EnumDeclaration) -> ProductNominal {
+    let unnamed = ProductNominal {
+        kind: NominalKind::Enum,
+        identity: String::new(),
+        digest: String::new(),
+    };
+    let Ok(text) = carrier_type_text(declaration) else {
+        return unnamed;
+    };
+    let mut meaning = vec![text.clone()];
+    for variant in &declaration.variants {
+        meaning.push(format!("{}/{}", variant.name, variant.fields.len()));
+    }
+    meaning.extend(declaration.derives.iter().cloned());
+    match semantic_digest(&meaning) {
+        Ok(digest) => ProductNominal {
+            kind: NominalKind::Enum,
+            identity: format!("carrier#{text}"),
+            digest,
+        },
+        Err(_) => unnamed,
+    }
+}
+
+/// Encode the exact checked type a carrier lays out; its nominal names carry no source span.
+fn carrier_type_text(declaration: &EnumDeclaration) -> Result<String, String> {
+    let Some(key) = &declaration.semantic_key else {
+        return Err("carrier has no checked type".into());
+    };
+    let stored = encode_checked_layout(key)?;
+    Ok(format!("sha256:{}", hex::encode(Sha256::digest(&stored))))
+}
