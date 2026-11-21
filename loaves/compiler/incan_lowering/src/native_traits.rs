@@ -5,10 +5,18 @@ use incan_semantics_core::body_ir::BodyIrModule;
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 
 use crate::classes::function_name;
+use crate::decls::library_item;
 
 /// The Rust traits one class adopts, each with the planned method filling each trait method the class declares.
+///
+/// A class a linked Loaf declares, such as the project's shared library a test unit links, is that Loaf's compiled
+/// item: the Loaf already implements its traits and its method bodies are linked calls, so it adopts nothing here, as
+/// it plans no callable, iterator or comparison methods here either.
 pub fn native_trait_adoptions(module: &BodyIrModule, owner: usize) -> Result<Vec<NativeTraitAdoption>, String> {
     let declaration = &module.nominal_declarations[owner];
+    if !library_item(declaration).is_empty() {
+        return Ok(Vec::new());
+    }
     let mut adoptions = Vec::new();
     for adoption in &declaration.trait_adoptions {
         let SymbolOrigin::RustCrate(parts) = &adoption.trait_identity.origin else {
