@@ -108,7 +108,7 @@ fn publication_folds_each_carrier_after_the_source_enums() -> Result<(), String>
     );
     option.carrier = Carrier::Option;
     let plan = Plan::new(vec![tone, option], Vec::new(), vec![function], Vec::new(), span);
-    let folded = fold_carrier_positions(&plan, 1)?;
+    let folded = fold_carrier_positions(plan, 1)?;
     assert!(folded.functions[0].return_type == PlanType::Enum(1, "__IncanCarrier0".to_owned()));
     assert!(folded.functions[0].locals[0].ty == PlanType::Enum(1, "__IncanCarrier0".to_owned()));
     assert!(
@@ -117,7 +117,7 @@ fn publication_folds_each_carrier_after_the_source_enums() -> Result<(), String>
     );
     assert!(folded.enums[1].variants[1].fields == [PlanType::Enum(0, "Tone".to_owned())]);
     // Folding a published plan again changes nothing.
-    assert!(fold_carrier_positions(&folded, 1)? == folded);
+    assert!(fold_carrier_positions(folded.clone(), 1)? == folded);
     Ok(())
 }
 
@@ -160,7 +160,7 @@ fn publication_keeps_a_trait_type_a_frame_names() -> Result<(), String> {
     );
     option.carrier = Carrier::Option;
     let plan = Plan::new(vec![option], Vec::new(), vec![function], Vec::new(), span);
-    let folded = fold_carrier_positions(&plan, 0)?;
+    let folded = fold_carrier_positions(plan, 0)?;
     assert!(
         folded.functions[0].locals[1].ty == token,
         "the fold changed a trait's type token"
