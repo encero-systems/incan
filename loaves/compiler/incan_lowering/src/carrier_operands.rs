@@ -15,6 +15,7 @@ use crate::frame::{
 use crate::frozen_plan::frozen_bytes_literal;
 use crate::generators::generator_shape;
 use crate::layout_types::native_alias_boundary;
+use crate::list_values::sequence_read_storage;
 use crate::lists::is_list;
 use crate::numerics::numeric_carrier;
 use crate::pending::untranslated;
@@ -72,7 +73,10 @@ pub fn boundary_plan_operand(
         return Ok(copied);
     }
     if source == PlanType::FrozenBytes && *target == PlanType::List(ListLeaf::U8, 1) {
-        return Err(untranslated("sequence_builtins::sequence_read_storage"));
+        let frozen = temporary(builder, source, span);
+        builder.emit(plan_assign(frozen.clone(), RvalueKind::Use(value), span));
+        let storage = sequence_read_storage(builder, frozen, span)?;
+        return Ok(read_place(storage, true, span));
     }
     if source == PlanType::StrRef && *target == PlanType::String {
         let owned = owned_slice_text(builder, value, span);

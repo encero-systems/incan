@@ -17,19 +17,21 @@ use crate::carrier_operands::{boundary_operand, element_operand};
 use crate::checked_values::{reference_value_read, scalar_operand, scalar_place, validate_callback_place};
 use crate::closures::callable_copy_type;
 use crate::collections::{borrow_collection, is_collection, is_owned_collection};
-use crate::element_borrows::shared_element_place;
+use crate::element_borrows::{mutable_element_place, shared_element_place};
 use crate::element_places::is_element_place;
 use crate::explicit_arguments::reference_contract;
+use crate::formatting::display_plan_operand;
 use crate::frame::{
     Builder, appended_field, dereferenced_place, drop_owned, external_call, forget_owned, literal, place_type,
     read_place, temporary, value_type,
 };
 use crate::frozen_plan::frozen_observation_type;
-use crate::list_iteration::frozen_list_snapshot_type;
+use crate::list_iteration::{frozen_list_snapshot_type, list_root_place};
 use crate::lists::{is_owned_list, list_element, list_shape, require_list_shape};
 use crate::model_lists::model_list_read;
 use crate::models::field_steps;
 use crate::numerics::numeric_carrier;
+use crate::options::replace_owned_destination;
 use crate::pending::untranslated;
 use crate::statements::is_nominal_type;
 use crate::strings::emit_text_helper;
@@ -109,9 +111,17 @@ pub fn checked_list_argument(
             return Err(untranslated("list_methods::materialized_receiver"));
         }
         // An exclusive argument reaches the list stored in the container, so its change lands there.
-        return Err(untranslated("element_borrows::mutable_element_place"));
+        let stored = mutable_element_place(builder, &read.place, span)?;
+        return list_borrow(builder, stored, true, span);
     }
-    Err(untranslated("list_iteration::list_root_place"))
+    let root = list_root_place(builder, &read.place, span)?;
+    if place_type(&builder.locals, &root) == PlanType::Generator(ListLeaf::Int, 0) {
+        if read.fact != OwnershipFact::Move && !read.last_use {
+            return Err("unsupported Body IR list argument without an owned range".into());
+        }
+        return Err(untranslated("generators::generator_collect"));
+    }
+    list_borrow(builder, root, mutable, span)
 }
 
 /// Recognize a projection that materializes a fresh sequence owner instead of naming stored element storage.
@@ -305,7 +315,7 @@ pub fn projected_element_read(
 pub fn sequence_read_storage(builder: &mut Builder, source: Place, span: &SourceSpan) -> Result<Place, String> {
     let ty = place_type(&builder.locals, &source);
     if ty == PlanType::FrozenStr {
-        return Err(untranslated("formatting::display_plan_operand"));
+        return display_plan_operand(builder, read_place(source, false, span), span);
     }
     if ty == PlanType::FrozenBytes {
         let output = temporary(builder, PlanType::List(ListLeaf::U8, 1), span);
@@ -677,8 +687,14 @@ pub fn list_assignment(
     }
     if destination.projection != Projection::Whole {
         let replacement = temporary(builder, place_type(&builder.locals, &destination), span);
-        list_assignment(builder, replacement, value, span)?;
-        return Err(untranslated("options::replace_owned_destination"));
+        list_assignment(builder, replacement.clone(), value, span)?;
+        replace_owned_destination(
+            builder,
+            destination,
+            RvalueKind::Use(read_place(replacement, true, span)),
+            span,
+        );
+        return Ok(());
     }
     let declared = builder.locals[destination.local as usize].ty.clone();
     let (leaf, depth) = require_list_shape(&declared, "unsupported Body IR non-list assignment")?;

@@ -12,20 +12,22 @@ use incan_semantics_core::body_ir::{
 use crate::async_::is_future;
 use crate::builtin_calls::{lower_boolean_operator, lower_numeric_helper, validate_exact_float};
 use crate::carrier_operands::boundary_plan_operand;
-use crate::checked_values::scalar_place;
+use crate::checked_values::{scalar_operand, scalar_place};
 use crate::closures::callable_copy_type;
 use crate::collections::is_collection;
 use crate::element_places::is_element_place;
 use crate::formatting::{lower_format, lower_string_assignment};
 use crate::frame::{Builder, cleanup_exit, literal, place_type, read_place, track_rvalue_moves, value_type};
-use crate::list_values::list_base_place;
+use crate::frozen_plan::frozen_bytes_literal;
+use crate::list_values::{frozen_list_assignment, list_assignment, list_base_place};
 use crate::lists::is_list;
 use crate::model_lists::structural_prefix;
 use crate::numerics::{integer_carrier, numeric_carrier, numeric_zero, sized_numeric};
 use crate::operators::scalar_rvalue;
 use crate::options::replace_owned_destination;
+use crate::owned_lists::initialize_owned_list_iterator;
 use crate::pending::untranslated;
-use crate::result_carriers::retained_reference_value;
+use crate::result_carriers::{frozen_operand, retained_reference_value};
 use crate::statements::{is_nominal_type, is_owned_callable};
 
 /// Assign a checked value to a local, routing strings, formatting and runtime-semantics operators first.
@@ -157,7 +159,16 @@ fn assign_stored_value(
     span: &SourceSpan,
 ) -> Result<(), String> {
     match &builder.locals[target.local as usize].ty {
-        PlanType::ListIntoIter(..) => return Err(untranslated("owned_lists::initialize_owned_list_iterator")),
+        PlanType::ListIntoIter(..) => {
+            let Rvalue::Use(SourceOperand::Place(read)) = value else {
+                return Err("unsupported Body IR consuming iterator initialization".into());
+            };
+            if read.fact != OwnershipFact::Move {
+                return Err("unsupported Body IR consuming iterator without retained taking".into());
+            }
+            let source = scalar_place(builder, &read.place, span)?;
+            return initialize_owned_list_iterator(builder, &target, &source, span);
+        }
         PlanType::ZipIteratorMutRef(..) => return Err(untranslated("tuple_iterators::initialize_zip_iterator")),
         PlanType::GeneratorMutRef(..) => return Err(untranslated("generators::generator_reference")),
         PlanType::SetRef(_) | PlanType::DictRef(..) | PlanType::ListRef(..) => {
@@ -167,7 +178,7 @@ fn assign_stored_value(
             if name == "FrozenList"
                 && let Rvalue::Aggregate(AggregateKind::List, _) = value
             {
-                return Err(untranslated("list_values::frozen_list_assignment"));
+                return frozen_list_assignment(builder, target, value, span);
             }
         }
         _ => {}
@@ -177,7 +188,7 @@ fn assign_stored_value(
         return Err(untranslated("hashed_collections::collection_assignment"));
     }
     if is_list(&ty) {
-        return Err(untranslated("list_values::list_assignment"));
+        return list_assignment(builder, target, value, span);
     }
     if matches!(ty, PlanType::String | PlanType::StringRef) && builder.iteration_locals.contains(&target.local) {
         return Err(untranslated("list_iteration::initialize_text_iterator"));
@@ -185,8 +196,28 @@ fn assign_stored_value(
     if ty == PlanType::String {
         return lower_string_assignment(builder, target, value, span);
     }
-    if ty == PlanType::FrozenStr || ty == PlanType::FrozenBytes {
-        return Err(untranslated("frozen_plan::frozen_assignment"));
+    if ty == PlanType::FrozenStr {
+        let Rvalue::Use(operand) = value else {
+            return Err("unsupported Body IR nonliteral FrozenStr assignment".into());
+        };
+        let converted = frozen_operand(builder, operand, span)?;
+        builder.emit(plan_assign(target, RvalueKind::Use(converted), span));
+        return Ok(());
+    }
+    if ty == PlanType::FrozenBytes {
+        let converted = match value {
+            Rvalue::Use(SourceOperand::Constant(constant)) => frozen_bytes_literal(builder, constant, span)?,
+            Rvalue::Use(operand) => {
+                let converted = scalar_operand(builder, operand, span)?;
+                if value_type(builder, &converted)? != PlanType::FrozenBytes {
+                    return Err("unsupported Body IR dynamic FrozenBytes assignment".into());
+                }
+                converted
+            }
+            _ => return Err("unsupported Body IR nonliteral FrozenBytes assignment".into()),
+        };
+        builder.emit(plan_assign(target, RvalueKind::Use(converted), span));
+        return Ok(());
     }
     match value {
         Rvalue::ResultVariant(_) => return Err(untranslated("result_carriers::lower_result_construction")),

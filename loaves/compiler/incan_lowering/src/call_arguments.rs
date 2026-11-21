@@ -15,6 +15,7 @@ use crate::element_places::is_element_place;
 use crate::explicit_arguments::argument_access;
 use crate::formatting::display_operand;
 use crate::frame::{Builder, literal, place_type, read_place, temporary};
+use crate::frozen_equality::{borrow_frozen, frozen_place, frozen_reference_type};
 use crate::generators::is_generator_reference;
 use crate::generators::is_generator_type;
 use crate::layout_types::native_source_type;
@@ -239,7 +240,7 @@ pub fn call_argument_operand(
         PlanType::ScalarRef(_) | PlanType::ScalarMutRef(_) => {
             return Err(untranslated("operand_borrows::borrow_scalar_operand"));
         }
-        PlanType::FrozenCollectionRef(..) => return Err(untranslated("frozen_plan::borrow_frozen")),
+        PlanType::FrozenCollectionRef(..) => return frozen_reference_argument(builder, value, ty, span),
         _ => {}
     }
     if owned_collection(ty) {
@@ -315,4 +316,30 @@ pub fn shared_nominal_argument(
     let reference = temporary(builder, ty.clone(), span);
     builder.emit(plan_assign(reference.clone(), RvalueKind::Borrow(receiver), span));
     Ok(read_place(reference, false, span))
+}
+
+/// Lend an existing frozen view, or borrow the exact frozen storage a checked argument names.
+fn frozen_reference_argument(
+    builder: &mut Builder,
+    value: &SourceOperand,
+    ty: &PlanType,
+    span: &SourceSpan,
+) -> Result<Operand, String> {
+    if let SourceOperand::Place(read) = value
+        && !is_element_place(builder, &read.place)?
+    {
+        let existing = scalar_place(builder, &read.place, span)?;
+        if place_type(&builder.locals, &existing) == *ty {
+            return Ok(read_place(existing, false, span));
+        }
+    }
+    match frozen_place(builder, value, span)? {
+        Some(storage) => {
+            if frozen_reference_type(&place_type(&builder.locals, &storage))? != *ty {
+                return Err("unsupported Body IR frozen argument owner mismatch".into());
+            }
+            borrow_frozen(builder, storage, span)
+        }
+        None => Err("unsupported Body IR native frozen argument without exact storage".into()),
+    }
 }
