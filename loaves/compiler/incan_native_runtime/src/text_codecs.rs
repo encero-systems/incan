@@ -54,6 +54,6 @@ pub fn invalid_decoder_options(encoding: &String, errors: &String) -> Validation
 }
 
 /// Adapt primitive UTF-8 validation detail to the established coded decoder error.
-pub fn invalid_utf8_error(detail: &String) -> ValidationError {
+pub fn invalid_utf8_error(detail: String) -> ValidationError {
     ValidationError::with_code(format!("'utf-8' codec can't decode bytes: {detail}"), "invalid-utf8")
 }

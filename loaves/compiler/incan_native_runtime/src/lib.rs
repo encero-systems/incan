@@ -10,6 +10,8 @@
 mod async_;
 #[cfg(test)]
 mod behavior_tests;
+#[cfg(test)]
+mod call_site_signatures;
 mod builtins;
 mod carriers;
 mod checked_json;

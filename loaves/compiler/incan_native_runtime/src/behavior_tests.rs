@@ -341,7 +341,7 @@ mod texts {
             "unknown-errors-policy: bytes.decode() errors must be \"strict\" or \"replace\", got 'ignore'"
         );
         assert_eq!(
-            invalid_utf8_error(&text("bad byte")).to_string(),
+            invalid_utf8_error(text("bad byte")).to_string(),
             "invalid-utf8: 'utf-8' codec can't decode bytes: bad byte"
         );
         validate_encoder_label(&text("utf8"));
