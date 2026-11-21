@@ -1,0 +1,23 @@
+# behavior: A native `&mut State` from a RefCell borrow is a `BorrowedMut[State]` value: one type, so it is passed with no adjustment (RFC 164).
+# pending: the checker admits the native `&mut State` as the view, and Body IR refuses to lower it: "explicit source-place input cannot coerce or copy its owner".
+# expect-stdout:
+#   1
+
+from rust::std::cell import RefCell
+from rust::std::ops import DerefMut
+
+
+model State:
+    count: int
+
+
+def bump(mut state: BorrowedMut[State]) -> int:
+    state.count += 1
+    return state.count
+
+
+def main() -> None:
+    """A native `&mut State` from a RefCell borrow is a `BorrowedMut[State]` value."""
+    cell = RefCell.new(State(count=0))
+    mut held = cell.borrow_mut()
+    println(bump(held.deref_mut()))

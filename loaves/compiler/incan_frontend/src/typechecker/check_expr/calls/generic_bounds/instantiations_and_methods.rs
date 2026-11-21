@@ -282,6 +282,9 @@ impl TypeChecker {
         );
         let return_type = substitute_resolved_type(&return_type, &type_bindings);
         let arg_types = self.check_call_arg_types_binding_closures_last(args, &contextual_params, &type_bindings);
+        let arg_types = self
+            .view_argument_types(method_info.identity.as_ref(), &contextual_params, args, &arg_types)
+            .unwrap_or(arg_types);
         self.seed_contextual_callable_type_param_bindings(&params, args, &arg_types, &mut type_bindings);
         self.validate_callable_arg_bindings(
             method,

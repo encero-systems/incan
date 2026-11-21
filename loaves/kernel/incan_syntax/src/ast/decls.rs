@@ -451,6 +451,9 @@ pub struct PropertyDecl {
     pub visibility: Visibility,
     pub name: Ident,
     pub return_type: Spanned<Type>,
+    /// Optional explicit source relationship for a borrowed result, as on a method: `from self.field` names the
+    /// field the view borrows, and `from self` the receiver when no single field is the source.
+    pub result_source: Option<Spanned<ResultSource>>,
     pub body: Option<Vec<Spanned<Statement>>>,
 }
 

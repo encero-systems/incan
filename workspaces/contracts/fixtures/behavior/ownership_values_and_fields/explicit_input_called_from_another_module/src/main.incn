@@ -1,0 +1,10 @@
+# behavior: A function with an explicit shared input is called from another module of the same Loaf with an owned local, as a call in its own module would be (RFC 164).
+# expect-stdout:
+#   3
+
+from sizes import text_size
+
+
+def main() -> None:
+    text = "abc"
+    println(text_size(text))

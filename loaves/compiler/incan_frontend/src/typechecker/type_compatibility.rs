@@ -785,15 +785,36 @@ impl TypeChecker {
     /// by Rust with a fixed argument ABI. A function that takes `T` or `&T` is not a valid substitute for one that Rust
     /// will call as `FnMut(&mut T)`.
     pub(super) fn callable_param_types_compatible(&self, actual: &ResolvedType, expected: &ResolvedType) -> bool {
-        match (actual, expected) {
+        let actual = self.callable_view_parameter_type(actual);
+        let expected = self.callable_view_parameter_type(expected);
+        match (actual.as_ref(), expected.as_ref()) {
             (ResolvedType::Ref(actual_inner), ResolvedType::Ref(expected_inner))
             | (ResolvedType::RefMut(actual_inner), ResolvedType::RefMut(expected_inner)) => {
                 self.nested_types_compatible(actual_inner, expected_inner)
             }
             (ResolvedType::Ref(_) | ResolvedType::RefMut(_), _)
             | (_, ResolvedType::Ref(_) | ResolvedType::RefMut(_)) => false,
-            _ => self.nested_types_compatible(actual, expected),
+            (actual, expected) => self.nested_types_compatible(actual, expected),
         }
+    }
+
+    /// RFC 164 one type: a callable's `Borrowed[T]` or `BorrowedMut[T]` parameter is the `&T` or `&mut T` parameter
+    /// a native signature spells, so both spellings name one callable type. Other parameters keep their own type.
+    fn callable_view_parameter_type<'a>(&self, ty: &'a ResolvedType) -> std::borrow::Cow<'a, ResolvedType> {
+        if let ResolvedType::Generic(name, arguments) = ty
+            && let [value] = arguments.as_slice()
+        {
+            match self.explicit_ownership_mode(name) {
+                Some(incan_lang::lang::types::ownership::OwnershipMode::Borrowed) => {
+                    return std::borrow::Cow::Owned(ResolvedType::Ref(Box::new(value.clone())));
+                }
+                Some(incan_lang::lang::types::ownership::OwnershipMode::BorrowedMut) => {
+                    return std::borrow::Cow::Owned(ResolvedType::RefMut(Box::new(value.clone())));
+                }
+                _ => {}
+            }
+        }
+        std::borrow::Cow::Borrowed(ty)
     }
 }
 

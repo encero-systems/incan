@@ -1,0 +1,23 @@
+# behavior: A property's borrowed result names the field it views with `from self.<field>`, so a disjoint sibling field stays usable while the view is held (RFC 164, umbrella #3004).
+# pending: the parser refuses `from` after a property's return type ("Expected ':' after property return type"), and properties carry no ownership contract for their result.
+# expect-stdout:
+#   3
+#   1
+#   0
+
+model Frame:
+    nominals: list[int]
+    count: int
+
+    property nominals_view -> Borrowed[list[int]] from self.nominals:
+        """Borrow the nominal table without copying it."""
+        return self.nominals
+
+
+def main() -> None:
+    """Read the borrowed table, then a sibling field while the view is held."""
+    frame = Frame(nominals=[1, 2, 3], count=1)
+    view = frame.nominals_view
+    println(len(view))
+    println(frame.count)
+    println(len(view) - 2 - frame.count)
