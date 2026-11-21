@@ -17,6 +17,7 @@ use crate::carrier_operands::boundary_plan_operand;
 use crate::classes::function_name;
 use crate::closures::{callable_copy_type, return_representation};
 use crate::collections::is_owned_collection;
+use crate::derived_defaults::{is_derived_default, lower_derived_default};
 use crate::enums::enum_type;
 use crate::explicit_arguments::validate_source_input_call;
 use crate::frame::{
@@ -109,6 +110,9 @@ pub fn lower_named_target(
     if let Some(step) = special_named_target(module, builder, target)? {
         return Err(untranslated(step));
     }
+    if is_derived_default(target) {
+        return lower_derived_default(module, builder, target, destination, span);
+    }
     if is_json_deserialize_method(target) {
         return lower_model_from_json(module, builder, target, arguments, destination, span);
     }
@@ -178,9 +182,6 @@ fn special_named_target(
     if builder.constructors().validated_constructors.contains(identity) {
         return Ok(Some("callable_calls::lower_validated_constructor"));
     }
-    if method && identity.declaration_name == "default" && identity_in(identity, "std", "derives", "copying") {
-        return Ok(Some("derived_defaults::lower_derived_default"));
-    }
     if let StringConversionContract::Selected(selection) = &module.string_conversion_contract
         && selection.method_identity == *identity
         && !conversion_trait(module)?.is_empty()
@@ -191,21 +192,6 @@ fn special_named_target(
 }
 
 /// Whether a canonical identity is declared in the standard module `std.<package>.<module>`, written in source or
-/// compiled into its standard Loaf.
-fn identity_in(identity: &CanonicalSymbolId, root: &str, package: &str, module: &str) -> bool {
-    match &identity.origin {
-        SymbolOrigin::Module(path) => path.len() == 3 && path[0] == root && path[1] == package && path[2] == module,
-        SymbolOrigin::Package { library, module_path } => {
-            let expected = if package == "derives" {
-                "incan_stdlib_primitives"
-            } else {
-                "incan_stdlib_data"
-            };
-            library == expected && module_path.len() == 2 && module_path[0] == package && module_path[1] == module
-        }
-        _ => false,
-    }
-}
 
 /// Authenticate an exact retained adapter slot before inspecting an unrelated call's operands.
 pub fn has_adapter_slot(module: &BodyIrModule, slot: &CanonicalSymbolId) -> bool {

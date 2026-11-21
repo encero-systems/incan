@@ -44,6 +44,7 @@ mod decls;
 mod decorator_caches;
 mod defaults;
 mod derived_methods;
+mod derived_defaults;
 mod display_methods;
 mod element_borrows;
 mod element_places;
