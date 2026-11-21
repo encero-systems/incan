@@ -279,7 +279,7 @@ impl TypeChecker {
 
     /// Retain one canonical Copy layout across modules. Readable owners keep their complete field layout; owners
     /// with no public fields remain opaque, so a by-value method grants no access to internal storage.
-    pub(in crate::typechecker::check_expr) fn retain_rust_copy_owner(&mut self, path: &str, info: &RustTypeInfo) {
+    pub(in crate::typechecker) fn retain_rust_copy_owner(&mut self, path: &str, info: &RustTypeInfo) {
         if info
             .fields
             .iter()

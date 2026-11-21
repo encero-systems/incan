@@ -52,8 +52,27 @@ impl TypeChecker {
             );
         }
         let (source_type, native) = self.resolved_rust_field_types(path, rust_field);
+        self.retain_rust_field_payload_layouts(&source_type);
         self.type_info.rust.field_values.insert(span, native);
         Some(source_type)
+    }
+
+    /// Retain the native record layouts a field's type names inside it (an `Option` of a Rust record, say), so
+    /// lowering can carry that payload even where the source never reads the record's own fields.
+    fn retain_rust_field_payload_layouts(&mut self, ty: &ResolvedType) {
+        let mut paths = Vec::new();
+        rust_path_leaves(ty, &mut paths);
+        for path in paths {
+            let Some(metadata) = self.rust_item_metadata_for_complete_type(&path) else {
+                continue;
+            };
+            if let RustItemKind::Type(info) = &metadata.kind
+                && info.variants.is_empty()
+                && !info.fields.is_empty()
+            {
+                self.retain_rust_layout(&path, info);
+            }
+        }
     }
 
     /// Resolve source and native field types together from metadata against the instantiated owner.
@@ -403,5 +422,19 @@ impl TypeChecker {
                 self.check_expr(expr)
             }
         }
+    }
+}
+
+/// The Rust paths a type names as payloads: inside collections, options, tuples and references.
+fn rust_path_leaves(ty: &ResolvedType, paths: &mut Vec<String>) {
+    match ty {
+        ResolvedType::RustPath(path) => paths.push(path.clone()),
+        ResolvedType::Generic(_, arguments) | ResolvedType::Tuple(arguments) => {
+            for argument in arguments {
+                rust_path_leaves(argument, paths);
+            }
+        }
+        ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => rust_path_leaves(inner, paths),
+        _ => {}
     }
 }
