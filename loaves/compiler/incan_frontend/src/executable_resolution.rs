@@ -227,7 +227,8 @@ fn resolve_from_catalog(
     let mut modules: BTreeMap<String, BodyIrModule> = BTreeMap::new();
     let mut resolved = ResolvedExecutableModules::default();
     while let Some((identity, implementation_allowed, optional_root)) = pending.pop_first() {
-        if checked_local.contains(&identity) {
+        // A native identity, such as a Rust trait's method or provided default, has no Incan fragment to load.
+        if checked_local.contains(&identity) || matches!(identity.origin, SymbolOrigin::RustCrate(_)) {
             continue;
         }
         let SymbolOrigin::Package { library, .. } = &identity.origin else {
@@ -806,6 +807,25 @@ mod tests {
         }
         assert!(rendered.contains("pub::absent_provider::api::read_bytes"));
         assert!(rendered.contains("dependency chain"));
+        Ok(())
+    }
+
+    /// A native identity reached as a requirement, such as a Rust trait's method that an adopter implements or a
+    /// Rust trait's provided default, has no Incan fragment: it resolves to nothing rather than to a missing package
+    /// declaration.
+    #[test]
+    fn a_native_requirement_needs_no_package_declaration() -> Result<(), Box<dyn std::error::Error>> {
+        let native = CanonicalSymbolId {
+            namespace: incan_semantics_core::SymbolNamespace::Member,
+            origin: SymbolOrigin::RustCrate(vec!["records".into(), "RecordSource".into(), "read".into()]),
+            declaration_name: "read".into(),
+            kind: SemanticSourceTargetKind::Method,
+            scope_discriminant: None,
+            declaration_span: HirSourceSpan::new(0, 0),
+        };
+        let resolved = resolve_loaf_declarations(&LoafIndex::default(), &BTreeSet::from([native]), &BTreeSet::new())
+            .map_err(|error| error.to_string())?;
+        assert!(resolved.modules.is_empty());
         Ok(())
     }
 

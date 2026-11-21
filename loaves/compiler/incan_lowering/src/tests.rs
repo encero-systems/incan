@@ -1,4 +1,4 @@
-//! Tests ported from the reference lowering's Incan test files, one module per file.
+//! Tests of the lowering, one module per file, most of them ported from the reference lowering's Incan test files.
 //!
 //! `test_parallel_ranges` and `test_runtime_layouts` live beside their modules (`parallel_ranges`, `runtime_calls`).
 
@@ -17,6 +17,7 @@ mod instance_requests;
 mod method_refusals;
 mod model_types;
 mod module_statics;
+mod native_trait_adoptions;
 mod nested_carrier_conversions;
 mod record_plan_outputs;
 mod record_positions;

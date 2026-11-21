@@ -1,0 +1,34 @@
+"""Classes adopting a Rust trait, in a module beside the entry, so the project's tests link them from its shared library."""
+
+from rust::tiny import Source, ask
+
+
+pub class Prefixed with Source:
+    """Answer each read with a prefix and keep the trait's default label."""
+
+    prefix: str
+
+    @staticmethod
+    pub def open(prefix: str) -> Prefixed:
+        return Prefixed(prefix=prefix)
+
+    def read(self, key: int) -> str:
+        return f"{self.prefix}{key}"
+
+
+pub class Named with Source:
+    """Answer each read with its key and name itself."""
+
+    pub name: str
+
+    def read(self, key: int) -> str:
+        return f"{key}"
+
+    def label(self) -> str:
+        return self.name
+
+
+pub def lookup(prefix: str, key: int) -> str:
+    """Read through a source this module builds."""
+    source = Prefixed.open(prefix)
+    return ask(source, key)
