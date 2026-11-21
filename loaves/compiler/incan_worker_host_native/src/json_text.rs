@@ -41,9 +41,30 @@ pub(crate) fn object(fields: BTreeMap<&str, Field>) -> String {
     format!("{{{}}}", members.join(","))
 }
 
-/// Parse one document, keeping the standard library's `JSONDecodeError` text.
+/// Parse one document as the standard JSON value does: a syntax error is its `JSONDecodeError`, and an integer above
+/// the int range anywhere in the document is its `ValueError`, the first one in array and sorted key order.
 pub fn parse_document(text: &str) -> Result<Value, String> {
-    serde_json::from_str(text).map_err(|error| format!("JSONDecodeError: {error}"))
+    let document = serde_json::from_str(text).map_err(|error| format!("JSONDecodeError: {error}"))?;
+    within_int_range(&document)?;
+    Ok(document)
+}
+
+/// Refuse the first unsigned integer that does not fit an Incan int; floats and signed integers are kept.
+fn within_int_range(value: &Value) -> Result<(), String> {
+    match value {
+        Value::Number(number) if number.as_i64().is_none() && number.as_u64().is_some() => {
+            Err(format!("ValueError: JSON integer `{number}` does not fit in Incan int"))
+        }
+        Value::Array(items) => items.iter().try_for_each(within_int_range),
+        Value::Object(members) => {
+            let mut keys: Vec<&String> = members.keys().collect();
+            keys.sort();
+            keys.into_iter()
+                .filter_map(|key| members.get(key))
+                .try_for_each(within_int_range)
+        }
+        _ => Ok(()),
+    }
 }
 
 /// Read a required string field, keeping the standard library's `KeyError` and `TypeError` texts.
