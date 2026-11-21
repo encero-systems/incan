@@ -273,7 +273,7 @@ impl TypeChecker {
             CallArg::Positional(end.as_ref().clone()),
         ];
         let fields = ["start".to_owned(), "end".to_owned()];
-        self.retain_rust_construction(path, info, &arguments, &fields, expression.span)
+        self.retain_rust_construction(path, info, &arguments, &fields, &[], expression.span)
             .is_some()
     }
 
@@ -362,7 +362,8 @@ impl TypeChecker {
     }
 
     /// Close the native owner from the already checked field arguments and retain the ordinary constructor slots.
-    /// A missing/default-filled field or unresolved type binder grants no executable construction. A nongeneric
+    /// A field left out grants an executable construction only through the default its record publishes; its slot is
+    /// retained as defaulted. A field filled through `Default` or an unresolved type binder grants none. A nongeneric
     /// declaration retains its bare owner identity rather than acquiring an empty generic application.
     pub(super) fn retain_rust_construction(
         &mut self,
@@ -370,9 +371,10 @@ impl TypeChecker {
         info: &RustTypeInfo,
         args: &[CallArg],
         selected: &[String],
+        defaulted: &[usize],
         span: Span,
     ) -> Option<ResolvedType> {
-        if args.len() != info.fields.len() || selected.len() != args.len() {
+        if args.len() + defaulted.len() != info.fields.len() || selected.len() != args.len() {
             return None;
         }
         self.retain_rust_layout(path, info);
@@ -419,7 +421,7 @@ impl TypeChecker {
                 body_ir::rust_item_identity(base)?,
                 ConstructorFieldBinding {
                     argument_slots: slots,
-                    defaulted_slots: Vec::new(),
+                    defaulted_slots: defaulted.to_vec(),
                     field_count: info.fields.len(),
                 },
             ),

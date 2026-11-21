@@ -593,8 +593,8 @@ impl TypeChecker {
                             let RustItemKind::Constant { type_display } = &metadata.kind else {
                                 return ResolvedType::Unknown;
                             };
-                            self.type_info.rust.checked_constants.insert(span, selected);
-                            self.native_rust_signature_type(type_display, path)
+                            let display = type_display.clone();
+                            self.checked_rust_constant(span, selected, &display, path)
                         }
                     };
                 }
@@ -608,8 +608,8 @@ impl TypeChecker {
                 if let Some(metadata) = self.rust_item_metadata_for_path(&selected)
                     && let RustItemKind::Constant { type_display } = &metadata.kind
                 {
-                    self.type_info.rust.checked_constants.insert(span, selected);
-                    return self.native_rust_signature_type(type_display, path);
+                    let display = type_display.clone();
+                    return self.checked_rust_constant(span, selected, &display, path);
                 }
                 if let Some(method) = owner
                     .methods
@@ -630,11 +630,8 @@ impl TypeChecker {
                         if let Some(metadata) = self.rust_item_metadata_for_path(&selected)
                             && let RustItemKind::Constant { type_display } = &metadata.kind
                         {
-                            self.type_info
-                                .rust
-                                .checked_constants
-                                .insert(span, metadata.canonical_path.clone());
-                            return self.native_rust_signature_type(type_display, path);
+                            let (selected, display) = (metadata.canonical_path.clone(), type_display.clone());
+                            return self.checked_rust_constant(span, selected, &display, path);
                         }
                         self.retain_rust_variant_construction(path, field, &[], &params, span);
                         return ResolvedType::RustPath(path.to_string());

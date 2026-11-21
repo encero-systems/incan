@@ -20,6 +20,8 @@ pub from std.primitives.crumb.metadata_values import encode as encode_metadata
 pub from std.primitives.crumb.values import Projection
 pub from std.primitives.crumb.encoding_errors import BinaryError
 pub from std.primitives.crumb.errors import CrumbError
+pub from std.fs import Path
+pub from std.json import JsonValue
 
 
 pub def create_budget(octets: int, elements: int, depth: int) -> Result[Budget, CrumbError]:
@@ -120,3 +122,38 @@ pub def crumb_message(error: CrumbError) -> str:
 pub def binary_message(error: BinaryError) -> str:
     """Return the standard binary diagnostic verbatim."""
     return error.message()
+
+
+pub def path_is_file(path: Path) -> bool:
+    """Whether the path resolves to a regular file."""
+    return path.is_file()
+
+
+pub def path_read(path: Path) -> Result[bytes, str]:
+    """Read a whole file with the standard error text."""
+    return path.read_bytes().map_err((error) => error.message())
+
+
+pub def path_write(path: Path, data: bytes) -> Result[None, str]:
+    """Replace a file's bytes with the standard error text."""
+    return path.write_bytes(data).map_err((error) => error.message())
+
+
+pub def path_unlink(path: Path) -> Result[None, str]:
+    """Remove a file with the standard error text."""
+    return path.unlink().map_err((error) => error.message())
+
+
+pub def path_suffixed(path: Path, suffix: str) -> Path:
+    """The path with text appended to its last component."""
+    return Path(path.0 + suffix)
+
+
+pub def json_native(value: JsonValue) -> NativeJsonValue:
+    """The native carrier of a standard JSON value."""
+    return value.0
+
+
+pub def json_value(value: NativeJsonValue) -> JsonValue:
+    """Wrap a native JSON carrier as a standard JSON value."""
+    return JsonValue(value)

@@ -19,8 +19,6 @@ from check_support import write_stderr
 from native_build import (
     NativeContext,
     StandardGeneration,
-    build_runtime,
-    build_source_interfaces,
     build_standard_packages,
     build_support_tool,
     publish_support,
@@ -172,8 +170,8 @@ pub def standard_context(relink: Relink) -> Result[NativeContext, str]:
 
 def rebuild_standard(context: NativeContext, helper: Path) -> Result[None, str]:
     """
-    Withdraw the installed providers and readmit the relinked compiler, then build the support crates, interfaces,
-    runtime and standard Loaves through it, as a release builds them in a fresh candidate home.
+    Withdraw the installed providers and readmit the relinked compiler, then build the support crates (the Rust
+    runtime among them) and the standard Loaves through it, as a release builds them in a fresh candidate home.
 
     The support crates are built again too: a standard Loaf's Rust facet whose source changed would otherwise be built
     alone, while the installed crates that depend on it still name the installed one (E0460).
@@ -181,8 +179,6 @@ def rebuild_standard(context: NativeContext, helper: Path) -> Result[None, str]:
     withdraw_installed_providers(context.home)?
     readmit_build_home(context, helper, "relink-driver-readmit")?
     publish_support(context, helper)?
-    interfaces = build_source_interfaces(context, helper, "relink-")?
-    _ = build_runtime(context, helper, Some(interfaces), true)?
     require_unique_runtime_root(context)?
     return build_standard_packages(context, helper, "relink-", standard_profiles(StandardGeneration.Candidate))
 

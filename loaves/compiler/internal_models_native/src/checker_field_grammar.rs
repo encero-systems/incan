@@ -1,23 +1,27 @@
-//! Primitive grammars retained by canonical checker rows.
+//! The grammar each checker record field's values follow, family by family; native objects never enter it.
 
 use crate::call_artifact_codecs::{CallArtifactCodec, call_artifact_codec};
 pub use crate::checker_record_models::{CanonicalField, CodecFault};
-use crate::input_fields::input_field_end;
+use crate::checker_record_rust_calls::rust_artifact_end;
+pub(crate) use crate::checker_record_types::{checked_type_end as type_end, parameters_end};
+use crate::input_fields::{input_field_end, method_call_end};
 use CodecFault::Malformed;
 
-/// Parse the canonical unsigned decimal grammar of up to five digits.
+/// The complete checked identifier classification shared with native record restoration.
+const IDENTIFIER_KINDS: [&str; 8] = [
+    "value",
+    "static",
+    "type-name",
+    "variant",
+    "module",
+    "rust-import",
+    "rust-value",
+    "trait",
+];
+
+/// Accept only a bounded unsigned canonical decimal spelling, including the one-byte zero.
 pub fn decimal(text: &str) -> Result<i64, CodecFault> {
-    let bytes = text.as_bytes();
-    if bytes.is_empty()
-        || bytes.len() > 5
-        || (bytes.len() > 1 && bytes[0] == b'0')
-        || !bytes.iter().all(u8::is_ascii_digit)
-    {
-        return Err(Malformed);
-    }
-    Ok(bytes
-        .iter()
-        .fold(0_i64, |value, digit| value * 10 + i64::from(digit - b'0')))
+    crate::checker_record_types::canonical_decimal(text)
 }
 
 /// Decode an unsigned count for indexing retained fields.
@@ -25,11 +29,18 @@ pub(crate) fn number(s: &str) -> Result<usize, CodecFault> {
     usize::try_from(decimal(s)?).map_err(|_| Malformed)
 }
 
-/// Require the complete 64-nybble lowercase digest behind its named algorithm.
+/// Read the validated scope count or the validated binding ordinal for the record-wide range check.
+pub fn allocated_scope_index(field: &CanonicalField) -> Result<i64, CodecFault> {
+    let index = if field.family == "scope" { 0 } else { 1 };
+    decimal(at(&field.values, index)?)
+}
+
+/// A normalized node root carries the full SHA-256 spelling, not a shortened hint or nonempty placeholder.
 pub fn full_digest(value: &str) -> bool {
-    value
-        .strip_prefix("sha256:")
-        .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+    value.chars().count() == 71
+        && value
+            .strip_prefix("sha256:")
+            .is_some_and(|hex| hex.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
 }
 
 /// Get a borrowed token at a wire offset, retaining the schema's typed refusal on truncation.
@@ -37,96 +48,22 @@ pub(crate) fn at(values: &[String], index: usize) -> Result<&str, CodecFault> {
     values.get(index).map(String::as_str).ok_or(Malformed)
 }
 
-/// Return the first offset after one prefix-encoded type.
-pub(crate) fn type_end(values: &[String], offset: usize, depth: u32) -> Result<usize, CodecFault> {
-    if depth > 32 {
-        return Err(Malformed);
-    }
-    let tag = at(values, offset)?;
-    let next = offset + 1;
-    match tag {
-        "never" | "int" | "float" | "bool" | "str" | "bytes" | "frozen-str" | "frozen-bytes" | "unit" | "self-type"
-        | "call-site-infer" | "unknown" => Ok(next),
-        "named" | "type-var" | "numeric" | "rust-path" => {
-            if at(values, next)?.is_empty() {
-                return Err(Malformed);
-            }
-            Ok(next + 1)
-        }
-        "result" | "frozen-dict" => type_end(values, type_end(values, next, depth + 1)?, depth + 1),
-        "option" | "list" | "frozen-list" | "frozen-set" | "type-token" | "ref" | "ref-mut" => {
-            type_end(values, next, depth + 1)
-        }
-        "ownership" => {
-            if !mode(at(values, next)?) {
-                return Err(Malformed);
-            }
-            type_end(values, next + 1, depth + 1)
-        }
-        "callable" => type_end(values, parameters_end(values, next, depth + 1)?, depth + 1),
-        "generic" | "tuple" => {
-            let first = at(values, next)?;
-            // Round 112 calls the standard list accessor when a named generic is missing its arity.
-            let (arity, mut end) = if tag == "generic" {
-                if first.is_empty() {
-                    return Err(Malformed);
-                }
-                (
-                    internal_models_bindings::list_get(values, (next + 1) as i64).as_str(),
-                    next + 2,
-                )
-            } else {
-                (first, next + 1)
-            };
-            let count = number(arity)?;
-            if count > values.len() - end {
-                return Err(Malformed);
-            }
-            for _ in 0..count {
-                end = type_end(values, end, depth + 1)?;
-            }
-            Ok(end)
-        }
-        _ => Err(CodecFault::Unsupported(format!("type:{tag}"))),
-    }
-}
-
-/// Validate explicit ownership-mode spellings shared by the declaration and flow grammars.
-pub(crate) fn mode(value: &str) -> bool {
-    matches!(value, "Borrowed" | "BorrowedMut" | "Owned" | "Reference")
-}
-
-/// Validate the binding marker, source shape, three flags and type in every callable parameter.
-pub(crate) fn parameters_end(values: &[String], offset: usize, depth: u32) -> Result<usize, CodecFault> {
-    let count = number(at(values, offset)?)?;
-    if count > values.len() {
-        return Err(Malformed);
-    }
-    let mut end = offset + 1;
-    for _ in 0..count {
-        let head = values.get(end..end + 6).ok_or(Malformed)?;
-        if !matches!(head[0].as_str(), "named" | "unnamed")
-            || (head[0] == "unnamed" && !head[1].is_empty())
-            || !matches!(head[2].as_str(), "normal" | "rest" | "keywords")
-            || !head[3..].iter().all(|v| matches!(v.as_str(), "true" | "false"))
-        {
-            return Err(Malformed);
-        }
-        end = type_end(values, end + 6, depth + 1)?;
-    }
-    Ok(end)
-}
-
 /// Read the optional diagnostic label and expectation after two counted note lists.
 fn diagnostic_end(values: &[String]) -> Result<usize, CodecFault> {
-    if values.len() < 7 || !matches!(at(values, 0)?, "error" | "syntax" | "type" | "warning" | "lint") {
+    if values.len() < 7 || !matches!(values[0].as_str(), "error" | "syntax" | "type" | "warning" | "lint") {
         return Err(Malformed);
     }
     let mut end = 3;
     for _ in 0..2 {
-        end += 1 + number(at(values, end)?)?;
+        if end >= values.len() {
+            return Err(Malformed);
+        }
+        end += 1 + number(&values[end])?;
+        if end >= values.len() {
+            return Err(Malformed);
+        }
     }
-    end += match at(values, end)? {
+    end += match values[end].as_str() {
         "primary-label" => 2,
         "no-primary-label" => 1,
         _ => return Err(Malformed),
@@ -136,10 +73,11 @@ fn diagnostic_end(values: &[String]) -> Result<usize, CodecFault> {
         "no-expected-actual" => 1,
         _ => return Err(Malformed),
     };
-    Ok(end + 1 + number(at(values, end)?)? * 2)
+    let count = number(at(values, end)?)?;
+    Ok(end + 1 + count * 2)
 }
 
-/// Read component paths, source slots and the return reference of one ownership declaration.
+/// Explicit access modes, type component paths and stable source slots survive independently of source spelling.
 fn ownership_end(v: &[String]) -> Result<usize, CodecFault> {
     if v.len() < 3 || v[0] != "1" {
         return Err(Malformed);
@@ -150,245 +88,351 @@ fn ownership_end(v: &[String]) -> Result<usize, CodecFault> {
     }
     let mut end = 2;
     for _ in 0..count {
-        if end + 3 >= v.len() || !mode(&v[end]) {
+        if end + 3 >= v.len() || !matches!(v[end].as_str(), "Borrowed" | "BorrowedMut" | "Owned" | "Reference") {
             return Err(Malformed);
         }
         if v[end + 1] != "result" {
-            number(&v[end + 1])?;
+            decimal(&v[end + 1])?;
         }
-        let n = number(&v[end + 2])?;
+        let size = number(&v[end + 2])?;
         end += 3;
-        for component in v.get(end..end + n).ok_or(Malformed)? {
-            number(component)?;
+        if size > v.len() - end {
+            return Err(Malformed);
         }
-        end = type_end(v, end + n, 0)?;
+        for component in &v[end..end + size] {
+            decimal(component)?;
+        }
+        end = type_end(v, end + size, 0)?;
     }
     match at(v, end)? {
-        "none" if count > 0 => return Ok(end + 1),
+        "none" if count == 0 => return Err(Malformed),
+        "none" => return Ok(end + 1),
         "parameter" => {
-            number(at(v, end + 1)?)?;
+            decimal(at(v, end + 1)?)?;
             end += 2;
         }
         "receiver" => end += 1,
         _ => return Err(Malformed),
     }
-    let n = number(at(v, end)?)?;
+    let size = number(at(v, end)?)?;
     end += 1;
-    if v.get(end..end + n).ok_or(Malformed)?.iter().any(String::is_empty) {
+    if size > v.len() - end || v[end..end + size].iter().any(String::is_empty) {
         return Err(Malformed);
     }
-    Ok(end + n)
+    Ok(end + size)
 }
 
-/// Verify that argument and default slots are disjoint and cover the field inventory.
-fn constructor_end(field: &CanonicalField) -> Result<usize, CodecFault> {
-    let v = &field.values;
+/// A constructor's argument-to-field binding: its field count, its counted argument slots and its counted,
+/// ascending defaulted slots, which together occupy every field once. A requirement names one checked field and
+/// its owner.
+fn constructor_field_end(field: &CanonicalField) -> Result<usize, CodecFault> {
+    let values = &field.values;
     if field.node.is_empty() {
         return Err(Malformed);
     }
     if field.family == "requirement" {
-        return if field.selector == "constructor-field" && v.len() == 2 && v.iter().all(|s| !s.is_empty()) {
-            Ok(2)
-        } else {
-            Err(Malformed)
-        };
-    }
-    if field.selector != "field-binding" || v.len() < 3 {
-        return Err(Malformed);
-    }
-    let fields = number(&v[0])?;
-    let supplied = number(&v[1])?;
-    let divider = supplied + 2;
-    let defaults = number(at(v, divider)?)?;
-    if defaults != v.len() - divider - 1 || supplied + defaults != fields {
-        return Err(Malformed);
-    }
-    let mut used = vec![false; fields];
-    let mut previous = None;
-    for (i, text) in v.iter().enumerate().skip(2) {
-        if i == divider {
-            continue;
-        }
-        let slot = number(text)?;
-        let taken = used.get_mut(slot).ok_or(Malformed)?;
-        if *taken || (i > divider && previous.is_some_and(|n| n >= slot)) {
+        if field.selector != "constructor-field" || values.len() != 2 || values.iter().any(String::is_empty) {
             return Err(Malformed);
         }
-        *taken = true;
-        if i > divider {
-            previous = Some(slot);
-        }
+        return Ok(2);
     }
-    Ok(v.len())
+    if field.selector != "field-binding" || values.len() < 3 {
+        return Err(Malformed);
+    }
+    let counts = values
+        .iter()
+        .map(|value| number(value))
+        .collect::<Result<Vec<_>, _>>()?;
+    let defaults_at = counts[1] + 2;
+    if defaults_at >= counts.len() || counts[defaults_at] != counts.len() - defaults_at - 1 {
+        return Err(Malformed);
+    }
+    let defaulted = &counts[defaults_at + 1..];
+    if defaulted.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err(Malformed);
+    }
+    let mut slots: Vec<usize> = counts[2..defaults_at].iter().chain(defaulted).copied().collect();
+    slots.sort_unstable();
+    if !slots.iter().copied().eq(0..counts[0]) {
+        return Err(Malformed);
+    }
+    Ok(values.len())
 }
 
-/// Validate shape, tag and complete consumption. Unknown producer capabilities retain their own refusal.
+/// Accept the canonical root marker or at most 32 dot-separated canonical component indices.
+fn validate_type_identity_path(path: &str) -> Result<(), CodecFault> {
+    if path == "root" {
+        return Ok(());
+    }
+    let components: Vec<&str> = path.split('.').collect();
+    if components.len() > 32 {
+        return Err(Malformed);
+    }
+    for component in components {
+        decimal(component)?;
+    }
+    Ok(())
+}
+
+/// The profile defines each primitive field grammar; unknown selectors or extra primitives are unsupported.
 pub fn validate_field(field: &CanonicalField) -> Result<(), CodecFault> {
-    let family = field.family.as_str();
-    let sel = field.selector.as_str();
+    let end = field_end(field)?;
+    if end != field.values.len() {
+        return Err(Malformed);
+    }
+    Ok(())
+}
+
+/// Each family's values follow that family's grammar; return where it stops.
+fn field_end(field: &CanonicalField) -> Result<usize, CodecFault> {
+    let values = field.values.as_slice();
+    let selector = field.selector.as_str();
     let node = !field.node.is_empty();
-    let v = &field.values[..];
-    let unsupported = |name: &str| CodecFault::Unsupported(name.to_owned());
-    let end = match family {
+    let unsupported = |name: &str| Err(CodecFault::Unsupported(name.to_owned()));
+    match field.family.as_str() {
         "type" => {
-            if !matches!(sel, "expr" | "body-expr" | "assignment" | "destination") {
-                return Err(unsupported(sel));
+            if !matches!(selector, "expr" | "body-expr" | "assignment" | "destination") {
+                return unsupported(selector);
             }
-            type_end(v, 0, 0)?
+            type_end(values, 0, 0)
         }
-        "type-identity" | "identity-context" => identity_field_end(field)?,
+        "type-identity" => {
+            if !node || values.len() != 1 || values[0].is_empty() {
+                return Err(Malformed);
+            }
+            validate_type_identity_path(selector)?;
+            Ok(1)
+        }
+        "identity-context" => {
+            if !node
+                || selector != "reference"
+                || values.len() != 5
+                || values[0].is_empty()
+                || values[1].is_empty()
+                || !matches!(values[3].as_str(), "field" | "method" | "property" | "variant")
+                || values[4].is_empty()
+            {
+                return Err(Malformed);
+            }
+            decimal(&values[2])?;
+            Ok(5)
+        }
         "binding-type" => {
-            if !node || at(v, 0)?.is_empty() {
+            if !node || values.is_empty() || values[0].is_empty() {
                 return Err(Malformed);
             }
-            match sel {
-                "body" => type_end(v, 1, 0)?,
-                "parameter-requirement" => match at(v, 1)? {
-                    "none" => 2,
-                    "some" => type_end(v, 2, 0)?,
-                    _ => return Err(Malformed),
+            match selector {
+                "body" => type_end(values, 1, 0),
+                "parameter-requirement" => match at(values, 1)? {
+                    "none" => Ok(2),
+                    "some" => type_end(values, 2, 0),
+                    _ => Err(Malformed),
                 },
-                _ => return Err(unsupported(sel)),
+                _ => unsupported(selector),
             }
         }
-        "mutation" => mutation_end(field)?,
-        "input-call" | "input-local" | "input-flow" | "input-copy" => input_field_end(field)?,
-        "ownership" if sel == "contract" && node => ownership_end(v)?,
-        "signature" => match sel {
-            "declaration" if matches!(at(v, 0)?, "true" | "false") => type_end(v, parameters_end(v, 1, 0)?, 0)?,
-            "declaration" => return Err(Malformed),
-            "call" | "body-call" => parameters_end(v, 0, 0)?,
-            "monomorphs" | "type-arguments" => {
-                let n = number(at(v, 0)?)?;
-                if n > v.len() {
-                    return Err(Malformed);
-                }
-                let mut end = 1;
-                for _ in 0..n {
-                    end = type_end(v, end, 0)?;
-                }
-                end
-            }
-            _ => return Err(unsupported(sel)),
-        },
-        "constructor" | "requirement" => constructor_end(field)?,
-        "builtin"
-            if ((sel == "call" && v.len() == 1) || (sel == "method" && v.len() == 2))
-                && v.iter().all(|s| !s.is_empty()) =>
-        {
-            v.len()
-        }
-        "binding" | "reference" | "write" | "default" if matches!(v,[s] if !s.is_empty()) => 1,
-        "parameter" => type_end(v, 0, 0)?,
-        "identifier" => {
-            if sel != "kind" || !(v == ["value"] || v == ["type-name"]) {
-                return Err(unsupported("identifier"));
-            }
-            1
-        }
-        "artifact-protocol" => {
-            if !node || v.len() != 1 {
+        "mutation" => mutation_end(field),
+        "input-call" | "input-local" | "input-flow" | "input-copy" => input_field_end(field),
+        "ownership" => {
+            if selector != "contract" || !node {
                 return Err(Malformed);
             }
-            match sel {
-                "body_ir_truthiness_receivers" if !v[0].is_empty() => 1,
-                "item_taking_iterations" | "in_place_match_scrutinees" | "loan_free_scrutinees" if v == ["true"] => 1,
-                "comprehension_source_consumption" if v == ["true"] || v == ["false"] => 1,
-                "body_ir_truthiness_receivers"
-                | "item_taking_iterations"
-                | "in_place_match_scrutinees"
-                | "loan_free_scrutinees"
-                | "comprehension_source_consumption" => return Err(Malformed),
-                _ => return Err(unsupported(sel)),
-            }
+            ownership_end(values)
         }
+        "signature" => signature_end(values, selector),
+        "constructor" | "requirement" => constructor_field_end(field),
+        "builtin" => match (selector, values) {
+            ("call", [function]) if !function.is_empty() => Ok(1),
+            ("method", [owner, method]) if !owner.is_empty() && !method.is_empty() => Ok(2),
+            _ => Err(Malformed),
+        },
+        "scope" => scope_end(field),
+        "binding" if values.len() == 2 => {
+            if selector != "declaration" || !node || values[0].is_empty() || decimal(&values[1])? > 2047 {
+                return Err(Malformed);
+            }
+            Ok(2)
+        }
+        "binding" | "reference" | "write" | "default" => {
+            if values.len() != 1 || values[0].is_empty() {
+                return Err(Malformed);
+            }
+            Ok(1)
+        }
+        "parameter" => type_end(values, 0, 0),
+        "identifier" => {
+            if selector != "kind" || values.len() != 1 || !IDENTIFIER_KINDS.contains(&values[0].as_str()) {
+                return unsupported("identifier");
+            }
+            Ok(1)
+        }
+        "artifact-protocol" => artifact_protocol_end(field),
         "artifact-call" => {
             if !node {
                 return Err(Malformed);
             }
-            match call_artifact_codec(sel).ok_or_else(|| unsupported(sel))? {
-                CallArtifactCodec::SpanType => type_end(v, 0, 0)?,
-                codec if codec.admits_plain_values(v) => v.len(),
-                _ => return Err(Malformed),
+            match call_artifact_codec(selector) {
+                Some(CallArtifactCodec::SpanType) => type_end(values, 0, 0),
+                Some(CallArtifactCodec::Method) => method_call_end(values),
+                Some(codec) if codec.admits_plain_values(values) => Ok(values.len()),
+                Some(_) => Err(Malformed),
+                None => unsupported(selector),
             }
         }
-        "target" if sel == "source" && v.len() >= 2 => v.len(),
-        "status" if !node && matches!(sel, "refused" | "pending") && (v == ["true"] || v == ["false"]) => 1,
-        "effect" if !node && !sel.is_empty() && v == ["checked"] => 1,
-        "native-call" => match sel {
-            "argument-type" | "result-type" if node => type_end(v, 0, 0)?,
-            "empty" if !node && v == ["true"] => 1,
-            _ => return Err(unsupported("native-call")),
+        "target" => {
+            if selector != "source" || values.len() < 2 {
+                return Err(Malformed);
+            }
+            Ok(values.len())
+        }
+        "status" => {
+            if node || !matches!(selector, "refused" | "pending") || values.len() != 1 {
+                return Err(Malformed);
+            }
+            if !matches!(values[0].as_str(), "true" | "false") {
+                return Err(Malformed);
+            }
+            Ok(1)
+        }
+        "effect" => {
+            if node || selector.is_empty() || values != ["checked"] {
+                return Err(Malformed);
+            }
+            Ok(1)
+        }
+        "native-call" => match selector {
+            "argument-type" | "result-type" if node => type_end(values, 0, 0),
+            "empty" if !node && values == ["true"] => Ok(1),
+            _ => unsupported("native-call"),
         },
-        "final-type" if sel == "empty" && v == ["true"] => 1,
-        "final-type" if sel == "expression" || (sel == "binding" && node) => type_end(v, 0, 0)?,
-        "diagnostic" => diagnostic_end(v)?,
-        "ownership" | "builtin" | "binding" | "reference" | "write" | "default" | "target" | "status" | "effect"
-        | "final-type" => return Err(Malformed),
-        _ => return Err(unsupported(family)),
-    };
-    if end == v.len() { Ok(()) } else { Err(Malformed) }
+        "native-value" => {
+            if !node || selector != "type" || values.len() < 2 || values[0].is_empty() {
+                return Err(Malformed);
+            }
+            type_end(values, 1, 0)
+        }
+        "final-type" => match selector {
+            "empty" if values == ["true"] => Ok(1),
+            "expression" => type_end(values, 0, 0),
+            "binding" if node => type_end(values, 0, 0),
+            _ => Err(Malformed),
+        },
+        "diagnostic" => diagnostic_end(values),
+        "artifact-rust" => rust_artifact_end(field),
+        family => unsupported(family),
+    }
 }
 
-/// Validate the component path and the stable identity of a nested member.
-fn identity_field_end(field: &CanonicalField) -> Result<usize, CodecFault> {
-    let node = !field.node.is_empty();
-    let sel = field.selector.as_str();
-    let v = field.values.as_slice();
-    Ok(match field.family.as_str() {
-        "type-identity" => {
-            if !node || !matches!(v,[s] if !s.is_empty()) {
+/// Signatures: a declaration's flag, parameters and result type; a call's parameters; or a counted list of types,
+/// its monomorphs or type arguments.
+fn signature_end(values: &[String], selector: &str) -> Result<usize, CodecFault> {
+    match selector {
+        "declaration" => {
+            if values.is_empty() || !matches!(values[0].as_str(), "true" | "false") {
                 return Err(Malformed);
             }
-            if sel != "root" {
-                for (i, part) in sel.split('.').enumerate() {
-                    if i >= 32 {
-                        return Err(Malformed);
-                    }
-                    number(part)?;
-                }
-            }
-            1
+            let end = parameters_end(values, 1, 0)?;
+            type_end(values, end, 0)
         }
-        "identity-context" => {
-            if !node
-                || sel != "reference"
-                || v.len() != 5
-                || v[0].is_empty()
-                || v[1].is_empty()
-                || !matches!(v[3].as_str(), "field" | "method" | "property" | "variant")
-                || v[4].is_empty()
-            {
+        "call" | "body-call" => parameters_end(values, 0, 0),
+        "monomorphs" | "type-arguments" => {
+            if values.is_empty() {
                 return Err(Malformed);
             }
-            number(&v[2])?;
-            5
+            let count = number(&values[0])?;
+            if count > values.len() {
+                return Err(Malformed);
+            }
+            let mut end = 1;
+            for _ in 0..count {
+                end = type_end(values, end, 0)?;
+            }
+            Ok(end)
         }
-        _ => return Err(Malformed),
-    })
+        _ => Err(CodecFault::Unsupported(selector.to_owned())),
+    }
 }
-/// Validate one mutation marker or its strictly ordered changed names.
+
+/// What a node changes: `reassigned` is just `true`; `changed` counts the names it changes, strictly sorted.
 fn mutation_end(field: &CanonicalField) -> Result<usize, CodecFault> {
-    let node = !field.node.is_empty();
-    let sel = field.selector.as_str();
-    let v = field.values.as_slice();
-    let unsupported = |name: &str| CodecFault::Unsupported(name.to_owned());
-
-    if !node {
+    let values = field.values.as_slice();
+    if field.node.is_empty() {
         return Err(Malformed);
     }
-    Ok(match sel {
-        "reassigned" if v == ["true"] => 1,
-        "changed"
-            if v.len() >= 2
-                && !v[0].is_empty()
-                && number(&v[1])? == v.len() - 2
-                && v.get(2).is_none_or(|s| !s.is_empty())
-                && v[2..].windows(2).all(|p| p[0] < p[1]) =>
-        {
-            v.len()
+    match field.selector.as_str() {
+        "reassigned" => {
+            if values != ["true"] {
+                return Err(Malformed);
+            }
+            Ok(1)
         }
-        "changed" | "reassigned" => return Err(Malformed),
-        _ => return Err(unsupported(sel)),
-    })
+        "changed" => {
+            if values.len() < 2 || values[0].is_empty() {
+                return Err(Malformed);
+            }
+            if number(&values[1])? != values.len() - 2 {
+                return Err(Malformed);
+            }
+            let mut previous = "";
+            for name in &values[2..] {
+                if name.as_str() <= previous {
+                    return Err(Malformed);
+                }
+                previous = name;
+            }
+            Ok(values.len())
+        }
+        _ => Err(Malformed),
+    }
+}
+
+/// One allocation inventory: each scope's parent ordinal, never later than itself, and its kind.
+fn scope_end(field: &CanonicalField) -> Result<usize, CodecFault> {
+    let values = field.values.as_slice();
+    if !field.node.is_empty() || field.selector != "allocation" || values.is_empty() {
+        return Err(Malformed);
+    }
+    let count = number(&values[0])?;
+    if count > 2047 || values.len() != 1 + count * 2 {
+        return Err(Malformed);
+    }
+    for index in 0..count {
+        if number(&values[1 + index * 2])? > index || !matches!(values[2 + index * 2].as_str(), "block" | "function") {
+            return Err(Malformed);
+        }
+    }
+    Ok(values.len())
+}
+
+/// Generated protocol artifact rows retain one checked receiver identity at its source node.
+fn artifact_protocol_end(field: &CanonicalField) -> Result<usize, CodecFault> {
+    let values = field.values.as_slice();
+    let selector = field.selector.as_str();
+    if field.node.is_empty() || values.len() != 1 {
+        return Err(Malformed);
+    }
+    if selector == "body_ir_truthiness_receivers" && values[0].is_empty() {
+        return Err(Malformed);
+    }
+    if matches!(
+        selector,
+        "item_taking_iterations" | "in_place_match_scrutinees" | "loan_free_scrutinees"
+    ) && values != ["true"]
+    {
+        return Err(Malformed);
+    }
+    if selector == "comprehension_source_consumption" && !matches!(values[0].as_str(), "true" | "false") {
+        return Err(Malformed);
+    }
+    if !matches!(
+        selector,
+        "body_ir_truthiness_receivers"
+            | "comprehension_source_consumption"
+            | "item_taking_iterations"
+            | "in_place_match_scrutinees"
+            | "loan_free_scrutinees"
+    ) {
+        return Err(CodecFault::Unsupported(selector.to_owned()));
+    }
+    Ok(1)
 }
