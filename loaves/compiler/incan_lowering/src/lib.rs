@@ -131,6 +131,7 @@ mod races;
 mod ranges;
 #[cfg(test)]
 mod record_codec_parity;
+mod record_positions;
 mod redo_counts;
 mod reflection;
 mod reflection_carriers;

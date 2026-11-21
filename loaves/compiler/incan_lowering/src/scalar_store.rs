@@ -8,12 +8,15 @@ use std::path::{Path, PathBuf};
 
 use incan_mir_plan_native::{
     ExternalFunction, Function, NominalReference, PlanFunctionRecord, ProductNominal, SourceSpan, UnitNominals,
-    decode_plan_function_record, encode_plan_function_record, encode_product, plan_function_digest,
-    restore_named_product,
+    decode_plan_function_record, decode_product_parts, encode_plan_function_record, encode_product,
+    plan_function_digest, product_nominals, restore_named_product,
 };
 use incan_semantics_core::semantic_digest::semantic_digest;
 
 use crate::pending::untranslated;
+use crate::record_positions::{
+    index_positions, indexed_product, place_positions, positioned_product, relocate_product,
+};
 
 /// A record whose key is its checked meaning; its spans name Body IR nodes by ordinal through a request-local position
 /// map.
@@ -145,8 +148,7 @@ pub fn reported(directory: Option<&str>, inputs: &[String]) -> bool {
 /// Authenticate the entire native payload after the codec proves an exact structural round trip.
 ///
 /// A keyed record's spans are owner-relative, and each span that locates a Body IR node names that node's ordinal, so
-/// the record holds no line a moved comment or docstring can change; that records-mode indexing refuses by name until
-/// `record_positions` is in Rust.
+/// the record holds no line a moved comment or docstring can change.
 fn encoded_record(
     inputs: &[String],
     function: &Function,
@@ -156,10 +158,9 @@ fn encoded_record(
     frames: &[Function],
     requests: &[Vec<u8>],
 ) -> Result<Vec<u8>, String> {
-    let payload = encode_product(function, runtime, nominals, frames)?;
+    let mut payload = encode_product(function, runtime, nominals, frames)?;
     if inputs.first().map(String::as_str) == Some(RECORD_FUNCTION) {
-        let _ = positions;
-        return Err(untranslated("record_positions::indexed_product"));
+        payload = indexed_record_payload(payload, function, runtime, nominals, positions, frames)?;
     }
     let digest = plan_function_digest(&payload, requests)?;
     let record = PlanFunctionRecord {
@@ -169,6 +170,39 @@ fn encoded_record(
         digest,
     };
     encode_plan_function_record(&record)
+}
+
+/// Index a records product's spans by Body IR node ordinal, proving the indexing loses no native fact.
+///
+/// A noncanonical spelling must still pass the original codec's independent relocation and index proofs.
+fn indexed_record_payload(
+    payload: Vec<u8>,
+    function: &Function,
+    runtime: &[ExternalFunction],
+    nominals: &[ProductNominal],
+    positions: &[(i64, i64)],
+    frames: &[Function],
+) -> Result<Vec<u8>, String> {
+    let file = function.span.file.to_string();
+    let line = function.span.line;
+    let indexed = indexed_product(&payload, positions, &file, line)?;
+    let restored = positioned_product(&indexed, positions, &file, line, &mut Vec::new())?;
+    if restored != payload {
+        let relative = relocate_product(&payload, "<owner>", 1)?;
+        let original = relocate_product(&relative, &file, line)?;
+        if original != payload {
+            let references = product_nominals(function, runtime, frames)?;
+            let (restored_function, restored_runtime, restored_frames, _identities) =
+                decode_product_parts(&original, &references)?;
+            if encode_product(&restored_function, &restored_runtime, nominals, &restored_frames)? != payload {
+                return Err("plan-function position round trip changed native facts".into());
+            }
+        }
+        if place_positions(&indexed, positions)? != relative || indexed != index_positions(&relative, positions)? {
+            return Err("plan-function position map changed native facts".into());
+        }
+    }
+    Ok(indexed)
 }
 
 /// Verify one decoded record and hand its positioned payload and generic requests to the caller.
@@ -185,17 +219,25 @@ fn record_payload(
     if plan_function_digest(&record.function, &record.requests).ok()? != record.digest {
         return None;
     }
-    if inputs.first().map(String::as_str) == Some(RECORD_FUNCTION) && span.is_some() {
-        // Placing node ordinals at this body's positions is records-mode work that is not yet in Rust; a records
-        // product is a miss until it is.
-        let _ = positions;
-        return None;
+    let mut payload = record.function;
+    if inputs.first().map(String::as_str) == Some(RECORD_FUNCTION)
+        && let Some(current) = span
+    {
+        // Node ordinals take this body's positions; a body without those nodes is a miss.
+        payload = positioned_product(
+            &payload,
+            positions,
+            &current.file.to_string(),
+            current.line,
+            &mut Vec::new(),
+        )
+        .ok()?;
     }
-    Some((record.function, record.requests))
+    Some((payload, record.requests))
 }
 
 /// Name a native product by the existing semantic digest owner's unambiguous framed serialization.
-fn scalar_path(directory: &str, inputs: &[String]) -> Result<PathBuf, String> {
+pub fn scalar_path(directory: &str, inputs: &[String]) -> Result<PathBuf, String> {
     let digest = fingerprint(inputs)?;
     Ok(Path::new(directory).join(format!("{}.incnfunction", digest.replace("sha256:", ""))))
 }
