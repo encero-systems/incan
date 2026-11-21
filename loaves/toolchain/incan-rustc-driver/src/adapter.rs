@@ -109,6 +109,7 @@ pub fn compile(
 ) -> Result<(), DriverError> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::native_compile", input = %output.display(), functions = plan.functions.len()).entered();
     let mut timing = crate::native_timing::Timing::requested();
+    force_plan_failure_once()?;
     let features = declared_features(access)?;
 
     // ---- Validated source plan ----
@@ -240,6 +241,25 @@ pub fn compile(
     }
     callbacks.timing.mark("loader_witness");
     Ok(())
+}
+
+/// Force one malformed-plan failure for the end-to-end refusal-retention contract, consuming the named sentinel.
+/// An absent sentinel leaves ordinary compilation unchanged; a sentinel that cannot be consumed is a host failure.
+fn force_plan_failure_once() -> Result<(), DriverError> {
+    let Some(path) = std::env::var_os("INCAN_TEST_PLAN_FAILURE_ONCE") else {
+        return Ok(());
+    };
+    match std::fs::remove_file(&path) {
+        Ok(()) => Err(DriverError::Plan(PlanError::Invalid {
+            function: "test seam".into(),
+            reason: "forced toolchain plan failure".into(),
+        })),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(DriverError::Invocation(format!(
+            "cannot consume one-shot plan failure {}: {error}",
+            Path::new(&path).display()
+        ))),
+    }
 }
 
 /// The program a development link runs as its linker: the dedicated `incan-link` installed beside this driver under

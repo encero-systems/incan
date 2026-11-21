@@ -3,7 +3,13 @@
 from rust::incan_loaf_names import native_crate_name
 from rust::std::process import Command, Stdio
 from rust::std::fs import remove_dir_all
+from pub::incan_mir_plan import INTERFACE_REPORT, decode_lowering_event, decode_native_interface
+pub from pub::internal_models.checked_body_counts import CheckedBodyCounts
+from pub::internal_models.checked_body_counts import decode_checked_body_counts
+pub from pub::internal_models.checker_publication import CheckerRecordCounts
+from pub::internal_models.checker_publication import checker_report_suffix, decode_checker_counts
 from std.fs import Path
+from pub::internal_models.overload_members import scope_output_suffix
 from std.json import parse
 from driver_command import driver_command
 from codegen import compiled_arguments
@@ -14,11 +20,14 @@ from compiler_refusals import compile_or_replay
 from compiler_worker import compile_resident, served_resident
 from files import discard_file, open_stream, read
 from observation import trace_boundary
+from pub::incan_platform.trace import Operation
+from trace_adapter import work, work_clock
 from publication import publish, publish_binary
 from rust_facts import refresh as refresh_rust_facts
 from shared_link import shared_arguments
 from toolchain import Toolchain
 from native_references import anchor_arguments
+from unit_transport import descriptor_path, publish_unit_document
 from unit import UnitDescription, dependency_source_roots
 from unit_freshness import Key, artifact_identity, unit_key
 from compiler_body_values import SelectedBodyPage
@@ -29,34 +38,11 @@ pub model PlanRecordCounts:
 
     pub plan_evaluations: int = 0
     pub plan_reuses: int = 0
-    pub lowering_demand_evaluations: int = 0
-    pub lowering_demand_reuses: int = 0
     pub native_interface_evaluations: int = 0
-
-
-pub model CheckerRecordCounts:
-    """Permanent checker-record admission counts emitted by one compiler activation."""
-
-    pub reusable_declarations: int = 0
-    pub all_declarations: int = 0
-    pub summary: str = "0/0 reusable declarations"
-    pub artifact_refusals: Dict[str, int] = {}
-    # Owners whose checked bodies the compiler restored from the selected records instead of checking them. A
-    # selected record the compiler refused is not here: that body was checked afresh.
-    pub restored: list[str] = []
 
 
 # The schema of the sidecar a check writes with `--checked-bodies`.
 const CHECKED_BODIES_SCHEMA: str = "incan.checked-bodies/1"
-
-
-pub model CheckedBodyCounts:
-    """One check's top-level function bodies: checked afresh, and restored from the engine's selected records."""
-
-    pub checked: int = 0
-    pub reused: int = 0
-    # Restored bodies whose pages the compiler decoded itself, rather than found decoded by an earlier check.
-    pub decoded: int = 0
 
 
 pub def compile_prepared_unit(
@@ -67,6 +53,7 @@ pub def compile_prepared_unit(
     reason: str = "no stored build",
     development: bool = false,
     graph_body_records: Option[list[SelectedBodyPage]] = None,
+    records_directory: Option[Path] = None,
 ) -> Result[i32, str]:
     """
     Compile one prepared unit without dependency selection or recursive preparation.
@@ -79,11 +66,13 @@ pub def compile_prepared_unit(
     # 1. The compiler reads the selected inputs and a generation-witnessed description.
     mut key = Key(digest="", parts=[])
     match known_key:
-        Some(value) => key = value
-        None => key = unit_key(unit, toolchain)?
+        Some(value) =>
+            key = value
+        None =>
+            key = unit_key(unit, toolchain)?
     compiled = crate_name(unit)
     trace_boundary("unit_write_begin")
-    path = write_unit(unit, compiled, None, described_by(key), true)?
+    path = write_unit(unit, compiled, None, described_by(key), true, typed=toolchain.unit_descriptor_crumb)?
     trace_boundary("unit_written")
     output.parent().mkdir(true, true).map_err((error) => f"{output.parent().0}: {error.message()}")?
     # 2. Native flags match the profile and the caller's explicit linkage request; published closures are anchored.
@@ -101,15 +90,15 @@ pub def compile_prepared_unit(
     if toolchain.codegraph_on_request:
         native.append("--no-codegraph")
     if let Some(records) = graph_body_records:
-        records_path = Path(f"{path.0}.graph-body-records")
+        records_path = records_directory.unwrap_or(Path(f"{path.0}.graph-body-records"))
         write_selected_records(records_path, unit, records)?
         native += ["--graph-body-records", records_path.0]
         native += ["--plan-record-products", records_path.0]
-        output_path = Path(f"{path.0}.graph-body-output")
-        discard_file(output_path)
+        output_path = graph_body_output_path(unit, key, toolchain.unit_descriptor_crumb)
+        discard_graph_body_output(output_path)?
         discard_file(checker_record_report_path(output_path))
         native += ["--graph-body-output", output_path.0]
-        report = Path(f"{path.0}.graph-plan-report")
+        report = plan_record_report_path(unit, key, toolchain.unit_descriptor_crumb)
         if report.exists():
             remove_dir_all(report.0).map_err((error) => f"cannot replace plan record report {report.0}: {error}")?
         report.mkdir(true, true).map_err((error) => f"plan record report: cannot {error.message()}")?
@@ -123,7 +112,11 @@ pub def compile_prepared_unit(
     return Ok(code)
 
 
-pub def write_selected_records(directory: Path, unit: UnitDescription, records: list[SelectedBodyPage]) -> Result[None, str]:
+pub def write_selected_records(
+    directory: Path,
+    unit: UnitDescription,
+    records: list[SelectedBodyPage],
+) -> Result[None, str]:
     """
     Replace `directory` with the engine's selected record pages, each at the key the driver reads it by, beside the
     compiler context they were selected under. Builds and checks read their records from this one writer.
@@ -135,19 +128,26 @@ pub def write_selected_records(directory: Path, unit: UnitDescription, records: 
         Some(value) => value
         None => return Err("records lowering requires the complete compiler context")
 
-    publish_binary(directory.joinpath("producer-profile"), generation.encode("utf-8"))?
+    publish_binary(directory.joinpath("producer-profile"), unit.lowering_context.unwrap_or(generation).encode("utf-8"))?
     for page in records:
+        clock = work_clock()
+        size = len(page.value)
         publish_binary(directory.joinpath(page.key), page.value)?
+        work(Operation.EngineGraphStaging, "compiler-input\t" + page.key, clock, size)
     return Ok(None)
 
 
 pub def checked_body_counts(report: Path) -> Result[CheckedBodyCounts, str]:
     """
-    Read a check's `incan.checked-bodies/1` sidecar: how many top-level function bodies it checked and how many it
-    restored from selected records. A replayed check runs no compiler, writes none, and checked nothing.
+    Read a check's typed counts or its historical public JSON report. A certified report replay runs no compiler,
+    writes no sidecar, and contributes zero physical work.
     """
     if not report.is_file():
         return Ok(CheckedBodyCounts())
+    if report.0.endswith(".crumb"):
+        counts = decode_checked_body_counts(report.read_bytes().map_err((error) => error.message())?)?
+        discard_file(report)
+        return Ok(counts)
     value = parse(report.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err(
         (error) => f"cannot decode checked bodies report {report.0}: {error.message()}",
     )?
@@ -164,106 +164,64 @@ pub def checked_body_counts(report: Path) -> Result[CheckedBodyCounts, str]:
     return Ok(CheckedBodyCounts(checked=checked, reused=reused, decoded=decoded))
 
 
-pub def graph_body_output_path(unit: UnitDescription, key: Key) -> Path:
+pub def graph_body_output_path(unit: UnitDescription, key: Key, typed: bool) -> Path:
     """Name the invocation sidecar written beside this exact described unit without publishing another descriptor."""
     directory = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath("units")
-    return directory.joinpath(f"{described_by(key)}.unit.json.graph-body-output")
+    description = descriptor_path(directory, described_by(key), typed)
+    if typed:
+        return Path(description.0 + ".published" + scope_output_suffix())
+    return Path(f"{description.0}.graph-body-output")
 
 
-pub def checker_record_counts(unit: UnitDescription, key: Key) -> Result[CheckerRecordCounts, str]:
+pub def checker_record_counts(unit: UnitDescription, key: Key, typed: bool) -> Result[CheckerRecordCounts, str]:
     """Read the compiler's complete per-owner admission report without inspecting diagnostic fallback strings."""
-    report = checker_record_report_path(graph_body_output_path(unit, key))
+    report = checker_record_report_path(graph_body_output_path(unit, key, typed))
     if not report.is_file():
         return Ok(CheckerRecordCounts())
-    value = parse(report.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err(
-        (error) => f"cannot decode checker record report {report.0}: {error.message()}",
-    )?
-    schema = value.require("schema").and_then((field) => field.expect_str()).map_err((error) => error.message())?
-    if schema != "incan.checker-reuse/1":
-        return Err("unsupported checker record report")
-    fields = value
-        .require("artifact_refusals")
-        .map_err((error) => error.message())?
-        .expect_object()
-        .map_err((error) => error.message())?
-    mut refusals: Dict[str, int] = {}
-    for name in fields.keys():
-        refusals[name] = fields[name].expect_int().map_err((error) => error.message())?
-    # A compiler that names no restored owner restored none.
-    mut restored: list[str] = []
-    if let Some(owners) = value.get("restored"):
-        for owner in owners.expect_array().map_err((error) => error.message())?:
-            restored.append(owner.expect_str().map_err((error) => error.message())?)
-    counts = CheckerRecordCounts(
-        reusable_declarations=value
-            .require("reusable_declarations")
-            .map_err((error) => error.message())?
-            .expect_int()
-            .map_err((error) => error.message())?,
-        all_declarations=value
-            .require("all_declarations")
-            .map_err((error) => error.message())?
-            .expect_int()
-            .map_err((error) => error.message())?,
-        summary=value.require("summary").map_err((error) => error.message())?.expect_str().map_err(
-            (error) => error.message(),
-        )?,
-        artifact_refusals=refusals,
-        restored=restored,
-    )
+    counts = decode_checker_counts(report.read_bytes().map_err((error) => error.message())?)?
     discard_file(report)
     return Ok(counts)
 
 
-def checker_record_report_path(output: Path) -> Path:
+pub def checker_record_report_path(output: Path) -> Path:
     """Name the compiler-owned report paired with one graph-body output generation."""
-    return Path(f"{output.0}.checker-report.json")
+    return Path(output.0 + checker_report_suffix())
 
 
-pub def plan_record_counts(unit: UnitDescription, key: Key) -> Result[PlanRecordCounts, str]:
+def discard_graph_body_output(output: Path) -> Result[None, str]:
+    """Remove the prior compiler sidecar whether an old toolchain wrote one file or this toolchain wrote row files."""
+    if output.is_dir():
+        return remove_dir_all(output.0).map_err((error) => f"cannot replace graph body output {output.0}: {error}")
+    discard_file(output)
+    return Ok(None)
+
+
+pub def plan_record_counts(unit: UnitDescription, key: Key, typed: bool) -> Result[PlanRecordCounts, str]:
     """Count only loss-checked plan products that the lowering reports as evaluated or reused for this request."""
-    report = plan_record_report_path(unit, key)
+    report = plan_record_report_path(unit, key, typed)
     mut counts = PlanRecordCounts()
     if not report.is_dir():
         return Ok(counts)
     for entry in report.iterdir().map_err((error) => f"plan record report: cannot {error.message()}")?:
         if not entry.is_file() or not entry.name().endswith(".event"):
             continue
-        text = entry
-            .read_text("utf-8", "strict")
-            .map_err((error) => f"plan record event: cannot {error.message()}")?
-        event = parse(text).map_err((error) => f"cannot decode plan record event {entry.0}: {error.message()}")?
-        reused = event.require("reused").map_err((error) => error.message())?.expect_bool().map_err(
-            (error) => error.message(),
-        )?
-        function = event.require("function").map_err((error) => error.message())?.expect_str().map_err(
-            (error) => error.message(),
-        )?
-        entry_role = event.get("role") is not None
-        if reused:
+        event = decode_lowering_event(entry.read_bytes().map_err((error) => error.message())?)?
+        if event.reused:
             counts.plan_reuses += 1
-            if not entry_role:
-                counts.lowering_demand_reuses += 1
         else:
             counts.plan_evaluations += 1
-            if not entry_role:
-                counts.lowering_demand_evaluations += 1
-    interface = report.joinpath("native-interface.json")
+    interface = report.joinpath(INTERFACE_REPORT)
     if interface.is_file():
-        value = parse(interface.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err(
-            (error) => error.message(),
-        )?
-        schema = value.require("schema").and_then((field) => field.expect_str()).map_err((error) => error.message())?
-        if schema != "incan.native-interface/1":
-            return Err("unsupported native-interface producer report")
+        _ = decode_native_interface(interface.read_bytes().map_err((error) => error.message())?)?
         counts.native_interface_evaluations = 1
     return Ok(counts)
 
 
-pub def plan_record_report_path(unit: UnitDescription, key: Key) -> Path:
+pub def plan_record_report_path(unit: UnitDescription, key: Key, typed: bool) -> Path:
     """Name the request-local lowering output consumed by proof counters and atomic Bakery publication."""
     directory = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath("units")
-    return directory.joinpath(f"{described_by(key)}.unit.json.graph-plan-report")
+    description = descriptor_path(directory, described_by(key), typed)
+    return Path(f"{description.0}.graph-plan-report")
 
 
 pub def crate_name(unit: UnitDescription) -> str:
@@ -279,6 +237,7 @@ pub def write_unit(
     owner: Option[Path] = None,
     described: str = "",
     rust_facts: bool = false,
+    typed: bool = false,
 ) -> Result[Path, str]:
     """
     Publish a description, retaining its generation only while the exact description witness remains valid.
@@ -287,7 +246,7 @@ pub def write_unit(
     2. For a compile or check (`rust_facts`), bake the Rust ABI extractions its last run staged and index them in
        the `<name>.rust-facts` directory beside the description, where the compiler finds them.
     3. Reuse only a complete unchanged generation of that description.
-    4. Otherwise publish the complete JSON and its new witness atomically.
+    4. Otherwise publish the complete unit and its new witness atomically.
     """
     # 1. An explicit owner controls only where the description is stored.
     mut root = Path(unit.project_root)
@@ -298,7 +257,7 @@ pub def write_unit(
     mut name = compiled
     if described != "":
         name = described
-    path = directory.joinpath(f"{name}.unit.json")
+    path = descriptor_path(directory, name, typed)
     witness = Path(f"{path.0}.oven-description")
     # 2. The compiler finds the directory by the description's location, so the description itself is unchanged and
     #    a compiler that predates it reads the same description.
@@ -310,8 +269,7 @@ pub def write_unit(
     if described != "" and description_current(path, witness, described):
         return Ok(path)
     # 4. Missing, changed and unwitnessed descriptions are published again.
-    text = unit.to_json().to_pretty_json().map_err((error) => error.message())?
-    publish(path, text)?
+    publish_unit_document(path, unit, typed)?
     if described != "":
         publish(witness, description_witness(described, artifact_identity(path)?))?
     return Ok(path)

@@ -6,7 +6,8 @@
 //! everything native compilation needs into one handoff file beside the unit's output, answers its caller with that
 //! file and retires, so the caller runs `--rustc-handoff PATH` in a fresh driver process once the worker's heap is
 //! gone. Within the ceiling, and in a short-lived `--unit` process, the same [`RustcHandoff`] compiles in process.
-//! Either way native compilation, the test report, the Loaf publication and the refusal receipt happen in one place.
+//! Either way native compilation, the test report and Loaf publication happen in one place. Source checking and
+//! lowering certify their own reproducible refusals before this native boundary; failures here remain retryable.
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -16,8 +17,6 @@ use incan_driver::loaf_publication::PreparedLoafPublication;
 use incan_driver::unit::{ToolchainAccess, UnitKind};
 use serde::{Deserialize, Serialize};
 
-use crate::adapter::DriverError;
-use crate::frontend::RefusalReceipt;
 use crate::identity::DriverIdentity;
 use crate::library_exports::LibraryFacade;
 use crate::native_timing::Timing;
@@ -44,7 +43,6 @@ pub(crate) struct RustcHandoff {
     pub(crate) tests: Option<Vec<u8>>,
     /// A library unit's Loaf and the directory it is published in once the rlib exists (DD-0007).
     pub(crate) publication: Option<(PathBuf, PreparedLoafPublication)>,
-    pub(crate) receipt: RefusalReceipt,
     /// The test files checked with generated case entries, each with the text it was checked as: the plan's spans
     /// resolve against these texts, and the checking process's record of them ends with that process. Filled when
     /// the handoff is written; a compile in the checking process reads its own record.
@@ -52,9 +50,8 @@ pub(crate) struct RustcHandoff {
 }
 
 impl RustcHandoff {
-    /// Run rustc, then write the test report and publish the Loaf; a refused plan certifies its refusal.
+    /// Run rustc, then write the test report and publish the Loaf; native-boundary failures remain retryable.
     pub(crate) fn compile(self, identity: &DriverIdentity) -> Result<(), Box<dyn std::error::Error>> {
-        let receipt = self.receipt;
         crate::adapter::compile(
             self.plan,
             &self.crate_name,
@@ -70,12 +67,7 @@ impl RustcHandoff {
             self.library_facades,
             self.plan_record_report.as_deref(),
         )
-        .map_err(|error| {
-            if matches!(error, DriverError::Plan(_)) {
-                receipt.deterministic();
-            }
-            error.to_string()
-        })?;
+        .map_err(|error| error.to_string())?;
         if let Some(tests) = self.tests {
             std::fs::write(self.output.with_extension("tests.json"), tests)?;
         }

@@ -1,0 +1,31 @@
+"""The source graph and standalone import records consumed during request capture."""
+
+from std.json import JsonValue, parse
+from source_graph_records import decode_imports, decode_scopes, encode_imports, encode_scopes
+
+
+pub def test_source_graph_and_import_projections() -> Result[None, str]:
+    """A reach query omits import data. A full graph preserves absent, empty and populated import reports."""
+    old = parse("""[{"scope":"a","absent":["missing"],"read":[{"path":"a.incn","digest":"abcd"}]},
+      {"scope":"b","absent":[],"read":[],"imports":[]},
+      {"scope":"c","absent":[],"read":[],"imports":[{"crate":"one","version":null,"features":[],"source":"foo"},
+        {"crate":"two","version":"1","features":["fast"],"source":"bar"}]}]""").map_err((error) => error.message())?
+    scopes = old.expect_array().map_err((error) => error.message())?
+    encoded = encode_scopes(scopes)?
+    assert encoded[:4] == b"CRMB"
+    assert JsonValue.array(decode_scopes(encoded, true)?).equals(old)
+    reach = decode_scopes(encoded, false)?
+    assert len(reach) == 3
+    for graph in reach:
+        assert graph.get("imports") is None
+    imports = scopes[2].require("imports").map_err((error) => error.message())?
+    records = imports.expect_array().map_err((error) => error.message())?
+    row = encode_imports("identity", records)?
+    assert row[:4] == b"CRMB"
+    assert decode_imports(row, "another")? is None
+    match decode_imports(row, "identity")?:
+        Some(restored) =>
+            assert JsonValue.array(restored).equals(imports)
+        None => return Err("Rust imports were absent under their retained identity")
+    assert decode_imports(encoded, "identity").is_err()
+    return Ok(None)

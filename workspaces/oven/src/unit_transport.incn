@@ -1,0 +1,30 @@
+"""Publish one prepared unit in the selected compiler's private transport or its public JSON compatibility format."""
+
+from std.fs import Path
+from std.json import JsonValue
+from pub::internal_models.unit_document import encode_unit_document, decode_unit_document
+from files import read_json
+from publication import publish, publish_binary
+from unit import UnitDescription
+
+
+pub def descriptor_path(directory: Path, stem: str, typed: bool) -> Path:
+    """Keep witnesses for different compiler transport generations at distinct paths."""
+    if typed:
+        return directory.joinpath(f"{stem}.unit.crumb")
+    return directory.joinpath(f"{stem}.unit.json")
+
+
+pub def publish_unit_document(path: Path, unit: UnitDescription, typed: bool) -> Result[None, str]:
+    """Send only the format advertised by this installed compiler."""
+    document = unit.to_json()
+    if typed:
+        return publish_binary(path, encode_unit_document(document)?)
+    return publish(path, document.to_pretty_json().map_err((error) => error.message())?)
+
+
+pub def read_unit_document(path: Path) -> Result[JsonValue, str]:
+    """Read the descriptor selected by the measured compiler generation."""
+    if path.name().endswith(".unit.crumb"):
+        return decode_unit_document(path.read_bytes().map_err((error) => error.message())?)
+    return read_json(path)
