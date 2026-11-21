@@ -11,6 +11,7 @@ use incan_semantics_core::body_ir::{
     Place as SourcePlace, PlaceElem, PlaceOperand, Rvalue,
 };
 
+use crate::builtin_methods::lower_generator_member;
 use crate::builtins::list_call;
 use crate::call_arguments::call_argument_operand;
 use crate::calls::instantiated_external_call;
@@ -233,7 +234,7 @@ pub fn lower_iterator_method(
         return Err("unsupported Body IR selected iterator Method".into());
     };
     if is_generator_adapter(method) || is_generator_consumer(method) {
-        return Err(untranslated("builtin_methods::lower_generator_member"));
+        return lower_generator_member(builder, method, arguments, destination, receiver_type, span);
     }
     if method != IteratorMethodId::Collect {
         return Err("unsupported Body IR selected generator Method".into());

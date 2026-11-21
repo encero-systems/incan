@@ -44,7 +44,7 @@ use crate::statements::is_nominal_type;
 use crate::strings::emit_text_helper;
 use crate::text_plan::{clone_text, clone_text_reference, owned_literal};
 use crate::tuple_iterators::{clone_zip, zip_shape};
-use crate::tuples::is_tuple_type;
+use crate::tuples::{is_tuple_type, tuple_fields};
 
 /// Borrow an owner or reborrow a parameter; frozen bytes materialize only for shared access.
 pub fn list_borrow(builder: &mut Builder, place: Place, mutable: bool, span: &SourceSpan) -> Result<Operand, String> {
@@ -845,8 +845,8 @@ fn splice_list_spread(
         return Err("unsupported Body IR named list element".into());
     };
     // A whole tuple has a fixed arity, so it splices field by field without a runtime helper.
-    if tuple_spread_place(builder, &spread.source, span)?.is_some() {
-        return Err(untranslated("tuples::tuple_fields"));
+    if let Some(tuple_place) = tuple_spread_place(builder, &spread.source, span)? {
+        return append_tuple_fields(builder, output, tuple_place, leaf, depth, span);
     }
     // A list spread's own ownership fact materializes one owner: the moved list, or a clone of a list that is read
     // again. `extend_list` copies from it and it is then dropped, as set and dictionary spreads do.
@@ -898,4 +898,29 @@ fn tuple_spread_place(
         return Ok(Some(place));
     }
     Ok(None)
+}
+
+/// Splice each tuple field in order, copying scalars and cloning text so the tuple itself stays whole.
+fn append_tuple_fields(
+    builder: &mut Builder,
+    output: &Place,
+    source: Place,
+    leaf: &ListLeaf,
+    depth: i64,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let element = list_element(leaf, depth);
+    let ty = place_type(&builder.locals, &source);
+    for field in tuple_fields(&source, &ty, span)? {
+        if place_type(&builder.locals, &field) != element {
+            return Err("unsupported Body IR tuple spread element type".into());
+        }
+        let value = if element == PlanType::String {
+            read_place(clone_text(builder, field, span)?, true, span)
+        } else {
+            read_place(field, false, span)
+        };
+        append_list_value(builder, output, value, leaf, depth, span)?;
+    }
+    Ok(())
 }
