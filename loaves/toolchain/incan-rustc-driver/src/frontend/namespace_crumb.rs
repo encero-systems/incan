@@ -7,7 +7,7 @@ use incan_frontend::checker_records::GraphNamespaceInterface;
 use incan_frontend::typechecker::{
     CheckedNamespaceInterface, ModuleDependencyInterface, NamespaceCell as Cell, NamespaceCrumb,
 };
-use internal_models::{MappedView, NamespaceAtom as Atom, NamespaceEntry, NamespaceField};
+use internal_models_native::{MappedView, NamespaceAtom as Atom, NamespaceEntry, NamespaceField};
 use sha2::{Digest, Sha256};
 
 pub(super) struct CheckedNamespaceCrumb;

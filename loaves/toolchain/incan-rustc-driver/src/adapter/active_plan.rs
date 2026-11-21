@@ -50,13 +50,13 @@ impl PlanReader {
         let Some(report) = report else {
             return Ok(reader);
         };
-        let bytes = match std::fs::read(report.join(internal_models::native_interface_filename())) {
+        let bytes = match std::fs::read(report.join(incan_mir_plan_native::native_interface_filename())) {
             Ok(bytes) => bytes,
             // A build without record input stays an ordinary compilation, ineligible for native incremental reuse.
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(reader),
             Err(error) => return Err(format!("cannot read native-interface record: {error}")),
         };
-        let interface = internal_models::decode_native_interface(&bytes)
+        let interface = incan_mir_plan_native::decode_native_interface(&bytes)
             .map_err(|error| format!("cannot decode native-interface record: {error}"))?;
         if interface.plan.is_empty() {
             return Err("native-interface record has no encoded plan".into());
@@ -105,7 +105,7 @@ impl PlanReader {
             if path.extension().and_then(|value| value.to_str()) != Some("event") {
                 continue;
             }
-            let event = internal_models::decode_lowering_event(
+            let event = incan_mir_plan_native::decode_lowering_event(
                 &std::fs::read(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))?,
             )
             .map_err(|error| format!("cannot decode {}: {error}", path.display()))?;
@@ -164,11 +164,11 @@ impl PlanReader {
         plan: &Plan,
         inputs: &mut HashMap<String, DefinitionInput>,
     ) -> Result<(), String> {
-        let path = report.join(internal_models::admitted_definitions_filename());
+        let path = report.join(incan_mir_plan_native::admitted_definitions_filename());
         if !path.is_file() {
             return Ok(());
         }
-        let definitions = internal_models::decode_admitted_definitions(
+        let definitions = incan_mir_plan_native::decode_admitted_definitions(
             &std::fs::read(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))?,
         )
         .map_err(|error| format!("cannot decode {}: {error}", path.display()))?;
