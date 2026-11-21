@@ -208,3 +208,59 @@ fn byte_buffer_result_is_incan_bytes_in_body_ir() -> Result<(), Box<dyn std::err
     assert!(!rendered.contains("unsupported"), "{rendered}");
     Ok(())
 }
+
+/// A `mut` text local first bound to a Rust `&'static str` constant owns its text, so a later Incan text constant
+/// can replace it (Oven's `mut profile = CHECKER_PROFILE` then `profile = LOWERING_PROFILE`; lowering refused a
+/// local left in the constant's native `&str` storage).
+#[test]
+fn mut_text_local_from_static_text_constant_owns_its_text() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "from rust::demo import GREETING\n\nconst LOCAL_PROFILE: str = \"local\"\n\ndef pick(flag: bool) -> str:\n    mut profile = GREETING\n    if flag:\n        profile = LOCAL_PROFILE\n    return profile\n";
+    let mut loaves = LoafIndex::default();
+    loaves.add_rust_facts(
+        &Default::default(),
+        BTreeMap::from([(
+            "demo::GREETING".to_owned(),
+            RustItemMetadata {
+                canonical_path: "demo::GREETING".into(),
+                definition_path: None,
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Constant {
+                    type_display: "&'static str".into(),
+                },
+            },
+        )]),
+    );
+    let mut checker = TypeChecker::new();
+    checker.set_loaves(Arc::new(loaves));
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let facts = checker.into_type_info();
+    let providers = ProviderOperationCatalog::new();
+    let context = BodyIrContext {
+        modules: crate::body_ir::ContextModules::default(),
+        provider_operations: &providers,
+        registry_package: None,
+        library_package: None,
+        include_inline_tests: false,
+    };
+    let module = super::build_module_seed(&program, &[], &facts, &context);
+    let body = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "pick")
+        .ok_or("missing body")?;
+    let profile = body
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("profile"))
+        .ok_or("missing local")?;
+    assert_eq!(
+        profile.ty,
+        incan_semantics_core::IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Str),
+        "{body:?}"
+    );
+    Ok(())
+}
