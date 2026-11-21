@@ -1,0 +1,251 @@
+"""An importer rename re-checks only its direct signature reader: ranked errors, checked values, frontier order, ranked
+completions and statement checks of the real Oven run."""
+
+from std.environ import get_or
+from std.fs import Path
+from std.json import parse
+from compiler_body_keys import IDENTITY_PROFILE
+from compiler_body_values import select_body_inventory_except
+from compiler_graph_records import OutputSlots, evaluation_record_key, reusable_family_records
+from compiler_graph_rows import encode_evaluation, read_evaluation
+from compiler_plan_values import LOWERING_PROFILE
+from pub::internal_models import ProducerRank, ProducerStage
+from pub::internal_models.checker_records import CHECKER_PROFILE, record_root
+from pub::internal_models.records import ReadWitness, RecordKey, encode_record_key
+from files import write
+from lowering_record_fixtures import proof_count, report_fixture_build, stop_example_engine
+from scratch import scratch_directory
+from store_path_conversion import snapshot as store_snapshot
+from pub::incan_platform.store import Snapshot, get
+
+
+pub def test_importer_rename_checks_only_its_direct_signature_reader() -> Result[None, str]:
+    """An installed build checks the renamed function and its caller once each, stopping before load_summary."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    project = root.joinpath("importer")
+    project.mkdir(true, true).map_err((error) => error.message())?
+    fixture = Path("../../examples/pro/codegraph_importer")
+    fixture.joinpath("src").copy(project.joinpath("src"), false, false).map_err((error) => error.message())?
+    fixture.joinpath("tests").copy(project.joinpath("tests"), false, false).map_err((error) => error.message())?
+    fixture.joinpath("loaf.toml").copy(project.joinpath("loaf.toml"), false, false).map_err((error) => error.message())?
+    trace = root.joinpath("trace")
+    trace.mkdir(true, true).map_err((error) => error.message())?
+    store = root.joinpath("store")
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    cold = report_fixture_build(binary, project, store, Some(trace))?
+    cold_checks = importer_statement_checks(trace)?
+    assert len(importer_ranked_completions(trace)?) == 0, "a cold build completed ranked work"
+    stop_example_engine(binary, store)?
+    warm_trace = root.joinpath("warm-trace")
+    warm_trace.mkdir(true, true).map_err((error) => error.message())?
+    file = project.joinpath("src/importer.incn")
+    original = file.read_text("utf-8", "strict").map_err((error) => error.message())?
+    edited = original.replace("supported_schema(version: int)", "supported_schema(schema_version: int)").replace(
+        "return version >= 1 and version <= 9", "return schema_version >= 1 and schema_version <= 9",
+    )
+    assert edited != original
+    write(file, edited)?
+    warm = report_fixture_build(binary, project, store, Some(warm_trace))?
+    stop_example_engine(binary, store)?
+    diagnostic = warm.to_json().map_err((error) => error.message())?
+    cold_diagnostic = cold.to_json().map_err((error) => error.message())?
+    assert proof_count(cold, "all_declarations")? == 8, cold_diagnostic
+    assert proof_count(cold, "reusable_declarations")? == 8, cold_diagnostic
+    assert len(cold_checks) == 6, f"cold statement checks: {cold_checks:?}"
+    cold_statements = importer_physical_statement_count(trace)?
+    assert cold_statements == 8, f"cold physical statements: {cold_statements}"
+    assert importer_physical_statement_count(warm_trace)? == 2, diagnostic
+    assert proof_count(warm, "lowering_demand_evaluations")? == 1, diagnostic
+    assert proof_count(warm, "plan_function_evaluations")? == 1, diagnostic
+    assert sorted(importer_statement_checks(warm_trace)?) == ["importer::import_jsonl", "importer::supported_schema"], diagnostic
+    leaf = "function:importer::supported_schema"
+    reader = "function:importer::import_jsonl"
+    stages = [leaf + "\tdeclaration", leaf + "\tlocal", leaf + "\tfinal", reader + "\treader"]
+    assert sorted(importer_ranked_completions(warm_trace)?) == sorted(stages), diagnostic
+    assert importer_frontier_order(warm_trace)? == stages, diagnostic
+    assert proof_count(warm, "body_evaluations")? == 2, diagnostic
+    assert proof_count(warm, "plan_function_reuses")? > 0, diagnostic
+    warm_values = importer_checked_values(store)?
+    project.joinpath("target").move(root.joinpath("warm-target")).map_err((error) => error.message())?
+    control = root.joinpath("cold-edited-store")
+    control_trace = root.joinpath("cold-edited-trace")
+    control_trace.mkdir(true, true).map_err((error) => error.message())?
+    control_proof = report_fixture_build(binary, project, control, Some(control_trace))?
+    stop_example_engine(binary, control)?
+    control_diagnostic = control_proof.to_json().map_err((error) => error.message())?
+    assert proof_count(control_proof, "body_evaluations")? == 8, control_diagnostic
+    assert proof_count(control_proof, "reusable_declarations")? == 8, control_diagnostic
+    control_checks = sorted(importer_statement_checks(control_trace)?)
+    assert control_checks == sorted(cold_checks), f"fresh statement checks {control_checks:?}, cold {cold_checks:?}"
+    control_statements = importer_physical_statement_count(control_trace)?
+    assert control_statements == 8, f"fresh physical statements: {control_statements}"
+    control_completions = importer_ranked_completions(control_trace)?
+    assert len(control_completions) == 0, f"a fresh build completed ranked work: {control_completions:?}"
+    assert importer_checked_values(control)? == warm_values, "the warm checked values differ from a fresh build's"
+    warm_ranks = importer_rank_errors(store)?
+    cold_ranks = importer_rank_errors(control)?
+    rank_diagnostic = f"misranked importer records: warm {warm_ranks:?}, fresh {cold_ranks:?}"
+    assert len(warm_ranks) == 0 and len(cold_ranks) == 0, rank_diagnostic
+    return Ok(None)
+
+
+def importer_rank_errors(store: Path) -> Result[list[str], str]:
+    """main.incn imports importer.incn. Each of its two demands reads its own Body IR at namespace rank one."""
+    selected = store_snapshot(store).map_err((error) => error.message())?
+    scope = OutputSlots(origin="codegraph_importer_experiment", identity_profile=IDENTITY_PROFILE)
+    mut owners: list[str] = []
+    mut errors: list[str] = []
+    for demand in reusable_family_records(selected, "lowering-demand", LOWERING_PROFILE, Some(scope))?:
+        name = demand.key.facet
+        if name not in ["input_path", "main"] or not demand.key.identity.startswith("function:main::" + name + "|"):
+            continue
+        mut suppliers = 0
+        for witness in demand.receipt.witnesses:
+            if let ReadWitness.Found(prior, _) = witness:
+                supplier = prior.request.key
+                if supplier.family == "body-ir":
+                    assert supplier.origin == demand.key.origin and supplier.identity == demand.key.identity, name
+                    suppliers += 1
+                    if not importer_rank_matches(
+                        selected, supplier, CHECKER_PROFILE, "compiled-body-ir-", ProducerStage.BodyIr,
+                    )?:
+                        errors.append("body-ir " + name)
+        assert suppliers == 1, name
+        if not importer_rank_matches(
+            selected, demand.key, LOWERING_PROFILE, "lowering-demand-", ProducerStage.LoweringDemand,
+        )?:
+            errors.append("lowering-demand " + name)
+        owners.append(name)
+    assert sorted(owners) == ["input_path", "main"], f"selected main.incn demands: {owners:?}"
+    return Ok(errors)
+
+
+def importer_rank_matches(
+    selected: Snapshot, key: RecordKey, profile: str, claim_prefix: str, stage: ProducerStage,
+) -> Result[bool, str]:
+    """The production reader admits the roots. Re-encode the canonical row to check the rank it does not expose."""
+    output = encode_record_key(key)?
+    encoded = match get(selected, evaluation_record_key(profile, output)).map_err((error) => error.message())?:
+        Some(value) => value
+        None => return Err("missing importer evaluation: " + output)
+
+    evaluation = read_evaluation(encoded)?
+    rank = ProducerRank(namespace=1, stage=stage, dependency=0)
+    expected = encode_evaluation(
+        profile, output, claim_prefix + key.identity, evaluation.value_digest, evaluation.receipt_root, rank,
+    )?
+    return Ok(encoded == expected)
+
+
+def importer_checked_values(store: Path) -> Result[Dict[str, list[bytes]], str]:
+    """Read six free owners and both GraphSummary methods' complete checked products from the build-selected graph."""
+    selected = store_snapshot(store).map_err((error) => error.message())?
+    origin = "codegraph_importer_experiment"
+    scope = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE)
+    mut declarations: Dict[str, bytes] = {}
+    for local in reusable_family_records(selected, "local", CHECKER_PROFILE, Some(scope))?:
+        for witness in local.receipt.witnesses:
+            if let ReadWitness.Found(prior, _) = witness:
+                key = prior.request.key
+                if key.family == "declaration" and key.identity == local.key.identity and key.origin == origin:
+                    assert key.identity not in declarations, f"two declarations for {key.identity}"
+                    match get(selected, encode_record_key(key)?).map_err((error) => error.message())?:
+                        None => return Err("a published importer local lost its declaration")
+                        Some(value) =>
+                            root = record_root(value).map_err((error) => f"invalid importer declaration: {error:?}")?
+                            assert root == key.context, f"the declaration of {key.identity} has another root"
+                            declarations[key.identity] = value
+    assert len(declarations) == 8, f"{len(declarations)} importer declarations were published"
+    mut values: Dict[str, list[bytes]] = {}
+    for row in select_body_inventory_except(selected, CHECKER_PROFILE, origin, [])?:
+        assert row.identity in declarations and row.identity not in values, f"an unmatched body row: {row.identity}"
+        values[row.identity] = [declarations[row.identity], row.local, row.final, row.body_ir]
+    owners = sorted([owner for owner in values.keys()])
+    assert len([owner for owner in owners if owner.startswith("function:")]) == 6, f"checked owners: {owners:?}"
+    assert "member/method:importer::empty#in(model:importer::GraphSummary)[0]" in values, f"checked owners: {owners:?}"
+    assert "member/method:importer::add_fact#in(model:importer::GraphSummary)[0]" in values, f"checked owners: {owners:?}"
+    assert len(values) == 8, f"checked owners: {owners:?}"
+    return Ok(values)
+
+
+def importer_frontier_order(trace: Path) -> Result[list[str], str]:
+    """Read the claim owner's ordered completions, checking the equal caller signature and empty frontier."""
+    mut result: list[str] = []
+    for file in trace.iterdir().map_err((error) => error.message())?:
+        if not file.name().startswith("engine-oven-"):
+            continue
+        contents = file.read_text("utf-8", "strict").map_err((error) => error.message())?
+        for line in contents.split("\n"):
+            if "ranked-stage" not in line and "ranked-reader" not in line:
+                continue
+            key = parse(line).and_then((record) => record.require("key")).and_then((field) => field.expect_str()).map_err((error) => error.message())?
+            fields = key.split("\t")
+            if fields[0] == "ranked-stage":
+                assert len(fields) == 3, f"a ranked stage key has {len(fields)} fields: {key}"
+                result.append(fields[1].split("|")[0] + "\t" + fields[2])
+            elif fields[0] == "ranked-reader":
+                assert len(fields) == 9, f"a ranked reader key has {len(fields)} fields: {key}"
+                # The resolved call stores its parameter label in both body records.
+                assert len(fields[2]) == 64 and len(fields[3]) == 64 and fields[2] != fields[3], f"local records: {key}"
+                assert len(fields[4]) == 64 and len(fields[5]) == 64 and fields[4] != fields[5], f"final records: {key}"
+                # Downstream callers read import_jsonl's own declaration, whose signature stays equal.
+                assert len(fields[6]) == 64 and fields[6] == fields[7], f"the reader's signature changed: {key}"
+                assert fields[8] == "0", f"a ranked reader left a frontier: {key}"
+                result.append(fields[1].split("|")[0] + "\treader")
+    return Ok(result)
+
+
+def importer_ranked_completions(trace: Path) -> Result[list[str], str]:
+    """Use compiler-side successful production events to distinguish a ranked run from a whole-unit recheck."""
+    mut stages: list[str] = []
+    for file in trace.iterdir().map_err((error) => error.message())?:
+        if not file.name().startswith("engine-compiler-"):
+            continue
+        records = file.read_text("utf-8", "strict").map_err((error) => error.message())?
+        for line in records.split("\n"):
+            if "completed ranked checking producer" not in line:
+                continue
+            fields = parse(line).and_then((record) => record.require("fields")).map_err((error) => error.message())?
+            identity = fields.require("owner").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+            root = fields.require("root").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+            if len(root) != 64:
+                return Err("ranked importer producer did not emit a content root")
+            family = fields.require("family").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+            stages.append(identity.split("|")[0] + "\t" + family)
+    return Ok(stages)
+
+
+def importer_physical_statement_count(trace: Path) -> Result[int, str]:
+    """Count all callable and property source entries, including methods without a free-function trace."""
+    mut total = 0
+    for file in trace.iterdir().map_err((error) => error.message())?:
+        if not file.name().startswith("engine-compiler-"):
+            continue
+        records = file.read_text("utf-8", "strict").map_err((error) => error.message())?
+        for line in records.split("\n"):
+            if '"action":"body"' not in line or '"phase":"checking"' not in line:
+                continue
+            fields = parse(line).and_then((record) => record.require("fields")).map_err((error) => error.message())?
+            module = fields.require("module").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+            if module in ['Some(["importer"])', 'Some(["main"])']:
+                total += 1
+    return Ok(total)
+
+
+def importer_statement_checks(trace: Path) -> Result[list[str], str]:
+    """Read free-function statement owner names for the two project modules."""
+    mut checked: list[str] = []
+    for file in trace.iterdir().map_err((error) => error.message())?:
+        if not file.name().startswith("engine-compiler-"):
+            continue
+        records = file.read_text("utf-8", "strict").map_err((error) => error.message())?
+        for line in records.split("\n"):
+            if "checked owner statements" not in line:
+                continue
+            fields = parse(line).and_then((record) => record.require("fields")).map_err((error) => error.message())?
+            module = fields.require("module").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+            if module in ["main", "importer"]:
+                owner = fields.require("owner").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+                checked.append(module + "::" + owner)
+    return Ok(checked)

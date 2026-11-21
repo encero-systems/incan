@@ -1,0 +1,399 @@
+"""Graph records in the segment store: a family selection reads its range, and edges, output index entries, listings
+and incoming entries are written in place across edits; retirement reuses only identical staged forward edges."""
+
+from pub::incan_platform.store.index import entries as index_entries
+from store_path_conversion import store_path
+from std.fs import Path
+from scratch import scratch_directory
+from segment_store_fixtures import write_one
+from pub::incan_platform.store import (
+    Snapshot,
+    begin,
+    commit,
+    keys,
+    keys_with_prefix,
+    lookup,
+    put,
+    read_counts,
+    measure_frame_reads,
+    finish_frame_reads,
+    keys_with_prefix,
+)
+from pub::incan_platform.store import snapshot as placed_snapshot
+from pub::incan_platform.store.memory import root as memory_root
+from store_path_conversion import snapshot
+from compiler_graph_rows import encode_pointer
+from compiler_graph_records import (
+    OutputSlots,
+    family_outputs,
+    family_listing,
+    prepare_evaluation,
+    readers_of,
+    reusable_family_records,
+    supersede_outputs,
+)
+from pub::internal_models import ProducerRank, ProducerStage
+from pub::internal_models.records import (
+    PreparationEvidence,
+    ReadReceipt,
+    ReadScope,
+    RecordKey,
+    RecordRead,
+    RecordReads,
+    RecordRequest,
+    RecordSelection,
+    StoreRecordSource,
+    encode_record_key,
+)
+
+
+pub def test_a_family_selection_reads_its_range_however_many_records_earlier_edits_left() -> Result[None, str]:
+    """
+    Selecting one family's reusable records and one record's readers reads only the index pages of their key range:
+    the pages read do not grow with the records every earlier edit left in the store, and a prefix listing returns
+    exactly the keys a whole listing would.
+    """
+    scratch = scratch_directory()?
+    output = "incan.engine.output/2\tp\tbody-ir\tprofile\torigin\tfunction:main\tfacet"
+    edge = "incan.engine.edge-in/3\tbody-ir\tprofile\torigin\tfunction:main\tfacet\t"
+    target = RecordKey(
+        family="body-ir",
+        identity="function:main",
+        identity_profile="profile",
+        origin="origin",
+        facet="facet",
+        context="checked",
+    )
+    mut pages: list[int] = []
+    for scale in [1, 100]:
+        root = scratch.path().joinpath(f"store-{scale}")
+        pointer = encode_pointer(encode_record_key(target)?)?
+        seeded = put(begin(snapshot(root).map_err((error) => error.message())?), output, pointer)
+        _ = commit(seeded).map_err((error) => error.message())?
+        for batch in range(scale):
+            mut transaction = begin(snapshot(root).map_err((error) => error.message())?)
+            for item in range(10):
+                transaction = put(transaction, f"incan.engine.receipt\t{batch}-{item}", b"earlier edit")
+                transaction = put(
+                    transaction,
+                    f"incan.engine.output/2\tp\tlocal\tprofile\torigin\tfunction:{batch}-{item}\tfacet\tchecked",
+                    b"other family",
+                )
+            commit(transaction).map_err((error) => error.message())?
+        latest = snapshot(root).map_err((error) => error.message())?
+        before = read_counts()
+        assert len(reusable_family_records(latest, "body-ir", "p")?) == 0
+        assert len(readers_of(latest, [target], "p")?) == 0
+        pages.append(read_counts().pages - before.pages)
+        # The project asks for one owner. Unrelated index entries must never be materialized.
+        mut neighbors = begin(latest)
+        neighbors = put(neighbors, "incan.engine.output/2\tp\tbody-ir\tprofile\torigin\tother\tfacet", b"unrelated pointer")
+        neighbors = put(neighbors, "incan.engine.output/2\tp\tbody-ir\tprofile\tanother\tfunction:main\tfacet", b"foreign pointer")
+        with_neighbors = commit(neighbors).map_err((error) => error.message())?
+        wanted = encode_record_key(target)?
+        slots = OutputSlots(origin=target.origin, identity_profile=target.identity_profile, included=Some([target.identity]))
+        prior = read_counts()
+        measure_frame_reads(true)
+        assert family_outputs(with_neighbors, target.family, "p", Some(slots))? == [wanted]
+        measured = finish_frame_reads()
+        assert len(measured) == 1 and measured[0].reads == 1 and measured[0].key == output
+        assert measured[0].value_bytes == len(pointer)
+        assert measured[0].frame_bytes == 8 + len(output.encode()) + len(pointer)
+        observed = read_counts()
+        assert observed.records - prior.records == 1
+        assert observed.decoded - prior.decoded == len(pointer)
+        # A module page already supplied this exact output. Selection reads the current pointer to confirm its
+        # context and skips the individual evaluation, receipt, value and dependency witnesses.
+        carried = OutputSlots(origin=target.origin, identity_profile=target.identity_profile,
+            included=Some([target.identity]), excluded_outputs=[wanted])
+        prior_carried = read_counts()
+        assert len(reusable_family_records(with_neighbors, target.family, "p", Some(carried))?) == 0
+        after_carried = read_counts()
+        assert after_carried.records - prior_carried.records == 1
+        assert after_carried.decoded - prior_carried.decoded == len(pointer)
+        every = keys(latest).map_err((error) => error.message())?
+        for prefix in ["incan.engine.output/2\tp\tbody-ir\t", "incan.engine.output/2\tp\t", "incan.engine.receipt\t5", edge]:
+            assert keys_with_prefix(latest, prefix).map_err((error) => error.message())? == [
+                key for key in every if key.startswith(prefix)
+            ], prefix
+    assert pages[1] <= pages[0] + 10, f"family selection read {pages[0]} pages at scale 1 and {pages[1]} at scale 100"
+    return Ok(None)
+
+
+pub def test_an_edited_declaration_s_edges_replace_their_keys_however_many_edits_came_before() -> Result[None, str]:
+    """
+    Keys that change together sit together. Each edit evaluates one declaration's slot in a new context that reads the
+    same dependency with new evidence, and retires the earlier evaluation. Its edges are written over the earlier ones
+    under the same keys, so after any number of edits the edge indexes hold exactly the current evaluation's entries,
+    tombstones included, and a reader lookup finds the current evaluation.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    dependency = RecordKey(
+        family="final",
+        identity="function:helper",
+        identity_profile="profile",
+        origin="origin",
+        facet="facet",
+        context="checked",
+    )
+    read = RecordRequest(key=dependency, selection=RecordSelection.Field("value"))
+    mut reader = dependency
+    for edit in range(12):
+        before = snapshot(root).map_err((error) => error.message())?
+        changed = put(begin(before), encode_record_key(dependency)?, f"helper {edit}".encode("utf-8"))
+        selected = commit(changed).map_err((error) => error.message())?
+        reader = RecordKey(
+            family="body-ir",
+            identity="function:main",
+            identity_profile="profile",
+            origin="origin",
+            facet="facet",
+            context=f"edit {edit}",
+        )
+        mut transaction = begin(selected)
+        rank = ProducerRank(namespace=2, stage=ProducerStage.CheckBody, dependency=1)
+        receipt = edge_receipt(selected, reader, [read])?
+        _ = prepare_evaluation(transaction, "claim", rank, f"main {edit}".encode("utf-8"), receipt)?
+        supersede_outputs(selected, transaction)?
+        _ = commit(transaction).map_err((error) => error.message())?
+    latest = snapshot(root).map_err((error) => error.message())?
+    mut edges: list[str] = []
+    for entry in index_entries(store_path(root), latest.index).map_err((error) => error.detail)?:
+        if entry.key.startswith("incan.engine.edge-"):
+            edges.append(entry.key)
+    assert len(edges) == 2, f"after 12 edits of one declaration the edge indexes hold {len(edges)} entries"
+    assert readers_of(latest, [dependency], "profile")? == [reader]
+    return Ok(None)
+
+
+pub def test_an_edge_to_a_record_each_edit_replaces_is_written_in_place() -> Result[None, str]:
+    """
+    Each edit evaluates a dependency in a new context, and one declaration's slot reads it. The reader's edge into the
+    dependency is keyed by the dependency's slot, not by the context the edit replaced, so after any number of edits the
+    edge indexes hold the one current edge in each direction, tombstones included. A reader lookup still names the
+    exact record read: the current dependency has the current reader, and an earlier context has none.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    mut earlier = graph_key("final", "function:helper", "checked")
+    mut dependency = earlier
+    mut reader = earlier
+    for edit in range(12):
+        earlier = dependency
+        dependency = graph_key("final", "function:helper", f"checked {edit}")
+        before = snapshot(root).map_err((error) => error.message())?
+        changed = put(begin(before), encode_record_key(dependency)?, f"helper {edit}".encode("utf-8"))
+        selected = commit(changed).map_err((error) => error.message())?
+        reader = graph_key("body-ir", "function:main", f"edit {edit}")
+        publish_reader(selected, reader, [RecordRequest(key=dependency, selection=RecordSelection.Field("value"))])?
+    latest = snapshot(root).map_err((error) => error.message())?
+    edges = indexed_keys(root, latest, "incan.engine.edge-")?
+    assert len(edges) == 2, f"after 12 edits of a replaced dependency the edge indexes hold {len(edges)} entries"
+    assert readers_of(latest, [dependency], "profile")? == [reader]
+    assert readers_of(latest, [earlier], "profile")? == []
+    return Ok(None)
+
+
+pub def test_a_reader_of_two_contexts_of_one_record_is_found_from_each() -> Result[None, str]:
+    """
+    One evaluation that makes the same read of two contexts of one record has one incoming edge for each, though both
+    sit under the record's slot. When the next evaluation reads only one of them, the other has no reader left.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    first = graph_key("final", "function:helper", "checked 1")
+    second = graph_key("final", "function:helper", "checked 2")
+    mut transaction = begin(snapshot(root).map_err((error) => error.message())?)
+    transaction = put(put(transaction, encode_record_key(first)?, b"one"), encode_record_key(second)?, b"two")
+    selected = commit(transaction).map_err((error) => error.message())?
+    reader = graph_key("body-ir", "function:main", "edit 0")
+    both = [
+        RecordRequest(key=first, selection=RecordSelection.Field("value")),
+        RecordRequest(key=second, selection=RecordSelection.Field("value")),
+    ]
+    publish_reader(selected, reader, both)?
+    latest = snapshot(root).map_err((error) => error.message())?
+    assert readers_of(latest, [first], "profile")? == [reader]
+    assert readers_of(latest, [second], "profile")? == [reader]
+    edited = graph_key("body-ir", "function:main", "edit 1")
+    publish_reader(latest, edited, [both[1]])?
+    current = snapshot(root).map_err((error) => error.message())?
+    assert readers_of(current, [first], "profile")? == []
+    assert readers_of(current, [second], "profile")? == [edited]
+    assert len(indexed_keys(root, current, "incan.engine.edge-")?) == 4
+    return Ok(None)
+
+
+pub def test_an_edited_declaration_s_output_index_entry_is_written_in_place() -> Result[None, str]:
+    """
+    Each edit evaluates one declaration's slot in a new context. Its output index entry is keyed by the slot, not by
+    the context, so after any number of edits the output index holds one entry for the slot, tombstones included, and
+    a family selection finds the current evaluation's record.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    dependency = graph_key("final", "function:helper", "checked")
+    read = RecordRequest(key=dependency, selection=RecordSelection.Field("value"))
+    _ = write_one(root, encode_record_key(dependency)?, "helper").map_err((error) => error.message())?
+    mut output = graph_key("body-ir", "function:main", "edit 0")
+    for edit in range(12):
+        output = graph_key("body-ir", "function:main", f"edit {edit}")
+        publish_reader(snapshot(root).map_err((error) => error.message())?, output, [read])?
+    latest = snapshot(root).map_err((error) => error.message())?
+    indexed = indexed_keys(root, latest, "incan.engine.output/2\t")?
+    assert len(indexed) == 1, f"after 12 edits of one declaration the output index holds {len(indexed)} entries"
+    records = reusable_family_records(latest, "body-ir", "profile")?
+    assert len(records) == 1 and records[0].key == output
+    assert records[0].value == b"edit 11"
+    return Ok(None)
+
+
+pub def test_a_family_s_listing_changes_with_each_evaluation_of_a_slot_and_with_nothing_else() -> Result[None, str]:
+    """
+    A check selects its pages again when a family's listing changes: the revisions of the family's output index
+    entries. An entry is keyed by its slot, so the listing changes through the entry's value: with every evaluation of
+    a slot in another context and with every slot that joins the family, and not when a slot is evaluated in the same
+    context again or another family's slot is evaluated.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    dependency = graph_key("final", "function:helper", "checked")
+    read = RecordRequest(key=dependency, selection=RecordSelection.Field("value"))
+    _ = write_one(root, encode_record_key(dependency)?, "helper").map_err((error) => error.message())?
+    mut listings: set[str] = set()
+    for edit in range(12):
+        output = graph_key("body-ir", "function:main", f"edit {edit}")
+        publish_reader(snapshot(root).map_err((error) => error.message())?, output, [read])?
+        listings.add(body_listing(root)?)
+    assert len(listings) == 12, f"12 evaluations of one slot, each in a new context, gave {len(listings)} listings"
+    before = body_listing(root)?
+    again = graph_key("body-ir", "function:main", "edit 11")
+    publish_reader(snapshot(root).map_err((error) => error.message())?, again, [read])?
+    elsewhere = graph_key("local", "function:main", "edit 0")
+    publish_reader(snapshot(root).map_err((error) => error.message())?, elsewhere, [read])?
+    assert body_listing(root)? == before, "the listing changed without another evaluation in the family"
+    joined = graph_key("body-ir", "function:other", "edit 0")
+    publish_reader(snapshot(root).map_err((error) => error.message())?, joined, [read])?
+    assert body_listing(root)? != before, "a slot joined the family and the listing stayed the same"
+    return Ok(None)
+
+
+def body_listing(root: Path) -> Result[str, str]:
+    """The `body-ir` family's listing in the store's latest generation, as one text."""
+    latest = snapshot(root).map_err((error) => error.message())?
+    return Ok("\n".join(family_listing(latest, "body-ir", "profile")?))
+
+
+pub def test_an_edit_leaves_the_incoming_entry_of_an_unchanged_read_as_it_is() -> Result[None, str]:
+    """
+    Each edit evaluates one declaration's slot in a new context, and the slot reads the same unchanged dependency. The
+    incoming entry's value names the reading slot, the profile and the record read, none of which the edit changes, so
+    the commit finds the entry unchanged: after any number of edits it is still the frame the first evaluation wrote.
+    A reader lookup names the slot's current record.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    dependency = graph_key("final", "function:helper", "checked")
+    read = RecordRequest(key=dependency, selection=RecordSelection.Field("value"))
+    _ = write_one(root, encode_record_key(dependency)?, "helper").map_err((error) => error.message())?
+    mut reader = graph_key("body-ir", "function:main", "edit 0")
+    publish_reader(snapshot(root).map_err((error) => error.message())?, reader, [read])?
+    first = incoming_segments(root)?
+    assert len(first) == 1, f"one read left {len(first)} incoming entries"
+    mut written = 0
+    for edit in range(11):
+        reader = graph_key("body-ir", "function:main", f"edit {edit + 1}")
+        publish_reader(snapshot(root).map_err((error) => error.message())?, reader, [read])?
+        if incoming_segments(root)? != first:
+            written += 1
+    assert written == 0, f"{written} of 11 edits wrote the incoming entry of a read they did not change"
+    latest = snapshot(root).map_err((error) => error.message())?
+    assert readers_of(latest, [dependency], "profile")? == [reader]
+    return Ok(None)
+
+
+pub def test_retirement_reuses_only_identical_staged_forward_edges() -> Result[None, str]:
+    """One unchanged edge needs no old frame. A same-width changed edge still retires its old reader."""
+    before = placed_snapshot(memory_root()).map_err((error) => error.message())?
+    reader = graph_key("body-ir", "function:main", "checked")
+    requests = [RecordRequest(key=graph_key("final", name, "checked"), selection=RecordSelection.Field("value"))
+        for name in ["alpha", "bravo", "delta"]]
+    mut seed = begin(before)
+    for request in requests:
+        seed = put(seed, encode_record_key(request.key)?, b"same")
+    source = commit(seed).map_err((error) => error.message())?
+    rank = ProducerRank(namespace=2, stage=ProducerStage.CheckBody, dependency=1)
+    mut first = begin(source)
+    _ = prepare_evaluation(first, "claim", rank, b"initial", edge_receipt(source, reader, requests[:2])?)?
+    selected = commit(first).map_err((error) => error.message())?
+    mut next = begin(selected)
+    _ = prepare_evaluation(next, "claim", rank, b"changed", edge_receipt(source, reader, [requests[0], requests[2]])?)?
+    measure_frame_reads(true)
+    supersede_outputs(selected, next)?
+    opened = finish_frame_reads()
+    assert len(opened) == 1 and opened[0].reads == 1 and opened[0].key.endswith("\t1")
+    latest = commit(next).map_err((error) => error.message())?
+    assert readers_of(latest, [requests[0].key], "profile")? == [reader]
+    assert len(readers_of(latest, [requests[1].key], "profile")?) == 0
+    assert readers_of(latest, [requests[2].key], "profile")? == [reader]
+    return Ok(None)
+
+
+def incoming_segments(root: Path) -> Result[list[str], str]:
+    """The segment that holds each incoming edge entry's frame in the store's latest generation, in key order."""
+    latest = snapshot(root).map_err((error) => error.message())?
+    mut found: list[str] = []
+    for entry in index_entries(store_path(root), latest.index).map_err((error) => error.detail)?:
+        if entry.key.startswith("incan.engine.edge-in/3\t"):
+            if let Some(location) = entry.location:
+                found.append(location.segment)
+    return Ok(found)
+
+
+def graph_key(family: str, identity: str, context: str) -> RecordKey:
+    """A compiler record key in the one identity profile, origin and facet these graph tests use."""
+    return RecordKey(
+        family=family,
+        identity=identity,
+        identity_profile="profile",
+        origin="origin",
+        facet="facet",
+        context=context,
+    )
+
+
+def publish_reader(selected: Snapshot, reader: RecordKey, reads: list[RecordRequest]) -> Result[None, str]:
+    """Publish an evaluation of `reader` that makes `reads`, retiring its slot's earlier evaluation, in one commit."""
+    mut transaction = begin(selected)
+    rank = ProducerRank(namespace=2, stage=ProducerStage.CheckBody, dependency=1)
+    receipt = edge_receipt(selected, reader, reads)?
+    _ = prepare_evaluation(transaction, "claim", rank, f"{reader.context}".encode("utf-8"), receipt)?
+    supersede_outputs(selected, transaction)?
+    _ = commit(transaction).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def indexed_keys(root: Path, selected: Snapshot, prefix: str) -> Result[list[str], str]:
+    """Every key the snapshot's index holds under `prefix`, tombstones included."""
+    mut found: list[str] = []
+    for entry in index_entries(store_path(root), selected.index).map_err((error) => error.detail)?:
+        if entry.key.startswith(prefix):
+            found.append(entry.key)
+    return Ok(found)
+
+
+def edge_receipt(selected: Snapshot, output: RecordKey, requests: list[RecordRequest]) -> Result[ReadReceipt, str]:
+    """The completed receipt of an evaluation of `output` that reads `requests` through the store, in order."""
+    scope = ReadScope(snapshot=selected.digest, profile="profile")
+    preparation = PreparationEvidence(output=output, rank_certificate="rank", selector_witnesses="selectors")
+    mut roots: list[str] = []
+    for request in requests:
+        roots.append(encode_record_key(request.key)?)
+    source = StoreRecordSource.open(selected, scope, roots)
+    mut reads = RecordReads.start(scope, preparation, requests)
+    for request in requests:
+        match reads.read(source, request):
+            RecordRead.Failed(_) => return Err("the dependency read failed")
+            _ => pass
+    return reads.finish().map_err((_) => "the dependency receipt failed")

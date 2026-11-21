@@ -1,8 +1,6 @@
 """Build, verify, pack, and optionally prove one source toolchain generation without publishing it."""
 
-from rust::std::env::consts import ARCH, OS
-from rust::std::process import Command, exit
-from rust::std::string import String as RustString
+from rust::std::process import exit
 from rust::std::time import Instant
 from std.environ import args, get_or
 from std.fs import Path
@@ -58,13 +56,26 @@ from release_support import (
     run_step,
     start_background_step,
     finish_background_step,
-    shared_relocated_sysroot,
     store_reference_log,
     tree_bytes,
     verification_program,
     write_json,
 )
+from relocated_sysroot import shared_relocated_sysroot
 from registry_checksums import REGISTRY_CHECKSUMS, write_checksummed_registry
+from release_helpers import (
+    command_text,
+    host_target,
+    manifest_string,
+    optional_string,
+    read_json,
+    record_release_tree_bytes,
+    release_tree_bytes_json,
+    replace_json,
+    set_manifest_string,
+    write_difference,
+    ReleaseTreeBytes,
+)
 from release_signer import adopt_signed_bundle, stamp_release_signer
 from relink_driver import Relink, absolute_manifest, run as relink
 from verify_fixed_point import prove_fixed_point
@@ -128,20 +139,6 @@ pub model Candidate:
     pub oven: Path
     pub lsp: Path
     pub pending_lsp: Option[PendingToolBuild]
-
-
-pub model ReleaseTreeBytes:
-    """Logical regular-file bytes retained in each release-owned output tree and their sum."""
-
-    pub build_home: int
-    pub source: int
-    pub verification_source: int
-    pub verification_home: int
-    pub relocated_rust: int
-    pub lane: int
-    pub bundle: int
-    pub ci: int
-    pub total: int
 
 
 def main() -> None:
@@ -1290,104 +1287,3 @@ def measure_release_tree_bytes(run: ReleaseRun) -> Result[ReleaseTreeBytes, str]
             total=total,
         ),
     )
-
-
-def record_release_tree_bytes(path: Path, prefix: str, measured: ReleaseTreeBytes) -> Result[None, str]:
-    """Append every measured release tree and their total under one evidence label prefix."""
-    append_bytes(path, prefix + "build-home", measured.build_home)?
-    append_bytes(path, prefix + "source", measured.source)?
-    append_bytes(path, prefix + "verification-source", measured.verification_source)?
-    append_bytes(path, prefix + "verification-home", measured.verification_home)?
-    append_bytes(path, prefix + "relocated-rust", measured.relocated_rust)?
-    append_bytes(path, prefix + "lane", measured.lane)?
-    append_bytes(path, prefix + "bundle", measured.bundle)?
-    append_bytes(path, prefix + "ci", measured.ci)?
-    return append_bytes(path, prefix + "total", measured.total)
-
-
-def release_tree_bytes_json(measured: ReleaseTreeBytes) -> JsonValue:
-    """Encode every measured release tree and their total for the receipt."""
-    return JsonValue.object(
-        {"build_home": JsonValue.int(measured.build_home), "source": JsonValue.int(measured.source), "verification_source": JsonValue.int(
-            measured.verification_source,
-        ), "verification_home": JsonValue.int(measured.verification_home), "relocated_rust": JsonValue.int(
-            measured.relocated_rust,
-        ), "lane": JsonValue.int(measured.lane), "bundle": JsonValue.int(measured.bundle), "ci": JsonValue.int(
-            measured.ci,
-        ), "total": JsonValue.int(measured.total)},
-    )
-
-
-def write_difference(path: Path, left: &BaselineReport, right: &BaselineReport) -> Result[None, str]:
-    """Retain deterministic differing case outcomes without calling an external diff tool."""
-    mut lines: list[str] = []
-    keys = sorted(list(set(left.result_keys + right.result_keys)))
-    for key in keys:
-        mut left_status = "MISSING"
-        mut right_status = "MISSING"
-        if key in left.result_statuses:
-            left_status = left.result_statuses[key]
-        if key in right.result_statuses:
-            right_status = right.result_statuses[key]
-        if left_status != right_status:
-            lines.append(f"{key}\t{left_status}\t{right_status}")
-    return path.write_text("\n".join(lines) + "\n", "utf-8", "strict", None).map_err((error) => error.message())
-
-
-def host_target() -> Result[str, str]:
-    """Map the two supported native release hosts to their Rust target triples."""
-    if OS == "macos" and ARCH == "aarch64":
-        return Ok("aarch64-apple-darwin")
-    if OS == "linux" and ARCH == "x86_64":
-        return Ok("x86_64-unknown-linux-gnu")
-    return Err(f"supported hosts: macOS arm64 and Linux x86_64; observed {OS}/{ARCH}")
-
-
-def command_text(executable: str, arguments: list[str]) -> Result[str, str]:
-    """Run a small read-only command whose stdout is the result rather than release evidence."""
-    mut command = Command.new(executable)
-    for argument in arguments:
-        command.arg(argument)
-    output = command.output().map_err((error) => f"cannot run {executable}: {error}")?
-    stdout = RustString.from_utf8_lossy(output.stdout).into_owned()
-    if not output.status.success():
-        stderr = RustString.from_utf8_lossy(output.stderr).into_owned()
-        return Err(f"{executable} failed: {stderr}")
-    return Ok(stdout)
-
-
-def read_json(path: Path) -> Result[JsonValue, str]:
-    """Read one UTF-8 JSON document."""
-    text = path.read_text("utf-8", "strict").map_err((error) => f"{path.0}: {error.message()}")?
-    return JsonValue.parse(text).map_err((error) => f"{path.0}: {error.message()}")
-
-
-def replace_json(path: Path, value: JsonValue) -> Result[None, str]:
-    """Publish pretty JSON through one same-directory staged file."""
-    staged = Path(f"{path.0}.next")
-    staged
-        .write_text(value.to_pretty_json().map_err((error) => error.message())? + "\n", "utf-8", "strict", None)
-        .map_err((error) => error.message())?
-    if path.exists() or path.is_symlink():
-        path.unlink().map_err((error) => error.message())?
-    _ = staged.move(path).map_err((error) => error.message())?
-    return Ok(None)
-
-
-def set_manifest_string(path: Path, key: str, value: str) -> Result[None, str]:
-    """Replace one string field in a JSON document atomically."""
-    mut fields = read_json(path)?.expect_object().map_err((error) => error.message())?
-    fields[key] = JsonValue.string(value)
-    return replace_json(path, JsonValue.object(fields))
-
-
-def manifest_string(value: JsonValue, key: str) -> Result[str, str]:
-    """Read one required JSON object string."""
-    return value.require(key).and_then((entry) => entry.expect_str()).map_err((error) => f"{key}: {error.message()}")
-
-
-def optional_string(value: JsonValue, key: str) -> Result[str, str]:
-    """Read one optional JSON object string as empty when absent."""
-    match value.get(key):
-        Some(entry) => return entry.expect_str().map_err((error) => f"{key}: {error.message()}")
-        None => return Ok("")

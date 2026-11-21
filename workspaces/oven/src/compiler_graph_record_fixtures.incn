@@ -1,0 +1,33 @@
+"""Record keys, requests and persisted envelope reads shared by the compiler graph record tests."""
+
+from pub::incan_platform.store import Snapshot, get
+from pub::internal_models.records import RecordKey, RecordRequest, RecordSelection
+
+
+pub def request(identity: str, selection: RecordSelection) -> RecordRequest:
+    """Create one exact prepared request."""
+    return RecordRequest(key=key(identity), selection=selection)
+
+
+pub def key(identity: str) -> RecordKey:
+    """Create one compiler record key."""
+    return family_key("local", identity)
+
+
+pub def family_key(family: str, identity: str) -> RecordKey:
+    """Create one compiler record key in the selected checking family."""
+    return RecordKey(
+        family=family,
+        identity_profile="identity/1",
+        origin="package",
+        identity=identity,
+        facet="checked",
+        context="",
+    )
+
+
+pub def required(before: Snapshot, key: str) -> Result[bytes, str]:
+    """Read one persisted envelope required by the test."""
+    match get(before, key).map_err((error) => error.message())?:
+        Some(value) => return Ok(value)
+        None => return Err(f"missing persisted envelope {key}")

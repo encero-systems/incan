@@ -263,7 +263,9 @@ pub(in crate::body_ir) fn collect_type_aliases(
             Some(bir::TypeAliasDeclaration {
                 canonical,
                 ty: parameter_types::checked_semantic_type(type_info.type_alias_target(&item.name)?, type_info),
-                named_type_identities: std::sync::Arc::clone(parameter_types::shared_retained_type_identities(type_info)),
+                named_type_identities: std::sync::Arc::clone(parameter_types::shared_retained_type_identities(
+                    type_info,
+                )),
             })
         })
         .collect()

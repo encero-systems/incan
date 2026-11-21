@@ -1,0 +1,26 @@
+"""Single-value commits and lookups as text, shared by the segment store tests."""
+
+from rust::std::string import String as RustString
+from std.fs import Path
+from pub::incan_platform.store.files import StoreError
+from pub::incan_platform.store import Lookup, Snapshot, begin, commit, owned, put
+from store_path_conversion import snapshot
+
+
+pub def text(found: Result[Lookup, StoreError]) -> str:
+    """A lookup as text: the value, `<deleted>`, `<absent>`, or `<integrity>` and the like for an error."""
+    match found:
+        Err(error) => return f"<{error.kind}>"
+        Ok(outcome) =>
+            match outcome:
+                Lookup.Found(value) =>
+                    match RustString.from_utf8(owned(value)):
+                        Ok(decoded) => return str(decoded)
+                        Err(_) => return "<bytes>"
+                Lookup.Deleted => return "<deleted>"
+                Lookup.Absent => return "<absent>"
+
+
+pub def write_one(root: Path, key: str, value: str, expect: int = 0) -> Result[Snapshot, StoreError]:
+    """Commit one value on the latest generation."""
+    return commit(put(begin(snapshot(root)?), key, value.encode("utf-8"), expect))
