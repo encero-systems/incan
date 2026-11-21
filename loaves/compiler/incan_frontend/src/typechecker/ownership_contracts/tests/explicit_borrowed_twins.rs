@@ -349,7 +349,8 @@ fn held_borrowed_results_are_loans_of_their_source() -> Result<(), Box<dyn std::
 /// RFC 164: in Incan source a borrow is spelled `Borrowed[T]` or `BorrowedMut[T]`. The Rust spelling is refused at
 /// every annotation position with one error at the reference, whose hint is the Incan spelling: a parameter, an
 /// exclusive parameter, a result, a local binding, a generic argument, a callable type's parameter, a type alias, a
-/// model field, a method parameter, a trait slot and an enum payload.
+/// model field, a method parameter, a trait slot and an enum payload. The refusal has its own stable code,
+/// INCAN-T0137, which `incan explain` describes.
 #[test]
 fn rust_reference_spellings_are_refused_at_every_annotation_position() -> Result<(), Box<dyn std::error::Error>> {
     for (template, fix) in [
@@ -401,9 +402,17 @@ fn rust_reference_spellings_are_refused_at_every_annotation_position() -> Result
             format!("{refusal:?}").contains(&format!("Write `{fix}`")),
             "{template}: {refusal:?}"
         );
+        assert_eq!(refusal.stable_code(), Some("INCAN-T0137"), "{template}");
         let explicit = checked(&spelled(template, EXPLICIT))?;
         assert!(!explicit.errors.iter().any(spelling_refusal), "{template}");
     }
+    let entry = crate::diagnostics::explain("INCAN-T0137").ok_or("INCAN-T0137 has no catalog entry")?;
+    assert_eq!((entry.severity, entry.phase), ("error", "typecheck"));
+    assert!(
+        entry.examples.iter().any(|example| example.contains("&")),
+        "{:?}",
+        entry.examples
+    );
     Ok(())
 }
 
