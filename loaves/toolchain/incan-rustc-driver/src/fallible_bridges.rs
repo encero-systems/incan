@@ -273,7 +273,7 @@ fn opaque(item: Box<ast::Ty>, error: Box<ast::Ty>, span: Span) -> Box<ast::Ty> {
     })
 }
 
-/// Forward each checked standard default to its Incan runtime ABI, preserving generic binders and receiver mutation.
+/// Forward each checked standard default to its standard-library ABI, preserving generic binders and receiver mutation.
 fn default_method(name: &str, methods: &FallibleIteratorMethods, span: Span) -> Result<Box<ast::AssocItem>, PlanError> {
     let item = || crate::declarations::ty(&methods.item, span);
     let error = || crate::declarations::ty(&methods.error, span);
@@ -343,7 +343,7 @@ fn default_method(name: &str, methods: &FallibleIteratorMethods, span: Span) -> 
         generics,
         inputs,
         output,
-        call(&["incan_native_runtime", &helper], arguments, span),
+        call(&["incan_stdlib_primitives", &helper], arguments, span),
         span,
     ))
 }

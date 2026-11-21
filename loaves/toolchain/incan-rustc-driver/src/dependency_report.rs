@@ -4,7 +4,7 @@
 //! reached package lists the declarations that entered it from another package or from a requested root, the chain
 //! of declarations that requested each one, and why that chain's root was requested.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use incan_driver::unit::UnitKind;
@@ -49,42 +49,68 @@ impl RootOrigin {
     }
 }
 
-/// Render the report: a summary line, then each reached package with its entering declarations.
+/// Render the report: a summary line, then each reached package with its entering declarations and the runtime
+/// functions its natively linked runtime operations call.
 pub(crate) fn render(
     package: &str,
     kind: UnitKind,
     reached: &BTreeMap<String, Vec<Vec<CanonicalSymbolId>>>,
     origins: &BTreeMap<CanonicalSymbolId, RootOrigin>,
+    native: &BTreeMap<String, RootOrigin>,
     project_root: &Path,
 ) -> String {
-    let plural = if reached.len() == 1 { "" } else { "s" };
+    let mut native_by_package: BTreeMap<&str, Vec<(&String, &RootOrigin)>> = BTreeMap::new();
+    for (path, origin) in native {
+        let library = path.split_once("::").map_or(path.as_str(), |(library, _)| library);
+        native_by_package.entry(library).or_default().push((path, origin));
+    }
+    let mut libraries: BTreeSet<&str> = reached.keys().map(String::as_str).collect();
+    libraries.extend(native_by_package.keys().copied());
+    let plural = if libraries.len() == 1 { "" } else { "s" };
     let mut text = format!(
         "{} `{package}` reaches {} package{plural}\n",
         kind.as_str(),
-        reached.len()
+        libraries.len()
     );
-    for (library, entries) in reached {
+    for library in libraries {
         text.push_str(&format!("{library}\n"));
-        if entries.is_empty() {
+        let entries = reached.get(library).map_or(&[][..], Vec::as_slice);
+        let natives = native_by_package.get(library).map_or(&[][..], Vec::as_slice);
+        if entries.is_empty() && natives.is_empty() {
             text.push_str("  selected by an uncovered root; no declaration is loaded\n");
         }
         for chain in entries {
-            let Some((declaration, requesters)) = chain.split_last() else {
-                continue;
-            };
-            text.push_str(&format!("  {}\n", declaration_name(declaration)));
-            if !requesters.is_empty() {
-                let via = requesters.iter().map(declaration_name).collect::<Vec<_>>().join(" -> ");
-                text.push_str(&format!("    via {via}\n"));
-            }
-            let origin = chain
-                .first()
-                .and_then(|root| origins.get(root))
-                .map_or_else(|| "an unrecorded root".to_owned(), |origin| origin.render(project_root));
-            text.push_str(&format!("    requested by {origin}\n"));
+            render_chain(&mut text, chain, origins, project_root);
+        }
+        // A natively linked runtime function is the Rust item its plan calls; it has no Incan declaration chain.
+        for (path, origin) in natives {
+            text.push_str(&format!("  function rust::{path}\n"));
+            text.push_str(&format!("    requested by {}\n", origin.render(project_root)));
         }
     }
     text
+}
+
+/// One entering declaration, the chain of declarations that requested it, and why that chain's root was requested.
+fn render_chain(
+    text: &mut String,
+    chain: &[CanonicalSymbolId],
+    origins: &BTreeMap<CanonicalSymbolId, RootOrigin>,
+    project_root: &Path,
+) {
+    let Some((declaration, requesters)) = chain.split_last() else {
+        return;
+    };
+    text.push_str(&format!("  {}\n", declaration_name(declaration)));
+    if !requesters.is_empty() {
+        let via = requesters.iter().map(declaration_name).collect::<Vec<_>>().join(" -> ");
+        text.push_str(&format!("    via {via}\n"));
+    }
+    let origin = chain
+        .first()
+        .and_then(|root| origins.get(root))
+        .map_or_else(|| "an unrecorded root".to_owned(), |origin| origin.render(project_root));
+    text.push_str(&format!("    requested by {origin}\n"));
 }
 
 /// A declaration's kind and canonical path, without the source offsets that change with every edit of its package.

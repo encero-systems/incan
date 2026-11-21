@@ -4,7 +4,7 @@
 # expect-stdout-contains:
 #   program `closure_of_a_byte_loop` reaches 1 package
 #   incan_native_runtime
-#     function pub::incan_native_runtime::lists::get_list
+#     function rust::incan_native_runtime::get_list
 # expect-exit: 0
 
 def total(data: bytes) -> int:
