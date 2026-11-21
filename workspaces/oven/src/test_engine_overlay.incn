@@ -1,7 +1,9 @@
 """Overlay requests: an editor view per project view, a mirrored overlay root and diagnostics in document coordinates."""
 
 from std.fs import Path
-from engine_overlay import editor_view_name, mirror_overlay, overlay_entry, report_diagnostics
+from engine_overlay import OverlayMirror, editor_view_name, mirror_into, mirror_overlay, overlay_entry, report_diagnostics
+from rust::std::thread import sleep
+from rust::std::time import Duration
 from overlay_request import parse_serve, parse_served
 from scratch import scratch_directory
 
@@ -36,6 +38,18 @@ pub def test_the_overlay_root_mirrors_the_program_and_places_the_buffer() -> Res
     assert mirror_overlay(program, overlay, "main.incn", buffer)? == 0, "an unchanged mirror rewrote files"
     write(program.joinpath("helper.incn"), "pub def value() -> int:\n    return 2\n")?
     assert mirror_overlay(program, overlay, "main.incn", buffer)? == 1
+    # Keep the real observation policy: files must settle before their metadata can prove a reusable read.
+    sleep(Duration.from_secs(2))
+    mut mirror = OverlayMirror()
+    assert mirror_into(mirror, program, overlay, "main.incn", buffer)? == 0
+    assert mirror.read_files == 1 and mirror.read_bytes > 0
+    edited_buffer = buffer + "# next edit\n"
+    assert mirror_into(mirror, program, overlay, "main.incn", edited_buffer)? == 1
+    assert mirror.read_files == 0 and mirror.read_bytes == 0
+    write(overlay.joinpath("helper.incn"), "pub def value() -> int:\n    return 8\n")?
+    assert mirror_into(mirror, program, overlay, "main.incn", edited_buffer)? == 1
+    assert mirror.read_files == 1
+    assert read(overlay.joinpath("helper.incn"))? == "pub def value() -> int:\n    return 2\n"
     return Ok(None)
 
 

@@ -9,10 +9,19 @@ from std.encoding.hex import hexlify
 from std.fs import Path
 from files import write, json_text
 from bakery_roots import Collected, collect
-from engine_programs import read_program, select_program, program_handle, NativeUnit, obtain, selected_program
+from engine_programs import (
+    read_program,
+    select_program,
+    program_handle,
+    NativeUnit,
+    obtain,
+    selected_program,
+    view_sealed,
+)
+from engine_program_records import SELECTION_KEY, decode_program, decode_selection, encode_selection
 from engine_epochs import prepare_submit
 from engine_client import service_generation, service_identity
-from pub::incan_platform.store import Transaction, durable_commits, begin, put, commit, commit_group
+from pub::incan_platform.store import Transaction, durable_commits, begin, get, put, commit, commit_group
 from store_path_conversion import compact, snapshot
 from engine_proofs import report
 from std.json import JsonValue, parse
@@ -207,6 +216,41 @@ pub def test_a_fresh_worker_hashes_no_native_input_an_earlier_worker_hashed() ->
     return Ok(None)
 
 
+def check_native_program_records(store: Path, unit: NativeUnit, handle: str, view: str) -> Result[None, str]:
+    """Reopen typed and legacy views, reject swapped rows, and preserve unchanged legacy descriptor bytes."""
+    key = f"incan.engine.native-unit\t{handle}"
+    selected = snapshot(store, view).map_err((error) => error.message())?
+    expected = unit.encoded(key)?
+    assert expected[:4] == b"CRMB"
+    assert get(selected, key).map_err((error) => error.message())? == Some(expected)
+    pointer = encode_selection(view, handle)?
+    assert get(selected, SELECTION_KEY).map_err((error) => error.message())? == Some(pointer)
+    assert read_program(store, handle)? == Some(unit)
+    assert decode_program(key + "other", expected).is_err()
+    assert decode_program(key, pointer).is_err()
+    assert decode_selection(view, expected).is_err()
+    assert decode_selection("other", pointer).is_err()
+    assert decode_selection(view, b"other").is_err()
+    assert decode_program(key, b'{"schema":"unrecognized","unit":"unit","binary":"program","payload":"payload"}').is_err()
+    legacy_view = "prior-native-selection"
+    legacy_handle = program_handle("epoch", "compiler", legacy_view)?
+    legacy_key = f"incan.engine.native-unit\t{legacy_handle}"
+    legacy = b'{"schema":"incan.engine.native-unit/1","unit":"unit","binary":"program","payload":"payload"}'
+    initial = snapshot(store, legacy_view).map_err((error) => error.message())?
+    mut transaction = put(begin(initial), legacy_key, legacy)
+    transaction = put(transaction, SELECTION_KEY, legacy_handle.encode("utf-8"))
+    prior = commit(transaction).map_err((error) => error.message())?
+    assert read_program(store, legacy_handle)? == Some(unit)
+    repeat = select_program(store, legacy_view, unit, legacy_handle)?
+    assert repeat.encodings == 0 and repeat.commits == 0 and repeat.snapshot.digest == prior.digest
+    next_handle = program_handle("second epoch", "compiler", legacy_view)?
+    select_program(store, legacy_view, unit, next_handle)?
+    restored = select_program(store, legacy_view, unit, legacy_handle)?
+    assert get(restored.snapshot, legacy_key).map_err((error) => error.message())? == Some(legacy)
+    assert get(restored.snapshot, SELECTION_KEY).map_err((error) => error.message())? == Some(encode_selection(legacy_view, legacy_handle)?)
+    return Ok(None)
+
+
 pub def test_service_handshake_drain_and_idle() -> Result[None, str]:
     """Full identities gate admission, drain settles existing work, and every live interest prevents idle exit."""
     admission = scratch_directory()?
@@ -233,6 +277,7 @@ pub def test_service_handshake_drain_and_idle() -> Result[None, str]:
     assert first_selection.encodings == 1 and first_selection.commits == 1
     assert repeat_selection.encodings == 0 and repeat_selection.commits == 0
     assert repeat_selection.snapshot.digest == first_selection.snapshot.digest
+    check_native_program_records(store, native, handle, first_selection.snapshot.view)?
     check_collection_before_selection()?
     check_collection_during_execution()?
     process_lifecycle()?
@@ -432,6 +477,9 @@ def exercise_worker_residency(root: Path, binary: str, inject_failure: bool) -> 
     initial_record_reads = invocation_count(observations, "incan_frontend::read_compiler_records")
     initial_records = compiler_records_read(observations)?
     initial_digests = link_input_digests(observations)?
+    initial_abi_opens = invocation_count(observations, "incan_frontend::open_rust_abi_index")
+    if initial_abi_opens == 0:
+        return Err("the initial build recorded no open of the Rust ABI index")
     write(source, "def main() -> None:\n    println(\"hullo\")\n")?
     edited = Command
         .new(binary)
@@ -460,6 +508,10 @@ def exercise_worker_residency(root: Path, binary: str, inject_failure: bool) -> 
     records = compiler_records_read(observations)? - initial_records
     if records > 86:
         return Err(f"one-body edit opened {records} compiler records")
+    # The resident compiler keeps the unchanged Rust ABI index it opened, so the edit opens none.
+    abi_opens = invocation_count(observations, "incan_frontend::open_rust_abi_index") - initial_abi_opens
+    if abi_opens != 0:
+        return Err(f"one-body edit opened the unchanged Rust ABI index {abi_opens} times")
     processes = invocation_processes(observations, "incan_rustc_driver::compile_unit")?
     if processes != 1:
         return Err(f"initial build and one-body edit used {processes} unit compiler processes")
@@ -478,6 +530,11 @@ def exercise_worker_residency(root: Path, binary: str, inject_failure: bool) -> 
     for linker in link_processes(observations)?:
         if not Path(linker).name().startswith("incan-link"):
             return Err(f"a development link ran {linker} instead of the dedicated linker")
+    # A trace splits each of the two links into preparing its inputs and running ld.
+    prepared = invocation_count(observations, "incan_rustc_driver::link_inputs")
+    ran = invocation_count(observations, "incan_rustc_driver::run_linker")
+    if prepared < 2 or ran < 2:
+        return Err(f"the two development links recorded {prepared} input preparations and {ran} linker runs")
     return Ok(None)
 
 
@@ -660,6 +717,8 @@ def check_frozen_installation_reads(directory: Path) -> Result[None, str]:
     mut completed: Dict[str, int] = {}
     mut counts = InstallationReadCounts()
     for file in directory.iterdir().map_err((error) => error.message())?:
+        # The events just before a refused access name the work that reached for the frozen input.
+        mut recent: list[str] = []
         for line in file.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
             if line == "":
                 continue
@@ -672,7 +731,11 @@ def check_frozen_installation_reads(directory: Path) -> Result[None, str]:
                 input = trace_text(event, "input")?
                 if (input.startswith(prefix) or "/.rustup/" in input) and completed.get(process, 0) > 0:
                     frozen_accesses += 1
-                    return Err(f"service process {process} {category} touched frozen input {input}")
+                    before = " | ".join(recent)
+                    return Err(f"service process {process} {category} touched frozen input {input} after: {before}")
+            recent.append(category + " " + trace_text(event, "input").unwrap_or(""))
+            if len(recent) > 8:
+                recent = recent[1:]
             if category == "file_read":
                 reads += 1
             if category == "engine_unit":
@@ -766,6 +829,7 @@ def check_collection_before_selection() -> Result[None, str]:
         if let Some(transaction) = produced.transaction:
             group.append(transaction)
         committed = commit_group(group).map_err((error) => error.message())?
+        view_sealed(store, produced.sealed)?
         # The publication handle pins the result while no caller view has selected it.
         collect(store, -1)?
         match produced.unit:
@@ -1033,7 +1097,11 @@ def process_lifecycle() -> Result[None, str]:
     write(copied_source, source.read_text("utf-8", "strict").map_err((error) => error.message())?)?
     for turn in range(50):
         check_service_reuse(idle_channel, root, copied_source, turn)?
-    assert not another.joinpath("target/incan/observations").exists(), "a native hit repeated unit preparation"
+    observations = another.joinpath("target/incan/observations")
+    mut ledgers: list[str] = []
+    if observations.is_dir():
+        ledgers = sorted([entry.name() for entry in observations.iterdir().map_err((error) => error.message())?])
+    assert not observations.exists(), f"a native hit repeated unit preparation: {ledgers:?}"
     idle_channel.transport.close()?
     await_exit(idle, true)?
     return Ok(None)

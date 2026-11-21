@@ -1,16 +1,19 @@
 """Explicitly retained proof reports over capture and whole-unit producer counters."""
 
 from std.fs import Path
-from std.json import JsonValue
 from engine_capture import CaptureCounters
-from engine_epochs import record_text
+from rust::std::str import from_utf8
+from std.primitives.crumb.values import Value
+from pub::internal_models.crumb_rows import required_value
+from pub::internal_models.graph_crumb_fields import encode_graph_row, integer as signed
+from engine_proof_pages import PAGE_ROWS, byte_limit, demand_values, frame_values, render_proof, stage_pages
+from engine_proof_records import PROOF, proof_description
 from engine_programs import ProgramOutcome
-from files import json_text
-from pub::incan_platform.store import Transaction, begin, commit, put
+from pub::incan_platform.store import Transaction, begin, commit, get, put
 from store_path_conversion import snapshot
 
 
-pub def retain(store: Path, run: str, capture: CaptureCounters, produced: ProgramOutcome) -> Result[str, str]:
+pub def retain(store: Path, run: str, capture: CaptureCounters, produced: &ProgramOutcome) -> Result[str, str]:
     """Retain one requested report; ordinary unchanged requests never write a report or grow the store."""
     _ = commit(prepare_report(store, run, capture, produced)?).map_err((error) => error.message())?
     return Ok(run)
@@ -20,46 +23,75 @@ pub def prepare_report(
     store: Path,
     run: str,
     capture: CaptureCounters,
-    produced: ProgramOutcome,
+    produced: &ProgramOutcome,
 ) -> Result[Transaction, str]:
     """Prepare an explicitly requested report for the same request publication boundary."""
     editable = capture.in_reach
     frozen = capture.frozen
-    refusals = {
-        name: JsonValue.int(produced.artifact_refusals[name])
-        for name in sorted([key for key in produced.artifact_refusals.keys()])
+    counts: Dict[str, int] = {
+        "unit_evaluations": produced.evaluations,
+        "body_evaluations": produced.body_evaluations,
+        "body_reuses": produced.body_reuses,
+        "body_page_writes": produced.body_page_writes,
+        "body_page_decodes": produced.body_page_decodes,
+        "body_ir_evaluations": produced.body_ir_evaluations,
+        "native_bakes": produced.native_bakes,
+        "reusable_declarations": produced.reusable_declarations,
+        "all_declarations": produced.all_declarations,
+        "source_stats": editable.stats,
+        "source_reads": editable.reads,
+        "source_hashes": editable.hashes,
+        "source_listings": editable.listings,
+        "epoch_reads": produced.epoch_reads,
+        "frozen_stats": frozen.stats,
+        "frozen_reads": frozen.reads,
+        "frozen_hashes": frozen.hashes,
+        "plan_function_evaluations": produced.plan_function_evaluations,
+        "plan_function_reuses": produced.plan_function_reuses,
+        "lowering_demand_evaluations": produced.lowering_demand_evaluations,
+        "lowering_demand_reuses": produced.lowering_demand_reuses,
+        "native_interface_evaluations": produced.native_interface_evaluations,
+        "index_pages": produced.index_pages,
+        "keys_listed": produced.keys_listed,
+        "plan_module_reuses": produced.plan_module_reuses,
+        "store_frames_read": produced.store_frames_read,
+        "store_frame_bytes": produced.store_frame_bytes,
+        "store_decoded_bytes": produced.store_decoded_bytes,
+        "store_metadata_bytes_copied": produced.store_metadata_bytes_copied,
+        "store_index_bytes_checked": produced.store_index_bytes_checked,
+        "store_digest_only_payload_bytes": produced.store_digest_only_payload_bytes,
+        "store_digest_only_reads": produced.store_digest_only_reads,
     }
-    document = JsonValue.object(
-        {"schema": JsonValue.string("incan.engine.proofs/3"), "run": JsonValue.string(run), "granularity": JsonValue.string(
-            "unit-record",
-        ), "unit_evaluations": JsonValue.int(produced.evaluations), "body_evaluations": JsonValue.int(
-            produced.body_evaluations,
-        ), "body_reuses": JsonValue.int(produced.body_reuses), "body_page_writes": JsonValue.int(
-            produced.body_page_writes,
-        ), "body_page_decodes": JsonValue.int(produced.body_page_decodes), "body_ir_evaluations": JsonValue.int(
-            produced.body_ir_evaluations,
-        ), "native_bakes": JsonValue.int(
-            produced.native_bakes,
-        ), "reusable_declarations": JsonValue.int(produced.reusable_declarations), "all_declarations": JsonValue.int(
-            produced.all_declarations,
-        ), "checker_reuse": JsonValue.string(produced.checker_reuse), "artifact_refusals": JsonValue.object(
-            refusals,
-        ), "source_stats": JsonValue.int(editable.stats), "source_reads": JsonValue.int(
-            editable.reads,
-        ), "source_hashes": JsonValue.int(editable.hashes), "source_listings": JsonValue.int(editable.listings), "epoch_reads": JsonValue.int(
-            produced.epoch_reads,
-        ), "frozen_stats": JsonValue.int(frozen.stats), "frozen_reads": JsonValue.int(frozen.reads), "frozen_hashes": JsonValue.int(
-            frozen.hashes,
-        ), "plan_function_evaluations": JsonValue.int(
-            produced.plan_function_evaluations,
-        ), "plan_function_reuses": JsonValue.int(produced.plan_function_reuses), "lowering_demand_evaluations": JsonValue.int(
-            produced.lowering_demand_evaluations,
-        ), "lowering_demand_reuses": JsonValue.int(produced.lowering_demand_reuses), "native_interface_evaluations": JsonValue.int(
-            produced.native_interface_evaluations,
-        ), "index_pages": JsonValue.int(produced.index_pages), "keys_listed": JsonValue.int(produced.keys_listed)},
-    )
     selected = snapshot(store).map_err((error) => error.message())?
-    return Ok(put(begin(selected), report_key(run), json_text(document)?.encode("utf-8")))
+    mut transaction = begin(selected)
+    if len(produced.frame_reads) + len(produced.graph_demands) <= PAGE_ROWS:
+        small = encode_proof(run, produced.checker_reuse, counts, produced.artifact_refusals,
+            frame_values(produced.frame_reads), demand_values(produced.graph_demands))
+        match small:
+            Ok(encoded) => return Ok(put(transaction, report_key(run), encoded))
+            Err(reason) =>
+                if not byte_limit(reason):
+                    return Err(reason)
+    summary = encode_proof(run, produced.checker_reuse, counts, produced.artifact_refusals, [], [])?
+    stage_pages(transaction, report_key(run), run, summary, produced.frame_reads, produced.graph_demands)?
+    return Ok(transaction)
+
+
+def encode_proof(
+    run: str, checker: str, counts: Dict[str, int], refusals: Dict[str, int], frames: list[Value], demands: list[Value],
+) -> Result[bytes, str]:
+    return encode_graph_row(PROOF, proof_description(), [
+        required_value(b"checks", Value.Text(checker)),
+        required_value(b"counts", integer_map(counts)),
+        required_value(b"demand", Value.List(demands)),
+        required_value(b"frames", Value.List(frames)),
+        required_value(b"refuse", integer_map(refusals)),
+        required_value(b"run_id", Value.Text(run)),
+    ])
+
+
+def integer_map(values: Dict[str, int]) -> Value:
+    return Value.List([Value.Tuple([Value.Text(name), signed(values[name])]) for name in sorted([key for key in values.keys()])])
 
 
 pub def report(store: Path, run: str) -> Result[str, str]:
@@ -69,9 +101,13 @@ pub def report(store: Path, run: str) -> Result[str, str]:
     for character in run:
         if character not in "0123456789abcdef":
             return Err("invalid proof run id")
-    match record_text(snapshot(store).map_err((error) => error.message())?, report_key(run))?:
-        Some(text) => return Ok(text)
+    selected = snapshot(store).map_err((error) => error.message())?
+    match get(selected, report_key(run)).map_err((error) => error.message())?:
         None => return Err("no retained proof report for this run")
+        Some(encoded) =>
+            if encoded[:4] != b"CRMB":
+                return Ok(str(from_utf8(encoded).map_err((error) => str(error))?))
+            return render_proof(selected, encoded, run)
 
 
 def report_key(run: str) -> str:

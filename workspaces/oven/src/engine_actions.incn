@@ -3,13 +3,15 @@
 from std.fs import Path
 from std.primitives.locking import LockGuard
 from rust::std::rc import Rc
+from rust::std::mem import take
 from std.encoding.hex import hexlify
 from engine_messages import BindingOutcome, Complete, CompletionStatus
 from request_directory import serve_from, served
-from engine_programs import ProgramOutcome, check_program, obtain, prepare_selection
+from engine_programs import ProgramOutcome, check_program, obtain, prepare_selection, view_sealed
+from graph_read_demands import begin_graph_demands, finish_graph_demands, note_graph_demand
 from engine_epochs import CapturedRequest, after_projection
 from engine_proofs import retain, prepare_report
-from pub::incan_platform.store import Transaction, begin as begin_selection, commit, commit_pinned, read_counts
+from pub::incan_platform.store import Transaction, begin as begin_selection, commit, commit_pinned, read_counts, measure_frame_reads, finish_frame_reads
 from observation import trace
 from jec import begin, record
 from pub::incan_platform.trace import Operation
@@ -49,6 +51,7 @@ pub model Ready:
 
     pub message: Complete
     pub console: str
+    pub incomplete_proof: str = ""
     pub pin: Option[ExecutionLease] = None
 
 
@@ -81,6 +84,10 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
     standard = standard_library_dir()?.0 + "/"
     count_frozen_work([toolchain, standard])
     reading = read_counts()
+    begin_graph_demands(pending.proofs)
+    if pending.proofs:
+        note_graph_demand("capture-mode", pending.capture.snapshot, pending.capture.revision)
+    measure_frame_reads(pending.proofs)
     produced_result = obtain(
         store,
         pending.capture.revision,
@@ -90,11 +97,22 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
         pending.producer,
         Some(pending.capture.selected),
     )
+    frame_reads = finish_frame_reads()
+    graph_demands = finish_graph_demands()
     frozen = finish_frozen_counting()
     read = read_counts()
     mut produced = produced_result?
     produced.index_pages = read.pages - reading.pages
     produced.keys_listed = read.listed - reading.listed
+    produced.store_frames_read = read.records - reading.records
+    produced.store_frame_bytes = read.bytes - reading.bytes
+    produced.store_decoded_bytes = read.decoded - reading.decoded
+    produced.store_metadata_bytes_copied = read.copied - reading.copied
+    produced.store_index_bytes_checked = read.index_bytes_checked - reading.index_bytes_checked
+    produced.store_digest_only_payload_bytes = read.digest_only_payload_bytes - reading.digest_only_payload_bytes
+    produced.store_digest_only_reads = read.digest_only_reads - reading.digest_only_reads
+    produced.frame_reads = frame_reads
+    produced.graph_demands = graph_demands
     mut counters = pending.capture.counters
     counters.frozen.stats += frozen.stats
     counters.frozen.reads += frozen.reads
@@ -104,8 +122,11 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
     mut observation = ""
     match produced.unit:
         None =>
+            mut incomplete = ""
             if pending.proofs:
-                observation = retain(store, run, counters, produced)?
+                match retain(store, run, counters, produced):
+                    Ok(handle) => observation = handle
+                    Err(reason) => incomplete = reason
             return Ok(
                 Ready(
                     message=Complete(
@@ -117,21 +138,22 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
                         observation_handle=observation,
                     ),
                     console=produced.console,
+                    incomplete_proof=incomplete,
                 ),
             )
         Some(unit) =>
             # 3. A completed native descriptor is selected independently for each caller.
             selecting = begin()
-            captured = after_projection(pending.capture)?
-            selection = prepare_selection(store, pending.view, unit, pending.handle)?
+            mut captured = after_projection(pending.capture)?
+            mut selection = prepare_selection(store, pending.view, unit, pending.handle)?
             mut group: list[Transaction] = []
-            if let Some(transaction) = captured.transaction:
+            if let Some(transaction) = take(captured.transaction):
                 group.append(transaction)
-            if let Some(transaction) = produced.transaction:
+            if let Some(transaction) = take(produced.transaction):
                 group.append(transaction)
-            if let Some(transaction) = produced.view_transaction:
+            if let Some(transaction) = take(produced.view_transaction):
                 group.append(transaction)
-            if let Some(transaction) = selection.transaction:
+            if let Some(transaction) = take(selection.transaction):
                 group.append(transaction)
             if pending.proofs:
                 group.append(prepare_report(store, run, counters, produced)?)
@@ -140,6 +162,8 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
                 group.append(begin_selection(selection.snapshot))
             published = commit_pinned(group, pending.view).map_err((error) => error.message())?
             selected = published.snapshot
+            # The commit flushed the baked unit's payloads; only now may the executable be viewed.
+            view_sealed(store, produced.sealed)?
             if produced.native_bakes > 0:
                 trace(
                     f"bakery {unit.identity[:12]}: baked program {Path(unit.binary).name()} (generation {selected.generation})",
@@ -170,7 +194,12 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
 def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, str]:
     """Check the captured build reach, publish its capture, and return no native selection or execution lease."""
     checking = begin()
-    outcome = check_program(
+    reading = read_counts()
+    begin_graph_demands(pending.proofs)
+    if pending.proofs:
+        note_graph_demand("capture-mode", pending.capture.snapshot, pending.capture.revision)
+    measure_frame_reads(pending.proofs)
+    result = check_program(
         store,
         pending.capture.revision,
         console,
@@ -178,7 +207,11 @@ def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, 
         Some(pending.capture.epoch),
         Some(pending.capture.selected),
         pending.view,
-    )?
+    )
+    frame_reads = finish_frame_reads()
+    graph_demands = finish_graph_demands()
+    read = read_counts()
+    outcome = result?
     record(Operation.EngineUnit, pending.capture.revision, checking)
     captured = after_projection(pending.capture)?
     mut snapshot = captured.snapshot.digest
@@ -189,15 +222,32 @@ def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, 
         status = CompletionStatus.Failed
     # A requested report shows that a check produced no unit, no plans and no native bake, and which bodies it checked.
     mut observation = ""
+    mut incomplete = ""
     if pending.proofs:
         checked = ProgramOutcome(
             code=outcome.code,
+            index_pages=read.pages - reading.pages,
+            keys_listed=read.listed - reading.listed,
+            store_frames_read=read.records - reading.records,
+            store_frame_bytes=read.bytes - reading.bytes,
+            store_decoded_bytes=read.decoded - reading.decoded,
+            store_metadata_bytes_copied=read.copied - reading.copied,
+            store_index_bytes_checked=read.index_bytes_checked - reading.index_bytes_checked,
+            store_digest_only_payload_bytes=read.digest_only_payload_bytes - reading.digest_only_payload_bytes,
+            store_digest_only_reads=read.digest_only_reads - reading.digest_only_reads,
+            frame_reads=frame_reads,
+            graph_demands=graph_demands,
             body_evaluations=outcome.body_evaluations,
             body_reuses=outcome.body_reuses,
             body_page_writes=outcome.body_page_writes,
             body_page_decodes=outcome.body_page_decodes,
         )
-        observation = retain(store, hexlify(pending.request), pending.capture.counters, checked)?
+        match retain(store, hexlify(pending.request), pending.capture.counters, checked):
+            Ok(handle) => observation = handle
+            Err(reason) =>
+                if outcome.code == 0:
+                    return Err(reason)
+                incomplete = reason
     return Ok(
         Ready(
             message=Complete(
@@ -209,6 +259,7 @@ def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, 
                 observation_handle=observation,
             ),
             console=outcome.console,
+            incomplete_proof=incomplete,
         ),
     )
 

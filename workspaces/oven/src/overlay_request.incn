@@ -38,6 +38,8 @@ pub def parse_served(line: str, profile: str) -> Result[OverlayRequest, str]:
     if version < 0:
         return Err(f"a document version is a non-negative integer, got {version}")
     mut answered = OverlayRequest(source=source, buffer=buffer, version=version, profile=profile)
+    if let Some(report) = request.get("report"):
+        answered.report = report.expect_bool().map_err((error) => error.message())?
     if let Some(selected) = request.get("build"):
         answered.build = selected.expect_bool().map_err((error) => error.message())?
     if let Some(position) = request.get("hover"):
