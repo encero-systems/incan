@@ -228,6 +228,25 @@ impl TypeChecker {
         )
     }
 
+    /// Whether `inner` is a Rust type whose metadata proves `Copy`. An owned use of a borrowed one copies it, never
+    /// calls its `Clone` (which may be observable), so its `Copy` layout is retained for Body IR to read.
+    fn retain_borrowed_rust_copy(&mut self, inner: &ResolvedType) -> bool {
+        let ResolvedType::RustPath(path) = inner else {
+            return false;
+        };
+        if self.derive_support(inner, DeriveId::Copy) != super::derive_requirements::DeriveSupport::Supported {
+            return false;
+        }
+        let Some(metadata) = self.rust_item_metadata_for_complete_type(path) else {
+            return false;
+        };
+        let RustItemKind::Type(info) = &metadata.kind else {
+            return false;
+        };
+        self.retain_rust_copy_owner(path, info);
+        true
+    }
+
     /// Refuse an owned use of a `Borrowed[T]` value when `T` has no clone: the use needs its own `T`, and the borrow
     /// cannot give one. Returns whether the use was refused.
     pub(in crate::typechecker) fn refuse_borrowed_value_without_clone(
@@ -241,6 +260,7 @@ impl TypeChecker {
         };
         if matches!(destination, ResolvedType::Ref(_) | ResolvedType::RefMut(_))
             || !self.borrowed_source_value_materializes(value_ty)
+            || self.retain_borrowed_rust_copy(inner)
             || self.is_clone_type(inner)
         {
             return false;
