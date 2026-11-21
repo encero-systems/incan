@@ -5,9 +5,9 @@ use incan_lang::lang::surface::option_methods::OptionMethodId;
 use incan_lang::lang::surface::result_methods::ResultMethodId;
 use incan_lang::lang::types::collections::{CollectionTypeId, from_str as collection_type};
 use incan_mir_plan_native::{
-    CalleeKind, Carrier, Constant, EnumDeclaration, EnumVariant, ExternalFunction, FieldProjection,
-    Operand as PlanOperand, OperandKind, Place, PlanType, Projection, RvalueKind, SourceSpan, TerminatorKind, Unwind,
-    assign as plan_assign, carrier_position, place as plan_place, source_span,
+    CalleeKind, Carrier, Constant, EnumDeclaration, EnumVariant, ExternalFunction, Operand as PlanOperand, OperandKind,
+    Place, PlanType, Projection, RvalueKind, SourceSpan, TerminatorKind, Unwind, assign as plan_assign,
+    carrier_position, place as plan_place, source_span,
 };
 use incan_semantics_core::body_ir::{
     Block, Body, BodyIrModule, CallableTarget, Callee, MatchArm, NamedCallableTarget, Operand, Rvalue, StatementKind,
@@ -16,12 +16,13 @@ use incan_semantics_core::body_ir::{
 use incan_semantics_core::body_ir::{Constant as SourceConstant, Pattern, ResultVariantKind};
 use incan_semantics_core::{IncanType, SemanticSourceTargetKind, SymbolOrigin, generic};
 
+use crate::carrier_operands::boundary_plan_operand;
 use crate::compiler_record_adapters::{authored_plan_checked_type, semantic_key_matches_native};
 use crate::enums::validate_payload_patterns;
 use crate::formatting::display_plan_value;
 use crate::frame::{
-    Builder, appended_field, cleanup_exit, drop_all_owned, drop_owned, forget_owned, place_type, read_place, temporary,
-    terminate_call, track_rvalue_moves,
+    Builder, cleanup_exit, drop_all_owned, drop_owned, forget_owned, place_type, read_place, temporary, terminate_call,
+    track_rvalue_moves, variant_payload_place,
 };
 use crate::layout_types::native_source_type;
 use crate::lists::taking_iterator_locals;
@@ -592,7 +593,8 @@ pub fn result_layout(builder: &Builder, ty: &PlanType) -> Result<(i64, EnumDecla
 
 /// Move the selected payload once; error returns drop every other initialized owner before returning. A `const` str
 /// error becomes the owned text the enclosing `Result[T, str]` carries, as at any other owned text boundary; any other
-/// differing error type is refused.
+/// differing error type is refused. A kept payload whose storage differs from the destination's, such as a native
+/// `Option[list[u8]]` kept as `Option[bytes]`, converts at the destination as a pattern binding's payload does.
 pub fn propagate_result(
     builder: &mut Builder,
     source: Place,
@@ -616,11 +618,7 @@ pub fn propagate_result(
     let owners = builder.owned.clone();
     builder.select(failure);
     let error_type = input.variants[1].fields[0].clone();
-    let error = Place {
-        local: source.local,
-        projection: Projection::VariantField(1, 0, error_type),
-        span: span.clone(),
-    };
+    let error = variant_payload_place(&source, 1, 0, error_type, span)?;
     let mut propagated = read_place(error.clone(), true, span);
     if owns_text {
         let text = display_plan_value(builder, read_place(error, false, span), span, false)?;
@@ -636,18 +634,15 @@ pub fn propagate_result(
     builder.select(success);
     builder.owned = owners;
     let value_type = input.variants[0].fields[0].clone();
-    let value = Place {
-        local: source.local,
-        projection: Projection::VariantField(0, 0, value_type),
-        span: span.clone(),
-    };
+    let value = variant_payload_place(&source, 0, 0, value_type.clone(), span)?;
     let local = destination.local;
     let destination_type = place_type(&builder.locals, &destination);
-    builder.emit(plan_assign(
-        destination,
-        RvalueKind::Use(read_place(value, true, span)),
-        span,
-    ));
+    let mut kept = read_place(value, true, span);
+    if value_type != destination_type {
+        kept = boundary_plan_operand(builder, kept, &destination_type, span)?;
+        track_rvalue_moves(builder, &RvalueKind::Use(kept.clone()));
+    }
+    builder.emit(plan_assign(destination, RvalueKind::Use(kept), span));
     if matches!(
         destination_type,
         PlanType::ValidationError | PlanType::String | PlanType::Enum(..) | PlanType::Model(..) | PlanType::List(..)
@@ -747,23 +742,7 @@ pub fn lower_carrier_method_plan(
 
 /// Project a carrier's payload where the carrier lives, keeping the field or reference path that reached it.
 fn carrier_payload_place(source: &Place, variant: i64, ty: PlanType, span: &SourceSpan) -> Result<Place, String> {
-    if source.projection == Projection::Whole {
-        return Ok(Place {
-            local: source.local,
-            projection: Projection::VariantField(variant, 0, ty),
-            span: span.clone(),
-        });
-    }
-    appended_field(
-        source,
-        FieldProjection {
-            slot: 0,
-            ty,
-            variant,
-            dereferences: 0,
-        },
-        span,
-    )
+    variant_payload_place(source, variant, 0, ty, span)
 }
 
 /// Whether a carrier payload owns resources its destination must drop.

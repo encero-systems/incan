@@ -19,7 +19,7 @@ use crate::enums::enum_owner;
 use crate::formatting::display_plan_operand;
 use crate::frame::{
     Builder, appended_field, bind_read_value, dereferenced_place, forget_moved_arguments, forget_owned, literal,
-    place_type, read_place, temporary, track_rvalue_moves, value_type,
+    place_type, read_place, temporary, track_rvalue_moves, value_type, variant_payload_place,
 };
 use crate::frozen_plan::frozen_bytes_literal;
 use crate::generators::generator_shape;
@@ -315,11 +315,8 @@ fn converted_carrier_operand(
         }
         let mut fields = Vec::with_capacity(from.len());
         for (index, payload_type) in from.iter().enumerate() {
-            let payload = Place {
-                local: source.local,
-                projection: Projection::VariantField(slot as i64, index as i64, payload_type.clone()),
-                span: span.clone(),
-            };
+            // A carrier held in another carrier's payload is read through that payload, never as the outer carrier.
+            let payload = variant_payload_place(&source, slot as i64, index as i64, payload_type.clone(), span)?;
             fields.push(boundary_plan_operand(
                 builder,
                 read_place(payload, true, span),
