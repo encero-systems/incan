@@ -181,7 +181,7 @@ pub fn lower_builtin(
         BuiltinFnId::Sum | BuiltinFnId::Sorted => {
             lower_sequence_builtin(builder, builtin, arguments, destination, span)
         }
-        BuiltinFnId::Min | BuiltinFnId::Max => Err(untranslated("builtin_calls::lower_extrema_builtin")),
+        BuiltinFnId::Min | BuiltinFnId::Max => lower_extrema_builtin(builder, builtin, arguments, destination, span),
         BuiltinFnId::ReadFile | BuiltinFnId::WriteFile => Err(untranslated("builtin_calls::lower_file_builtin")),
         BuiltinFnId::Zip => lower_zip_builtin(builder, arguments, destination, span),
         BuiltinFnId::Enumerate => lower_enumerate_builtin(builder, arguments, destination, span),
@@ -552,6 +552,52 @@ fn fixed_arguments(
         }
     }
     Ok(result)
+}
+
+/// Classify a homogeneous scalar list before borrowing its value for the minimum or maximum implementation.
+fn lower_extrema_builtin(
+    builder: &mut Builder,
+    builtin: BuiltinFnId,
+    arguments: &[ArgumentElement],
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    if arguments.len() != 1 {
+        return Err("unsupported Body IR extrema builtin arity".into());
+    }
+    let source_type = argument_type(builder, arguments, 0, span)?;
+    let (leaf, depth) = require_list_shape(&source_type, "unsupported Body IR extrema builtin type")?;
+    if depth != 1 {
+        return Err("unsupported Body IR nested extrema list".into());
+    }
+    let (suffix, result) = match leaf {
+        ListLeaf::Int => ("int", PlanType::Int),
+        ListLeaf::Float => ("float", PlanType::Float),
+        ListLeaf::Bool => ("bool", PlanType::Bool),
+        ListLeaf::Str => ("text", PlanType::String),
+        _ => return Err("unsupported Body IR extrema list element".into()),
+    };
+    let name = if builtin == BuiltinFnId::Max {
+        "maximum"
+    } else {
+        "minimum"
+    };
+    let output = call_destination(builder, destination, result.clone(), span)?;
+    let reference = borrowed_list_argument(builder, arguments, 0, false, span)?;
+    let local = output.local;
+    external_call(
+        builder,
+        &format!("incan_native_runtime::{name}_{suffix}"),
+        vec![PlanType::ListRef(leaf, depth)],
+        result.clone(),
+        vec![reference],
+        output,
+        span,
+    );
+    if result == PlanType::String {
+        builder.owned.push(local);
+    }
+    Ok(())
 }
 
 /// Construct lazy zip only from canonical identity and two checked primitive-list arguments.

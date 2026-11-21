@@ -12,6 +12,7 @@ use incan_semantics_core::body_ir::{
 use crate::async_::is_future;
 use crate::builtin_calls::{lower_boolean_operator, lower_numeric_helper, validate_exact_float};
 use crate::builtins::list_call;
+use crate::callable_values::register_callable_item;
 use crate::carrier_operands::{boundary_plan_operand, element_operand, element_plan_operand};
 use crate::checked_values::{scalar_operand, scalar_place};
 use crate::closure_lifting::{
@@ -28,6 +29,7 @@ use crate::frame::{
     value_type,
 };
 use crate::frozen_plan::frozen_bytes_literal;
+use crate::function_items::{FunctionItem, function_item_callee, source_function_item};
 use crate::generators::generator_reference;
 use crate::hashed_collections::{collection_assignment, dictionary_entry_assignment, dictionary_index_assignment};
 use crate::list_iteration::{
@@ -141,15 +143,15 @@ pub fn lower_local_assignment(
     if in_place_iteration_binding(builder, &target, value)? {
         return Ok(());
     }
+    if let Some((name, ty, declaration_name)) = source_function_item(module, builder, value, span)? {
+        return assign_function_item(builder, target, (name, ty, declaration_name), span);
+    }
     match value {
         Rvalue::Closure {
             params,
             captured_operands,
             body,
         } => {
-            if body.function_item || body.original_callable.is_some() {
-                return Err(untranslated("closures::source_function_item"));
-            }
             let closure = ClosureExpression {
                 parameters: params,
                 captures: captured_operands,
@@ -520,4 +522,27 @@ fn exclusive_view_element_assignment(
     let target = dereferenced_place(&stored_reference, referent.clone(), span)?;
     write_replacement(builder, target, &referent, argument, span);
     Ok(())
+}
+
+/// Store an authenticated function item, registering its name before anything can observe it.
+fn assign_function_item(
+    builder: &mut Builder,
+    target: Place,
+    (name, ty, declaration_name): FunctionItem,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    if target.projection != Projection::Whole {
+        return Err("unsupported Body IR projected function-item construction".into());
+    }
+    if is_owned_callable(&place_type(&builder.locals, &target)) {
+        let held = temporary(builder, ty, span);
+        let callee = function_item_callee(builder, &name, span);
+        builder.emit(plan_assign(held.clone(), RvalueKind::FunctionItem(callee), span));
+        register_callable_item(builder, read_place(held.clone(), false, span), &declaration_name, span)?;
+        return assign_callable(builder, target, read_place(held, false, span), false, span);
+    }
+    builder.locals[target.local as usize].ty = ty;
+    let callee = function_item_callee(builder, &name, span);
+    builder.emit(plan_assign(target.clone(), RvalueKind::FunctionItem(callee), span));
+    register_callable_item(builder, read_place(target, false, span), &declaration_name, span)
 }

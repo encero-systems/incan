@@ -3,7 +3,7 @@
 use incan_lang::lang::types::collections::{CollectionTypeId, from_str as collection_type};
 use incan_mir_plan_native::{
     Carrier, Constant, FieldProjection, ListLeaf, Operand, OperandKind, Place, PlanType, Projection, RvalueKind,
-    SourceSpan, assign as plan_assign, carrier_position, place as plan_place,
+    SourceSpan, TerminatorKind, assign as plan_assign, carrier_position, place as plan_place,
 };
 use incan_semantics_core::body_ir::{Operand as SourceOperand, OwnershipFact, Pattern};
 use incan_semantics_core::{IncanType, SemanticSourceTargetKind};
@@ -32,6 +32,7 @@ use crate::matches::{bind_enum_payload, bind_structural_pattern, enum_payload_re
 use crate::numerics::numeric_carrier;
 use crate::operators::enum_comparison_tag;
 use crate::option_tests::option_isinstance;
+use crate::options::{assign_carrier, variant_condition};
 use crate::patterns::{carrier_pattern_slot, carrier_payload_types, pattern_binds};
 use crate::pending::untranslated;
 use crate::result_carriers::{frozen_operand, typed_carrier_operand};
@@ -134,7 +135,7 @@ pub fn boundary_plan_operand(
         _ => {}
     }
     if converted_carrier(builder, &source, target) {
-        return Err(untranslated("carrier_operands::converted_carrier_operand"));
+        return converted_carrier_operand(builder, value, &source, target, span);
     }
     match target {
         PlanType::Closure(_) => return Err(untranslated("callable_calls::owned_callable_value")),
@@ -278,6 +279,61 @@ fn converted_carrier(builder: &Builder, source: &PlanType, target: &PlanType) ->
     }
     // An existing optional payload lifts as a whole, including None inside Some(None).
     !(after.carrier == Carrier::Option && after.variants[1].fields.len() == 1 && after.variants[1].fields[0] == *source)
+}
+
+/// Convert checked Option/Result payload carriers without changing the active variant or duplicating owners; exact
+/// Option payloads stay on the wrapping boundary. `converted_carrier` has already selected the conversion.
+fn converted_carrier_operand(
+    builder: &mut Builder,
+    value: Operand,
+    source_type: &PlanType,
+    target: &PlanType,
+    span: &SourceSpan,
+) -> Result<Operand, String> {
+    let (PlanType::Enum(source_owner, _), PlanType::Enum(target_owner, _)) = (source_type, target) else {
+        return Err("invalid Body IR carrier conversion".into());
+    };
+    let before = builder.intrinsics[carrier_position(*source_owner) as usize].clone();
+    let after = builder.intrinsics[carrier_position(*target_owner) as usize].clone();
+    let OperandKind::Move(source) = value.kind else {
+        return Err("unsupported Body IR carrier conversion without an owned value".into());
+    };
+    let output = temporary(builder, target.clone(), span);
+    let selected = builder.new_block(span);
+    let other = builder.new_block(span);
+    let joined = builder.new_block(span);
+    let condition = variant_condition(builder, &source, 0, span);
+    builder.finish(TerminatorKind::SwitchBool(condition, other, selected), span);
+    forget_owned(builder, source.local);
+    let owners = builder.owned.clone();
+    for slot in 0..2usize {
+        builder.select(if slot == 1 { other } else { selected });
+        builder.owned = owners.clone();
+        let (from, to) = (&before.variants[slot].fields, &after.variants[slot].fields);
+        if from.len() != to.len() {
+            return Err("unsupported Body IR carrier conversion variant layout".into());
+        }
+        let mut fields = Vec::with_capacity(from.len());
+        for (index, payload_type) in from.iter().enumerate() {
+            let payload = Place {
+                local: source.local,
+                projection: Projection::VariantField(slot as i64, index as i64, payload_type.clone()),
+                span: span.clone(),
+            };
+            fields.push(boundary_plan_operand(
+                builder,
+                read_place(payload, true, span),
+                &to[index],
+                span,
+            )?);
+        }
+        assign_carrier(builder, output.clone(), *target_owner, slot as i64, fields, span);
+        builder.finish(TerminatorKind::Goto(joined), span);
+    }
+    builder.select(joined);
+    builder.owned = owners;
+    builder.owned.push(output.local);
+    Ok(read_place(output, true, span))
 }
 
 /// Bring a value written into an `Option` to the type of that `Option`'s payload, which then wraps it in `Some`.
