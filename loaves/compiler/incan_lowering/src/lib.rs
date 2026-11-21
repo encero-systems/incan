@@ -109,6 +109,7 @@ mod redo_counts;
 mod reflection_carriers;
 mod resize;
 mod result_carriers;
+mod result_combinators;
 mod result_requirements;
 mod runtime_calls;
 mod runtime_frames;

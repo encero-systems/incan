@@ -1,7 +1,6 @@
 //! Method calls: checked receivers, selected implementations and their ordinary arguments.
 
 use incan_lang::lang::surface::iterator_methods::IteratorMethodId;
-use incan_lang::lang::surface::result_methods::ResultMethodId;
 use incan_mir_plan_native::{CalleeKind, Operand, Place, PlanType, RvalueKind, SourceSpan, assign as plan_assign};
 use incan_semantics_core::body_ir::{
     ArgumentBinding, ArgumentElement, Body, BodyIrModule, MethodTarget, Operand as SourceOperand, OwnershipFact,
@@ -21,6 +20,7 @@ use crate::frame::{Builder, dereferenced_place, place_type, read_place, temporar
 use crate::library_methods::lower_library_method;
 use crate::models::model_place;
 use crate::pending::untranslated;
+use crate::result_combinators::{lower_result_combinator, result_combinator};
 use crate::sequence_builtins::argument_type;
 use crate::traits::{is_lazy_method_body, receiver_selects_slot_arguments};
 use crate::type_parameters::request_instance;
@@ -688,24 +688,13 @@ fn lower_builtin_origin_method(
     destination: &Option<SourcePlace>,
     span: &SourceSpan,
 ) -> Result<(), String> {
-    let _ = module;
     if target.builtin_iterator() == Some(IteratorMethodId::Collect)
         && let PlanType::Model(..) = argument_type(builder, arguments, 0, span)?
     {
         return Err(untranslated("method_calls::concrete_iterator_collect"));
     }
-    if let Some(method) = target.builtin_result()
-        && matches!(
-            method,
-            ResultMethodId::Map
-                | ResultMethodId::MapErr
-                | ResultMethodId::AndThen
-                | ResultMethodId::OrElse
-                | ResultMethodId::Inspect
-                | ResultMethodId::InspectErr
-        )
-    {
-        return Err(untranslated("result_combinators::lower_result_combinator"));
+    if let Some(combinator) = target.builtin_result().and_then(result_combinator) {
+        return lower_result_combinator(module, builder, combinator, arguments, destination, span);
     }
     lower_builtin_method(builder, target, arguments, destination, span)
 }
