@@ -1,0 +1,7 @@
+"""Global compiler contributors for the exact installation profile and package roster admitted to a source unit. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
+
+pub from rust::internal_models_native import (
+    CompilerContributors,
+    encode_compiler_contributors,
+    decode_compiler_contributors,
+)

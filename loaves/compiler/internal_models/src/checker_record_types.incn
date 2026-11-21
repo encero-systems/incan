@@ -1,0 +1,7 @@
+"""Validate canonical checker-record source types independently of native object layouts. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
+
+pub from rust::internal_models_native import (
+    canonical_decimal,
+    checked_type_end,
+    parameters_end,
+)

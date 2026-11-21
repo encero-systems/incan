@@ -1,0 +1,11 @@
+"""The graph's native plan profile uses compiler-owned Crumb descriptions for its stored functions and layouts. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
+
+pub from rust::internal_models_native import (
+    write_wire,
+    read_wire,
+    admit_wire,
+    PreparedWireReader,
+    wire_field,
+    variant_schema,
+    enum_schema,
+)

@@ -1,0 +1,7 @@
+"""Counts observed by one graph-backed check, returned to Oven separately from public diagnostics. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
+
+pub from rust::internal_models_native import (
+    CheckedBodyCounts,
+    encode_checked_body_counts,
+    decode_checked_body_counts,
+)

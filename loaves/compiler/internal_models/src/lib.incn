@@ -1,12 +1,6 @@
-"""
-The compiler's shared record contracts, one module per contract; none names Oven, a worker or a native compiler object.
+"""The compiler's shared record contracts, one module per contract; none names Oven, a worker or a native compiler object. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
 
-`records` reads keyed compiler facts through one revision-bound scope, `record_service` is the producer interface and
-`checker_records` the canonical checker record codec. A consumer imports a module, for example
-`from pub::internal_models.checker_records import encode_record`, or the read and producer contracts from this facade.
-"""
-
-pub from compiler_records import (
+pub from rust::internal_models_native import (
     IDENTITY_ADAPTER_PROFILE,
     IDENTITY_ADAPTER_SOURCE,
     IDENTITY_ADAPTER_GENERATION,
@@ -25,8 +19,6 @@ pub from compiler_records import (
     valid_hir_source_span,
     valid_canonical_symbol_id,
     valid_stable_declaration_id,
-)
-pub from checked_types import (
     CheckedNumericType,
     CheckedPrimitiveType,
     CheckedInputAccess,
@@ -35,9 +27,11 @@ pub from checked_types import (
     CheckedCallableParam,
     CheckedType,
     valid_checked_type,
-)
-pub from body_ir_values import CompilerBlock, CompilerCallee, CompilerRvalue, CompilerStatement, CompilerStatementKind
-pub from body_ir_declarations import (
+    CompilerBlock,
+    CompilerCallee,
+    CompilerRvalue,
+    CompilerStatement,
+    CompilerStatementKind,
     BODY_IR_ADAPTER_PROFILE,
     BODY_IR_ADAPTER_SOURCE,
     BODY_IR_ADAPTER_GENERATION,
@@ -61,8 +55,6 @@ pub from body_ir_declarations import (
     valid_invocation_view,
     valid_published_expanded_body,
     invalidate_owned_callable_fields,
-)
-pub from records import (
     RecordKey,
     ReadScope,
     PayloadSelection,
@@ -86,8 +78,6 @@ pub from records import (
     StoreRecordSource,
     encode_record_key,
     selected_record_bytes,
-)
-pub from record_service import (
     RECORD_SERVICE_SCHEMA,
     prepared_reader,
     CompilerRecordService,
@@ -109,8 +99,6 @@ pub from record_service import (
     RecordRoot,
     SemanticRefusal,
     ValueReference,
-)
-pub from activation_envelopes import (
     DEMAND_SCHEMA,
     PREPARED_SCHEMA,
     WORK_SCHEMA,
@@ -125,16 +113,30 @@ pub from activation_envelopes import (
     decode_ready_work,
     envelope_key,
     stage_name,
-)
-pub from checker_records import (
+    encode_import_closures,
+    ranked_output_suffix,
+    NamespaceOrder,
+    certified_namespace_order,
+    checking_basis_key,
+    checking_completion_receipt,
+    decode_namespace_order,
+    encode_checking_completion,
+    CheckedFamily,
+    CodecFault,
     GraphBodyValue,
     GraphBodyFields,
     GraphNamespaceValue,
+    GraphNamespaceView,
+    SettledCallRead,
+    SettledCallContract,
     CompiledBodyValue,
     CompiledBodyDependencyRead,
     CompiledBodyFallback,
     CompiledNamespaceValue,
     CompiledBodyOutputs,
+    decode_owned_record,
+    callable_checker_fields,
+    native_fields,
     from_native_fields,
     from_native_final_fields,
     from_native_local_fields,
@@ -142,18 +144,81 @@ pub from checker_records import (
     content_digest,
     semantic_digest,
     encode_graph_body_values,
+    encode_graph_checking_pair,
+    decode_graph_checking_inputs,
     encode_graph_namespace_value,
     decode_graph_body_page,
     decode_graph_body_values,
     decode_graph_namespace_value,
+    decode_owned_namespace_view,
+    decode_graph_namespace_view,
     record_root,
-)
-pub from checker_field_grammar import CodecFault
-pub from compiled_body_frames import (
     CompiledBodyOutput,
-    encode_compiled_body_outputs,
-    compiled_body_frame_size,
-    decode_compiled_body_frame,
-    decode_compiled_body_payload,
+    encode_compiled_body_rows,
+    decode_compiled_body_row,
+    RECEIPT_SCHEMA,
+    decode_read_receipt,
+    encode_read_receipt,
+    PayloadAdmission,
+    decode_unit_admission,
+    encode_unit_admission,
+    encode_binding,
+    read_binding,
+    SOURCE_PROFILE,
+    encode_source_text,
+    source_value,
+    NamespaceReference,
+    encode_namespace_references,
+    decode_namespace_references,
+    namespace_reference_filename,
+    encode_namespace_proof,
+    read_namespace_proof,
+    namespace_proof_output_suffix,
+    NamespaceAtom,
+    NamespaceEntry,
+    NamespaceField,
+    NamespaceIdentity,
+    NamespacePublication,
+    PreparedNamespaceReader,
+    prepare_namespace_reader,
+    decode_prepared_namespace,
+    decode_prepared_namespace_view,
+    identify_prepared_namespace,
+    identify_prepared_namespace_view,
+    namespace_identity,
+    decode_namespace_interface,
+    encode_namespace_interface,
+    publish_namespace_interface,
+    CompilerContributors,
+    decode_compiler_contributors,
+    encode_compiler_contributors,
+    CheckerRecordCounts,
+    checker_report_suffix,
+    encode_checker_counts,
+    decode_checker_counts,
+    encode_callable_inventory,
+    decode_callable_inventory,
+    encode_search_paths,
+    decode_search_paths,
+    CheckedBodyCounts,
+    encode_checked_body_counts,
+    decode_checked_body_counts,
+    ManifestCacheValue,
+    ManifestInventory,
+    encode_manifest_cache,
+    decode_manifest_cache,
+    encode_manifest_inventory,
+    decode_manifest_inventory,
+    encode_unit_document,
+    decode_unit_document,
+    CompilerExportMember,
+    decode_compiler_export,
+    encode_compiler_export,
+    encode_owner_call_reads,
+    decode_owner_call_reads,
+    scope_output_suffix,
+    contract_output_suffix,
+    coordinate_output_suffix,
+    encode_method_lookups,
+    method_lookup_suffix,
 )
-pub from read_receipts import RECEIPT_SCHEMA, decode_read_receipt, encode_read_receipt

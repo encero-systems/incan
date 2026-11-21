@@ -1,0 +1,10 @@
+"""Crumb descriptions of the compiler-owned editable namespace declaration closure. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
+
+pub from rust::internal_models_native import (
+    NAMESPACE_SCHEMA,
+    NAMESPACE_MODULE_NAME,
+    NAMESPACE_MODULE_PATH,
+    namespace_root,
+    namespace_descriptions,
+    namespace_field_is_canonical,
+)
