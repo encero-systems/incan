@@ -1,8 +1,0 @@
-"""A second entry that takes the record from unit_publication too."""
-
-from unit_publication import PayloadAdmission
-
-
-def main() -> None:
-    """Print a record built here."""
-    println(PayloadAdmission(identity="unit").identity)

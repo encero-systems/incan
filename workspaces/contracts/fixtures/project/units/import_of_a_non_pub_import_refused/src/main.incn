@@ -1,0 +1,19 @@
+# behavior: a name one module imports without pub is no export of that module (RFC 176): importing it from there is refused with INCAN-I0001, and the hint names the module that exports it, whether the importer is checked against the module's source (the first entry) or, on the records route, against the namespace the first entry published (the second entry), as Oven's toolchain once took PayloadAdmission from unit_publication
+# environment:
+#   INCAN_ENGINE=records
+# cli-commands:
+#   run src/main.incn
+#   run src/again.incn
+# expect-exit: 1
+# expect-stderr-contains:
+#   `PayloadAdmission` is not exported by `unit_publication`
+#   Import it from `payload_types`
+
+"""Print the identity of the toolchain's admitted unit."""
+
+from toolchain import installed
+
+
+def main() -> None:
+    """Print the first payload's identity."""
+    println(installed().payloads[0].identity)

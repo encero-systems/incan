@@ -1,5 +1,5 @@
 [project]
-name = "private_import_through_a_published_namespace"
+name = "import_of_a_non_pub_import_refused"
 version = "0.1.0"
 
 [project.scripts]
