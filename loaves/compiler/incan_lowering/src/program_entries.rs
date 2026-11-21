@@ -254,6 +254,7 @@ fn lower_ordinary_frame(
     admission: &mut ModuleAdmission<'_>,
 ) -> Result<LoweredFrame, String> {
     if let Some(restored) = restore_admitted(context, program, body, frame, intrinsics, keyed, admission) {
+        frame_product("admitted", "ordinary", &frame_label(body));
         return Ok(restored);
     }
     let records = keyed.report.is_some();

@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use incan_mir_plan_native::decode_plan_function_record;
 use incan_semantics_core::CompilerNodeId;
 use incan_semantics_core::body_ir::{Body, BodyIrModule};
+use incan_semantics_core::semantic_digest::semantic_digest;
 
 use crate::SourceInputs;
 use crate::checked_values::location;
@@ -33,6 +34,8 @@ pub struct FrameOutcomes {
     pub lowered: Vec<String>,
     /// Frames lowered whose product could not be kept, so a later call lowers them again.
     pub unkept: Vec<String>,
+    /// Frames restored whole from their module's admitted plan page, without a product lookup.
+    pub admitted: Vec<String>,
 }
 
 impl FrameTrace {
@@ -76,6 +79,7 @@ impl FrameTrace {
                 "reused" => outcomes.reused.push(entry),
                 "lowered" => outcomes.lowered.push(entry),
                 "unkept" => outcomes.unkept.push(entry),
+                "admitted" => outcomes.admitted.push(entry),
                 _ => {}
             }
         }
@@ -93,6 +97,8 @@ pub struct BodyChange {
     pub edited_start: usize,
     /// Whether the Body IR itself differs, as opposed to only the checker's witness.
     pub body_differs: bool,
+    /// Whether the checked meaning (the semantic digest a records key names) differs, as opposed to only positions.
+    pub meaning_differs: bool,
 }
 
 /// The bodies of `edited` whose Body IR or checker witness differs from the matching body of `base`.
@@ -123,6 +129,10 @@ pub fn changed_bodies(
             let witness_differs = matched.is_some_and(|before| {
                 base_witnesses.get(&before.direct_call_id) != edited_witnesses.get(&body.direct_call_id)
             });
+            let meaning_differs = match matched {
+                Some(before) => semantic_digest(before).ok() != semantic_digest(body).ok(),
+                None => true,
+            };
             if body_differs || witness_differs {
                 changes.push(BodyChange {
                     function: format!("{}::{}", body_module_identity(body).unwrap_or_default(), body.name),
@@ -130,6 +140,7 @@ pub fn changed_bodies(
                     base_start: matched.map(|before| before.span.start),
                     edited_start: body.span.start,
                     body_differs,
+                    meaning_differs,
                 });
             }
         }

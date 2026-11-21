@@ -42,7 +42,8 @@ pub fn emit(category: &str, former: &str, text: &str) {
 
 /// Trace whether one keyed frame was restored from its product or lowered, into the channel only.
 ///
-/// `outcome` is `reused` or `lowered`; `kind` is `ordinary` or `instance`. A frame without a product key is not traced.
+/// `outcome` is `reused`, `lowered`, `unkept` (lowered without a product) or `admitted` (restored from its module's
+/// plan page); `kind` is `ordinary` or `instance`. A frame without a product key or page is not traced.
 pub fn frame_product(outcome: &str, kind: &str, name: &str) {
     if !channel().is_empty() {
         emit("lowering_product", "", &format!("{outcome} {kind} {name}"));

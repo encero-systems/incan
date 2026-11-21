@@ -421,11 +421,12 @@ fn report_reuse(
     base: Option<&Case>,
 ) -> Result<(), String> {
     println!(
-        "REUSE {name} step {index} ({}): {} keyed frames reused, {} lowered and kept, {} lowered without a product",
+        "REUSE {name} step {index} ({}): {} keyed frames reused, {} lowered and kept, {} lowered without a product, {} restored from module pages",
         step.call,
         outcomes.reused.len(),
         outcomes.lowered.len(),
-        outcomes.unkept.len()
+        outcomes.unkept.len(),
+        outcomes.admitted.len()
     );
     for lowered in &outcomes.lowered {
         println!("  lowered {lowered}");
@@ -447,8 +448,9 @@ fn report_reuse(
         .filter(|change| change.base_start.is_some_and(|start| start != change.edited_start))
         .count();
     let witness_only = changes.iter().filter(|change| !change.body_differs).count();
+    let meaning = changes.iter().filter(|change| change.meaning_differs).count();
     println!(
-        "CHANGED {name} step {index}: {} bodies differ from the base ({shifted} moved, {witness_only} witness only)",
+        "CHANGED {name} step {index}: {} bodies differ from the base ({meaning} in meaning, {shifted} moved, {witness_only} witness only)",
         changes.len()
     );
     for change in &changes {
@@ -458,13 +460,24 @@ fn report_reuse(
             change.module,
             change.base_start,
             change.edited_start,
-            if change.body_differs { "" } else { " (witness only)" }
+            if !change.body_differs {
+                " (witness only)"
+            } else if change.meaning_differs {
+                " (meaning)"
+            } else {
+                " (positions only)"
+            }
         );
     }
     let changed: BTreeSet<&str> = changes.iter().map(|change| change.function.as_str()).collect();
     let ordinary = |entry: &&String| entry.strip_prefix("ordinary ").map(str::to_owned);
     let kept: BTreeSet<String> = outcomes.lowered.iter().filter_map(|entry| ordinary(&entry)).collect();
-    let reused: BTreeSet<String> = outcomes.reused.iter().filter_map(|entry| ordinary(&entry)).collect();
+    let reused: BTreeSet<String> = outcomes
+        .reused
+        .iter()
+        .chain(&outcomes.admitted)
+        .filter_map(|entry| ordinary(&entry))
+        .collect();
     let kept_unchanged: Vec<&String> = kept.iter().filter(|label| !changed.contains(label.as_str())).collect();
     let changed_reused: Vec<&&str> = changed.iter().filter(|label| reused.contains(**label)).collect();
     println!(
