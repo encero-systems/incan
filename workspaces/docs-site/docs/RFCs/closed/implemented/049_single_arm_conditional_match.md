@@ -7,7 +7,7 @@
     - RFC 000 (core language surface)
     - RFC 018 (testing)
 - **Issue:** https://github.com/encero-systems/incan/issues/333
-- **RFC PR:** —
+- **RFC PR:** [#398](https://github.com/encero-systems/incan/pull/398)
 - **Written against:** v0.3.0-dev.1
 - **Shipped in:** v0.3.0-dev.1
 

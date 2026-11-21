@@ -11,7 +11,7 @@
     - RFC 102 (Incan semantic layer inspection surface)
     - RFC 104 (ambient runtime capabilities and receipts)
 - **Issue:** #575
-- **RFC PR:** —
+- **RFC PR:** [#866](https://github.com/encero-systems/incan/pull/866)
 - **Written against:** v0.5
 - **Shipped in:** v0.5
 

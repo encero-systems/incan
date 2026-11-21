@@ -7,7 +7,7 @@
     - RFC 005 (Rust interop)
     - RFC 028 (Overload-based dispatch)
 - **Issue:** [#266](https://github.com/encero-systems/incan/issues/266)
-- **RFC PR:** —
+- **RFC PR:** [#267](https://github.com/encero-systems/incan/pull/267)
 - **Written against:** v0.1
 - **Shipped in:** v0.2
 
