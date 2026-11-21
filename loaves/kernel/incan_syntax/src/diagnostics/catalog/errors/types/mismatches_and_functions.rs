@@ -15,6 +15,35 @@ pub fn type_mismatch(expected: &str, found: &str, span: Span) -> CompileError {
     error
 }
 
+/// Build the diagnostic for an owned use of a borrowed value whose type has no clone (RFC 164).
+///
+/// A `Borrowed[T]` value reads as a `T`; a use that needs its own `T` (storing it, returning it, or passing it to a
+/// parameter that takes it by value) receives a clone, which `T` must have.
+pub fn borrowed_value_without_clone(borrowed: &str, value: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("This use needs its own '{value}', but the '{borrowed}' value cannot be cloned"),
+        span,
+    )
+    .with_note(format!(
+        "A '{borrowed}' value is read through its borrow; storing it, returning it or passing it by value needs a \
+         clone of it, and '{value}' has none"
+    ))
+    .with_hint(format!(
+        "Read the value where it is borrowed, or give '{value}' a clone (for an Incan type, @derive(Clone))"
+    ))
+}
+
+/// Build the diagnostic for a borrowed value where an `Owned[T]` parameter or a `mut` binding needs its own value
+/// (RFC 164): neither receives an implicit clone.
+pub fn borrowed_value_needs_explicit_clone(borrowed: &str, place: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("{place} takes its own value, and a '{borrowed}' value is not cloned for it implicitly"),
+        span,
+    )
+    .with_note("An Owned[T] parameter and a mut binding never receive an implicit clone of a borrowed value")
+    .with_hint("Write `.clone()` on the borrowed value to give it an independent copy")
+}
+
 /// Build the diagnostic for arithmetic over two different integer types (RFC 009).
 ///
 /// Same-type integer arithmetic keeps its type, so an operation whose operands have two integer types (`i8 + i16`, or

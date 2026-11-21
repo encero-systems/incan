@@ -591,6 +591,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 ast::CallArg::Positional(expr) => {
                     let operand = self.lower_expr_to_operand(expr, scope, out);
                     let operand = self.retain_evaluated_value_read(expr, operand, scope, out);
+                    let operand = self.retain_borrowed_value_destination(expr, operand, scope, out);
                     elements.push(bir::ArgumentElement::One(operand));
                 }
                 ast::CallArg::PositionalUnpack(source) => {
@@ -602,6 +603,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 ast::CallArg::Named(name, expr) => {
                     let operand = self.lower_expr_to_operand(expr, scope, out);
                     let operand = self.retain_evaluated_value_read(expr, operand, scope, out);
+                    let operand = self.retain_borrowed_value_destination(expr, operand, scope, out);
                     elements.push(bir::ArgumentElement::Named {
                         name: name.node.clone(),
                         operand,
