@@ -2,17 +2,19 @@
 
 use super::*;
 
-/// The standard library's frozen text and bytes carriers are Incan's frozen text and bytes, as a compiled Incan
-/// `str` or `bytes` constant is.
+/// The standard library's frozen text and bytes carriers named by a Rust path stay native Rust types, as a source
+/// that imports them by `rust::` path (the runtime's frozen text observation) relies on: mapping them to Incan frozen
+/// values would make `str(value)` lower to the runtime's own formatting call.
 #[test]
-fn frozen_text_and_bytes_carriers_are_incan_frozen_values() {
+fn frozen_carriers_named_by_rust_path_stay_native() {
     let checker = TypeChecker::new();
-    for (display, expected) in [
-        ("incan_std_primitives::frozen::FrozenStr", ResolvedType::FrozenStr),
-        ("incan_std_primitives::frozen::FrozenBytes", ResolvedType::FrozenBytes),
+    for display in [
+        "incan_std_primitives::frozen::FrozenStr",
+        "incan_std_primitives::frozen::FrozenBytes",
     ] {
-        assert_eq!(checker.native_rust_signature_type(display, ""), expected, "{display}");
-        assert_eq!(checker.resolved_type_from_rust_display(display), expected, "{display}");
+        let native = ResolvedType::RustPath(display.to_owned());
+        assert_eq!(checker.native_rust_signature_type(display, ""), native, "{display}");
+        assert_eq!(checker.resolved_type_from_rust_display(display), native, "{display}");
     }
 }
 
