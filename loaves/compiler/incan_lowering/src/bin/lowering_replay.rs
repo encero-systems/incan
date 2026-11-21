@@ -146,6 +146,8 @@ fn differing_files(
 struct StepDirectories {
     products: PathBuf,
     report: PathBuf,
+    /// The produced module initializer names the reference products a case restores are renamed to.
+    names: BTreeMap<i64, String>,
 }
 
 fn case_directories(scratch: &Path) -> Result<StepDirectories, String> {
@@ -156,16 +158,31 @@ fn case_directories(scratch: &Path) -> Result<StepDirectories, String> {
     let directories = StepDirectories {
         products: root.join("products"),
         report: root.join("report"),
+        names: BTreeMap::new(),
     };
     std::fs::create_dir_all(&directories.products).map_err(|error| error.to_string())?;
     std::fs::create_dir_all(&directories.report).map_err(|error| error.to_string())?;
     Ok(directories)
 }
 
+/// The produced module initializer names of a case's final plan, from one replay of its steps.
+fn prepass_names(corpus: &Corpus, case: &Case, scratch: &Path) -> Result<BTreeMap<i64, String>, String> {
+    let directories = case_directories(scratch)?;
+    let mut continuation = None;
+    let mut names = BTreeMap::new();
+    for step in &case.steps {
+        let (actual, _) = replay_step(corpus, step, &directories, &mut continuation)?;
+        if let Outcome::Complete(Some(plan)) = &actual {
+            names = produced_initializers(plan);
+        }
+    }
+    Ok(names)
+}
+
 fn inputs(corpus: &Corpus, step: &Step, directories: &StepDirectories) -> Result<SourceInputs, String> {
     let scalar_products = match &step.scalar_products {
         Some(_) => {
-            corpus.reset(&step.products_before, &directories.products)?;
+            corpus.reset_renamed(&step.products_before, &directories.products, &directories.names)?;
             Some(directories.products.to_string_lossy().into_owned())
         }
         None => None,
@@ -257,7 +274,14 @@ fn replay_case(
         }
     }
     let mut continuation = None;
-    let directories = case_directories(scratch)?;
+    let mut directories = case_directories(scratch)?;
+    // A case restoring reference products written with slot-named module initializers is lowered once first, to learn
+    // the produced names those products are renamed to before the case is replayed from empty directories.
+    if !evidence.report && corpus.restores_slot_names(case) {
+        let names = prepass_names(corpus, case, scratch)?;
+        directories = case_directories(scratch)?;
+        directories.names = names;
+    }
     let mut published: Option<(Vec<u8>, Vec<u8>)> = None;
     let mut renamed_products: Vec<(String, Vec<u8>, Vec<u8>)> = Vec::new();
     let mut last_plan: Option<Vec<u8>> = None;
@@ -439,6 +463,7 @@ fn check_case_records_keys(corpus: &Corpus, name: &str, case: &Case, scratch: &P
         let directories = StepDirectories {
             products: directory.clone(),
             report: directory.join("report"),
+            names: BTreeMap::new(),
         };
         let inputs = inputs(corpus, step, &directories)?;
         corpus.restore(&step.products_after, &directory)?;

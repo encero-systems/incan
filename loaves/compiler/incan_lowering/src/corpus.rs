@@ -9,8 +9,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use incan_mir_plan_native::{
-    CalleeKind, Function, NominalReference, Plan, TerminatorKind, decode_plan_function_record, decode_product_parts,
-    product_identities,
+    CalleeKind, ExternalFunction, Function, NominalReference, Plan, PlanFunctionRecord, ProductNominal, TerminatorKind,
+    decode_plan_function_record, decode_product_parts, encode_plan_function_record, encode_product,
+    plan_function_digest, product_identities,
 };
 use incan_semantics_core::body_ir::{
     Body, BodyIrModule, NativeAttribute, NativeUnionDeclaration, RuntimeCallableBinding, StaticInitializer,
@@ -250,11 +251,54 @@ impl Corpus {
     }
 
     pub fn restore(&self, files: &[(String, String)], directory: &Path) -> Result<(), String> {
+        self.restore_renamed(files, directory, &BTreeMap::new())
+    }
+
+    /// Make a directory's files exactly the captured ones, each reference product calling the module initializers
+    /// `names` gives instead of the slot-named ones the reference wrote; subdirectories stay.
+    pub fn reset_renamed(
+        &self,
+        files: &[(String, String)],
+        directory: &Path,
+        names: &BTreeMap<i64, String>,
+    ) -> Result<(), String> {
+        std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+        for entry in std::fs::read_dir(directory).map_err(|error| error.to_string())? {
+            let path = entry.map_err(|error| error.to_string())?.path();
+            let name = path.file_name().map(|name| name.to_string_lossy().into_owned());
+            if path.is_file() && !files.iter().any(|(file, _)| Some(file) == name.as_ref()) {
+                std::fs::remove_file(&path).map_err(|error| error.to_string())?;
+            }
+        }
+        self.restore_renamed(files, directory, names)
+    }
+
+    fn restore_renamed(
+        &self,
+        files: &[(String, String)],
+        directory: &Path,
+        names: &BTreeMap<i64, String>,
+    ) -> Result<(), String> {
         std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
         for (name, digest) in files {
-            std::fs::write(directory.join(name), self.blob(digest)?).map_err(|error| error.to_string())?;
+            let mut bytes = self.blob(digest)?;
+            if name.ends_with(".incnfunction")
+                && let Some(renamed) = renamed_product(&bytes, names)
+            {
+                bytes = renamed;
+            }
+            std::fs::write(directory.join(name), bytes).map_err(|error| error.to_string())?;
         }
         Ok(())
+    }
+
+    /// Whether any product a case restores was written with a slot-named module initializer.
+    pub fn restores_slot_names(&self, case: &Case) -> bool {
+        case.steps.iter().any(|step| {
+            step.products_before
+                .iter()
+                .any(|(_, digest)| self.blob(digest).is_ok_and(|bytes| has_slot_name(&bytes)))
+        })
     }
 }
 
@@ -363,15 +407,7 @@ pub fn product_differs_only_by_initializers(expected: &[u8], produced: &[u8], na
     if identities != produced_identities {
         return false;
     }
-    let references: Vec<NominalReference> = identities
-        .iter()
-        .enumerate()
-        .map(|(index, nominal)| NominalReference {
-            kind: nominal.kind.clone(),
-            index: index as i64,
-            name: String::new(),
-        })
-        .collect();
+    let references = placeholder_references(&identities);
     let (Ok(reference), Ok(current)) = (
         decode_product_parts(&want.function, &references),
         decode_product_parts(&have.function, &references),
@@ -384,4 +420,63 @@ pub fn product_differs_only_by_initializers(expected: &[u8], produced: &[u8], na
         rename_calls(frame, names);
     }
     function == current.0 && runtime == current.1 && frames == current.2
+}
+
+/// Whether bytes hold a reference module initializer name, `__incan_init_module_statics_` and a decimal slot.
+fn has_slot_name(bytes: &[u8]) -> bool {
+    let prefix = MODULE_INITIALIZER.as_bytes();
+    bytes
+        .windows(prefix.len() + 1)
+        .any(|window| window.starts_with(prefix) && window[prefix.len()].is_ascii_digit())
+}
+
+/// Placeholder declaration positions, one per named declaration in order, under which a product decodes alone.
+fn placeholder_references(identities: &[ProductNominal]) -> Vec<NominalReference> {
+    identities
+        .iter()
+        .enumerate()
+        .map(|(index, nominal)| NominalReference {
+            kind: nominal.kind.clone(),
+            index: index as i64,
+            name: String::new(),
+        })
+        .collect()
+}
+
+/// A product record with the same inputs and requests around a function, runtime demand and frames.
+fn reencoded(
+    record: &PlanFunctionRecord,
+    parts: &(Function, Vec<ExternalFunction>, Vec<Function>),
+    identities: &[ProductNominal],
+) -> Option<Vec<u8>> {
+    let payload = encode_product(&parts.0, &parts.1, identities, &parts.2).ok()?;
+    let digest = plan_function_digest(&payload, &record.requests).ok()?;
+    encode_plan_function_record(&PlanFunctionRecord {
+        inputs: record.inputs.clone(),
+        function: payload,
+        requests: record.requests.clone(),
+        digest,
+    })
+    .ok()
+}
+
+/// A reference product whose calls name the produced module initializers, or nothing when it names no slot-named
+/// initializer or does not re-encode to its own bytes, in which case a rename could not be trusted.
+pub fn renamed_product(encoded: &[u8], names: &BTreeMap<i64, String>) -> Option<Vec<u8>> {
+    if names.is_empty() || !has_slot_name(encoded) {
+        return None;
+    }
+    let record = decode_plan_function_record(encoded).ok()?;
+    let identities = product_identities(&record.function).ok()?;
+    let (function, runtime, frames, _) =
+        decode_product_parts(&record.function, &placeholder_references(&identities)).ok()?;
+    let mut parts = (function, runtime, frames);
+    if reencoded(&record, &parts, &identities)? != encoded {
+        return None;
+    }
+    rename_calls(&mut parts.0, names);
+    for frame in &mut parts.2 {
+        rename_calls(frame, names);
+    }
+    reencoded(&record, &parts, &identities)
 }
