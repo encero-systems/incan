@@ -387,13 +387,26 @@ impl TypeChecker {
             Ok(reused) => reused,
             Err(error) => {
                 tracing::debug!(target: "incan::invocation", ?span, ?error, "graph body selection refused");
+                self.graph_body_records.refuse_ranked_input();
                 false
             }
         });
         let local_index = if reused {
             None
+        } else if !self.permits_ranked_body(record_program, span) {
+            self.errors.push(crate::diagnostics::CompileError::new(
+                format!("ranked checking cannot restore the undemanded owner '{}'", func.name),
+                span,
+            ));
+            None
         } else {
             self.check_work.function_bodies += 1;
+            tracing::debug!(
+                target: "incan::invocation",
+                module = %self.current_module_path.as_deref().unwrap_or_default().join("::"),
+                owner = %func.name,
+                "checked owner statements"
+            );
             self.check_callable_body(
                 &func.body,
                 func.is_async(),
@@ -815,15 +828,18 @@ impl TypeChecker {
         method_span: Span,
         owner: &str,
         owner_params: &[TypeParam],
+        program: Option<&Program>,
     ) {
         let index = self.body_checks.len();
         let prepared = self.check_declaration_owner(method_span, |checker| {
             checker.prepare_owned_method(method, method_span, owner, owner_params)
         });
         if let Some((prepared, previous_owner)) = prepared {
-            self.check_prepared_method(method, method_span, prepared);
+            self.check_prepared_method(method, method_span, prepared, program);
             #[cfg(test)]
-            self.observe_body_local(method_span);
+            if self.graph_body_records.ranked_owner().is_none() {
+                self.observe_body_local(method_span);
+            }
             self.current_method_owner = previous_owner;
             self.continue_declaration_owner(index, |checker| {
                 checker.apply_user_defined_method_decorators(method, owner)

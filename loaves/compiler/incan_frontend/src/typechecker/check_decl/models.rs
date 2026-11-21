@@ -106,14 +106,14 @@ impl TypeChecker {
 
     /// Check model members only after its declaration producer has returned final field and default inputs. Keep
     /// post-member derive validation in its legacy position without enclosing a body in the declaration producer.
-    pub(super) fn check_model(&mut self, model: &ModelDecl, span: Span) {
+    pub(super) fn check_model(&mut self, model: &ModelDecl, span: Span, program: Option<&Program>) {
         let index = self.body_checks.len();
         let (scope, has_validate) = self.check_declaration_owner(span, |checker| {
             checker.validate_protected_type_param_bindings(&model.type_params, span);
             checker.prepare_model_declaration(model)
         });
         self.symbols.resume_scope(scope);
-        self.check_model_members(model, index);
+        self.check_model_members(model, index, program);
         self.continue_declaration_owner(index, |checker| {
             checker.complete_model_declaration(model, has_validate);
             checker.symbols.exit_scope();
@@ -122,7 +122,7 @@ impl TypeChecker {
     }
 
     /// Check each model member in source order against the same prepared nominal scope used by its declaration.
-    pub(super) fn check_model_members(&mut self, model: &ModelDecl, declaration: usize) {
+    pub(super) fn check_model_members(&mut self, model: &ModelDecl, declaration: usize, program: Option<&Program>) {
         // Check methods
         let active_model_methods = model
             .methods
@@ -130,7 +130,13 @@ impl TypeChecker {
             .filter(|method| self.member_binding_is_active(method.span))
             .collect::<Vec<_>>();
         for method in active_model_methods {
-            self.check_method_with_owner_type_params(&method.node, method.span, &model.name, &model.type_params);
+            self.check_method_with_owner_type_params(
+                &method.node,
+                method.span,
+                &model.name,
+                &model.type_params,
+                program,
+            );
         }
         self.continue_declaration_owner(declaration, |checker| {
             checker.check_method_partials(&model.name, &model.method_partials)

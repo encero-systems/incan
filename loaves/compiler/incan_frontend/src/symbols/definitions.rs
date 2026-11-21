@@ -9,6 +9,16 @@ impl SymbolTable {
         self.scopes.len()
     }
 
+    /// Scopes allocated inside the active callable body in original allocation order.
+    pub(crate) fn allocated_child_scopes(&self, first: usize) -> impl Iterator<Item = (Option<usize>, ScopeKind)> {
+        self.scopes[first..].iter().map(|scope| (scope.parent, scope.kind))
+    }
+
+    /// Install one already validated, exited child scope without entering or populating its lexical bindings.
+    pub(crate) fn retain_exited_scope(&mut self, parent: usize, kind: ScopeKind) {
+        self.scopes.push(Scope::new(Some(parent), kind));
+    }
+
     /// Enter a new scope
     pub fn enter_scope(&mut self, kind: ScopeKind) {
         let new_scope = Scope::new(Some(self.current_scope), kind);
