@@ -35,6 +35,8 @@ pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Erro
                 let watch = incan_worker_host_native::caller_watch(&mut host)
                     .map(|watch| Abandonment::watch(watch, request.retire_after));
                 let outcome = activate(&request, &host);
+                // The worker keeps no owned copy of its dependency closure between requests.
+                incan_frontend::loaf_index::release_retained_loaves();
                 timing.mark("worker_compiled");
                 // Disarm before replying. A one-activation process has no next caller, so its observer can end with it.
                 drop(watch);
@@ -60,6 +62,7 @@ pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Erro
             }
             WorkerActivation::Record(request) => {
                 let reply = crate::compiler_record_service::activate(request, &home);
+                incan_frontend::loaf_index::release_retained_loaves();
                 incan_platform::release_free_heap();
                 incan_worker_host_native::complete_record(&mut host, reply, footprint(), live_heap());
             }
