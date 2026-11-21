@@ -11,6 +11,7 @@ use incan_semantics_core::body_ir::{
 use crate::builtin_calls::coerce_numeric_operand;
 use crate::carrier_operands::boundary_operand;
 use crate::checked_values::{scalar_operand, scalar_place};
+use crate::defaults::model_default_arguments;
 use crate::element_places::is_element_place;
 use crate::enums::variant_index;
 use crate::explicit_arguments::reference_contract;
@@ -78,8 +79,8 @@ pub fn checked_aggregate(
                 }
                 _ => return Err("unsupported Body IR unresolved model constructor".into()),
             }
-            let _ = module;
-            Err(untranslated("model_construction::model_default_arguments"))
+            let operands = model_default_arguments(module, builder, index, &target.binding, elements, span)?;
+            Ok(RvalueKind::Model(index as i64, operands))
         }
         AggregateKind::Range => Err(untranslated("ranges::range_aggregate")),
         _ => Err("unsupported Body IR Aggregate outside plain models".into()),

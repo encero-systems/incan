@@ -12,6 +12,7 @@ use crate::call_arguments::{SlotPolicy, call_parameter_type, has_defaulted_slots
 use crate::callable_calls::{checked_type_arguments, emit_selected_body_call};
 use crate::classes::{frame_type, function_name, receiver_mode};
 use crate::decls::{library_enum_item, library_item};
+use crate::defaults::{DefaultCall, default_arguments};
 use crate::element_places::is_element_place;
 use crate::explicit_arguments::parameter_accesses;
 use crate::frame::{Builder, dereferenced_place, place_type, read_place, temporary};
@@ -702,8 +703,16 @@ fn method_ordinary_operands(
             .iter()
             .any(|preset| preset.name == target.name && Some(&preset.target) == target.canonical.as_ref())
     });
-    if partial || (matches!(target.binding, ArgumentBinding::Resolved { .. }) && has_defaulted_slots(&target.binding)) {
+    if partial {
         return Err(untranslated("defaults::method_default_arguments"));
+    }
+    if matches!(target.binding, ArgumentBinding::Resolved { .. }) && has_defaulted_slots(&target.binding) {
+        let call = DefaultCall {
+            body,
+            parameter_offset: 1,
+            owned: false,
+        };
+        return default_arguments(module, builder, &target.binding, &arguments[1..], &types, &call, span);
     }
     let policy = SlotPolicy {
         offset: 1,
