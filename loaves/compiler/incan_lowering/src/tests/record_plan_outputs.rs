@@ -304,7 +304,7 @@ fn admitted_positions_are_private_to_the_compiler_request() -> Result<(), String
             }),
         };
         let products = attempt.join("products").to_string_lossy().into_owned();
-        report_admitted(Some(&root_text), "m", &[owner], 1, true, Some(&products))?;
+        report_admitted(Some(&root_text), "m", &[owner], &[Vec::new()], 1, true, Some(&products))?;
     }
     for (line, attempt) in (8..).zip(&attempts) {
         let note = read_module_admission(
