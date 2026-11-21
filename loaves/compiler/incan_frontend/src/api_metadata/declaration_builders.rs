@@ -123,26 +123,27 @@ pub(super) fn api_callable_for_function(
     callable
 }
 
-/// Resolve the source return type used by function API metadata.
+/// Resolve the source return type used by function API metadata, as the checked signature routes it (RFC 164).
 pub(super) fn source_function_return_type(function: &FunctionDecl, checker: &TypeChecker) -> TypeRef {
-    type_ref_from_resolved(&crate::symbols::resolve_type(
-        &function.return_type.node,
-        &checker.symbols,
-    ))
+    let (_, result) = checker.canonical_function_annotations(function);
+    type_ref_from_resolved(&crate::symbols::resolve_type(&result.node, &checker.symbols))
 }
 
-/// Resolve source-declared callable parameters, including caller-visible mutation, for checked API metadata.
+/// Resolve source-declared callable parameters, including caller-visible mutation, for checked API metadata. Each
+/// annotation is the one the checked signature resolves, so a borrow is published the same way in both spellings.
 pub(super) fn source_function_params(
     function: &FunctionDecl,
     checker: &TypeChecker,
 ) -> Vec<crate::symbols::CallableParam> {
+    let (annotations, _) = checker.canonical_function_annotations(function);
     function
         .params
         .iter()
-        .map(|param| {
+        .zip(annotations)
+        .map(|(param, annotation)| {
             crate::symbols::CallableParam::named_with_default(
                 param.node.name.clone(),
-                crate::symbols::resolve_type(&param.node.ty.node, &checker.symbols),
+                crate::symbols::resolve_type(&annotation.node, &checker.symbols),
                 param.node.kind,
                 param.node.default.is_some(),
             )
