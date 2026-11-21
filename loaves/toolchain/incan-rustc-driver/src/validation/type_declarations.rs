@@ -111,7 +111,7 @@ pub(super) fn checked_list_leaf_type(leaf: &ListLeaf) -> Result<PlanType, PlanEr
             reason: "collection leaf has invalid child arity or reference carrier".into(),
         });
     }
-    Ok(list_leaf_type(leaf.clone()))
+    Ok(list_leaf_type(&leaf))
 }
 
 /// Whether a native array or slice may hold this element: any source signature type, or a sized text reference
@@ -272,14 +272,14 @@ pub(super) fn validate_nested_carrier_components(plan: &Plan, ty: &PlanType) -> 
         }
         PlanType::Tuple(elements) | PlanType::TupleRef(elements) | PlanType::TupleMutRef(elements) => {
             for element in elements {
-                validate_model_type(plan, &tuple_element_type(element.clone()))?;
+                validate_model_type(plan, &tuple_element_type(&element))?;
             }
         }
         PlanType::ZipIterator(left, right)
         | PlanType::ZipIteratorRef(left, right)
         | PlanType::ZipIteratorMutRef(left, right) => {
-            validate_model_type(plan, &tuple_element_type(left.clone()))?;
-            validate_model_type(plan, &tuple_element_type(right.clone()))?;
+            validate_model_type(plan, &tuple_element_type(&left))?;
+            validate_model_type(plan, &tuple_element_type(&right))?;
         }
         _ => {}
     }

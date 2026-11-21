@@ -18,7 +18,7 @@ use incan_frontend::loaf_index::{LoafIndex, LoafNativeClosure, NativeAnchors};
 use incan_frontend::parsed_module::ParsedModule;
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_loaf_names::native_crate_name;
-use incan_mir_lowering::{
+use incan_lowering::{
     RefusalPlanning, RuntimeRequirement, SourceInputs, UnitPlanning, layout_runtime_requirements, program_refusals,
     resume_unit_plan, unit_plan,
 };
@@ -951,7 +951,7 @@ fn compile_unit(
     timing.mark("plan_lowered");
     let tests = crate::test_unit::report(&program.tests, &plan.tests)?;
     if let (Some(products), Some(report)) = (&dependencies.plan_record_products, &dependencies.plan_record_report) {
-        incan_mir_lowering::publish_plan_records(
+        incan_lowering::publish_plan_records(
             &plan,
             products.to_string_lossy().into_owned(),
             report.to_string_lossy().into_owned(),

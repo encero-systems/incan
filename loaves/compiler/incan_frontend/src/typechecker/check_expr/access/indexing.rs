@@ -176,7 +176,7 @@ impl TypeChecker {
                     let key_ty = &args[0];
                     if self.types_compatible(&index_ty, key_ty) {
                         // A numeric key of a narrower type is widened to the key type where it is lowered (RFC 009).
-                        self.record_value_destination_if_compatible(index.span, &index_ty, key_ty);
+                        self.record_read_destination_if_compatible(index.span, &index_ty, key_ty);
                     } else {
                         self.errors.push(errors::index_type_mismatch(
                             &key_ty.to_string(),
@@ -226,7 +226,7 @@ impl TypeChecker {
             ResolvedType::FrozenDict(key_ty, value_ty) => {
                 let text_probe_for_text_key = is_str_like(&index_ty) && is_str_like(&key_ty);
                 if !text_probe_for_text_key && self.types_compatible(&index_ty, &key_ty) {
-                    self.record_value_destination_if_compatible(index.span, &index_ty, &key_ty);
+                    self.record_read_destination_if_compatible(index.span, &index_ty, &key_ty);
                 } else if !text_probe_for_text_key {
                     self.errors.push(errors::index_type_mismatch(
                         &key_ty.to_string(),

@@ -16,7 +16,6 @@
 - **Reads.** `record_service` reuses `records` for keyed reads. Preparation distinguishes final inputs, earlier prerequisites, semantic diagnostics and compiler faults; evaluation distinguishes staged results, semantic diagnostics and compiler faults. An unfinished supplier during evaluation is a typed contract fault.
 - **Contracts only.** This Loaf does not implement record-scoped checking or plan production. The current reader's table positions and boolean witnesses cannot certify revision-bound read roots. Producers require the existing checker and Body IR operations to consume final keyed environments before they can implement this interface; whole-program checking or lowering followed by record slicing does not satisfy it.
 - **Canonical values.** A checker record is a profile, a checked stable owner, a position-free semantic root and ordered fields. Native objects never enter the codec, and an unsupported capability is refused, never silently omitted.
-- **Compatibility.** `incan_mir_lowering` re-exports the `records` and `record_service` names from its facade.
 
 The [record-scope cases](./tests/test_record_scope.incn) and [canonical controls](./tests/canonical_record_controls.incn) cover these contracts. The canonical controls compare against the frontend's native adapter, which stays out of this Loaf's manifest, so installed CI's Oven test step, `scripts/oven_tests.incn`, runs them in an isolated project that adds it.
 

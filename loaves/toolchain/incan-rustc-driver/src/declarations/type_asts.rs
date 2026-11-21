@@ -215,7 +215,7 @@ pub(super) fn admitted_value_ty_kind(kind: &PlanType, span: Span) -> ast::TyKind
         PlanType::Tuple(elements) => ast::TyKind::Tup(
             elements
                 .iter()
-                .map(|element| ty(&tuple_element_type(element.clone()), span))
+                .map(|element| ty(&tuple_element_type(&element), span))
                 .collect(),
         ),
         PlanType::TupleRef(elements) => reference_ast(ty(&PlanType::Tuple(elements.clone()), span), false),
@@ -344,7 +344,7 @@ pub(super) fn frozen_collection_ty(name: &str, elements: &[PlanType], span: Span
 /// construction.
 pub(super) fn list_iterator_signature_type(leaf: &ListLeaf, depth: i64, span: Span) -> ast::TyKind {
     let element = if depth == 1 {
-        list_leaf_type(leaf.clone())
+        list_leaf_type(&leaf)
     } else {
         PlanType::List(leaf.clone(), depth - 1)
     };
@@ -421,7 +421,7 @@ pub(super) fn primitive_or_nominal_ty(kind: &PlanType, span: Span) -> ast::TyKin
 pub(super) fn collection_signature_ty(kind: &PlanType, span: Span) -> Option<Box<ast::Ty>> {
     let kind = match kind {
         PlanType::List(leaf, depth) => {
-            let mut element = ty(&list_leaf_type(leaf.clone()), span);
+            let mut element = ty(&list_leaf_type(&leaf), span);
             for _ in 0..*depth {
                 let mut path = ast::Path::from_ident(ident("Vec", span));
                 path.segments[0].args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
@@ -485,7 +485,7 @@ pub(super) fn collection_signature_ty(kind: &PlanType, span: Span) -> Option<Box
 /// Declare the runtime generator's canonical type without creating an alternative wrapper layout.
 pub(super) fn generator_ty(name: &str, leaf: &ListLeaf, depth: i64, span: Span) -> Box<ast::Ty> {
     let element = if depth == 0 {
-        list_leaf_type(leaf.clone())
+        list_leaf_type(&leaf)
     } else {
         PlanType::List(leaf.clone(), depth)
     };

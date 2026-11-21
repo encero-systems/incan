@@ -391,6 +391,11 @@ impl TypeChecker {
                         &argument.to_string(),
                         call.span,
                     ));
+                } else if let (Some(argument), Some(CallArg::Positional(value))) =
+                    (arg_types.first(), call.args.first())
+                {
+                    // The list stores its own element: a borrowed value is cloned into it (RFC 164).
+                    self.record_value_destination_if_compatible(value.span, argument, &element);
                 }
                 let fresh = matches!(call.args.first(), Some(CallArg::Positional(value) | CallArg::Named(_, value)) if self.is_fresh_value(value));
                 if !fresh && !self.is_copy_type(clone_ty) && !self.is_clone_type(clone_ty) {
