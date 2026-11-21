@@ -15,6 +15,7 @@ use crate::native_type_identity::ConstructorIndex;
 use crate::nominal_instances::NominalInstance;
 use crate::pending::untranslated;
 use crate::program_context::ProgramContext;
+use crate::runtime_calls::{RuntimeInventories, redirect_runtime_calls, retain_runtime_instances, runtime_redirects};
 use crate::runtime_requirements::RuntimeRetention;
 use crate::type_parameters::Instance;
 
@@ -39,26 +40,36 @@ pub fn lower_instances(
     let _ = (
         template_constructors,
         templates,
-        program,
         unions,
         sources,
         files,
-        intrinsics,
         nominal_instances,
         cells,
+        products,
     );
-    let _ = products;
+    let mut redirects = runtime_redirects();
     let governed_runtime = !context.runtime_callable_bindings.is_empty()
         || !context.runtime_binding_scopes.is_empty()
         || governed_runtime_module(owners);
-    if governed_runtime
-        && (!inventories.externals.is_empty() || !inventories.functions.is_empty() || !instances.is_empty())
-    {
-        return Err(untranslated("runtime_calls::retain_runtime_instances"));
+    if governed_runtime {
+        let constructors = program.constructors.clone();
+        let runtime = RuntimeInventories {
+            functions: &mut inventories.functions,
+            externals: &mut inventories.externals,
+            intrinsics,
+            unions,
+        };
+        retain_runtime_instances(&constructors, context, runtime, &mut redirects)?;
     }
     if !instances.is_empty() {
         return Err(untranslated("frame_instances::lower_instance_frame"));
     }
+    // Runtime declarations are preflighted before plan construction. Retain this check as a fail-closed assertion
+    // against a future lowering operation bypassing that authenticated facade inventory.
+    if !redirects.missing.is_empty() {
+        return Ok(RuntimeRetention::NeedsRuntime(redirects.missing));
+    }
+    redirect_runtime_calls(&mut inventories.functions, &redirects)?;
     Ok(RuntimeRetention::Complete)
 }
 

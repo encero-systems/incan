@@ -2,7 +2,9 @@
 
 use incan_mir_plan_native::PlanType;
 use incan_semantics_core::IncanInputAccess;
-use incan_semantics_core::body_ir::Body;
+use incan_semantics_core::body_ir::{Body, BodyIrModule, CallableParam};
+
+use crate::frame::Builder;
 
 /// The access of a body's direct returned view; a carried view returns an owned carrier and has none.
 pub fn direct_view_access(body: &Body) -> Option<IncanInputAccess> {
@@ -43,4 +45,52 @@ pub fn reference_contract(ty: &PlanType) -> Result<(PlanType, bool), String> {
         _ => return Err(format!("unsupported Body IR explicit reference carrier {ty:?}")),
     };
     Ok(contract)
+}
+
+/// Keep declaration-order access slots aligned when a method's separately lowered receiver is omitted.
+pub fn parameter_accesses(parameters: &[CallableParam], offset: usize) -> Result<Vec<IncanInputAccess>, String> {
+    if offset > parameters.len() {
+        return Err("invalid Body IR input access parameter offset".into());
+    }
+    Ok(parameters[offset..]
+        .iter()
+        .map(|parameter| parameter.input_access)
+        .collect())
+}
+
+/// An absent source contract denotes the ordinary/native route; a supplied contract must cover every slot.
+pub fn argument_access(accesses: &[IncanInputAccess], count: usize, slot: usize) -> Result<IncanInputAccess, String> {
+    if slot >= count || (!accesses.is_empty() && accesses.len() != count) {
+        return Err("invalid Body IR argument input access slots".into());
+    }
+    Ok(accesses.get(slot).copied().unwrap_or(IncanInputAccess::Inferred))
+}
+
+/// Authenticate source-authored input modes; compiler-inferred shared access needs no source permission.
+pub fn validate_source_input_call(module: &BodyIrModule, builder: &Builder, callee: &Body) -> Result<(), String> {
+    // A returned view obliges its caller to alias the substituted place under a checked profile.
+    let explicit = callee.returned_view.is_some()
+        || callee.params.iter().any(|parameter| {
+            matches!(
+                parameter.input_access,
+                IncanInputAccess::Shared | IncanInputAccess::Exclusive | IncanInputAccess::Owned
+            )
+        });
+    if !explicit {
+        return Ok(());
+    }
+    let Some(identity) = &builder.callable_identity else {
+        return Err("unsupported Body IR explicit source call without a declared caller".into());
+    };
+    let Some(index) = builder.program.body_indices.unique(identity) else {
+        return Err("unsupported Body IR explicit source call without a unique checked caller".into());
+    };
+    let caller = &module.bodies[index];
+    if caller.canonical.as_ref() != Some(identity) {
+        return Err("unsupported Body IR explicit source caller identity mismatch".into());
+    }
+    match caller.input_call_profile_gap(callee) {
+        Some(reason) => Err(format!("unsupported Body IR {reason}")),
+        None => Ok(()),
+    }
 }
