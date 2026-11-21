@@ -1,0 +1,15 @@
+# behavior: a Rust type and function re-exported by one Loaf's module and again by a second Loaf's module are each one public declaration, the Rust item itself: the consumer, which declares neither the first Loaf nor the crate, imports them by name and through the module's namespace
+# expect-stdout:
+#   5
+#   6
+
+"""Reach one Rust key and reader through two re-exporting Loaves."""
+
+from pub::facade.store import RecordKey, read_key
+from pub::facade import store
+
+
+def main() -> None:
+    """Read keys built and read through the member imports and through the namespace."""
+    println(read_key(RecordKey(value=5)))
+    println(store.read_key(store.RecordKey(value=6)))

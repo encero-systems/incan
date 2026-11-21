@@ -1,0 +1,155 @@
+//! A Rust item re-exported through a chain of `pub from` modules is one public declaration wherever it is imported.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
+use std::sync::Arc;
+
+use crate::api_metadata::{
+    CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
+    materialize_api_alias_projections, materialize_checked_api_public_namespaces,
+};
+use crate::library_exports::collect_checked_public_exports;
+use crate::library_manifest::{LibraryManifest, LibraryRustAbi};
+use crate::loaf_index::{LoafEntry, LoafIndex};
+use crate::typechecker::TypeChecker;
+use incan_lang::interop::{RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustTypeInfo, RustVisibility};
+
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
+/// The Rust crate `native`'s function `read_key(value: i64) -> i64` and type `RecordKey`.
+fn native_items() -> Vec<RustItemMetadata> {
+    let function = RustItemMetadata {
+        canonical_path: "native::read_key".into(),
+        definition_path: None,
+        visibility: RustVisibility::Public,
+        kind: RustItemKind::Function(RustFunctionSig {
+            receiver_contract: None,
+            type_params: Vec::new(),
+            bounds: Vec::new(),
+            params: vec![RustParam {
+                name: Some("value".into()),
+                type_display: "i64".into(),
+            }],
+            return_type: "i64".into(),
+            is_async: false,
+            is_unsafe: false,
+        }),
+    };
+    let record = RustItemMetadata {
+        canonical_path: "native::RecordKey".into(),
+        definition_path: None,
+        visibility: RustVisibility::Public,
+        kind: RustItemKind::Type(RustTypeInfo::default()),
+    };
+    vec![function, record]
+}
+
+/// Check `source` as the module `module` of `package` against `loaves` and publish it as that package's manifest, with
+/// `rust_abi` as the Rust items the package ships.
+fn published_module(
+    package: &str,
+    module: &str,
+    source: &str,
+    loaves: LoafIndex,
+    rust_abi: Vec<RustItemMetadata>,
+) -> TestResult<LibraryManifest> {
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let path = vec![module.to_owned()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_package_identity(Some(package.into()));
+    checker.set_current_module_path(Some(path.clone()));
+    checker.set_loaves(Arc::new(loaves));
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("{package}.{module}: {errors:?}"))?;
+    let exports = collect_checked_public_exports(&program, &checker);
+    let mut api = CheckedApiMetadataPackage {
+        schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+        package: None,
+        modules: vec![collect_checked_api_metadata(&program, &checker, path.clone())],
+        public_namespaces: Vec::new(),
+    };
+    materialize_api_alias_projections(&mut api.modules);
+    materialize_checked_api_public_namespaces(&mut api)?;
+    let mut manifest = LibraryManifest::new(package, "0.1.0");
+    manifest
+        .contract_metadata
+        .identity_graph
+        .extend_checked_api_exports(package, &api, &[(path, exports)])?;
+    manifest.contract_metadata.api = Some(api);
+    manifest.rust_abi = LibraryRustAbi::from_items(rust_abi);
+    Ok(manifest)
+}
+
+/// Write `manifest` where the index reads a dependency's compiled artifact and admit it under its own name.
+fn installed(root: &Path, manifest: &LibraryManifest) -> TestResult<LoafEntry> {
+    let directory = root.join(&manifest.name);
+    std::fs::create_dir(&directory)?;
+    std::fs::write(
+        directory.join(format!("{}.incnlib", manifest.name)),
+        manifest.to_json_string()?,
+    )?;
+    Ok(LoafIndex::dependency(&manifest.name, &manifest.name, &directory)?)
+}
+
+/// `models.keys` publishes the Rust crate's items with `pub from rust::native import …` and ships their metadata;
+/// `facade.store` publishes them again with `pub from pub::models.keys import …`. Returns both installed Loaves.
+fn reexport_chain(root: &Path) -> TestResult<(LoafEntry, LoafEntry)> {
+    let mut facts = LoafIndex::default();
+    facts.add_rust_facts(
+        &BTreeSet::new(),
+        native_items()
+            .into_iter()
+            .map(|item| (item.canonical_path.clone(), item))
+            .collect::<BTreeMap<_, _>>(),
+    );
+    let models = published_module(
+        "models",
+        "keys",
+        "pub from rust::native import RecordKey, read_key\n",
+        facts,
+        native_items(),
+    )?;
+    let models_entry = installed(root, &models)?;
+    let facade = published_module(
+        "facade",
+        "store",
+        "pub from pub::models.keys import RecordKey, read_key\n",
+        LoafIndex::new([models_entry.clone()])?,
+        Vec::new(),
+    )?;
+    Ok((models_entry, installed(root, &facade)?))
+}
+
+/// Check a consumer of `facade` that reaches the Rust items through both re-exports.
+fn check_consumer(source: &str) -> TestResult {
+    let root = tempfile::tempdir()?;
+    let (models, facade) = reexport_chain(root.path())?;
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker.set_loaves(Arc::new(LoafIndex::new([facade, models])?));
+    checker.check_program(&program).map_err(|errors| {
+        let messages = errors.iter().map(|error| error.message.as_str()).collect::<Vec<_>>();
+        format!("{messages:?}")
+    })?;
+    Ok(())
+}
+
+/// A function and a type of a Rust crate, re-exported by one Loaf's module and again by another's, import by name from
+/// the second module as the Rust items themselves, not as an ambiguous member.
+#[test]
+fn rust_items_through_two_reexports_import_from_the_outer_module() -> TestResult {
+    check_consumer(
+        "from pub::facade.store import RecordKey, read_key\n\ndef keep(key: RecordKey) -> RecordKey:\n    return key\n\ndef main() -> int:\n    return read_key(5)\n",
+    )
+}
+
+/// The same Rust items resolve when the outer module is imported as a namespace and its members are named through it.
+#[test]
+fn rust_items_through_two_reexports_resolve_through_the_outer_namespace() -> TestResult {
+    check_consumer(
+        "from pub::facade import store\n\ndef keep(key: store.RecordKey) -> store.RecordKey:\n    return key\n\ndef main() -> int:\n    return store.read_key(5)\n",
+    )
+}

@@ -1,0 +1,3 @@
+"""The Rust key and its reader."""
+
+pub from rust::native import RecordKey, read_key
