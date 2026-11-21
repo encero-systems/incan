@@ -47,7 +47,7 @@ from engine_capture import CapturedInput, InputRole
 from observation import file_metadata
 from pub::incan_mir_plan import LoweringEvent, LoweringRefusal, encode_lowering_event, encode_lowering_refusal
 from std.fs import Path
-from compiler_body_fallbacks import fallback_reasons
+from compiler_body_fallbacks import fallback_reasons, namespace_witnessed_event
 from compiler_source_projection import project_source, publish_source_projection, signature_record
 from publication import publish_binary
 from scratch import scratch_directory
@@ -376,6 +376,16 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
         .map_err((error) => error.message())?
     skipped = prepare_compiled_bodies(begin(published.snapshot), unit, canonical_fallback_output, Some(canonical_report))?
     assert skipped.bodies == 0 and skipped.fallbacks == 1
+    # A fallback owner's plan is witnessed by its module's namespace record, as a member's is: the record carries the
+    # owner's Body IR. This request staged no namespace record, so the event above published no plan.
+    fallbacks = [
+        CompiledBodyFallback(module="src/main.incn", name="other", identity=fallback_identity, reason="exact producer refusal"),
+    ]
+    assert namespace_witnessed_event(unit, fallbacks, fallback_symbol)?, "a fallback owner's plan has no namespace witness"
+    checked_symbol = encode_incan_symbol_identity(
+        RustCanonicalSymbolId.module_declaration(["main"], "main", RustDeclarationKind.Function, RustHirSourceSpan.new(0, 10)),
+    )
+    assert not namespace_witnessed_event(unit, fallbacks, checked_symbol)?, "a checked owner's plan read its namespace"
     selected = select_body_inventory(published.snapshot, CHECKER_PROFILE)?
     assert len(selected) == 1 and selected[0].identity == identity
     pages = encode_body_inventory(selected)?
