@@ -4,9 +4,10 @@ use std::path::{Path, PathBuf};
 
 use incan_mir_plan_native::{
     AdmittedFunction, AdmittedPlacement, EventPosition, Function, INTERFACE_REPORT, Local, LoweringRefusal,
-    ModelDeclaration, NominalKind, Parameter, Plan, PlanType, ProductNominal, SourceSpan, TerminatorKind, block,
-    decode_lowering_event, decode_lowering_refusal, decode_native_interface, decode_plan_function_record,
-    decode_record_plan, encode_lowering_refusal, product_nominals, read_module_admission, source_span,
+    ModelDeclaration, NATIVE_DEFINITIONS, NominalKind, Parameter, Plan, PlanType, ProductNominal, SourceSpan,
+    TerminatorKind, block, decode_admitted_definitions, decode_lowering_event, decode_lowering_refusal,
+    decode_native_interface, decode_plan_function_record, decode_record_plan, encode_lowering_refusal,
+    product_nominals, read_module_admission, source_span,
 };
 
 use crate::plan_modules::report_admitted;
@@ -322,5 +323,77 @@ fn admitted_positions_are_private_to_the_compiler_request() -> Result<(), String
     }
     // An old reader sees the usual note. Its shared path carries no authoritative placement.
     assert!(!root.join("6d.admitted.placement").is_file());
+    Ok(())
+}
+
+/// The native inputs a plan report names, by function.
+fn native_inputs(request: &Request) -> Result<std::collections::BTreeMap<String, (String, String)>, String> {
+    let definitions = decode_admitted_definitions(&read(&request.report(NATIVE_DEFINITIONS))?)?;
+    Ok(definitions
+        .into_iter()
+        .map(|definition| (definition.function, (definition.key, definition.digest)))
+        .collect())
+}
+
+/// A unit that publishes no native interface still names a native input for every function no event names: a helper
+/// frame by the product that carries it, an unwitnessed generated function by its own content. Native incremental
+/// reuse can then track every definition, and an input changes exactly when what it names changes.
+#[test]
+fn every_function_without_an_event_has_a_native_input() -> Result<(), String> {
+    let caller = unit_function("main", 1);
+    let frame = unit_function("__incan_closure_main_0", 2);
+    let runtime = "__incan_module_runtime_assert__runtime_frame";
+    let publish = |test: &str, caller: &Function, adapter: &Function| -> Result<_, String> {
+        let request = Request::new(test)?;
+        let inputs = inputs(caller);
+        retain_scalar(
+            &request.products,
+            &inputs,
+            caller,
+            &[],
+            &[],
+            &[],
+            std::slice::from_ref(&frame),
+            &[],
+        )?;
+        report_scalar(
+            Some(&request.report),
+            &event(&request, &inputs, &caller.name, false, &[]),
+        )?;
+        let unit = plan(vec![caller.clone(), frame.clone(), adapter.clone()], &[]);
+        publish_plan_records(&unit, &request.products, &request.report)?;
+        assert!(!request.report(INTERFACE_REPORT).is_file());
+        let named = native_inputs(&request)?;
+        let key = std::fs::read_dir(&request.report)
+            .map_err(|error| error.to_string())?
+            .filter_map(|entry| entry.ok())
+            .find_map(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .strip_suffix(".event")
+                    .map(str::to_owned)
+            })
+            .ok_or("no event")?;
+        Ok((named, key))
+    };
+    let (first, key) = publish("inputs", &caller, &unit_function(runtime, 2))?;
+    assert_eq!(
+        first.keys().cloned().collect::<Vec<_>>(),
+        vec![frame.name.clone(), runtime.to_owned()]
+    );
+    assert_eq!(
+        first[&frame.name].0, key,
+        "a helper frame's input names the product that carries it"
+    );
+    // The same content names the same inputs; a changed generated function changes only its own.
+    let (again, _) = publish("inputs-again", &caller, &unit_function(runtime, 2))?;
+    assert_eq!(again, first);
+    let (changed, _) = publish("inputs-changed", &caller, &unit_function(runtime, 3))?;
+    assert_eq!(changed[&frame.name], first[&frame.name]);
+    assert_ne!(changed[runtime], first[runtime]);
+    // A changed carrier changes its frame's input.
+    let (carried, _) = publish("inputs-carrier", &unit_function("main", 3), &unit_function(runtime, 2))?;
+    assert_ne!(carried[&frame.name], first[&frame.name]);
     Ok(())
 }
