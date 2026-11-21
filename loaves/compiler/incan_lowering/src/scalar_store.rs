@@ -18,7 +18,7 @@ use incan_semantics_core::semantic_digest::semantic_digest;
 
 use crate::producer_trace::{enter_producer, finish_producer};
 use crate::record_positions::{
-    index_positions, indexed_product, place_positions, positioned_product, relocate_product,
+    index_positions, indexed_product, place_positions, placed_record, positioned_product, relocate_product,
 };
 use crate::resident_products::resident_placed;
 
@@ -498,7 +498,8 @@ pub fn finalized_plan_product(
 }
 
 /// A product restored from a module's admitted page: the product read once and placed at the body's positions, the
-/// generic instance requests its lowering made and the event it came from.
+/// generic instance requests its lowering made and the event it came from, without the product bytes the placed
+/// record was read from.
 pub type AdmittedPayload = (PlacedRecord, Vec<Vec<u8>>, LoweringEvent);
 
 /// Read the product of a body from the final event of its module's admitted plan record.
@@ -518,8 +519,9 @@ pub fn admitted_payload(
     generation: &str,
     current: Option<Vec<(i64, i64)>>,
 ) -> Result<AdmittedPayload, &'static str> {
-    let decoded = decode_lowering_event(event).map_err(|_| "its page event does not decode")?;
-    let record = decode_plan_function_record(&decoded.product).map_err(|_| "its page product does not decode")?;
+    let mut decoded = decode_lowering_event(event).map_err(|_| "its page event does not decode")?;
+    let record = decode_plan_function_record(&std::mem::take(&mut decoded.product))
+        .map_err(|_| "its page product does not decode")?;
     let meaning = record.inputs.get(1).ok_or("its page product has no checked meaning")?;
     let positions = current.unwrap_or_else(|| event_positions(&decoded));
     let mut expected = record_scalar_inputs(meaning, name, span, overflow, reads, positions.len());
@@ -530,8 +532,7 @@ pub fn admitted_payload(
     if positions.len() != decoded.positions.len() {
         return Err("its node positions differ in number from the page event's");
     }
-    let placed = resident_placed(&record.function, &positions, &span.file.to_string(), span.line)
-        .map(|(placed, _)| placed)
+    let placed = placed_record(&record.function, &positions, &span.file.to_string(), span.line)
         .map_err(|_| "its page product does not place at the body's nodes")?;
     Ok((placed, record.requests, decoded))
 }

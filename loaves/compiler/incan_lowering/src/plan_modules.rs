@@ -2,12 +2,15 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use incan_mir_plan_native::{
     ADMITTED_MODULE_NOTE, AdmittedFunction, AdmittedModule, PARTIAL_MODULE_NOTE, POSITIONED_MODULE_PAGE,
     PlanModuleFunction, REPOSITION_MODULE_PAGE, decode_plan_module, encode_module_note, read_module_admission,
     write_module_placement,
 };
+
+use crate::resident_products::{ResidentPage, resident_page};
 
 /// Where Bakery places the plan record of an admitted module: named by the module, never by a product key.
 pub fn module_page(products: &str, module: &str) -> PathBuf {
@@ -37,30 +40,43 @@ impl AdmittedPage {
 /// The final events of an admitted module, by the native function name of the body each belongs to.
 ///
 /// Bakery writes the page only for a module whose every witness still validates. No page, or a page that does not
-/// decode or names another module, admits nothing: every body then takes the keyed route.
-pub fn admitted_page(products: Option<&str>, module: &str, generation: Option<&str>) -> AdmittedPage {
-    let mut page = AdmittedPage {
-        events: HashMap::new(),
-        inspect_placement: true,
-    };
+/// decode or names another module, admits nothing: every body then takes the keyed route. A page this worker already
+/// read from the same bytes is the page it kept, with the products it restored from it.
+pub fn admitted_page(products: Option<&str>, module: &str, generation: Option<&str>) -> Arc<ResidentPage> {
     let (Some(directory), Some(_)) = (products, generation) else {
-        return page;
+        return ResidentPage::unkept(no_page());
     };
     let path = module_page(directory, module);
     let Ok(encoded) = std::fs::read(&path) else {
-        return page;
+        return ResidentPage::unkept(no_page());
     };
-    let Ok(record) = decode_plan_module(&encoded) else {
-        return page;
-    };
-    if record.module != module {
-        return page;
+    let inspect = path.to_string_lossy().ends_with(REPOSITION_MODULE_PAGE);
+    resident_page(&encoded, module, inspect, || read_page(&encoded, module, inspect))
+        .unwrap_or_else(|| ResidentPage::unkept(no_page()))
+}
+
+/// A page that admits nothing.
+fn no_page() -> AdmittedPage {
+    AdmittedPage {
+        events: HashMap::new(),
+        inspect_placement: true,
     }
-    page.inspect_placement = path.to_string_lossy().ends_with(REPOSITION_MODULE_PAGE);
+}
+
+/// Decode a module page, refusing one that names another module.
+fn read_page(encoded: &[u8], module: &str, inspect: bool) -> Option<AdmittedPage> {
+    let record = decode_plan_module(encoded).ok()?;
+    if record.module != module {
+        return None;
+    }
+    let mut page = AdmittedPage {
+        events: HashMap::new(),
+        inspect_placement: inspect,
+    };
     for function in record.functions {
         page.events.insert(function.function.clone(), function);
     }
-    page
+    Some(page)
 }
 
 /// Distinguish fully admitted modules from modules with individual restored functions.
