@@ -417,6 +417,7 @@ pub(super) fn restore_resolved_method_calls<'a>(
     let value = ResolvedMethodCall {
         method: next(values)?.to_owned(),
         dispatch: read_method_dispatch(values)?,
+        lookup: None,
     };
     if target.insert(span, value).is_some() {
         return Err(NodeBindingError::MissingNode);

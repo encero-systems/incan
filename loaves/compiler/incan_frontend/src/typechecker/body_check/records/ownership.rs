@@ -16,7 +16,7 @@ pub(super) fn project(
 ) -> Result<(), NodeBindingError> {
     let Some(contract) = checker
         .declaration_view()
-        .function(owner)
+        .callable(owner)
         .and_then(|binding| binding.identity.as_ref())
         .and_then(|identity| checker.type_info.declarations.ownership_contracts.get(identity))
     else {
