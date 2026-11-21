@@ -89,14 +89,14 @@ fn collect(ty: &PlanType, signatures: &mut Vec<Vec<PlanType>>) {
         }
         PlanType::Tuple(elements) => {
             for element in elements {
-                collect(&crate::plan::tuple_element_type(element.clone()), signatures);
+                collect(&crate::plan::tuple_element_type(&element), signatures);
             }
         }
         PlanType::ZipIterator(left, right)
         | PlanType::ZipIteratorRef(left, right)
         | PlanType::ZipIteratorMutRef(left, right) => {
-            collect(&crate::plan::tuple_element_type(left.clone()), signatures);
-            collect(&crate::plan::tuple_element_type(right.clone()), signatures);
+            collect(&crate::plan::tuple_element_type(&left), signatures);
+            collect(&crate::plan::tuple_element_type(&right), signatures);
         }
         PlanType::List(leaf, _)
         | PlanType::ListRef(leaf, _)
@@ -108,11 +108,11 @@ fn collect(ty: &PlanType, signatures: &mut Vec<Vec<PlanType>>) {
         | PlanType::GeneratorMutRef(leaf, _)
         | PlanType::GeneratorYield(leaf, _)
         | PlanType::GeneratorYieldRef(leaf, _) => {
-            collect(&crate::plan::list_leaf_type(leaf.clone()), signatures);
+            collect(&crate::plan::list_leaf_type(&leaf), signatures);
         }
         PlanType::Dict(key, value) | PlanType::DictRef(key, value) | PlanType::DictMutRef(key, value) => {
-            collect(&crate::plan::list_leaf_type(key.clone()), signatures);
-            collect(&crate::plan::list_leaf_type(value.clone()), signatures);
+            collect(&crate::plan::list_leaf_type(&key), signatures);
+            collect(&crate::plan::list_leaf_type(&value), signatures);
         }
         _ => {}
     }

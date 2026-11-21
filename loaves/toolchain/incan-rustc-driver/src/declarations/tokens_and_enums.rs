@@ -259,7 +259,7 @@ pub(super) fn hashed_type(name: &str, leaves: &[&ListLeaf], span: Span) -> Box<a
         span,
         args: leaves
             .iter()
-            .map(|leaf| ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(&list_leaf_type((*leaf).clone()), span))))
+            .map(|leaf| ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(&list_leaf_type(leaf), span))))
             .collect(),
     })));
     path.segments.push(segment);
@@ -434,8 +434,8 @@ pub(crate) fn linked_zip_ty(
     segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
         span,
         args: thin_vec![
-            ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(&tuple_element_type(left.clone()), span))),
-            ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(&tuple_element_type(right.clone()), span))),
+            ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(&tuple_element_type(&left), span))),
+            ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(&tuple_element_type(&right), span))),
         ],
     })));
     path.segments.push(segment);

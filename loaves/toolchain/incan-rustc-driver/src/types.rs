@@ -314,7 +314,7 @@ fn native_tuple_type<'tcx>(tcx: TyCtxt<'tcx>, elements: &[PlanType]) -> Result<T
 fn tuple_value_type<'tcx>(tcx: TyCtxt<'tcx>, elements: &[crate::plan::TupleElement]) -> Result<Ty<'tcx>, PlanError> {
     let fields = elements
         .iter()
-        .map(|element| native_type(tcx, &tuple_element_type(element.clone())))
+        .map(|element| native_type(tcx, &tuple_element_type(&element)))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Ty::new_tup(tcx, &fields))
 }
@@ -776,7 +776,7 @@ fn hash_collection_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str, leaves: &[&ListLeaf
 
 /// Map the checked scalar or tuple leaf once for all collection layouts.
 fn collection_leaf_type<'tcx>(tcx: TyCtxt<'tcx>, leaf: &ListLeaf) -> Result<Ty<'tcx>, PlanError> {
-    native_type(tcx, &list_leaf_type(leaf.clone()))
+    native_type(tcx, &list_leaf_type(&leaf))
 }
 
 /// Resolve an injected source enum or concrete standard-carrier alias by its validated plan declaration name.
