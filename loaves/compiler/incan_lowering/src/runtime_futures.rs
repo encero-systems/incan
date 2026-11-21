@@ -18,7 +18,8 @@ use crate::type_parameters::{Instance, instantiate, request_instance};
 ///
 /// Future constructors hold their callee outside ordinary terminators. Their exact capture ABI must agree with the
 /// source coroutine; no ordinary return adapter may turn its deferred execution into an eager call. A callee whose
-/// declaration this attempt has not loaded keeps its unbound selection.
+/// declaration this attempt has not loaded keeps its unbound selection, and a runtime async function with no governed
+/// body keeps its native callee.
 pub fn retain_runtime_future_instances(
     constructors: &ConstructorIndex,
     module: &BodyIrModule,
@@ -36,6 +37,11 @@ pub fn retain_runtime_future_instances(
             continue;
         };
         if !path.starts_with("incan_native_runtime::") || redirects.deferred.contains_key(path) {
+            continue;
+        }
+        // A runtime that publishes no governed coroutine, as the Rust runtime does, keeps its native async function as
+        // the boxing shim's callee.
+        if runtime_body(module, path)?.is_none() {
             continue;
         }
         let (path, types, span) = (path.clone(), types.clone(), callee.span.clone());
