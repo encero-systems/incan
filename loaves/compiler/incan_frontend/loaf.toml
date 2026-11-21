@@ -35,3 +35,4 @@ type = "lib"
 # Filesystem fixtures belong to the frontend's own test harness, not its library artifact.
 [envs.test.dependencies]
 tempfile = { loaf = "crates-io/tempfile", version = "3" }
+incan_lowering = { loaf = "incan_lowering", path = "../incan_lowering" }

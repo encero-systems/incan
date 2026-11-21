@@ -281,3 +281,60 @@ fn borrowed_copy_values_are_copied_not_cloned() -> Result<(), Box<dyn std::error
     }
     Ok(())
 }
+
+/// The native spellings of a shared and an exclusive borrow, padded to the width of the explicit ones so every span
+/// of the two spellings agrees.
+const NATIVE: (&str, &str) = ("&         {}", "&mut         {}");
+/// The explicit spellings of a shared and an exclusive borrow.
+const EXPLICIT: (&str, &str) = ("Borrowed[{}]", "BorrowedMut[{}]");
+
+/// Expand `{borrow:T}` and `{borrow_mut:T}` markers with one pair of spellings; other braces pass through.
+fn spelled(template: &str, (shared, exclusive): (&str, &str)) -> String {
+    let mut out = String::new();
+    let mut rest = template;
+    while let Some(start) = rest.find('{') {
+        out.push_str(&rest[..start]);
+        let Some(end) = rest[start..].find('}') else {
+            out.push_str(&rest[start..]);
+            return out;
+        };
+        let marker = &rest[start + 1..start + end];
+        match marker.split_once(':') {
+            Some(("borrow", name)) => out.push_str(&shared.replace("{}", name)),
+            Some(("borrow_mut", name)) => out.push_str(&exclusive.replace("{}", name)),
+            _ => out.push_str(&rest[start..=start + end]),
+        }
+        rest = &rest[start + end + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// RFC 164: `Borrowed[T]` and `&T`, and `BorrowedMut[T]` and `&mut T`, are one type. Every body of a module lowers to
+/// the same Body IR in both spellings: reads through the borrow, owned uses that clone, exclusive writes, calls that
+/// lend an owned local, local borrows and the platform trace writer's `append(self, text)` and
+/// `write_record(self, row)` shapes.
+#[test]
+fn explicit_borrows_lower_as_their_reference_twins() -> Result<(), Box<dyn std::error::Error>> {
+    let template = "from rust::demo import label\n\nmodel Item:\n    name: str\n    count: int\n\nmodel Counter:\n    value: int\n\ndef echo(text: str) -> str:\n    return text\n\ndef keep(item: Item) -> list[Item]:\n    return [item]\n\ndef measure(text: {borrow:str}) -> int:\n    return len(echo(text))\n\ndef reads(item: {borrow:Item}, items: {borrow:list[Item]}) -> int:\n    mut total = item.count + len(items)\n    for entry in items:\n        total += entry.count\n    return total\n\ndef give(item: {borrow:Item}) -> Item:\n    return item\n\ndef hand_on(item: {borrow:Item}) -> list[Item]:\n    return keep(item)\n\ndef bump(mut counter: {borrow_mut:Counter}) -> int:\n    counter.value = counter.value + 1\n    return counter.value\n\ndef first(items: list[Item]) -> int:\n    head: {borrow:Item} = items[0]\n    return head.count\n\nclass Writer:\n    pub rows: list[str]\n\n    pub def append(mut self, text: {borrow:str}) -> int:\n        self.rows.append(echo(text))\n        return len(self.rows)\n\n    pub def write_record(mut self, row: {borrow:Item}) -> int:\n        self.rows.append(echo(row.name))\n        return row.count + len(self.rows)\n\ndef main() -> int:\n    mut counter = Counter(value=0)\n    item = Item(name=\"a\", count=1)\n    mut writer = Writer(rows=[])\n    return bump(counter) + measure(label()) + reads(item, [item]) + writer.append(\"x\") + writer.write_record(item)\n";
+    let native = rendered_bodies(&spelled(template, NATIVE))?;
+    let explicit = rendered_bodies(&spelled(template, EXPLICIT))?;
+    assert_eq!(explicit.keys().collect::<Vec<_>>(), native.keys().collect::<Vec<_>>());
+    for (name, (body, _)) in &native {
+        assert!(!body.contains("unsupported"), "{name}: {body}");
+        assert_eq!(explicit.get(name).map(|(body, _)| body), Some(body), "{name}");
+    }
+    Ok(())
+}
+
+/// An owned use of a borrowed value whose type has no clone is refused at that use in both spellings, with the same
+/// diagnostic; a borrowed `Copy` value is copied in both.
+#[test]
+fn explicit_borrows_refuse_and_copy_as_their_reference_twins() -> Result<(), Box<dyn std::error::Error>> {
+    let template = "from rust::demo import Token\n\ndef give(value: {borrow:Token}) -> Token:\n    return value\n";
+    let native = refusals(&spelled(template, NATIVE))?;
+    let explicit = refusals(&spelled(template, EXPLICIT))?;
+    assert_eq!(explicit, native);
+    assert!(native.iter().any(|message| message.contains("clone")), "{native:?}");
+    Ok(())
+}
