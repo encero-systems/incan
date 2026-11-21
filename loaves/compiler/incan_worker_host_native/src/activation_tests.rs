@@ -2,7 +2,7 @@
 //! (`run1/golden/worker-activation-1.log`, label `runtime-worker-ref-8`).
 
 use internal_models_native::namespace_references::NamespaceReference;
-use internal_models_native::records::RecordKey;
+use internal_models_native::records::{RecordKey, encode_record_key};
 
 use crate::checked_activation::{projected_owner_source, resolve_checking_activation};
 use crate::checking_preparation::{completed_checker_key, prepare_checking};
@@ -60,17 +60,18 @@ fn frame(key: RecordKey, segment: &str) -> Option<String> {
 
 #[test]
 fn completed_checker_keys_keep_their_spelling() -> Result<(), String> {
+    // The key is named by its encoded record key, so no record-model type crosses into an Incan caller.
     let prefix = "incan.compiler.completed-checking\t";
     assert_eq!(
-        completed_checker_key(&key("local", "owner-1", "main"))?,
+        completed_checker_key(&encode_record_key(&key("local", "owner-1", "main"))?),
         format!("{prefix}4f52e91e5fdd88ce05f98fb3c06034752490937364b494a463c88d2005c84921")
     );
     assert_eq!(
-        completed_checker_key(&key("final", "pkg.mod::f", "f"))?,
+        completed_checker_key(&encode_record_key(&key("final", "pkg.mod::f", "f"))?),
         format!("{prefix}cac56e4035588ee290764e3fe13c6d080d929d054d4217b0d4a7398cf071af06")
     );
     assert_eq!(
-        completed_checker_key(&key("local", "bad\tidentity", "main"))
+        encode_record_key(&key("local", "bad\tidentity", "main"))
             .err()
             .as_deref(),
         Some("compiler record key fields cannot contain store delimiters")
