@@ -1,7 +1,10 @@
 //! Concrete standard Option and Result layouts shared with native enum operations.
 
 use incan_lang::lang::types::collections::{CollectionTypeId, from_str as collection_type};
-use incan_mir_plan_native::{Carrier, EnumDeclaration, EnumVariant, PlanType, source_span};
+use incan_mir_plan_native::{
+    Carrier, EnumDeclaration, EnumVariant, Place, PlanType, Projection, RvalueKind, SourceSpan, TerminatorKind, Unwind,
+    assign as plan_assign, source_span,
+};
 use incan_semantics_core::body_ir::{
     Block, Body, BodyIrModule, CallableTarget, Callee, MatchArm, NamedCallableTarget, Operand, Rvalue, StatementKind,
     StaticInitializer,
@@ -9,6 +12,9 @@ use incan_semantics_core::body_ir::{
 use incan_semantics_core::{IncanType, SemanticSourceTargetKind, generic};
 
 use crate::compiler_record_adapters::{authored_plan_checked_type, semantic_key_matches_native};
+use crate::frame::{
+    Builder, cleanup_exit, drop_owned, forget_owned, place_type, read_place, temporary, track_rvalue_moves,
+};
 use crate::layout_types::native_source_type;
 use crate::lists::taking_iterator_locals;
 use crate::native_type_identity::{ConstructorIndex, native_owner};
@@ -368,4 +374,33 @@ pub fn retain_carrier(
         _ => {}
     }
     Ok(())
+}
+
+/// Evaluate an owned replacement before dropping its old field, keeping the enclosing owner initialized.
+pub fn replace_owned_destination(builder: &mut Builder, target: Place, operation: RvalueKind, span: &SourceSpan) {
+    if target.projection == Projection::Whole {
+        track_rvalue_moves(builder, &operation);
+        drop_owned(builder, target.local, span);
+        let local = target.local;
+        builder.emit(plan_assign(target, operation, span));
+        builder.owned.push(local);
+        return;
+    }
+    let replacement = temporary(builder, place_type(&builder.locals, &target), span);
+    track_rvalue_moves(builder, &operation);
+    builder.emit(plan_assign(replacement.clone(), operation, span));
+    builder.owned.push(replacement.local);
+    let continuation = builder.new_block(span);
+    let cleanup = cleanup_exit(builder, span);
+    builder.finish(
+        TerminatorKind::Drop(target.clone(), continuation, Unwind::Cleanup(cleanup)),
+        span,
+    );
+    builder.select(continuation);
+    forget_owned(builder, replacement.local);
+    builder.emit(plan_assign(
+        target,
+        RvalueKind::Use(read_place(replacement, true, span)),
+        span,
+    ));
 }

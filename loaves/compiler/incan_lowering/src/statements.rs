@@ -6,7 +6,8 @@ use incan_mir_plan_native::{
 };
 use incan_semantics_core::IncanInputAccess;
 use incan_semantics_core::body_ir::{
-    Block, BodyIrModule, Operand as SourceOperand, Statement as SourceStatement, StatementKind as SourceStatementKind,
+    Block, BodyIrModule, Operand as SourceOperand, OwnershipFact, Statement as SourceStatement,
+    StatementKind as SourceStatementKind,
 };
 
 use crate::assignments::lower_assignment;
@@ -15,7 +16,11 @@ use crate::calls::lower_call;
 use crate::carrier_operands::boundary_operand;
 use crate::checked_values::{builder_location, scalar_place};
 use crate::closures::callable_copy_type;
-use crate::frame::{Builder, drop_all_owned, drop_owned, finish_fallthrough, literal, place_type, track_rvalue_moves};
+use crate::formatting::display_operand;
+use crate::frame::{
+    Builder, drop_all_owned, drop_owned, finish_fallthrough, forget_owned, literal, place_type, read_place,
+    track_rvalue_moves,
+};
 use crate::list_values::value_operand;
 use crate::loop_exits::exits_to;
 use crate::matches::join_branch_owners;
@@ -221,7 +226,9 @@ pub fn return_operand(builder: &mut Builder, operand: &SourceOperand, span: &Sou
         return Err(untranslated("explicit_arguments::explicit_place_argument"));
     }
     if return_type == PlanType::String {
-        return Err(untranslated("formatting::display_operand"));
+        let text = display_operand(builder, operand, span)?;
+        forget_owned(builder, text.local);
+        return Ok(read_place(text, true, span));
     }
     let result = boundary_operand(builder, operand, &return_type, span)?;
     track_rvalue_moves(builder, &RvalueKind::Use(result.clone()));
@@ -403,4 +410,12 @@ fn lower_loop(module: &BodyIrModule, builder: &mut Builder, body: &Block, span: 
     // A loop nothing leaves (`loop:` or `while true:` without `break`) never falls through to what follows it.
     builder.closed[after as usize] = !exits_to(&builder.blocks, header, after);
     Ok(())
+}
+
+/// Whether Body IR reads the payload's place under a shared or exclusive borrow.
+pub fn borrowed_payload(payload: &SourceOperand) -> bool {
+    match payload {
+        SourceOperand::Place(read) => read.fact == OwnershipFact::Borrow || read.fact == OwnershipFact::MutBorrow,
+        _ => false,
+    }
 }

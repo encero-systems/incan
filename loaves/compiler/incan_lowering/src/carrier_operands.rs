@@ -8,6 +8,7 @@ use incan_semantics_core::body_ir::Operand as SourceOperand;
 use crate::builtin_calls::coerce_numeric_operand;
 use crate::callable_calls::carrier_callable_operand;
 use crate::compiler_record_adapters::semantic_key_matches_native;
+use crate::formatting::display_plan_operand;
 use crate::frame::{
     Builder, dereferenced_place, forget_moved_arguments, read_place, temporary, track_rvalue_moves, value_type,
 };
@@ -18,7 +19,7 @@ use crate::numerics::numeric_carrier;
 use crate::pending::untranslated;
 use crate::result_carriers::{frozen_operand, typed_carrier_operand};
 use crate::static_storage::snapshot_owns;
-use crate::text_plan::clone_text_reference;
+use crate::text_plan::{clone_text_reference, owned_slice_text};
 use crate::unions::carrier_injection;
 
 /// Preserve checked static literals and materialize carrier construction at a typed value boundary.
@@ -73,7 +74,8 @@ pub fn boundary_plan_operand(
         return Err(untranslated("sequence_builtins::sequence_read_storage"));
     }
     if source == PlanType::StrRef && *target == PlanType::String {
-        return Err(untranslated("text_plan::owned_slice_text"));
+        let owned = owned_slice_text(builder, value, span);
+        return Ok(read_place(owned, true, span));
     }
     // Text an inferred-shared parameter lends reaching a destination that owns text is that destination's copy.
     if source == PlanType::StringRef && *target == PlanType::String {
@@ -82,7 +84,8 @@ pub fn boundary_plan_operand(
     // A `const` str reaching a destination that owns text, such as an `Err` payload or a list element, becomes owned
     // text there, as at a `str` parameter.
     if source == PlanType::FrozenStr && *target == PlanType::String {
-        return Err(untranslated("formatting::display_plan_operand"));
+        let text = display_plan_operand(builder, value, span)?;
+        return Ok(read_place(text, true, span));
     }
     // A borrowed source model that reaches a destination owning one was admitted by the checker there, so it is cloned.
     match (&source, target) {
@@ -107,10 +110,12 @@ pub fn boundary_plan_operand(
         PlanType::FunctionPointer(_) => return Err(untranslated("closures::function_assignment")),
         _ => {}
     }
+    let mut operand = value;
     if source == PlanType::FrozenStr && frozen_text_union_member(builder, target)? {
-        return Err(untranslated("formatting::display_plan_operand"));
+        let text = display_plan_operand(builder, operand, span)?;
+        operand = read_place(text, true, span);
     }
-    let mut operand = owned_union_member(builder, value, target)?;
+    operand = owned_union_member(builder, operand, target)?;
     operand = carrier_callable_operand(builder, operand, target, span)?;
     operand = option_payload_operand(builder, operand, target, span)?;
     let actual_source = value_type(builder, &operand)?;

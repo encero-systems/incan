@@ -3,7 +3,8 @@
 use incan_mir_plan_native::{EnumDeclaration as PlanEnumDeclaration, EnumVariant, PlanType, source_span};
 use incan_semantics_core::IncanType;
 use incan_semantics_core::body_ir::{
-    BodyIrModule, Constant, EnumDeclaration as SourceEnumDeclaration, ValueEnumBacking,
+    ArgumentBinding, BodyIrModule, Constant, EnumDeclaration as SourceEnumDeclaration, EnumVariantTarget,
+    FieldlessEnumVariantTarget, ValueEnumBacking,
 };
 
 use crate::decls::{ViewLifetimeLayout, library_enum_item, serde_propagation, with_serde_derives};
@@ -141,4 +142,79 @@ pub fn enum_owner(ty: &PlanType) -> Result<i64, String> {
         PlanType::Enum(index, _) => Ok(*index),
         _ => Err("unsupported Body IR Match outside source enums".into()),
     }
+}
+
+/// Resolve construction by exact variant and owner identities; written owner aliases remain diagnostic spelling.
+pub fn variant_index(
+    declarations: &[SourceEnumDeclaration],
+    target: &EnumVariantTarget,
+    expected: &PlanType,
+) -> Result<(usize, usize), String> {
+    for (owner, declaration) in declarations.iter().enumerate() {
+        match expected {
+            PlanType::Enum(selected, _) => {
+                if owner as i64 != *selected {
+                    continue;
+                }
+            }
+            _ => return Err("unsupported Body IR enum constructor destination".into()),
+        }
+        for (slot, variant) in declaration.variants.iter().enumerate() {
+            if variant.canonical != target.variant_canonical {
+                continue;
+            }
+            if target.enum_canonical.as_ref() != Some(&declaration.canonical) || target.variant_name != variant.name {
+                return Err("invalid Body IR enum constructor identity".into());
+            }
+            validate_binding(&target.binding, variant.fields.len())?;
+            return Ok((owner, slot));
+        }
+    }
+    Err("unsupported Body IR unretained enum constructor".into())
+}
+
+/// Resolve the older fieldless constructor vocabulary against the same canonical layout.
+pub fn unit_variant(
+    declarations: &[SourceEnumDeclaration],
+    target: &FieldlessEnumVariantTarget,
+) -> Result<(usize, usize), String> {
+    for (owner, declaration) in declarations.iter().enumerate() {
+        if declaration.canonical != target.enum_canonical
+            || declaration.direct_declaration_id != target.enum_declaration_id
+        {
+            continue;
+        }
+        for (slot, variant) in declaration.variants.iter().enumerate() {
+            if variant.canonical == target.variant_canonical
+                && variant.direct_declaration_id == target.variant_declaration_id
+                && variant.fields.is_empty()
+            {
+                if declaration.canonical.declaration_name != target.enum_name || variant.name != target.variant_name {
+                    return Err("invalid Body IR fieldless enum spelling".into());
+                }
+                return Ok((owner, slot));
+            }
+        }
+    }
+    Err("unsupported Body IR unretained fieldless enum variant".into())
+}
+
+/// Require complete positional payload binding; spreads and omitted payload slots remain refused.
+pub fn validate_binding(binding: &ArgumentBinding, count: usize) -> Result<(), String> {
+    let ArgumentBinding::Resolved {
+        arguments,
+        defaulted_slots,
+    } = binding
+    else {
+        return Err("unsupported Body IR unresolved enum payload binding".into());
+    };
+    if !defaulted_slots.is_empty() || arguments.len() != count {
+        return Err("unsupported Body IR incomplete enum payload binding".into());
+    }
+    for (index, argument) in arguments.iter().enumerate() {
+        if argument.slot != index {
+            return Err("unsupported Body IR reordered enum payload binding".into());
+        }
+    }
+    Ok(())
 }
