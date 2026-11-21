@@ -13,7 +13,7 @@ use crate::async_::is_future;
 use crate::builtin_calls::{lower_boolean_operator, lower_numeric_helper, validate_exact_float};
 use crate::builtins::list_call;
 use crate::callable_values::register_callable_item;
-use crate::carrier_operands::{boundary_plan_operand, element_operand, element_plan_operand};
+use crate::carrier_operands::{bind_payload_in_place, boundary_plan_operand, element_operand, element_plan_operand};
 use crate::checked_values::{scalar_operand, scalar_place};
 use crate::closure_lifting::{
     ClosureExpression, assign_callable, lower_closure, lower_generator_expression, move_closure, stored_callable,
@@ -140,7 +140,7 @@ pub fn lower_local_assignment(
     if builder.borrowed_items.contains(&target.local) {
         return Err("unsupported Body IR mutation of borrowed list iteration item".into());
     }
-    if in_place_iteration_binding(builder, &target, value)? {
+    if in_place_iteration_binding(builder, &target, value, span)? {
         return Ok(());
     }
     if let Some((name, ty, declaration_name)) = source_function_item(module, builder, value, span)? {
@@ -352,16 +352,47 @@ fn store_operation(
 
 /// Consume a checked exclusive pattern binding as a view of its polled element. Only a whole binding can change its
 /// frame carrier; a later field write must keep the owner and its earlier assignments intact.
-fn in_place_iteration_binding(builder: &mut Builder, destination: &Place, value: &Rvalue) -> Result<bool, String> {
+fn in_place_iteration_binding(
+    builder: &mut Builder,
+    destination: &Place,
+    value: &Rvalue,
+    span: &SourceSpan,
+) -> Result<bool, String> {
     if destination.projection != Projection::Whole || builder.iteration_locals.contains(&destination.local) {
         return Ok(false);
     }
-    match value {
-        Rvalue::Use(SourceOperand::Place(read)) if read.fact == OwnershipFact::MutBorrow => {
-            Err(untranslated("assignments::in_place_iteration_binding"))
-        }
-        _ => Ok(false),
+    let Rvalue::Use(SourceOperand::Place(read)) = value else {
+        return Ok(false);
+    };
+    if read.fact != OwnershipFact::MutBorrow {
+        return Ok(false);
     }
+    let mut source = if is_element_place(builder, &read.place)? {
+        mutable_element_place(builder, &read.place, span)?
+    } else {
+        scalar_place(builder, &read.place, span)?
+    };
+    if is_list(&place_type(&builder.locals, &source)) {
+        let reference = list_borrow(builder, source, true, span)?;
+        builder.locals[destination.local as usize].ty = value_type(builder, &reference)?;
+        builder.emit(plan_assign(destination.clone(), RvalueKind::Use(reference), span));
+    } else {
+        // An indexed element accessor returns a reference; pattern binding reborrows its retained value.
+        match place_type(&builder.locals, &source) {
+            PlanType::ModelMutRef(owner, name) => {
+                source = dereferenced_place(&source, PlanType::Model(owner, name), span)?;
+            }
+            PlanType::TupleMutRef(elements) => {
+                source = dereferenced_place(&source, PlanType::Tuple(elements), span)?;
+            }
+            _ => {}
+        }
+        bind_payload_in_place(builder, destination.local, source, span)?;
+    }
+    if !builder.in_place_items.contains(&destination.local) {
+        builder.in_place_items.push(destination.local);
+    }
+    Ok(true)
 }
 
 /// Rewrite integer negation with a zero of its exact carrier so the unit's subtraction policy applies.

@@ -2,29 +2,30 @@
 
 use incan_mir_plan_native::{
     CalleeKind, Carrier, Constant, Operand, OperandKind, Place, PlanType, Projection, RvalueKind, SourceSpan,
-    assign as plan_assign, carrier_position,
+    assign as plan_assign, carrier_position, is_carrier_index,
 };
 use incan_semantics_core::body_ir::{
     Constant as SourceConstant, FormatPart, FormatStyle, Operand as SourceOperand, OwnershipFact, Place as SourcePlace,
     Rvalue,
 };
 
-use crate::checked_values::scalar_place;
+use crate::checked_values::{clone_nominal_operand, scalar_place};
 use crate::collections::{is_collection, is_owned_collection};
 use crate::element_places::{element_place_type, is_element_place};
-use crate::enum_display::{display_enum_operand, native_enum_owner, native_enum_text};
+use crate::enum_display::{borrowed_enum_debug, display_enum_operand, native_enum_owner, native_enum_text};
 use crate::frame::{Builder, drop_owned, forget_owned, place_type, read_place, temporary, terminate_call, value_type};
 use crate::list_values::{element_read, value_operand};
 use crate::lists::{is_list, is_owned_list};
 use crate::model_construction::lower_string_field_assignment;
 use crate::model_values::{debug_model_operand, display_model_operand};
 use crate::numerics::{has_sized_numeric, numeric_carrier, numeric_name};
-use crate::options::format_carrier;
+use crate::option_tests::is_union_carrier;
+use crate::options::{clone_tuple_operand, format_carrier};
 use crate::pending::untranslated;
 use crate::text_plan::{
     clone_text, clone_text_reference, format_parts, owned_borrowed_text, owned_literal, owned_slice_text,
 };
-use crate::tuples::is_tuple_type;
+use crate::tuples::{display_tuple, is_tuple_type, tuple_debug_formatted};
 
 /// Lower an f-string, retaining literal boundaries and the checked display or nominal Debug style.
 pub fn lower_format(
@@ -86,7 +87,7 @@ fn debug_operand(builder: &mut Builder, value: &SourceOperand, span: &SourceSpan
             let place = scalar_place(builder, &read.place, span)?;
             match place_type(&builder.locals, &place) {
                 PlanType::Model(..) => return debug_model_operand(builder, value, span),
-                PlanType::Enum(..) => return Err(untranslated("formatting::debug_enum_operand")),
+                PlanType::Enum(owner, _) => return debug_enum_operand(builder, place, owner, span),
                 PlanType::ValidationError | PlanType::ValidationErrorRef => {
                     return Err(untranslated("validation_errors::validation_error_reference"));
                 }
@@ -132,10 +133,16 @@ fn display_tuple_place(builder: &mut Builder, value: &SourcePlace, span: &Source
         return Ok(None);
     }
     let target = scalar_place(builder, value, span)?;
-    if !is_tuple_type(&place_type(&builder.locals, &target)) {
+    let ty = place_type(&builder.locals, &target);
+    if !is_tuple_type(&ty) {
         return Ok(None);
     }
-    Err(untranslated("tuples::display_tuple"))
+    if tuple_debug_formatted(&ty) {
+        // A list or carrier element has no flat formatter; Debug of a snapshot spells the whole tuple as legacy does.
+        let snapshot = clone_tuple_operand(builder, target, span)?;
+        return Ok(Some(debug_plan_operand(builder, snapshot, span)?));
+    }
+    Ok(Some(display_tuple(builder, target, span)?))
 }
 
 /// Produce an owned `String` holding a value's display text, honoring the value's ownership fact.
@@ -342,6 +349,29 @@ fn exclusive_text_display(builder: &mut Builder, operand: Operand, span: &Source
     let shared = temporary(builder, PlanType::StringRef, span);
     builder.emit(plan_assign(shared.clone(), RvalueKind::Borrow(referent), span));
     Ok(owned_borrowed_text(builder, read_place(shared, false, span), span))
+}
+
+/// Borrow a source enum's checked Debug implementation; unions and text Options retain their existing rendering.
+fn debug_enum_operand(builder: &mut Builder, place: Place, owner: i64, span: &SourceSpan) -> Result<Place, String> {
+    let declared = usize::try_from(owner).ok().and_then(|index| builder.enums().get(index));
+    if let Some(declaration) = declared
+        && declaration.derives.iter().any(|derive| derive == "Debug")
+    {
+        let name = declaration.name.to_string();
+        return borrowed_enum_debug(builder, place, owner, &name, span);
+    }
+    if is_union_carrier(builder, owner) {
+        let copied = clone_nominal_operand(builder, place, span)?;
+        return debug_plan_operand(builder, copied, span);
+    }
+    if is_carrier_index(owner)
+        && let Some(declaration) = builder.intrinsics.get(carrier_position(owner) as usize)
+        && matches!(declaration.carrier, Carrier::Option | Carrier::Result)
+    {
+        let name = declaration.name.clone();
+        return borrowed_enum_debug(builder, place, owner, &name, span);
+    }
+    Err("unsupported Body IR nonmodel FormatStyle.Debug".into())
 }
 
 /// Invoke legacy Debug on an admitted carrier after its read ownership has been materialized.

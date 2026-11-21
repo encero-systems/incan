@@ -2,14 +2,16 @@
 
 use incan_lang::lang::types::collections::{CollectionTypeId, from_str as collection_type};
 use incan_mir_plan_native::{
-    FieldProjection, Place, PlanType, Projection, SourceSpan, TupleElement, tuple_element_type,
+    FieldProjection, Place, PlanType, Projection, RvalueKind, SourceSpan, TupleElement, assign as plan_assign,
+    tuple_element_type,
 };
 use incan_semantics_core::IncanPrimitiveType;
 use incan_semantics_core::IncanType;
 use incan_semantics_core::body_ir::{Constant, Operand, PlaceElem};
 
-use crate::frame::appended_field;
+use crate::frame::{Builder, appended_field, external_call, place_type, read_place, temporary};
 use crate::numerics::{numeric_type, sized_numeric};
+use crate::text_plan::format_parts;
 
 /// Name every canonical type kind even when its legacy Display implementation is empty.
 pub fn type_name(ty: &IncanType) -> String {
@@ -245,4 +247,59 @@ pub fn tuple_fields(value: &Place, ty: &PlanType, span: &SourceSpan) -> Result<V
         }
     }
     Ok(fields)
+}
+
+/// Retain Rust debug tuple punctuation, including the one-element trailing comma.
+pub fn tuple_parts(count: usize) -> Vec<String> {
+    if count == 0 {
+        return vec!["()".into()];
+    }
+    let mut parts = vec!["(".to_owned()];
+    parts.extend((1..count).map(|_| ", ".to_owned()));
+    parts.push(if count == 1 { ",)" } else { ")" }.to_owned());
+    parts
+}
+
+/// Select the existing debug formatter and its exact scalar or borrowed-text signature.
+pub fn tuple_formatter(ty: &PlanType) -> Result<(&'static str, PlanType), String> {
+    match ty {
+        PlanType::Int => Ok(("debug_int", PlanType::Int)),
+        PlanType::Float => Ok(("debug_float", PlanType::Float)),
+        PlanType::Bool => Ok(("debug_bool", PlanType::Bool)),
+        PlanType::Unit => Ok(("debug_unit", PlanType::Unit)),
+        PlanType::String => Ok(("debug_text", PlanType::StringRef)),
+        _ => Err("unsupported Body IR tuple display element".into()),
+    }
+}
+
+/// Format each scalar element with legacy debug spelling while borrowing owned string fields.
+pub fn display_tuple(builder: &mut Builder, value: Place, span: &SourceSpan) -> Result<Place, String> {
+    let ty = place_type(&builder.locals, &value);
+    let fields = tuple_fields(&value, &ty, span)?;
+    let mut values = Vec::with_capacity(fields.len());
+    for field in &fields {
+        let ty = place_type(&builder.locals, field);
+        let (name, parameter) = tuple_formatter(&ty)?;
+        let mut argument = read_place(field.clone(), false, span);
+        if ty == PlanType::String {
+            let reference = temporary(builder, parameter.clone(), span);
+            builder.emit(plan_assign(reference.clone(), RvalueKind::Borrow(field.clone()), span));
+            argument = read_place(reference, false, span);
+        }
+        let text = temporary(builder, PlanType::String, span);
+        let path = format!("incan_native_runtime::{name}");
+        external_call(
+            builder,
+            &path,
+            vec![parameter],
+            PlanType::String,
+            vec![argument],
+            text.clone(),
+            span,
+        );
+        values.push(text);
+    }
+    let result = temporary(builder, PlanType::String, span);
+    format_parts(builder, result.clone(), &tuple_parts(fields.len()), &values, span);
+    Ok(result)
 }
