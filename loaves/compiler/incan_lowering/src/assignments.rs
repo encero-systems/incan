@@ -135,8 +135,11 @@ pub fn lower_local_assignment(
     span: &SourceSpan,
 ) -> Result<(), String> {
     // Replace the borrowed value through its checked projection, never the reference slot itself.
+    // A reborrow (`&mut *x`) binds the reference slot itself; any other value replaces what it borrows.
+    let reborrow = matches!(value, Rvalue::Use(SourceOperand::Place(read)) if read.fact == OwnershipFact::MutBorrow);
     if builder.locals[target.local as usize].ty == PlanType::StringMutRef
         && target.projection != Projection::Deref(PlanType::String)
+        && !reborrow
     {
         return Err("unsupported Body IR assignment to a mutable text reference slot".into());
     }
@@ -369,6 +372,19 @@ fn in_place_iteration_binding(
     };
     if read.fact != OwnershipFact::MutBorrow {
         return Ok(false);
+    }
+    // RFC 164: an exclusive borrow bound to one a list stores reborrows what the stored borrow names.
+    if let Some(reference) = crate::element_borrows::reborrow_stored_element(builder, &read.place, span)? {
+        builder.locals[destination.local as usize].ty = place_type(&builder.locals, &reference);
+        builder.emit(plan_assign(
+            destination.clone(),
+            RvalueKind::Use(read_place(reference, true, span)),
+            span,
+        ));
+        if !builder.in_place_items.contains(&destination.local) {
+            builder.in_place_items.push(destination.local);
+        }
+        return Ok(true);
     }
     let mut source = if is_element_place(builder, &read.place)? {
         mutable_element_place(builder, &read.place, span)?

@@ -86,8 +86,8 @@ pub use integer_helpers::{
 };
 pub use lists::{
     append_list, borrow_list_mut, clone_list, concat_list, contains_list, count_list, empty_list, equal_list,
-    extend_list, get_list, index_list, length_list, pop_list, remove_list, repeat_list, set_list, slice_list,
-    sorted_float, sorted_list, swap_list, unequal_list,
+    extend_list, get_list, index_list, length_list, pop_list, reborrow_list_mut, remove_list, repeat_list, set_list,
+    slice_list, sorted_float, sorted_list, swap_list, unequal_list,
 };
 pub use model_values::{
     debug_model, debug_value, deserialize_model, display_type_parameter, display_value, equal_model,

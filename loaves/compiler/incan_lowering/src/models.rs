@@ -246,6 +246,13 @@ pub fn model_prefix(
         })
     };
     let slot_type = &locals[(index + offset) as usize].ty;
+    // RFC 164: a projection of what a reference-valued local borrows (`(*x).field`) is a projection of the local,
+    // which reaches its referent's fields itself.
+    if count > 1 && matches!(value.projection.first(), Some(PlaceElem::Deref)) {
+        let mut through = value.clone();
+        through.projection.remove(0);
+        return model_prefix(tables, locals, &through, count - 1, span, offset);
+    }
     // RFC 164: a whole reference-valued local read or written through its reference (`*x`) names its referent.
     if count == 1 && matches!(value.projection.first(), Some(PlaceElem::Deref)) {
         let (referent, _) = crate::explicit_arguments::reference_contract(slot_type)?;

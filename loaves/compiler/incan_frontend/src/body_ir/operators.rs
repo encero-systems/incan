@@ -162,7 +162,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
 
         // RFC 164: an operator reads a borrowed operand through its borrow; the operation is on the borrowed values.
-        let (lhs_ty, rhs_ty) = (borrowed_operand_view(&lhs_ty), borrowed_container_view(op, &rhs_ty));
+        let (lhs_ty, rhs_ty) = (
+            borrowed_text_view(op, borrowed_operand_view(&lhs_ty)),
+            borrowed_text_view(op, borrowed_container_view(op, &rhs_ty)),
+        );
         if !Self::binary_op_is_supported(op, &lhs_ty, &rhs_ty) {
             return self.unsupported_operand(format!("binary operator {op:?}"), scope, hir_span_value, out);
         }
@@ -177,10 +180,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let lhs_checked = self.resolve_ty(lhs.span);
         let rhs_checked = self.resolve_ty(rhs.span);
         let (lhs_ty, rhs_ty) = (
-            borrowed_operand_view(&lhs_checked),
-            borrowed_container_view(op, &rhs_checked),
+            borrowed_text_view(op, borrowed_operand_view(&lhs_checked)),
+            borrowed_text_view(op, borrowed_container_view(op, &rhs_checked)),
         );
-        let (lhs_operand, rhs_operand) = if collection_equality_borrows(op, &lhs_ty, &rhs_ty) {
+        // RFC 164: a list or set of shared borrows is probed with the shared borrow itself, as the checker compares it.
+        let borrow_probe = membership_probes_a_borrow(op, &lhs_checked, &rhs_ty);
+        let lhs_ty = if borrow_probe { lhs_checked.clone() } else { lhs_ty };
+        let (lhs_operand, rhs_operand) = if borrow_probe {
+            (
+                self.lower_expr_to_operand(lhs, scope, out),
+                self.lower_binary_operand(rhs, scope, out),
+            )
+        } else if collection_equality_borrows(op, &lhs_ty, &rhs_ty) {
             (
                 self.lower_collection_equality_operand(lhs, scope, out),
                 self.lower_collection_equality_operand(rhs, scope, out),
@@ -759,6 +770,29 @@ pub(super) fn read_through_scalar_borrow(checked: &IncanType, operand: bir::Oper
         }
         other => other,
     }
+}
+
+/// The type concatenation reads from a borrowed text operand (RFC 164): `+` joins the text a borrow names into owned
+/// text, as the string helper reads any text operand by reference. Other operators keep the operand's type.
+fn borrowed_text_view(op: ast::BinaryOp, ty: IncanType) -> IncanType {
+    match ty {
+        IncanType::Ref(inner) | IncanType::RefMut(inner)
+            if op == ast::BinaryOp::Add && matches!(inner.as_ref(), IncanType::Primitive(IncanPrimitiveType::Str)) =>
+        {
+            *inner
+        }
+        other => other,
+    }
+}
+
+/// Whether membership probes a list or set of shared borrows with a shared borrow, which it compares as it holds it.
+fn membership_probes_a_borrow(op: ast::BinaryOp, probe: &IncanType, container: &IncanType) -> bool {
+    matches!(op, ast::BinaryOp::In | ast::BinaryOp::NotIn)
+        && matches!(probe, IncanType::Ref(_))
+        && matches!(
+            container.collection(),
+            Some((CollectionTypeId::List | CollectionTypeId::Set, [IncanType::Ref(_), ..]))
+        )
 }
 
 /// Whether a borrowed referent is a Copy scalar an operator or an owned use reads through its reference.
