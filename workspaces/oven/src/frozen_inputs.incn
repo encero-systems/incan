@@ -6,6 +6,8 @@ from std.json import JsonValue
 from jec import begin, record
 from payload_types import InstalledPayload, PayloadAdmission
 
+pub const REGISTRY_COMPLETION: str = "registry-completion/2"
+
 
 pub model Document:
     """One parsed installed record and the exact filesystem generation admitted with it."""
@@ -21,6 +23,9 @@ model Selection:
     documents: Dict[str, Document] = {}
     payloads: Dict[str, InstalledPayload] = {}
     observations: Dict[str, str] = {}
+    registry: Dict[str, str] = {}
+    registry_catalog: str = ""
+    registry_stores: Dict[str, bool] = {}
 
     def select(
         mut self,
@@ -28,6 +33,10 @@ model Selection:
         payloads: list[InstalledPayload],
         paths: list[str],
         stamps: list[str],
+        registry_path: str,
+        registry_identity: str,
+        rustc: str,
+        rustc_observation: str,
     ) -> None:
         """Replace the current read scope with the exact documents decoded from its admitted page."""
         self.documents = {document.path: document for document in documents}
@@ -37,6 +46,19 @@ model Selection:
             self.observations[document.path] = document.stamp
         for payload in payloads:
             self.observations[payload.path] = payload.admission.observation
+        mut selected_registry: Dict[str, str] = {}
+        if registry_path == "" or registry_identity == "" or rustc == "" or rustc_observation == "":
+            pass
+        else:
+            selected_registry = {
+                "path": registry_path,
+                "identity": registry_identity,
+                "compiler": f"{REGISTRY_COMPLETION}:{rustc}:{rustc_observation}",
+            }
+        if self.registry != selected_registry:
+            self.registry_catalog = ""
+            self.registry_stores = {}
+        self.registry = selected_registry
 
     def payload(self, path: Path) -> Result[Option[PayloadAdmission], str]:
         """Name a payload admitted with its installation without reopening the payload or producer record."""
@@ -54,6 +76,7 @@ model Selection:
                     observation=admission.observation,
                     provenance=admission.provenance,
                     facts=admission.facts,
+                    refusal=admission.refusal,
                 ),
             ),
         )
@@ -75,6 +98,17 @@ model Selection:
         """Add one subordinate immutable observation to this installation selection."""
         self.observations[path] = stamp
 
+    def cached_registry_store(self, catalog: str, entries: str) -> Option[bool]:
+        """Answer only after this process has derived the selected closure's stores from its sealed catalog."""
+        if self.registry_catalog != catalog:
+            return None
+        return Some(entries in self.registry_stores)
+
+    def admit_registry_stores(mut self, catalog: str, stores: list[str]) -> None:
+        """Retain one selected closure's stores after its sealed catalog has been decoded on first need."""
+        self.registry_catalog = catalog
+        self.registry_stores = {store: true for store in stores}
+
 
 static SELECTED: Selection = Selection()
 
@@ -84,14 +118,37 @@ pub def select(
     payloads: list[InstalledPayload],
     paths: list[str],
     stamps: list[str],
+    registry_path: str,
+    registry_identity: str,
+    rustc: str,
+    rustc_observation: str,
 ) -> None:
     """Install a single verified page's document projection for its ordinary readers."""
-    SELECTED.select(documents, payloads, paths, stamps)
+    SELECTED.select(documents, payloads, paths, stamps, registry_path, registry_identity, rustc, rustc_observation)
 
 
 pub def clear() -> None:
     """End the selection before re-admission so producers cannot accidentally read the preceding generation."""
-    SELECTED.select([], [], [], [])
+    SELECTED.select([], [], [], [], "", "", "", "")
+
+
+pub def registry_selection() -> tuple[str, str, str]:
+    """The selected toolchain closure and compiler generation, without reopening either installed input."""
+    return (
+        SELECTED.registry.get("path", ""),
+        SELECTED.registry.get("identity", ""),
+        SELECTED.registry.get("compiler", ""),
+    )
+
+
+pub def cached_registry_store(catalog: str, entries: str) -> Option[bool]:
+    """Whether `entries` was in the selected closure, if this process has already decoded that closure's catalog."""
+    return SELECTED.cached_registry_store(catalog, entries)
+
+
+pub def admit_registry_stores(catalog: str, stores: list[str]) -> None:
+    """Cache stores derived from the selected closure's sealed catalog, never from artifact paths or frames."""
+    SELECTED.admit_registry_stores(catalog, stores)
 
 
 pub def payload(path: Path) -> Result[Option[PayloadAdmission], str]:
