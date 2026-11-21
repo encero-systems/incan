@@ -605,9 +605,6 @@ impl TypeChecker {
         if let Some(source) = self.resolved_source_from_rust_carrier(&normalized) {
             return source;
         }
-        if let Some(frozen) = Self::frozen_scalar_from_rust_display(&normalized) {
-            return frozen;
-        }
         // Native scalar names are metadata vocabulary, independent of same-spelled source imports.
         if let Some(id) = numerics::from_str(&normalized)
             && numerics::as_str(id) == normalized
@@ -667,15 +664,6 @@ impl TypeChecker {
         self.transitive_pub_types
             .contains_key(key)
             .then(|| ResolvedType::Named(key.to_owned()))
-    }
-
-    /// The standard library's frozen text and bytes carriers, which a compiled Incan `str` or `bytes` constant has.
-    pub(in crate::typechecker) fn frozen_scalar_from_rust_display(normalized: &str) -> Option<ResolvedType> {
-        match normalized {
-            "incan_std_primitives::frozen::FrozenStr" => Some(ResolvedType::FrozenStr),
-            "incan_std_primitives::frozen::FrozenBytes" => Some(ResolvedType::FrozenBytes),
-            _ => None,
-        }
     }
 
     /// Resolve borrowed, structural and nominal Rust spellings after scalar and callable forms have been admitted.

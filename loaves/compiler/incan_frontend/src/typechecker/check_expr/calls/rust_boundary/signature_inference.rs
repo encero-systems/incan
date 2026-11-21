@@ -634,10 +634,7 @@ impl TypeChecker {
         if display == "str" || self.rust_alias_expansion(display, &[]).as_deref() == Some("str") {
             return ResolvedType::RustPath("str".into());
         }
-        // A compiled Incan library's frozen constants and source-named layouts keep their Incan types.
-        if let Some(frozen) = Self::frozen_scalar_from_rust_display(display) {
-            return frozen;
-        }
+        // A compiled Incan library's source-named layouts keep their Incan types.
         if let Some(source) = crate::typechecker::rust_signatures::compiled_layout_carrier_key(display)
             .and_then(|key| self.resolved_source_from_carrier_key(key))
         {
