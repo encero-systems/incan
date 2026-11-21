@@ -215,3 +215,90 @@ fn publish_record(directory: &str, inputs: &[String], encoded: &[u8]) -> Result<
     std::fs::write(&temporary, encoded).map_err(|error| format!("cannot write scalar cache {error}"))?;
     std::fs::rename(&temporary, &path).map_err(|error| format!("cannot replace scalar cache {error}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use incan_mir_plan_native::{Function, Local, PlanType, TerminatorKind, block, source_span, unit_nominals};
+
+    use super::{retain_scalar, retained_scalar, scalar_inputs, scalar_path};
+
+    /// A plan function returning unit, with one block that returns.
+    fn returning_unit(name: &str) -> Function {
+        let span = source_span("src/main.incn", 3, 1);
+        let locals = vec![Local {
+            ty: PlanType::Unit,
+            span: span.clone(),
+        }];
+        let blocks = vec![block(Vec::new(), TerminatorKind::Return, &span)];
+        Function::new(name.to_owned(), Vec::new(), PlanType::Unit, locals, blocks, span)
+    }
+
+    /// A fresh private product directory for one test.
+    fn product_directory(test: &str) -> String {
+        let directory = std::env::temp_dir().join(format!("incan-lowering-{test}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        directory.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn scalar_inputs_spell_the_reference_key() {
+        let inputs = scalar_inputs(
+            "sha256:ab",
+            "main",
+            &source_span("src/main.incn", 3, 1),
+            false,
+            "witness",
+        );
+        assert_eq!(
+            inputs,
+            [
+                "incan.scalar-function/9",
+                "sha256:ab",
+                "main",
+                "src/main.incn",
+                "3",
+                "1",
+                "false",
+                "witness"
+            ]
+        );
+    }
+
+    #[test]
+    fn retained_product_restores_what_was_retained() {
+        let directory = product_directory("restore");
+        let span = source_span("src/main.incn", 3, 1);
+        let inputs = scalar_inputs("sha256:ab", "main", &span, false, "witness");
+        let function = returning_unit("main");
+        let requests = vec![b"request".to_vec()];
+        retain_scalar(&directory, &inputs, &function, &[], &[], &[], &[], &requests).expect("retain");
+        let path = scalar_path(&directory, &inputs).expect("path");
+        assert!(path.is_file(), "the product is one file named by its inputs");
+        assert_eq!(
+            path.extension().and_then(|extension| extension.to_str()),
+            Some("incnfunction")
+        );
+        let unit = unit_nominals(Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let (restored, runtime, references, frames, encoded) =
+            retained_scalar(&directory, &inputs, &unit, Some(&span), &[]).expect("a retained product is reused");
+        assert_eq!(restored, function);
+        assert!(runtime.is_empty() && references.is_empty() && frames.is_empty());
+        assert_eq!(encoded, requests);
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn changed_inputs_and_damaged_products_are_misses() {
+        let directory = product_directory("miss");
+        let span = source_span("src/main.incn", 3, 1);
+        let inputs = scalar_inputs("sha256:ab", "main", &span, false, "witness");
+        retain_scalar(&directory, &inputs, &returning_unit("main"), &[], &[], &[], &[], &[]).expect("retain");
+        let unit = unit_nominals(Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let changed = scalar_inputs("sha256:ab", "main", &span, true, "witness");
+        assert!(retained_scalar(&directory, &changed, &unit, Some(&span), &[]).is_none());
+        let path = scalar_path(&directory, &inputs).expect("path");
+        std::fs::write(&path, b"not a product").expect("damage");
+        assert!(retained_scalar(&directory, &inputs, &unit, Some(&span), &[]).is_none());
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+}
