@@ -52,6 +52,7 @@ from apple_sdk import selected_sdk
 from std.environ import get_or
 from jec import begin, record
 from installation_codec import Installation
+from frozen_inputs import clear as clear_frozen_inputs
 from installation_page import (
     readmit as readmit_installation_page,
     recall as recall_installation,
@@ -80,6 +81,7 @@ pub def prepare_installation(directory: Path) -> Result[tuple[Toolchain, Install
 
 pub def finish_installation(directory: Path, admission: InstallationAdmission) -> Result[None, str]:
     """Bind the same verified generations at their final location and record completed installation admission."""
+    clear_frozen_inputs()
     for relative, payload in admission.payloads:
         relocate_payload(directory.joinpath(relative), payload)?
     for relative, fact in admission.facts:
@@ -88,7 +90,7 @@ pub def finish_installation(directory: Path, admission: InstallationAdmission) -
     toolchain, _ = parsed_toolchain(directory)?
     # The machine-local sysroot exists only after installation has selected and bound it.
     admit_compiler_facts(toolchain)?
-    retain_installation(directory, read_toolchain, Some((toolchain, generation)))?
+    readmit_installation_page(directory, read_toolchain, Some((toolchain, generation)))?
     retire_legacy_admission(directory)?
     return Ok(None)
 
@@ -309,13 +311,25 @@ def admit_registry(document: JsonValue, directory: Path) -> Result[list[Path], s
         return Ok([])
     mut paths: list[Path] = []
     externs = read_json(source)?.require("externs").map_err((error) => error.message())?
+    closure_root = source.parent()
+    physical_root = closure_root.resolve().map_err((error) => error.message())?
     for identity in externs.keys():
         native = externs.require(identity).map_err((error) => error.message())?
-        artifact = Path(located(source.parent(), required_text(native, "path")?))
+        declared = required_text(native, "path")?
+        artifact = Path(located(closure_root, declared))
         mut expected = ""
         if native.get("payload_digest") != None:
             expected = required_text(native, "payload_digest")?
         import_payload(artifact, identity, expected)?
+        # A compiler home links the installed registry. Published native dependencies can address the same
+        # admitted artifact through the installation while local builds address it through the compiler home.
+        if physical_root.0 != closure_root.0:
+            physical = Path(located(physical_root, declared))
+            if physical.0 != artifact.0:
+                selected = artifact.resolve().map_err((error) => error.message())?
+                candidate = physical.resolve().map_err((error) => error.message())?
+                if selected.0 == candidate.0:
+                    import_payload(physical, identity, expected)?
         paths.append(artifact)
     return Ok(paths)
 
@@ -377,6 +391,13 @@ def toolchain_of(document: JsonValue, directory: Path) -> Result[Toolchain, list
             registry_units=located(directory, text_field(document, "registry_units", [])?),
             codegraph_on_request=optional_flag(document, "codegraph_on_request")?,
             closure_anchors=optional_flag(document, "closure_anchors")?,
+            search_index_crumb=optional_flag(document, "search_index_crumb")?,
+            checked_body_counts_crumb=optional_flag(document, "checked_body_counts_crumb")?,
+            worker_protocol_crumb=optional_flag(document, "worker_protocol_crumb")?,
+            unit_descriptor_crumb=optional_flag(document, "unit_descriptor_crumb")?,
+            compiler_record_export_crumb=optional_flag(document, "compiler_record_export_crumb")?,
+            namespace_references=optional_flag(document, "namespace_references")?,
+            retain_checked_modules=optional_flag(document, "retain_checked_modules")?,
             console="",
             worker_generation="",
             native_closures=NativeClosureInput(),
@@ -397,7 +418,12 @@ def optional_compiler_records(document: JsonValue, directory: Path) -> Result[Op
             digest = text_field(value, "digest", ["compiler_records"])?
             if root == "" or digest == "":
                 return Err(["compiler_records"])
-            return Ok(Some(CompilerRecordPin(root=located(directory, root), digest=digest)))
+            mut top = ""
+            if value.get("directory") != None:
+                top = text_field(value, "directory", ["compiler_records"])?
+                if top == "":
+                    return Err(["compiler_records", "directory"])
+            return Ok(Some(CompilerRecordPin(root=located(directory, root), digest=digest, directory=top)))
 
 
 def optional_path(document: JsonValue, key: str, directory: Path) -> Result[str, list[str]]:

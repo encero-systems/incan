@@ -11,7 +11,7 @@ from frozen_inputs import Document
 from page_values import read_value, write_value
 from payload_types import InstalledPayload, PayloadAdmission
 
-pub const PROFILE: str = "incan.installation-page/21"
+pub const PROFILE: str = "incan.installation-page/31"
 
 
 pub model StandardManifest:
@@ -61,9 +61,10 @@ pub def encode(page: Installation) -> Result[bytes, str]:
 pub def decode(view: MappedView) -> Result[Installation, str]:
     """Refuse unknown versions, truncated or duplicate rows, malformed identities and trailing bytes."""
     mut reader = Reader(view=view)
-    if reader.text()? != PROFILE:
+    profile = reader.text()?
+    if profile not in [PROFILE, "incan.installation-page/30", "incan.installation-page/29", "incan.installation-page/28", "incan.installation-page/27", "incan.installation-page/26", "incan.installation-page/25", "incan.installation-page/24", "incan.installation-page/23", "incan.installation-page/22"]:
         return Err("unsupported installation page version")
-    toolchain = read_toolchain(reader)?
+    toolchain = read_toolchain(reader, profile)?
     mut manifests: list[StandardManifest] = []
     mut roots: set[str] = set()
     mut names: set[str] = set()
@@ -89,7 +90,7 @@ pub def decode(view: MappedView) -> Result[Installation, str]:
     mut payloads: list[InstalledPayload] = []
     mut payload_paths: set[str] = set()
     for _index in range(reader.count(56)?):
-        payload = read_payload(reader)?
+        payload = read_payload(reader, profile)?
         if payload.path in payload_paths or len(payload.admission.payload) != 64:
             return Err("installation page has duplicate payload paths or invalid digests")
         payload_paths.add(payload.path)
@@ -110,22 +111,18 @@ pub def decode(view: MappedView) -> Result[Installation, str]:
     )
 
 
-def read_payload(mut reader: Reader) -> Result[InstalledPayload, str]:
+def read_payload(mut reader: Reader, profile: str) -> Result[InstalledPayload, str]:
     """Read the producer identity and exact admitted payload generation without reconstructing publication JSON."""
-    return Ok(
-        InstalledPayload(
-            path=reader.text()?,
-            record=reader.text()?,
-            record_stamp=reader.text()?,
-            admission=PayloadAdmission(
-                identity=reader.text()?,
-                payload=reader.text()?,
-                observation=reader.text()?,
-                provenance=reader.texts()?,
-                facts=reader.text()?,
-            ),
-        ),
+    path = reader.text()?
+    record = reader.text()?
+    stamp = reader.text()?
+    mut proof = PayloadAdmission(
+        identity=reader.text()?, payload=reader.text()?, observation=reader.text()?, provenance=reader.texts()?,
+        facts=reader.text()?,
     )
+    if profile != "incan.installation-page/22":
+        proof.refusal = reader.text()?
+    return Ok(InstalledPayload(path=path, record=record, record_stamp=stamp, admission=proof))
 
 
 def write_payload(buffer: _BytesIO, payload: InstalledPayload) -> Result[None, str]:
@@ -141,10 +138,11 @@ def write_payload(buffer: _BytesIO, payload: InstalledPayload) -> Result[None, s
     ]:
         put_text(buffer, value)?
     put_texts(buffer, admission.provenance)?
-    return put_text(buffer, admission.facts)
+    put_text(buffer, admission.facts)?
+    return put_text(buffer, admission.refusal)
 
 
-def read_toolchain(mut reader: Reader) -> Result[InstalledCompiler, str]:
+def read_toolchain(mut reader: Reader, profile: str) -> Result[InstalledCompiler, str]:
     """Read installed compiler fields without reconstructing the description's JSON tree."""
     driver = reader.text()?
     sysroot = reader.text()?
@@ -152,30 +150,43 @@ def read_toolchain(mut reader: Reader) -> Result[InstalledCompiler, str]:
     mut externs: list[NativeCrate] = []
     for _index in range(reader.count(16)?):
         externs.append(NativeCrate(name=reader.text()?, path=reader.text()?, identity=reader.text()?))
-    return Ok(
-        InstalledCompiler(
-            driver=driver,
-            sysroot=sysroot,
-            rust_abi=abi,
-            externs=externs,
-            search=reader.texts()?,
-            registry_units=reader.text()?,
-            registry_units_identity=reader.text()?,
-            codegraph_on_request=reader.count(1)? == 1,
-            closure_anchors=reader.count(1)? == 1,
-            registry_lock=reader.text()?,
-            c_compiler=reader.text()?,
-            target=reader.text()?,
-            rust_version=reader.text()?,
-            default_deployment_target=reader.text()?,
-            default_sdk_identity=reader.text()?,
-            rustc_observation=reader.text()?,
-            default_trusted_publishers=reader.texts()?,
-            compiler_records=read_compiler_record_pin(reader)?,
-            compiler_facts=reader.texts()?,
-            driver_observation=reader.text()?,
-        ),
+    mut toolchain = InstalledCompiler(
+        driver=driver,
+        sysroot=sysroot,
+        rust_abi=abi,
+        externs=externs,
+        search=reader.texts()?,
+        registry_units=reader.text()?,
+        registry_units_identity=reader.text()?,
+        codegraph_on_request=reader.count(1)? == 1,
+        closure_anchors=reader.count(1)? == 1,
+        registry_lock=reader.text()?,
+        c_compiler=reader.text()?,
+        target=reader.text()?,
+        rust_version=reader.text()?,
+        default_deployment_target=reader.text()?,
+        default_sdk_identity=reader.text()?,
+        rustc_observation=reader.text()?,
+        default_trusted_publishers=reader.texts()?,
+        compiler_records=read_compiler_record_pin(reader, profile)?,
+        compiler_facts=reader.texts()?,
+        driver_observation=reader.text()?,
     )
+    if profile in [PROFILE, "incan.installation-page/30", "incan.installation-page/29", "incan.installation-page/28", "incan.installation-page/27", "incan.installation-page/26", "incan.installation-page/25", "incan.installation-page/24"]:
+        toolchain.search_index_crumb = reader.count(1)? == 1
+    if profile in [PROFILE, "incan.installation-page/30", "incan.installation-page/29", "incan.installation-page/28", "incan.installation-page/27", "incan.installation-page/26"]:
+        toolchain.checked_body_counts_crumb = reader.count(1)? == 1
+    if profile in [PROFILE, "incan.installation-page/30", "incan.installation-page/29", "incan.installation-page/28", "incan.installation-page/27"]:
+        toolchain.worker_protocol_crumb = reader.count(1)? == 1
+    if profile in [PROFILE, "incan.installation-page/30", "incan.installation-page/29", "incan.installation-page/28"]:
+        toolchain.unit_descriptor_crumb = reader.count(1)? == 1
+    if profile in [PROFILE, "incan.installation-page/30", "incan.installation-page/29"]:
+        toolchain.compiler_record_export_crumb = reader.count(1)? == 1
+    if profile in [PROFILE, "incan.installation-page/30"]:
+        toolchain.namespace_references = reader.count(1)? == 1
+    if profile == PROFILE:
+        toolchain.retain_checked_modules = reader.count(1)? == 1
+    return Ok(toolchain)
 
 
 def write_toolchain(buffer: _BytesIO, toolchain: InstalledCompiler) -> Result[None, str]:
@@ -213,17 +224,50 @@ def write_toolchain(buffer: _BytesIO, toolchain: InstalledCompiler) -> Result[No
             put_number(buffer, 1)?
             put_text(buffer, pin.root)?
             put_text(buffer, pin.digest)?
+            put_text(buffer, pin.directory)?
     put_texts(buffer, toolchain.compiler_facts)?
-    return put_text(buffer, toolchain.driver_observation)
+    put_text(buffer, toolchain.driver_observation)?
+    if toolchain.search_index_crumb:
+        put_number(buffer, 1)?
+    else:
+        put_number(buffer, 0)?
+    if toolchain.checked_body_counts_crumb:
+        put_number(buffer, 1)?
+    else:
+        put_number(buffer, 0)?
+    if toolchain.worker_protocol_crumb:
+        put_number(buffer, 1)?
+    else:
+        put_number(buffer, 0)?
+    if toolchain.unit_descriptor_crumb:
+        put_number(buffer, 1)?
+    else:
+        put_number(buffer, 0)?
+    if toolchain.compiler_record_export_crumb:
+        put_number(buffer, 1)?
+    else:
+        put_number(buffer, 0)?
+    if toolchain.namespace_references:
+        put_number(buffer, 1)?
+    else:
+        put_number(buffer, 0)?
+    if toolchain.retain_checked_modules:
+        return put_number(buffer, 1)
+    return put_number(buffer, 0)
 
 
-def read_compiler_record_pin(mut reader: Reader) -> Result[Option[CompilerRecordPin], str]:
+def read_compiler_record_pin(mut reader: Reader, profile: str) -> Result[Option[CompilerRecordPin], str]:
     """Read the optional installed record authority; any non-Boolean discriminator is malformed."""
     present = reader.count(1)?
     if present == 0:
         return Ok(None)
+    if present != 1:
+        return Err("installation page has an invalid compiler-record discriminator")
     root = reader.text()?
     digest = reader.text()?
     if root == "" or len(digest) != 64:
         return Err("installation page has an invalid compiler-record pin")
-    return Ok(Some(CompilerRecordPin(root=root, digest=digest)))
+    mut directory = ""
+    if profile in [PROFILE, "incan.installation-page/30", "incan.installation-page/29", "incan.installation-page/28", "incan.installation-page/27", "incan.installation-page/26", "incan.installation-page/25"]:
+        directory = reader.text()?
+    return Ok(Some(CompilerRecordPin(root=root, digest=digest, directory=directory)))

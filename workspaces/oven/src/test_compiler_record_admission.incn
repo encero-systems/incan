@@ -4,8 +4,14 @@ from std.encoding.hex import hexlify
 from std.fs import Path
 from std.hash import file_digest, sha256
 from std.json import JsonValue
+from pub::internal_models.compiler_contributors import CompilerContributors, decode_compiler_contributors, encode_compiler_contributors
+from pub::internal_models.compiler_export import CompilerExportMember, decode_compiler_export, encode_compiler_export
 from scratch import scratch_directory
-from compiler_record_admission import SHIPPED_RECORDS, convert, installed_records
+from compiler_record_admission import CompilerRecordPin, SHIPPED_RECORDS, compiler_record_profile, convert, installed_records
+from pub::incan_platform.store import begin, commit, stage_put
+from sealed_set import Record, SetSpec, export_set, verify
+from store_path_conversion import snapshot
+from pub::incan_worker_host.record_directory import directory_member_key, read_directory
 
 
 pub def test_shipped_compiler_records_are_admitted_without_running_a_compiler() -> Result[None, str]:
@@ -16,6 +22,7 @@ pub def test_shipped_compiler_records_are_admitted_without_running_a_compiler() 
     2. Convert with a driver file that is not executable: only admission may happen.
     3. The sealed set and its pin exist.
     """
+    verify_contributor_crumb()?
     scratch = scratch_directory()?
     installed = scratch.path().joinpath("toolchain")
     # 1. and 2. One content-named object, the index that names it, and a driver that would fail to run.
@@ -23,6 +30,18 @@ pub def test_shipped_compiler_records_are_admitted_without_running_a_compiler() 
     pin = convert(driver.0, installed, installed)?
     # 3. Admission published the set the pin names.
     assert pin.root == "compiler-records", "the pin names the installed set"
+    assert pin.directory != "", "the installed pin names its authenticated selector"
+    directory = installed.joinpath(pin.root).joinpath("selection").0
+    key_hash = hexlify(sha256.digest(b"shipped record"))
+    prefix = "loaf/debug/probe/metadata/"
+    selected = read_directory(directory, pin.directory, pin.digest, prefix + key_hash + "/", 1)?
+    assert len(selected.members) == 1
+    assert selected.members[0].key == prefix + "00000000/" + key_hash
+    assert selected.members[0].revision == key_hash
+    absent = read_directory(directory, pin.directory, pin.digest, prefix + hexlify(sha256.digest(b"absent")) + "/", 1)?
+    assert len(absent.members) == 0
+    assert read_directory(directory, pin.directory, hexlify(sha256.digest(b"wrong root")), prefix, 1).is_err()
+
     assert installed.joinpath("compiler-records").joinpath("manifest.json").is_file(), "the set is published"
     return Ok(None)
 
@@ -46,6 +65,123 @@ pub def test_a_shipped_sealed_set_installs_without_converting_or_copying() -> Re
     # 3. Nothing was converted, copied or rewritten.
     assert pin.digest == sealed.digest, "the shipped pin is kept"
     assert sealed_inventory(installed)? == before, "admission wrote no object"
+    missing = CompilerRecordPin(root="missing-transport", digest=sealed.digest, directory=sealed.directory)
+    match installed_records(driver.0, installed, Some(missing)):
+        Ok(_) => return Err("a pinned incomplete compiler directory was re-created")
+        Err(reason) => assert reason == "missing sealed manifest for the shipped compiler directory"
+    assert read_directory(installed.0, "malformed.page", sealed.digest, "", 1).is_err()
+    legacy = installed_records(driver.0, installed, Some(CompilerRecordPin(root=sealed.root, digest=sealed.digest)))?
+    assert legacy.directory == "", "earlier pins without an index still admit their exact sealed transport"
+    top = sealed.directory.split(":")
+    assert len(top) == 4
+    wrong_root = ":".join(top[:3] + [hexlify(sha256.digest(b"wrong root"))])
+    bad = CompilerRecordPin(root=sealed.root, digest=sealed.digest, directory=wrong_root)
+    assert installed_records(driver.0, installed, Some(bad)).is_err(), "a changed root digest cannot authenticate the page"
+    index = installed.joinpath(sealed.root).joinpath("selection")
+    mut changed = begin(snapshot(index).map_err((error) => error.message())?)
+    other = hexlify(sha256.digest(b"extra member"))
+    stage_put(changed, sealed.digest + "\tloaf/debug/probe/metadata/" + other + "/00000001/" + other, b"")
+    extra = commit(changed).map_err((error) => error.message())?
+    swapped = CompilerRecordPin(root=sealed.root, digest=sealed.digest, directory=extra.index)
+    assert installed_records(driver.0, installed, Some(swapped)).is_err(), "even a valid root must have the complete sealed membership"
+    return Ok(None)
+
+
+pub def test_paged_compiler_admission_checks_origin_producer_and_content_revision_before_publication() -> Result[None, str]:
+    """A general transport can be sound while its origin, producer or value identity differs from the compiler contract."""
+    scratch = scratch_directory()?
+    installation = scratch.path().joinpath("installed")
+    driver = ship_one_record(installation)?
+    expected_producer = hexlify(file_digest(driver, "sha256").map_err((error) => error.message())?)
+    value = b"actual bytes"
+    actual = hexlify(sha256.digest(value))
+    other = hexlify(sha256.digest(b"wrong identity"))
+    key = "loaf/debug/probe/metadata/00000000/" + actual
+    mut staged = begin(snapshot(scratch.path().joinpath("source")).map_err((error) => error.message())?)
+    stage_put(staged, key, value)
+    source = commit(staged).map_err((error) => error.message())?
+    store = installation.joinpath("compiler-record-store")
+    before = snapshot(store).map_err((error) => error.message())?.generation
+    for field in ["origin", "producer", "revision"]:
+        mut origin = "installed-toolchain"
+        mut producer = expected_producer
+        mut revision = actual
+        mut reason = "sealed record revision differs from its value digest"
+        if field == "origin":
+            origin = "different origin"
+            reason = "sealed record origin differs from the selected origin"
+        elif field == "producer":
+            producer = other
+            reason = "sealed record producer differs from the selected producer"
+        else:
+            revision = other
+        spec = SetSpec(
+            profile=compiler_record_profile(), origin=origin, producer=producer, receipt="fixture",
+            records=[Record(key=key, revision=revision, payloads=[], references=[])], namespaces=[], dependencies=[],
+        )
+        transport = installation.joinpath(field)
+        seal = export_set(source, spec, transport).map_err((error) => error.message())?
+        _ = verify(transport, seal, spec.profile).map_err((error) => error.message())?
+        mut index = begin(snapshot(transport.joinpath("selection")).map_err((error) => error.message())?)
+        stage_put(index, "@" + seal, b"")
+        stage_put(index, directory_member_key(seal, key, revision)?, b"")
+        top = commit(index).map_err((error) => error.message())?.index
+        selected = CompilerRecordPin(root=field, digest=seal, directory=top)
+        match installed_records(driver.0, installation, Some(selected)):
+            Ok(_) => return Err("admitted a compiler transport with a different " + field)
+            Err(detail) => assert reason in detail, detail
+        assert snapshot(store).map_err((error) => error.message())?.generation == before
+    return Ok(None)
+
+
+pub def test_one_directory_proof_checks_only_the_pages_selected_by_the_facet() -> Result[None, str]:
+    """A real multi-page index proves one named record while leaving unrelated pages unopened."""
+    scratch = scratch_directory()?
+    directory = scratch.path().joinpath("directory")
+    seal = hexlify(sha256.digest(directory.0.encode("utf-8")))
+    mut staged = begin(snapshot(directory).map_err((error) => error.message())?)
+    stage_put(staged, "@" + seal, b"")
+    group = "loaf/debug/probe/metadata/"
+    mut chosen = ""
+    for ordinal in range(320):
+        digest = hexlify(sha256.digest(str(ordinal).encode("utf-8")))
+        key = group + "00000000/" + digest
+        stage_put(staged, directory_member_key(seal, key, digest)?, b"")
+        if ordinal == 100:
+            chosen = digest
+    root = commit(staged).map_err((error) => error.message())?.index
+    one = read_directory(directory.0, root, seal, group + chosen + "/", 1)?
+    assert len(one.members) == 1 and one.members[0].revision == chosen
+    assert one.checked_bytes > 0, "a fresh root must authenticate the pages on its first selection"
+    rest = read_directory(directory.0, root, seal, group, 0)?
+    assert len(rest.members) == 320
+    assert rest.checked_bytes > one.checked_bytes, "the unrelated remaining pages carry more bytes than the selected path"
+    return Ok(None)
+
+
+pub def test_typed_and_predecessor_compiler_indexes_seal_the_identical_membership() -> Result[None, str]:
+    scratch = scratch_directory()?
+    before = scratch.path().joinpath("legacy")
+    current = scratch.path().joinpath("current")
+    predecessor = ship_one_record(before)?
+    driver = ship_one_record(current)?
+    old_pin = convert(predecessor.0, before, before)?
+    revision = hexlify(sha256.digest(b"shipped record"))
+    member = CompilerExportMember(key=f"loaf/debug/probe/metadata/00000000/{revision}", revision=revision)
+    frame = encode_compiler_export([member])?
+    assert frame[:4] == b"CRMB" and decode_compiler_export(frame)? == [member], "typed member round trip"
+    assert encode_compiler_export([member, member]).is_err(), "duplicate key accepted"
+    bad = CompilerExportMember(key="key", revision="not sha256")
+    assert encode_compiler_export([bad]).is_err(), "bad revision accepted"
+    index = current.joinpath(SHIPPED_RECORDS).joinpath("index.crumb")
+    index.write_bytes(frame[:16]).map_err((error) => error.message())?
+    assert convert(driver.0, current, current, true).is_err(), "corrupt typed index fell back to legacy"
+    index.write_bytes(frame).map_err((error) => error.message())?
+    pin = convert(driver.0, current, current, true)?
+    assert old_pin.digest == pin.digest, f"sealed roots differ: {old_pin.digest} and {pin.digest}"
+    directory = current.joinpath(pin.root).joinpath("selection").0
+    found = read_directory(directory, pin.directory, pin.digest, f"loaf/debug/probe/metadata/{revision}/", 1)?
+    assert len(found.members) == 1 and found.members[0].key == member.key and found.members[0].revision == revision, f"directory read {len(found.members)} members"
     return Ok(None)
 
 
@@ -92,3 +228,17 @@ def inventory(directory: Path, prefix: str) -> Result[list[str], str]:
             digest = hexlify(file_digest(entry, "sha256").map_err((error) => error.message())?)
             entries.append(f"{name} {digest}")
     return Ok(sorted(entries))
+
+
+def verify_contributor_crumb() -> Result[None, str]:
+    """Restore the exact selected vocabulary and negative operations fact, and refuse malformed contributor sets."""
+    facts = CompilerContributors(profile="release", scope=hexlify(sha256.digest(b"one\ntwo")), vocabulary=["one"])
+    encoded = encode_compiler_contributors(facts)?
+    selected = decode_compiler_contributors(encoded)?
+    assert selected.profile == facts.profile and selected.scope == facts.scope
+    assert selected.vocabulary == facts.vocabulary and selected.operations == facts.operations
+    assert decode_compiler_contributors(b"altered").is_err()
+    mut duplicate = facts
+    duplicate.operations = ["two", "two"]
+    assert encode_compiler_contributors(duplicate).is_err()
+    return Ok(None)
