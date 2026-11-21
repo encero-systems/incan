@@ -34,7 +34,10 @@ pub(super) fn read(path: &Path) -> Result<(Arc<LibraryManifest>, String), String
     if let (Some(state), Some(compiler), Some(cache)) = (state, compiler, cache.as_deref())
         && fs::metadata(path).ok().and_then(|metadata| generation(&metadata)) == Some(state)
     {
-        let _ = store(cache, &canonical, state, compiler, &manifest, &digest);
+        // Publication is optional; a refused record leaves the next request on the JSON path, so say why.
+        if let Err(error) = store(cache, &canonical, state, compiler, &manifest, &digest) {
+            tracing::debug!(target: "incan::invocation", %error, path = %path.display(), "decoded facts cache store refused");
+        }
     }
     Ok((Arc::new(manifest), digest))
 }
