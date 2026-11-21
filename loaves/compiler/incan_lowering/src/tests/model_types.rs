@@ -3,17 +3,21 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use incan_mir_plan_native::PlanType;
+use incan_mir_plan_native::{Carrier, EnumDeclaration, ListLeaf, PlanType};
 use incan_semantics_core::body_ir::{
-    NewtypeDeserialize, NewtypeStringConversion, NominalDeclaration, nominal_carrier_key,
+    BodyIrModule, NewtypeDeserialize, NewtypeStringConversion, NominalDeclaration, native_enum_declaration,
+    nominal_carrier_key,
 };
 use incan_semantics_core::{
     CanonicalSymbolId, CompilerNodeId, HirSourceSpan, IncanType, SemanticSourceTargetKind, SymbolNamespace,
-    SymbolOrigin,
+    SymbolOrigin, generic,
 };
+
+use incan_semantics_core::semantic_digest::{enum_layout_witness, model_layout_witness};
 
 use crate::models::model_type;
 use crate::native_type_identity::constructor_index;
+use crate::options::retain_carrier;
 use crate::symbols::model_symbol;
 
 fn identity(name: &str) -> CanonicalSymbolId {
@@ -144,5 +148,85 @@ fn model_type_refuses_unauthenticated_or_ambiguous_nominal_owners() -> Result<()
         nominal(identity("OtherLegacyPacket"), "LegacyPacket", &[]),
     ];
     assert!(resolved(&legacy_duplicate, "LegacyPacket").is_err());
+    Ok(())
+}
+
+/// Retain `Option[List[model]]` only through the same exact imported carrier authority scalar layouts use.
+#[test]
+fn nested_option_list_retains_exact_imported_model_carrier() -> Result<(), String> {
+    let owner = imported_identity("CanonicalSymbolId");
+    let carrier = carrier_key(&owner)?;
+    let ty = generic(
+        "Option".into(),
+        vec![generic("List".into(), vec![IncanType::Named(carrier.clone())])],
+    );
+    let mut module = BodyIrModule::declarations_only("app".into());
+    module.nominal_declarations = vec![nominal(owner.clone(), "CanonicalSymbolId", &[(&carrier, &owner)])];
+    let constructors = constructor_index(&module.nominal_declarations);
+    let mut intrinsics: Vec<EnumDeclaration> = Vec::new();
+    retain_carrier(&constructors, &module, &mut intrinsics, &ty, "src/main.incn")?;
+    assert_eq!(intrinsics.len(), 1);
+    assert!(intrinsics[0].carrier == Carrier::Option);
+    assert!(intrinsics[0].variants[0].fields.is_empty());
+    let model = ListLeaf::Model(0, model_symbol("CanonicalSymbolId"));
+    assert!(intrinsics[0].variants[1].fields == vec![PlanType::List(model, 1)]);
+    let mut rejected = BodyIrModule::declarations_only("app".into());
+    rejected.nominal_declarations = vec![nominal(owner, "CanonicalSymbolId", &[])];
+    let rejected_index = constructor_index(&rejected.nominal_declarations);
+    let mut rejected_intrinsics: Vec<EnumDeclaration> = Vec::new();
+    assert!(
+        retain_carrier(
+            &rejected_index,
+            &rejected,
+            &mut rejected_intrinsics,
+            &ty,
+            "src/main.incn"
+        )
+        .is_err()
+    );
+    assert!(rejected_intrinsics.is_empty());
+    Ok(())
+}
+
+/// Nested specializations survive a rebound source carrier; meaningful changes to arguments or fields still miss.
+#[test]
+fn stored_layout_identity_follows_nested_arguments_across_a_source_move() -> Result<(), String> {
+    let owner = identity("Wrapper");
+    let first = imported_identity("Packet");
+    let mut second = imported_identity("Packet");
+    second.declaration_span = HirSourceSpan::new(27, 44);
+    let (first_key, second_key) = (carrier_key(&first)?, carrier_key(&second)?);
+    let mut before = nominal(owner.clone(), "generated_before", &[(&first_key, &first)]);
+    let mut after = nominal(owner, "generated_after", &[(&second_key, &second)]);
+    before.native_type_arguments = vec![generic("Option".into(), vec![IncanType::Named(first_key)])];
+    after.native_type_arguments = vec![generic("Option".into(), vec![IncanType::Named(second_key)])];
+    after.direct_declaration_id = CompilerNodeId::declaration_span("app", 27, 44);
+    let witness = |model: &NominalDeclaration| model_layout_witness(model).map_err(|error| error.to_string());
+    let same = witness(&after)?;
+    assert!(witness(&before)? == same);
+    after.derives = vec!["Clone".into()];
+    let changed = witness(&after)?;
+    assert!(changed.0 == same.0 && changed.1 != same.1);
+    after.native_type_arguments = vec![generic(
+        "Option".into(),
+        vec![IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Str)],
+    )];
+    assert!(witness(&after)?.0 != same.0);
+    Ok(())
+}
+
+/// A changed variant payload changes the version of the same closed enum specialization.
+#[test]
+fn native_enum_layout_authenticates_its_variant_payload() -> Result<(), String> {
+    let payload = |name: &str| vec![("Some".to_owned(), vec![IncanType::Named(name.into())])];
+    let Some(before) = native_enum_declaration("std::option::Option", Vec::new(), payload("X")) else {
+        return Err("native enum fixture could not be constructed".into());
+    };
+    let Some(after) = native_enum_declaration("std::option::Option", Vec::new(), payload("Y")) else {
+        return Err("changed native enum fixture could not be constructed".into());
+    };
+    let a = enum_layout_witness(&before).map_err(|error| error.to_string())?;
+    let b = enum_layout_witness(&after).map_err(|error| error.to_string())?;
+    assert!(a.0 == b.0 && a.1 != b.1);
     Ok(())
 }
