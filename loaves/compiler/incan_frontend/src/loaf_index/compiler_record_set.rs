@@ -25,18 +25,21 @@ use crate::library_manifest::{
 use super::LoafIndexError;
 use super::lazy_entry::Summary;
 use crate::api_metadata::ApiDocumentation;
+use crate::library_manifest::executable_ranges::{HEAD, RANGE, record_key};
 use crate::library_manifest::executable_surface::ExecutableSurface;
 use incan_semantics_core::body_ir::RuntimeCallableBinding;
 
 mod declaration_records;
+mod directory;
+pub use directory::install_directory_reader;
 mod inventory;
 mod runtime_bindings;
 #[cfg(test)]
 mod thread_selection;
 use declaration_records::NAMED_FAMILIES;
 pub(super) use declaration_records::{names_record, read_declaration};
-pub(super) use inventory::summary;
 use inventory::{Metadata, read_summary};
+pub(super) use inventory::{admit_capabilities, summary};
 pub(super) use runtime_bindings::read_runtime_bindings;
 
 /// The record family holding a Loaf's checked API documentation, which compiles never open (RFC 179).
@@ -48,6 +51,7 @@ const PUBLIC_IDENTITIES: &str = "public-identities";
 const RUNTIME_BINDINGS: &str = "runtime-bindings";
 const ROOT_ENV: &str = "INCAN_COMPILER_RECORD_ROOT";
 const DIGEST_ENV: &str = "INCAN_COMPILER_RECORD_DIGEST";
+const DIRECTORY_ENV: &str = "INCAN_COMPILER_RECORD_DIRECTORY";
 const SET_FORMAT: &str = "incan.sealed-set/2";
 const RECORD_PROFILE: &str = "incan.compiler-records/2";
 const RECORD_CODEC: &str = "incan.compiler-record-value/1";
@@ -61,10 +65,13 @@ pub(super) fn configured() -> bool {
     if thread_selection::selected().is_some() {
         return true;
     }
-    std::env::var_os(ROOT_ENV).is_some() || std::env::var_os(DIGEST_ENV).is_some()
+    [ROOT_ENV, DIGEST_ENV, DIRECTORY_ENV]
+        .iter()
+        .any(|key| std::env::var_os(key).is_some())
 }
 
 /// One compiler-record membership from the pinned sealed-set manifest.
+#[derive(Clone)]
 struct RecordEntry {
     key: String,
     revision: String,
@@ -75,6 +82,9 @@ struct RecordEntry {
 struct RecordSet {
     root: PathBuf,
     entries: Vec<RecordEntry>,
+    directory: Option<(String, String)>,
+    /// Authenticated values for demanded executable range heads and memberships.
+    range_values: Mutex<BTreeMap<String, Vec<u8>>>,
     /// Records this process has read from the payload directory.
     records_read: AtomicUsize,
     /// Payload bytes this process has read from the payload directory.
@@ -83,8 +93,15 @@ struct RecordSet {
     admitted: Mutex<BTreeMap<(String, Projection), AdmittedGroup>>,
     /// Inventory summaries this process already read and authenticated, by metadata key prefix.
     summaries: Mutex<BTreeMap<String, Summary>>,
+    /// Profiles whose global contributor inventory was checked, including older installations without one.
+    capability_profiles:
+        Mutex<BTreeMap<String, BTreeMap<String, crate::library_manifest::capabilities::Contributions>>>,
+    /// Parser registrations already authenticated under this installed set and Loaf profile.
+    vocabularies: Mutex<BTreeMap<String, (Arc<VocabExports>, String)>>,
     /// Executable surfaces this process already read and authenticated, by package prefix.
     surfaces: Mutex<BTreeMap<String, (Arc<ExecutableSurface>, String)>>,
+    /// A successful exact declaration read already proves that its family exists in this immutable set.
+    present_named_families: Mutex<BTreeSet<String>>,
     /// Runtime callable bindings this process already read, by record key prefix.
     bindings: Mutex<BTreeMap<String, (Arc<Vec<RuntimeCallableBinding>>, String)>>,
 }
@@ -117,8 +134,10 @@ enum Projection {
 impl Projection {
     /// Whether records of `family` belong to this projection.
     fn admits(self, family: &str) -> bool {
-        let surface = matches!(family, EXECUTABLE_DESCRIPTOR | PUBLIC_IDENTITIES | RUNTIME_BINDINGS)
-            || NAMED_FAMILIES.contains(&family);
+        let surface = matches!(
+            family,
+            EXECUTABLE_DESCRIPTOR | PUBLIC_IDENTITIES | RUNTIME_BINDINGS | HEAD | RANGE
+        ) || NAMED_FAMILIES.contains(&family);
         match self {
             Self::Complete => family != DOCUMENTATION && !surface,
             Self::Execution => matches!(
@@ -142,14 +161,20 @@ impl Projection {
 
 impl RecordSet {
     /// An installed set whose receipt the caller authenticated, before any payload is read.
-    fn new(root: PathBuf, entries: Vec<RecordEntry>) -> Self {
+    fn new(root: PathBuf, mut entries: Vec<RecordEntry>) -> Self {
+        entries.sort_unstable_by(|a, b| a.key.cmp(&b.key));
         Self {
+            range_values: Mutex::default(),
+            present_named_families: Mutex::default(),
+            directory: None,
             root,
             entries,
             records_read: AtomicUsize::new(0),
             bytes_read: AtomicUsize::new(0),
             admitted: Mutex::new(BTreeMap::new()),
             summaries: Mutex::new(BTreeMap::new()),
+            capability_profiles: Mutex::default(),
+            vocabularies: Mutex::new(BTreeMap::new()),
             surfaces: Mutex::new(BTreeMap::new()),
             bindings: Mutex::new(BTreeMap::new()),
         }
@@ -188,9 +213,56 @@ impl RecordSet {
         self.bytes_read.fetch_add(bytes, Ordering::Relaxed);
         #[cfg(test)]
         thread_selection::note_read(key);
-        #[cfg(not(test))]
-        let _ = key;
+        tracing::trace!(
+            target: "incan::invocation",
+            phase = "record_read",
+            record = key,
+            bytes
+        );
     }
+}
+
+/// Select an exact range fact by binary search over the authenticated directory. Old pins have no range head.
+pub(super) fn range_value<T: DeserializeOwned>(
+    dir: &Path,
+    name: &str,
+    family: &str,
+    member: &str,
+) -> Result<Option<T>, LoafIndexError> {
+    let Some(set) = installed().map_err(|reason| unreadable(dir, name, reason))? else {
+        return Ok(None);
+    };
+    let profile = dir
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| unreadable(dir, name, "Loaf profile is not UTF-8".into()))?;
+    let key = format!("loaf/{profile}/{name}/{}", record_key(family, member));
+    let prefix = format!("loaf/{profile}/{name}/{family}/");
+    let hash = format!("{:x}", Sha256::digest(member.as_bytes()));
+    let rows = set
+        .members(&prefix, Some(&hash), 0)
+        .map_err(|reason| unreadable(dir, name, reason))?;
+    let fail = |reason| unreadable(dir, name, record_failure(&key, reason));
+    let Some(entry) = rows.first() else { return Ok(None) };
+    if rows.len() != 1 || entry.key != key {
+        return Err(fail("ambiguous or invalid installed executable member".into()));
+    }
+    if entry.revision != entry.value {
+        return Err(fail("distinct revision and content identities".into()));
+    }
+    let mut cached = set.range_values.lock().unwrap_or_else(PoisonError::into_inner);
+    let bytes = match cached.entry(key.clone()) {
+        std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+        std::collections::btree_map::Entry::Vacant(slot) => {
+            validate_payload_directory(&set.root).map_err(fail)?;
+            let bytes = open_value(&set.root, &entry.value).map_err(fail)?;
+            set.count_read(&key, bytes.len());
+            slot.insert(bytes)
+        }
+    };
+    Ok(Some(
+        LibraryManifest::decode_compiler_record_value(bytes).map_err(|error| fail(error.to_string()))?,
+    ))
 }
 
 /// Read one installed standard/runtime Loaf through its independently addressed records.
@@ -236,12 +308,14 @@ fn read_surface_in(
     if let Some(found) = set.surfaces.lock().unwrap_or_else(PoisonError::into_inner).get(&prefix) {
         return Ok(Some(found.clone()));
     }
-    let entries = set
-        .entries
-        .iter()
-        .filter(|entry| entry.key.starts_with(&prefix))
-        .collect::<Vec<_>>();
-    let selected = select_records(entries, &prefix, dir, name)?
+    let mut entries = Vec::new();
+    for family in ["metadata", EXECUTABLE_DESCRIPTOR, PUBLIC_IDENTITIES] {
+        entries.extend(
+            set.members(&format!("{prefix}{family}/"), None, 0)
+                .map_err(|reason| unreadable(dir, name, reason))?,
+        );
+    }
+    let selected = select_records(entries.iter().collect(), &prefix, dir, name)?
         .into_iter()
         .filter(|(family, _, _)| matches!(*family, "metadata" | EXECUTABLE_DESCRIPTOR | PUBLIC_IDENTITIES))
         .collect::<Vec<_>>();
@@ -337,15 +411,13 @@ fn read_group(
             loaf = name
         )
         .entered();
-        set.entries
-            .iter()
-            .filter(|entry| entry.key.starts_with(&prefix))
-            .collect::<Vec<_>>()
+        set.members(&prefix, None, 0)
+            .map_err(|reason| unreadable(dir, name, reason))?
     };
     if entries.is_empty() {
         return Ok(None);
     }
-    let selected = select_records(entries, &prefix, dir, name)?
+    let selected = select_records(entries.iter().collect(), &prefix, dir, name)?
         .into_iter()
         .filter(|(family, _, _)| projection.admits(family))
         .collect::<Vec<_>>();
@@ -598,7 +670,7 @@ fn load_installed() -> Result<Option<RecordSet>, String> {
     )
     .entered();
     let (root, digest) = match (std::env::var_os(ROOT_ENV), std::env::var_os(DIGEST_ENV)) {
-        (None, None) => return Ok(None),
+        (None, None) if std::env::var_os(DIRECTORY_ENV).is_none() => return Ok(None),
         (Some(root), Some(digest)) => (root, digest),
         _ => return Err("compiler-record root and digest must be supplied together".to_owned()),
     };
@@ -607,11 +679,23 @@ fn load_installed() -> Result<Option<RecordSet>, String> {
         .into_string()
         .map_err(|_| "compiler-record digest is not UTF-8".to_owned())?;
     valid_digest(&digest)?;
+    if let Some(top) = std::env::var_os(DIRECTORY_ENV) {
+        let top = top
+            .into_string()
+            .map_err(|_| "non-UTF-8 compiler directory root".to_owned())?;
+        if top.is_empty() {
+            return Err("empty compiler directory root".into());
+        }
+        let mut set = RecordSet::new(root, Vec::new());
+        set.directory = Some((digest, top));
+        return Ok(Some(set));
+    }
     let path = root.join("manifest.json");
     let bytes = fs::read(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     if !digest_matches(&bytes, &digest) {
         return Err("compiler-record manifest differs from the installed toolchain pin".to_owned());
     }
+    tracing::trace!(target: "incan::invocation", phase = "record_directory_read", digest = %digest, bytes = bytes.len());
     let document: Value =
         serde_json::from_slice(&bytes).map_err(|error| format!("invalid compiler-record set: {error}"))?;
     let fields = array(&document, 10, "compiler-record set")?;
@@ -659,6 +743,66 @@ fn digest_matches(bytes: &[u8], expected: &str) -> bool {
             };
             decode(encoded[0]) << 4 | decode(encoded[1]) == byte
         })
+}
+
+/// The parser needs the complete vocabulary registration of an admitted contributor, independently of the
+/// contributor's type-checking contracts. Older or external stores still provide their complete validated manifest.
+pub(super) fn read_vocabulary(dir: &Path, name: &str) -> Result<Option<(Arc<VocabExports>, String)>, LoafIndexError> {
+    let Some(set) = installed().map_err(|reason| unreadable(dir, name, reason))? else {
+        return Ok(None);
+    };
+    let profile = dir
+        .file_name()
+        .and_then(|part| part.to_str())
+        .ok_or_else(|| unreadable(dir, name, "Loaf profile directory is not UTF-8".to_owned()))?;
+    let prefix = format!("loaf/{profile}/{name}/vocabulary/");
+    if let Some(found) = set
+        .vocabularies
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&prefix)
+        .cloned()
+    {
+        return Ok(Some(found));
+    }
+    let rows = set
+        .members(&prefix, None, 2)
+        .map_err(|reason| unreadable(dir, name, reason))?;
+    let mut matching = rows.iter();
+    let Some(entry) = matching.next() else {
+        return Ok(None);
+    };
+    if matching.next().is_some() || entry.revision != entry.value {
+        return Err(unreadable(
+            dir,
+            name,
+            "vocabulary publication must select one content-named record".to_owned(),
+        ));
+    }
+    let Some(summary) = read_summary(set, dir, name)? else {
+        return Ok(None);
+    };
+    let bytes = read_value(&set.root, &entry.value)
+        .map_err(|reason| unreadable(dir, name, record_failure(&entry.key, reason)))?;
+    set.count_read(&entry.key, bytes.len());
+    let vocab =
+        VocabExports::decode_compiler_record_value(&bytes).map_err(|error| unreadable(dir, name, error.to_string()))?;
+    if !entry
+        .key
+        .ends_with(&format!("/{:x}", Sha256::digest(vocab.package_name.as_bytes())))
+    {
+        return Err(unreadable(
+            dir,
+            name,
+            "vocabulary registration disagrees with its record key".to_owned(),
+        ));
+    }
+    let found = (Arc::new(vocab), summary.identity.digest);
+    set.vocabularies
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(prefix, found.clone());
+    Ok(Some(found))
 }
 
 /// Read one immutable value after the installed set receipt named it; the value itself is authenticated on open.
@@ -843,6 +987,7 @@ fn unreadable(dir: &Path, name: &str, reason: String) -> LoafIndexError {
 
 #[cfg(test)]
 mod tests {
+    mod capabilities;
     mod member_families;
     mod namespace_records;
     mod type_scopes;
@@ -856,6 +1001,7 @@ mod tests {
 
     use super::declaration_records::read_declaration_in;
     use super::runtime_bindings::read_runtime_bindings_in;
+    use super::thread_selection;
     use super::{
         Metadata, Projection, RecordEntry, RecordReads, RecordSet, open_value, read_group, read_summary,
         read_surface_in,
@@ -1091,6 +1237,10 @@ mod tests {
     /// a descriptor, and a checked API repeated until the contract metadata is well over the bound.
     fn surfaced_library() -> Result<LibraryManifest, Box<dyn std::error::Error>> {
         let source = "pub def price() -> int:\n    return 1999\n\npub model Money:\n    cents: int\n\n    pub def doubled(self) -> int:\n        return self.cents * 2\n";
+        surfaced_library_for("prices", source)
+    }
+
+    fn surfaced_library_for(name: &str, source: &str) -> Result<LibraryManifest, Box<dyn std::error::Error>> {
         let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
         let mut checker = crate::typechecker::TypeChecker::new();
@@ -1098,8 +1248,8 @@ mod tests {
             .check_program(&program)
             .map_err(|errors| format!("{errors:?}"))?;
         let exports = crate::library_exports::collect_checked_public_exports(&program, &checker);
-        let mut manifest = LibraryManifest::from_checked_exports("prices", "0.1.0", &exports);
-        let module = collect_checked_api_metadata(&program, &checker, vec!["prices".to_owned()]);
+        let mut manifest = LibraryManifest::from_checked_exports(name, "0.1.0", &exports);
+        let module = collect_checked_api_metadata(&program, &checker, vec![name.to_owned()]);
         manifest.contract_metadata.api = Some(CheckedApiMetadataPackage {
             schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
             package: None,
@@ -1152,6 +1302,121 @@ mod tests {
     }
 
     #[test]
+    fn sealed_ranges_read_only_the_requested_trait_and_refuse_changed_bytes_and_wrong_membership()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::executable_resolution::resolve_loaf_declarations;
+        use crate::library_manifest::executable_ranges::{RANGE, export_ranges, record_key};
+        use crate::library_manifest::executable_surface::own_public_identities;
+        use incan_semantics_core::body_ir::BodyIrModule;
+        use incan_semantics_core::encode_incan_symbol_identity;
+        use incan_semantics_core::executable_representation::{
+            DeclarationCoverage, SurfaceReader, build_surface, representation_version,
+        };
+        let root = tempfile::tempdir()?;
+        let name = "prices";
+        let dir = root.path().join("debug");
+        fs::create_dir(&dir)?;
+        let mut manifest = surfaced_library_for(name, "pub trait First:\n    pass\n\npub trait Other:\n    pass\n")?;
+        let public = own_public_identities(&manifest);
+        let first = public
+            .iter()
+            .find(|identity| identity.declaration_name == "First")
+            .ok_or("missing First")?;
+        let other = public
+            .iter()
+            .find(|identity| identity.declaration_name == "Other")
+            .ok_or("missing Other")?;
+        let mut module = BodyIrModule::declarations_only(name.into());
+        module.trait_declarations = vec![first.clone(), other.clone()];
+        let bytes = build_surface(&[module], name, &manifest.version, &public, &BTreeSet::new())?;
+        manifest.contract_metadata.executable_representation = Some(ExecutableRepresentationExport {
+            representation_version: representation_version(&bytes)?,
+            content_digest: content_name(&bytes),
+        });
+        let path = dir.join("prices.incnbody");
+        fs::write(&path, &bytes)?;
+        let mut set = installed_library(root.path(), &manifest)?;
+        let first_key = record_key(RANGE, &encode_incan_symbol_identity(first));
+        let other_key = record_key(RANGE, &encode_incan_symbol_identity(other));
+        let mut other_content = None;
+        for (key, value) in export_ranges(&manifest, &content_name(b"prices manifest"), &bytes)? {
+            let digest = content_name(&value);
+            if key == other_key {
+                other_content = Some(digest.clone());
+            }
+            fs::write(root.path().join("payloads").join(&digest), value)?;
+            set.entries.push(RecordEntry {
+                key: format!("loaf/debug/{name}/{key}"),
+                revision: digest.clone(),
+                value: digest,
+            });
+        }
+        let mut wrong_entries = set
+            .entries
+            .iter()
+            .map(|row| RecordEntry {
+                key: row.key.clone(),
+                revision: row.revision.clone(),
+                value: row.value.clone(),
+            })
+            .collect::<Vec<_>>();
+        let other_content = other_content.ok_or("missing second range publication")?;
+        let first_row = wrong_entries
+            .iter_mut()
+            .find(|e| e.key.ends_with(&first_key))
+            .ok_or("missing first range publication")?;
+        first_row.revision = other_content.clone();
+        first_row.value = other_content;
+        let selected = thread_selection::select(RecordSet::new(root.path().into(), set.entries));
+        let index = crate::loaf_index::LoafIndex::deferred([(name.to_owned(), name.to_owned(), dir.clone(), false)])?;
+        let roots = BTreeSet::from([first.clone()]);
+        let run = |index: &crate::loaf_index::LoafIndex| resolve_loaf_declarations(index, &roots, &BTreeSet::new());
+        let accepted = run(&index)?;
+        assert_eq!(accepted.decoded_declarations, 1);
+        let reader = SurfaceReader::open(&bytes)?;
+        let address = |id| -> Result<(usize, u64), Box<dyn std::error::Error>> {
+            let DeclarationCoverage::Covered { offset, length, .. } = reader.index().coverage(id)? else {
+                return Err("trait was not covered".into());
+            };
+            Ok((
+                bytes.len() - reader.payload().len() + usize::try_from(*offset)?,
+                *length,
+            ))
+        };
+        let (first_offset, first_len) = address(first)?;
+        let (other_offset, _) = address(other)?;
+        assert_eq!(accepted.payload_bytes_read, first_len);
+        assert_eq!(accepted.content_bytes_verified, first_len);
+        let keys = thread_selection::read_keys();
+        assert_eq!(keys.iter().filter(|key| key.contains("/executable-range/")).count(), 1);
+        assert!(keys.iter().any(|key| key.ends_with(&first_key)));
+        assert!(!keys.iter().any(|key| key.contains("/public-identities/")));
+        let mut changed = bytes.clone();
+        changed[other_offset] ^= 1;
+        fs::write(&path, &changed)?;
+        assert_eq!(run(&index)?.decoded_declarations, 1);
+        changed[first_offset] ^= 1;
+        fs::write(&path, &changed)?;
+        assert!(
+            run(&index)
+                .expect_err("changed selected fragment must fail")
+                .to_string()
+                .contains("sealed digest")
+        );
+        fs::write(&path, &bytes)?;
+        drop(selected);
+        let _substituted = thread_selection::select(RecordSet::new(root.path().into(), wrong_entries));
+        let fresh = crate::loaf_index::LoafIndex::deferred([(name.to_owned(), name.to_owned(), dir, false)])?;
+        assert!(
+            run(&fresh)
+                .expect_err("substituted membership must fail")
+                .to_string()
+                .contains("another declaration")
+        );
+        Ok(())
+    }
+
+    #[test]
     fn native_lowering_reads_a_loafs_runtime_bindings_by_name() -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
         let manifest = surfaced_library()?;
@@ -1169,6 +1434,160 @@ mod tests {
             records, 1,
             "native lowering read {records} records, {bytes} bytes; it needs the runtime bindings record alone"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn both_parser_vocabularies_share_one_validated_registration_without_reading_the_contract()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let mut manifest = surfaced_library()?;
+        let registration = super::VocabExports {
+            metadata_version: incan_vocab::VOCAB_METADATA_VERSION,
+            unit_identity: content_name(b"checked registration"),
+            crate_path: "src/lib.incn".to_string(),
+            package_name: manifest.name.clone(),
+            keyword_registrations: Vec::new(),
+            dsl_surfaces: Vec::new(),
+            provider_manifest: Default::default(),
+            desugarer_artifact: None,
+        };
+        manifest.vocab = Some(registration.clone());
+        let selected = thread_selection::select(installed_library(root.path(), &manifest)?);
+        let index = crate::loaf_index::LoafIndex::deferred([(
+            manifest.name.clone(),
+            manifest.name.clone(),
+            root.path().join("debug"),
+            false,
+        )])?;
+        let before = selected.0.reads();
+        let _ = index.imported_vocab();
+        let _ = index.imported_dsl_surfaces();
+        index.validate_demands()?;
+        // The resident worker opens independent parse and compile sessions against the same immutable set.
+        let second = crate::loaf_index::LoafIndex::deferred([(
+            manifest.name.clone(),
+            manifest.name.clone(),
+            root.path().join("debug"),
+            false,
+        )])?;
+        let _ = second.imported_vocab();
+        second.validate_demands()?;
+        let after = selected.0.reads();
+        assert_eq!(after.records - before.records, 1);
+        assert_eq!(
+            after.bytes - before.bytes,
+            registration.encode_compiler_record_value()?.len()
+        );
+        assert!(
+            !thread_selection::read_keys()
+                .iter()
+                .any(|key| key.contains("/contract-metadata/"))
+        );
+        let mut unsupported = registration;
+        unsupported.metadata_version += 1;
+        assert!(
+            super::VocabExports::decode_compiler_record_value(&unsupported.encode_compiler_record_value()?).is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn runtime_planning_reads_only_the_individually_requested_facade() -> Result<(), Box<dyn std::error::Error>> {
+        let name = "incan_native_runtime";
+        let root = tempfile::tempdir()?;
+        let manifest = surfaced_library_for(
+            name,
+            "pub def used() -> int:\n    return 1\n\npub def unused() -> int:\n    return 2\n",
+        )?;
+        let selected = thread_selection::select(installed_library(root.path(), &manifest)?);
+        let dir = root.path().join("debug");
+        let index = crate::loaf_index::LoafIndex::deferred([(name.to_owned(), name.to_owned(), dir, false)])?;
+        let baseline = selected.0.reads();
+        assert!(index.can_query_runtime_bindings(name));
+        assert!(!index.can_query_runtime_bindings("different-package"));
+        let used = format!("{name}::used");
+        let unused = format!("{name}::unused");
+        assert_eq!(selected.0.reads(), baseline);
+        let binding = index.runtime_binding(name, &used)?.ok_or("expected the named facade")?;
+        assert_eq!(binding.path, used);
+        assert_eq!(index.runtime_binding(name, &used)?, Some(binding.clone()));
+        assert!(index.runtime_binding(name, "incan_native_runtime::missing")?.is_none());
+        let read = selected.0.reads();
+        assert_eq!(read.records - baseline.records, 1);
+        assert_eq!(
+            read.bytes - baseline.bytes,
+            LibraryManifest::encode_compiler_record_value(&binding)?.len()
+        );
+        assert!(
+            !thread_selection::read_keys()
+                .iter()
+                .any(|key| key.contains("/runtime-bindings/") || key.ends_with(&content_name(unused.as_bytes())))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_aggregate_only_runtime_keeps_its_published_facade_and_native_absences()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let name = "incan_native_runtime";
+        let root = tempfile::tempdir()?;
+        let manifest = surfaced_library_for(name, "pub def used() -> int:\n    return 1\n")?;
+        let mut set = installed_library(root.path(), &manifest)?;
+        set.entries.retain(|entry| !entry.key.contains("/runtime-binding/"));
+        let selected = thread_selection::select(set);
+        let dir = root.path().join("debug");
+        let index = crate::loaf_index::LoafIndex::deferred([(name.to_owned(), name.to_owned(), dir, false)])?;
+        assert!(index.can_query_runtime_bindings(name));
+        let binding = index
+            .runtime_binding(name, "incan_native_runtime::used")?
+            .ok_or("missing legacy binding")?;
+        assert_eq!(binding.path, "incan_native_runtime::used");
+        assert!(
+            index
+                .runtime_binding(name, "incan_native_runtime::unpublished")?
+                .is_none()
+        );
+        assert_eq!(
+            thread_selection::read_keys()
+                .iter()
+                .filter(|key| key.contains("/runtime-bindings/"))
+                .count(),
+            1
+        );
+        drop(selected);
+        Ok(())
+    }
+
+    #[test]
+    fn an_aggregate_only_runtime_refuses_disagreeing_facade_owners() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let name = "incan_native_runtime";
+        let manifest = surfaced_library_for(name, "pub def used() -> int:\n    return 1\n")?;
+        let mut set = installed_library(root.path(), &manifest)?;
+        set.entries.retain(|entry| !entry.key.contains("/runtime-binding/"));
+        let mut bindings = runtime_bindings(&manifest);
+        let original = bindings
+            .iter()
+            .find(|row| row.path == "incan_native_runtime::used")
+            .ok_or("missing facade")?;
+        let mut other = original.clone();
+        other.canonical.declaration_name = "distinct_declaration".to_owned();
+        bindings.push(other);
+        let bytes = LibraryManifest::encode_compiler_record_value(&bindings)?;
+        let digest = content_name(&bytes);
+        fs::write(root.path().join("payloads").join(&digest), bytes)?;
+        let aggregate = set
+            .entries
+            .iter_mut()
+            .find(|entry| entry.key.contains("/runtime-bindings/"))
+            .ok_or("missing aggregate")?;
+        aggregate.value = digest.clone();
+        aggregate.revision = digest;
+        let _selected = thread_selection::select(set);
+        let dir = root.path().join("debug");
+        let index = crate::loaf_index::LoafIndex::deferred([(name.to_owned(), name.to_owned(), dir, false)])?;
+        assert!(index.runtime_binding(name, "incan_native_runtime::used").is_err());
         Ok(())
     }
 
