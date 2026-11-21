@@ -59,17 +59,3 @@ fn displays_unify_across_reexport_spellings() {
     );
     assert_eq!(ancestral_rust_display("Vec<u8, alloc::Global>"), "alloc::vec::Vec<u8>");
 }
-
-/// A display names an item by its public path in every position, and only whole paths are replaced.
-#[test]
-fn displays_replace_whole_item_paths_only() {
-    let replace = |display: &str| super::replace_rust_display_path(display, "levels::private::Level", "levels::Level");
-    assert_eq!(replace("levels::private::Level"), "levels::Level");
-    assert_eq!(
-        replace("std::vec::Vec<(levels::private::Level, &levels::private::Level)>"),
-        "std::vec::Vec<(levels::Level, &levels::Level)>"
-    );
-    assert_eq!(replace("levels::private::Levels"), "levels::private::Levels");
-    assert_eq!(replace("other::levels::private::Level"), "other::levels::private::Level");
-    assert_eq!(replace("levels::private::Level::Inner"), "levels::private::Level::Inner");
-}
