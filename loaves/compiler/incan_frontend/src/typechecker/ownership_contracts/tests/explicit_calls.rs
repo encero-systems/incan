@@ -488,6 +488,104 @@ fn ordinary_call_replay_requires_its_exact_header() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
+/// An imported package function has no local declaration binding, but its canonical package identity and exact
+/// selected call-site header still authenticate one ordinary call. A current-module call missing its header and a
+/// package identity colliding with conflicting retained headers remain refused.
+#[test]
+fn package_ordinary_call_requires_exact_selected_header_without_local_binding() -> Result<(), Box<dyn std::error::Error>>
+{
+    let source = "def add(left: int, right: int) -> int:\n    return left + right\ndef use(value: Borrowed[int]) -> int:\n    return add(value, 1)\n";
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker.set_current_package_identity(Some("fixture_records".into()));
+    checker.set_current_module_path(Some(vec!["codec".into()]));
+    if let Err(errors) = checker.check_program(&program) {
+        checker.errors = errors;
+    }
+    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+    assert!(
+        checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .any(|(owner, flow)| { owner.declaration_name == "use" && matches!(flow, InputFlow::Checked { .. }) })
+    );
+    let call = checker
+        .type_info
+        .protocols
+        .explicit_input_calls
+        .values()
+        .find(|call| call.callee.declaration_name == "add")
+        .ok_or("missing ordinary add call")?
+        .clone();
+    assert_eq!(call.kind, InputCallKind::Ordinary);
+    assert!(matches!(
+        &call.callee.origin,
+        incan_semantics_core::SymbolOrigin::Package { library, module_path }
+            if library == "fixture_records" && module_path.iter().map(String::as_str).eq(["codec"])
+    ));
+
+    let mut imported = checker.type_info.clone();
+    imported
+        .declarations
+        .function_bindings_by_span
+        .retain(|_, binding| binding.identity.as_ref() != Some(&call.callee));
+    imported
+        .declarations
+        .function_bindings
+        .retain(|_, binding| binding.identity.as_ref() != Some(&call.callee));
+    assert!(
+        imported.selected_input_contract(&call).is_ok(),
+        "exact package call without a local binding was refused"
+    );
+
+    let module = checked(source)?;
+    let module_call = module
+        .type_info
+        .protocols
+        .explicit_input_calls
+        .values()
+        .find(|candidate| candidate.callee.declaration_name == "add")
+        .ok_or("missing module add call")?
+        .clone();
+    let mut missing = module.type_info.clone();
+    missing
+        .declarations
+        .function_bindings_by_span
+        .retain(|_, binding| binding.identity.as_ref() != Some(&module_call.callee));
+    missing
+        .declarations
+        .function_bindings
+        .retain(|_, binding| binding.identity.as_ref() != Some(&module_call.callee));
+    assert!(
+        missing.selected_input_contract(&module_call).is_err(),
+        "module call borrowed package fallback"
+    );
+
+    let mut conflicting = checker.type_info.clone();
+    let mut changed = 0;
+    for binding in conflicting
+        .declarations
+        .function_bindings_by_span
+        .values_mut()
+        .chain(conflicting.declarations.function_bindings.values_mut())
+        .filter(|binding| binding.identity.as_ref() == Some(&call.callee))
+    {
+        if changed > 0 {
+            binding.params[0].is_mut = true;
+        }
+        changed += 1;
+    }
+    assert!(changed > 1, "missing conflicting package-header fixture bindings");
+    assert!(
+        conflicting.selected_input_contract(&call).is_err(),
+        "conflicting package headers were accepted"
+    );
+    Ok(())
+}
+
 /// A selected overload retains its own instantiated parameter slots without rewriting either declaration.
 /// The ordinary caller owns its checked access profile even without an explicit input annotation of its own.
 #[test]
