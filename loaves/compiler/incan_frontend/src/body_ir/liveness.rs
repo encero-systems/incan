@@ -401,7 +401,8 @@ fn read_projection(place: &bir::Place, live: &mut Live) {
             }
             bir::PlaceElem::Field { .. }
             | bir::PlaceElem::UnionMember { .. }
-            | bir::PlaceElem::OptionPayload { .. } => {}
+            | bir::PlaceElem::OptionPayload { .. }
+            | bir::PlaceElem::Deref => {}
         }
     }
 }

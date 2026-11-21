@@ -65,7 +65,10 @@ pub fn lower_assignment(
     if let Some(global) = destination.global() {
         return write_static(module, builder, destination, global, value, span);
     }
-    if !destination.projection.is_empty() {
+    // RFC 164: a write through a whole exclusive reference (`*x = value`) replaces its referent; it is no element,
+    // index or field write.
+    let through_reference = matches!(destination.projection.as_slice(), [PlaceElem::Deref]);
+    if !destination.projection.is_empty() && !through_reference {
         if is_element_place(builder, destination)? {
             return element_assignment(module, builder, destination, value, span);
         }
