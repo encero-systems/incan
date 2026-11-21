@@ -88,7 +88,7 @@ pub def fallible_factory(
                     return Ok(
                         Some(
                             NativeFactory(
-                                path=f"incan_native_runtime::fallible_{slot.declaration_name}",
+                                path=f"incan_stdlib_primitives::fallible_{slot.declaration_name}",
                                 arguments=arguments,
                             ),
                         ),
@@ -131,7 +131,7 @@ def concrete_return(module: &BodyIrModule, slot: &CanonicalSymbolId, declaration
 
 
 def factory_carrier(name: str) -> tuple[str, int]:
-    """List the concrete public factory signatures mirrored by the existing Incan runtime helpers."""
+    """List the concrete public factory signatures mirrored by the standard library's fallible-default helpers."""
     match name:
         "map" => return ("MapFallibleIterator", 5)
         "filter" => return ("FilterFallibleIterator", 4)

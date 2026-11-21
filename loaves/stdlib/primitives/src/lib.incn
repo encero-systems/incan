@@ -3,6 +3,7 @@
 import derives.collection
 import derives.comparison
 import derives.copying
+import derives.fallible_defaults
 import derives.string
 import features
 import prelude
@@ -116,6 +117,18 @@ pub from primitives.io import ByteReader, Endian, IoError, WriteBuffer
 pub from primitives.native_strings import nul_terminated_utf8
 pub from primitives.output import write_stderr_line, write_stdout_line
 pub from primitives.text import copy_frozen_bytes, decode_utf8, encode_frozen_utf8, encode_utf8
+pub from derives.fallible_defaults import (
+    fallible_collect,
+    fallible_filter,
+    fallible_flat_map,
+    fallible_fold,
+    fallible_inspect,
+    fallible_inspect_err,
+    fallible_map,
+    fallible_map_err,
+    fallible_next,
+    fallible_take,
+)
 import primitives.reflection as primitive_reflection
 import primitives.crumb.column_errors
 import primitives.crumb.column_pack_read
