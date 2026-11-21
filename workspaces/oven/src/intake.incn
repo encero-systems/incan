@@ -64,6 +64,8 @@ model ManifestStore:
 
     pub manifests: Dict[str, ManifestReading] = {}
     pub projects: Dict[str, LocalProject] = {}
+    # The lock text a command resolved in memory for each root whose oven.lock is missing or stale, by lock path.
+    pub resolved_locks: Dict[str, str] = {}
 
 
 pub model ManifestReader:
@@ -105,6 +107,33 @@ def snapshot_in(root: Path, mut store: &mut ManifestStore) -> Result[ManifestSna
         digest = hexlify(sha256.digest(raw))
         store.manifests[manifest.0] = ManifestReading(stamp=observed.stamp, digest=digest, snapshot=snapshot)
     return Ok(snapshot)
+
+
+pub def remember_resolved_lock(reader: ManifestReader, path: str, text: str) -> None:
+    """
+    Select, for the rest of this preparation, the lock a command resolved in memory for the root whose lock file is
+    `path`. Only `oven lock`, `oven add` and `oven update` write a lock, so a missing or stale file keeps its bytes.
+    """
+    mut held = reader.state.as_ref().borrow_mut()
+    resolve_in(held.deref_mut(), path, text)
+
+
+def resolve_in(mut store: &mut ManifestStore, path: str, text: str) -> None:
+    """Record one resolved lock in the preparation's memo."""
+    store.resolved_locks[path] = text
+
+
+pub def resolved_lock_text(reader: ManifestReader, path: str) -> Option[str]:
+    """The lock text this preparation resolved in memory for the lock file `path`, if it resolved one."""
+    mut held = reader.state.as_ref().borrow_mut()
+    return resolved_in(held.deref_mut(), path)
+
+
+def resolved_in(mut store: &mut ManifestStore, path: str) -> Option[str]:
+    """Read one resolved lock from the preparation's memo."""
+    if path in store.resolved_locks:
+        return Some(store.resolved_locks[path])
+    return None
 
 
 pub def read_digests(reader: ManifestReader) -> Dict[str, str]:

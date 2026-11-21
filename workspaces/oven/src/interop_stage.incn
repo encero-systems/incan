@@ -15,8 +15,8 @@ from c_interop import CArtifactKind, CInteropArtifact, CInteropTarget
 from c_interop_requirements import CPlatformKind
 from files import json_text, write
 from features import FeatureRequest
-from intake import LocalProject, ManifestReader, intake
-from lock_format import OvenLock, lock_path, read_lock
+from intake import LocalProject, ManifestReader, intake, resolved_lock_text
+from lock_format import OvenLock, lock_path, read_lock, read_lock_text
 from project_lock import ensure_project_lock
 from unit import discovered_project
 
@@ -130,8 +130,12 @@ pub def stage_interop(options: StageOptions) -> Result[i32, str]:
     adapter_fits(options.adapter, target)?
     # 2. The lock covers the target's contract and every bundled file's digest.
     root = Path(project.root)
-    ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), options.locked)?
-    lock = read_lock(lock_path(root))?
+    reader = ManifestReader()
+    _ = ensure_project_lock(root, "debug", FeatureRequest(), {}, reader, options.locked)?
+    physical = root.resolve().map_err((error) => f"{root.0}: {error.message()}")?
+    lock = match resolved_lock_text(reader, lock_path(physical).0):
+        Some(text) => read_lock_text(text, lock_path(root).0)?
+        None => read_lock(lock_path(root))?
     # 3. A caller-owned output is never replaced.
     output = Path(options.output)
     if output.exists() or output.is_symlink():

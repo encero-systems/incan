@@ -645,7 +645,10 @@ def enclosing_loaf(directory: Path) -> Result[Path, str]:
 
 
 def prepared_lock(command: str, options: Options) -> None:
-    """Reconcile a project command's root lock; explicit direct source execution has no project lock to prepare."""
+    """
+    Read a project command's root lock, which only `oven lock`, `oven add` and `oven update` write, and say in one line
+    when it is stale; explicit direct source execution has no project lock.
+    """
     if options.direct:
         return
     match ensure_project_lock(
@@ -657,7 +660,12 @@ def prepared_lock(command: str, options: Options) -> None:
         options.locked,
     ):
         Err(reason) => fail(f"{invoked()} {command}: {reason}", 1)
-        Ok(_) => warn_tolerated_entries(command, Path(options.path))
+        Ok(notice) =>
+            if let Some(stale) = notice:
+                mut err = stderr()
+                # A closed standard error cannot be told about, so a failed write is ignored.
+                _ = err.write_all(RustString.from(f"{invoked()} {command}: warning: {stale}\n").into_bytes())
+            warn_tolerated_entries(command, Path(options.path))
 
 
 def warn_tolerated_entries(command: str, path: Path) -> None:

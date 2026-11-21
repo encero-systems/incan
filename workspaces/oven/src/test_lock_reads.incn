@@ -1,0 +1,160 @@
+"""Only `oven lock`, `oven add` and `oven update` write oven.lock; run, build, test and lint read it and never write."""
+
+from rust::std::process import Command
+from rust::std::str import from_utf8
+from std.environ import get_or
+from std.fs import Path
+from features import FeatureRequest
+from files import make_directory, read, write
+from intake import ManifestReader, resolved_lock_text
+from lock_format import OvenLock, graph_identity, lock_path, read_lock, read_lock_text, write_lock
+from project_lock import LockCommand, ensure_project_lock, lock_project
+from registry_units import RegistryUnits
+from rust_registry import project_registry
+from scratch import scratch_directory
+
+
+def app(root: Path, version: str) -> Result[None, str]:
+    """A root Loaf `app` at `version` with a program and one test, and no dependencies."""
+    make_directory(root.joinpath("src"))?
+    make_directory(root.joinpath("tests"))?
+    write(root.joinpath("loaf.toml"), f"[project]\nname = \"app\"\nversion = \"{version}\"\n")?
+    write(root.joinpath("src/main.incn"), "def main() -> None:\n    println(\"app\")\n")?
+    write(root.joinpath("tests/test_app.incn"), "def test_app() -> None:\n    assert 1 + 1 == 2\n")?
+    return Ok(None)
+
+
+def physical(root: Path) -> Result[Path, str]:
+    """The root as commands resolve it, so its lock path is the one they key a closure by."""
+    return root.resolve().map_err((error) => error.message())
+
+
+def root_version(lock: OvenLock) -> str:
+    """The version the lock records for its root Loaf."""
+    for entry in lock.loaves:
+        if entry.origin == "root":
+            return entry.version
+    return ""
+
+
+def resolved_version(reader: ManifestReader, root: Path) -> Result[str, str]:
+    """The root version of the closure a command resolved in memory for `root`, or a refusal when it resolved none."""
+    path = lock_path(physical(root)?)
+    match resolved_lock_text(reader, path.0):
+        None => return Err("the command resolved no closure in memory")
+        Some(text) => return Ok(root_version(read_lock_text(text, path.0)?))
+
+
+def reread(root: Path) -> Result[None, str]:
+    """Reconcile the root's lock the way run, build, test and lint do, discarding any notice."""
+    _ = ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), false)?
+    return Ok(None)
+
+
+pub def test_a_command_never_creates_a_missing_lock() -> Result[None, str]:
+    """A root without oven.lock is resolved in memory: no file appears and nothing is reported."""
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("app")
+    app(root, "0.1.0")?
+    reader = ManifestReader()
+    notice = ensure_project_lock(root, "debug", FeatureRequest(), {}, reader, false)?
+    assert notice is None, "a missing lock was reported"
+    assert not lock_path(root).exists(), "a command created oven.lock"
+    assert resolved_version(reader, root)? == "0.1.0"
+    return Ok(None)
+
+
+pub def test_a_stale_lock_keeps_its_bytes_and_is_reported_once() -> Result[None, str]:
+    """
+    A committed lock the manifest no longer matches keeps its bytes. The command selects the closure resolved in
+    memory and returns one notice naming the lock and `oven lock`.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("app")
+    app(root, "0.1.0")?
+    _ = lock_project(LockCommand(path=root.0))?
+    before = read(lock_path(root))?
+    write(root.joinpath("loaf.toml"), "[project]\nname = \"app\"\nversion = \"0.2.0\"\n")?
+    reader = ManifestReader()
+    notice = ensure_project_lock(root, "debug", FeatureRequest(), {}, reader, false)?
+    match notice:
+        None => return Err("a stale lock was not reported")
+        Some(text) =>
+            assert "is stale" in text, text
+            assert "run `oven lock`" in text, text
+            assert "\n" not in text, text
+            assert lock_path(physical(root)?).0 in text, text
+    assert read(lock_path(root))? == before, "a command rewrote a stale lock"
+    assert resolved_version(reader, root)? == "0.2.0"
+    return Ok(None)
+
+
+pub def test_a_lock_from_another_compiler_build_keeps_its_bytes_and_still_selects() -> Result[None, str]:
+    """
+    A lock whose recorded compiler identity differs from this build's keeps its bytes, and selection reads it without
+    refusing: its producer pins belong to the other build, so they pin nothing here.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("app")
+    app(root, "0.1.0")?
+    _ = lock_project(LockCommand(path=root.0))?
+    path = lock_path(root)
+    mut lock = read_lock(path)?
+    lock.toolchain.identity = "another-compiler-build"
+    lock.graph = graph_identity(lock)?
+    write_lock(path, lock)?
+    before = read(path)?
+    reread(root)?
+    assert read(path)? == before, "a command rewrote a lock from another compiler build"
+    selected = project_registry(RegistryUnits(units=[], search=[]), physical(root)?.0, ManifestReader())?
+    assert len(selected.recorded_bindings) == 0, "a lock from another compiler build pinned producers"
+    return Ok(None)
+
+
+pub def test_oven_lock_writes_and_refreshes_the_lock() -> Result[None, str]:
+    """`oven lock` still writes a missing lock and rewrites a stale one."""
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("app")
+    app(root, "0.1.0")?
+    first = lock_project(LockCommand(path=root.0))?
+    assert first.changed and lock_path(root).is_file(), "oven lock wrote no lock"
+    write(root.joinpath("loaf.toml"), "[project]\nname = \"app\"\nversion = \"0.2.0\"\n")?
+    second = lock_project(LockCommand(path=root.0))?
+    assert second.changed, "oven lock did not refresh a stale lock"
+    assert root_version(read_lock(lock_path(root))?) == "0.2.0"
+    return Ok(None)
+
+
+def command(binary: Path, arguments: list[str], root: Path) -> Result[tuple[bool, str], str]:
+    """Run one toolchain command in `root`, returning whether it succeeded and its standard error."""
+    outcome = Command.new(binary.0).args(arguments).current_dir(root.0).output().map_err((error) => str(error))?
+    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+    return Ok((outcome.status.success(), str(errors)))
+
+
+pub def test_build_and_test_leave_a_committed_lock_byte_identical() -> Result[None, str]:
+    """
+    The installed toolchain's `oven build` and `incan test` leave a committed, stale lock byte-identical and say it is
+    stale; a root without a lock gets none.
+    """
+    incan = Path(get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan"))
+    oven = incan.parent().joinpath("oven")
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("app")
+    app(root, "0.1.0")?
+    locked, lock_errors = command(oven, ["lock", root.0], root)?
+    assert locked, f"oven lock failed: {lock_errors}"
+    write(root.joinpath("loaf.toml"), "[project]\nname = \"app\"\nversion = \"0.2.0\"\n")?
+    before = read(lock_path(root))?
+    built, build_errors = command(oven, ["build", root.0], root)?
+    assert built, f"oven build failed: {build_errors}"
+    assert "is stale" in build_errors and "oven lock" in build_errors, build_errors
+    assert read(lock_path(root))? == before, "oven build rewrote the committed lock"
+    tested, test_errors = command(incan, ["test", root.0], root)?
+    assert tested, f"incan test failed: {test_errors}"
+    assert read(lock_path(root))? == before, "incan test rewrote the committed lock"
+    lock_path(root).unlink().map_err((error) => error.message())?
+    rebuilt, rebuild_errors = command(oven, ["build", root.0], root)?
+    assert rebuilt, f"oven build without a lock failed: {rebuild_errors}"
+    assert not lock_path(root).exists(), "oven build created oven.lock"
+    return Ok(None)

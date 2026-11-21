@@ -6,7 +6,7 @@ from c_interop import parse_c_targets
 from cli_help import refused_option
 from features import FeatureRequest
 from home_paths import TOOLCHAIN
-from intake import ManifestReader, read_digests, read_manifest_snapshot, read_project
+from intake import ManifestReader, read_digests, read_manifest_snapshot, read_project, remember_resolved_lock
 from interop_lock import LockInterop, interop_difference, locked_interop
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets, unique
 from lock_format import (
@@ -18,6 +18,7 @@ from lock_format import (
     OvenLock,
     graph_identity,
     lock_path,
+    lock_text,
     read_lock,
     validate_mode,
     write_lock,
@@ -58,6 +59,9 @@ pub model LockResult:
     pub interop: int = 0
     # One line for each local requirement whose lower bound is not published, so that bound was not tested (RFC 125).
     pub untested: list[str] = []
+    # A changed resolution's closure and the first lock dimension it changed, when this command did not publish it.
+    pub resolved: Option[OvenLock] = None
+    pub difference: str = ""
 
 
 pub def locked_report(result: LockResult) -> list[str]:
@@ -109,13 +113,18 @@ pub def ensure_project_lock(
     substitutes: Dict[str, str],
     reader: ManifestReader,
     locked: bool,
-) -> Result[None, str]:
+) -> Result[Option[str], str]:
     """
-    Refresh a run, build or test root's lock silently, or prove `--locked` needs no change.
+    Read a run, build, test or lint root's lock without ever writing it, or prove `--locked` needs no change.
+
+    Only `oven lock`, `oven add` and `oven update` write oven.lock. Here a missing or stale lock keeps its file as it
+    is: the command selects the closure resolved in memory, and a stale lock is reported as one notice naming
+    `oven lock`, which this returns.
 
     1. A lock last reconciled to no change, under the same question, is not resolved again while it and the one
        manifest that reconciliation read keep the identities they had.
-    2. Otherwise reconcile, and retain a no-change result for the next command.
+    2. Otherwise reconcile without publishing, and retain a no-change result for the next command.
+    3. A changed resolution is selected in memory; a lock file it differs from is stale.
     """
     match root_project(path)?:
         None => return Ok(None)
@@ -128,10 +137,21 @@ pub def ensure_project_lock(
             if settled(root, question, lock)?:
                 return Ok(None)
             # 2. Only a no-change result is retained, for the lock bytes it compared against.
-            result = reconcile(root, profile, request, substitutes, reader, "", locked, true)?
+            result = reconcile(root, profile, request, substitutes, reader, "", locked, false)?
             if not result.changed and result.interop == 0:
                 remember_settled(root, question, reader, lock)
-            return Ok(None)
+            # 3. The file keeps its bytes; this process selects the closure it resolved.
+            match result.resolved:
+                None => return Ok(None)
+                Some(resolved) =>
+                    remember_resolved_lock(reader, lock_path(root).0, lock_text(resolved)?)
+                    if lock == "":
+                        return Ok(None)
+                    return Ok(
+                        Some(
+                            f"{lock_path(root).0} is stale ({result.difference}); this command used the dependencies resolved in memory; run `oven lock` to update it",
+                        ),
+                    )
 
 
 def settled_question(
@@ -240,7 +260,7 @@ def reconcile(
     1. Read and authenticate an existing lock before it can constrain selection.
     2. Choose the explicit mode, else the one the existing lock records under any toolchain, else the default.
     3. Resolve with valid existing producer pins and construct the complete format-1 graph.
-    4. Refuse a locked change, or publish a changed lock without changing command output.
+    4. Refuse a locked change; publish a changed lock only when `write`, else return its closure for memory.
     """
     path = lock_path(root)
     mut existing: Option[OvenLock] = None
@@ -282,9 +302,16 @@ def reconcile(
     changed = existing is None or not same_resolution(existing, generated)
     if locked and changed:
         return Err(f"{path.0} would change at {difference(existing, generated)}; run `oven lock`")
-    if write and changed:
-        write_lock(path, generated)?
-        trace(f"lock refreshed {path.0} graph={generated.graph}")
+    mut resolved: Option[OvenLock] = None
+    mut changed_at = ""
+    if changed:
+        changed_at = difference(existing, generated)
+        if write:
+            write_lock(path, generated)?
+            trace(f"lock refreshed {path.0} graph={generated.graph}")
+        else:
+            resolved = Some(generated.clone())
+            trace(f"lock resolved in memory {path.0} graph={generated.graph}")
     return Ok(
         LockResult(
             name=root_entry.name,
@@ -293,6 +320,8 @@ def reconcile(
             changed=changed,
             interop=len(generated.interop),
             untested=untested_bounds(facets, registry.units, selected)?,
+            resolved=resolved,
+            difference=changed_at,
         ),
     )
 
