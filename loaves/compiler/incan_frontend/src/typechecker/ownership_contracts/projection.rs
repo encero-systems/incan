@@ -297,13 +297,35 @@ impl TypeCheckInfo {
                     }
                     _ => return Err("ordinary invocation syntax differs from its canonical declaration"),
                 };
+                // A native borrow slot takes its access from its mode, whatever instantiates its referent (RFC 164).
                 let free_parameter_types_changed = call.callee.kind == SemanticSourceTargetKind::Function
-                    && binding
-                        .params
-                        .iter()
-                        .zip(&call.parameters)
-                        .any(|(declared, selected)| declared.ty != selected.ty);
-                if binding.is_async
+                    && binding.params.iter().zip(&call.parameters).any(|(declared, selected)| {
+                        declared.ty != selected.ty
+                            && !matches!(
+                                (&declared.ty, &selected.ty),
+                                (
+                                    crate::symbols::ResolvedType::Ref(_),
+                                    crate::symbols::ResolvedType::Ref(_)
+                                ) | (
+                                    crate::symbols::ResolvedType::RefMut(_),
+                                    crate::symbols::ResolvedType::RefMut(_)
+                                )
+                            )
+                    });
+                // An async callee whose inputs are all native borrows or Copy scalars passes each by its mode, as its
+                // explicit spelling did (RFC 164); its loans last until the call is awaited.
+                let async_by_modes = binding.params.iter().all(|parameter| {
+                    matches!(
+                        parameter.ty,
+                        crate::symbols::ResolvedType::Ref(_)
+                            | crate::symbols::ResolvedType::RefMut(_)
+                            | crate::symbols::ResolvedType::Int
+                            | crate::symbols::ResolvedType::Float
+                            | crate::symbols::ResolvedType::Bool
+                            | crate::symbols::ResolvedType::Numeric(_)
+                    )
+                });
+                if (binding.is_async && !async_by_modes)
                     || !ordinary_header_matches(&binding.params, &call.parameters)
                     || free_parameter_types_changed
                 {
