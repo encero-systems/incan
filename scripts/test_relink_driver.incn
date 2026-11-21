@@ -2,12 +2,20 @@
 
 from rust::std::process import Command
 from std.encoding.hex import hexlify
+from std.environ import get_or
 from std.fs import Path
-from std.hash import file_digest
+from std.hash import file_digest, sha256
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
+from pub::internal_models.unit_admission import decode_unit_admission
 from native_build import NativeContext, build_support_tool, runtime_root, share_seed_generations
-from relink_driver import install_driver, prepare_compiler_home, readmit, withdraw_installed_providers
+from relink_driver import (
+    install_driver,
+    prepare_compiler_home,
+    readmit,
+    refresh_compiler_home,
+    withdraw_installed_providers,
+)
 from release_support import TOOLCHAIN_DIRECTORY
 
 # The fields of an installed manifest every compiler home needs, before its registry fields.
@@ -21,6 +29,8 @@ def test_compiler_home_reports_each_manifest_change() -> Result[None, str]:
     1. The first preparation writes the manifest.
     2. Preparing again for the same installation changes nothing.
     3. A relink that installs another driver changes it again, so its admitted page must be replaced.
+    4. Standard publication that replaces provider paths changes it again and the compiler home names the final
+       installed providers, never the earlier home.
     """
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     installed = temporary.path().joinpath("home")
@@ -40,6 +50,69 @@ def test_compiler_home_reports_each_manifest_change() -> Result[None, str]:
         .write_bytes(b"{\"driver\":\"bin/incan-rustc-driver-b\",\"sysroot\":\"sysroot\",\"externs\":[]}")
         .map_err((error) => error.message())?
     assert prepare_compiler_home(installed, compiler)?
+    # 4. Provider publication happens after driver installation during a standard relink.
+    manifest
+        .write_bytes(
+            b"{\"driver\":\"bin/incan-rustc-driver-b\",\"sysroot\":\"sysroot\",\"externs\":[{\"name\":\"final_provider\",\"path\":\"native/final/libfinal.rlib\"}],\"search\":[\"native/final\"]}",
+        )
+        .map_err((error) => error.message())?
+    assert prepare_compiler_home(installed, compiler)?
+    compiler_text = compiler
+        .joinpath(TOOLCHAIN_DIRECTORY + "/toolchain.json")
+        .read_text("utf-8", "strict")
+        .map_err((error) => error.message())?
+    final_root = installed.resolve().map_err((error) => error.message())?.joinpath(TOOLCHAIN_DIRECTORY + "/native/final")
+    assert final_root.0 in compiler_text, compiler_text
+    assert not prepare_compiler_home(installed, compiler)?
+    return Ok(None)
+
+
+def test_standard_provider_refresh_rebinds_and_readmits_the_compiler_home() -> Result[None, str]:
+    """
+    A standard relink publishes its final providers after installing the driver. The compiler home is rebound and
+    re-admitted when those provider paths change even though the driver identity does not.
+
+    1. Initial preparation admits the seed provider paths once; an unchanged repeat does nothing.
+    2. Replacing only extern and search paths triggers a second admission.
+    3. The compiler manifest names only the final providers under the installed home.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    installed = temporary.path().joinpath("home")
+    compiler = installed.joinpath("compiler-build")
+    toolchain = installed.joinpath(TOOLCHAIN_DIRECTORY)
+    toolchain.joinpath("native/seed").mkdir(true, true).map_err((error) => error.message())?
+    toolchain.joinpath("native/final").mkdir(true, true).map_err((error) => error.message())?
+    manifest = toolchain.joinpath("toolchain.json")
+    manifest
+        .write_bytes(
+            b"{\"driver\":\"bin/incan-rustc-driver-a\",\"sysroot\":\"sysroot\",\"externs\":[{\"name\":\"provider\",\"path\":\"native/seed/libprovider.rlib\"}],\"search\":[\"native/seed\"]}",
+        )
+        .map_err((error) => error.message())?
+    requests = temporary.path().joinpath("requests")
+    builder = temporary.path().joinpath("accepting")
+    script = "#!/bin/sh\nprintf '%s %s\\n' \"$INCAN_HOME\" \"$*\" >> " + requests.0 + "\necho re-admitted\n"
+    executable(builder, script)?
+    # 1. One changed manifest means one admission; the unchanged repeat means none.
+    refresh_compiler_home(builder.0, installed, compiler, [], true)?
+    refresh_compiler_home(builder.0, installed, compiler, [], true)?
+    # 2. Standard publication changes provider paths without changing the driver.
+    manifest
+        .write_bytes(
+            b"{\"driver\":\"bin/incan-rustc-driver-a\",\"sysroot\":\"sysroot\",\"externs\":[{\"name\":\"provider\",\"path\":\"native/final/libprovider.rlib\"}],\"search\":[\"native/final\"]}",
+        )
+        .map_err((error) => error.message())?
+    refresh_compiler_home(builder.0, installed, compiler, [], true)?
+    recorded = requests.read_text("utf-8", "strict").map_err((error) => error.message())?
+    expected = f"{compiler.0} --internal-readmit\n{compiler.0} --internal-readmit\n"
+    assert recorded == expected, recorded
+    # 3. Only the final installed provider paths remain in the compiler manifest.
+    compiler_text = compiler
+        .joinpath(TOOLCHAIN_DIRECTORY + "/toolchain.json")
+        .read_text("utf-8", "strict")
+        .map_err((error) => error.message())?
+    root = installed.resolve().map_err((error) => error.message())?.joinpath(TOOLCHAIN_DIRECTORY + "/native")
+    assert root.joinpath("final").0 in compiler_text, compiler_text
+    assert root.joinpath("seed").0 not in compiler_text, compiler_text
     return Ok(None)
 
 
@@ -49,8 +122,9 @@ def test_the_compiler_home_reads_an_installed_registry_through_its_own_link() ->
     compiler home names both through its own `registry` link, the spelling a packed Loaf's native closure names
     registry artifacts by, so its re-admission admits each artifact where its builds read it.
 
-    1. The closure and lock the installed manifest names inside `registry/` resolve under the compiler home's link.
-    2. The closure read there is the installed one.
+    1. The closure, lock, direct extern and search root inside `registry/` resolve under the compiler home's link.
+    2. Non-registry providers remain absolute to the installed home, and the closure read through the link is the
+       installed one.
     3. A registry the installation names by an absolute path elsewhere stays as written.
     """
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
@@ -59,8 +133,11 @@ def test_the_compiler_home_reads_an_installed_registry_through_its_own_link() ->
     toolchain = installed.joinpath(TOOLCHAIN_DIRECTORY)
     toolchain.joinpath("registry").mkdir(true, true).map_err((error) => error.message())?
     toolchain.joinpath("registry/closure.json").write_bytes(b"installed closure").map_err((error) => error.message())?
+    registry_extern = "{\"name\":\"serde\",\"path\":\"registry/entries/sha256-a/artifacts/libserde.rlib\"}"
+    native_extern = "{\"name\":\"native\",\"path\":\"native/final/libnative.rlib\"}"
+    providers = f"\"externs\":[{registry_extern},{native_extern}],\"search\":[\"registry\",\"registry/entries/sha256-a/artifacts\",\"registry/../native\",\"registry-other\",\"native/final\"],"
     registry = "\"registry_units\":\"registry/closure.json\",\"registry_lock\":\"registry/selected.json\"}"
-    write_manifest(toolchain, MANIFEST_HEAD + registry)?
+    write_manifest(toolchain, MANIFEST_HEAD.replace("\"externs\":[],", providers) + registry)?
     _ = prepare_compiler_home(installed, compiler)?
     # 1. Both resolve against the compiler home's own toolchain directory, inside its `registry` link.
     selected = compiler.resolve().map_err((error) => error.message())?.joinpath(TOOLCHAIN_DIRECTORY)
@@ -68,13 +145,96 @@ def test_the_compiler_home_reads_an_installed_registry_through_its_own_link() ->
     assert units == selected.joinpath("registry/closure.json").0, units
     lock = manifest_path(selected, "registry_lock")?
     assert lock == selected.joinpath("registry/selected.json").0, lock
-    # 2. The link selects the installed tree, not a copy.
+    compiler_text = selected.joinpath("toolchain.json").read_text("utf-8", "strict").map_err((error) => error.message())?
+    compiler_manifest = JsonValue.parse(compiler_text).map_err((error) => error.message())?
+    externs = compiler_manifest
+        .require("externs")
+        .and_then((value) => value.expect_array())
+        .map_err((error) => error.message())?
+    serde = externs[0].require("path").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+    assert serde == "registry/entries/sha256-a/artifacts/libserde.rlib", serde
+    search = compiler_manifest
+        .require("search")
+        .and_then((value) => value.expect_array())
+        .map_err((error) => error.message())?
+    registry_root = search[0].expect_str().map_err((error) => error.message())?
+    assert registry_root == "registry", registry_root
+    registry_search = search[1].expect_str().map_err((error) => error.message())?
+    assert registry_search == "registry/entries/sha256-a/artifacts", registry_search
+    # 2. The link selects the installed tree, while providers outside it stay anchored to the installed home.
     assert Path(units).read_bytes().map_err((error) => error.message())? == b"installed closure"
+    installed_toolchain = toolchain.resolve().map_err((error) => error.message())?
+    native = externs[1].require("path").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+    assert native == installed_toolchain.joinpath("native/final/libnative.rlib").0, native
+    escaped_search = search[2].expect_str().map_err((error) => error.message())?
+    assert escaped_search == installed_toolchain.joinpath("registry/../native").0, escaped_search
+    adjacent_search = search[3].expect_str().map_err((error) => error.message())?
+    assert adjacent_search == installed_toolchain.joinpath("registry-other").0, adjacent_search
+    native_search = search[4].expect_str().map_err((error) => error.message())?
+    assert native_search == installed_toolchain.joinpath("native/final").0, native_search
     # 3. An absolute registry outside the installation is not the compiler home's to rename.
     write_manifest(toolchain, MANIFEST_HEAD + "\"registry_units\":\"/elsewhere/closure.json\"}")?
     _ = prepare_compiler_home(installed, compiler)?
     elsewhere = manifest_path(selected, "registry_units")?
     assert elsewhere == "/elsewhere/closure.json", elsewhere
+    return Ok(None)
+
+
+def test_the_compiler_home_readmits_a_direct_registry_extern_by_its_link_spelling() -> Result[None, str]:
+    """
+    A prepared compiler home is re-admitted through the real installed builder, and its direct registry extern receives
+    the exact entry identity at the path spelling its builds use.
+
+    1. Prepare a temporary compiler home from the installed home running this test.
+    2. Re-admit it through the installed builder's `--internal-readmit` entry.
+    3. Require the compiler-spelled registry artifact's admission record to name its declared entry identity.
+    """
+    installed_text = get_or("INCAN_HOME", "")
+    if installed_text == "":
+        return Err("INCAN_HOME is required for the real compiler-home readmission regression")
+    installed = Path(installed_text)
+    builder = installed.joinpath("bin/incan")
+    if not builder.is_file():
+        return Err(f"installed builder is missing: {builder.0}")
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    compiler = temporary.path().joinpath("compiler-build")
+    _ = prepare_compiler_home(installed, compiler)?
+    toolchain = compiler.resolve().map_err((error) => error.message())?.joinpath(TOOLCHAIN_DIRECTORY)
+    text = toolchain.joinpath("toolchain.json").read_text("utf-8", "strict").map_err((error) => error.message())?
+    manifest = JsonValue.parse(text).map_err((error) => error.message())?
+    mut selected = ""
+    for entry in (
+        manifest.require("externs").and_then((value) => value.expect_array()).map_err((error) => error.message())?
+    ):
+        path = entry.require("path").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+        if path.startswith("registry/entries/sha256-"):
+            selected = path
+    if selected == "":
+        return Err("installed toolchain has no direct registry extern for the real readmission regression")
+    artifact = toolchain.joinpath(selected)
+    components = selected.split("/")
+    if len(components) < 3 or not components[2].startswith("sha256-"):
+        return Err(f"registry extern has no entry identity: {selected}")
+    identity = "sha256:" + components[2][len("sha256-"):]
+    # 2. This is the production readmission boundary, not a command-recording stub.
+    readmit(builder.0, compiler, [])?
+    physical = artifact.resolve().map_err((error) => error.message())?
+    assert physical.0 != artifact.0
+    directory = compiler.joinpath("cache/unit-admissions")
+    for spelling in [artifact, physical]:
+        located = hexlify(sha256.digest(spelling.0.encode("utf-8")))
+        current = directory.joinpath(f"{located}.crumb")
+        mut admitted = ""
+        if current.is_file():
+            raw = current.read_bytes().map_err((error) => error.message())?
+            proof = decode_unit_admission(raw, spelling.0)?
+            assert proof.refusal == ""
+            admitted = proof.identity
+        else:
+            legacy = directory.joinpath(f"{located}.json")
+            document = JsonValue.parse(legacy.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err((error) => error.message())?
+            admitted = document.require("unit").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+        assert admitted == identity, f"{spelling.0}: expected {identity}, admitted {admitted}"
     return Ok(None)
 
 
@@ -98,8 +258,10 @@ def test_the_compiler_home_reads_a_release_candidates_registry_where_the_candida
     toolchain.joinpath("registry/closure.json").write_bytes(b"candidate closure").map_err((error) => error.message())?
     toolchain.joinpath("registry/entries").symlink_to(producer.joinpath("entries")).map_err((error) => error.message())?
     toolchain.joinpath("registry-producer").symlink_to(producer).map_err((error) => error.message())?
+    registry_extern = "{\"name\":\"serde\",\"path\":\"registry/entries/sha256-a/artifacts/libserde.rlib\"}"
+    providers = f"\"externs\":[{registry_extern}],\"search\":[\"registry/entries/sha256-a/artifacts\"],"
     registry = "\"registry_units\":\"registry/closure.json\",\"registry_lock\":\"registry-producer/selected.json\"}"
-    write_manifest(toolchain, MANIFEST_HEAD + registry)?
+    write_manifest(toolchain, MANIFEST_HEAD.replace("\"externs\":[],", providers) + registry)?
     _ = prepare_compiler_home(candidate, compiler)?
     selected = compiler.resolve().map_err((error) => error.message())?.joinpath(TOOLCHAIN_DIRECTORY)
     named = candidate.resolve().map_err((error) => error.message())?.joinpath(TOOLCHAIN_DIRECTORY)
@@ -109,6 +271,14 @@ def test_the_compiler_home_reads_a_release_candidates_registry_where_the_candida
     # 2. The producer's selection, as the candidate names it.
     lock = manifest_path(selected, "registry_lock")?
     assert lock == named.joinpath("registry-producer/selected.json").0, lock
+    text = selected.joinpath("toolchain.json").read_text("utf-8", "strict").map_err((error) => error.message())?
+    manifest = JsonValue.parse(text).map_err((error) => error.message())?
+    externs = manifest.require("externs").and_then((value) => value.expect_array()).map_err((error) => error.message())?
+    serde = externs[0].require("path").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+    assert serde == named.joinpath("registry/entries/sha256-a/artifacts/libserde.rlib").0, serde
+    search = manifest.require("search").and_then((value) => value.expect_array()).map_err((error) => error.message())?
+    registry_search = search[0].expect_str().map_err((error) => error.message())?
+    assert registry_search == named.joinpath("registry/entries/sha256-a/artifacts").0, registry_search
     return Ok(None)
 
 
@@ -200,8 +370,7 @@ def test_a_relink_drops_the_bundle_compiler_record_pin() -> Result[None, str]:
     toolchain
         .joinpath("toolchain.json")
         .write_text(
-            "{\"driver\":\"bin/incan-rustc-driver-a\",\"rust_abi\":[],\"sysroot\":\"sysroot\",\"externs\":[],"
-            + "\"compiler_records\":{\"root\":\"compiler-records\",\"digest\":\"cf96ccd9\"}}",
+            "{\"driver\":\"bin/incan-rustc-driver-a\",\"rust_abi\":[],\"sysroot\":\"sysroot\",\"externs\":[]," + "\"compiler_records\":{\"root\":\"compiler-records\",\"digest\":\"cf96ccd9\"}}",
             "utf-8",
             "strict",
             None,
@@ -239,8 +408,7 @@ def test_a_standard_relink_withdraws_the_installed_providers_before_it_builds_su
     toolchain
         .joinpath("toolchain.json")
         .write_text(
-            MANIFEST_HEAD.replace("\"externs\":[]", f"\"externs\":[{installed}]")
-            + "\"search\":[\"native/a\"],\"registry_units\":\"registry/units.json\"}",
+            MANIFEST_HEAD.replace("\"externs\":[]", f"\"externs\":[{installed}]") + "\"search\":[\"native/a\"],\"registry_units\":\"registry/units.json\"}",
             "utf-8",
             "strict",
             None,
