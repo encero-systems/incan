@@ -1,7 +1,7 @@
 //! A plan product holds no source line: moved lines inside a body change only its request-local position map.
 //!
-//! The reference's fourth test, finalization against every carried frame, waits on `scalar_store::finalize_scalar`,
-//! which records publication brings.
+//! The reference's finalization test calls `finalize_scalar`, a wrapper that returns the first two parts of
+//! `finalized_plan_product`; the Rust lowering keeps only the latter, which this test calls.
 
 use std::path::{Path, PathBuf};
 
@@ -13,7 +13,7 @@ use incan_mir_plan_native::{
 use crate::record_positions::{
     index_positions, indexed_product, place_positions, positioned_product, relocate_product,
 };
-use crate::scalar_store::{record_scalar_inputs, retain_scalar, retained_scalar};
+use crate::scalar_store::{finalized_plan_product, record_scalar_inputs, retain_scalar, retained_scalar};
 
 /// A function whose block starts on one body line and whose return sits on another.
 fn positioned(name: &str, owner: &SourceSpan, statement_line: i64, exit_line: i64) -> Function {
@@ -149,4 +149,49 @@ fn unlocated_body_span_refuses_a_position_free_product() -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+/// Finalization accepts a capture only when every carried frame matches, and replaces a fresh product that differs.
+#[test]
+fn finalization_matches_every_carried_frame_before_reusing_capture() -> Result<(), String> {
+    let directory = products("finalize")?;
+    let text = directory.to_string_lossy().into_owned();
+    let owner = source_span("positions.incn", 10, 1);
+    let function = positioned("work", &owner, 11, 12);
+    let frame = positioned("helper", &owner, 11, 12);
+    let nodes = [(0, 1), (1, 5), (2, 5)];
+    let inputs = record_scalar_inputs("meaning", &function.name, &owner, false, "reads", nodes.len());
+    retain_scalar(&text, &inputs, &function, &[], &[], &nodes, &[frame.clone()], &[])?;
+    let mut path = None;
+    for entry in std::fs::read_dir(&directory).map_err(|error| error.to_string())? {
+        let candidate = entry.map_err(|error| error.to_string())?.path();
+        if candidate.to_string_lossy().ends_with(".incnfunction") {
+            path = Some(candidate);
+        }
+    }
+    let Some(path) = path else {
+        return Err("missing captured test product".into());
+    };
+    let captured = std::fs::read(&path).map_err(|error| error.to_string())?;
+    let key = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let product = decode_plan_function_record(&captured)?.function;
+    let mut names = Vec::new();
+    let placed = positioned_product(&product, &nodes, "positions.incn", 10, &mut names)?;
+    assert_eq!(names, vec!["helper".to_owned()]);
+    assert!(placed == positioned_product(&product, &nodes, "positions.incn", 10, &mut Vec::new())?);
+    let finalize = |reused: bool, frames: &[Function]| {
+        finalized_plan_product(&text, &key, &function, reused, Vec::new(), &nodes, frames, &captured)
+    };
+    assert!(finalize(false, &[frame.clone()])?.0 == captured);
+    assert!(finalize(true, &[frame])?.0 == captured);
+    let changed = positioned("helper", &owner, 12, 11);
+    assert!(finalize(true, &[changed.clone()]).is_err());
+    let replaced = finalize(false, &[changed])?.0;
+    assert!(replaced != captured);
+    assert!(std::fs::read(&path).map_err(|error| error.to_string())? == replaced);
+    let _ = std::fs::remove_dir_all(&directory);
+    Ok(())
 }
