@@ -7,7 +7,9 @@
 //! is identical, and a records case's final plan, published as the driver publishes it, leaves the captured publication
 //! in its report, file for file. With `INCAN_ENGINE_TRACE` naming a directory, `--reuse` prints the keyed frames each
 //! call restored, lowered and kept, or lowered without a product, and `--base` names the case whose bodies an edit is
-//! compared with.
+//! compared with. `--record OUT` writes a copy of the corpus to OUT whose expected product files, report files and
+//! publications are this replay's own, each call of a case reading the products its previous call wrote where the
+//! reference did; it records nothing, and exits 1, when any call's answer differs from the reference.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -16,6 +18,7 @@ use incan_lowering::corpus::{
     Case, Corpus, Outcome, Requirement, Step, produced_initializers, product_differs_only_by_initializers,
     renamed_initializers, report_differs_only_by_initializers,
 };
+use incan_lowering::corpus_recording::{Recording, recordable};
 use incan_lowering::reuse_proof::{FrameOutcomes, FrameTrace, changed_bodies, check_records_keys};
 use incan_lowering::{
     Plan, RefusalPlanning, RuntimeRequirement, SourceInputs, UnitContinuation, UnitPlanning,
@@ -28,6 +31,8 @@ use sha2::{Digest, Sha256};
 struct Evidence {
     report: bool,
     base: Option<Case>,
+    /// A recording in progress: each case's copy and every call answer that differed from its reference.
+    recording: Option<Recording>,
 }
 
 #[derive(Default)]
@@ -150,6 +155,8 @@ struct StepDirectories {
     report: PathBuf,
     /// The produced module initializer names the reference products a case restores are renamed to.
     names: BTreeMap<i64, String>,
+    /// A recording call reads the products its previous call wrote, as the reference's did, instead of restoring them.
+    chained: bool,
 }
 
 fn case_directories(scratch: &Path) -> Result<StepDirectories, String> {
@@ -161,6 +168,7 @@ fn case_directories(scratch: &Path) -> Result<StepDirectories, String> {
         products: root.join("products"),
         report: root.join("report"),
         names: BTreeMap::new(),
+        chained: false,
     };
     std::fs::create_dir_all(&directories.products).map_err(|error| error.to_string())?;
     std::fs::create_dir_all(&directories.report).map_err(|error| error.to_string())?;
@@ -184,7 +192,9 @@ fn prepass_names(corpus: &Corpus, case: &Case, scratch: &Path) -> Result<BTreeMa
 fn inputs(corpus: &Corpus, step: &Step, directories: &StepDirectories) -> Result<SourceInputs, String> {
     let scalar_products = match &step.scalar_products {
         Some(_) => {
-            corpus.reset_renamed(&step.products_before, &directories.products, &directories.names)?;
+            if !directories.chained {
+                corpus.reset_renamed(&step.products_before, &directories.products, &directories.names)?;
+            }
             Some(directories.products.to_string_lossy().into_owned())
         }
         None => None,
@@ -243,6 +253,7 @@ fn replay_step(
     Ok((answer, unions))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn replay_case(
     corpus: &Corpus,
     name: &str,
@@ -250,6 +261,8 @@ fn replay_case(
     scratch: &Path,
     tally: &mut Tally,
     evidence: &Evidence,
+    mut recorded: Option<&mut Case>,
+    differences: &mut Vec<String>,
 ) -> Result<(), String> {
     tally.cases += 1;
     let mut trace = if evidence.report { FrameTrace::open() } else { None };
@@ -290,6 +303,8 @@ fn replay_case(
     let mut last_plan: Option<Vec<u8>> = None;
     for (index, step) in case.steps.iter().enumerate() {
         tally.steps += 1;
+        directories.chained =
+            recorded.is_some() && index > 0 && step.products_before == case.steps[index - 1].products_after;
         let (actual, unions) = replay_step(corpus, step, &directories, &mut continuation)?;
         if let Some(cursor) = trace.as_mut() {
             report_reuse(corpus, name, index, step, &cursor.take(), evidence.base.as_ref())?;
@@ -309,6 +324,12 @@ fn replay_case(
             _ => step.outcome.clone(),
         };
         let identical = actual == expected_outcome && unions == step.unions;
+        if let (Some(recording), Some(copy)) = (evidence.recording.as_ref(), recorded.as_deref_mut()) {
+            record_step(recording, copy, index, step, &directories)?;
+            if !identical {
+                differences.push(format!("{name} step {index} ({})", step.call));
+            }
+        }
         if step.scalar_products.is_some() {
             let (expected, same, differing) = differing_files(corpus, &step.products_after, &directories.products);
             renamed_products.extend(differing);
@@ -381,7 +402,15 @@ fn replay_case(
         }
     }
     if let Some((expected, produced)) = published {
-        compare_publication(corpus, name, &expected, &produced, &directories, tally)?;
+        compare_publication(
+            corpus,
+            name,
+            &expected,
+            &produced,
+            &directories,
+            tally,
+            evidence.recording.as_ref(),
+        )?;
     }
     // A product the reference wrote with slot-named module initializers must differ in those names alone.
     let names = last_plan.as_deref().map(produced_initializers).unwrap_or_default();
@@ -415,8 +444,10 @@ fn compare_publication(
     produced: &[u8],
     directories: &StepDirectories,
     tally: &mut Tally,
+    recording: Option<&Recording>,
 ) -> Result<(), String> {
-    let Some(captured) = corpus.publication(&hex::encode(Sha256::digest(expected)))? else {
+    let digest = hex::encode(Sha256::digest(expected));
+    let Some(captured) = corpus.publication(&digest)? else {
         return Ok(());
     };
     tally.publications += 1;
@@ -441,6 +472,9 @@ fn compare_publication(
         }
     }
     files.sort();
+    if let Some(recording) = recording {
+        recording.write_publication(&digest, &files)?;
+    }
     tally.publication_files += captured.len();
     tally.publication_files_identical += captured.iter().filter(|file| files.contains(file)).count();
     let names = produced_initializers(produced);
@@ -473,6 +507,27 @@ fn compare_publication(
     Ok(())
 }
 
+/// Record one call's outputs in a case's copy: the products it read when its call chains, and the product and report
+/// files it left.
+fn record_step(
+    recording: &Recording,
+    copy: &mut Case,
+    index: usize,
+    step: &Step,
+    directories: &StepDirectories,
+) -> Result<(), String> {
+    if directories.chained {
+        copy.steps[index].products_before = copy.steps[index - 1].products_after.clone();
+    }
+    if step.scalar_products.is_some() {
+        copy.steps[index].products_after = recording.files(&directories.products)?;
+    }
+    if step.record_report.is_some() {
+        copy.steps[index].report_after = recording.files(&directories.report)?;
+    }
+    Ok(())
+}
+
 /// Key every ordinary body of each records call as the lowering keys it and check the products the reference left.
 fn check_case_records_keys(corpus: &Corpus, name: &str, case: &Case, scratch: &Path) -> Result<(), String> {
     for (index, step) in case.steps.iter().enumerate() {
@@ -489,6 +544,7 @@ fn check_case_records_keys(corpus: &Corpus, name: &str, case: &Case, scratch: &P
             products: directory.clone(),
             report: directory.join("report"),
             names: BTreeMap::new(),
+            chained: false,
         };
         let inputs = inputs(corpus, step, &directories)?;
         corpus.restore(&step.products_after, &directory)?;
@@ -688,6 +744,7 @@ struct Options {
     report: bool,
     records_keys: bool,
     base_prefix: Option<String>,
+    record: Option<PathBuf>,
 }
 
 /// Read the options; an unknown option ends the process with status 2.
@@ -699,6 +756,7 @@ fn parse_options(arguments: &[String]) -> Options {
     let mut report = false;
     let mut records_keys = false;
     let mut base_prefix: Option<String> = None;
+    let mut record: Option<PathBuf> = None;
     let mut options = arguments.iter();
     while let Some(option) = options.next() {
         if option == "--describe" {
@@ -718,6 +776,7 @@ fn parse_options(arguments: &[String]) -> Options {
             ("--show", Some(value)) => show = value.parse().unwrap_or(20),
             ("--dump", Some(value)) => dump = Some(PathBuf::from(value)),
             ("--base", Some(value)) => base_prefix = Some(value.clone()),
+            ("--record", Some(value)) => record = Some(PathBuf::from(value)),
             _ => {
                 eprintln!("unknown option {option}");
                 std::process::exit(2);
@@ -732,6 +791,7 @@ fn parse_options(arguments: &[String]) -> Options {
         report,
         records_keys,
         base_prefix,
+        record,
     }
 }
 
@@ -792,6 +852,7 @@ fn main() {
         report,
         records_keys,
         base_prefix,
+        record,
     } = parse_options(&arguments[2..]);
     let corpus = Corpus::open(Path::new(root));
     let scratch = std::env::temp_dir().join(format!("lowering-replay-{}", std::process::id()));
@@ -812,7 +873,23 @@ fn main() {
             })
             .and_then(|path| corpus.case(path).ok())
     });
-    let evidence = Evidence { report, base };
+    let recording = match &record {
+        Some(out) => match Recording::create(Path::new(root), out) {
+            Ok(recording) => Some(recording),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(2);
+            }
+        },
+        None => None,
+    };
+    let evidence = Evidence {
+        report,
+        base,
+        recording,
+    };
+    let mut recorded: Vec<(String, Case)> = Vec::new();
+    let mut differences: Vec<String> = Vec::new();
     for path in cases {
         let name = path
             .file_stem()
@@ -845,15 +922,51 @@ fn main() {
             }
             continue;
         }
-        let result = corpus
-            .case(&path)
-            .and_then(|case| replay_case(&corpus, &name, &case, &scratch, &mut tally, &evidence));
+        let mut copy = if evidence.recording.is_some() {
+            corpus.case(&path).ok()
+        } else {
+            None
+        };
+        if evidence.recording.is_some() && copy.is_none() {
+            differences.push(format!("{name}: case does not decode"));
+        }
+        let result = corpus.case(&path).and_then(|case| {
+            replay_case(
+                &corpus,
+                &name,
+                &case,
+                &scratch,
+                &mut tally,
+                &evidence,
+                copy.as_mut(),
+                &mut differences,
+            )
+        });
         if let Err(error) = result {
             tally.mismatches.push(format!("{name}: replay failed: {error}"));
+            differences.push(format!("{name}: replay failed"));
+        }
+        if let Some(copy) = copy {
+            let file = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            recorded.push((file, copy));
         }
     }
     let _ = std::fs::remove_dir_all(&scratch);
     print_tally(&tally, show);
+    if let Some(recording) = evidence.recording.as_ref() {
+        if let Err(refusal) = recordable(&differences) {
+            eprintln!("{refusal}");
+            std::process::exit(1);
+        }
+        for (file, case) in &recorded {
+            if let Err(error) = recording.write_case(file, case) {
+                eprintln!("{file}: {error}");
+                std::process::exit(1);
+            }
+        }
+        println!("recorded {} cases", recorded.len());
+        std::process::exit(0);
+    }
     let complete = tally.mismatches.is_empty()
         && tally.products_identical + tally.products_renamed == tally.products
         && tally.reports_identical + tally.reports_renamed == tally.reports
