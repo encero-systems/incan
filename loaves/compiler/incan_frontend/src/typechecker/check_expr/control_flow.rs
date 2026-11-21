@@ -153,6 +153,8 @@ impl TypeChecker {
         let Some(base_ty) = self.type_info.expr_type(base.span) else {
             return false;
         };
+        // A receiver reached through a borrow calls its referent's methods (RFC 164).
+        let base_ty = &crate::typechecker::helpers::borrowed_value_type(base_ty.clone());
         if self.known_surface_async_method(base_ty, method) {
             return true;
         }
