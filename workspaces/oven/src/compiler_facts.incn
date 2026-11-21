@@ -3,13 +3,19 @@
 from std.encoding.hex import hexlify
 from std.fs import Path
 from std.hash import sha256
-from std.json import JsonValue
-from files import json_text, read_json
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from files import read_json
+from pub::internal_models.crumb_rows import ModelField, model_description, required_value
+from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, text
 from home_paths import home
 from json_fields import required_text
 from observation import file_digest, observe
-from publication import publish
+from publication import publish_binary
 from frozen_inputs import payload as frozen_payload
+
+
+const FACT_ROW: bytes = b"cmpfac\x00"
 
 
 pub model FactAdmission:
@@ -22,8 +28,8 @@ pub model FactAdmission:
 pub def verified_fact(path: Path) -> Result[FactAdmission, str]:
     """Capture an admitted compiler fact before its containing installation is renamed."""
     digest = fact_identity(path)?
-    document = read_json(fact_record(path)?)?
-    return Ok(FactAdmission(digest=digest, observation=required_text(document, "observation")?))
+    stored = read_admission(fact_record(path)?)?
+    return Ok(FactAdmission(digest=digest, observation=stored.observation))
 
 
 pub def relocate_fact(path: Path, admission: FactAdmission) -> Result[None, str]:
@@ -45,8 +51,8 @@ pub def admit_fact(path: Path) -> Result[None, str]:
     location = fact_record(path)?
     before = observe(path)?.stamp
     if location.is_file():
-        document = read_json(location)?
-        if required_text(document, "observation")? == before:
+        stored = read_admission(location)?
+        if stored.observation == before:
             return Ok(None)
     # 2. Hashing belongs to admission, not to naming this fact in another unit's key.
     digest = file_digest(path)?
@@ -60,25 +66,47 @@ def record_fact(path: Path, digest: str, observation: str) -> Result[None, str]:
     """Publish admission evidence at the fact's current physical location."""
     location = fact_record(path)?
     location.parent().mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
-    record = JsonValue.object(
-        {"digest": JsonValue.string(digest), "observation": JsonValue.string(observation), "provenance": JsonValue.string(
-            path.0,
-        )},
-    )
-    return publish(location, json_text(record)?)
+    row = encode_graph_row(FACT_ROW, admission_description(), [
+        required_value(b"digest", Value.Text(digest)),
+        required_value(b"observ", Value.Text(observation)),
+        required_value(b"proven", Value.Text(path.0)),
+    ])?
+    return publish_binary(location, row)
+
+
+def admission_description() -> Description:
+    """An observation and its diagnostic provenance accompany the admitted content digest."""
+    return model_description(FACT_ROW, "incan.compiler.file-admission/2", [
+        ModelField(identity=b"digest", name="digest", storage="string"),
+        ModelField(identity=b"observ", name="observation", storage="string"),
+        ModelField(identity=b"proven", name="provenance", storage="string"),
+    ])
+
+
+def read_admission(location: Path) -> Result[FactAdmission, str]:
+    """Open the typed row, or the previous installation's evidence until its next explicit admission."""
+    if not location.is_file():
+        legacy = location.parent().joinpath(location.stem() + ".json")
+        if not legacy.is_file():
+            return Err(f"{location.0}: compiler fact requires admission")
+        document = read_json(legacy)?
+        return Ok(FactAdmission(digest=required_text(document, "digest")?, observation=required_text(document, "observation")?))
+    raw = location.read_bytes().map_err((error) => error.message())?
+    fields = decode_graph_row(raw, FACT_ROW, admission_description(), 3)?
+    return Ok(FactAdmission(digest=text(fields[0].value)?, observation=text(fields[1].value)?))
 
 
 pub def fact_identity(path: Path) -> Result[str, str]:
     """Read an already admitted compiler fact's content identity without reading or hashing its payload."""
     if let Some(admission) = frozen_payload(path)?:
+        if admission.refusal != "":
+            return Err(admission.refusal)
         return Ok(admission.payload)
     location = fact_record(path)?
-    if not location.is_file():
-        return Err(f"{path.0}: compiler fact requires admission")
-    document = read_json(location)?
-    if required_text(document, "observation")? != observe(path)?.stamp:
+    stored = read_admission(location)?
+    if stored.observation != observe(path)?.stamp:
         return Err(f"{path.0}: compiler fact changed after admission")
-    return required_text(document, "digest")
+    return Ok(stored.digest)
 
 
 def fact_record(path: Path) -> Result[Path, str]:
@@ -90,7 +118,7 @@ def fact_record(path: Path) -> Result[Path, str]:
 def record_at(physical: Path) -> Result[Path, str]:
     """The admission record of the fact at one physical path."""
     address = hexlify(sha256.digest(physical.0.encode("utf-8")))
-    return Ok(home()?.joinpath("cache/compiler-facts").joinpath(f"{address}.json"))
+    return Ok(home()?.joinpath("cache/compiler-facts").joinpath(f"{address}.crumb"))
 
 
 pub def retire_facts(removed: list[str]) -> Result[int, str]:
@@ -106,7 +134,12 @@ pub def retire_facts(removed: list[str]) -> Result[int, str]:
             continue
         directory = path.parent().resolve().map_err((error) => f"cannot {error.message()}")?
         record = record_at(directory.joinpath(path.name()))?
-        if record.is_file():
-            record.unlink().map_err((error) => f"cannot {error.message()}")?
+        legacy = record.parent().joinpath(record.stem() + ".json")
+        mut found = false
+        for generation in [record, legacy]:
+            if generation.is_file():
+                generation.unlink().map_err((error) => f"cannot {error.message()}")?
+                found = true
+        if found:
             retired += 1
     return Ok(retired)

@@ -1,15 +1,28 @@
 """A home installed from a pack keys each unit as the home it was packed from, so it reuses what that home compiled."""
 
+from rust::std::fs import rename
 from std.fs import Path
 from std.json import JsonValue
 from compiler_record_admission import CompilerRecordPin
 from compiler_worker import generation_for
 from files import json_text, read_json
 from freshness_fixtures import compiler_fingerprint, fixture, unit_key, write
-from observation import file_digest
+from observation import file_digest, observe
+from frozen_inputs import Document, admit_observations, clear, select
 from scratch import scratch_directory
-from unit_freshness import fingerprint
-from unit_publication import LOAF_FACTS_SCHEMA, facts_path, import_publication, record_path, record_payload
+from unit_freshness import artifact_identity, fingerprint
+from unit_publication import (
+    LOAF_FACTS_SCHEMA,
+    PUBLICATION_SCHEMA,
+    import_payload,
+    admitted_identity,
+    facts_path,
+    import_publication,
+    publication,
+    published_identity,
+    record_path,
+    record_payload,
+)
 
 
 pub def test_a_compiler_record_pin_leaves_unit_identities_alone() -> Result[None, str]:
@@ -66,3 +79,105 @@ pub def test_a_transported_loaf_keys_its_consumers_as_where_it_was_built() -> Re
     assert unit_key(setup.unit, setup.toolchain)?.digest == built_program, "the installed Loaf rekeyed the program"
     assert unit_key(library, setup.toolchain)?.digest == built_library, "the installed Loaf rekeyed a library"
     return Ok(None)
+
+
+pub def test_a_directory_named_like_a_registry_entry_gives_its_artifacts_no_identity() -> Result[None, str]:
+    """A registry-looking path outside every store in the selected toolchain closure proves no producer identity."""
+    scratch = scratch_directory()?
+    entry = "sha256-abababababababababababababababababababababababababababababababab"
+    forged = scratch.path().joinpath("vendor/entries").joinpath(entry).joinpath("artifacts/libserde.rlib")
+    write(forged, "bytes no registry unit produced")?
+    assert admitted_identity(forged)?.is_none(), "a directory name alone admitted an artifact"
+    assert published_identity(forged).is_err(), "a directory name alone named an artifact's producer"
+    registry = scratch.path().joinpath("registry")
+    artifact = registry.joinpath("entries").joinpath(entry).joinpath("artifacts/libserde.rlib")
+    write(artifact, "selected registry payload")?
+    closure = registry.joinpath("closure.json")
+    binding = JsonValue.object({"path": JsonValue.string(artifact.0)})
+    document = JsonValue.object({"externs": JsonValue.object({"serde": binding})})
+    select([Document(path=closure.0, stamp="closure-stamp", value=document)], [], [], [], closure.0, "closure", "rustc", "compiler")
+    expected = "sha256:" + entry[7:]
+    assert artifact_identity(artifact)? == expected
+    physical = observe(artifact)?.stamp
+    unrelated = observe(forged)?.stamp
+    # A completed catalog adds observations; both the selected producer and the unadmitted file keep their identities.
+    admit_observations([artifact.0, forged.0], [physical, unrelated])
+    assert artifact_identity(artifact)? == expected, "catalog observation changed the scalar producer generation"
+    assert artifact_identity(forged)? == unrelated
+    next_identity = "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+    replaced = registry.joinpath("entries/sha256-" + next_identity).joinpath("artifacts/libserde.rlib")
+    write(replaced, "replacement registry payload")?
+    admit_observations([replaced.0], [observe(replaced)?.stamp])
+    assert artifact_identity(replaced)? == "sha256:" + next_identity
+    clear()
+    return Ok(None)
+
+
+pub def test_a_selected_registry_entry_is_named_from_its_admission_without_an_observation() -> Result[None, str]:
+    """
+    Naming a linked artifact of the selected closure's registry observes nothing: the installation's admission owns
+    that frozen store, so a request reads the content that admission recorded. Any other artifact is still observed.
+    """
+    scratch = scratch_directory()?
+    entry = "sha256-efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef"
+    registry = scratch.path().joinpath("registry")
+    artifact = registry.joinpath("entries").joinpath(entry).joinpath("artifacts/libtokio.rlib")
+    outside = scratch.path().joinpath("vendor/entries").joinpath(entry).joinpath("artifacts/libtokio.rlib")
+    identity = "sha256:" + entry[7:]
+    for path in [artifact, outside]:
+        write(path, "registry payload")?
+        import_payload(path, identity, file_digest(path)?)?
+    closure = registry.joinpath("closure.json")
+    binding = JsonValue.object({"path": JsonValue.string(artifact.0)})
+    document = JsonValue.object({"externs": JsonValue.object({"tokio": binding})})
+    select([Document(path=closure.0, stamp="closure-stamp", value=document)], [], [], [], closure.0, "closure", "rustc", "compiler")
+    # The same bytes in a new file: only an observation tells this generation from the admitted one.
+    for path in [artifact, outside]:
+        incoming = path.parent().joinpath("incoming")
+        write(incoming, "registry payload")?
+        rename(incoming.0, path.0).map_err((error) => str(error))?
+    selected = publication(artifact)
+    unselected = publication(outside)
+    clear()
+    named, content = selected?
+    assert named == identity, "the selected entry lost its admitted producer identity"
+    assert content == file_digest(artifact)?, "the selected entry lost its admitted content"
+    assert unselected.is_err(), "an artifact outside the selected closure was named without an observation"
+    return Ok(None)
+
+
+pub def test_replacing_a_staged_payload_rechecks_its_new_transport_proof() -> Result[None, str]:
+    scratch = scratch_directory()?
+    staged = scratch.path().joinpath("standard.incnbody")
+    incoming = scratch.path().joinpath("incoming.incnbody")
+    write(staged, "same body bytes")?
+    digest = file_digest(staged)?
+    write_portable_producer(staged, "previous", digest)?
+    import_publication(staged)?
+    assert published_identity(staged)? == "previous"
+
+    # Changing only the accompanying claim cannot relabel the currently admitted physical generation.
+    write_portable_producer(staged, "next", digest)?
+    assert import_publication(staged).is_err()
+    write(incoming, "damaged body bytes")?
+    rename(incoming.0, staged.0).map_err((error) => str(error))?
+    assert import_publication(staged).is_err()
+
+    # New archives can reproduce identical bytes through a different producer in a fresh staging directory.
+    write(incoming, "same body bytes")?
+    rename(incoming.0, staged.0).map_err((error) => str(error))?
+    assert import_payload(staged, "wrong external identity", digest).is_err()
+    import_publication(staged)?
+    assert published_identity(staged)? == "next"
+    import_publication(staged)?
+    return Ok(None)
+
+
+def write_portable_producer(path: Path, identity: str, digest: str) -> Result[None, str]:
+    record = JsonValue.object({
+        "schema": JsonValue.string(PUBLICATION_SCHEMA),
+        "unit": JsonValue.string(identity),
+        "payload": JsonValue.string(digest),
+        "observation": JsonValue.string(""),
+    })
+    return write(record_path(path), json_text(record)?)

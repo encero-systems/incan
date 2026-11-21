@@ -58,6 +58,13 @@ pub model Toolchain:
     # This compiler accepts `--toolchain-root` and `--bakery-root` and anchors the native closures it publishes. A driver
     # from before them refuses the options, so Oven passes them only when the installation advertises this.
     pub closure_anchors: bool = false
+    pub search_index_crumb: bool = false
+    pub checked_body_counts_crumb: bool = false
+    pub worker_protocol_crumb: bool = false
+    pub unit_descriptor_crumb: bool = false
+    pub compiler_record_export_crumb: bool = false
+    pub namespace_references: bool = false
+    pub retain_checked_modules: bool = false
 
     pub def installed(self) -> InstalledCompiler:
         """Project frozen compiler facts without retaining any request-local readers or console selection."""
@@ -71,6 +78,13 @@ pub model Toolchain:
             registry_units_identity=self.registry_units_identity,
             codegraph_on_request=self.codegraph_on_request,
             closure_anchors=self.closure_anchors,
+            search_index_crumb=self.search_index_crumb,
+            checked_body_counts_crumb=self.checked_body_counts_crumb,
+            worker_protocol_crumb=self.worker_protocol_crumb,
+            unit_descriptor_crumb=self.unit_descriptor_crumb,
+            compiler_record_export_crumb=self.compiler_record_export_crumb,
+            namespace_references=self.namespace_references,
+            retain_checked_modules=self.retain_checked_modules,
             registry_lock=self.registry_lock,
             c_compiler=self.c_compiler,
             target=self.target,
@@ -97,6 +111,13 @@ pub model InstalledCompiler:
     pub registry_units_identity: str = ""
     pub codegraph_on_request: bool = false
     pub closure_anchors: bool = false
+    pub search_index_crumb: bool = false
+    pub checked_body_counts_crumb: bool = false
+    pub worker_protocol_crumb: bool = false
+    pub unit_descriptor_crumb: bool = false
+    pub compiler_record_export_crumb: bool = false
+    pub namespace_references: bool = false
+    pub retain_checked_modules: bool = false
     pub registry_lock: str
     pub c_compiler: str
     pub target: str
@@ -122,6 +143,13 @@ pub model InstalledCompiler:
             registry_units_identity=self.registry_units_identity,
             codegraph_on_request=self.codegraph_on_request,
             closure_anchors=self.closure_anchors,
+            search_index_crumb=self.search_index_crumb,
+            checked_body_counts_crumb=self.checked_body_counts_crumb,
+            worker_protocol_crumb=self.worker_protocol_crumb,
+            unit_descriptor_crumb=self.unit_descriptor_crumb,
+            compiler_record_export_crumb=self.compiler_record_export_crumb,
+            namespace_references=self.namespace_references,
+            retain_checked_modules=self.retain_checked_modules,
             console="",
             worker_generation="",
             native_closures=NativeClosureInput(),
