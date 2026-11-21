@@ -34,9 +34,11 @@ pub fn module_static_key(statics: &[StaticDeclaration], owner: &str) -> i64 {
     -1
 }
 
-/// Name the planned function initializing the statics of the module keyed `key`.
-pub fn module_initializer_name(key: i64) -> String {
-    format!("__incan_init_module_statics_{key}")
+/// Name the planned function initializing the statics of module `owner` by the module's stable identity, as other
+/// generated names are. A static slot would shift whenever another module gains or loses a static, renaming this
+/// initializer under every saved product whose frames enter it.
+pub fn module_initializer_name(owner: &str) -> String {
+    format!("__incan_init_module_statics_{}", hex::encode(owner.as_bytes()))
 }
 
 /// Call module `owner`'s static initializer, as legacy calls `__incan_init_module_statics` at a function entry.
@@ -48,7 +50,7 @@ pub fn initialize_module_statics(builder: &mut Builder, owner: &str, span: &Sour
     let output = temporary(builder, PlanType::Unit, span);
     terminate_call(
         builder,
-        CalleeKind::Planned(module_initializer_name(key)),
+        CalleeKind::Planned(module_initializer_name(owner)),
         Vec::new(),
         output,
         span,
@@ -177,7 +179,7 @@ pub fn module_initializer(statics: &[StaticDeclaration], key: i64, span: &Source
     blocks.push(plan_block(vec![unit], TerminatorKind::Return, span));
     let local = |ty: PlanType| Local { ty, span: span.clone() };
     Function::new(
-        module_initializer_name(key),
+        module_initializer_name(&owner),
         Vec::new(),
         PlanType::Unit,
         vec![local(PlanType::Unit), local(PlanType::Bool), local(PlanType::Unit)],

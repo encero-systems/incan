@@ -553,7 +553,9 @@ pub def test_a_const_with_a_computed_initializer_keeps_its_module_initializer() 
     """A `const` whose value is built at run time, a list of models here, is still initialized on entry."""
     report = plan_report("computed_constant", COMPUTED_CONSTANT, "2")?
     found = initializers(report)
-    assert "__incan_init_module_statics_0" in found, f"the plan holds only these initializers: {found}"
+    # The module initializer is named by the module's identity, never by a static slot another module can shift.
+    modules = [name for name in found if name.startswith("__incan_init_module_statics_")]
+    assert len(modules) == 1, f"the plan holds only these initializers: {found}"
     return Ok(None)
 
 
