@@ -1,0 +1,100 @@
+"""Content-preserving compaction of a store: one canonical base segment and canonical indexes for every view."""
+
+from rust::std::process import id
+from std.primitives.hex import hexlify
+from crate.store import EXPECT_ANY, Lookup, Snapshot, ViewRoot, install_segment, owned, read_frame, snapshot, switch
+from crate.store import sync_pages
+from crate.store.index import Entry, Location, build, entries as index_entries
+from crate.store.index import PageWriter, install_pack, installed_reference, page_directory
+from crate.store.files import StoreError, ensure_directory, failure, index_failure, io_failure, place_synced, remove_tree
+from crate.store.codec import KIND_TOMBSTONE, KIND_VALUE, Encoded, Write, encoded_frames, leaf_entries
+from crate.store.path import StorePath as Path
+
+# ---- Compaction ----
+
+
+pub def compact(root: Path) -> Result[Snapshot, StoreError]:
+    """
+    Content-preserving compaction: one canonical base segment and canonical indexes holding exactly what every view
+    held, tombstones included, so every lookup in every view answers as before.
+
+    The base's bytes and each index root depend only on those contents, so equal contents always give a byte-identical
+    base and the same roots.
+    """
+    ensure_directory(root.joinpath("locks"))?
+    held = root
+        .joinpath("locks")
+        .joinpath("publication")
+        .store_lock_exclusive()
+        .map_err((error) => io_failure(root, error))?
+    latest = snapshot(root)?
+    mut writes: list[Write] = []
+    mut per_view: Dict[str, list[Write]] = {}
+    for entry in latest.views:
+        mut held_writes: list[Write] = []
+        seen = snapshot(root, entry.view)?
+        for leaf in index_entries(root, seen.index).map_err(index_failure)?:
+            write = leaf_write(root, leaf)?
+            held_writes.append(write)
+            writes.append(write)
+        per_view[entry.view] = held_writes
+    staged = root.joinpath("staging").joinpath(f"compact-{id()}")
+    encoded = encoded_frames(writes)?
+    base = staged.joinpath("base.seg")
+    place_synced(base, encoded.data)?
+    name = install_segment(root, encoded.data, base)?
+    ensure_directory(page_directory(root))?
+    writer = PageWriter()
+    mut built: list[ViewRoot] = []
+    for entry in latest.views:
+        held_encoded = encoded_frames(per_view[entry.view])?
+        relocated = in_key_order(relocate(leaf_entries(held_encoded, name), encoded))
+        built.append(ViewRoot(view=entry.view, root=build(writer, relocated).map_err(index_failure)?))
+    pack = install_pack(root, writer, staged.joinpath("pages")).map_err(index_failure)?
+    views = [ViewRoot(view=entry.view, root=installed_reference(entry.root, pack)) for entry in built]
+    sync_pages(root)?
+    published = switch(root, latest, views, "compaction")?
+    remove_tree(staged)
+    return Ok(published)
+
+
+def leaf_write(root: Path, leaf: Entry) -> Result[Write, StoreError]:
+    """The write a leaf entry's frame records."""
+    match leaf.location:
+        None => return Err(failure("integrity", "index", "inner entry in a leaf"))
+        Some(location) =>
+            match read_frame(root, leaf.key, location)?:
+                Lookup.Found(value) =>
+                    return Ok(Write(key=leaf.key, kind=KIND_VALUE, value=owned(value), expect=EXPECT_ANY))
+                Lookup.Deleted => return Ok(Write(key=leaf.key, kind=KIND_TOMBSTONE, value=b"", expect=EXPECT_ANY))
+                Lookup.Absent => return Err(failure("integrity", "index", "leaf without a frame"))
+
+
+def relocate(entries: list[Entry], base: Encoded) -> list[Entry]:
+    """A view's leaf entries pointed at the frames of the same key and digest in the base segment."""
+    mut by_frame: Dict[str, int] = {}
+    for position in range(len(base.keys)):
+        by_frame[base.keys[position] + "\t" + hexlify(base.digests[position])] = position
+    mut result: list[Entry] = []
+    for entry in entries:
+        match entry.location:
+            None => pass
+            Some(location) =>
+                position = by_frame[entry.key + "\t" + hexlify(location.digest)]
+                moved = Location(
+                    segment=location.segment,
+                    offset=base.offsets[position],
+                    length=base.lengths[position],
+                    digest=location.digest,
+                    tombstone=location.tombstone,
+                )
+                result.append(Entry(key=entry.key, location=Some(moved), child=""))
+    return result
+
+
+def in_key_order(entries: list[Entry]) -> list[Entry]:
+    """Leaf entries sorted by key."""
+    mut by_key: Dict[str, Entry] = {}
+    for entry in entries:
+        by_key[entry.key] = entry
+    return [by_key[key] for key in sorted([key for key in by_key.keys()])]

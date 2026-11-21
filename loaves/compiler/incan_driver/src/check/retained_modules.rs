@@ -21,7 +21,8 @@ pub(crate) struct RetainedModule {
     pub(crate) warnings: Vec<CompileError>,
 }
 
-/// One resident editor view. It retains only successful checked interfaces, plus the source and import witnesses that choose them.
+/// One resident editor view. It retains only successful checked interfaces, plus the source and import witnesses that
+/// choose them.
 #[derive(Default)]
 pub struct RetainedModuleChecks {
     context: Option<String>,
@@ -44,10 +45,7 @@ impl RetainedModuleChecks {
         rust_paths: BTreeSet<String>,
     ) -> bool {
         self.pending.clear();
-        let bytes = modules
-            .iter()
-            .map(|module| module.source.len())
-            .sum::<usize>();
+        let bytes = modules.iter().map(|module| module.source.len()).sum::<usize>();
         let Some(context) = unit
             .checked_context
             .as_ref()
@@ -61,9 +59,7 @@ impl RetainedModuleChecks {
                 .names
                 .iter()
                 .zip(modules)
-                .all(|((file, path), module)| {
-                    file == &module.file_path && path == &module.path_segments
-                })
+                .all(|((file, path), module)| file == &module.file_path && path == &module.path_segments)
             && self.imports == imports.direct_edges();
         let digests: Vec<[u8; 32]> = modules
             .iter()
@@ -85,12 +81,7 @@ impl RetainedModuleChecks {
             }
             self.entries = (0..modules.len()).map(|_| None).collect();
         } else {
-            let changed = self
-                .digests
-                .iter()
-                .zip(&digests)
-                .map(|(was, now)| was != now)
-                .collect();
+            let changed = self.digests.iter().zip(&digests).map(|(was, now)| was != now).collect();
             self.invalidate(changed);
         }
         self.digests = digests;

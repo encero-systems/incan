@@ -8,6 +8,7 @@ import store
 import store.bytes
 import store.codec
 import store.collection
+import store.compaction
 import store.files
 import store.index
 import store.path

@@ -17,11 +17,9 @@ use crate::session::CompilationSession;
 use crate::sources::{collect_incan_source_files, read_source_for_diagnostics};
 use incan_frontend::ast::{Declaration, ImportKind, ImportPath, Program};
 use incan_frontend::module::{
-    MissingSourceModule, SourceModuleImportResolution, SourceModuleRef,
-    canonicalize_source_module_segments, logical_module_segments_from_file,
-    logical_source_import_candidates, resolve_program_source_imports,
-    resolve_source_module_import_from_source_file, resolve_source_module_path,
-    self_import_diagnostic_message,
+    MissingSourceModule, SourceModuleImportResolution, SourceModuleRef, canonicalize_source_module_segments,
+    logical_module_segments_from_file, logical_source_import_candidates, resolve_program_source_imports,
+    resolve_source_module_import_from_source_file, resolve_source_module_path, self_import_diagnostic_message,
 };
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::{diagnostics, typechecker};
@@ -80,11 +78,7 @@ pub fn collect_document_modules(
     collect_modules_detailed_from_seeds(
         path.clone(),
         session,
-        vec![(
-            path.to_string_lossy().to_string(),
-            module_name,
-            path_segments,
-        )],
+        vec![(path.to_string_lossy().to_string(), module_name, path_segments)],
         open_sources,
         &mut SourceGraphReads::default(),
     )
@@ -108,21 +102,14 @@ pub struct SourceGraphReads {
 pub fn collect_source_graph_reads(
     path: PathBuf,
     session: &CompilationSession,
-) -> (
-    SourceGraphReads,
-    Result<Vec<ParsedModule>, CliDiagnosticFailure>,
-) {
+) -> (SourceGraphReads, Result<Vec<ParsedModule>, CliDiagnosticFailure>) {
     let path_segments = entry_module_segments(&session.source_root, &path);
     let module_name = path_segments.join("_");
     let mut reads = SourceGraphReads::default();
     let collected = collect_modules_detailed_from_seeds(
         path.clone(),
         session,
-        vec![(
-            path.to_string_lossy().to_string(),
-            module_name,
-            path_segments,
-        )],
+        vec![(path.to_string_lossy().to_string(), module_name, path_segments)],
         &HashMap::new(),
         &mut reads,
     );
@@ -139,11 +126,7 @@ pub fn collect_library_modules_detailed_with_session(
     let seeds = seeds
         .into_iter()
         .map(|(source_file, module_name, path_segments)| {
-            (
-                source_file.to_string_lossy().to_string(),
-                module_name,
-                path_segments,
-            )
+            (source_file.to_string_lossy().to_string(), module_name, path_segments)
         })
         .collect();
     let mut modules = collect_modules_detailed_from_seeds(
@@ -194,31 +177,19 @@ pub fn library_source_seeds(
         .map(|source| source.canonicalize().unwrap_or_else(|_| source.clone()))
         .collect::<BTreeSet<_>>();
     let mut logical_sources = BTreeMap::<Vec<String>, PathBuf>::new();
-    let mut seeds = vec![(
-        path.to_path_buf(),
-        "main".to_string(),
-        vec!["main".to_string()],
-    )];
+    let mut seeds = vec![(path.to_path_buf(), "main".to_string(), vec!["main".to_string()])];
     for source_file in source_files {
-        let canonical = source_file
-            .canonicalize()
-            .unwrap_or_else(|_| source_file.clone());
+        let canonical = source_file.canonicalize().unwrap_or_else(|_| source_file.clone());
         if canonical == entry_path || excluded.contains(&canonical) {
             continue;
         }
-        let Some(path_segments) =
-            logical_module_segments_from_file(&session.source_root, &source_file)
-        else {
+        let Some(path_segments) = logical_module_segments_from_file(&session.source_root, &source_file) else {
             continue;
         };
         if is_unselected_package_entrypoint(&session.source_root, &source_file, &entry_path) {
             continue;
         }
-        if own_roots.is_some_and(|roots| {
-            path_segments
-                .first()
-                .is_none_or(|root| !roots.contains(&root.as_str()))
-        }) {
+        if own_roots.is_some_and(|roots| path_segments.first().is_none_or(|root| !roots.contains(&root.as_str()))) {
             continue;
         }
         if let Some(existing) = logical_sources.insert(path_segments.clone(), canonical.clone()) {
@@ -235,20 +206,10 @@ pub fn library_source_seeds(
 }
 
 /// Return whether a root `main.incn` or `lib.incn` is the package entrypoint not selected by this build.
-fn is_unselected_package_entrypoint(
-    source_root: &Path,
-    source_file: &Path,
-    selected_entrypoint: &Path,
-) -> bool {
-    let canonical_source_root = source_root
-        .canonicalize()
-        .unwrap_or_else(|_| source_root.to_path_buf());
-    let canonical_source_file = source_file
-        .canonicalize()
-        .unwrap_or_else(|_| source_file.to_path_buf());
-    if canonical_source_file == selected_entrypoint
-        || canonical_source_file.parent() != Some(&canonical_source_root)
-    {
+fn is_unselected_package_entrypoint(source_root: &Path, source_file: &Path, selected_entrypoint: &Path) -> bool {
+    let canonical_source_root = source_root.canonicalize().unwrap_or_else(|_| source_root.to_path_buf());
+    let canonical_source_file = source_file.canonicalize().unwrap_or_else(|_| source_file.to_path_buf());
+    if canonical_source_file == selected_entrypoint || canonical_source_file.parent() != Some(&canonical_source_root) {
         return false;
     }
     canonical_source_file
@@ -308,39 +269,33 @@ fn collect_modules_detailed_from_seeds(
             None => read_source_for_diagnostics(&file_path)?,
         };
         let file_path_obj = Path::new(&file_path);
-        let (mut ast, gated_exports) = match session
-            .parse_source_unprojected(file_path_obj, &source, true)
-            .and_then(|unprojected| {
-                let gated = incan_frontend::library_exports::gated_public_exports(
-                    &unprojected,
-                    &path_segments,
-                );
-                session
-                    .project_parsed_program(unprojected)
-                    .map(|ast| (ast, gated))
-            }) {
-            Ok((a, gated)) => {
-                // Surface non-fatal parser warnings immediately, so they reach the user whichever command ran. They
-                // are collected for machine-readable reports later, off the retained AST, by the typecheck pass.
-                render_module_warnings(&file_path, &source, &a.warnings);
-                (a, gated)
-            }
-            Err(errs) => {
-                return Err(CliDiagnosticFailure::from_errors(
-                    file_path,
-                    source,
-                    errs,
-                    diagnostics::DiagnosticPhase::Parse,
-                ));
-            }
-        };
+        let (mut ast, gated_exports) =
+            match session
+                .parse_source_unprojected(file_path_obj, &source, true)
+                .and_then(|unprojected| {
+                    let gated = incan_frontend::library_exports::gated_public_exports(&unprojected, &path_segments);
+                    session.project_parsed_program(unprojected).map(|ast| (ast, gated))
+                }) {
+                Ok((a, gated)) => {
+                    // Surface non-fatal parser warnings immediately, so they reach the user whichever command ran. They
+                    // are collected for machine-readable reports later, off the retained AST, by the typecheck pass.
+                    render_module_warnings(&file_path, &source, &a.warnings);
+                    (a, gated)
+                }
+                Err(errs) => {
+                    return Err(CliDiagnosticFailure::from_errors(
+                        file_path,
+                        source,
+                        errs,
+                        diagnostics::DiagnosticPhase::Parse,
+                    ));
+                }
+            };
 
         let current_base = file_path_obj.parent().unwrap_or(base_dir);
         respell_project_library_imports(&mut ast, current_base, session);
         let mut missing_modules = Vec::new();
-        for resolved in
-            resolve_program_source_imports(&ast, current_base, Some(&session.source_root))
-        {
+        for resolved in resolve_program_source_imports(&ast, current_base, Some(&session.source_root)) {
             let span = resolved.span;
             for absent in resolved.probed {
                 if !reads.absent.contains(&absent) {
@@ -364,11 +319,7 @@ fn collect_modules_detailed_from_seeds(
                         file_path,
                         source,
                         diagnostics::CompileError::new(
-                            self_import_diagnostic_message(
-                                &module_ref,
-                                &import_path,
-                                can_use_root_import,
-                            ),
+                            self_import_diagnostic_message(&module_ref, &import_path, can_use_root_import),
                             span,
                         ),
                         diagnostics::DiagnosticPhase::Typecheck,
@@ -387,10 +338,7 @@ fn collect_modules_detailed_from_seeds(
             if !processed.contains(&dep_key) {
                 to_process.push((dep_path_str, module_name, module_segments));
             }
-            dependency_edges
-                .entry(file_key.clone())
-                .or_default()
-                .insert(dep_key);
+            dependency_edges.entry(file_key.clone()).or_default().insert(dep_key);
         }
         // Every import of a module no file defines is refused here, each once, before checking binds its names.
         if !missing_modules.is_empty() {
@@ -421,11 +369,7 @@ fn collect_modules_detailed_from_seeds(
 /// library, so the module is linked rather than compiled again. The library provides every source-root module but
 /// the excluded ones and the root entry files, as [`library_source_seeds`] selects them. Only the import's kind
 /// changes: its span, alias and items stay, so diagnostics and panic locations still name the authored file and line.
-fn respell_project_library_imports(
-    ast: &mut Program,
-    base_dir: &Path,
-    session: &CompilationSession,
-) {
+fn respell_project_library_imports(ast: &mut Program, base_dir: &Path, session: &CompilationSession) {
     let unit = session.unit();
     let Some(library) = &unit.project_library else {
         return;
@@ -446,14 +390,12 @@ fn respell_project_library_imports(
         if !matches!(import.kind, ImportKind::From { .. } | ImportKind::Module(_)) {
             continue;
         }
-        let SourceModuleImportResolution::Local(module_ref) =
-            resolve_source_module_import_from_source_file(
-                base_dir,
-                Some(&session.source_root),
-                current_source_file.as_deref(),
-                import,
-            )
-        else {
+        let SourceModuleImportResolution::Local(module_ref) = resolve_source_module_import_from_source_file(
+            base_dir,
+            Some(&session.source_root),
+            current_source_file.as_deref(),
+            import,
+        ) else {
             continue;
         };
         let file = canonical(&module_ref.file_path);
@@ -483,10 +425,7 @@ fn respell_project_library_imports(
 
 /// The physical source module a standard package's own `std.<root>.…` import names, when the session is that
 /// package and the root is one of its own.
-fn own_standard_module(
-    session: &CompilationSession,
-    module_path: &[String],
-) -> Option<SourceModuleRef> {
+fn own_standard_module(session: &CompilationSession, module_path: &[String]) -> Option<SourceModuleRef> {
     let policy = session.own_standard_package()?;
     let root = module_path.get(1)?;
     if !policy.namespace_roots.contains(&root.as_str()) {
@@ -503,9 +442,7 @@ fn missing_module_error(
     span: incan_frontend::ast::Span,
 ) -> diagnostics::CompileError {
     let project_root = &session.unit().project_root;
-    let project_root = project_root
-        .canonicalize()
-        .unwrap_or_else(|_| project_root.clone());
+    let project_root = project_root.canonicalize().unwrap_or_else(|_| project_root.clone());
     let module_files = missing
         .module_files
         .iter()
@@ -581,13 +518,7 @@ pub fn topologically_sort_modules(
             }
         }
     }
-    let first_discovered = |component: usize| {
-        components[component]
-            .iter()
-            .copied()
-            .min()
-            .unwrap_or(usize::MAX)
-    };
+    let first_discovered = |component: usize| components[component].iter().copied().min().unwrap_or(usize::MAX);
     let mut ready: BTreeSet<(usize, usize)> = (0..components.len())
         .filter(|&component| waiting[component] == 0)
         .map(|component| (first_discovered(component), component))
@@ -606,10 +537,7 @@ pub fn topologically_sort_modules(
     }
 
     let mut slots: Vec<Option<ParsedModule>> = modules.into_iter().map(Some).collect();
-    Ok(placed
-        .into_iter()
-        .filter_map(|id| slots[id].take())
-        .collect())
+    Ok(placed.into_iter().filter_map(|id| slots[id].take()).collect())
 }
 
 /// The strongly connected components of a dependency graph over ids `0..dependencies.len()`: every import cycle as
@@ -710,9 +638,7 @@ impl SourceModuleImports {
             .collect();
         Self {
             direct,
-            closures: (0..modules.len())
-                .map(|_| std::sync::OnceLock::new())
-                .collect(),
+            closures: (0..modules.len()).map(|_| std::sync::OnceLock::new()).collect(),
             peers: std::sync::OnceLock::new(),
         }
     }
@@ -728,11 +654,7 @@ impl SourceModuleImports {
             let mut peers = vec![Vec::new(); self.direct.len()];
             for component in strongly_connected_components(&self.direct) {
                 for &member in &component {
-                    let mut others: Vec<usize> = component
-                        .iter()
-                        .copied()
-                        .filter(|&peer| peer != member)
-                        .collect();
+                    let mut others: Vec<usize> = component.iter().copied().filter(|&peer| peer != member).collect();
                     others.sort_unstable();
                     peers[member] = others;
                 }
@@ -772,9 +694,7 @@ impl SourceModuleImports {
                 target: "incan::invocation", "incan_driver::walk_source_imports", module = index,
             )
             .entered();
-            reachable_imports(self.direct.len(), index, |module| {
-                self.direct[module].iter().copied()
-            })
+            reachable_imports(self.direct.len(), index, |module| self.direct[module].iter().copied())
         })
     }
 }
@@ -804,15 +724,10 @@ pub fn imported_module_deps_for<'m>(
     module_idx_by_key: &HashMap<String, usize>,
     own_standard_package: Option<&'static StandardPackageNamespacePolicy>,
 ) -> Vec<(&'m str, &'m Program)> {
-    imported_module_dep_indexes_for(
-        modules,
-        module_index,
-        module_idx_by_key,
-        own_standard_package,
-    )
-    .into_iter()
-    .map(|idx| (modules[idx].name.as_str(), &modules[idx].ast))
-    .collect()
+    imported_module_dep_indexes_for(modules, module_index, module_idx_by_key, own_standard_package)
+        .into_iter()
+        .map(|idx| (modules[idx].name.as_str(), &modules[idx].ast))
+        .collect()
 }
 
 /// Resolve the collected-module indexes in one module's transitive source dependency closure.
@@ -827,8 +742,7 @@ pub fn imported_module_dep_indexes_for(
     own_standard_package: Option<&'static StandardPackageNamespacePolicy>,
 ) -> Vec<usize> {
     reachable_imports(modules.len(), module_index, |index| {
-        direct_local_dep_indexes(modules, index, module_idx_by_key, own_standard_package)
-            .into_iter()
+        direct_local_dep_indexes(modules, index, module_idx_by_key, own_standard_package).into_iter()
     })
 }
 
@@ -974,13 +888,9 @@ fn resolve_local_dep_index(
 /// module and is therefore not injective: `pkg.helpers` and a module literally named `pkg_helpers` flatten to one
 /// string. Supplying the true segments lets a canonical identity name the module that answered rather than the
 /// spelling that asked. Mirrors the pair `IrCodegen::add_module_with_path_segments` already carries for emission.
-pub fn register_module_path_segments(
-    checker: &mut typechecker::TypeChecker,
-    modules: &[ParsedModule],
-) {
+pub fn register_module_path_segments(checker: &mut typechecker::TypeChecker, modules: &[ParsedModule]) {
     for module in modules {
-        checker
-            .register_dependency_module_path_segments(&module.name, module.path_segments.clone());
+        checker.register_dependency_module_path_segments(&module.name, module.path_segments.clone());
     }
 }
 
