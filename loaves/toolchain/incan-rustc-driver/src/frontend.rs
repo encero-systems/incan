@@ -591,7 +591,7 @@ fn bind_contextual_rank(
     {
         return Err("contextual ranked edit does not bind a project source owner".into());
     }
-    let order = internal_models::decode_namespace_order(&bounded("ranked-source-order.crumb")?, owner.origin)
+    let order = internal_models::decode_namespace_order(&bounded("ranked-source-order.crumb")?, &owner.origin)
         .map_err(|error| error.to_string())?;
     if order.evidence != owner.context || order.members.as_slice() != [owner.facet.as_str()] {
         return Err("contextual ranked edit does not match its namespace certificate".into());

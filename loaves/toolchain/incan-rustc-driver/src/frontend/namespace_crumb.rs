@@ -105,8 +105,8 @@ pub(super) fn remember_published(
         internal_models::encode_namespace_proof(
             &source.to_owned(),
             CheckedNamespaceInterface::SCHEMA,
-            interface.module_name().to_owned(),
-            &interface.module_path().to_vec(),
+            interface.module_name(),
+            interface.module_path(),
             &digest.to_vec(),
         )?
     } else {

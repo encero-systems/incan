@@ -84,7 +84,7 @@ pub(crate) fn export(arguments: &[String]) -> Result<(), Box<dyn std::error::Err
                 key: record.key,
                 revision: record.revision,
             })
-            .collect();
+            .collect::<Vec<_>>();
         let encoded = internal_models::encode_compiler_export(&members)?;
         fs::write(output.join("index.crumb"), encoded)?;
     } else {

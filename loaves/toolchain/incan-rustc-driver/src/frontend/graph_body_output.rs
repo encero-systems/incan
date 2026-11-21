@@ -578,12 +578,8 @@ impl GraphBodyOutput {
                 if call_reads.contains_key(&module_path) && incan_frontend::body_ir::needs_call_witness(body) {
                     let reader = body.direct_call_id.path();
                     let reads = by_reader.get(reader).unwrap_or(&no_reads);
-                    let witness = internal_models::encode_owner_call_reads(
-                        pending.identity.clone(),
-                        reader.to_owned(),
-                        module_path.clone(),
-                        reads,
-                    )?;
+                    let witness =
+                        internal_models::encode_owner_call_reads(&pending.identity, reader, &module_path, reads)?;
                     pending.body_ir.extend_from_slice(&witness);
                 }
             }
