@@ -16,6 +16,7 @@ use incan_mir_plan_native::{
 use incan_semantics_core::semantic_digest::semantic_digest;
 
 use crate::plan_modules::{module_page, read_admitted};
+use crate::producer_trace::{enter_producer, finish_producer};
 use crate::record_positions::positioned_product;
 use crate::scalar_store::{event_positions, event_references, finalized_plan_product, report_scalar_refusal};
 
@@ -34,7 +35,9 @@ pub fn publish_plan_records(plan: &Plan, products: &str, report: &str) -> Result
     if keyed.len() != plan.functions.len() {
         return Err("native-interface has an unwitnessed plan-function member".into());
     }
+    let interface_attempt = enter_producer("compiler", "native-interface", report, "encode");
     let encoded = encode_record_plan_products(plan, keyed, references)?;
+    finish_producer(interface_attempt, "produced");
     let main = ordinary_entry(plan)?;
     let matches: Vec<&LoweringEvent> = events.iter().filter(|event| event.function == main).collect();
     let [selected] = matches.as_slice() else {
@@ -61,7 +64,9 @@ pub fn publish_plan_records(plan: &Plan, products: &str, report: &str) -> Result
         verify_entry_record(&value, &main, &inputs)?;
         value
     } else {
+        let entry_attempt = enter_producer("compiler", "plan-function", &selected.identity, "entry");
         let value = encode_entry_record(&main, &inputs)?;
+        finish_producer(entry_attempt, "produced");
         std::fs::write(&path, &value).map_err(|error| error.to_string())?;
         value
     };
@@ -185,6 +190,7 @@ fn keyed_plan_products(
             continue;
         }
         let frames = carried_frames(plan, &function_indexes, &event.product, carried)?;
+        let attempt = enter_producer("compiler", "plan-function-finalize", &event.identity, &event.key);
         let (last, positions, positioned) = finalized_plan_product(
             products,
             &event.key,
@@ -195,6 +201,7 @@ fn keyed_plan_products(
             &frames,
             &event.product,
         )?;
+        finish_producer(attempt, "produced");
         if last != event.product {
             event.product = last;
             write(
@@ -372,4 +379,92 @@ fn append_admitted_events(events: &mut Vec<LoweringEvent>, products: &str, repor
         std::fs::remove_file(&listed).map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use incan_mir_plan_native::{
+        EnumDeclaration, Function, NominalKind, NominalReference, Parameter, Plan, PlanType, carrier_index, source_span,
+    };
+
+    use super::{ordinary_entry, plan_positions};
+
+    fn function(name: &str, parameters: Vec<Parameter>, return_type: PlanType) -> Function {
+        Function::new(
+            name.into(),
+            parameters,
+            return_type,
+            Vec::new(),
+            Vec::new(),
+            source_span("main.incn", 1, 1),
+        )
+    }
+
+    fn plan(functions: Vec<Function>) -> Plan {
+        let span = source_span("main.incn", 1, 1);
+        let enums = ["Color", "Option_i64"]
+            .iter()
+            .map(|name| EnumDeclaration::new((*name).into(), false, Vec::new(), Vec::new(), span.clone()))
+            .collect();
+        Plan::new(enums, Vec::new(), functions, Vec::new(), span)
+    }
+
+    #[test]
+    fn only_a_synchronous_unit_main_is_the_ordinary_entry() {
+        let main = || function("main", Vec::new(), PlanType::Unit);
+        assert_eq!(
+            ordinary_entry(&plan(vec![function("helper", Vec::new(), PlanType::Int), main()])),
+            Ok("main".into())
+        );
+        let mut selected = plan(vec![main()]);
+        selected.programs = vec!["main".into()];
+        assert!(ordinary_entry(&selected).is_ok());
+        selected.programs = vec!["serve".into()];
+        assert!(ordinary_entry(&selected).is_err());
+        assert!(ordinary_entry(&plan(vec![function("main", Vec::new(), PlanType::Int)])).is_err());
+        let mut asynchronous = main();
+        asynchronous.is_async = true;
+        assert!(ordinary_entry(&plan(vec![asynchronous])).is_err());
+        assert!(ordinary_entry(&plan(vec![function("helper", Vec::new(), PlanType::Unit)])).is_err());
+    }
+
+    #[test]
+    fn a_product_carrier_takes_its_place_after_the_source_enums() {
+        let whole = plan(Vec::new());
+        let reference = |kind: NominalKind, index: i64, name: &str| NominalReference {
+            kind,
+            index,
+            name: name.into(),
+        };
+        let placed = plan_positions(
+            &whole,
+            1,
+            &[
+                reference(NominalKind::Enum, carrier_index(0), "Option_i64"),
+                reference(NominalKind::Enum, 0, "Color"),
+                reference(NominalKind::Model, carrier_index(0), "Point"),
+            ],
+        );
+        assert_eq!(
+            placed,
+            Ok(vec![
+                reference(NominalKind::Enum, 1, "Option_i64"),
+                reference(NominalKind::Enum, 0, "Color"),
+                reference(NominalKind::Model, carrier_index(0), "Point"),
+            ])
+        );
+        assert!(
+            plan_positions(
+                &whole,
+                1,
+                &[reference(NominalKind::Enum, carrier_index(0), "Option_str")]
+            )
+            .is_err()
+        );
+        assert!(plan_positions(&whole, 1, &[reference(NominalKind::Enum, carrier_index(1), "")]).is_err());
+        assert_eq!(
+            plan_positions(&whole, 1, &[reference(NominalKind::Enum, carrier_index(0), "")]),
+            Ok(vec![reference(NominalKind::Enum, 1, "")])
+        );
+    }
 }

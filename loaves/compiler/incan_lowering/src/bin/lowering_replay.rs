@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use incan_lowering::corpus::{Case, Corpus, Outcome, Requirement, Step};
-use incan_lowering::reuse_proof::{FrameOutcomes, FrameTrace, changed_bodies};
+use incan_lowering::reuse_proof::{FrameOutcomes, FrameTrace, changed_bodies, check_records_keys};
 use incan_lowering::{
     Plan, RefusalPlanning, RuntimeRequirement, SourceInputs, UnitContinuation, UnitPlanning,
     layout_runtime_requirements, program_refusals, publish_plan_records, resume_unit_plan, unit_plan,
@@ -373,6 +373,43 @@ fn compare_publication(
     Ok(())
 }
 
+/// Key every ordinary body of each records call as the lowering keys it and check the products the reference left.
+fn check_case_records_keys(corpus: &Corpus, name: &str, case: &Case, scratch: &Path) -> Result<(), String> {
+    for (index, step) in case.steps.iter().enumerate() {
+        if step.record_report.is_none() || step.call != "unit" {
+            continue;
+        }
+        let directory = scratch.join(format!("records-keys-{index}"));
+        if directory.exists() {
+            std::fs::remove_dir_all(&directory).map_err(|error| error.to_string())?;
+        }
+        corpus.restore(&step.products_after, &directory)?;
+        let modules = corpus.modules(&step.modules)?;
+        let directories = StepDirectories {
+            products: directory.clone(),
+            report: directory.join("report"),
+        };
+        let inputs = inputs(corpus, step, &directories)?;
+        corpus.restore(&step.products_after, &directory)?;
+        let products = directory.to_string_lossy().into_owned();
+        let report = check_records_keys(&modules, &inputs, step.entry, &step.kind, &products)?;
+        println!(
+            "RECORDS-KEYS {name} step {index}: keyed {}, stored {}, round trips {}, failures {}",
+            report.keyed,
+            report.stored,
+            report.round_trips,
+            report.failures.len()
+        );
+        for (label, file) in &report.stored_products {
+            println!("  stored {label} {file}");
+        }
+        for failure in &report.failures {
+            println!("  {failure}");
+        }
+    }
+    Ok(())
+}
+
 /// Print which keyed frames one step restored or lowered and, against a base capture of the same unit, which bodies
 /// changed: the evidence that an edit lowers only the functions whose Body IR changed.
 fn report_reuse(
@@ -384,11 +421,12 @@ fn report_reuse(
     base: Option<&Case>,
 ) -> Result<(), String> {
     println!(
-        "REUSE {name} step {index} ({}): {} keyed frames reused, {} lowered and kept, {} lowered without a product",
+        "REUSE {name} step {index} ({}): {} keyed frames reused, {} lowered and kept, {} lowered without a product, {} restored from module pages",
         step.call,
         outcomes.reused.len(),
         outcomes.lowered.len(),
-        outcomes.unkept.len()
+        outcomes.unkept.len(),
+        outcomes.admitted.len()
     );
     for lowered in &outcomes.lowered {
         println!("  lowered {lowered}");
@@ -410,8 +448,9 @@ fn report_reuse(
         .filter(|change| change.base_start.is_some_and(|start| start != change.edited_start))
         .count();
     let witness_only = changes.iter().filter(|change| !change.body_differs).count();
+    let meaning = changes.iter().filter(|change| change.meaning_differs).count();
     println!(
-        "CHANGED {name} step {index}: {} bodies differ from the base ({shifted} moved, {witness_only} witness only)",
+        "CHANGED {name} step {index}: {} bodies differ from the base ({meaning} in meaning, {shifted} moved, {witness_only} witness only)",
         changes.len()
     );
     for change in &changes {
@@ -421,13 +460,24 @@ fn report_reuse(
             change.module,
             change.base_start,
             change.edited_start,
-            if change.body_differs { "" } else { " (witness only)" }
+            if !change.body_differs {
+                " (witness only)"
+            } else if change.meaning_differs {
+                " (meaning)"
+            } else {
+                " (positions only)"
+            }
         );
     }
     let changed: BTreeSet<&str> = changes.iter().map(|change| change.function.as_str()).collect();
     let ordinary = |entry: &&String| entry.strip_prefix("ordinary ").map(str::to_owned);
     let kept: BTreeSet<String> = outcomes.lowered.iter().filter_map(|entry| ordinary(&entry)).collect();
-    let reused: BTreeSet<String> = outcomes.reused.iter().filter_map(|entry| ordinary(&entry)).collect();
+    let reused: BTreeSet<String> = outcomes
+        .reused
+        .iter()
+        .chain(&outcomes.admitted)
+        .filter_map(|entry| ordinary(&entry))
+        .collect();
     let kept_unchanged: Vec<&String> = kept.iter().filter(|label| !changed.contains(label.as_str())).collect();
     let changed_reused: Vec<&&str> = changed.iter().filter(|label| reused.contains(**label)).collect();
     println!(
@@ -528,21 +578,27 @@ fn dump_case(corpus: &Corpus, case: &Case, directory: &Path) -> Result<(), Strin
     Ok(())
 }
 
-fn main() {
-    let arguments: Vec<String> = std::env::args().collect();
-    let Some(root) = arguments.get(1) else {
-        eprintln!(
-            "usage: lowering-replay CORPUS [--case PREFIX] [--show N] [--describe] [--dump DIRECTORY] [--reuse [--base PREFIX]]"
-        );
-        std::process::exit(2);
-    };
+/// The replay's command-line options after the corpus root.
+struct Options {
+    prefix: String,
+    show: usize,
+    describe: bool,
+    dump: Option<PathBuf>,
+    report: bool,
+    records_keys: bool,
+    base_prefix: Option<String>,
+}
+
+/// Read the options; an unknown option ends the process with status 2.
+fn parse_options(arguments: &[String]) -> Options {
     let mut prefix = String::new();
     let mut show = 20usize;
     let mut describe = false;
     let mut dump: Option<PathBuf> = None;
     let mut report = false;
+    let mut records_keys = false;
     let mut base_prefix: Option<String> = None;
-    let mut options = arguments[2..].iter();
+    let mut options = arguments.iter();
     while let Some(option) = options.next() {
         if option == "--describe" {
             describe = true;
@@ -550,6 +606,10 @@ fn main() {
         }
         if option == "--reuse" {
             report = true;
+            continue;
+        }
+        if option == "--records-keys" {
+            records_keys = true;
             continue;
         }
         match (option.as_str(), options.next()) {
@@ -563,6 +623,65 @@ fn main() {
             }
         }
     }
+    Options {
+        prefix,
+        show,
+        describe,
+        dump,
+        report,
+        records_keys,
+        base_prefix,
+    }
+}
+
+/// Print the mismatches, the per-call counts and the totals.
+fn print_tally(tally: &Tally, show: usize) {
+    for mismatch in tally.mismatches.iter().take(show) {
+        println!("MISMATCH {mismatch}");
+    }
+    for (call, (count, identical)) in &tally.by_call {
+        println!("call {call}: {identical} of {count} identical");
+    }
+    println!(
+        "cases {} (capture faults {}); layouts {}/{}; steps {}/{}; plans {}/{}; functions {}/{}; products {}/{}; report files {}/{}; publications {}/{}, files {}/{}",
+        tally.cases,
+        tally.case_faults,
+        tally.layouts_identical,
+        tally.layouts,
+        tally.steps_identical,
+        tally.steps,
+        tally.plans_identical,
+        tally.plans,
+        tally.functions_identical,
+        tally.functions,
+        tally.products_identical,
+        tally.products,
+        tally.reports_identical,
+        tally.reports,
+        tally.publications_identical,
+        tally.publications,
+        tally.publication_files_identical,
+        tally.publication_files
+    );
+}
+
+fn main() {
+    let arguments: Vec<String> = std::env::args().collect();
+    let Some(root) = arguments.get(1) else {
+        eprintln!(
+            "usage: lowering-replay CORPUS [--case PREFIX] [--show N] [--describe] [--dump DIRECTORY] [--reuse [--base PREFIX]]"
+        );
+        std::process::exit(2);
+    };
+    let Options {
+        prefix,
+        show,
+        describe,
+        dump,
+        report,
+        records_keys,
+        base_prefix,
+    } = parse_options(&arguments[2..]);
     let corpus = Corpus::open(Path::new(root));
     let scratch = std::env::temp_dir().join(format!("lowering-replay-{}", std::process::id()));
     let mut tally = Tally::default();
@@ -600,6 +719,15 @@ fn main() {
             }
             continue;
         }
+        if records_keys {
+            if let Err(error) = corpus
+                .case(&path)
+                .and_then(|case| check_case_records_keys(&corpus, &name, &case, &scratch))
+            {
+                eprintln!("{name}: {error}");
+            }
+            continue;
+        }
         if describe {
             if let Ok(case) = corpus.case(&path) {
                 describe_case(&corpus, &name, &case);
@@ -614,33 +742,7 @@ fn main() {
         }
     }
     let _ = std::fs::remove_dir_all(&scratch);
-    for mismatch in tally.mismatches.iter().take(show) {
-        println!("MISMATCH {mismatch}");
-    }
-    for (call, (count, identical)) in &tally.by_call {
-        println!("call {call}: {identical} of {count} identical");
-    }
-    println!(
-        "cases {} (capture faults {}); layouts {}/{}; steps {}/{}; plans {}/{}; functions {}/{}; products {}/{}; report files {}/{}; publications {}/{}, files {}/{}",
-        tally.cases,
-        tally.case_faults,
-        tally.layouts_identical,
-        tally.layouts,
-        tally.steps_identical,
-        tally.steps,
-        tally.plans_identical,
-        tally.plans,
-        tally.functions_identical,
-        tally.functions,
-        tally.products_identical,
-        tally.products,
-        tally.reports_identical,
-        tally.reports,
-        tally.publications_identical,
-        tally.publications,
-        tally.publication_files_identical,
-        tally.publication_files
-    );
+    print_tally(&tally, show);
     let complete = tally.mismatches.is_empty()
         && tally.products_identical == tally.products
         && tally.reports_identical == tally.reports
