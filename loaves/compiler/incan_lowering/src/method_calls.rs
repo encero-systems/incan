@@ -1,6 +1,6 @@
 //! Method calls: checked receivers, selected implementations and their ordinary arguments.
 
-use incan_lang::lang::surface::iterator_methods::IteratorMethodId;
+use incan_lang::lang::surface::iterator_methods::{IteratorMethodId, as_str as iterator_method_name};
 use incan_mir_plan_native::{CalleeKind, Operand, Place, PlanType, RvalueKind, SourceSpan, assign as plan_assign};
 use incan_semantics_core::body_ir::{
     ArgumentBinding, ArgumentElement, Body, BodyIrModule, MethodTarget, Operand as SourceOperand, OwnershipFact,
@@ -83,11 +83,16 @@ fn lower_checked_method_call(
         return Err("invalid Body IR Method missing receiver".into());
     }
     match special_method_route(module, builder, target, arguments, destination, span)? {
-        MethodRoute::Refused(step) => return Err(untranslated(step)),
         MethodRoute::Lowered => return Ok(()),
         MethodRoute::Library(index, selected) => {
             let callable = &module.loaf_callables[index];
             return lower_library_method(module, builder, callable, &selected, arguments, destination, span);
+        }
+        MethodRoute::SelectedLibrary => {
+            let Some(selection) = &target.native_trait_delegation else {
+                return Err("invalid Body IR selected library method without a delegation".into());
+            };
+            return lower_library_method(module, builder, selection, target, arguments, destination, span);
         }
         MethodRoute::Reflection => {
             lower_reflection(builder, target, arguments, destination, span)?;
@@ -116,7 +121,6 @@ fn special_method_route(
     destination: &Option<SourcePlace>,
     span: &SourceSpan,
 ) -> Result<MethodRoute, String> {
-    use MethodRoute::Refused;
     let receiver = &arguments[0];
     if lower_global_method(module, builder, target, arguments, destination, span)? {
         return Ok(MethodRoute::Lowered);
@@ -141,17 +145,14 @@ fn special_method_route(
         }
         implementation = Some(selected);
     }
-    if matches!(
-        target.builtin_iterator(),
-        Some(IteratorMethodId::Iter | IteratorMethodId::Collect)
-    ) {
-        return Ok(Refused("method_calls::retained_iterator_default"));
+    if retained_iterator_default(module, builder, target, receiver, span)? {
+        return Ok(MethodRoute::Retained);
     }
     if !target.has_valid_native_trait_selection() {
         return Err("the selected standard library trait signature is invalid".into());
     }
-    if target.native_trait_delegation.is_some() {
-        return Ok(Refused("method_calls::lower_selected_library_method"));
+    if selected_library_method(module, builder, target, receiver, span)? {
+        return Ok(MethodRoute::SelectedLibrary);
     }
     // A list or dictionary element receiver is reborrowed in its container; no native place names it.
     if let Some(owner) = element_method_owner(builder, receiver)? {
@@ -170,6 +171,27 @@ fn special_method_route(
         return Ok(MethodRoute::Library(index, implementation_target(target, identity)));
     }
     Ok(MethodRoute::Retained)
+}
+
+/// Whether a checked SDK instantiation lowers the call while source implementations keep priority, including over
+/// collection elements whose model is declared here (`lower_selected_library_method`).
+fn selected_library_method(
+    module: &BodyIrModule,
+    builder: &Builder,
+    target: &MethodTarget,
+    receiver: &ArgumentElement,
+    span: &SourceSpan,
+) -> Result<bool, String> {
+    if target.native_trait_delegation.is_none() || receiver_fills_source_slot(module, builder, target, receiver, span)?
+    {
+        return Ok(false);
+    }
+    if let Some(PlanType::Model(owner, _)) = element_method_owner(builder, receiver)?
+        && library_item(&module.nominal_declarations[owner as usize]).is_empty()
+    {
+        return Ok(false);
+    }
+    Ok(true)
 }
 
 /// The route of a method on a list or dictionary element: a retained SDK model element calls its authenticated SDK
@@ -293,9 +315,9 @@ fn implementation_target(target: &MethodTarget, canonical: CanonicalSymbolId) ->
 
 /// How a method call lowers once its special routes are excluded.
 enum MethodRoute {
-    Refused(&'static str),
     Lowered,
     Library(usize, MethodTarget),
+    SelectedLibrary,
     Reflection,
     EnumMessage(usize),
     ValueGetter(usize),
@@ -768,7 +790,8 @@ fn lower_builtin_origin_method(
     if target.builtin_iterator() == Some(IteratorMethodId::Collect)
         && let PlanType::Model(..) = argument_type(builder, arguments, 0, span)?
     {
-        return Err(untranslated("method_calls::concrete_iterator_collect"));
+        let selected = concrete_iterator_collect(module, builder, target, arguments, span)?;
+        return lower_retained_method_call(module, builder, &selected, arguments, destination, span);
     }
     if let Some(combinator) = target.builtin_result().and_then(result_combinator) {
         return lower_result_combinator(module, builder, combinator, arguments, destination, span);
@@ -965,6 +988,100 @@ pub fn source_method_symbol(module: &BodyIrModule, target: &MethodTarget, body: 
         return Err(untranslated("comparison_methods::source_equality_value"));
     }
     Ok(function_name(module, body))
+}
+
+/// Prefer retained Incan Iterator identity and collection defaults absent from the native SDK trait.
+fn retained_iterator_default(
+    module: &BodyIrModule,
+    builder: &Builder,
+    target: &MethodTarget,
+    receiver: &ArgumentElement,
+    span: &SourceSpan,
+) -> Result<bool, String> {
+    let Some(identity) = &target.canonical else {
+        return Ok(false);
+    };
+    if identity.kind != SemanticSourceTargetKind::Method || identity.namespace != SymbolNamespace::Member {
+        return Ok(false);
+    }
+    if !matches!(
+        target.builtin_iterator(),
+        Some(IteratorMethodId::Iter | IteratorMethodId::Collect)
+    ) {
+        return Ok(false);
+    }
+    let standard = module.trait_declarations.iter().any(|protocol| {
+        standard_iterator_protocol(protocol)
+            && protocol.origin == identity.origin
+            && protocol.declaration_span.start <= identity.declaration_span.start
+            && identity.declaration_span.end <= protocol.declaration_span.end
+    });
+    if !standard || !target.has_valid_native_trait_selection() {
+        return Ok(false);
+    }
+    receiver_fills_retained_slot(module, target, builder, receiver, span)
+}
+
+/// Resolve a builtin opaque-Iterator terminal only through its concrete SDK owner's unique retained default (#1698).
+fn concrete_iterator_collect(
+    module: &BodyIrModule,
+    builder: &mut Builder,
+    target: &MethodTarget,
+    arguments: &[ArgumentElement],
+    span: &SourceSpan,
+) -> Result<MethodTarget, String> {
+    if arguments.len() != 1
+        || !target.type_args.is_empty()
+        || target.loaf_trait.is_some()
+        || target.native_trait_delegation.is_some()
+    {
+        return Err("unsupported Body IR opaque Iterator.collect call contract".into());
+    }
+    let PlanType::Model(owner, _) = argument_type(builder, arguments, 0, span)? else {
+        return Err("unsupported Body IR opaque Iterator.collect without concrete receiver".into());
+    };
+    let declaration = &module.nominal_declarations[owner as usize];
+    if library_item(declaration).is_empty() {
+        return Err("opaque Iterator.collect requires a standard library owner".into());
+    }
+    let mut selected = target.clone();
+    let mut matches = 0;
+    let selected_method = iterator_method_name(IteratorMethodId::Collect);
+    for protocol in module
+        .trait_declarations
+        .iter()
+        .filter(|protocol| standard_iterator_protocol(protocol))
+    {
+        for implementation in &module.trait_implementations {
+            let method = &implementation.method;
+            if implementation.owner != declaration.canonical
+                || method.origin != protocol.origin
+                || method.namespace != SymbolNamespace::Member
+                || method.kind != SemanticSourceTargetKind::Method
+                || method.declaration_name != selected_method
+            {
+                continue;
+            }
+            if !(protocol.declaration_span.start <= method.declaration_span.start
+                && method.declaration_span.end <= protocol.declaration_span.end)
+            {
+                continue;
+            }
+            if implementation.implementation != *method {
+                return Err("unsupported Body IR opaque Iterator.collect with a nondefault implementation".into());
+            }
+            matches += 1;
+            selected.canonical = Some(method.clone());
+        }
+    }
+    if matches != 1 || !receiver_fills_retained_slot(module, &selected, builder, &arguments[0], span)? {
+        return Err("unsupported Body IR opaque Iterator.collect without one retained standard default".into());
+    }
+    let index = method_index(module, &selected, builder, &arguments[0], span)?;
+    if module.bodies[index].params.len() != 1 {
+        return Err("unsupported Body IR opaque Iterator.collect with ordinary parameters".into());
+    }
+    Ok(selected)
 }
 
 /// Prefer an adopter's checked implementation only when its executable body is retained in this program.
