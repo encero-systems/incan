@@ -4,8 +4,8 @@ use incan_mir_plan_native::{Operand, Place, PlanType, SourceSpan};
 use incan_semantics_core::body_ir::{Place as SourcePlace, PlaceElem};
 
 use crate::frame::Builder;
+use crate::list_values::projected_element_read;
 use crate::models::{field_step_type, model_prefix};
-use crate::pending::untranslated;
 use crate::tuples::is_tuple_type;
 
 /// Read an index or slice after a retained nominal field or tuple element prefix, cloning its result instead of moving
@@ -24,8 +24,7 @@ pub fn model_list_read(
             if count == 0 {
                 return Err("unsupported Body IR model indexing without a field".into());
             }
-            let _ = span;
-            Err(untranslated("model_lists::prefixed_list_read"))
+            Ok(Some(prefixed_list_read(builder, source, count, span)?))
         }
     }
 }
@@ -79,4 +78,15 @@ pub fn prefix_place(builder: &Builder, source: &SourcePlace, count: usize, span:
     )?;
     place.local += builder.local_offset;
     Ok(place)
+}
+
+/// Read the list indexes, slices and element fields that follow a structural prefix, cloning an owned result.
+fn prefixed_list_read(
+    builder: &mut Builder,
+    source: &SourcePlace,
+    count: usize,
+    span: &SourceSpan,
+) -> Result<Operand, String> {
+    let container = prefix_place(builder, source, count, span)?;
+    projected_element_read(builder, source, container, count, span)
 }
