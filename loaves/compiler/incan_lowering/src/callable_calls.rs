@@ -31,6 +31,8 @@ use crate::statements::is_nominal_type;
 use crate::string_conversion_contracts::conversion_trait;
 use crate::traits::{close_trait_dispatch_arguments, instantiate_type, is_lazy_method_body};
 use crate::type_parameters::{indexed_static_type_arguments, instantiate, request_instance, substitute};
+use crate::value_enum_methods::lower_value_enum_from_value;
+use crate::value_enums::value_enum_from_value_owner;
 
 /// Fill an environment-owning payload selected by the retained union declaration, preserving captured values.
 pub fn carrier_callable_operand(
@@ -109,6 +111,9 @@ pub fn lower_named_target(
     if let Some(step) = special_named_target(module, builder, target)? {
         return Err(untranslated(step));
     }
+    if let Some(owner) = value_enum_from_value_owner(module, target)? {
+        return lower_value_enum_from_value(builder, owner, arguments, destination, span);
+    }
     let Some(identity) = &target.canonical else {
         return Err("unsupported Body IR builtin or unproven NamedCallableTarget".into());
     };
@@ -186,17 +191,6 @@ fn special_named_target(
         && !conversion_trait(module)?.is_empty()
     {
         return Ok(Some("string_conversion::string_conversion_callee"));
-    }
-    if identity.declaration_name == "from_value"
-        && identity.namespace == SymbolNamespace::Member
-        && method
-        && module.value_enum_declarations.iter().any(|declaration| {
-            identity.origin == declaration.canonical.origin
-                && identity.scope_discriminant == declaration.canonical.scope_discriminant
-                && identity.declaration_span == declaration.canonical.declaration_span
-        })
-    {
-        return Ok(Some("value_enums::lower_value_enum_from_value"));
     }
     Ok(None)
 }

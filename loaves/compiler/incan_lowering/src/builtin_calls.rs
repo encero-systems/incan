@@ -12,7 +12,6 @@ use crate::builtins::{emit_boolean_operator, scalar_builtin};
 use crate::checked_values::scalar_operand;
 use crate::checked_values::scalar_place;
 use crate::decls::library_enum_item;
-use crate::element_places::{element_place_type, is_element_place};
 use crate::formatting::display_operand;
 use crate::frame::{
     Builder, drop_owned, external_call, forget_owned, literal, place_type, read_place, temporary, terminate_call,

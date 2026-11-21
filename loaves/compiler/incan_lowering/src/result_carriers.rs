@@ -22,7 +22,6 @@ use crate::list_values::value_operand;
 use crate::lists::is_exclusive_borrow;
 use crate::model_lists::structural_prefix;
 use crate::options::{none_operand, propagate_result, replace_owned_destination};
-use crate::pending::untranslated;
 use crate::statements::{carrier_payload, is_nominal_type};
 
 /// Materialize checked carrier and text conversions at a concrete call, return, or collection boundary.

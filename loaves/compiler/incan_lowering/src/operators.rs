@@ -18,6 +18,7 @@ use crate::numerics::{integer_carrier, is_float_constant, numeric_carrier};
 use crate::pending::untranslated;
 use crate::result_carriers::retained_reference_value;
 use crate::statements::is_text_or_nominal;
+use crate::value_enums::value_variant;
 
 /// The plan type an operand carries: its local's declared type, or its literal's type.
 pub fn operand_type(builder: &Builder, operand: &Operand) -> Result<PlanType, String> {
@@ -160,7 +161,10 @@ pub fn scalar_rvalue(
         Rvalue::IsInstance(_) => Err(untranslated("carrier_operands::lower_union_isinstance")),
         Rvalue::Aggregate(kind, elements) => checked_aggregate(module, builder, kind, elements, expected, span),
         Rvalue::Dict(_) => Err("unsupported Body IR Dict".into()),
-        Rvalue::ValueEnumVariant(_) => Err(untranslated("value_enums::value_variant")),
+        Rvalue::ValueEnumVariant(target) => {
+            let (owner, variant) = value_variant(builder.enums(), builder.value_enums(), target)?;
+            Ok(RvalueKind::Enum(owner as i64, variant as i64, Vec::new()))
+        }
         Rvalue::FieldlessEnumVariant(target) => {
             let (owner, variant) = unit_variant(builder.enums(), target)?;
             Ok(RvalueKind::Enum(owner as i64, variant as i64, Vec::new()))

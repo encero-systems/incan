@@ -136,6 +136,8 @@ mod tuples;
 mod type_parameters;
 mod types;
 mod unions;
+mod value_enum_methods;
+mod value_enums;
 
 pub use incan_mir_plan_native::{Plan, PlanType, SourceSpan};
 pub use lowering::{UnitContinuation, UnitPlanning};

@@ -696,3 +696,15 @@ pub fn format_carrier(builder: &mut Builder, source: Place, span: &SourceSpan) -
         span,
     ))
 }
+
+/// Transfer active payload owners before replacing and tracking one concrete carrier destination.
+pub fn assign_carrier(
+    builder: &mut Builder,
+    target: Place,
+    owner: i64,
+    slot: i64,
+    operands: Vec<PlanOperand>,
+    span: &SourceSpan,
+) {
+    replace_owned_destination(builder, target, RvalueKind::Enum(owner, slot, operands), span);
+}

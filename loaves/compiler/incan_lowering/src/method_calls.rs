@@ -24,6 +24,8 @@ use crate::pending::untranslated;
 use crate::sequence_builtins::argument_type;
 use crate::traits::{is_lazy_method_body, receiver_selects_slot_arguments};
 use crate::type_parameters::request_instance;
+use crate::value_enum_methods::{lower_enum_message, lower_value_enum_method};
+use crate::value_enums::{enum_message_layout, value_method_owner};
 
 /// Close retained source trait arguments in the caller's checked frame before choosing an implementation.
 pub fn lower_method_call(
@@ -74,6 +76,10 @@ fn lower_checked_method_call(
         MethodRoute::Library(index, selected) => {
             let callable = &module.loaf_callables[index];
             return lower_library_method(module, builder, callable, &selected, arguments, destination, span);
+        }
+        MethodRoute::EnumMessage(index) => return lower_enum_message(builder, index, arguments, destination, span),
+        MethodRoute::ValueGetter(owner) => {
+            return lower_value_enum_method(builder, owner, arguments, destination, span);
         }
         MethodRoute::Retained => {}
     }
@@ -130,13 +136,11 @@ fn special_method_route(
     {
         return Ok(Refused("element_borrows::element_method_owner"));
     }
-    if let Some(enum_index) = receiver_enum_layout(builder, receiver, span)? {
-        if generated_enum_member(module, target, enum_index, "message") {
-            return Ok(Refused("value_enums::lower_enum_message"));
-        }
-        if target.loaf_trait.is_none() && value_enum_getter(module, target, enum_index) {
-            return Ok(Refused("value_enum_methods::lower_value_enum_method"));
-        }
+    if let Some(index) = enum_message_layout(module, builder, target, receiver, span)? {
+        return Ok(MethodRoute::EnumMessage(index));
+    }
+    if let Some(owner) = value_method_owner(module, builder, target, receiver, span)? {
+        return Ok(MethodRoute::ValueGetter(owner));
     }
     if !receiver_fills_source_slot(module, builder, target, receiver, span)?
         && let Some(identity) = implementation
@@ -216,60 +220,9 @@ fn implementation_target(target: &MethodTarget, canonical: CanonicalSymbolId) ->
 enum MethodRoute {
     Refused(&'static str),
     Library(usize, MethodTarget),
+    EnumMessage(usize),
+    ValueGetter(usize),
     Retained,
-}
-
-/// The source enum layout a receiver place holds, if any.
-fn receiver_enum_layout(
-    builder: &Builder,
-    receiver: &ArgumentElement,
-    span: &SourceSpan,
-) -> Result<Option<usize>, String> {
-    let Some(SourceOperand::Place(read)) = receiver.as_one() else {
-        return Ok(None);
-    };
-    let mut source = model_place(
-        builder.tables(),
-        &builder.locals,
-        &read.place,
-        span,
-        builder.local_offset,
-    )?;
-    source.local += builder.local_offset;
-    match place_type(&builder.locals, &source) {
-        PlanType::Enum(index, _) if index >= 0 && (index as usize) < builder.enums().len() => Ok(Some(index as usize)),
-        _ => Ok(None),
-    }
-}
-
-/// Whether the target is a checker-generated member of the receiver's own source enum.
-fn generated_enum_member(module: &BodyIrModule, target: &MethodTarget, index: usize, name: &str) -> bool {
-    let Some(identity) = &target.canonical else {
-        return false;
-    };
-    let Some(owner) = module.enum_declarations.get(index) else {
-        return false;
-    };
-    identity.declaration_name == name
-        && identity.namespace == SymbolNamespace::Member
-        && identity.kind == SemanticSourceTargetKind::Method
-        && identity.origin == owner.canonical.origin
-        && identity.scope_discriminant == owner.canonical.scope_discriminant
-        && identity.declaration_span == owner.canonical.declaration_span
-}
-
-/// Whether the target is a value enum's generated getter on the receiver's layout.
-fn value_enum_getter(module: &BodyIrModule, target: &MethodTarget, index: usize) -> bool {
-    let Some(layout) = module.enum_declarations.get(index) else {
-        return false;
-    };
-    module.value_enum_declarations.iter().any(|declaration| {
-        layout.canonical == declaration.canonical
-            && target
-                .canonical
-                .as_ref()
-                .is_none_or(|identity| identity.declaration_span == declaration.canonical.declaration_span)
-    })
 }
 
 /// Read the receiver's retained model or source enum from the checked type of the place it reads.
