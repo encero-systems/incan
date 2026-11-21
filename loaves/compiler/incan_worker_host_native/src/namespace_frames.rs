@@ -57,6 +57,16 @@ impl NamespaceFrameReader {
     }
 }
 
+impl std::fmt::Debug for NamespaceFrameReader {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NamespaceFrameReader")
+            .field("directory", &self.directory)
+            .field("mapped_segments", &self.mappings.len())
+            .finish()
+    }
+}
+
 /// The request-local native reader.
 pub fn namespace_frame_reader(directory: &str) -> NamespaceFrameReader {
     NamespaceFrameReader::create(directory)
