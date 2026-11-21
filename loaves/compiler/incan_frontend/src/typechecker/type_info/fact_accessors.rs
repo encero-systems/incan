@@ -3,6 +3,11 @@
 use super::*;
 
 impl TypeCheckInfo {
+    /// The retained executable frame that source lowering will take for this exact declaration.
+    pub fn selected_callable_body(&self, span: Span) -> Option<&incan_semantics_core::body_ir::Body> {
+        self.reused_callable_bodies.get(&span)
+    }
+
     /// Return the final compiler-selected type of a binding introduced by an assignment statement.
     pub fn assignment_binding_type(&self, span: Span) -> Option<&ResolvedType> {
         self.expressions.assignment_binding_types.get(&span)
@@ -474,9 +479,14 @@ impl TypeCheckInfo {
                 .entry(span)
                 .or_insert(BuiltinMethodId::Iterator(method_id));
         }
-        self.calls
-            .resolved_method_calls
-            .insert(span, ResolvedMethodCall { method, dispatch });
+        self.calls.resolved_method_calls.insert(
+            span,
+            ResolvedMethodCall {
+                method,
+                dispatch,
+                lookup: None,
+            },
+        );
     }
 
     /// Remove and return the facts method resolution recorded for the call at `span` (see [`CallSiteFacts`]).

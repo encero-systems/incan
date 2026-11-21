@@ -56,7 +56,7 @@ impl TypeChecker {
         // ---- Checked values and declarations ----
         self.freeze_value_storage(program, &mut storage);
         self.freeze_source_storage(program, &mut storage);
-        // ---- Native layout and default templates ----
+        // ---- Selected native layouts ----
         for layout in self.type_info.rust.checked_layouts.values() {
             for field in &layout.fields {
                 self.rust_call_storage_type(&field.ty, &layout.type_parameters, &mut storage, &mut BTreeMap::new());
@@ -67,13 +67,8 @@ impl TypeChecker {
                 self.rust_call_storage_type(field, &layout.type_parameters, &mut storage, &mut BTreeMap::new());
             }
         }
-        for parameters in self.type_info.rust.owner_parameters.values() {
-            let names = parameters.iter().map(|(name, _)| name.clone()).collect::<Vec<_>>();
-            for default in parameters.iter().filter_map(|(_, default)| default.as_ref()) {
-                self.rust_call_storage_type(default, &names, &mut storage, &mut BTreeMap::new());
-            }
-        }
-        // ---- Published checker facts ----
+        // A selected native owner completes its own defaults in `rust_storage_constructor`. Other metadata
+        // queries may have inspected collection types, but their default arguments carry no storage here.
         self.type_info.rust.storage_types = storage;
         self.type_info.rust.checked_calls = calls;
         self.type_info.rust.await_conversions = awaits;
@@ -766,5 +761,33 @@ fn has_native_storage(ty: &IncanType) -> bool {
             params.iter().any(|parameter| has_native_storage(&parameter.ty)) || has_native_storage(return_type)
         }
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod storage_demand_tests {
+    use super::*;
+
+    #[test]
+    fn generic_defaults_enter_storage_only_through_selected_native_types() {
+        let mut checker = TypeChecker::new();
+        let parameter = "std::alloc::Global";
+        let default = ResolvedType::Named(parameter.to_owned());
+        checker.type_info.rust.owner_parameters.insert(
+            "example::Owner".to_owned(),
+            vec![("A".to_owned(), Some(default.clone()))],
+        );
+        checker.publish_rust_storage_types(&Program::default());
+        assert!(checker.type_info.rust.storage_types.is_empty());
+
+        let selected = ResolvedType::Generic("example::Owner".to_owned(), vec![default]);
+        checker
+            .type_info
+            .expressions
+            .expr_types
+            .insert(crate::ast::Span::default(), selected.clone());
+        checker.publish_rust_storage_types(&Program::default());
+        let structural = semantic_type_from_resolved(&selected);
+        assert_eq!(checker.type_info.rust.storage_types.get(&structural), Some(&structural));
     }
 }
