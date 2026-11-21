@@ -703,6 +703,7 @@ impl TypeChecker {
             return refused;
         };
         let exported_names = exported_symbol_names(&exports);
+        let written = incan_module_spelling(module);
         for item_name in &item_names {
             if exported_names.contains(item_name) || self.source_submodule_path(module, item_name).is_some() {
                 continue;
@@ -719,13 +720,19 @@ impl TypeChecker {
                 refused.insert(item_name.clone(), None);
                 continue;
             }
-            let names = exporters.iter().map(|path| path.join(".")).collect::<Vec<_>>();
-            self.errors.push(errors::import_not_exported_by_module(
-                item_name,
-                &module.to_rust_path(),
-                &names,
-                span,
-            ));
+            if let Some(submodule) = self.namespace_submodule_exporting(item_name, &exports) {
+                // The named module is a namespace's own module (its prelude), so the name belongs in the namespace.
+                self.errors.push(errors::import_not_reexported_by_namespace(
+                    item_name,
+                    &written,
+                    &format!("{written}.{}", submodule.join(".")),
+                    span,
+                ));
+            } else {
+                let names = exporters.iter().map(|path| path.join(".")).collect::<Vec<_>>();
+                self.errors
+                    .push(errors::import_not_exported_by_module(item_name, &written, &names, span));
+            }
             refused.insert(item_name.clone(), exporters.into_iter().next().map(ImportPath::simple));
         }
         refused
@@ -737,16 +744,40 @@ impl TypeChecker {
             .dependency_exports
             .iter()
             .filter(|(_, exports)| !Arc::ptr_eq(exports, provider) && exported_symbol_names(exports).contains(name))
-            .map(|(key, _)| {
-                self.dependency_module_path_segments
-                    .get(key)
-                    .cloned()
-                    .unwrap_or_else(|| vec![key.clone()])
-            })
+            .map(|(key, _)| self.dependency_module_segments(key))
             .collect::<Vec<_>>();
         modules.sort();
         modules.dedup();
         modules
+    }
+
+    /// When `provider` is a namespace's own module and a module inside that namespace exports `name`, the path of
+    /// that module below the namespace: one that declares `name` before one that re-exports it, then in path order.
+    fn namespace_submodule_exporting(&self, name: &str, provider: &Arc<[ExportedSymbol]>) -> Option<Vec<String>> {
+        let (namespace_key, _) = self
+            .dependency_exports
+            .iter()
+            .find(|(_, exports)| Arc::ptr_eq(exports, provider))?;
+        let namespace = self.dependency_module_segments(namespace_key);
+        self.dependency_exports
+            .iter()
+            .filter_map(|(key, exports)| {
+                let path = self.dependency_module_segments(key);
+                let below = path.strip_prefix(namespace.as_slice()).filter(|below| !below.is_empty())?;
+                let reexported = exports.iter().any(|symbol| matches!(symbol, ExportedSymbol::Reexported(n) if n == name));
+                let declared = exported_symbol_names(exports).contains(name) && !reexported;
+                (declared || reexported).then(|| (reexported, below.to_vec()))
+            })
+            .min()
+            .map(|(_, below)| below)
+    }
+
+    /// The logical module path of one cached dependency module.
+    fn dependency_module_segments(&self, key: &str) -> Vec<String> {
+        self.dependency_module_path_segments
+            .get(key)
+            .cloned()
+            .unwrap_or_else(|| vec![key.to_owned()])
     }
 
     /// Define a symbol for a module import through the shared binding registry.
@@ -817,4 +848,15 @@ fn exported_symbol_names(exports: &[ExportedSymbol]) -> HashSet<String> {
             ExportedSymbol::Variant { variant_name, .. } => variant_name.clone(),
         })
         .collect()
+}
+
+/// An import's module path as Incan source spells it: `std.fs`, `crate.config`, `super.common`.
+fn incan_module_spelling(module: &ImportPath) -> String {
+    let mut parts = Vec::new();
+    if module.is_absolute {
+        parts.push("crate".to_owned());
+    }
+    parts.extend(std::iter::repeat_n("super".to_owned(), module.parent_levels));
+    parts.extend(module.segments.iter().cloned());
+    parts.join(".")
 }

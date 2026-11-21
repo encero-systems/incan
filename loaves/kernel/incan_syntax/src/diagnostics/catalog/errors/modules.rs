@@ -362,6 +362,22 @@ pub fn import_not_exported_by_module(
         ))
 }
 
+/// Importing a name from a namespace whose own module (its prelude) does not re-export it, while a module inside the
+/// namespace exports it: the namespace is the documented import path, so the fix is its `pub from` line (RFC 176).
+pub fn import_not_reexported_by_namespace(
+    name: &str,
+    namespace: &str,
+    exporting_module: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::new(format!("`{name}` is not exported by `{namespace}`"), span)
+        .with_stable_code("INCAN-I0001")
+        .with_primary_label(format!("`{namespace}` does not export `{name}`"))
+        .with_hint(format!(
+            "Re-export it from `{namespace}` with `pub from {exporting_module} import {name}` in that namespace's prelude"
+        ))
+}
+
 /// Refuse an import of a type whose provider explicitly records its public-to-private migration.
 pub fn import_made_private(
     name: &str,
