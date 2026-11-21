@@ -20,6 +20,7 @@ use crate::producer_trace::{enter_producer, finish_producer};
 use crate::record_positions::{
     index_positions, indexed_product, place_positions, placed_record, positioned_product, relocate_product,
 };
+use crate::resident_products::resident_placed;
 
 /// A record whose key is its checked meaning; its spans name Body IR nodes by ordinal through a request-local position
 /// map.
@@ -360,7 +361,9 @@ fn record_payload(
         && let Some(current) = span
     {
         // Node ordinals take this body's positions; a body without those nodes is a miss.
-        placed_record(&record.function, positions, &current.file.to_string(), current.line).ok()?
+        resident_placed(&record.function, positions, &current.file.to_string(), current.line)
+            .ok()?
+            .0
     } else {
         place_product_record(&record.function, &WirePositions::preserve()).ok()?
     };
@@ -495,7 +498,8 @@ pub fn finalized_plan_product(
 }
 
 /// A product restored from a module's admitted page: the product read once and placed at the body's positions, the
-/// generic instance requests its lowering made and the event it came from.
+/// generic instance requests its lowering made and the event it came from, without the product bytes the placed
+/// record was read from.
 pub type AdmittedPayload = (PlacedRecord, Vec<Vec<u8>>, LoweringEvent);
 
 /// Read the product of a body from the final event of its module's admitted plan record.
@@ -515,8 +519,9 @@ pub fn admitted_payload(
     generation: &str,
     current: Option<Vec<(i64, i64)>>,
 ) -> Result<AdmittedPayload, &'static str> {
-    let decoded = decode_lowering_event(event).map_err(|_| "its page event does not decode")?;
-    let record = decode_plan_function_record(&decoded.product).map_err(|_| "its page product does not decode")?;
+    let mut decoded = decode_lowering_event(event).map_err(|_| "its page event does not decode")?;
+    let record = decode_plan_function_record(&std::mem::take(&mut decoded.product))
+        .map_err(|_| "its page product does not decode")?;
     let meaning = record.inputs.get(1).ok_or("its page product has no checked meaning")?;
     let positions = current.unwrap_or_else(|| event_positions(&decoded));
     let mut expected = record_scalar_inputs(meaning, name, span, overflow, reads, positions.len());

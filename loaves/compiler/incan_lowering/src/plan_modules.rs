@@ -1,13 +1,17 @@
 //! A module's admitted plan record: the page a worker restores its functions from, and the note of what it restored.
 
 use std::collections::HashMap;
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 
 use incan_mir_plan_native::{
     ADMITTED_MODULE_NOTE, AdmittedFunction, AdmittedModule, PARTIAL_MODULE_NOTE, POSITIONED_MODULE_PAGE,
     PlanModuleFunction, REPOSITION_MODULE_PAGE, decode_plan_module, encode_module_note, read_module_admission,
     write_module_placement,
 };
+
+use crate::resident_products::{ResidentPage, resident_page};
 
 /// Where Bakery places the plan record of an admitted module: named by the module, never by a product key.
 pub fn module_page(products: &str, module: &str) -> PathBuf {
@@ -34,33 +38,128 @@ impl AdmittedPage {
     }
 }
 
+/// One module's page as one request reads it: the page this worker keeps for its bytes, which holds each event's
+/// identity but not its bytes, and this request's copy of the bytes, from which an event the worker has not restored
+/// for these inputs yet is read.
+pub struct ModulePage {
+    resident: Arc<ResidentPage>,
+    encoded: Vec<u8>,
+    module: String,
+    /// This request's page with its event bytes, read on its first restore the worker has not kept.
+    full: OnceLock<Option<AdmittedPage>>,
+}
+
+impl Deref for ModulePage {
+    type Target = ResidentPage;
+
+    fn deref(&self) -> &ResidentPage {
+        &self.resident
+    }
+}
+
+impl ModulePage {
+    /// A page that admits nothing.
+    fn empty() -> Self {
+        Self {
+            resident: ResidentPage::unkept(no_page()),
+            encoded: Vec::new(),
+            module: String::new(),
+            full: OnceLock::new(),
+        }
+    }
+
+    /// The page this worker keeps for these bytes.
+    pub fn resident(&self) -> &Arc<ResidentPage> {
+        &self.resident
+    }
+
+    /// The bytes of the final event of the body lowered to `function`, read from this request's page.
+    pub fn event_bytes(&self, function: &str) -> Option<&[u8]> {
+        let inspect = self.resident.inspect_placement;
+        let page = self
+            .full
+            .get_or_init(|| read_page(&self.encoded, &self.module, inspect))
+            .as_ref()?;
+        page.event(function).map(|event| event.event.as_slice())
+    }
+}
+
 /// The final events of an admitted module, by the native function name of the body each belongs to.
 ///
 /// Bakery writes the page only for a module whose every witness still validates. No page, or a page that does not
-/// decode or names another module, admits nothing: every body then takes the keyed route.
-pub fn admitted_page(products: Option<&str>, module: &str, generation: Option<&str>) -> AdmittedPage {
-    let mut page = AdmittedPage {
-        events: HashMap::new(),
-        inspect_placement: true,
-    };
+/// decode or names another module, admits nothing: every body then takes the keyed route. A page this worker already
+/// read from the same bytes is the page it kept, with the products it restored from it.
+pub fn admitted_page(products: Option<&str>, module: &str, generation: Option<&str>) -> ModulePage {
     let (Some(directory), Some(_)) = (products, generation) else {
-        return page;
+        return ModulePage::empty();
     };
     let path = module_page(directory, module);
     let Ok(encoded) = std::fs::read(&path) else {
-        return page;
+        return ModulePage::empty();
     };
-    let Ok(record) = decode_plan_module(&encoded) else {
-        return page;
+    let inspect = path.to_string_lossy().ends_with(REPOSITION_MODULE_PAGE);
+    let full = OnceLock::new();
+    let resident = resident_page(&encoded, module, inspect, || {
+        let page = read_page(&encoded, module, inspect)?;
+        let kept = without_event_bytes(&page);
+        let _ = full.set(Some(page));
+        Some(kept)
+    });
+    let Some(resident) = resident else {
+        return ModulePage::empty();
     };
-    if record.module != module {
-        return page;
+    ModulePage {
+        resident,
+        encoded,
+        module: module.to_owned(),
+        full,
     }
-    page.inspect_placement = path.to_string_lossy().ends_with(REPOSITION_MODULE_PAGE);
+}
+
+/// A page that admits nothing.
+fn no_page() -> AdmittedPage {
+    AdmittedPage {
+        events: HashMap::new(),
+        inspect_placement: true,
+    }
+}
+
+/// Decode a module page, refusing one that names another module.
+fn read_page(encoded: &[u8], module: &str, inspect: bool) -> Option<AdmittedPage> {
+    let record = decode_plan_module(encoded).ok()?;
+    if record.module != module {
+        return None;
+    }
+    let mut page = AdmittedPage {
+        events: HashMap::new(),
+        inspect_placement: inspect,
+    };
     for function in record.functions {
         page.events.insert(function.function.clone(), function);
     }
-    page
+    Some(page)
+}
+
+/// The page a worker keeps: each event's identity, without its bytes.
+fn without_event_bytes(page: &AdmittedPage) -> AdmittedPage {
+    let events = page
+        .events
+        .iter()
+        .map(|(name, function)| {
+            let kept = PlanModuleFunction {
+                identity: function.identity.clone(),
+                symbol: function.symbol.clone(),
+                function: function.function.clone(),
+                key: function.key.clone(),
+                event: Vec::new(),
+            };
+            (name.clone(), kept)
+        })
+        .collect();
+    AdmittedPage {
+        events,
+        inspect_placement: page.inspect_placement,
+    }
 }
 
 /// Distinguish fully admitted modules from modules with individual restored functions.
@@ -211,13 +310,18 @@ pub fn read_admitted(directory: &Path) -> Result<Vec<AdmittedModule>, String> {
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
+    use std::sync::Arc;
 
     use incan_mir_plan_native::{
-        AdmittedFunction, AdmittedPlacement, EventPosition, EventReference, PlanModuleFunction, PlanModuleValue,
-        encode_plan_module,
+        AdmittedFunction, AdmittedPlacement, EventPosition, EventReference, Function, Local, LoweringEvent,
+        PlanModuleFunction, PlanModuleValue, PlanType, TerminatorKind, block, encode_plan_module, encode_product,
+        source_span,
     };
 
     use super::{admitted_frames, admitted_page, read_admitted, report_admitted};
+    use crate::record_positions::{indexed_product, placed_record};
+    use crate::resident_products::RestoreInputs;
+    use crate::scalar_store::AdmittedPayload;
 
     /// A fresh directory for one test.
     fn directory(test: &str) -> PathBuf {
@@ -371,5 +475,113 @@ mod tests {
                 .is_empty()
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A placed product for a restored page entry, its requests and the event it came from.
+    fn restored_payload() -> Result<AdmittedPayload, String> {
+        let owner = source_span("resident.incn", 10, 1);
+        let exit = block(Vec::new(), TerminatorKind::Return, &source_span("resident.incn", 11, 5));
+        let locals = vec![Local {
+            ty: PlanType::Unit,
+            span: owner.clone(),
+        }];
+        let function = Function::new("a".into(), Vec::new(), PlanType::Unit, locals, vec![exit], owner);
+        let wire = encode_product(&function, &[], &[], &[])?;
+        let stored = indexed_product(&wire, &[(0, 1), (1, 5)], "resident.incn", 10)?;
+        let placed = placed_record(&stored, &[(0, 1), (1, 5)], "resident.incn", 30)?;
+        let event = LoweringEvent {
+            identity: "pub::resident_gamma::a".into(),
+            key: "cd".repeat(32),
+            function: "a".into(),
+            product: Vec::new(),
+            reused: false,
+            admitted: true,
+            module: "resident_gamma".into(),
+            role: "ordinary".into(),
+            demand: String::new(),
+            runtime_requirements: 0,
+            references: Vec::new(),
+            positions: Vec::new(),
+        };
+        Ok((placed, Vec::new(), event))
+    }
+
+    /// A resident worker reads an unchanged page once and restores each of its products once per restore inputs.
+    #[test]
+    fn a_resident_worker_reads_an_unchanged_page_once() -> Result<(), String> {
+        let root = directory("resident");
+        let products = root.to_string_lossy().into_owned();
+        let page = PlanModuleValue {
+            module: "resident_gamma".into(),
+            functions: vec![PlanModuleFunction {
+                identity: "pub::resident_gamma::a".into(),
+                symbol: "pub::resident_gamma::a".into(),
+                function: "a".into(),
+                key: "cd".repeat(32),
+                event: vec![2],
+            }],
+        };
+        let encoded = encode_plan_module(&page)?;
+        let basename = hex::encode("resident_gamma");
+        let reposition = root.join(format!("{basename}.incnmodule.reposition"));
+        std::fs::write(&reposition, &encoded).map_err(|error| error.to_string())?;
+        let first = admitted_page(Some(&products), "resident_gamma", Some("profile"));
+        let again = admitted_page(Some(&products), "resident_gamma", Some("profile"));
+        assert!(
+            Arc::ptr_eq(first.resident(), again.resident()),
+            "an unchanged page was read again"
+        );
+        assert!(first.inspect_placement && first.event("a").is_some());
+        // The kept page holds no event bytes; each request reads them from its own copy of the page.
+        assert!(first.event("a").is_some_and(|event| event.event.is_empty()));
+        assert_eq!(again.event_bytes("a"), Some([2_u8].as_slice()));
+        // The same bytes under another module name stay refused, and placed bytes are another page.
+        let other = root.join(format!("{}.incnmodule.positioned", hex::encode("resident_delta")));
+        std::fs::write(&other, &encoded).map_err(|error| error.to_string())?;
+        assert!(
+            admitted_page(Some(&products), "resident_delta", Some("profile"))
+                .events
+                .is_empty()
+        );
+        let positioned = root.join(format!("{basename}.incnmodule.positioned"));
+        std::fs::write(&positioned, &encoded).map_err(|error| error.to_string())?;
+        let placed = admitted_page(Some(&products), "resident_gamma", Some("profile"));
+        assert!(!Arc::ptr_eq(first.resident(), placed.resident()) && !placed.inspect_placement);
+        let inputs = RestoreInputs {
+            frame: "a".into(),
+            file: "resident.incn".into(),
+            line: 30,
+            overflow: true,
+            reads: "reads".into(),
+            generation: "profile".into(),
+            positions: Some(vec![(0, 1), (1, 5)]),
+        };
+        let mut restores = 0;
+        let made = first.restored(&inputs, || {
+            restores += 1;
+            restored_payload()
+        })?;
+        let kept = first.restored(&inputs, || {
+            restores += 1;
+            restored_payload()
+        })?;
+        assert!(
+            Arc::ptr_eq(&made, &kept) && restores == 1,
+            "a kept product was restored again"
+        );
+        let moved = RestoreInputs {
+            line: 31,
+            ..inputs.clone()
+        };
+        first.restored(&moved, || {
+            restores += 1;
+            restored_payload()
+        })?;
+        assert_eq!(
+            restores, 2,
+            "a product restored at another line was read from the worker"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
     }
 }

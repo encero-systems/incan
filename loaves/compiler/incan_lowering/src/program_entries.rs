@@ -25,10 +25,11 @@ use crate::generators::append_generator_constructor;
 use crate::instance_products::{encode_requests, restore_requests};
 use crate::lowering::Inventories;
 use crate::nominal_records::{product_nominal_table, retain_named_scalar, sync_carriers};
-use crate::plan_modules::{AdmittedPage, admitted_page, report_admitted};
+use crate::plan_modules::{ModulePage, admitted_page, report_admitted};
 use crate::plan_product_inputs::{linked_crates, ordinary_product_inputs, producer_generation};
 use crate::producer_trace::{enter_producer, finish_producer};
 use crate::program_context::ProgramContext;
+use crate::resident_products::RestoreInputs;
 use crate::scalar_store::{
     ProductEvent, admitted_function, admitted_payload, event_nodes, event_reference, report_scalar,
     report_scalar_refusal, retained_scalar, scalar_miss,
@@ -235,7 +236,7 @@ pub struct FrameSource<'a> {
 /// One module's admitted plan record as its ordinary frames read it: the page, the line index an inspected placement
 /// borrows, the functions restored from the page so far and the helper frames each restored product carries.
 pub struct ModuleAdmission<'a> {
-    pub page: &'a AdmittedPage,
+    pub page: &'a ModulePage,
     pub placement_lines: &'a [i64],
     pub restored: Vec<AdmittedFunction>,
     pub frames: Vec<Vec<String>>,
@@ -513,18 +514,32 @@ fn restore_admitted(
     let current = (!lines.is_empty()).then(|| indexed_body_positions(body, lines, frame.file, &span));
     sync_carriers(&mut keyed.nominals, intrinsics);
     let generation = keyed.generation.as_deref().unwrap_or("");
-    let (placed, encoded, previous) = match admitted_payload(
-        &selected.event,
-        &span,
-        &name,
-        program.overflow_checks,
-        reads,
-        generation,
-        current.clone(),
-    ) {
+    let inputs = RestoreInputs {
+        frame: name.clone(),
+        file: span.file.to_string(),
+        line: span.line,
+        overflow: program.overflow_checks,
+        reads: reads.clone(),
+        generation: generation.to_owned(),
+        positions: current.clone(),
+    };
+    let restored = admission.page.restored(&inputs, || {
+        let event = admission.page.event_bytes(&name).ok_or("its page event is gone")?;
+        admitted_payload(
+            event,
+            &span,
+            &name,
+            program.overflow_checks,
+            reads,
+            generation,
+            current.clone(),
+        )
+    });
+    let payload = match restored {
         Ok(admitted) => admitted,
         Err(reason) => return Admission::Missed(reason),
     };
+    let (placed, encoded, previous) = (&payload.0, &payload.1, &payload.2);
     if previous.key != selected.key || previous.function != selected.function || previous.identity != selected.symbol {
         return Admission::Missed("its page entry names another event");
     }
@@ -533,10 +548,10 @@ fn restore_admitted(
             unresolved_nominal(placed.nominals(), &keyed.nominals).unwrap_or("a declaration it names does not resolve"),
         );
     };
-    let Some((function, runtime, frames)) = admitted_function(&placed, &resolved, &keyed.linked) else {
+    let Some((function, runtime, frames)) = admitted_function(placed, &resolved, &keyed.linked) else {
         return Admission::Missed("its product does not restore at the resolved declarations");
     };
-    let Some(requests) = restore_requests(&encoded, context) else {
+    let Some(requests) = restore_requests(encoded, context) else {
         return Admission::Missed("a generic instance it requests is gone");
     };
     let references: Vec<_> = resolved.iter().map(event_reference).collect();

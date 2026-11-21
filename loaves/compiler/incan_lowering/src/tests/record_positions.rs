@@ -14,6 +14,7 @@ use incan_mir_plan_native::{
 use crate::record_positions::{
     index_positions, indexed_product, place_positions, placed_record, positioned_product, relocate_product,
 };
+use crate::resident_products::resident_placed;
 use crate::scalar_store::{finalized_plan_product, record_scalar_inputs, retain_scalar, retained_scalar};
 
 /// A function whose block starts on one body line and whose return sits on another.
@@ -135,6 +136,29 @@ fn an_admitted_product_restores_from_one_placed_read() -> Result<(), String> {
     assert!(restored != function, "the restored function kept the captured lines");
     assert!(placed.restores_at_own_ordinals());
     assert!(placed_record(&stored, &[(0, 1)], "moved.incn", 20).is_err());
+    Ok(())
+}
+
+/// A resident worker places a product's bytes at the same nodes once: a later request restoring the same product at
+/// the same nodes reads the placed record the worker kept, which restores exactly as a fresh placement does, and other
+/// nodes or another file place again.
+#[test]
+fn a_resident_worker_places_a_product_once() -> Result<(), String> {
+    let owner = source_span("positions.incn", 10, 1);
+    let function = positioned("resident", &owner, 11, 12);
+    let helper = positioned("resident_helper", &owner, 12, 11);
+    let wire = encode_product(&function, &[], &[], std::slice::from_ref(&helper))?;
+    let stored = indexed_product(&wire, &[(0, 1), (1, 5), (2, 5)], "positions.incn", 10)?;
+    let nodes = [(0, 1), (3, 5), (4, 5)];
+    let (first, kept) = resident_placed(&stored, &nodes, "positions.incn", 30)?;
+    assert!(!kept, "a first placement was read from the worker");
+    let (second, kept) = resident_placed(&stored, &nodes, "positions.incn", 30)?;
+    assert!(kept, "the same product at the same nodes was placed again");
+    assert!(second.restore(&[], &BTreeSet::new())? == first.restore(&[], &BTreeSet::new())?);
+    let fresh = placed_record(&stored, &nodes, "positions.incn", 30)?;
+    assert!(second.restore(&[], &BTreeSet::new())? == fresh.restore(&[], &BTreeSet::new())?);
+    assert!(!resident_placed(&stored, &[(0, 1), (3, 5), (5, 5)], "positions.incn", 30)?.1);
+    assert!(!resident_placed(&stored, &nodes, "moved.incn", 30)?.1);
     Ok(())
 }
 
