@@ -844,25 +844,10 @@ def lowering_witnesses(
             None => return Err("retained Body IR has no selected evaluation")
         if read_body_frame(key, CHECKER_PROFILE, body.value)? != record.body_ir:
             return Err("retained Body IR differs from the selected graph")
-        if decoded.source not in projections:
-            projections[decoded.source] = source_projection(unit, origin, decoded.source)?
-        projection = projections[decoded.source]
-        owner = match compiled_owner_source(projection, decoded.source, str(decoded.body.name), record.identity):
-            Ok(value) => value
-            Err(reason) =>
-                # A removed or renamed owner remains valid history in the selected graph, but it is not a witness
-                # for the current compile. Every other malformed selection state remains a hard refusal.
-                if reason.startswith("compiled body output has no matching owner source:"):
-                    continue
-                return Err(reason)
-
-        for binding in [projection.header, owner] + projection.feature_inputs:
-            previous = match get(prior, encode_record_key(binding.key)?).map_err((error) => error.message())?:
-                Some(value) => value
-                None => return Err("retained Body IR is missing a current source input")
-
-            if source_value(binding.key, previous)? != binding.text.encode("utf-8"):
-                return Err("retained Body IR has changed current source inputs")
+        # A carried module's source records are the selected graph's: its owner and inputs are current by the capture.
+        carried = decoded.source in cutoff.carried
+        if not carried and not retained_sources_current(projections, prior, unit, origin, decoded.source, str(decoded.body.name), record.identity)?:
+            continue
         position = orders.retained(prior, decoded.source, body)?
         source.add(encode_record_key(key)?, body.value)
         local_key = body_key("local", origin, record.identity, "checked", root(record.local)?)
@@ -892,9 +877,10 @@ def lowering_witnesses(
                         source.add(encoded, value)
                         signatures.append(input)
                 _ => return Err("retained lowering owner has an unsupported checker witness")
-        for feature in projection.feature_inputs:
-            if feature.key not in signatures:
-                return Err("retained lowering owner has no witnessed feature selection")
+        if not carried:
+            for feature in projections[decoded.source].feature_inputs:
+                if feature.key not in signatures:
+                    return Err("retained lowering owner has no witnessed feature selection")
         witnesses.append(
             LoweringBody(
                 identity=record.identity,
@@ -908,6 +894,40 @@ def lowering_witnesses(
         )
         witnessed.add(record.identity)
     return Ok(witnesses)
+
+
+def retained_sources_current(
+    mut projections: Dict[str, SourceProjection],
+    prior: Snapshot,
+    unit: UnitDescription,
+    origin: str,
+    module: str,
+    name: str,
+    identity: str,
+) -> Result[bool, str]:
+    """
+    Whether a retained owner's current header, owner and feature records equal the selected graph's; false for an owner
+    removed or renamed since, which remains valid history but is no witness for the current compile.
+    """
+    if module not in projections:
+        projections[module] = source_projection(unit, origin, module)?
+    projection = projections[module]
+    owner = match compiled_owner_source(projection, module, name, identity):
+        Ok(value) => value
+        Err(reason) =>
+            # Every other malformed selection state remains a hard refusal.
+            if reason.startswith("compiled body output has no matching owner source:"):
+                return Ok(false)
+            return Err(reason)
+
+    for binding in [projection.header, owner] + projection.feature_inputs:
+        previous = match get(prior, encode_record_key(binding.key)?).map_err((error) => error.message())?:
+            Some(value) => value
+            None => return Err("retained Body IR is missing a current source input")
+
+        if source_value(binding.key, previous)? != binding.text.encode("utf-8"):
+            return Err("retained Body IR has changed current source inputs")
+    return Ok(true)
 
 
 def lowering_events(report: Path) -> Result[list[LoweringEvent], str]:
