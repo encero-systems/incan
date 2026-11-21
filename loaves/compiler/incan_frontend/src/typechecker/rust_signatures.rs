@@ -917,10 +917,14 @@ impl TypeChecker {
 const COMPILED_LAYOUT_NAMESPACE_PREFIX: &str = "__incan_layout_";
 
 /// The nominal carrier key of a compiled Incan library's source-named layout `<crate>::__incan_layout_<key>::<Name>`.
-/// Generic layouts keep their native path.
+/// Only a plain path names the layout itself: a reference, a generic application or any other display keeps its own
+/// structure, and its inner path reenters this rule.
 pub(super) fn compiled_layout_carrier_key(normalized: &str) -> Option<&str> {
     let prefix = incan_semantics_core::body_ir::NOMINAL_CARRIER_KEY_PREFIX;
-    if normalized.contains('<') {
+    if !normalized
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == ':')
+    {
         return None;
     }
     let mut segments = normalized.rsplit("::");
