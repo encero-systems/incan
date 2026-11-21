@@ -47,6 +47,8 @@ const PACKAGE_BINDING: &str = "pub::";
 pub type NamedProduct = (Function, Vec<ExternalFunction>, Vec<NominalReference>, Vec<Function>);
 /// A completely restored product: its function, runtime demand, helper frames and named declarations.
 pub type ProductParts = (Function, Vec<ExternalFunction>, Vec<Function>, Vec<ProductNominal>);
+/// A product placed at this request's positions: its bytes, runtime demand and named declarations.
+pub type PlacedProduct = (Vec<u8>, Vec<ExternalFunction>, Vec<ProductNominal>);
 
 /// Name the unit positions a product of this function would retain, in the product's first-seen ordinal order.
 pub fn product_nominals(
@@ -297,7 +299,7 @@ pub fn positioned_product_requirements(
     encoded: &[u8],
     positions: &WirePositions,
     references: &[NominalReference],
-) -> Result<(Vec<u8>, Vec<ExternalFunction>, Vec<ProductNominal>), String> {
+) -> Result<PlacedProduct, String> {
     let stored = positioned_record(encoded, positions)?;
     let (_, runtime) = restore_product(&stored, references)?;
     restore_frames(&stored, references)?;

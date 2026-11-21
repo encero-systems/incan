@@ -3,6 +3,10 @@
 //! The plan types are what lowering produces and the rustc adapter consumes. Keyed function products, the native
 //! interface and the layout records store them as Crumb rows of the compiler-owned native-plan profile.
 
+// Plan and stored-shape enums keep the reference plan's unboxed alternatives, which lowering and the rustc adapter
+// construct and match directly.
+#![allow(clippy::large_enum_variant)]
+
 mod debug;
 
 pub mod body;
@@ -37,8 +41,8 @@ pub use records::codec::{
     decode_record_plan, encode_entry_binding, encode_record_plan, encode_record_plan_products, record_plan_products,
 };
 pub use records::function::{
-    NamedProduct, ProductParts, decode_frames, decode_product, decode_product_parts, decode_runtime, decode_scalar,
-    encode_product, encode_runtime, encode_scalar, matches_product, positioned_product_requirements,
+    NamedProduct, PlacedProduct, ProductParts, decode_frames, decode_product, decode_product_parts, decode_runtime,
+    decode_scalar, encode_product, encode_runtime, encode_scalar, matches_product, positioned_product_requirements,
     product_frame_names, product_identities, product_nominals, restore_named_product, transform_product_positions,
     valid_ordinal_product,
 };

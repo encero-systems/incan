@@ -18,13 +18,13 @@ pub(crate) struct StoredInstanceRequest {
 /// Project one `StoredInstanceRequest` onto its schema-admitted Crumb record.
 pub(crate) fn wire_stored_instance_request(value: &StoredInstanceRequest) -> Result<Wire, String> {
     Ok(Wire::Record(vec![
-        required(b"\xab\xcd\x0e\xe1\xfc,", Wire::Text((&value.declaration).clone())),
+        required(b"\xab\xcd\x0e\xe1\xfc,", Wire::Text(value.declaration.clone())),
         required(b"\xb1\x92\x01}\xa4\x7f", list(&value.arguments, wire_checked_type)?),
         required(
             b"\xfc\x7f\x8co\xaf\xff",
             list(&value.owned_callable_slots, |item0| Ok(Wire::integer(*item0)))?,
         ),
-        required(b"\x9b\xf1\x17\x8c4{", Wire::Boolean(*&value.original_callable)),
+        required(b"\x9b\xf1\x17\x8c4{", Wire::Boolean(value.original_callable)),
     ]))
 }
 
@@ -37,7 +37,7 @@ pub(crate) fn read_stored_instance_request(
     Ok(StoredInstanceRequest {
         declaration: text(&fields[1].value)?,
         arguments: read_list(&fields[2].value, |item0| read_checked_type(item0, positions))?,
-        owned_callable_slots: read_list(&fields[3].value, |item0| Ok(number(item0)?))?,
+        owned_callable_slots: read_list(&fields[3].value, number)?,
         original_callable: boolean_value(&fields[0].value)?,
     })
 }
@@ -61,13 +61,12 @@ pub(crate) fn read_carrier(value: &Wire, positions: &WirePositions) -> Result<Ca
 fn read_carrier_alternative(
     identity: &[u8],
     fields: &[WireField],
-    positions: &WirePositions,
+    _positions: &WirePositions,
 ) -> Result<Carrier, String> {
-    let _ = positions;
     Ok(match identity {
-        b"\xdcV\xdd&\x87\xa3" if fields.len() == 0 => Carrier::Declared,
-        b"E\xaa\xac\xba~\xa1" if fields.len() == 0 => Carrier::Option,
-        b"n}P\xe8OG" if fields.len() == 0 => Carrier::Result,
+        b"\xdcV\xdd&\x87\xa3" if fields.is_empty() => Carrier::Declared,
+        b"E\xaa\xac\xba~\xa1" if fields.is_empty() => Carrier::Option,
+        b"n}P\xe8OG" if fields.is_empty() => Carrier::Result,
         _ => return Err("unknown or incomplete StoredLayoutCarrier alternative".to_owned()),
     })
 }
@@ -77,14 +76,14 @@ pub(crate) fn wire_checked_callable_param(value: &CheckedCallableParam) -> Resul
     Ok(Wire::Record(vec![
         required(
             b"\x82\xa3S\x7f\xf0\xdb",
-            optional(&value.name, |item0| Ok(Wire::Text((item0).clone())))?,
+            optional(&value.name, |item0| Ok(Wire::Text(item0.clone())))?,
         ),
         required(b"O\x9d\xb7\xf8\xe5\x06", wire_checked_type(&value.ty)?),
         required(b"\x0b'\xc1X\xfe\xb3", wire_checked_callable_param_kind(&value.kind)?),
-        required(b"h*w|#(", Wire::Boolean(*&value.has_default)),
-        required(b"\xc2\xea58V\xa6", Wire::Boolean(*&value.is_partial_preset)),
-        required(b"\xc5}!\xc0\xf9[", Wire::Boolean(*&value.is_mut)),
-        required(b"\xa6\xcb\xca1|\x1a", Wire::Boolean(*&value.native_owned)),
+        required(b"h*w|#(", Wire::Boolean(value.has_default)),
+        required(b"\xc2\xea58V\xa6", Wire::Boolean(value.is_partial_preset)),
+        required(b"\xc5}!\xc0\xf9[", Wire::Boolean(value.is_mut)),
+        required(b"\xa6\xcb\xca1|\x1a", Wire::Boolean(value.native_owned)),
         required(b"+#{X\xd0r", wire_checked_input_access(&value.input_access)?),
     ]))
 }
@@ -96,7 +95,7 @@ pub(crate) fn read_checked_callable_param(
 ) -> Result<CheckedCallableParam, String> {
     let fields = wire_fields(value, 8)?;
     Ok(CheckedCallableParam {
-        name: read_optional(&fields[4].value, |children| Ok(text(&children[0])?))?,
+        name: read_optional(&fields[4].value, |children| text(&children[0]))?,
         ty: read_checked_type(&fields[2].value, positions)?,
         kind: read_checked_callable_param_kind(&fields[0].value, positions)?,
         has_default: boolean_value(&fields[3].value)?,
@@ -129,13 +128,12 @@ pub(crate) fn read_checked_callable_param_kind(
 fn read_checked_callable_param_kind_alternative(
     identity: &[u8],
     fields: &[WireField],
-    positions: &WirePositions,
+    _positions: &WirePositions,
 ) -> Result<CheckedCallableParamKind, String> {
-    let _ = positions;
     Ok(match identity {
-        b"\xa7$\x8e\xebE\xeb" if fields.len() == 0 => CheckedCallableParamKind::Normal,
-        b"\xed\xe4!\xe1h\xfb" if fields.len() == 0 => CheckedCallableParamKind::RestPositional,
-        b"\xff\xad\x057D!" if fields.len() == 0 => CheckedCallableParamKind::RestKeyword,
+        b"\xa7$\x8e\xebE\xeb" if fields.is_empty() => CheckedCallableParamKind::Normal,
+        b"\xed\xe4!\xe1h\xfb" if fields.is_empty() => CheckedCallableParamKind::RestPositional,
+        b"\xff\xad\x057D!" if fields.is_empty() => CheckedCallableParamKind::RestKeyword,
         _ => return Err("unknown or incomplete StoredLayoutCheckedCallableParamKind alternative".to_owned()),
     })
 }
@@ -161,15 +159,14 @@ pub(crate) fn read_checked_input_access(value: &Wire, positions: &WirePositions)
 fn read_checked_input_access_alternative(
     identity: &[u8],
     fields: &[WireField],
-    positions: &WirePositions,
+    _positions: &WirePositions,
 ) -> Result<CheckedInputAccess, String> {
-    let _ = positions;
     Ok(match identity {
-        b"\xd4a\xcb\xb4\x90f" if fields.len() == 0 => CheckedInputAccess::Inferred,
-        b"\xe3\xc4\xb3\x9dmP" if fields.len() == 0 => CheckedInputAccess::Shared,
-        b"H\x83\xb7\xdf\xff\xb0" if fields.len() == 0 => CheckedInputAccess::Exclusive,
-        b"\x17\xb7`\xc4\x1c\xd2" if fields.len() == 0 => CheckedInputAccess::Owned,
-        b"1\xca\xf1d\xbb&" if fields.len() == 0 => CheckedInputAccess::InferredShared,
+        b"\xd4a\xcb\xb4\x90f" if fields.is_empty() => CheckedInputAccess::Inferred,
+        b"\xe3\xc4\xb3\x9dmP" if fields.is_empty() => CheckedInputAccess::Shared,
+        b"H\x83\xb7\xdf\xff\xb0" if fields.is_empty() => CheckedInputAccess::Exclusive,
+        b"\x17\xb7`\xc4\x1c\xd2" if fields.is_empty() => CheckedInputAccess::Owned,
+        b"1\xca\xf1d\xbb&" if fields.is_empty() => CheckedInputAccess::InferredShared,
         _ => return Err("unknown or incomplete StoredLayoutCheckedInputAccess alternative".to_owned()),
     })
 }
@@ -205,25 +202,24 @@ pub(crate) fn read_checked_numeric_type(value: &Wire, positions: &WirePositions)
 fn read_checked_numeric_type_alternative(
     identity: &[u8],
     fields: &[WireField],
-    positions: &WirePositions,
+    _positions: &WirePositions,
 ) -> Result<CheckedNumericType, String> {
-    let _ = positions;
     Ok(match identity {
-        b"1Fb\x8c\x11\x8c" if fields.len() == 0 => CheckedNumericType::I8,
-        b"\xb9\xff?nq\xda" if fields.len() == 0 => CheckedNumericType::I16,
-        b"\xbe-,\xd01}" if fields.len() == 0 => CheckedNumericType::I32,
-        b"\xc1\xc7\xe0-\xd6\xcb" if fields.len() == 0 => CheckedNumericType::I64,
-        b"G\xeck\xdaM\xa3" if fields.len() == 0 => CheckedNumericType::I128,
-        b"4s\xd3\x8a\x12A" if fields.len() == 0 => CheckedNumericType::U8,
-        b"\xef\x09\xbc\x80\xcdb" if fields.len() == 0 => CheckedNumericType::U16,
-        b"\x80\x07$\x86\xf2\xea" if fields.len() == 0 => CheckedNumericType::U32,
-        b"\x84\xb8\x9e\x22ET" if fields.len() == 0 => CheckedNumericType::U64,
-        b"\x0c\x80\x0d\xc4\xf9I" if fields.len() == 0 => CheckedNumericType::U128,
-        b"\x82%Z\xeel\xcc" if fields.len() == 0 => CheckedNumericType::F32,
-        b"\xa4M\x7ft\xc8)" if fields.len() == 0 => CheckedNumericType::F64,
-        b"\xec|D\x91\xf6\x86" if fields.len() == 0 => CheckedNumericType::ISize,
-        b"\xbaL\xadu\xa6Z" if fields.len() == 0 => CheckedNumericType::USize,
-        b"I\xf4\x11\xf0\xa1\xa7" if fields.len() == 0 => CheckedNumericType::Bool,
+        b"1Fb\x8c\x11\x8c" if fields.is_empty() => CheckedNumericType::I8,
+        b"\xb9\xff?nq\xda" if fields.is_empty() => CheckedNumericType::I16,
+        b"\xbe-,\xd01}" if fields.is_empty() => CheckedNumericType::I32,
+        b"\xc1\xc7\xe0-\xd6\xcb" if fields.is_empty() => CheckedNumericType::I64,
+        b"G\xeck\xdaM\xa3" if fields.is_empty() => CheckedNumericType::I128,
+        b"4s\xd3\x8a\x12A" if fields.is_empty() => CheckedNumericType::U8,
+        b"\xef\x09\xbc\x80\xcdb" if fields.is_empty() => CheckedNumericType::U16,
+        b"\x80\x07$\x86\xf2\xea" if fields.is_empty() => CheckedNumericType::U32,
+        b"\x84\xb8\x9e\x22ET" if fields.is_empty() => CheckedNumericType::U64,
+        b"\x0c\x80\x0d\xc4\xf9I" if fields.is_empty() => CheckedNumericType::U128,
+        b"\x82%Z\xeel\xcc" if fields.is_empty() => CheckedNumericType::F32,
+        b"\xa4M\x7ft\xc8)" if fields.is_empty() => CheckedNumericType::F64,
+        b"\xec|D\x91\xf6\x86" if fields.is_empty() => CheckedNumericType::ISize,
+        b"\xbaL\xadu\xa6Z" if fields.is_empty() => CheckedNumericType::USize,
+        b"I\xf4\x11\xf0\xa1\xa7" if fields.is_empty() => CheckedNumericType::Bool,
         _ => return Err("unknown or incomplete StoredLayoutCheckedNumericType alternative".to_owned()),
     })
 }
@@ -258,19 +254,18 @@ fn read_checked_primitive_type_alternative(
     fields: &[WireField],
     positions: &WirePositions,
 ) -> Result<CheckedPrimitiveType, String> {
-    let _ = positions;
     Ok(match identity {
-        b"\x0b_`\x80p\xc6" if fields.len() == 0 => CheckedPrimitiveType::Int,
-        b"\x1ai<\x00\xc4\x0c" if fields.len() == 0 => CheckedPrimitiveType::Float,
+        b"\x0b_`\x80p\xc6" if fields.is_empty() => CheckedPrimitiveType::Int,
+        b"\x1ai<\x00\xc4\x0c" if fields.is_empty() => CheckedPrimitiveType::Float,
         b"6u-l\xd1G" if fields.len() == 1 => {
             CheckedPrimitiveType::Numeric(read_checked_numeric_type(&fields[0].value, positions)?)
         }
-        b"I\xf4\x11\xf0\xa1\xa7" if fields.len() == 0 => CheckedPrimitiveType::Bool,
-        b"\x80\x84\xa5\x1b<d" if fields.len() == 0 => CheckedPrimitiveType::Str,
-        b"M\x80\x000\x1f\xcc" if fields.len() == 0 => CheckedPrimitiveType::Bytes,
-        b"O\xab\xe1W\xe8\xf9" if fields.len() == 0 => CheckedPrimitiveType::FrozenStr,
-        b"\xa5\x1aU\xd1;\xee" if fields.len() == 0 => CheckedPrimitiveType::FrozenBytes,
-        b"NTY`\xf1\xbf" if fields.len() == 0 => CheckedPrimitiveType::Unit,
+        b"I\xf4\x11\xf0\xa1\xa7" if fields.is_empty() => CheckedPrimitiveType::Bool,
+        b"\x80\x84\xa5\x1b<d" if fields.is_empty() => CheckedPrimitiveType::Str,
+        b"M\x80\x000\x1f\xcc" if fields.is_empty() => CheckedPrimitiveType::Bytes,
+        b"O\xab\xe1W\xe8\xf9" if fields.is_empty() => CheckedPrimitiveType::FrozenStr,
+        b"\xa5\x1aU\xd1;\xee" if fields.is_empty() => CheckedPrimitiveType::FrozenBytes,
+        b"NTY`\xf1\xbf" if fields.is_empty() => CheckedPrimitiveType::Unit,
         _ => return Err("unknown or incomplete StoredLayoutCheckedPrimitiveType alternative".to_owned()),
     })
 }
@@ -295,11 +290,10 @@ pub(crate) fn read_checked_runtime_builtin(
 fn read_checked_runtime_builtin_alternative(
     identity: &[u8],
     fields: &[WireField],
-    positions: &WirePositions,
+    _positions: &WirePositions,
 ) -> Result<CheckedRuntimeBuiltin, String> {
-    let _ = positions;
     Ok(match identity {
-        b"\xbd\xfa\xef\x14\xbe\x91" if fields.len() == 0 => CheckedRuntimeBuiltin::ValidationError,
+        b"\xbd\xfa\xef\x14\xbe\x91" if fields.is_empty() => CheckedRuntimeBuiltin::ValidationError,
         _ => return Err("unknown or incomplete StoredLayoutCheckedRuntimeBuiltin alternative".to_owned()),
     })
 }
@@ -311,10 +305,10 @@ pub(crate) fn wire_checked_type(value: &CheckedType) -> Result<Wire, String> {
         CheckedType::Primitive(field0) => {
             alternative(b"\x09V\x17<\xa4\x15", vec![wire_checked_primitive_type(field0)?])
         }
-        CheckedType::Named(field0) => alternative(b"\x86\x05`Z\xe0&", vec![Wire::Text((field0).clone())]),
+        CheckedType::Named(field0) => alternative(b"\x86\x05`Z\xe0&", vec![Wire::Text(field0.clone())]),
         CheckedType::Generic(field0, field1) => alternative(
             b"\x02(\xc6\xd4\x8e\xcf",
-            vec![Wire::Text((field0).clone()), list(field1, wire_checked_type)?],
+            vec![Wire::Text(field0.clone()), list(field1, wire_checked_type)?],
         ),
         CheckedType::Decimal(field0, field1) => alternative(
             b"\x18Q}3-\x1b",
@@ -329,15 +323,15 @@ pub(crate) fn wire_checked_type(value: &CheckedType) -> Result<Wire, String> {
         ),
         CheckedType::TypeToken(field0) => alternative(b"\xeb\x90\x0dwd\xd0", vec![list(field0, wire_checked_type)?]),
         CheckedType::Tuple(field0) => alternative(b"\xf16\xeex\xc3;", vec![list(field0, wire_checked_type)?]),
-        CheckedType::TypeVar(field0) => alternative(b"\xc7\xa4\xa1AK\xe4", vec![Wire::Text((field0).clone())]),
+        CheckedType::TypeVar(field0) => alternative(b"\xc7\xa4\xa1AK\xe4", vec![Wire::Text(field0.clone())]),
         CheckedType::SelfType => unit(b"\x800$\x93\xf2\xd4"),
         CheckedType::Ref(field0) => alternative(b"\x9bn\x88\xe8\x94:", vec![list(field0, wire_checked_type)?]),
         CheckedType::RefMut(field0) => alternative(b"\xff\xc4\x90\xa6\xa7\xb3", vec![list(field0, wire_checked_type)?]),
-        CheckedType::RustInteropPath(field0) => alternative(b"\xe7u\x7f\x0d\xdfV", vec![Wire::Text((field0).clone())]),
+        CheckedType::RustInteropPath(field0) => alternative(b"\xe7u\x7f\x0d\xdfV", vec![Wire::Text(field0.clone())]),
         CheckedType::NativeBuiltin(field0) => {
             alternative(b"o\xc7B\xf9\xdc\xbd", vec![wire_checked_runtime_builtin(field0)?])
         }
-        CheckedType::Unsupported(field0) => alternative(b"T2FX\xe2\xeb", vec![Wire::Text((field0).clone())]),
+        CheckedType::Unsupported(field0) => alternative(b"T2FX\xe2\xeb", vec![Wire::Text(field0.clone())]),
         CheckedType::Infer => unit(b"'@\x0f\xf4\xb8\x09"),
         CheckedType::Unknown => unit(b"\xb7d\xcd\xc0\xea\xb7"),
         CheckedType::NativeArray(field0, field1) => alternative(
@@ -347,7 +341,7 @@ pub(crate) fn wire_checked_type(value: &CheckedType) -> Result<Wire, String> {
         CheckedType::NativeTraitObject(field0, field1, field2) => alternative(
             b"\x5cz%\xe2\x9cR",
             vec![
-                Wire::Text((field0).clone()),
+                Wire::Text(field0.clone()),
                 Wire::Boolean(*field1),
                 Wire::Boolean(*field2),
             ],
@@ -373,9 +367,8 @@ fn read_checked_type_alternative(
     fields: &[WireField],
     positions: &WirePositions,
 ) -> Result<CheckedType, String> {
-    let _ = positions;
     Ok(match identity {
-        b"c\x00\xef\x80\x0b\xb8" if fields.len() == 0 => CheckedType::Never,
+        b"c\x00\xef\x80\x0b\xb8" if fields.is_empty() => CheckedType::Never,
         b"\x09V\x17<\xa4\x15" if fields.len() == 1 => {
             CheckedType::Primitive(read_checked_primitive_type(&fields[0].value, positions)?)
         }
@@ -399,7 +392,7 @@ fn read_checked_type_alternative(
             read_checked_type(item0, positions)
         })?),
         b"\xc7\xa4\xa1AK\xe4" if fields.len() == 1 => CheckedType::TypeVar(text(&fields[0].value)?),
-        b"\x800$\x93\xf2\xd4" if fields.len() == 0 => CheckedType::SelfType,
+        b"\x800$\x93\xf2\xd4" if fields.is_empty() => CheckedType::SelfType,
         b"\x9bn\x88\xe8\x94:" if fields.len() == 1 => CheckedType::Ref(read_list(&fields[0].value, |item0| {
             read_checked_type(item0, positions)
         })?),
@@ -413,8 +406,8 @@ fn read_checked_type_alternative(
             CheckedType::NativeBuiltin(read_checked_runtime_builtin(&fields[0].value, positions)?)
         }
         b"T2FX\xe2\xeb" if fields.len() == 1 => CheckedType::Unsupported(text(&fields[0].value)?),
-        b"'@\x0f\xf4\xb8\x09" if fields.len() == 0 => CheckedType::Infer,
-        b"\xb7d\xcd\xc0\xea\xb7" if fields.len() == 0 => CheckedType::Unknown,
+        b"'@\x0f\xf4\xb8\x09" if fields.is_empty() => CheckedType::Infer,
+        b"\xb7d\xcd\xc0\xea\xb7" if fields.is_empty() => CheckedType::Unknown,
         b"0?\xb1)\xac\xe5" if fields.len() == 2 => CheckedType::NativeArray(
             read_list(&fields[0].value, |item0| read_checked_type(item0, positions))?,
             unsigned_value(&fields[1].value)?,
@@ -428,7 +421,7 @@ fn read_checked_type_alternative(
             boolean_value(&fields[0].value)?,
             read_list(&fields[1].value, |item0| read_checked_type(item0, positions))?,
         ),
-        b"\xed\x5c1CFF" if fields.len() == 0 => CheckedType::NativeCChar,
+        b"\xed\x5c1CFF" if fields.is_empty() => CheckedType::NativeCChar,
         _ => return Err("unknown or incomplete StoredLayoutCheckedType alternative".to_owned()),
     })
 }
@@ -442,11 +435,11 @@ pub(crate) fn wire_list_leaf(value: &ListLeaf) -> Result<Wire, String> {
         ListLeaf::Str => unit(b"\x80\x84\xa5\x1b<d"),
         ListLeaf::Tuple(field0) => alternative(b"\xf16\xeex\xc3;", vec![list(field0, wire_tuple_element)?]),
         ListLeaf::Model(field0, field1) => {
-            alternative(b"^,aL#\xf0", vec![Wire::integer(*field0), Wire::Text((field1).clone())])
+            alternative(b"^,aL#\xf0", vec![Wire::integer(*field0), Wire::Text(field1.clone())])
         }
         ListLeaf::Enum(field0, field1) => alternative(
             b"T\x10\x8d\xaf\xaa\xc5",
-            vec![Wire::integer(*field0), Wire::Text((field1).clone())],
+            vec![Wire::integer(*field0), Wire::Text(field1.clone())],
         ),
         ListLeaf::U8 => unit(b"4s\xd3\x8a\x12A"),
         ListLeaf::Unit => unit(b"NTY`\xf1\xbf"),
@@ -455,7 +448,7 @@ pub(crate) fn wire_list_leaf(value: &ListLeaf) -> Result<Wire, String> {
         ListLeaf::FrozenBytes => unit(b"\xa5\x1aU\xd1;\xee"),
         ListLeaf::FrozenCollection(field0, field1) => alternative(
             b"`ar\x85\xa4\xcb",
-            vec![Wire::Text((field0).clone()), list(field1, wire_plan_type)?],
+            vec![Wire::Text(field0.clone()), list(field1, wire_plan_type)?],
         ),
         ListLeaf::FunctionPointer(field0) => alternative(b"\xa7\x0a\xca\xf0X`", vec![list(field0, wire_plan_type)?]),
         ListLeaf::TypeToken(field0) => alternative(b"\xeb\x90\x0dwd\xd0", vec![list(field0, wire_plan_type)?]),
@@ -483,12 +476,11 @@ fn read_list_leaf_alternative(
     fields: &[WireField],
     positions: &WirePositions,
 ) -> Result<ListLeaf, String> {
-    let _ = positions;
     Ok(match identity {
-        b"\x0b_`\x80p\xc6" if fields.len() == 0 => ListLeaf::Int,
-        b"\x1ai<\x00\xc4\x0c" if fields.len() == 0 => ListLeaf::Float,
-        b"I\xf4\x11\xf0\xa1\xa7" if fields.len() == 0 => ListLeaf::Bool,
-        b"\x80\x84\xa5\x1b<d" if fields.len() == 0 => ListLeaf::Str,
+        b"\x0b_`\x80p\xc6" if fields.is_empty() => ListLeaf::Int,
+        b"\x1ai<\x00\xc4\x0c" if fields.is_empty() => ListLeaf::Float,
+        b"I\xf4\x11\xf0\xa1\xa7" if fields.is_empty() => ListLeaf::Bool,
+        b"\x80\x84\xa5\x1b<d" if fields.is_empty() => ListLeaf::Str,
         b"\xf16\xeex\xc3;" if fields.len() == 1 => ListLeaf::Tuple(read_list(&fields[0].value, |item0| {
             read_tuple_element(item0, positions)
         })?),
@@ -496,11 +488,11 @@ fn read_list_leaf_alternative(
         b"T\x10\x8d\xaf\xaa\xc5" if fields.len() == 2 => {
             ListLeaf::Enum(number(&fields[0].value)?, text(&fields[1].value)?)
         }
-        b"4s\xd3\x8a\x12A" if fields.len() == 0 => ListLeaf::U8,
-        b"NTY`\xf1\xbf" if fields.len() == 0 => ListLeaf::Unit,
-        b"\x18Q}3-\x1b" if fields.len() == 0 => ListLeaf::Decimal,
-        b"O\xab\xe1W\xe8\xf9" if fields.len() == 0 => ListLeaf::FrozenStr,
-        b"\xa5\x1aU\xd1;\xee" if fields.len() == 0 => ListLeaf::FrozenBytes,
+        b"4s\xd3\x8a\x12A" if fields.is_empty() => ListLeaf::U8,
+        b"NTY`\xf1\xbf" if fields.is_empty() => ListLeaf::Unit,
+        b"\x18Q}3-\x1b" if fields.is_empty() => ListLeaf::Decimal,
+        b"O\xab\xe1W\xe8\xf9" if fields.is_empty() => ListLeaf::FrozenStr,
+        b"\xa5\x1aU\xd1;\xee" if fields.is_empty() => ListLeaf::FrozenBytes,
         b"`ar\x85\xa4\xcb" if fields.len() == 2 => ListLeaf::FrozenCollection(
             text(&fields[0].value)?,
             read_list(&fields[1].value, |item0| read_plan_type(item0, positions))?,
@@ -521,7 +513,7 @@ fn read_list_leaf_alternative(
         b"\xb6\xf6\xf3\xad\x07\xb3" if fields.len() == 1 => {
             ListLeaf::Set(read_list(&fields[0].value, |item0| read_list_leaf(item0, positions))?)
         }
-        b"\xbaL\xadu\xa6Z" if fields.len() == 0 => ListLeaf::USize,
+        b"\xbaL\xadu\xa6Z" if fields.is_empty() => ListLeaf::USize,
         b"6u-l\xd1G" if fields.len() == 1 => ListLeaf::Numeric(read_sized_numeric(&fields[0].value, positions)?),
         b"q\xbf\x90\x93_\xc2" if fields.len() == 1 => {
             ListLeaf::Reference(read_list(&fields[0].value, |item0| read_plan_type(item0, positions))?)
@@ -568,11 +560,11 @@ pub(crate) fn wire_plan_type(value: &PlanType) -> Result<Wire, String> {
         PlanType::FrozenBytes => unit(b"\xa5\x1aU\xd1;\xee"),
         PlanType::FrozenCollection(field0, field1) => alternative(
             b"`ar\x85\xa4\xcb",
-            vec![Wire::Text((field0).clone()), list(field1, wire_plan_type)?],
+            vec![Wire::Text(field0.clone()), list(field1, wire_plan_type)?],
         ),
         PlanType::FrozenCollectionRef(field0, field1) => alternative(
             b"T\xf9p\x0cZ3",
-            vec![Wire::Text((field0).clone()), list(field1, wire_plan_type)?],
+            vec![Wire::Text(field0.clone()), list(field1, wire_plan_type)?],
         ),
         PlanType::TypeToken(field0) => alternative(b"\xeb\x90\x0dwd\xd0", vec![list(field0, wire_plan_type)?]),
         _ => return wire_plan_type_1(value),
@@ -593,25 +585,25 @@ fn wire_plan_type_1(value: &PlanType) -> Result<Wire, String> {
         PlanType::StrArrayRef(field0) => alternative(b"\xb1\x90\x07D|\x13", vec![Wire::integer(*field0)]),
         PlanType::Enum(field0, field1) => alternative(
             b"T\x10\x8d\xaf\xaa\xc5",
-            vec![Wire::integer(*field0), Wire::Text((field1).clone())],
+            vec![Wire::integer(*field0), Wire::Text(field1.clone())],
         ),
         PlanType::EnumRef(field0, field1) => alternative(
             b"\xc0\xa35\x8f\x22\x01",
-            vec![Wire::integer(*field0), Wire::Text((field1).clone())],
+            vec![Wire::integer(*field0), Wire::Text(field1.clone())],
         ),
         PlanType::EnumMutRef(field0, field1) => {
-            alternative(b"zq\xac~]|", vec![Wire::integer(*field0), Wire::Text((field1).clone())])
+            alternative(b"zq\xac~]|", vec![Wire::integer(*field0), Wire::Text(field1.clone())])
         }
         PlanType::Model(field0, field1) => {
-            alternative(b"^,aL#\xf0", vec![Wire::integer(*field0), Wire::Text((field1).clone())])
+            alternative(b"^,aL#\xf0", vec![Wire::integer(*field0), Wire::Text(field1.clone())])
         }
         PlanType::ModelRef(field0, field1) => alternative(
             b"C\xc3U\x17\xae\x15",
-            vec![Wire::integer(*field0), Wire::Text((field1).clone())],
+            vec![Wire::integer(*field0), Wire::Text(field1.clone())],
         ),
         PlanType::ModelMutRef(field0, field1) => alternative(
             b"\xb0\x02\x8e\xa2$\x98",
-            vec![Wire::integer(*field0), Wire::Text((field1).clone())],
+            vec![Wire::integer(*field0), Wire::Text(field1.clone())],
         ),
         PlanType::StringSlice => unit(b"\x10\x99\xe21t\xe8"),
         PlanType::StrSlice => unit(b"\xb7\xe7\x93\x84\xb2\xfb"),
@@ -686,7 +678,7 @@ fn wire_plan_type_2(value: &PlanType) -> Result<Wire, String> {
         PlanType::FunctionPointer(field0) => alternative(b"\xa7\x0a\xca\xf0X`", vec![list(field0, wire_plan_type)?]),
         PlanType::FunctionItem(field0, field1) => alternative(
             b"\xff\x92\x01\x14t\x9f",
-            vec![Wire::Text((field0).clone()), list(field1, wire_plan_type)?],
+            vec![Wire::Text(field0.clone()), list(field1, wire_plan_type)?],
         ),
         PlanType::Closure(field0) => alternative(b"\xe9\x0da}+U", vec![list(field0, wire_plan_type)?]),
         PlanType::NativeClosure(field0, field1, field2) => alternative(
@@ -700,7 +692,7 @@ fn wire_plan_type_2(value: &PlanType) -> Result<Wire, String> {
         PlanType::NativeTraitObject(field0, field1, field2) => alternative(
             b"\x5cz%\xe2\x9cR",
             vec![
-                Wire::Text((field0).clone()),
+                Wire::Text(field0.clone()),
                 Wire::Boolean(*field1),
                 Wire::Boolean(*field2),
             ],
@@ -754,53 +746,52 @@ fn read_plan_type_alternative(
     fields: &[WireField],
     positions: &WirePositions,
 ) -> Result<PlanType, String> {
-    let _ = positions;
     Ok(match identity {
-        b"\x0b_`\x80p\xc6" if fields.len() == 0 => PlanType::Int,
-        b"\x1ai<\x00\xc4\x0c" if fields.len() == 0 => PlanType::Float,
-        b"1Fb\x8c\x11\x8c" if fields.len() == 0 => PlanType::I8,
-        b"\xb9\xff?nq\xda" if fields.len() == 0 => PlanType::I16,
-        b"\xbe-,\xd01}" if fields.len() == 0 => PlanType::I32,
-        b"G\xeck\xdaM\xa3" if fields.len() == 0 => PlanType::I128,
-        b"\xec|D\x91\xf6\x86" if fields.len() == 0 => PlanType::ISize,
-        b"\xbaL\xadu\xa6Z" if fields.len() == 0 => PlanType::USize,
-        b"4s\xd3\x8a\x12A" if fields.len() == 0 => PlanType::U8,
-        b"\xef\x09\xbc\x80\xcdb" if fields.len() == 0 => PlanType::U16,
-        b"\x80\x07$\x86\xf2\xea" if fields.len() == 0 => PlanType::U32,
-        b"\x84\xb8\x9e\x22ET" if fields.len() == 0 => PlanType::U64,
-        b"\x0c\x80\x0d\xc4\xf9I" if fields.len() == 0 => PlanType::U128,
-        b"\x82%Z\xeel\xcc" if fields.len() == 0 => PlanType::F32,
-        b"\xa4M\x7ft\xc8)" if fields.len() == 0 => PlanType::F64,
-        b"I\xf4\x11\xf0\xa1\xa7" if fields.len() == 0 => PlanType::Bool,
-        b"NTY`\xf1\xbf" if fields.len() == 0 => PlanType::Unit,
+        b"\x0b_`\x80p\xc6" if fields.is_empty() => PlanType::Int,
+        b"\x1ai<\x00\xc4\x0c" if fields.is_empty() => PlanType::Float,
+        b"1Fb\x8c\x11\x8c" if fields.is_empty() => PlanType::I8,
+        b"\xb9\xff?nq\xda" if fields.is_empty() => PlanType::I16,
+        b"\xbe-,\xd01}" if fields.is_empty() => PlanType::I32,
+        b"G\xeck\xdaM\xa3" if fields.is_empty() => PlanType::I128,
+        b"\xec|D\x91\xf6\x86" if fields.is_empty() => PlanType::ISize,
+        b"\xbaL\xadu\xa6Z" if fields.is_empty() => PlanType::USize,
+        b"4s\xd3\x8a\x12A" if fields.is_empty() => PlanType::U8,
+        b"\xef\x09\xbc\x80\xcdb" if fields.is_empty() => PlanType::U16,
+        b"\x80\x07$\x86\xf2\xea" if fields.is_empty() => PlanType::U32,
+        b"\x84\xb8\x9e\x22ET" if fields.is_empty() => PlanType::U64,
+        b"\x0c\x80\x0d\xc4\xf9I" if fields.is_empty() => PlanType::U128,
+        b"\x82%Z\xeel\xcc" if fields.is_empty() => PlanType::F32,
+        b"\xa4M\x7ft\xc8)" if fields.is_empty() => PlanType::F64,
+        b"I\xf4\x11\xf0\xa1\xa7" if fields.is_empty() => PlanType::Bool,
+        b"NTY`\xf1\xbf" if fields.is_empty() => PlanType::Unit,
         b"\xa0?\xf2#F\x9f" if fields.len() == 1 => {
             PlanType::CheckedNumeric(read_sized_numeric(&fields[0].value, positions)?)
         }
-        b"c\x00\xef\x80\x0b\xb8" if fields.len() == 0 => PlanType::Never,
-        b"\xe6\xf5\xc36\x16\xf4" if fields.len() == 0 => PlanType::UnitFunction,
-        b"\x03\xa6\xc5\x01j\x86" if fields.len() == 0 => PlanType::EnumTag,
-        b"\xc3\xf45\xc7(Q" if fields.len() == 0 => PlanType::CheckedInt,
+        b"c\x00\xef\x80\x0b\xb8" if fields.is_empty() => PlanType::Never,
+        b"\xe6\xf5\xc36\x16\xf4" if fields.is_empty() => PlanType::UnitFunction,
+        b"\x03\xa6\xc5\x01j\x86" if fields.is_empty() => PlanType::EnumTag,
+        b"\xc3\xf45\xc7(Q" if fields.is_empty() => PlanType::CheckedInt,
         b"\xf16\xeex\xc3;" if fields.len() == 1 => PlanType::Tuple(read_list(&fields[0].value, |item0| {
             read_tuple_element(item0, positions)
         })?),
-        b"\xb2\xef#\x0e\x7fO" if fields.len() == 0 => PlanType::String,
+        b"\xb2\xef#\x0e\x7fO" if fields.is_empty() => PlanType::String,
         b"\xbd\xb4\xa2v\x05;" if fields.len() == 1 => PlanType::TupleRef(read_list(&fields[0].value, |item0| {
             read_tuple_element(item0, positions)
         })?),
         b"\xaeV\xd77[\xff" if fields.len() == 1 => PlanType::TupleMutRef(read_list(&fields[0].value, |item0| {
             read_tuple_element(item0, positions)
         })?),
-        b"\xbfkl\x9f\xdb\xc5" if fields.len() == 0 => PlanType::StringRef,
+        b"\xbfkl\x9f\xdb\xc5" if fields.is_empty() => PlanType::StringRef,
         b"\x97 \xde\x22\xd7\xd4" if fields.len() == 1 => {
             PlanType::ScalarRef(read_list(&fields[0].value, |item0| read_plan_type(item0, positions))?)
         }
         b"\xcbeb\x95hA" if fields.len() == 1 => {
             PlanType::ScalarMutRef(read_list(&fields[0].value, |item0| read_plan_type(item0, positions))?)
         }
-        b"\xa45\x1e\xa3g\xb4" if fields.len() == 0 => PlanType::StringMutRef,
-        b"\x18Q}3-\x1b" if fields.len() == 0 => PlanType::Decimal,
-        b"O\xab\xe1W\xe8\xf9" if fields.len() == 0 => PlanType::FrozenStr,
-        b"\xa5\x1aU\xd1;\xee" if fields.len() == 0 => PlanType::FrozenBytes,
+        b"\xa45\x1e\xa3g\xb4" if fields.is_empty() => PlanType::StringMutRef,
+        b"\x18Q}3-\x1b" if fields.is_empty() => PlanType::Decimal,
+        b"O\xab\xe1W\xe8\xf9" if fields.is_empty() => PlanType::FrozenStr,
+        b"\xa5\x1aU\xd1;\xee" if fields.is_empty() => PlanType::FrozenBytes,
         b"`ar\x85\xa4\xcb" if fields.len() == 2 => PlanType::FrozenCollection(
             text(&fields[0].value)?,
             read_list(&fields[1].value, |item0| read_plan_type(item0, positions))?,
@@ -822,13 +813,12 @@ fn read_plan_type_alternative_1(
     fields: &[WireField],
     positions: &WirePositions,
 ) -> Result<PlanType, String> {
-    let _ = positions;
     Ok(match identity {
-        b"\xd5\xdf\x07x\xa5\x0a" if fields.len() == 0 => PlanType::StaticText,
-        b"_\x93\x11xcg" if fields.len() == 0 => PlanType::StaticBytes,
-        b"\xbd\xfa\xef\x14\xbe\x91" if fields.len() == 0 => PlanType::ValidationError,
-        b"\x1ejG\x9a\xae\xf1" if fields.len() == 0 => PlanType::ValidationErrorRef,
-        b"(+u\x8f\x05\x8a" if fields.len() == 0 => PlanType::StrRef,
+        b"\xd5\xdf\x07x\xa5\x0a" if fields.is_empty() => PlanType::StaticText,
+        b"_\x93\x11xcg" if fields.is_empty() => PlanType::StaticBytes,
+        b"\xbd\xfa\xef\x14\xbe\x91" if fields.is_empty() => PlanType::ValidationError,
+        b"\x1ejG\x9a\xae\xf1" if fields.is_empty() => PlanType::ValidationErrorRef,
+        b"(+u\x8f\x05\x8a" if fields.is_empty() => PlanType::StrRef,
         b"\x85~Q\x14\x0d\x18" if fields.len() == 1 => PlanType::StringArray(number(&fields[0].value)?),
         b"\x8a\xe3R\x0a\xe0\xcb" if fields.len() == 1 => PlanType::StrArray(number(&fields[0].value)?),
         b"\xeb2P\xd3\xfc<" if fields.len() == 1 => PlanType::StringArrayRef(number(&fields[0].value)?),
@@ -847,8 +837,8 @@ fn read_plan_type_alternative_1(
         b"\xb0\x02\x8e\xa2$\x98" if fields.len() == 2 => {
             PlanType::ModelMutRef(number(&fields[0].value)?, text(&fields[1].value)?)
         }
-        b"\x10\x99\xe21t\xe8" if fields.len() == 0 => PlanType::StringSlice,
-        b"\xb7\xe7\x93\x84\xb2\xfb" if fields.len() == 0 => PlanType::StrSlice,
+        b"\x10\x99\xe21t\xe8" if fields.is_empty() => PlanType::StringSlice,
+        b"\xb7\xe7\x93\x84\xb2\xfb" if fields.is_empty() => PlanType::StrSlice,
         b"o /T\xa7\xb2" if fields.len() == 2 => {
             PlanType::List(read_list_leaf(&fields[0].value, positions)?, number(&fields[1].value)?)
         }
@@ -881,7 +871,7 @@ fn read_plan_type_alternative_1(
             read_list_leaf(&fields[0].value, positions)?,
             read_list_leaf(&fields[1].value, positions)?,
         ),
-        b"\xaf\xd5\xff\xa5\xa9\x15" if fields.len() == 0 => PlanType::RangeValue,
+        b"\xaf\xd5\xff\xa5\xa9\x15" if fields.is_empty() => PlanType::RangeValue,
         b"\xda\x10<v\xc1;" if fields.len() == 2 => PlanType::ZipIterator(
             read_tuple_element(&fields[0].value, positions)?,
             read_tuple_element(&fields[1].value, positions)?,
@@ -916,7 +906,6 @@ fn read_plan_type_alternative_2(
     fields: &[WireField],
     positions: &WirePositions,
 ) -> Result<PlanType, String> {
-    let _ = positions;
     Ok(match identity {
         b"\xa7\x0a\xca\xf0X`" if fields.len() == 1 => {
             PlanType::FunctionPointer(read_list(&fields[0].value, |item0| read_plan_type(item0, positions))?)
@@ -959,7 +948,7 @@ fn read_plan_type_alternative_2(
         b"acl\xde\xf5G" if fields.len() == 1 => {
             PlanType::Future(read_list(&fields[0].value, |item0| read_plan_type(item0, positions))?)
         }
-        b"\x89\xd2qrhj" if fields.len() == 0 => PlanType::NativeStr,
+        b"\x89\xd2qrhj" if fields.is_empty() => PlanType::NativeStr,
         b"\x1f\x04\x02YL\xb8" if fields.len() == 1 => {
             PlanType::NativeSlice(read_list(&fields[0].value, |item0| read_plan_type(item0, positions))?)
         }
@@ -981,7 +970,7 @@ fn read_plan_type_alternative_2(
             read_list(&fields[0].value, |item0| read_plan_type(item0, positions))?,
             number(&fields[1].value)?,
         ),
-        b"D,\xa28\xaa\xb8" if fields.len() == 0 => PlanType::CChar,
+        b"D,\xa28\xaa\xb8" if fields.is_empty() => PlanType::CChar,
         b"'\xee\xe0\xd7P=" if fields.len() == 2 => PlanType::RawPointer(
             boolean_value(&fields[0].value)?,
             read_list(&fields[1].value, |item0| read_plan_type(item0, positions))?,
@@ -1022,23 +1011,22 @@ pub(crate) fn read_sized_numeric(value: &Wire, positions: &WirePositions) -> Res
 fn read_sized_numeric_alternative(
     identity: &[u8],
     fields: &[WireField],
-    positions: &WirePositions,
+    _positions: &WirePositions,
 ) -> Result<SizedNumeric, String> {
-    let _ = positions;
     Ok(match identity {
-        b"1Fb\x8c\x11\x8c" if fields.len() == 0 => SizedNumeric::I8,
-        b"\xb9\xff?nq\xda" if fields.len() == 0 => SizedNumeric::I16,
-        b"\xbe-,\xd01}" if fields.len() == 0 => SizedNumeric::I32,
-        b"G\xeck\xdaM\xa3" if fields.len() == 0 => SizedNumeric::I128,
-        b"4s\xd3\x8a\x12A" if fields.len() == 0 => SizedNumeric::U8,
-        b"\xef\x09\xbc\x80\xcdb" if fields.len() == 0 => SizedNumeric::U16,
-        b"\x80\x07$\x86\xf2\xea" if fields.len() == 0 => SizedNumeric::U32,
-        b"\x84\xb8\x9e\x22ET" if fields.len() == 0 => SizedNumeric::U64,
-        b"\x0c\x80\x0d\xc4\xf9I" if fields.len() == 0 => SizedNumeric::U128,
-        b"\x82%Z\xeel\xcc" if fields.len() == 0 => SizedNumeric::F32,
-        b"\xa4M\x7ft\xc8)" if fields.len() == 0 => SizedNumeric::F64,
-        b"\xec|D\x91\xf6\x86" if fields.len() == 0 => SizedNumeric::ISize,
-        b"\xbaL\xadu\xa6Z" if fields.len() == 0 => SizedNumeric::USize,
+        b"1Fb\x8c\x11\x8c" if fields.is_empty() => SizedNumeric::I8,
+        b"\xb9\xff?nq\xda" if fields.is_empty() => SizedNumeric::I16,
+        b"\xbe-,\xd01}" if fields.is_empty() => SizedNumeric::I32,
+        b"G\xeck\xdaM\xa3" if fields.is_empty() => SizedNumeric::I128,
+        b"4s\xd3\x8a\x12A" if fields.is_empty() => SizedNumeric::U8,
+        b"\xef\x09\xbc\x80\xcdb" if fields.is_empty() => SizedNumeric::U16,
+        b"\x80\x07$\x86\xf2\xea" if fields.is_empty() => SizedNumeric::U32,
+        b"\x84\xb8\x9e\x22ET" if fields.is_empty() => SizedNumeric::U64,
+        b"\x0c\x80\x0d\xc4\xf9I" if fields.is_empty() => SizedNumeric::U128,
+        b"\x82%Z\xeel\xcc" if fields.is_empty() => SizedNumeric::F32,
+        b"\xa4M\x7ft\xc8)" if fields.is_empty() => SizedNumeric::F64,
+        b"\xec|D\x91\xf6\x86" if fields.is_empty() => SizedNumeric::ISize,
+        b"\xbaL\xadu\xa6Z" if fields.is_empty() => SizedNumeric::USize,
         _ => return Err("unknown or incomplete StoredLayoutSizedNumeric alternative".to_owned()),
     })
 }
@@ -1061,11 +1049,11 @@ pub(crate) fn wire_tuple_element(value: &TupleElement) -> Result<Wire, String> {
         ),
         TupleElement::Set(field0) => alternative(b"\xb6\xf6\xf3\xad\x07\xb3", vec![wire_list_leaf(field0)?]),
         TupleElement::Model(field0, field1) => {
-            alternative(b"^,aL#\xf0", vec![Wire::integer(*field0), Wire::Text((field1).clone())])
+            alternative(b"^,aL#\xf0", vec![Wire::integer(*field0), Wire::Text(field1.clone())])
         }
         TupleElement::Enum(field0, field1) => alternative(
             b"T\x10\x8d\xaf\xaa\xc5",
-            vec![Wire::integer(*field0), Wire::Text((field1).clone())],
+            vec![Wire::integer(*field0), Wire::Text(field1.clone())],
         ),
         TupleElement::Tuple(field0) => alternative(b"\xf16\xeex\xc3;", vec![list(field0, wire_tuple_element)?]),
         TupleElement::FunctionPointer(field0) => {
@@ -1077,11 +1065,11 @@ pub(crate) fn wire_tuple_element(value: &TupleElement) -> Result<Wire, String> {
         ),
         TupleElement::ModelRef(field0, field1) => alternative(
             b"C\xc3U\x17\xae\x15",
-            vec![Wire::integer(*field0), Wire::Text((field1).clone())],
+            vec![Wire::integer(*field0), Wire::Text(field1.clone())],
         ),
         TupleElement::ModelMutRef(field0, field1) => alternative(
             b"\xb0\x02\x8e\xa2$\x98",
-            vec![Wire::integer(*field0), Wire::Text((field1).clone())],
+            vec![Wire::integer(*field0), Wire::Text(field1.clone())],
         ),
         TupleElement::SliceRef(field0) => alternative(b"\xa1\xf0\x0b\xce\x97\xfb", vec![list(field0, wire_plan_type)?]),
         TupleElement::SliceMutRef(field0) => alternative(b"\xabf`]\xf9\xcc", vec![list(field0, wire_plan_type)?]),
@@ -1091,7 +1079,7 @@ pub(crate) fn wire_tuple_element(value: &TupleElement) -> Result<Wire, String> {
         TupleElement::FrozenBytes => unit(b"\xa5\x1aU\xd1;\xee"),
         TupleElement::FrozenCollection(field0, field1) => alternative(
             b"`ar\x85\xa4\xcb",
-            vec![Wire::Text((field0).clone()), list(field1, wire_plan_type)?],
+            vec![Wire::Text(field0.clone()), list(field1, wire_plan_type)?],
         ),
     })
 }
@@ -1108,14 +1096,13 @@ fn read_tuple_element_alternative(
     fields: &[WireField],
     positions: &WirePositions,
 ) -> Result<TupleElement, String> {
-    let _ = positions;
     Ok(match identity {
-        b"\x0b_`\x80p\xc6" if fields.len() == 0 => TupleElement::Int,
-        b"\x1ai<\x00\xc4\x0c" if fields.len() == 0 => TupleElement::Float,
+        b"\x0b_`\x80p\xc6" if fields.is_empty() => TupleElement::Int,
+        b"\x1ai<\x00\xc4\x0c" if fields.is_empty() => TupleElement::Float,
         b"6u-l\xd1G" if fields.len() == 1 => TupleElement::Numeric(read_sized_numeric(&fields[0].value, positions)?),
-        b"I\xf4\x11\xf0\xa1\xa7" if fields.len() == 0 => TupleElement::Bool,
-        b"NTY`\xf1\xbf" if fields.len() == 0 => TupleElement::Unit,
-        b"\xb2\xef#\x0e\x7fO" if fields.len() == 0 => TupleElement::String,
+        b"I\xf4\x11\xf0\xa1\xa7" if fields.is_empty() => TupleElement::Bool,
+        b"NTY`\xf1\xbf" if fields.is_empty() => TupleElement::Unit,
+        b"\xb2\xef#\x0e\x7fO" if fields.is_empty() => TupleElement::String,
         b"o /T\xa7\xb2" if fields.len() == 2 => {
             TupleElement::List(read_list_leaf(&fields[0].value, positions)?, number(&fields[1].value)?)
         }
@@ -1152,10 +1139,10 @@ fn read_tuple_element_alternative(
         b"\xabf`]\xf9\xcc" if fields.len() == 1 => {
             TupleElement::SliceMutRef(read_list(&fields[0].value, |item0| read_plan_type(item0, positions))?)
         }
-        b"O\xab\xe1W\xe8\xf9" if fields.len() == 0 => TupleElement::FrozenStr,
-        b"\xd5\xdf\x07x\xa5\x0a" if fields.len() == 0 => TupleElement::StaticText,
-        b"_\x93\x11xcg" if fields.len() == 0 => TupleElement::StaticBytes,
-        b"\xa5\x1aU\xd1;\xee" if fields.len() == 0 => TupleElement::FrozenBytes,
+        b"O\xab\xe1W\xe8\xf9" if fields.is_empty() => TupleElement::FrozenStr,
+        b"\xd5\xdf\x07x\xa5\x0a" if fields.is_empty() => TupleElement::StaticText,
+        b"_\x93\x11xcg" if fields.is_empty() => TupleElement::StaticBytes,
+        b"\xa5\x1aU\xd1;\xee" if fields.is_empty() => TupleElement::FrozenBytes,
         b"`ar\x85\xa4\xcb" if fields.len() == 2 => TupleElement::FrozenCollection(
             text(&fields[0].value)?,
             read_list(&fields[1].value, |item0| read_plan_type(item0, positions))?,

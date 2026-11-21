@@ -25,10 +25,10 @@ pub(crate) fn wire_stored_constant(value: &StoredConstant) -> Result<Wire, Strin
         StoredConstant::Float(field0) => alternative(b"\x1ai<\x00\xc4\x0c", vec![Wire::float(*field0)]),
         StoredConstant::Bool(field0) => alternative(b"I\xf4\x11\xf0\xa1\xa7", vec![Wire::Boolean(*field0)]),
         StoredConstant::Unit => unit(b"NTY`\xf1\xbf"),
-        StoredConstant::Text(field0) => alternative(b"q\x98\x8cM\x8e\x08", vec![Wire::Text((field0).clone())]),
+        StoredConstant::Text(field0) => alternative(b"q\x98\x8cM\x8e\x08", vec![Wire::Text(field0.clone())]),
         StoredConstant::Numeric(field0, field1) => alternative(
             b"6u-l\xd1G",
-            vec![Wire::Text((field0).clone()), wire_stored_type(field1)?],
+            vec![Wire::Text(field0.clone()), wire_stored_type(field1)?],
         ),
         StoredConstant::TypeToken(field0) => alternative(b"\xeb\x90\x0dwd\xd0", vec![list(field0, wire_stored_type)?]),
     })
@@ -46,12 +46,11 @@ fn read_stored_constant_alternative(
     fields: &[WireField],
     positions: &WirePositions,
 ) -> Result<StoredConstant, String> {
-    let _ = positions;
     Ok(match identity {
         b"\x0b_`\x80p\xc6" if fields.len() == 1 => StoredConstant::Int(number(&fields[0].value)?),
         b"\x1ai<\x00\xc4\x0c" if fields.len() == 1 => StoredConstant::Float(read_float(&fields[0].value)?),
         b"I\xf4\x11\xf0\xa1\xa7" if fields.len() == 1 => StoredConstant::Bool(boolean_value(&fields[0].value)?),
-        b"NTY`\xf1\xbf" if fields.len() == 0 => StoredConstant::Unit,
+        b"NTY`\xf1\xbf" if fields.is_empty() => StoredConstant::Unit,
         b"q\x98\x8cM\x8e\x08" if fields.len() == 1 => StoredConstant::Text(text(&fields[0].value)?),
         b"6u-l\xd1G" if fields.len() == 2 => {
             StoredConstant::Numeric(text(&fields[0].value)?, read_stored_type(&fields[1].value, positions)?)
@@ -75,10 +74,10 @@ pub(crate) struct StoredFieldStep {
 /// Project one `StoredFieldStep` onto its schema-admitted Crumb record.
 pub(crate) fn wire_stored_field_step(value: &StoredFieldStep) -> Result<Wire, String> {
     Ok(Wire::Record(vec![
-        required(b"eX\x83\x831\xb7", Wire::integer(*&value.slot)),
+        required(b"eX\x83\x831\xb7", Wire::integer(value.slot)),
         required(b"O\x9d\xb7\xf8\xe5\x06", wire_stored_type(&value.ty)?),
-        required(b"\xcb{\xf5bB\x0b", Wire::integer(*&value.variant)),
-        required(b"3\x8e0\xd7\xaa\x17", Wire::integer(*&value.dereferences)),
+        required(b"\xcb{\xf5bB\x0b", Wire::integer(value.variant)),
+        required(b"3\x8e0\xd7\xaa\x17", Wire::integer(value.dereferences)),
     ]))
 }
 
@@ -128,7 +127,7 @@ pub(crate) struct StoredPlace {
 /// Project one `StoredPlace` onto its schema-admitted Crumb record.
 pub(crate) fn wire_stored_place(value: &StoredPlace) -> Result<Wire, String> {
     Ok(Wire::Record(vec![
-        required(b"%\xbf\x8e\x1a#\x93", Wire::integer(*&value.local)),
+        required(b"%\xbf\x8e\x1a#\x93", Wire::integer(value.local)),
         required(b"\x1b%\x0e\xa1\x99\xbe", wire_stored_projection(&value.projection)?),
         required(b"7\xa0\x02Z\xa1\xf2", wire_stored_span(&value.span)?),
     ]))
@@ -204,11 +203,10 @@ fn read_stored_projection_alternative(
     fields: &[WireField],
     positions: &WirePositions,
 ) -> Result<StoredProjection, String> {
-    let _ = positions;
     Ok(match identity {
-        b"\xfdU\x05`\x93\x8c" if fields.len() == 0 => StoredProjection::Whole,
-        b"\x8e7\x95=#\xda" if fields.len() == 0 => StoredProjection::Value,
-        b"\x17\xb8\xdc\xf5>K" if fields.len() == 0 => StoredProjection::Overflow,
+        b"\xfdU\x05`\x93\x8c" if fields.is_empty() => StoredProjection::Whole,
+        b"\x8e7\x95=#\xda" if fields.is_empty() => StoredProjection::Value,
+        b"\x17\xb8\xdc\xf5>K" if fields.is_empty() => StoredProjection::Overflow,
         b"\x04I\xf5\xd2N?" if fields.len() == 1 => {
             StoredProjection::NumericValue(read_stored_type(&fields[0].value, positions)?)
         }
@@ -269,7 +267,6 @@ fn read_stored_read_alternative(
     fields: &[WireField],
     positions: &WirePositions,
 ) -> Result<StoredRead, String> {
-    let _ = positions;
     Ok(match identity {
         b"\xe2\x1f\x93_\x11\xd7" if fields.len() == 1 => {
             StoredRead::Copy(read_stored_place(&fields[0].value, positions)?)
@@ -382,7 +379,7 @@ pub(crate) fn wire_stored_rvalue(value: &StoredRvalue) -> Result<Wire, String> {
         StoredRvalue::ClosureObject(field0) => alternative(b"s!\xe9q\x11\xd7", vec![wire_stored_place(field0)?]),
         StoredRvalue::PlannedFunctionItem(field0, field1) => alternative(
             b"^H\x983G\x01",
-            vec![Wire::Text((field0).clone()), wire_stored_span(field1)?],
+            vec![Wire::Text(field0.clone()), wire_stored_span(field1)?],
         ),
     })
 }
@@ -399,7 +396,6 @@ fn read_stored_rvalue_alternative(
     fields: &[WireField],
     positions: &WirePositions,
 ) -> Result<StoredRvalue, String> {
-    let _ = positions;
     Ok(match identity {
         b"\xc3m\x81\x9e{\xc6" if fields.len() == 1 => {
             StoredRvalue::Use(read_stored_operand(&fields[0].value, positions)?)
@@ -439,9 +435,7 @@ fn read_stored_rvalue_alternative(
         b"\x0fAV\x17\xca$" if fields.len() == 1 => {
             StoredRvalue::FrozenText(read_stored_operand(&fields[0].value, positions)?)
         }
-        b"\xa5\x1aU\xd1;\xee" if fields.len() == 1 => {
-            StoredRvalue::FrozenBytes(read_list(&fields[0].value, |item0| Ok(number(item0)?))?)
-        }
+        b"\xa5\x1aU\xd1;\xee" if fields.len() == 1 => StoredRvalue::FrozenBytes(read_list(&fields[0].value, number)?),
         b"\xdeJ\xe4\xd3\x93\xf0" if fields.len() == 3 => StoredRvalue::NumericCast(
             read_stored_operand(&fields[0].value, positions)?,
             read_stored_type(&fields[1].value, positions)?,
@@ -502,9 +496,9 @@ pub(crate) struct StoredSpan {
 /// Project one `StoredSpan` onto its schema-admitted Crumb record.
 pub(crate) fn wire_stored_span(value: &StoredSpan) -> Result<Wire, String> {
     Ok(Wire::Record(vec![
-        required(b";\x9c5\x8f6\xf0", Wire::Text((&value.file).clone())),
-        required(b"8\xa9\xc1\xe7!X", Wire::integer(*&value.line)),
-        required(b"\x88\x1d_\xb6\x00\x90", Wire::integer(*&value.column)),
+        required(b";\x9c5\x8f6\xf0", Wire::Text(value.file.clone())),
+        required(b"8\xa9\xc1\xe7!X", Wire::integer(value.line)),
+        required(b"\x88\x1d_\xb6\x00\x90", Wire::integer(value.column)),
     ]))
 }
 
@@ -582,7 +576,6 @@ fn read_stored_statement_kind_alternative(
     fields: &[WireField],
     positions: &WirePositions,
 ) -> Result<StoredStatementKind, String> {
-    let _ = positions;
     Ok(match identity {
         b"\x8e\xce\x89\x5c\x9b2" if fields.len() == 3 => StoredStatementKind::Assign(
             read_stored_place(&fields[0].value, positions)?,
@@ -650,23 +643,22 @@ fn read_stored_type_alternative(
     fields: &[WireField],
     positions: &WirePositions,
 ) -> Result<StoredType, String> {
-    let _ = positions;
     Ok(match identity {
-        b"\x0b_`\x80p\xc6" if fields.len() == 0 => StoredType::Int,
-        b"\x1ai<\x00\xc4\x0c" if fields.len() == 0 => StoredType::Float,
-        b"I\xf4\x11\xf0\xa1\xa7" if fields.len() == 0 => StoredType::Bool,
-        b"NTY`\xf1\xbf" if fields.len() == 0 => StoredType::Unit,
-        b"\xc3\xf45\xc7(Q" if fields.len() == 0 => StoredType::CheckedInt,
-        b"c\x00\xef\x80\x0b\xb8" if fields.len() == 0 => StoredType::Never,
-        b"q\x98\x8cM\x8e\x08" if fields.len() == 0 => StoredType::Text,
-        b"\xd0Y?\xda\x9f\xb6" if fields.len() == 0 => StoredType::LiteralTextView,
-        b"pL \xb1\x8c\x8e" if fields.len() == 0 => StoredType::TextView,
+        b"\x0b_`\x80p\xc6" if fields.is_empty() => StoredType::Int,
+        b"\x1ai<\x00\xc4\x0c" if fields.is_empty() => StoredType::Float,
+        b"I\xf4\x11\xf0\xa1\xa7" if fields.is_empty() => StoredType::Bool,
+        b"NTY`\xf1\xbf" if fields.is_empty() => StoredType::Unit,
+        b"\xc3\xf45\xc7(Q" if fields.is_empty() => StoredType::CheckedInt,
+        b"c\x00\xef\x80\x0b\xb8" if fields.is_empty() => StoredType::Never,
+        b"q\x98\x8cM\x8e\x08" if fields.is_empty() => StoredType::Text,
+        b"\xd0Y?\xda\x9f\xb6" if fields.is_empty() => StoredType::LiteralTextView,
+        b"pL \xb1\x8c\x8e" if fields.is_empty() => StoredType::TextView,
         b"\xd1\xbf\xdd\xae\x10V" if fields.len() == 1 => StoredType::TextValues(number(&fields[0].value)?),
         b"\xf7\xbfU\x17\x8c\x06" if fields.len() == 1 => StoredType::LiteralTextValues(number(&fields[0].value)?),
         b"/\x98A\xdf\x82\x04" if fields.len() == 1 => StoredType::TextValuesView(number(&fields[0].value)?),
         b"\xe6Zg\x16y\x07" if fields.len() == 1 => StoredType::LiteralTextValuesView(number(&fields[0].value)?),
-        b"\xdb\x01{)\xdaG" if fields.len() == 0 => StoredType::TextSequence,
-        b"\x931\xa0y+U" if fields.len() == 0 => StoredType::LiteralTextSequence,
+        b"\xdb\x01{)\xdaG" if fields.is_empty() => StoredType::TextSequence,
+        b"\x931\xa0y+U" if fields.is_empty() => StoredType::LiteralTextSequence,
         b"\xa5\x11\x90\x91a\xe1" if fields.len() == 1 => {
             StoredType::Layout(read_plan_type(&fields[0].value, positions)?)
         }

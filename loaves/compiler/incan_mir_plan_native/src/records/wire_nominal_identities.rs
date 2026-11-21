@@ -24,12 +24,11 @@ pub(crate) fn read_nominal_kind(value: &Wire, positions: &WirePositions) -> Resu
 fn read_nominal_kind_alternative(
     identity: &[u8],
     fields: &[WireField],
-    positions: &WirePositions,
+    _positions: &WirePositions,
 ) -> Result<NominalKind, String> {
-    let _ = positions;
     Ok(match identity {
-        b"^,aL#\xf0" if fields.len() == 0 => NominalKind::Model,
-        b"T\x10\x8d\xaf\xaa\xc5" if fields.len() == 0 => NominalKind::Enum,
+        b"^,aL#\xf0" if fields.is_empty() => NominalKind::Model,
+        b"T\x10\x8d\xaf\xaa\xc5" if fields.is_empty() => NominalKind::Enum,
         _ => return Err("unknown or incomplete NominalKind alternative".to_owned()),
     })
 }
@@ -38,8 +37,8 @@ fn read_nominal_kind_alternative(
 pub(crate) fn wire_product_nominal(value: &ProductNominal) -> Result<Wire, String> {
     Ok(Wire::Record(vec![
         required(b"\x0b'\xc1X\xfe\xb3", wire_nominal_kind(&value.kind)?),
-        required(b"h\x9fjbs\x84", Wire::Text((&value.identity).clone())),
-        required(b"\x0b\xf4t\x89cc", Wire::Text((&value.digest).clone())),
+        required(b"h\x9fjbs\x84", Wire::Text(value.identity.clone())),
+        required(b"\x0b\xf4t\x89cc", Wire::Text(value.digest.clone())),
     ]))
 }
 

@@ -343,14 +343,6 @@ pub(crate) fn text(value: &Wire) -> Result<String, String> {
     }
 }
 
-/// One binary payload.
-pub(crate) fn binary_value(value: &Wire) -> Result<Vec<u8>, String> {
-    match value {
-        Wire::Binary(data) => Ok(data.clone()),
-        _ => Err("native plan table requires a typed Crumb payload".to_owned()),
-    }
-}
-
 /// One list; list and tuple have different Crumb representations.
 pub(crate) fn items(value: &Wire) -> Result<&[Wire], String> {
     match value {

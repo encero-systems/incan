@@ -22,7 +22,7 @@ pub(crate) fn wire_stored_block(value: &StoredBlock) -> Result<Wire, String> {
         required(b"U\xa8\x1c\xf2\x1eq", list(&value.statements, wire_stored_statement)?),
         required(b"\xe5\x96\x89\x9f\x11K", wire_stored_exit(&value.exit)?),
         required(b"\x927\x9a<f\xb7", wire_stored_span(&value.exit_span)?),
-        required(b"a\x14\x96\xf4\x12\xca", Wire::Boolean(*&value.cleanup)),
+        required(b"a\x14\x96\xf4\x12\xca", Wire::Boolean(value.cleanup)),
         required(b"7\xa0\x02Z\xa1\xf2", wire_stored_span(&value.span)?),
     ]))
 }
@@ -119,7 +119,6 @@ fn read_stored_exit_alternative(
     fields: &[WireField],
     positions: &WirePositions,
 ) -> Result<StoredExit, String> {
-    let _ = positions;
     Ok(match identity {
         b"\xf1\x07\x91\x11\xa1\xc1" if fields.len() == 1 => StoredExit::Goto(number(&fields[0].value)?),
         b"9\x92\x1at\x0b\xf2" if fields.len() == 3 => StoredExit::Switch(
@@ -148,9 +147,9 @@ fn read_stored_exit_alternative(
             number(&fields[0].value)?,
             read_stored_unwind(&fields[5].value, positions)?,
         ),
-        b"k\x01C\xd08d" if fields.len() == 0 => StoredExit::Return,
-        b"\xab\xaaF\xad\xb4\xe1" if fields.len() == 0 => StoredExit::Unreachable,
-        b"\xd6@\xc7B\x1d\xa0" if fields.len() == 0 => StoredExit::Resume,
+        b"k\x01C\xd08d" if fields.is_empty() => StoredExit::Return,
+        b"\xab\xaaF\xad\xb4\xe1" if fields.is_empty() => StoredExit::Unreachable,
+        b"\xd6@\xc7B\x1d\xa0" if fields.is_empty() => StoredExit::Resume,
         _ => return Err("unknown or incomplete StoredExit alternative".to_owned()),
     })
 }
@@ -168,7 +167,7 @@ pub(crate) struct StoredExternal {
 /// Project one `StoredExternal` onto its schema-admitted Crumb record.
 pub(crate) fn wire_stored_external(value: &StoredExternal) -> Result<Wire, String> {
     Ok(Wire::Record(vec![
-        required(b"\xa0\xaf\x9f\x86[\xf6", Wire::Text((&value.path).clone())),
+        required(b"\xa0\xaf\x9f\x86[\xf6", Wire::Text(value.path.clone())),
         required(b"\xb1\x92\x01}\xa4\x7f", list(&value.arguments, wire_stored_type)?),
         required(b"\xf5(!*Im", list(&value.parameters, wire_stored_type)?),
         required(b"\xf6\xa2\x14\xf7\xa5\xfc", wire_stored_type(&value.result)?),
@@ -206,8 +205,8 @@ pub(crate) struct StoredFunction {
 /// Project one `StoredFunction` onto its schema-admitted Crumb record.
 pub(crate) fn wire_stored_function(value: &StoredFunction) -> Result<Wire, String> {
     Ok(Wire::Record(vec![
-        required(b"\xdf\x0a\xd6\xe48\x80", Wire::integer(*&value.schema)),
-        required(b"\x82\xa3S\x7f\xf0\xdb", Wire::Text((&value.name).clone())),
+        required(b"\xdf\x0a\xd6\xe48\x80", Wire::integer(value.schema)),
+        required(b"\x82\xa3S\x7f\xf0\xdb", Wire::Text(value.name.clone())),
         required(b"\xf5(!*Im", list(&value.parameters, wire_stored_parameter)?),
         required(b"\xf6\xa2\x14\xf7\xa5\xfc", wire_stored_type(&value.result)?),
         required(b"\xe9\xe8\xd4\xb1\x93\xcf", list(&value.locals, wire_stored_slot)?),
@@ -216,14 +215,11 @@ pub(crate) fn wire_stored_function(value: &StoredFunction) -> Result<Wire, Strin
         required(
             b"8\x05\xee\xed\xa5\xe1",
             list(&value.lifetimes, |item0| {
-                Ok(list(item0, |item1| Ok(Wire::Text((item1).clone())))?)
+                list(item0, |item1| Ok(Wire::Text(item1.clone())))
             })?,
         ),
         required(b"\xbe\x9a\xa7IM\x82", list(&value.loans, wire_stored_loan)?),
-        required(
-            b"\x01\x8a\x9c\xec\xfa\x93",
-            Wire::integer(*&value.retained_result_source),
-        ),
+        required(b"\x01\x8a\x9c\xec\xfa\x93", Wire::integer(value.retained_result_source)),
     ]))
 }
 
@@ -238,9 +234,7 @@ pub(crate) fn read_stored_function(value: &Wire, positions: &WirePositions) -> R
         locals: read_list(&fields[7].value, |item0| read_stored_slot(item0, positions))?,
         blocks: read_list(&fields[1].value, |item0| read_stored_block(item0, positions))?,
         span: read_stored_span(&fields[2].value, positions)?,
-        lifetimes: read_list(&fields[3].value, |item0| {
-            Ok(read_list(item0, |item1| Ok(text(item1)?))?)
-        })?,
+        lifetimes: read_list(&fields[3].value, |item0| read_list(item0, text))?,
         loans: read_list(&fields[5].value, |item0| read_stored_loan(item0, positions))?,
         retained_result_source: number(&fields[0].value)?,
     })
@@ -258,12 +252,12 @@ pub(crate) struct StoredLoan {
 /// Project one `StoredLoan` onto its schema-admitted Crumb record.
 pub(crate) fn wire_stored_loan(value: &StoredLoan) -> Result<Wire, String> {
     Ok(Wire::Record(vec![
-        required(b"eX\x83\x831\xb7", Wire::integer(*&value.slot)),
+        required(b"eX\x83\x831\xb7", Wire::integer(value.slot)),
         required(
             b"\xa0\xaf\x9f\x86[\xf6",
             list(&value.path, |item0| Ok(Wire::integer(*item0)))?,
         ),
-        required(b"c\x906\x1d\xfd\xff", Wire::integer(*&value.parameter)),
+        required(b"c\x906\x1d\xfd\xff", Wire::integer(value.parameter)),
         required(b"O\x9d\xb7\xf8\xe5\x06", wire_stored_type(&value.ty)?),
     ]))
 }
@@ -273,7 +267,7 @@ pub(crate) fn read_stored_loan(value: &Wire, positions: &WirePositions) -> Resul
     let fields = wire_fields(value, 4)?;
     Ok(StoredLoan {
         slot: number(&fields[2].value)?,
-        path: read_list(&fields[3].value, |item0| Ok(number(item0)?))?,
+        path: read_list(&fields[3].value, number)?,
         parameter: number(&fields[1].value)?,
         ty: read_stored_type(&fields[0].value, positions)?,
     })
@@ -289,7 +283,7 @@ pub(crate) struct StoredParameter {
 /// Project one `StoredParameter` onto its schema-admitted Crumb record.
 pub(crate) fn wire_stored_parameter(value: &StoredParameter) -> Result<Wire, String> {
     Ok(Wire::Record(vec![
-        required(b"\x82\xa3S\x7f\xf0\xdb", Wire::Text((&value.name).clone())),
+        required(b"\x82\xa3S\x7f\xf0\xdb", Wire::Text(value.name.clone())),
         required(b"eX\x83\x831\xb7", wire_stored_slot(&value.slot)?),
     ]))
 }
@@ -316,7 +310,7 @@ pub(crate) struct StoredProduct {
 /// Project one `StoredProduct` onto its schema-admitted Crumb record.
 pub(crate) fn wire_stored_product(value: &StoredProduct) -> Result<Wire, String> {
     Ok(Wire::Record(vec![
-        required(b"\xdf\x0a\xd6\xe48\x80", Wire::integer(*&value.schema)),
+        required(b"\xdf\x0a\xd6\xe48\x80", Wire::integer(value.schema)),
         required(b"x\xf9\xac\x01\x8eU", wire_stored_function(&value.function)?),
         required(b"\xd9,j\x81\xb2\xff", list(&value.runtime, wire_stored_external)?),
         required(b"wYS3\xedF", list(&value.nominals, wire_product_nominal)?),
@@ -381,20 +375,20 @@ pub(crate) enum StoredTarget {
 /// Project one `StoredTarget` alternative onto its identity and positional payload.
 pub(crate) fn wire_stored_target(value: &StoredTarget) -> Result<Wire, String> {
     Ok(match value {
-        StoredTarget::Planned(field0) => alternative(b"\xfbo|\x93\xe6\xbf", vec![Wire::Text((field0).clone())]),
-        StoredTarget::External(field0) => alternative(b"h\xc1\x14\xea\x9c\x8c", vec![Wire::Text((field0).clone())]),
+        StoredTarget::Planned(field0) => alternative(b"\xfbo|\x93\xe6\xbf", vec![Wire::Text(field0.clone())]),
+        StoredTarget::External(field0) => alternative(b"h\xc1\x14\xea\x9c\x8c", vec![Wire::Text(field0.clone())]),
         StoredTarget::Instantiated(field0, field1) => alternative(
             b"\x12\xfds\xf8Q\xe0",
-            vec![Wire::Text((field0).clone()), list(field1, wire_stored_type)?],
+            vec![Wire::Text(field0.clone()), list(field1, wire_stored_type)?],
         ),
         StoredTarget::CloneModel(field0) => alternative(b"\xc8\x948\xc6\xc9\xb9", vec![Wire::integer(*field0)]),
         StoredTarget::CloneEnum(field0) => alternative(b"P\x03\xf3_;\xc1", vec![Wire::integer(*field0)]),
         StoredTarget::ClosureBody(field0, field1) => alternative(
             b"\x81@\xe21\x84\x11",
-            vec![Wire::Text((field0).clone()), Wire::integer(*field1)],
+            vec![Wire::Text(field0.clone()), Wire::integer(*field1)],
         ),
         StoredTarget::ClosureBodyOnce(field0, field1) => {
-            alternative(b"q9EI8$", vec![Wire::Text((field0).clone()), Wire::integer(*field1)])
+            alternative(b"q9EI8$", vec![Wire::Text(field0.clone()), Wire::integer(*field1)])
         }
         StoredTarget::CallClosure(field0) => {
             alternative(b"\xb7i\xac\x8f\xcd\xa0", vec![list(field0, wire_stored_type)?])
@@ -427,7 +421,6 @@ fn read_stored_target_alternative(
     fields: &[WireField],
     positions: &WirePositions,
 ) -> Result<StoredTarget, String> {
-    let _ = positions;
     Ok(match identity {
         b"\xfbo|\x93\xe6\xbf" if fields.len() == 1 => StoredTarget::Planned(text(&fields[0].value)?),
         b"h\xc1\x14\xea\x9c\x8c" if fields.len() == 1 => StoredTarget::External(text(&fields[0].value)?),
@@ -492,13 +485,12 @@ pub(crate) fn read_stored_unwind(value: &Wire, positions: &WirePositions) -> Res
 fn read_stored_unwind_alternative(
     identity: &[u8],
     fields: &[WireField],
-    positions: &WirePositions,
+    _positions: &WirePositions,
 ) -> Result<StoredUnwind, String> {
-    let _ = positions;
     Ok(match identity {
-        b"1\xfb\xef\x16%\x94" if fields.len() == 0 => StoredUnwind::Continue,
+        b"1\xfb\xef\x16%\x94" if fields.is_empty() => StoredUnwind::Continue,
         b"\x9f\x1b#{]\xc3" if fields.len() == 1 => StoredUnwind::Cleanup(number(&fields[0].value)?),
-        b"\xf9\x13\xf0\x92\x10\xe8" if fields.len() == 0 => StoredUnwind::Terminate,
+        b"\xf9\x13\xf0\x92\x10\xe8" if fields.is_empty() => StoredUnwind::Terminate,
         _ => return Err("unknown or incomplete StoredUnwind alternative".to_owned()),
     })
 }
