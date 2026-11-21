@@ -24,6 +24,15 @@ pub(crate) struct LibraryFacade {
 }
 
 impl LibraryFacade {
+    /// A facade publishing `name` as the item at `path`.
+    #[cfg(test)]
+    pub(crate) fn new(name: &str, path: &str) -> Self {
+        Self {
+            name: name.into(),
+            path: path.into(),
+        }
+    }
+
     /// The crate this facade's `::` path names, which the unit declares as it declares the crate a body calls into: a
     /// root re-export of a Rust item names that item's own crate, which a library reaching it through another Loaf does
     /// not declare. `None` for an item of this crate.
