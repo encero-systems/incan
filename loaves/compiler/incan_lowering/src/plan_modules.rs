@@ -584,4 +584,59 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
+
+    /// A page Oven names by the digest of its bytes is found by that name: the worker does not read it again while the
+    /// name is unchanged, and refuses bytes that do not match the name when it does read them.
+    #[test]
+    fn a_page_named_by_its_identity_is_not_read_again() -> Result<(), String> {
+        use sha2::{Digest, Sha256};
+        let root = directory("named");
+        let products = root.to_string_lossy().into_owned();
+        let page = PlanModuleValue {
+            module: "named_epsilon".into(),
+            functions: vec![PlanModuleFunction {
+                identity: "pub::named_epsilon::a".into(),
+                symbol: "pub::named_epsilon::a".into(),
+                function: "a".into(),
+                key: "ab".repeat(32),
+                event: vec![3],
+            }],
+        };
+        let encoded = encode_plan_module(&page)?;
+        let path = root.join(format!("{}.incnmodule.reposition", hex::encode("named_epsilon")));
+        let named = PathBuf::from(format!("{}.digest", path.display()));
+        let write = |path: &Path, bytes: &[u8]| std::fs::write(path, bytes).map_err(|error| error.to_string());
+        write(&path, &encoded)?;
+        write(&named, hex::encode(Sha256::digest(&encoded)).as_bytes())?;
+        let first = admitted_page(Some(&products), "named_epsilon", Some("profile"));
+        assert!(first.event("a").is_some());
+        // Bytes that no longer match the name are not read while the name is unchanged, and refused when they are.
+        write(&path, b"not a page")?;
+        let again = admitted_page(Some(&products), "named_epsilon", Some("profile"));
+        assert!(
+            Arc::ptr_eq(first.resident(), again.resident()),
+            "a page named by its identity was read again"
+        );
+        assert_eq!(again.event_bytes("a"), None);
+        // A name that does not match the bytes on a first read admits nothing.
+        let other = root.join(format!("{}.incnmodule.reposition", hex::encode("named_zeta")));
+        write(
+            &other,
+            &encode_plan_module(&PlanModuleValue {
+                module: "named_zeta".into(),
+                ..page.clone()
+            })?,
+        )?;
+        write(
+            &PathBuf::from(format!("{}.digest", other.display())),
+            "cd".repeat(32).as_bytes(),
+        )?;
+        assert!(
+            admitted_page(Some(&products), "named_zeta", Some("profile"))
+                .events
+                .is_empty()
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
 }
