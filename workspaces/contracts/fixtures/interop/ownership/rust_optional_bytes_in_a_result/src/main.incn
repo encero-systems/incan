@@ -1,0 +1,54 @@
+# behavior: a Rust Result whose Ok payload is an optional byte buffer reads as Result[Option[bytes], E] wherever the source takes the payload: an Ok pattern binds it, map_err keeps it, and ? propagates it, alone or compared with an optional bytes literal
+# expect-stdout:
+#   true
+#   true
+#   true
+#   true
+#   absent
+
+"""Read optional bytes out of Rust results through a pattern, a combinator and propagation."""
+
+from rust::optional_bytes import read, read_text
+
+
+def matched(found: bool) -> Option[bytes]:
+    """Bind the optional payload of an Ok pattern."""
+    match read(found):
+        Ok(value) => return value
+        Err(_) => return None
+
+
+def mapped(found: bool) -> Result[Option[bytes], str]:
+    """Keep the optional payload through map_err."""
+    return read(found).map_err((fault) => fault.detail)
+
+
+def propagated(found: bool) -> Result[Option[bytes], str]:
+    """Keep the optional payload through ?."""
+    value = read_text(found)?
+    return Ok(value)
+
+
+def compared() -> Result[bool, str]:
+    """Compare a propagated optional payload with an optional bytes literal."""
+    return Ok(read_text(true)? == Some(b"value"))
+
+
+def main() -> None:
+    """Print what each read keeps."""
+    println(matched(true) == Some(b"value"))
+    match mapped(true):
+        Ok(value) => println(value == Some(b"value"))
+        Err(detail) => println(detail)
+    match propagated(true):
+        Ok(value) => println(value == Some(b"value"))
+        Err(detail) => println(detail)
+    match compared():
+        Ok(same) => println(same)
+        Err(detail) => println(detail)
+    match mapped(false):
+        Ok(value) =>
+            match value:
+                Some(_) => println("present")
+                None => println("absent")
+        Err(detail) => println(detail)

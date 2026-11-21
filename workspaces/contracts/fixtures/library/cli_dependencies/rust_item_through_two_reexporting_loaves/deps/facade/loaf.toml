@@ -1,0 +1,6 @@
+[project]
+name = "facade"
+version = "0.1.0"
+
+[dependencies]
+models = { path = "../models" }

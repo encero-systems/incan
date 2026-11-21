@@ -503,6 +503,27 @@ pub fn dereferenced_place(source: &Place, referent: PlanType, span: &SourceSpan)
     appended_field(source, field, span)
 }
 
+/// Select payload `slot` of `variant` of the enum at `source`, where that enum lives: a whole local's payload is its
+/// own projection, while an enum held in a field or another enum's payload keeps the complete path that reached it.
+pub fn variant_payload_place(
+    source: &Place,
+    variant: i64,
+    slot: i64,
+    ty: PlanType,
+    span: &SourceSpan,
+) -> Result<Place, String> {
+    if source.projection == Projection::Whole {
+        return Ok(Place {
+            local: source.local,
+            projection: Projection::VariantField(variant, slot, ty),
+            span: span.clone(),
+        });
+    }
+    let mut field = FieldProjection::new(slot, ty);
+    field.variant = variant;
+    appended_field(source, field, span)
+}
+
 /// Declare a monomorphic runtime signature and emit its unwinding call.
 pub fn external_call(
     builder: &mut Builder,
