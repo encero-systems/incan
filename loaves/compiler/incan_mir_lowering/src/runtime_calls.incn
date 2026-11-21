@@ -207,8 +207,8 @@ pub def retain_runtime_instances(
             continue
         match runtime_body(module, external.path)?:
             None =>
-                if external.path.startswith("incan_native_runtime::") and len(external.type_arguments) != 0:
-                    return Err(f"runtime publishes no governed body for {external.path}")
+                # Without a governed body, a generic runtime function is the Rust runtime's own: its exact
+                # instantiated external stays the call, re-examined by type arguments like every native generic.
                 if retain_runtime_frame_call(
                     program.constructors.as_ref(),
                     module,
@@ -550,7 +550,8 @@ def retain_runtime_future_instances(
 
     Future constructors hold their callee outside ordinary terminators. Their exact capture ABI must agree with the
     source coroutine; no ordinary return adapter may turn its deferred execution into an eager call. A callee whose
-    declaration this attempt has not loaded keeps its unbound selection.
+    declaration this attempt has not loaded keeps its unbound selection, and a runtime async function with no
+    governed body keeps its native callee.
     """
     nominals = borrowed_table(module.nominal_declarations)
     enums = borrowed_table(module.enum_declarations)
@@ -573,6 +574,11 @@ def retain_runtime_future_instances(
             None => pass
         if path == "" or deferred_runtime(redirects, path):
             continue
+        # A runtime that publishes no governed coroutine, as the Rust runtime does, keeps its native async function
+        # as the boxing shim's callee.
+        match runtime_body(module, path)?:
+            None => continue
+            Some(_published) => pass
         # 1. Close the retained source declaration's arguments.
         body = runtime_async_body(module, path, len(types))?
         mut arguments: list[RustType] = []
