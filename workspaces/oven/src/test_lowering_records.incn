@@ -5,6 +5,16 @@ from rust::std::str import from_utf8
 from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue, parse
+from compiler_plan_modules import restored_modules
+from compiler_source_projection import positioned_source_key
+from compiler_body_keys import IDENTITY_PROFILE, body_key
+from compiler_body_values import select_body_inventory_except
+from compiler_graph_records import OutputSlots, evaluation_record_key, family_outputs, reusable_family_records
+from compiler_graph_rows import encode_evaluation, read_evaluation
+from compiler_plan_values import LOWERING_PROFILE
+from pub::internal_models import ProducerRank, ProducerStage
+from pub::internal_models.checker_records import CHECKER_PROFILE, record_root
+from pub::internal_models.records import ReadWitness, RecordKey, encode_record_key
 from files import write
 from scratch import scratch_directory
 from engine_client import service_generation, service_identity
@@ -13,7 +23,303 @@ from engine_messages import Message, Stop
 from engine_wire import zero_id
 from rust_target import decoded
 from store_path_conversion import snapshot as store_snapshot
-from pub::incan_platform.store import index_levels as store_index_levels, keys_with_prefix
+from pub::incan_mir_plan import AdmittedFunction, AdmittedModule, encode_module_note
+from pub::incan_mir_plan import ADMITTED_MODULE_NOTE, PARTIAL_MODULE_NOTE, PLAN_MODULE_FAMILY, decode_plan_module
+from pub::incan_platform.store import Snapshot, get, index_levels as store_index_levels, keys_with_prefix
+
+
+pub def test_partial_module_admission_count() -> Result[None, str]:
+    """The native assembly consumes partially restored pages while the whole-module counter excludes them."""
+    scratch = scratch_directory()?
+    report = scratch.path()
+    function = AdmittedFunction(function="main", identity="function:main", references=[])
+    whole = encode_module_note(AdmittedModule(module="a", complete=true, functions=[function]))?
+    partial_note = encode_module_note(AdmittedModule(module="b", complete=false, functions=[function]))?
+    report.joinpath("61" + ADMITTED_MODULE_NOTE).write_bytes(whole).map_err((error) => error.message())?
+    report.joinpath("62" + PARTIAL_MODULE_NOTE).write_bytes(partial_note).map_err((error) => error.message())?
+    assert restored_modules(report)? == ["a", "b"]
+    assert restored_modules(report, whole_only=true)? == ["a"]
+    report.joinpath("62" + ADMITTED_MODULE_NOTE).write_bytes(partial_note).map_err((error) => error.message())?
+    match restored_modules(report, whole_only=true):
+        Ok(_) => return Err("a partially restored module was counted as complete")
+        Err(reason) => assert "disagrees with its filename" in reason
+    return Ok(None)
+
+
+def selected_choice_supplier(store: Path) -> Result[str, str]:
+    """Read the stable ranked local's actual positive declaration-slot witness."""
+    graph = store_snapshot(store).map_err((error) => error.message())?
+    scope = OutputSlots(origin="ranked_feature", identity_profile=IDENTITY_PROFILE)
+    mut targets: list[str] = []
+    for local in reusable_family_records(graph, "local", CHECKER_PROFILE, Some(scope))?:
+        if not local.key.identity.startswith("function:selector::read_choice|"):
+            continue
+        for witness in local.receipt.witnesses:
+            if let ReadWitness.Found(prior, _) = witness:
+                key = prior.request.key
+                if key.family == "declaration-slot" and key.identity == "choices":
+                    targets.append(key.facet)
+    assert len(targets) == 1
+    return Ok(targets[0])
+
+
+pub def test_feature_switch_rebinds_guarded_import_in_existing_store() -> Result[None, str]:
+    """A manifest-only switch changes the guarded supplier read by an unchanged function."""
+    scratch = scratch_directory()?
+    project = scratch.path().joinpath("project")
+    src = project.joinpath("src")
+    src.mkdir(true, true).map_err((error) => error.message())?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    manifest = project.joinpath("loaf.toml")
+    config = "[project]\nname = \"ranked_feature\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n[project.features]\ndefault = [\"alpha\"]\nalpha = []\nbeta = []\n"
+    write(manifest, config)?
+    write(src.joinpath("main.incn"), "from selector import read_choice\n\ndef main() -> None:\n    println(read_choice())\n")?
+    write(src.joinpath("choices.incn"), "pub def alpha_value() -> int:\n    return 1\n\npub def beta_value() -> int:\n    return 2\n\npub def unrelated() -> int:\n    return 9\n")?
+    write(src.joinpath("selector.incn"), "when feature(\"alpha\"):\n    from choices import alpha_value as selected\n\nwhen feature(\"beta\"):\n    from choices import beta_value as selected\n\npub def read_choice() -> int:\n    return selected()\n")?
+    store = scratch.path().joinpath("store")
+    _ = lowering_example_run(binary, project, store, "1")?
+    assert selected_choice_supplier(store)? == "alpha_value"
+    write(manifest, config.replace("default = [\"alpha\"]", "default = [\"beta\"]"))?
+    _ = lowering_example_run(binary, project, store, "2")?
+    assert selected_choice_supplier(store)? == "beta_value"
+    stop_example_engine(binary, store)?
+    project.joinpath("target").remove_tree().map_err((error) => error.message())?
+    cold = scratch.path().joinpath("fresh")
+    _ = lowering_example_run(binary, project, cold, "2")?
+    assert selected_choice_supplier(cold)? == "beta_value"
+    return stop_example_engine(binary, cold)
+
+
+pub def test_importer_rename_checks_only_its_direct_signature_reader() -> Result[None, str]:
+    """An installed build checks the renamed function and its caller once each, stopping before load_summary."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    project = root.joinpath("importer")
+    project.mkdir(true, true).map_err((error) => error.message())?
+    fixture = Path("../../examples/pro/codegraph_importer")
+    fixture.joinpath("src").copy(project.joinpath("src"), false, false).map_err((error) => error.message())?
+    fixture.joinpath("tests").copy(project.joinpath("tests"), false, false).map_err((error) => error.message())?
+    fixture.joinpath("loaf.toml").copy(project.joinpath("loaf.toml"), false, false).map_err((error) => error.message())?
+    trace = root.joinpath("trace")
+    trace.mkdir(true, true).map_err((error) => error.message())?
+    store = root.joinpath("store")
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    cold = report_fixture_build(binary, project, store, Some(trace))?
+    cold_checks = importer_statement_checks(trace)?
+    assert len(importer_ranked_completions(trace)?) == 0, "a cold build completed ranked work"
+    stop_example_engine(binary, store)?
+    warm_trace = root.joinpath("warm-trace")
+    warm_trace.mkdir(true, true).map_err((error) => error.message())?
+    file = project.joinpath("src/importer.incn")
+    original = file.read_text("utf-8", "strict").map_err((error) => error.message())?
+    edited = original.replace("supported_schema(version: int)", "supported_schema(schema_version: int)").replace(
+        "return version >= 1 and version <= 9", "return schema_version >= 1 and schema_version <= 9",
+    )
+    assert edited != original
+    write(file, edited)?
+    warm = report_fixture_build(binary, project, store, Some(warm_trace))?
+    stop_example_engine(binary, store)?
+    diagnostic = warm.to_json().map_err((error) => error.message())?
+    cold_diagnostic = cold.to_json().map_err((error) => error.message())?
+    assert proof_count(cold, "all_declarations")? == 8, cold_diagnostic
+    assert proof_count(cold, "reusable_declarations")? == 8, cold_diagnostic
+    assert len(cold_checks) == 6, f"cold statement checks: {cold_checks:?}"
+    cold_statements = importer_physical_statement_count(trace)?
+    assert cold_statements == 8, f"cold physical statements: {cold_statements}"
+    assert importer_physical_statement_count(warm_trace)? == 2, diagnostic
+    assert proof_count(warm, "lowering_demand_evaluations")? == 1, diagnostic
+    assert proof_count(warm, "plan_function_evaluations")? == 1, diagnostic
+    assert sorted(importer_statement_checks(warm_trace)?) == ["importer::import_jsonl", "importer::supported_schema"], diagnostic
+    leaf = "function:importer::supported_schema"
+    reader = "function:importer::import_jsonl"
+    stages = [leaf + "\tdeclaration", leaf + "\tlocal", leaf + "\tfinal", reader + "\treader"]
+    assert sorted(importer_ranked_completions(warm_trace)?) == sorted(stages), diagnostic
+    assert importer_frontier_order(warm_trace)? == stages, diagnostic
+    assert proof_count(warm, "body_evaluations")? == 2, diagnostic
+    assert proof_count(warm, "plan_function_reuses")? > 0, diagnostic
+    warm_values = importer_checked_values(store)?
+    project.joinpath("target").move(root.joinpath("warm-target")).map_err((error) => error.message())?
+    control = root.joinpath("cold-edited-store")
+    control_trace = root.joinpath("cold-edited-trace")
+    control_trace.mkdir(true, true).map_err((error) => error.message())?
+    control_proof = report_fixture_build(binary, project, control, Some(control_trace))?
+    stop_example_engine(binary, control)?
+    control_diagnostic = control_proof.to_json().map_err((error) => error.message())?
+    assert proof_count(control_proof, "body_evaluations")? == 8, control_diagnostic
+    assert proof_count(control_proof, "reusable_declarations")? == 8, control_diagnostic
+    control_checks = sorted(importer_statement_checks(control_trace)?)
+    assert control_checks == sorted(cold_checks), f"fresh statement checks {control_checks:?}, cold {cold_checks:?}"
+    control_statements = importer_physical_statement_count(control_trace)?
+    assert control_statements == 8, f"fresh physical statements: {control_statements}"
+    control_completions = importer_ranked_completions(control_trace)?
+    assert len(control_completions) == 0, f"a fresh build completed ranked work: {control_completions:?}"
+    assert importer_checked_values(control)? == warm_values, "the warm checked values differ from a fresh build's"
+    warm_ranks = importer_rank_errors(store)?
+    cold_ranks = importer_rank_errors(control)?
+    rank_diagnostic = f"misranked importer records: warm {warm_ranks:?}, fresh {cold_ranks:?}"
+    assert len(warm_ranks) == 0 and len(cold_ranks) == 0, rank_diagnostic
+    return Ok(None)
+
+
+def importer_rank_errors(store: Path) -> Result[list[str], str]:
+    """main.incn imports importer.incn. Each of its two demands reads its own Body IR at namespace rank one."""
+    selected = store_snapshot(store).map_err((error) => error.message())?
+    scope = OutputSlots(origin="codegraph_importer_experiment", identity_profile=IDENTITY_PROFILE)
+    mut owners: list[str] = []
+    mut errors: list[str] = []
+    for demand in reusable_family_records(selected, "lowering-demand", LOWERING_PROFILE, Some(scope))?:
+        name = demand.key.facet
+        if name not in ["input_path", "main"] or not demand.key.identity.startswith("function:main::" + name + "|"):
+            continue
+        mut suppliers = 0
+        for witness in demand.receipt.witnesses:
+            if let ReadWitness.Found(prior, _) = witness:
+                supplier = prior.request.key
+                if supplier.family == "body-ir":
+                    assert supplier.origin == demand.key.origin and supplier.identity == demand.key.identity, name
+                    suppliers += 1
+                    if not importer_rank_matches(
+                        selected, supplier, CHECKER_PROFILE, "compiled-body-ir-", ProducerStage.BodyIr,
+                    )?:
+                        errors.append("body-ir " + name)
+        assert suppliers == 1, name
+        if not importer_rank_matches(
+            selected, demand.key, LOWERING_PROFILE, "lowering-demand-", ProducerStage.LoweringDemand,
+        )?:
+            errors.append("lowering-demand " + name)
+        owners.append(name)
+    assert sorted(owners) == ["input_path", "main"], f"selected main.incn demands: {owners:?}"
+    return Ok(errors)
+
+
+def importer_rank_matches(
+    selected: Snapshot, key: RecordKey, profile: str, claim_prefix: str, stage: ProducerStage,
+) -> Result[bool, str]:
+    """The production reader admits the roots. Re-encode the canonical row to check the rank it does not expose."""
+    output = encode_record_key(key)?
+    encoded = match get(selected, evaluation_record_key(profile, output)).map_err((error) => error.message())?:
+        Some(value) => value
+        None => return Err("missing importer evaluation: " + output)
+
+    evaluation = read_evaluation(encoded)?
+    rank = ProducerRank(namespace=1, stage=stage, dependency=0)
+    expected = encode_evaluation(
+        profile, output, claim_prefix + key.identity, evaluation.value_digest, evaluation.receipt_root, rank,
+    )?
+    return Ok(encoded == expected)
+
+
+def importer_checked_values(store: Path) -> Result[Dict[str, list[bytes]], str]:
+    """Read six free owners and both GraphSummary methods' complete checked products from the build-selected graph."""
+    selected = store_snapshot(store).map_err((error) => error.message())?
+    origin = "codegraph_importer_experiment"
+    scope = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE)
+    mut declarations: Dict[str, bytes] = {}
+    for local in reusable_family_records(selected, "local", CHECKER_PROFILE, Some(scope))?:
+        for witness in local.receipt.witnesses:
+            if let ReadWitness.Found(prior, _) = witness:
+                key = prior.request.key
+                if key.family == "declaration" and key.identity == local.key.identity and key.origin == origin:
+                    assert key.identity not in declarations, f"two declarations for {key.identity}"
+                    match get(selected, encode_record_key(key)?).map_err((error) => error.message())?:
+                        None => return Err("a published importer local lost its declaration")
+                        Some(value) =>
+                            root = record_root(value).map_err((error) => f"invalid importer declaration: {error:?}")?
+                            assert root == key.context, f"the declaration of {key.identity} has another root"
+                            declarations[key.identity] = value
+    assert len(declarations) == 8, f"{len(declarations)} importer declarations were published"
+    mut values: Dict[str, list[bytes]] = {}
+    for row in select_body_inventory_except(selected, CHECKER_PROFILE, origin, [])?:
+        assert row.identity in declarations and row.identity not in values, f"an unmatched body row: {row.identity}"
+        values[row.identity] = [declarations[row.identity], row.local, row.final, row.body_ir]
+    owners = sorted([owner for owner in values.keys()])
+    assert len([owner for owner in owners if owner.startswith("function:")]) == 6, f"checked owners: {owners:?}"
+    assert "member/method:importer::empty#in(model:importer::GraphSummary)[0]" in values, f"checked owners: {owners:?}"
+    assert "member/method:importer::add_fact#in(model:importer::GraphSummary)[0]" in values, f"checked owners: {owners:?}"
+    assert len(values) == 8, f"checked owners: {owners:?}"
+    return Ok(values)
+
+
+def importer_frontier_order(trace: Path) -> Result[list[str], str]:
+    """Read the claim owner's ordered completions, checking the equal caller signature and empty frontier."""
+    mut result: list[str] = []
+    for file in trace.iterdir().map_err((error) => error.message())?:
+        if not file.name().startswith("engine-oven-"):
+            continue
+        contents = file.read_text("utf-8", "strict").map_err((error) => error.message())?
+        for line in contents.split("\n"):
+            if "ranked-stage" not in line and "ranked-reader" not in line:
+                continue
+            key = parse(line).and_then((record) => record.require("key")).and_then((field) => field.expect_str()).map_err((error) => error.message())?
+            fields = key.split("\t")
+            if fields[0] == "ranked-stage":
+                assert len(fields) == 3, f"a ranked stage key has {len(fields)} fields: {key}"
+                result.append(fields[1].split("|")[0] + "\t" + fields[2])
+            elif fields[0] == "ranked-reader":
+                assert len(fields) == 9, f"a ranked reader key has {len(fields)} fields: {key}"
+                # The resolved call stores its parameter label in both body records.
+                assert len(fields[2]) == 64 and len(fields[3]) == 64 and fields[2] != fields[3], f"local records: {key}"
+                assert len(fields[4]) == 64 and len(fields[5]) == 64 and fields[4] != fields[5], f"final records: {key}"
+                # Downstream callers read import_jsonl's own declaration, whose signature stays equal.
+                assert len(fields[6]) == 64 and fields[6] == fields[7], f"the reader's signature changed: {key}"
+                assert fields[8] == "0", f"a ranked reader left a frontier: {key}"
+                result.append(fields[1].split("|")[0] + "\treader")
+    return Ok(result)
+
+
+def importer_ranked_completions(trace: Path) -> Result[list[str], str]:
+    """Use compiler-side successful production events to distinguish a ranked run from a whole-unit recheck."""
+    mut stages: list[str] = []
+    for file in trace.iterdir().map_err((error) => error.message())?:
+        if not file.name().startswith("engine-compiler-"):
+            continue
+        records = file.read_text("utf-8", "strict").map_err((error) => error.message())?
+        for line in records.split("\n"):
+            if "completed ranked checking producer" not in line:
+                continue
+            fields = parse(line).and_then((record) => record.require("fields")).map_err((error) => error.message())?
+            identity = fields.require("owner").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+            root = fields.require("root").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+            if len(root) != 64:
+                return Err("ranked importer producer did not emit a content root")
+            family = fields.require("family").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+            stages.append(identity.split("|")[0] + "\t" + family)
+    return Ok(stages)
+
+
+def importer_physical_statement_count(trace: Path) -> Result[int, str]:
+    """Count all callable and property source entries, including methods without a free-function trace."""
+    mut total = 0
+    for file in trace.iterdir().map_err((error) => error.message())?:
+        if not file.name().startswith("engine-compiler-"):
+            continue
+        records = file.read_text("utf-8", "strict").map_err((error) => error.message())?
+        for line in records.split("\n"):
+            if '"action":"body"' not in line or '"phase":"checking"' not in line:
+                continue
+            fields = parse(line).and_then((record) => record.require("fields")).map_err((error) => error.message())?
+            module = fields.require("module").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+            if module in ['Some(["importer"])', 'Some(["main"])']:
+                total += 1
+    return Ok(total)
+
+
+def importer_statement_checks(trace: Path) -> Result[list[str], str]:
+    """Read free-function statement owner names for the two project modules."""
+    mut checked: list[str] = []
+    for file in trace.iterdir().map_err((error) => error.message())?:
+        if not file.name().startswith("engine-compiler-"):
+            continue
+        records = file.read_text("utf-8", "strict").map_err((error) => error.message())?
+        for line in records.split("\n"):
+            if "checked owner statements" not in line:
+                continue
+            fields = parse(line).and_then((record) => record.require("fields")).map_err((error) => error.message())?
+            module = fields.require("module").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+            if module in ["main", "importer"]:
+                owner = fields.require("owner").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+                checked.append(module + "::" + owner)
+    return Ok(checked)
 
 
 pub def test_lowering_record_worked_example() -> Result[None, str]:
@@ -23,7 +329,7 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     """
     scratch = scratch_directory()?
     root = scratch.path()
-    source = root.joinpath("hello.incn")
+    source = root.joinpath("main.incn")
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     store = root.joinpath("store")
     write(source, "def greeting() -> str:\n    return \"hello\"\n\n\ndef main() -> None:\n    println(greeting())\n")?
@@ -37,6 +343,7 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     assert fingerprint_for(edited_fingerprints, "main")? == fingerprint_for(initial_fingerprints, "main")?
     assert partition_for(edited_fingerprints, "greeting")? == partition_for(initial_fingerprints, "greeting")?
     assert partition_for(edited_fingerprints, "main")? == partition_for(initial_fingerprints, "main")?
+    edited_page = selected_main_module(store, ["greeting", "main"])?
     diagnostic = edited.to_json().map_err((error) => error.message())?
     assert proof_count(edited, "body_evaluations")? == 1, diagnostic
     assert proof_count(edited, "body_ir_evaluations")? == 1, diagnostic
@@ -54,7 +361,12 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     assert proof_count(commented, "body_evaluations")? == 0, comment_diagnostic
     assert proof_count(commented, "body_ir_evaluations")? == 0, comment_diagnostic
     assert proof_count(commented, "plan_function_evaluations")? == 0, comment_diagnostic
-    assert proof_count(commented, "plan_function_reuses")? == 3, comment_diagnostic
+    # The comment leaves both bodies as they were: they are restored from the module's plan record, and the entry
+    # binding is the one plan function reused by its key.
+    assert proof_count(commented, "plan_function_reuses")? == 1, comment_diagnostic
+    assert proof_count(commented, "plan_module_reuses")? == 1, comment_diagnostic
+    commented_page = selected_main_module(store, ["greeting", "main"])?
+    assert commented_page != edited_page, "whole-module admission kept the old source positions"
     assert proof_count(commented, "lowering_demand_evaluations")? == 0, comment_diagnostic
     assert proof_count(commented, "native_interface_evaluations")? == 1, comment_diagnostic
     # The comment line moves `main`, so its line tables change and the unit is baked again (BE-34).
@@ -68,6 +380,8 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     documented_diagnostic = documented.to_json().map_err((error) => error.message())?
     assert proof_count(documented, "body_evaluations")? == 0, documented_diagnostic
     assert proof_count(documented, "body_ir_evaluations")? == 0, documented_diagnostic
+    assert proof_count(documented, "lowering_demand_evaluations")? == 0, documented_diagnostic
+    assert selected_main_module(store, ["greeting", "main"])? != commented_page, "copied module after inserting a docstring"
     # Rewording the docstring moves no code, so not even `greeting`'s plan is evaluated again.
     write(
         source,
@@ -134,22 +448,283 @@ pub def test_local_rust_source_edit_rebuilds_affected_unit() -> Result[None, str
     return verify_rust_source_edit_rebuild(binary, scratch.path())
 
 
-pub def test_body_edits_keep_one_indexed_output_per_slot() -> Result[None, str]:
+pub def test_one_module_edit_lowers_only_that_module() -> Result[None, str]:
     """
-    Five body edits in a row leave one indexed output per slot: each edit's evaluations retire the outputs they
-    replace, so what the next edit selects and invalidates does not grow with the edits before it.
+    A body edit in one module of a four-module unit lowers that module alone: lowering visits no body of the three
+    unchanged modules, which are admitted whole, and evaluates one plan function.
     """
     scratch = scratch_directory()?
     root = scratch.path()
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     source = root.joinpath("main.incn")
     store = root.joinpath("store")
+    observations = root.joinpath("trace")
+    observations.mkdir(true, true).map_err((error) => error.message())?
+    for name in ["lone_alpha", "lone_beta", "lone_gamma"]:
+        write(root.joinpath(name + ".incn"), lone_module(name, "1"))?
+    imports = "from lone_alpha import lone_alpha_one, lone_alpha_two\nfrom lone_beta import lone_beta_one, lone_beta_two\nfrom lone_gamma import lone_gamma_one, lone_gamma_two\n"
+    calls = "lone_alpha_one(1) + lone_alpha_two(1) + lone_beta_one(1) + lone_beta_two(1) + lone_gamma_one(1) + lone_gamma_two(1)"
+    write(source, imports + "\n\ndef main() -> None:\n    println(" + calls + ")\n")?
+    _ = traced_example_run(binary, source, store, observations, "12")?
+    cold = observed_module_work(observations)?
+    for name in ["lone_alpha", "lone_beta", "lone_gamma", "main"]:
+        assert cold.get("lower:" + name, 0) > 0, f"the cold build traced no lowered body of {name}"
+        assert cold.get("check:" + name + ".incn", 0) > 0, f"the cold build traced no checker entry for {name}"
+        assert cold.get("body-ir:" + name + ".incn", 0) > 0, f"the cold build traced no Body IR entry for {name}"
+    assert cold.get("body-ir", 0) >= 4, "the cold build did not observe Body IR for all four modules"
+    write(root.joinpath("lone_beta.incn"), lone_module("lone_beta", "5"))?
+    edited = traced_example_run(binary, source, store, observations, "16")?
+    diagnostic = edited.to_json().map_err((error) => error.message())?
+    assert proof_count(edited, "plan_function_evaluations")? == 1, diagnostic
+    warm = observed_module_work(observations)?
+    verify_module_work(cold, warm, "lone_beta")?
+    # The three unchanged modules, `main` among them, are restored from their module plan records.
+    assert proof_count(edited, "plan_module_reuses")? == 3, diagnostic
+    # A later edit of a module that was restored lowers that module again, and its edit reaches the program.
+    write(root.joinpath("lone_alpha.incn"), lone_module("lone_alpha", "7"))?
+    again = traced_example_run(binary, source, store, observations, "22")?
+    again_diagnostic = again.to_json().map_err((error) => error.message())?
+    assert proof_count(again, "plan_function_evaluations")? == 1, again_diagnostic
+    assert proof_count(again, "plan_module_reuses")? == 3, again_diagnostic
+    verify_module_work(warm, observed_module_work(observations)?, "lone_alpha")?
+    return stop_example_engine(binary, store)
+
+
+pub def test_renaming_a_changed_default_keeps_the_current_omitted_argument() -> Result[None, str]:
+    """A caller that omits an argument observes the provider's edited default even when its type stays the same."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    source = root.joinpath("main.incn")
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    store = root.joinpath("store")
+    caller = "\n\ndef main() -> None:\n    println(value())\n"
+    write(source, "def value(number: int = 1) -> int:\n    return number\n" + caller)?
+    _ = lowering_example_run(binary, source, store, "1")?
+    write(source, "def value(count: int = 7) -> int:\n    return count\n" + caller)?
+    _ = lowering_example_run(binary, source, store, "7")?
+    plan = root.joinpath("native.plan").read_bytes().map_err((error) => error.message())?
+    stop_example_engine(binary, store)?
+    root.joinpath("target").remove_tree().map_err((error) => error.message())?
+    fresh = root.joinpath("fresh")
+    _ = lowering_example_run(binary, source, fresh, "7")?
+    assert plan == root.joinpath("native.plan").read_bytes().map_err((error) => error.message())?
+    return stop_example_engine(binary, fresh)
+
+
+def selected_main_module(store: Path, functions: list[str]) -> Result[bytes, str]:
+    """The published main page and every ordinary function it names agree with the selected scalar slots."""
+    graph = store_snapshot(store).map_err((error) => error.message())?
+    scope = OutputSlots(origin="main", identity_profile=IDENTITY_PROFILE, included=Some(["main.incn"]))
+    records = reusable_family_records(graph, PLAN_MODULE_FAMILY, LOWERING_PROFILE, Some(scope))?
+    assert len(records) == 1
+    selected = records[0]
+    page = decode_plan_module(selected.value).map_err((error) => f"invalid selected main module: {error:?}")?
+    assert page.module == "main" and [item.function for item in page.functions] == functions
+    owners = [item.identity for item in page.functions]
+    member_scope = OutputSlots(origin="main", identity_profile=IDENTITY_PROFILE, included=Some(owners))
+    current = family_outputs(graph, "plan-function", LOWERING_PROFILE, Some(member_scope))?
+    mut suppliers: list[str] = []
+    for witness in selected.receipt.witnesses:
+        if let ReadWitness.Found(prior, _) = witness:
+            suppliers.append(encode_record_key(prior.request.key)?)
+    mut expected = [encode_record_key(positioned_source_key("main", "main.incn"))?]
+    for item in page.functions:
+        key = body_key("plan-function", "main", item.identity, "body:" + item.function, item.key)
+        output = encode_record_key(key)?
+        assert output in current, f"module holds superseded function: {item.function}"
+        expected.append(output)
+    assert sorted(suppliers) == sorted(expected)
+    return Ok(selected.value)
+
+
+pub def test_caller_rebuilds_when_its_callee_starts_consuming_a_model() -> Result[None, str]:
+    """A body-only edit changes the callee's native argument from borrowed to owned."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    source = root.joinpath("main.incn")
+    helper = root.joinpath("fs_reader.incn")
+    initial = "pub model Request:\n    pub value: int\n\npub def echo(request: Request) -> Request:\n    return Request(value=request.value)\n"
+    write(helper, initial)?
+    write(source, "from fs_reader import Request, echo\nfrom flag import enabled\n\ndef invoke(value: int) -> int:\n    return echo(Request(value=value)).value\n\ndef main() -> None:\n    if enabled(1):\n        println(invoke(4))\n")?
+    write(root.joinpath("flag.incn"), "pub def enabled(code: int) -> bool:\n    return code == 0 or code == 1\n")?
+    store = root.joinpath("store")
+    _ = lowering_example_run(binary, source, store, "4")?
+    base_module = selected_main_module(store, ["invoke", "main"])?
+    write(helper, initial.replace("return Request(value=request.value)", "return request"))?
+    _ = lowering_example_run(binary, source, store, "4")?
+    executable = root.joinpath("target/incan/release/bin/main")
+    warm = executable.read_bytes().map_err((error) => error.message())?
+    warm_module = selected_main_module(store, ["invoke", "main"])?
+    assert warm_module != base_module
+    stop_example_engine(binary, store)?
+    root.joinpath("target").remove_tree().map_err((error) => error.message())?
+    cold_store = root.joinpath("cold-store")
+    _ = lowering_example_run(binary, source, cold_store, "4")?
+    cold = executable.read_bytes().map_err((error) => error.message())?
+    assert warm == cold
+    assert selected_main_module(cold_store, ["invoke", "main"])? == warm_module
+    stop_example_engine(binary, cold_store)?
+    write(source, "def main() -> None:\n    println(4)\n")?
+    _ = lowering_example_run(binary, source, store, "4")?
+    _ = selected_main_module(store, ["main"])?
+    return stop_example_engine(binary, store)
+
+
+pub def test_admitted_module_keeps_its_external_result_payload_layout() -> Result[None, str]:
+    """An unchanged file.stat() call still needs the standard PathStat layout after a different module is edited."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    source = root.joinpath("main.incn")
+    sample = root.joinpath("example.txt")
+    write(sample, "four")?
+    path_literal = JsonValue.string(sample.0).to_json().map_err((error) => error.message())?
+    write(root.joinpath("fs_reader.incn"), "from std.fs import Path\n\npub def byte_count(path: str) -> Result[int, str]:\n    return Path(path).stat().map_err((error) => error.message())?.size().map_err((error) => error.message())\n")?
+    leaf = root.joinpath("flag.incn")
+    initial = "pub def enabled(code: int) -> bool:\n    return code == 0 or code == 1\n"
+    write(leaf, initial)?
+    write(source, "from fs_reader import byte_count\nfrom flag import enabled\n\ndef main() -> None:\n    if enabled(1):\n        println(byte_count(" + path_literal + ").unwrap_or(-1))\n")?
+    warm_store = root.joinpath("store")
+    _ = lowering_example_run(binary, source, warm_store, "4")?
+    write(leaf, initial.replace("code == 0 or code == 1", "code in [0, 1]"))?
+    edited = lowering_example_run(binary, source, warm_store, "4")?
+    assert proof_count(edited, "body_evaluations")? == 1
+    executable = root.joinpath("target/incan/release/bin/main")
+    warm = executable.read_bytes().map_err((error) => error.message())?
+    stop_example_engine(binary, warm_store)?
+    root.joinpath("target").remove_tree().map_err((error) => error.message())?
+    cold_store = root.joinpath("cold-store")
+    cold = lowering_example_run(binary, source, cold_store, "4")?
+    assert proof_count(cold, "body_evaluations")? == 3
+    assert executable.read_bytes().map_err((error) => error.message())? == warm
+    return stop_example_engine(binary, cold_store)
+
+
+pub def test_unchanged_import_cycle_is_admitted_as_one_component() -> Result[None, str]:
+    """An unrelated edit restores both peers. An exposed change makes both peers run through the checker again."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    source = root.joinpath("main.incn")
+    store = root.joinpath("store")
+    trace = root.joinpath("trace")
+    trace.mkdir(true, true).map_err((error) => error.message())?
+    left = "from right import twice\n\npub def base() -> int:\n    return 2\n\n\npub def left() -> int:\n    return twice(base())\n"
+    right = "from left import base\n\npub def twice(value: int) -> int:\n    return value + base()\n"
+    write(root.joinpath("left.incn"), left)?
+    write(root.joinpath("right.incn"), right)?
+    leaf = root.joinpath("leaf.incn")
+    write(leaf, "pub def leaf() -> int:\n    return 1\n")?
+    write(source, "from leaf import leaf\nfrom left import left\n\ndef main() -> None:\n    println(left() + leaf())\n")?
+    _ = traced_example_run(binary, source, store, trace, "5")?
+    cold = observed_module_work(trace)?
+    write(leaf, "pub def leaf() -> int:\n    return 2\n")?
+    _ = traced_example_run(binary, source, store, trace, "6")?
+    warm = observed_module_work(trace)?
+    for peer in ["check:left.incn", "check:right.incn"]:
+        assert cold.get(peer, 0) > 0
+        assert warm.get(peer, 0) == cold[peer], peer
+    assert warm.get("body-ir", 0) == cold.get("body-ir", 0) + 1
+    # Adding an exported declaration changes the component's surface without changing either import.
+    changed = left.replace("return 2", "return 3") + "\n\npub def exported() -> int:\n    return 9\n"
+    write(root.joinpath("left.incn"), changed)?
+    _ = traced_example_run(binary, source, store, trace, "8")?
+    changed_work = observed_module_work(trace)?
+    for peer in ["check:left.incn", "check:right.incn"]:
+        assert changed_work.get(peer, 0) > warm.get(peer, 0), peer
+    return stop_example_engine(binary, store)
+
+
+def lone_module(name: str, addend: str) -> str:
+    """One module of two functions; `addend` is the text a body edit changes."""
+    one = f"pub def {name}_one(value: int) -> int:\n    return value + {addend}\n\n\n"
+    return one + f"pub def {name}_two(value: int) -> int:\n    return value * 2\n"
+
+
+def traced_example_run(binary: str, source: Path, store: Path, trace: Path, expected: str) -> Result[JsonValue, str]:
+    """Run one records request whose engine and compiler worker write their trace records into `trace`."""
+    outcome = Command
+        .new(binary)
+        .arg("run")
+        .arg(source.0)
+        .arg("--engine-report")
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .env("INCAN_ENGINE_TRACE", trace.0)
+        .output()
+        .map_err((error) => str(error))?
+    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
+    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+    if not outcome.status.success() or not output.endswith(expected + "\n") or errors != "":
+        return Err(f"traced example: status={outcome.status.code()} stdout={output} stderr={errors}")
+    return command_proof(outcome.stdout)
+
+
+def observed_module_work(trace: Path) -> Result[Dict[str, int], str]:
+    """Count actual checker and Body IR module entries and lowering work on this fixture's cumulative trace."""
+    mut counts: Dict[str, int] = {}
+    for entry in trace.iterdir().map_err((error) => error.message())?:
+        if not entry.is_file():
+            continue
+        for line in entry.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
+            if "\"kind\":\"begin\"" in line and "\"function\":\"incan_driver::typecheck_module\"" in line:
+                document = parse(line).map_err((error) => error.message())?
+                fields = document.require("fields").map_err((error) => error.message())?
+                path = fields.require("module").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
+                key = "check:" + Path(path).name()
+                counts[key] = counts.get(key, 0) + 1
+            elif "\"kind\":\"begin\"" in line and "\"function\":\"incan_driver::build_body_ir_module\"" in line:
+                document = parse(line).map_err((error) => error.message())?
+                fields = document.require("fields").map_err((error) => error.message())?
+                path = fields.require("file").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
+                key = "body-ir:" + Path(path).name()
+                counts[key] = counts.get(key, 0) + 1
+                counts["body-ir"] = counts.get("body-ir", 0) + 1
+            else:
+                parts = line.split("\"key\":\"lowering: body ")
+                if len(parts) > 1:
+                    key = "lower:" + parts[1].split(" ")[0]
+                    counts[key] = counts.get(key, 0) + 1
+    return Ok(counts)
+
+
+def verify_module_work(previous: Dict[str, int], current: Dict[str, int], edited: str) -> Result[None, str]:
+    """Each warm edit checks its own module, builds one module's Body IR, and lowers only that module's bodies."""
+    changed = sorted([key for key in current.keys() if current[key] > previous.get(key, 0)])
+    expected = sorted(["body-ir", "body-ir:" + edited + ".incn", "check:" + edited + ".incn", "lower:" + edited])
+    if changed != expected:
+        return Err(f"edit of {edited} entered {changed}, expected {expected}")
+    if current["body-ir"] - previous.get("body-ir", 0) != 1:
+        return Err(f"edit of {edited} rebuilt more than one module's Body IR")
+    return Ok(None)
+
+
+pub def test_body_edits_keep_one_indexed_output_per_slot() -> Result[None, str]:
+    """
+    Five body edits in a row leave one indexed output per slot: each edit's evaluations retire the outputs they
+    replace. Only the changed callee enters the demand producer after the first build.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    source = root.joinpath("main.incn")
+    store = root.joinpath("store")
+    trace = root.joinpath("trace")
+    trace.mkdir(true, false).map_err((error) => error.message())?
+    mut previous_demands = 0
     for edit in range(5):
-        write(source, f"def main() -> None:\n    println(\"edit {edit}\")\n")?
-        _ = lowering_example_run(binary, source, store, f"edit {edit}")?
+        write(source, f"def greeting() -> str:\n    return \"edit {edit}\"\n\n\ndef main() -> None:\n    println(greeting())\n")?
+        _ = lowering_example_run(binary, source, store, f"edit {edit}", Some(trace))?
+        entered = physical_demands(trace)?
+        mut expected = 1
+        if edit == 0:
+            expected = 2
+        assert entered - previous_demands == expected, f"edit {edit} executed {entered - previous_demands} demand producers"
+        previous_demands = entered
     latest = store_snapshot(store).map_err((error) => error.message())?
     mut slots: Dict[str, int] = {}
-    for key in keys_with_prefix(latest, "incan.engine.output\t").map_err((error) => error.message())?:
+    for key in keys_with_prefix(latest, "incan.engine.output/2\t").map_err((error) => error.message())?:
         slot = "\t".join(key.split("\t")[:7])
         slots[slot] = slots.get(slot, 0) + 1
     assert len(slots) > 0, "five edits indexed no outputs"
@@ -203,7 +778,7 @@ def most_outputs_in_one_slot(store: Path) -> Result[int, str]:
     """The most outputs the store's output index holds for one slot: profile, family, identity and facet."""
     latest = store_snapshot(store).map_err((error) => error.message())?
     mut slots: Dict[str, int] = {}
-    for key in keys_with_prefix(latest, "incan.engine.output\t").map_err((error) => error.message())?:
+    for key in keys_with_prefix(latest, "incan.engine.output/2\t").map_err((error) => error.message())?:
         slot = "\t".join(key.split("\t")[:7])
         slots[slot] = slots.get(slot, 0) + 1
     mut most = 0
@@ -253,8 +828,8 @@ pub def test_engine_report_counts_checker_reuse_and_artifact_refusals() -> Resul
     diagnostic = report.to_json().map_err((error) => error.message())?
     # `selected` tests a `Flag` for truth through `Flag.__bool__`, a resolved operator call its record keeps. `main`
     # constructs the imported `Flag`, and its record keeps the field binding and the imported field it initializes.
-    assert proof_count(report, "reusable_declarations")? == 3, diagnostic
-    assert proof_count(report, "all_declarations")? == 4, diagnostic
+    assert proof_count(report, "reusable_declarations")? == 4, diagnostic
+    assert proof_count(report, "all_declarations")? == 5, diagnostic
     assert proof_refusal_count(report, "CallArtifacts.resolved_operator_calls")? == 0, diagnostic
     # `weighed` reads a computed property, which no record keeps yet.
     assert proof_refusal_count(report, "ExpressionArtifacts.computed_property_accesses")? == 1, diagnostic
@@ -290,6 +865,63 @@ pub def test_body_edit_rebuilds_beside_an_unchecked_fallback_owner() -> Result[N
     warm_diagnostic = warm.to_json().map_err((error) => error.message())?
     assert proof_count(warm, "body_evaluations")? == 1, warm_diagnostic
     require_probe_output(project.joinpath("target/incan/release/bin/fallback_owner"), "43")?
+    return stop_example_engine(binary, store)
+
+
+pub def test_declaration_edit_keeps_an_imported_enum_read() -> Result[None, str]:
+    """
+    A declaration added beside an unchanged function that reads a sibling module's enum builds warm as it builds
+    cold: the retained sibling still gives that function its variants (#3154).
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    project = root.joinpath("imported-enum-project")
+    source = project.joinpath("src")
+    source.mkdir(true, true).map_err((error) => error.message())?
+    write(
+        project.joinpath("loaf.toml"),
+        "[project]\nname = \"imported_enum\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n",
+    )?
+    write(source.joinpath("kinds.incn"), "pub enum Value:\n    Empty\n    Full(int)\n")?
+    reader = "from kinds import Value\n\n\ndef main() -> None:\n    match Value.Empty:\n        Value.Empty => println(1)\n        _ => pass\n    match Value.Full(2):\n        Value.Full(count) => println(count)\n        _ => pass\n"
+    write(source.joinpath("main.incn"), reader)?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    store = root.joinpath("store")
+    report_fixture_build(binary, project, store)?
+    write(source.joinpath("main.incn"), reader + "\n\ndef added() -> int:\n    return 1\n")?
+    report_fixture_build(binary, project, store)?
+    require_probe_output(project.joinpath("target/incan/release/bin/imported_enum"), "1\n2")?
+    return stop_example_engine(binary, store)
+
+
+pub def test_a_method_body_gets_a_plan_product() -> Result[None, str]:
+    """
+    A module with a method gets a plan product for each of its bodies: the method's as well as the free function's.
+    The unit then has a complete native interface, and an edit of the method keeps a product for every body.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    source = root.joinpath("main.incn")
+    store = root.joinpath("store")
+    shapes = "pub model Counter:\n    pub count: int\n\n    pub def scaled(self) -> int:\n        return self.count * "
+    bump = "\n\n\npub def bump(value: int) -> int:\n    return value + 1\n"
+    write(root.joinpath("shapes.incn"), shapes + "2" + bump)?
+    write(
+        source,
+        "from shapes import Counter, bump\n\n\ndef main() -> None:\n    println(Counter(count=2).scaled() + bump(1))\n",
+    )?
+    # Three bodies: `main`, `bump` and the method `Counter.scaled`.
+    cold = lowering_example_run(binary, source, store, "6")?
+    cold_diagnostic = cold.to_json().map_err((error) => error.message())?
+    assert proof_count(cold, "lowering_demand_evaluations")? == 3, cold_diagnostic
+    assert proof_count(cold, "native_interface_evaluations")? == 1, cold_diagnostic
+    write(root.joinpath("shapes.incn"), shapes + "5" + bump)?
+    warm = lowering_example_run(binary, source, store, "12")?
+    warm_diagnostic = warm.to_json().map_err((error) => error.message())?
+    evaluated = proof_count(warm, "lowering_demand_evaluations")?
+    assert evaluated >= 1 and evaluated + proof_count(warm, "lowering_demand_reuses")? == 3, warm_diagnostic
+    assert proof_count(warm, "native_interface_evaluations")? == 1, warm_diagnostic
     return stop_example_engine(binary, store)
 
 
@@ -506,13 +1138,13 @@ def finished_run(succeeded: bool, stdout: bytes, stderr: bytes) -> Result[JsonVa
 
 
 def verify_signature_edit(binary: str, root: Path) -> Result[None, str]:
-    """A signature edit through a symlink must recheck main and reproduce the cold plan and executable."""
+    """A parameter rename and return-type edit through a symlink must recheck main and reproduce the cold plan and executable."""
     root.mkdir(true, true).map_err((error) => error.message())?
     source = root.joinpath("hello.incn")
     store = root.joinpath("store")
-    write(source, "def value() -> int:\n    return 1\n\n\ndef main() -> None:\n    println(value())\n")?
+    write(source, "def value(number: int) -> int:\n    return number\n\n\ndef main() -> None:\n    println(value(1))\n")?
     _ = lowering_example_run(binary, source, store, "1")?
-    write(source, "def value() -> str:\n    return \"one\"\n\n\ndef main() -> None:\n    println(value())\n")?
+    write(source, "def value(count: int) -> str:\n    return \"one\"\n\n\ndef main() -> None:\n    println(value(1))\n")?
     warm = lowering_example_run(binary, source, store, "one")?
     diagnostic = warm.to_json().map_err((error) => error.message())?
     assert proof_count(warm, "body_evaluations")? == 2, diagnostic
@@ -676,16 +1308,20 @@ def stop_example_engine(binary: str, store: Path) -> Result[None, str]:
     stopped = channel.receive().map_err((refusal) => refusal.detail)?
     match stopped.message:
         Message.Event(value) =>
-            assert value.status == "Stopping"
+            assert value.status == "Stopping", f"the engine answered {value.status}"
         _ => return Err("lowering example did not stop its engine")
     _ = channel.transport.close()
     return Ok(None)
 
 
-def lowering_example_run(binary: str, source: Path, store: Path, expected: str) -> Result[JsonValue, str]:
+def lowering_example_run(
+    binary: str, source: Path, store: Path, expected: str, trace: Option[Path] = None,
+) -> Result[JsonValue, str]:
     """Run one real engine request and require both successful native output and its measured proof."""
-    outcome = Command
-        .new(binary)
+    mut command = Command.new(binary)
+    if let Some(directory) = trace:
+        command.env("INCAN_ENGINE_TRACE", directory.0).env("INCAN_TRACE_PRODUCERS", "1")
+    outcome = command
         .arg("run")
         .arg(source.0)
         .args(["--profile", "release", "--engine-report"])
@@ -699,6 +1335,23 @@ def lowering_example_run(binary: str, source: Path, store: Path, expected: str) 
     if not outcome.status.success() or not output.endswith(expected + "\n") or errors != "":
         return Err(f"lowering example: status={outcome.status.code()} stdout={output} stderr={errors}")
     return command_proof(outcome.stdout)
+
+
+def physical_demands(trace: Path) -> Result[int, str]:
+    """Count physical demand entries in the fixture's engine trace directory."""
+    mut entries = 0
+    for path in trace.iterdir().map_err((error) => error.message())?:
+        if not path.name().startswith("engine-producers-"):
+            continue
+        text = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+        for line in text.split("\n"):
+            if "\"operation\":\"producer_attempt\"" not in line:
+                continue
+            event = parse(line).map_err((error) => error.message())?
+            key = event.require("key").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+            if key.starts_with("lowering-demand\t"):
+                entries += 1
+    return Ok(entries)
 
 
 def lowering_example_run_with_fingerprints(
@@ -735,20 +1388,20 @@ def command_proof(output: bytes) -> Result[JsonValue, str]:
     return parse(lines[0]).map_err((error) => error.message())
 
 
-def report_fixture_build(binary: str, project: Path, store: Path) -> Result[JsonValue, str]:
+def report_fixture_build(binary: str, project: Path, store: Path, trace: Option[Path] = None) -> Result[JsonValue, str]:
     """Build one fixture through the records engine and decode its requested report."""
-    outcome = Command
-        .new(binary)
-        .arg("build")
+    mut command = Command.new(binary)
+    command.arg("build")
         .arg(project.0)
         .args(["--profile", "release", "--engine-report"])
         .env("INCAN_ENGINE", "records")
         .env("INCAN_BAKERY", store.0)
-        .output()
-        .map_err((error) => str(error))?
+    if let Some(directory) = trace:
+        command.env("INCAN_ENGINE_TRACE", directory.0)
+    outcome = command.output().map_err((error) => str(error))?
     output = from_utf8(outcome.stdout).map_err((error) => str(error))?
     errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
-    if not outcome.status.success() or errors != "":
+    if not outcome.status.success() or (errors != "" and (trace is None or "warning[INCAN-T0125]" not in errors)):
         return Err(f"checker report fixture: status={outcome.status.code()} stdout={output} stderr={errors}")
     return command_proof(outcome.stdout)
 

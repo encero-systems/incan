@@ -1,30 +1,64 @@
 """Select Bakery-admitted lowering products for one graph-record compiler activation."""
 
-from pub::incan_platform.store import Snapshot
-from pub::internal_models.records import RecordKey
-from compiler_body_values import SelectedBodyPage
-from compiler_graph_records import reusable_family_records, readers_of
+from pub::incan_platform.store import Snapshot, get
+from pub::internal_models.records import ReadReceipt, ReadWitness, RecordKey, encode_record_key
+from compiler_source_projection import positioned_source_key
+from compiler_prepared_records import prepared_product_request
+from compiler_body_keys import IDENTITY_PROFILE, body_key
+from compiler_body_values import CoveredBodyOwners, SelectedBodyPage
+from compiler_graph_records import OutputSlots, reusable_evaluation, reusable_family_records, readers_of
+from pub::incan_mir_plan import PLAN_MODULE_FAMILY, POSITIONED_MODULE_PAGE, REPOSITION_MODULE_PAGE, PlanModuleValue, decode_plan_module
+from std.encoding.hex import hexlify
+from std.primitives.hash import sha256
 
-pub const LOWERING_PROFILE: str = "incan.lowering-records/3"
+pub const LOWERING_PROFILE: str = "incan.lowering-records/11"
 
 
-pub def plan_owners_reading(selected: Snapshot, changed: list[RecordKey]) -> Result[list[str], str]:
-    """Exclude plans whose own signature witnesses changed while permitting equal-meaning body edits to cut off."""
-    mut owners: set[str] = set()
-    for reader in readers_of(selected, changed, LOWERING_PROFILE)?:
-        if reader.family in ["lowering-demand", "plan-function"]:
-            owners.add(reader.identity)
-    return Ok(sorted([owner for owner in owners]))
+pub def plan_reads_changed(selected: Snapshot, changed: list[RecordKey]) -> Result[Dict[str, list[RecordKey]], str]:
+    """Remember each exact changed input that excludes a previously certified native plan."""
+    mut inputs: Dict[str, list[RecordKey]] = {}
+    for target in changed:
+        for reader in readers_of(selected, [target], LOWERING_PROFILE)?:
+            if reader.family not in ["lowering-demand", "plan-function"]:
+                continue
+            mut causes = inputs.get(reader.identity, [])
+            if target not in causes:
+                causes.append(target)
+                inputs[reader.identity] = causes
+    return Ok(inputs)
+
+
+pub model RetainedPlanInputs:
+    """One pinned view's scalar plans and their authenticated lowering-demand digests."""
+
+    pub snapshot: str = ""
+    pub digests: Dict[str, tuple[str, str]] = {}
+
+
+pub model PlanFunctionSelection:
+    """Compiler pages and the verified inputs publication can carry forward after the worker returns."""
+
+    pub pages: list[SelectedBodyPage] = []
+    pub retained: RetainedPlanInputs = RetainedPlanInputs()
 
 
 pub def select_plan_inventory_except(
     selected: Snapshot,
+    origin: str,
     invalid: list[str],
-) -> Result[list[SelectedBodyPage], str]:
-    """Materialize only witnessed plan functions whose stable declaration owner was not invalidated by this edit."""
-    mut pages: list[SelectedBodyPage] = []
-    for record in reusable_family_records(selected, "plan-function", LOWERING_PROFILE)?:
-        if record.key.identity in invalid:
+    admitted_outputs: list[str] = [],
+    keyed_readers: Option[list[str]] = None,
+) -> Result[PlanFunctionSelection, str]:
+    """
+    Materialize only witnessed plan functions whose stable declaration owner was not invalidated by this edit. A
+    function whose exact output is in `admitted_outputs` travels in its module page. Its product is not read twice.
+    """
+    mut inventory = PlanFunctionSelection(retained=RetainedPlanInputs(snapshot=selected.digest))
+    slots = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, excluded=invalid, excluded_outputs=admitted_outputs, included=keyed_readers)
+    for record in reusable_family_records(selected, "plan-function", LOWERING_PROFILE, Some(slots))?:
+        # A rechecked reader may probe its old ordinary scalar by the compiler's newly computed full key.
+        # A module or entry admission bypasses that lookup and therefore remains unavailable on this path.
+        if keyed_readers is not None and not record.key.facet.startswith("body:"):
             continue
         key = record.key.context
         if not canonical_digest(key):
@@ -32,11 +66,54 @@ pub def select_plan_inventory_except(
         mut extension = ".incnfunction"
         if record.key.facet == "entry":
             extension = ".incnentry"
-        pages.append(SelectedBodyPage(key=key + extension, value=record.value))
-    return Ok(pages)
+        inventory.pages.append(SelectedBodyPage(key=key + extension, value=record.value))
+        if record.key.facet.startswith("body:") and keyed_readers is None:
+            demand = body_key("lowering-demand", origin, record.key.identity, record.key.facet[5:], key)
+            evidence = lowering_demand_digest(record.receipt, demand)?
+            inventory.retained.digests[encode_record_key(record.key)?] = (record.value_digest, evidence)
+    return Ok(inventory)
 
 
-def canonical_digest(value: str) -> bool:
+pub def carried_lowering_demand(
+    selected: Option[Snapshot],
+    retained: &RetainedPlanInputs,
+    plan: RecordKey,
+    demand: RecordKey,
+    product: bytes,
+) -> Result[tuple[bytes, str], str]:
+    """Carry the exact demand witnessed by an admitted plan whose returned product still matches."""
+    graph = match selected:
+        Some(value) => value
+        None => return Err("a reused lowering record has no selected graph snapshot")
+    encoded = encode_record_key(plan)?
+    mut evidence = ("", "")
+    if retained.snapshot == graph.digest and encoded in retained.digests:
+        evidence = retained.digests[encoded]
+    else:
+        # Ranked readers can supply exact additional scalar pages after the main selection.
+        prior = match reusable_evaluation(graph, plan, LOWERING_PROFILE)?:
+            Some(value) => value
+            None => return Err("a reused lowering record has no selected plan evaluation")
+        evidence = (prior.value_digest, lowering_demand_digest(prior.receipt, demand)?)
+    if hexlify(sha256.digest(product)) != evidence[0]:
+        return Err("a reused lowering record differs from its selected graph authority")
+    value = match get(graph, encode_record_key(demand)?).map_err((error) => error.message())?:
+        Some(bytes) => bytes
+        None => return Err("a reused lowering record has no selected demand")
+    return Ok((value, evidence[1]))
+
+
+def lowering_demand_digest(receipt: &ReadReceipt, key: RecordKey) -> Result[str, str]:
+    """Read exactly the complete payload identity selected by this plan's own preparation."""
+    expected = prepared_product_request(key)
+    for witness in receipt.witnesses:
+        if let ReadWitness.Found(prior, _) = witness:
+            if prior.request == expected:
+                return Ok(prior.semantic_digest)
+    return Err("a reused lowering plan has no exact demand witness")
+
+
+pub def canonical_digest(value: str) -> bool:
     """Accept the lowercase SHA-256 spelling used by the lowering codec as a safe page filename."""
     if len(value) != 64:
         return false
@@ -44,3 +121,87 @@ def canonical_digest(value: str) -> bool:
     for digit in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"]:
         remaining = remaining.replace(digit, "")
     return remaining == ""
+
+
+pub model AdmittedPlanModule:
+    """A verified module plan and the receipt selecting it from the current graph view."""
+
+    pub key: RecordKey
+    pub plan: PlanModuleValue
+    pub value_digest: str
+    pub namespace: int
+    pub certificate: str
+    pub admitted_snapshot: str
+    pub receipt: ReadReceipt
+    pub placement_current: bool
+
+
+pub model PlanModuleSelection:
+    """The module plan records admitted for one activation: a page for each, and the product keys they carry."""
+
+    pub pages: list[SelectedBodyPage] = []
+    pub outputs: list[str] = []
+    pub records: list[AdmittedPlanModule] = []
+    pub covered: CoveredBodyOwners = CoveredBodyOwners()
+
+
+pub def select_plan_modules(
+    selected: Snapshot,
+    origin: str,
+    invalid_modules: list[str],
+    invalid_owners: list[str],
+    complete_namespaces: set[str] = set(),
+    changed_positions: set[str] = set(),
+) -> Result[PlanModuleSelection, str]:
+    """
+    Admit whole every module whose plan record still validates in the selected graph and that this request leaves
+    alone: the module is not among `invalid_modules`, whose namespace this edit reaches, and none of its plan
+    functions is keyed by one of `invalid_owners`, the owners this request checks again or whose signature witnesses
+    changed. The compiler restores an admitted module's functions from the record's page and lowers none of its
+    bodies.
+    """
+    mut refused: set[str] = set()
+    for owner in invalid_owners:
+        refused.add(owner)
+    mut selection = PlanModuleSelection()
+    slots = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, excluded=invalid_modules)
+    for record in reusable_family_records(selected, PLAN_MODULE_FAMILY, LOWERING_PROFILE, Some(slots))?:
+        value = decode_plan_module(record.value).map_err((error) => f"selected plan-module record refused: {error:?}")?
+        mut valid = true
+        for function in value.functions:
+            if function.identity in refused or not canonical_digest(function.key):
+                valid = false
+        if not valid:
+            continue
+        positioned = prepared_product_request(positioned_source_key(origin, record.key.identity))
+        mut bound = false
+        for witness in record.receipt.witnesses:
+            if let ReadWitness.Found(prior, _) = witness:
+                if prior.request == positioned:
+                    bound = true
+        mut suffix = REPOSITION_MODULE_PAGE
+        if bound and record.key.identity not in changed_positions:
+            suffix = POSITIONED_MODULE_PAGE
+        # An earlier worker sees no qualified module page and keeps the ordinary keyed route.
+        selection.pages.append(SelectedBodyPage(key=hexlify(value.module.encode("utf-8")) + suffix, value=record.value))
+        mut witnessed: set[str] = set()
+        if record.key.identity in complete_namespaces:
+            for witness in record.receipt.witnesses:
+                if let ReadWitness.Found(prior, _) = witness:
+                    if prior.request.key.family == "plan-function":
+                        witnessed.add(encode_record_key(prior.request.key)?)
+        for function in value.functions:
+            key = body_key("plan-function", origin, function.identity, "body:" + function.function, function.key)
+            output = encode_record_key(key)?
+            selection.outputs.append(output)
+            # Only the checker-backed branch of plan publication replaces the native event symbol with a
+            # separate stable body owner. A fallback, runtime, or namespace-member event keeps its own symbol.
+            if output in witnessed and function.identity != function.symbol:
+                selection.covered.include(record.key.identity, function.identity, function.symbol)?
+        selection.records.append(AdmittedPlanModule(
+            key=record.key, plan=value, value_digest=record.value_digest, namespace=record.namespace,
+            certificate=record.receipt.preparation.rank_certificate, receipt=record.receipt,
+            admitted_snapshot=selected.digest, placement_current=bound and record.key.identity not in changed_positions,
+        ))
+
+    return Ok(selection)

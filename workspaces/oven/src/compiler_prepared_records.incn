@@ -1,15 +1,24 @@
 """Authenticate compiler facts staged in the current unpublished graph transaction."""
 
+from pub::internal_models.overload_members import OVERLOAD_MEMBERS, read_method_members
 from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
+from pub::internal_models.source_value_records import SOURCE_PROFILE, source_value
+from pub::internal_models.record_scope import MAX_CHECKER_ROW_BYTES, checked_row_family, checked_row_request
 from pub::internal_models.records import (
+    PayloadSelection,
+    PreparationEvidence,
     ReadFault,
+    ReadReceipt,
     ReadScope,
     RevisionEvidence,
     SelectedFact,
+    RecordKey,
     RecordRead,
+    RecordReads,
     RecordSource,
     RecordRequest,
+    RecordSelection,
     encode_record_key,
     selected_record_bytes,
 )
@@ -30,12 +39,76 @@ pub class PreparedBodyRecordSource with RecordSource:
         """Make one exact pending value available to later producers in the same transaction."""
         self.values[key] = value
 
+    pub def holds(self, key: str) -> bool:
+        """Whether a value is already available under one encoded record key."""
+        return key in self.values
+
+    pub def bind_profile(mut self, profile: str) -> None:
+        """Transfer this transaction's staged values to its next producer phase after the previous phase finishes."""
+        self.scope = ReadScope(snapshot=self.scope.snapshot, profile=profile)
+
+    pub def matches(self, key: str, value: bytes) -> bool:
+        """Check whether two checked readers staged the same membership for their shared receiver."""
+        return key in self.values and self.values[key] == value
+
     pub def for_profile(self, profile: str) -> PreparedBodyRecordSource:
         """Bind the same staged values to the next producer profile without weakening its read-scope check."""
         scope = ReadScope(snapshot=self.scope.snapshot, profile=profile)
         return PreparedBodyRecordSource(scope=scope, values=self.values)
 
-    def read(self, scope: ReadScope, request: RecordRequest) -> RecordRead:
+    pub def receipt(
+        self,
+        scope: ReadScope,
+        output: RecordKey,
+        requests: list[RecordRequest],
+        rank_certificate: str = "compiled-check",
+        validated_plans: Dict[str, str] = {},
+    ) -> Result[ReadReceipt, str]:
+        """Authenticate one producer's exact inputs from the caller-owned publication transaction."""
+        preparation = PreparationEvidence(
+            output=output,
+            rank_certificate=rank_certificate,
+            selector_witnesses="compiled-check",
+        )
+        mut bounded: list[RecordRequest] = []
+        mut positions: Dict[str, list[int]] = {}
+        for request in requests:
+            encoded_key = encode_record_key(request.key)?
+            mut item = request
+            if request.byte_limit == MAX_CHECKER_ROW_BYTES and checked_row_family(request.key.family) and request.selection == RecordSelection.Field("value"):
+                if encoded_key in self.values:
+                    item = checked_row_request(request.key, len(self.values[encoded_key]))?
+            # The same selected field can appear at several checked source locations. One staged transaction
+            # supplies it once. Other selections and byte limits on that key are independently authorized.
+            if encoded_key not in positions:
+                positions[encoded_key] = []
+            mut repeated = false
+            for index in positions[encoded_key]:
+                if bounded[index] == item:
+                    repeated = true
+                    break
+            if not repeated:
+                positions[encoded_key].append(len(bounded))
+                bounded.append(item)
+        mut reads = RecordReads.start(scope, preparation, bounded)
+        plans = AdmittedPlanDigests.open(scope, validated_plans)
+        for item in bounded:
+            mut retained = false
+            if len(validated_plans) > 0 and plan_product(item.key):
+                written = encode_record_key(item.key)?
+                retained = written in validated_plans and written not in self.values
+            result = match retained:
+                true => reads.read(plans, item)
+                false => reads.read(self, item)
+            match result:
+                RecordRead.Failed(fault) =>
+                    written = encode_record_key(output)?
+                    wanted = encode_record_key(item.key)?
+                    return Err(f"compiled body publication for {written} could not read {wanted}: {fault:?}")
+                _ => pass
+        return reads.finish().map_err((_) => "compiled body publication produced an incomplete receipt")
+
+    def read(self, scope: &ReadScope, request: &RecordRequest) -> RecordRead:
         """Return one staged selection with full-value evidence, or fail when publication left it unavailable."""
         if scope != self.scope:
             return RecordRead.Failed(ReadFault.SnapshotMismatch)
@@ -45,11 +118,58 @@ pub class PreparedBodyRecordSource with RecordSource:
 
         if key not in self.values:
             return RecordRead.Failed(ReadFault.UnfinishedSupplier)
-        value = self.values[key]
+        physical = self.values[key]
+        if request.key.family == OVERLOAD_MEMBERS:
+            return read_method_members(scope, request, physical)
+        value = match source_value(request.key, physical):
+            Ok(logical) => logical
+            Err(_) => return RecordRead.Failed(ReadFault.DamagedRecord)
+
         selected = match selected_record_bytes(value, request):
             Some(result) => result
             None => return RecordRead.Failed(ReadFault.InvalidEvidence)
 
         semantic = hexlify(sha256.digest(value))
-        evidence = RevisionEvidence(scope=scope, request=request, revision=semantic, semantic_digest=semantic)
+        mut revision = semantic
+        if request.key.identity_profile == SOURCE_PROFILE:
+            revision = hexlify(sha256.digest(physical))
+        evidence = RevisionEvidence(scope=scope.clone(), request=request.clone(), revision=revision, semantic_digest=semantic)
         return RecordRead.Found(SelectedFact(evidence=evidence, value=selected, selection_digest=semantic))
+
+
+class AdmittedPlanDigests with RecordSource:
+    """Validated digests of plan products already admitted from this publication's graph snapshot."""
+    scope: ReadScope
+    digests: Dict[str, str]
+
+    @staticmethod
+    pub def open(scope: ReadScope, digests: Dict[str, str]) -> AdmittedPlanDigests:
+        return AdmittedPlanDigests(scope=scope, digests=digests)
+
+    def read(self, scope: &ReadScope, request: &RecordRequest) -> RecordRead:
+        if scope != self.scope or not plan_product(request.key) or request != prepared_product_request(request.key):
+            return RecordRead.Failed(ReadFault.InvalidEvidence)
+        key = match encode_record_key(request.key):
+            Ok(value) => value
+            Err(_) => return RecordRead.Failed(ReadFault.InvalidEvidence)
+        if key not in self.digests:
+            return RecordRead.Failed(ReadFault.OutsidePreparation)
+        # An opaque plan product uses its verified payload digest for both witnesses.
+        digest = self.digests[key]
+        proof = RevisionEvidence(scope=scope.clone(), request=request.clone(), revision=digest, semantic_digest=digest)
+        return RecordRead.Found(SelectedFact(evidence=proof, value=b"", selection_digest=digest))
+
+
+def plan_product(key: RecordKey) -> bool:
+    """The plan products whose complete digest can witness an already admitted value."""
+    return key.family == "plan-function" or key.family == "plan-module"
+
+
+pub def prepared_product_request(key: RecordKey) -> RecordRequest:
+    """Read scalar facts and bind opaque compiler products through their complete semantic digest."""
+    if key.family in ["body-ir", "lowering-demand", "plan-function", "namespace", "plan-module"]:
+        selected = PayloadSelection(reference=key.context, offset=0, length=0)
+        return RecordRequest(key=key, selection=RecordSelection.Payload(selected))
+    if checked_row_family(key.family):
+        return RecordRequest(key=key, selection=RecordSelection.Field("value"), byte_limit=MAX_CHECKER_ROW_BYTES)
+    return RecordRequest(key=key, selection=RecordSelection.Field("value"))
