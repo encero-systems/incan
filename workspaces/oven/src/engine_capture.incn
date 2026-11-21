@@ -27,7 +27,7 @@ from std.encoding.hex import hexlify
 from std.fs import Path
 from std.hash import sha256
 from std.json import JsonValue, parse
-from files import json_text
+from engine_capture_identity import capture_identity
 from home import StandardPackage, home, standard_library_dir
 from manifest_intent import parse_document
 from loaf_local_graph import unique
@@ -137,17 +137,7 @@ pub model CapturedInput:
     # Whether its last change was old enough when it was recorded for these metadata to vouch for its bytes later.
     pub settled: bool
 
-    pub def encoded(self) -> JsonValue:
-        """The input in its deterministic encoding."""
-        return JsonValue.array(
-            [
-                JsonValue.string(self.path),
-                JsonValue.string(self.role.value()),
-                metadata_encoded(self.metadata),
-                JsonValue.string(self.digest),
-                JsonValue.bool(self.settled),
-            ],
-        )
+
 
 
 @derive(Eq)
@@ -160,17 +150,7 @@ pub model CapturedListing:
     pub files: list[str]
     pub directories: list[str]
 
-    pub def encoded(self) -> JsonValue:
-        """The listing in its deterministic encoding."""
-        return JsonValue.array(
-            [
-                JsonValue.string(self.path),
-                metadata_encoded(self.metadata),
-                JsonValue.bool(self.settled),
-                texts(self.files),
-                texts(self.directories),
-            ],
-        )
+
 
 
 @derive(Eq)
@@ -187,16 +167,7 @@ pub model Declarations:
     # Editable Incan dependency project roots, made absolute against this manifest.
     pub dependencies: list[str] = []
 
-    pub def encoded(self) -> JsonValue:
-        """The declarations in their deterministic encoding."""
-        return JsonValue.array(
-            [
-                JsonValue.string(self.manifest),
-                JsonValue.array([item.encoded() for item in self.files]),
-                JsonValue.array([JsonValue.string(self.source_root), JsonValue.string(self.rust_source_root)]),
-                texts(self.dependencies),
-            ],
-        )
+
 
 
 model SourceMembership:
@@ -225,35 +196,10 @@ pub model BuildEpoch:
 
     pub def identity(self) -> Result[str, str]:
         """The digest of the roots, the selection and what each path in reach held; metadata never enters it."""
-        found = [JsonValue.array(
-            [JsonValue.string(item.path), JsonValue.string(item.role.value()), JsonValue.string(item.digest)],
-        ) for item in self.inputs]
-        content = JsonValue.array(
-            [
-                JsonValue.string(EPOCH_SCHEMA),
-                texts(self.roots),
-                self.selection.encoded(),
-                JsonValue.array(found),
-                JsonValue.array([item.encoded() for item in self.absent]),
-            ],
-        )
-        return Ok(hexlify(sha256.digest(json_text(content)?.encode("utf-8"))))
-
-    pub def encoded(self) -> Result[str, str]:
-        """The whole epoch as deterministic text: equal epochs encode to equal bytes."""
-        return json_text(
-            JsonValue.array(
-                [
-                    JsonValue.string(EPOCH_SCHEMA),
-                    texts(self.roots),
-                    self.selection.encoded(),
-                    JsonValue.array([item.encoded() for item in self.inputs]),
-                    JsonValue.array([item.encoded() for item in self.absent]),
-                    JsonValue.array([item.encoded() for item in self.listings]),
-                    JsonValue.array([item.encoded() for item in self.declarations]),
-                    texts(self.admitted),
-                ],
-            ),
+        return capture_identity(
+            self.roots, self.selection.command, self.selection.profile, self.selection.features,
+            [(item.path, item.role.value(), item.digest) for item in self.inputs],
+            [(item.path, item.role.value()) for item in self.absent],
         )
 
     pub def witnesses(self) -> list[LookupWitness]:
@@ -643,7 +589,7 @@ model Capture:
                 listing = CapturedListing(
                     path=directory,
                     metadata=observed,
-                    settled=observed.settled(self.settle),
+                    settled=observed.settled_for_capture(self.settle),
                     files=entry.files,
                     directories=entry.directories,
                 )
@@ -728,7 +674,7 @@ model Capture:
                     if stable_across_read(before, after):
                         self.counters.in_reach.hashes += 1
                         digest = hexlify(sha256.digest(content))
-                        settled = after.settled(self.settle)
+                        settled = after.settled_for_capture(self.settle)
                         self.found[path] = CapturedInput(
                             path=path,
                             role=role,
@@ -886,20 +832,6 @@ def texts(items: list[str]) -> JsonValue:
     return JsonValue.array([JsonValue.string(item) for item in items])
 
 
-def metadata_encoded(metadata: FileMetadata) -> JsonValue:
-    """File metadata in their deterministic encoding."""
-    return JsonValue.array(
-        [
-            JsonValue.int(metadata.device),
-            JsonValue.int(metadata.inode),
-            JsonValue.int(metadata.size),
-            JsonValue.int(metadata.mode),
-            JsonValue.int(metadata.modified_ns),
-            JsonValue.int(metadata.changed_ns),
-        ],
-    )
-
-
 pub def decoded_epoch(text: str) -> Result[BuildEpoch, str]:
     """
     An epoch from its encoding. Anything but a complete epoch of this schema is refused, so a damaged record is never
@@ -1012,7 +944,7 @@ def decoded_metadata(value: JsonValue) -> Result[FileMetadata, str]:
     )
 
 
-def role_of(text: str) -> Result[InputRole, str]:
+pub def role_of(text: str) -> Result[InputRole, str]:
     """The role an encoding names."""
     roles = [
         InputRole.Root,

@@ -263,7 +263,7 @@ def accept(mut client: Client, mut state: ServiceState, request: bytes, submit: 
     state.accept(request, submit.requested_roots, token)?
     send(client.channel, request, Message.Accepted(Accepted(capture_token=token, interest_token=token)))?
     capturing = begin_work()
-    captured_request = prepare_submit(state.store, submit)
+    captured_request = prepare_submit(state.store, submit, discover_standalone=true)
     record_work(Operation.EngineCapture, submit.requested_roots, capturing)
     match captured_request:
         Err(reason) =>
@@ -306,6 +306,12 @@ def settle(mut client: Client, mut state: ServiceState) -> Result[None, Refusal]
                         client.channel,
                         pending.request,
                         Message.Event(Event(status="Console", trace_handle=ready.console)),
+                    )?
+                if ready.incomplete_proof != "":
+                    send(
+                        client.channel,
+                        pending.request,
+                        Message.Event(Event(status="ProofIncomplete", trace_handle=ready.incomplete_proof[:2048])),
                     )?
                 match ready.pin:
                     Some(pin) =>

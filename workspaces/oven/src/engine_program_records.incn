@@ -1,0 +1,97 @@
+"""Bound native descriptors and selected program handles for ordinary and standalone execution."""
+
+from rust::std::str import from_utf8
+from std.json import parse
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from pub::internal_models.crumb_rows import ModelField, model_description, required_value
+from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, text
+from json_fields import required_text
+
+const DESCRIPTOR_ROW: bytes = b"natuni\x00"
+const SELECTION_ROW: bytes = b"natsel\x00"
+pub const SELECTION_KEY: str = "incan.engine.selected-native-unit/2"
+
+
+@derive(Eq)
+pub model NativeUnit:
+    """A sealed unit, its selected executable payload, and the path of that executable in the caller's view."""
+
+    pub identity: str
+    pub payload: str
+    pub binary: str
+
+    pub def encoded(self, key: str) -> Result[bytes, str]:
+        """Bind the descriptor to the exact program handle or standalone selector used to retrieve it."""
+        return encode_graph_row(DESCRIPTOR_ROW, descriptor_description(), [
+            required_value(b"binary", Value.Text(self.binary)),
+            required_value(b"ident_", Value.Text(self.identity)),
+            required_value(b"key___", Value.Text(key)),
+            required_value(b"paylod", Value.Text(self.payload)),
+        ])
+
+
+def descriptor_description() -> Description:
+    return model_description(DESCRIPTOR_ROW, "incan.engine.native-unit/2", [
+        ModelField(identity=b"binary", name="binary", storage="string"),
+        ModelField(identity=b"ident_", name="identity", storage="string"),
+        ModelField(identity=b"key___", name="key", storage="string"),
+        ModelField(identity=b"paylod", name="payload", storage="string"),
+    ])
+
+
+pub def decode_program(key: str, data: bytes) -> Result[NativeUnit, str]:
+    """Open a keyed descriptor or validate the predecessor's native-unit JSON schema."""
+    if data[:4] == b"CRMB":
+        fields = decode_graph_row(data, DESCRIPTOR_ROW, descriptor_description(), 4)?
+        if text(fields[2].value)? != key:
+            return Err("native descriptor was stored under a different key")
+        return Ok(NativeUnit(binary=text(fields[0].value)?, identity=text(fields[1].value)?, payload=text(fields[3].value)?))
+    value = parse(str(from_utf8(data).map_err((error) => str(error))?)).map_err((error) => error.message())?
+    if required_text(value, "schema")? != "incan.engine.native-unit/1":
+        return Err("unsupported native unit descriptor")
+    return Ok(NativeUnit(identity=required_text(value, "unit")?, payload=required_text(value, "payload")?, binary=required_text(value, "binary")?))
+
+
+def selection_description() -> Description:
+    return model_description(SELECTION_ROW, "incan.engine.selected-native-unit/3", [
+        ModelField(identity=b"handle", name="handle", storage="string"),
+        ModelField(identity=b"key___", name="key", storage="string"),
+        ModelField(identity=b"view__", name="view", storage="string"),
+    ])
+
+
+pub def encode_selection(view: str, handle: str) -> Result[bytes, str]:
+    """Bind the selected handle to both its view and the selection key."""
+    if program_view(handle)? != view:
+        return Err("native selection belongs to a different project view")
+    return encode_graph_row(SELECTION_ROW, selection_description(), [
+        required_value(b"handle", Value.Text(handle)),
+        required_value(b"key___", Value.Text(SELECTION_KEY)),
+        required_value(b"view__", Value.Text(view)),
+    ])
+
+
+pub def decode_selection(view: str, data: bytes) -> Result[str, str]:
+    """Admit either the typed selection or a previously stored handle valid in this view."""
+    mut handle = ""
+    if data[:4] == b"CRMB":
+        fields = decode_graph_row(data, SELECTION_ROW, selection_description(), 3)?
+        if text(fields[1].value)? != SELECTION_KEY or text(fields[2].value)? != view:
+            return Err("native selection was stored under a different key or view")
+        handle = text(fields[0].value)?
+    else:
+        handle = str(from_utf8(data).map_err((error) => str(error))?)
+    if program_view(handle)? != view:
+        return Err("native selection belongs to a different project view")
+    return Ok(handle)
+
+
+pub def program_view(handle: str) -> Result[str, str]:
+    """Decode only the bounded view locator of an opaque handle."""
+    if len(handle) < 74 or not handle.startswith("program:") or handle[72:73] != ":":
+        return Err("invalid native program handle")
+    for character in handle[8:72]:
+        if character not in "0123456789abcdef":
+            return Err("invalid native program identity")
+    return Ok(handle[73:])

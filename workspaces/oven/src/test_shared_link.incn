@@ -2,16 +2,14 @@
 
 from rust::std::process import Command
 from std.fs import Path
-from std.json import parse
 from bakery import find
 from bakery_records import Fact
-from engine_epochs import record_text
+from engine_program_records import decode_program
 from files import make_directory, read, write
 from home_paths import bakery
 from engine_programs import NativeUnit, index_program, restore_program
 from incan_units import obtain_executable
-from json_fields import required_text
-from pub::incan_platform.store import commit
+from pub::incan_platform.store import commit, get
 from scratch import scratch_directory
 from shared_link import linkage_key, shared_arguments
 from store_path_conversion import snapshot
@@ -201,6 +199,11 @@ def selected_fact_unit(fact: Option[Fact], identity: str, output: Path) -> Resul
 
 def indexed_payload(store: Path, selector: str) -> Result[Option[str], str]:
     """The executable payload the standalone index names under `selector`."""
-    match record_text(snapshot(store).map_err((error) => error.message())?, selector)?:
+    selected = snapshot(store).map_err((error) => error.message())?
+    match get(selected, selector).map_err((error) => error.message())?:
         None => return Ok(None)
-        Some(text) => return Ok(Some(required_text(parse(text).map_err((error) => error.message())?, "payload")?))
+        Some(data) =>
+            assert data[:4] == b"CRMB", "the standalone index must carry a typed descriptor"
+            unit = decode_program(selector, data)?
+            assert Path(unit.binary).name() == unit.binary
+            return Ok(Some(unit.payload))

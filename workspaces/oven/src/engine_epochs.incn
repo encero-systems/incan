@@ -3,6 +3,9 @@
 from rust::std::str import from_utf8
 from std.environ import get_optional
 from std.fs import Path
+from std.encoding.hex import hexlify
+from std.hash import sha256
+from engine_epoch_records import encode_epoch, encode_head, read_epoch, read_head
 from engine_capture import (
     BuildEpoch,
     CaptureRequest,
@@ -11,13 +14,15 @@ from engine_capture import (
     InputSelection,
     SelectedHome,
     capture,
-    decoded_epoch,
     selected_home,
 )
 from engine_messages import Submit
 from pub::incan_platform.store import Lookup, Snapshot, Transaction, begin_compared, commit, lookup, owned, put
 from store_path_conversion import snapshot
-from unit_freshness import fingerprint
+from features import FeatureRequest
+from observation import children, observe, trace
+from unit import describe, discovered_project
+from unit_freshness import collect_program_reach, fingerprint
 from unit_sources import SourceGraph, recorded_reach
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
@@ -51,7 +56,7 @@ pub def capture_submit(store: Path, submit: Submit) -> Result[CapturedRequest, s
     return Ok(captured)
 
 
-pub def prepare_submit(store: Path, submit: Submit) -> Result[CapturedRequest, str]:
+pub def prepare_submit(store: Path, submit: Submit, discover_standalone: bool = false) -> Result[CapturedRequest, str]:
     """
     Capture a file request and prepare its revision without publishing any part of the request.
 
@@ -74,19 +79,25 @@ pub def prepare_submit(store: Path, submit: Submit) -> Result[CapturedRequest, s
         return Err("unit records require one Incan program file and a project view")
     selected = selected_home()?
     admitted = selected.admitted
-    head = f"incan.engine.capture-head\t{fingerprint([submit.view, source.0, submit.input_selection, admitted.pin])?}"
+    # Previous heads could certify a file while its coarse status timestamp still admitted another write.
+    inputs = ["settled-source-observation/1", submit.view, source.0, submit.input_selection, admitted.pin]
+    head = f"incan.engine.capture-head\t{fingerprint(inputs)?}"
     before = snapshot(store, submit.view).map_err((error) => error.message())?
     prior_revision, prior_identity, previous = previous_epoch(before, head)?
     # 2. Every engine request starts at its selected source, and build and run select the same program inputs: the verb
     #    is an execution action, not a compiled identity. The unit's recorded source graphs bound its reach once they
     #    exist.
+    mut reach = recorded_reach(source, submit.input_selection)
+    if reach is None and discover_standalone:
+        match first_standalone_reach(source, submit.input_selection, selected):
+            Ok(found) => reach = found
+            Err(reason) => trace(f"source graph unavailable for {source.0}: {reason}")
     request = CaptureRequest(
         roots=[source.0],
         selection=InputSelection(command="run", profile=submit.input_selection, features=diagnostic_features()),
         whole_unit=true,
-        reach=recorded_reach(source, submit.input_selection),
+        reach=reach,
     )
-    # Complete nanosecond metadata guards this Unix request; no coarse timestamp grace delays unchanged reuse.
     checking = begin_work()
     captured = capture(request, previous, admitted, 0)?
     record_work(Operation.EngineCaptureInputs, source.0, checking)
@@ -111,12 +122,12 @@ pub def prepare_submit(store: Path, submit: Submit) -> Result[CapturedRequest, s
                 )
             # 3. Metadata belongs to a captured revision, while the epoch's semantic identity excludes it.
             publishing = begin_work()
-            encoded = epoch.encoded()?
-            revision = fingerprint([encoded])?
+            encoded = encode_epoch(epoch)?
+            revision = hexlify(sha256.digest(encoded))
             identity = epoch.identity()?
             mut transaction = begin_compared(before)
-            transaction = put(transaction, epoch_key(revision), encoded.encode("utf-8"))
-            transaction = put(transaction, head, f"{revision} {identity}".encode("utf-8"))
+            transaction = put(transaction, epoch_key(revision), encoded)
+            transaction = put(transaction, head, encode_head(revision, identity)?)
 
             record_work(Operation.EngineCaptureEncode, source.0, publishing)
             return Ok(
@@ -132,6 +143,26 @@ pub def prepare_submit(store: Path, submit: Submit) -> Result[CapturedRequest, s
                     reach=request.reach,
                 ),
             )
+
+
+def first_standalone_reach(source: Path, profile: str, selected: &SelectedHome) -> Result[Option[SourceGraph], str]:
+    """
+    Use the compiler's collection before capturing an ordinary file beside unrelated standalone programs.
+
+    A file with no other source and no directory beside it can import no local module: its reach is the file, so no
+    collection runs and the request touches no frozen input and prepares no unit.
+    """
+    if discovered_project(source)? is not None:
+        return Ok(None)
+    beside = children(source.parent(), ".incn")?
+    if len(beside.directories) == 0 and beside.files == [source.name()]:
+        return Ok(None)
+    before = observe(source)?.stamp
+    unit = describe(source, profile, FeatureRequest(), direct=true, selected_standard=Some(selected.standard))?
+    collected = collect_program_reach(unit, selected.toolchain)?
+    if observe(source)?.stamp != before:
+        return Ok(None)
+    return Ok(collected)
 
 
 def diagnostic_features() -> list[str]:
@@ -195,45 +226,40 @@ def refreshed_request(
 ) -> Result[CapturedRequest, str]:
     """`captured` with an epoch of the same identity and fresher metadata, staged for publication with its reach."""
     mut refreshed = captured
-    encoded = epoch.encoded()?
+    encoded = encode_epoch(epoch)?
     refreshed.epoch = epoch
-    refreshed.revision = fingerprint([encoded])?
+    refreshed.revision = hexlify(sha256.digest(encoded))
     refreshed.reach = reach
     mut transaction = begin_compared(captured.snapshot)
-    transaction = put(transaction, epoch_key(refreshed.revision), encoded.encode("utf-8"))
-    transaction = put(transaction, captured.head, f"{refreshed.revision} {captured.identity}".encode("utf-8"))
+    transaction = put(transaction, epoch_key(refreshed.revision), encoded)
+    transaction = put(transaction, captured.head, encode_head(refreshed.revision, captured.identity)?)
     refreshed.transaction = Some(transaction)
     return Ok(refreshed)
 
 
 def previous_epoch(view: Snapshot, head: str) -> Result[tuple[str, str, Option[BuildEpoch]], str]:
     """Read the selected revision and semantic identity; a revision-only head is upgraded once after capture."""
-    match record_text(view, head)?:
+    match record_bytes(view, head)?:
         None => return Ok(("", "", None))
-        Some(text) =>
-            fields = text.split(" ")
-            if len(fields) not in [1, 2]:
-                return Err("malformed capture head")
-            for field in fields:
-                if len(field) != 64:
-                    return Err("malformed capture identity")
-                for character in field:
-                    if character not in "0123456789abcdef":
-                        return Err("malformed capture identity")
-            revision = fields[0]
-            mut identity = ""
-            if len(fields) == 2:
-                identity = fields[1]
-            match record_text(view, epoch_key(revision))?:
+        Some(data) =>
+            revision, identity = read_head(data)?
+            match record_bytes(view, epoch_key(revision))?:
                 None => return Err("capture head names a missing epoch record")
-                Some(encoded) => return Ok((revision, identity, Some(decoded_epoch(encoded)?)))
+                Some(encoded) => return Ok((revision, identity, Some(read_epoch(encoded)?)))
 
 
 pub def load_epoch(store: Path, revision: str, view: str) -> Result[BuildEpoch, str]:
     """Activate one exact persisted capture revision for a producer; callers drop it when that activation ends."""
-    match record_text(snapshot(store, view).map_err((error) => error.message())?, epoch_key(revision))?:
+    match record_bytes(snapshot(store, view).map_err((error) => error.message())?, epoch_key(revision))?:
         None => return Err("captured epoch record is missing")
-        Some(text) => return decoded_epoch(text)
+        Some(data) => return read_epoch(data)
+
+
+def record_bytes(view: Snapshot, key: str) -> Result[Option[bytes], str]:
+    match lookup(view, key).map_err((error) => error.message())?:
+        Lookup.Found(value) => return Ok(Some(owned(value)))
+        Lookup.Absent => return Ok(None)
+        Lookup.Deleted => return Ok(None)
 
 
 pub def record_text(view: Snapshot, key: str) -> Result[Option[str], str]:
