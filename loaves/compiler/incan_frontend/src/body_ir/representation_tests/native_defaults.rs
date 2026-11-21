@@ -91,6 +91,42 @@ fn native_construction_calls_published_defaults() -> Result<(), Box<dyn std::err
 fn static_text_constant_reads_its_native_item() -> Result<(), Box<dyn std::error::Error>> {
     let source =
         "from rust::demo import GREETING\n\ndef shout() -> str:\n    text: str = GREETING\n    return text + \"!\"\n";
+    let module = greeting_module(source)?;
+    let rendered = format!("{:?}", module.bodies);
+    assert!(rendered.contains("RustItem(\"demo::GREETING\""), "{rendered}");
+    assert!(!rendered.contains("unsupported"), "{rendered}");
+    Ok(())
+}
+
+/// An unannotated `mut` local first bound to a Rust `&'static str` constant owns its text, as an annotated `str` local
+/// does, so a later Incan text constant fits its storage.
+#[test]
+fn rebound_static_text_constant_local_owns_its_text() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "from rust::demo import GREETING\n\nconst LOCAL: str = \"local\"\n\ndef pick(flag: bool) -> str:\n    mut text = GREETING\n    if flag:\n        text = LOCAL\n    return text\n";
+    let module = greeting_module(source)?;
+    let pick = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "pick")
+        .ok_or("missing pick body")?;
+    let text = pick
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("text"))
+        .ok_or("missing text local")?;
+    assert_eq!(
+        text.ty,
+        super::IncanType::Primitive(super::IncanPrimitiveType::Str),
+        "{pick:?}"
+    );
+    let rendered = format!("{:?}", module.bodies);
+    assert!(rendered.contains("RustItem(\"demo::GREETING\""), "{rendered}");
+    assert!(!rendered.contains("unsupported"), "{rendered}");
+    Ok(())
+}
+
+/// The Body IR module of `source`, checked against a crate whose `demo::GREETING` is a `&'static str` constant.
+fn greeting_module(source: &str) -> Result<bir::BodyIrModule, Box<dyn std::error::Error>> {
     let mut loaves = LoafIndex::default();
     loaves.add_rust_facts(
         &Default::default(),
@@ -122,11 +158,7 @@ fn static_text_constant_reads_its_native_item() -> Result<(), Box<dyn std::error
         library_package: None,
         include_inline_tests: false,
     };
-    let module = super::build_module_seed(&program, &[], &facts, &context);
-    let rendered = format!("{:?}", module.bodies);
-    assert!(rendered.contains("RustItem(\"demo::GREETING\""), "{rendered}");
-    assert!(!rendered.contains("unsupported"), "{rendered}");
-    Ok(())
+    Ok(super::build_module_seed(&program, &[], &facts, &context))
 }
 
 /// A non-generic Rust function's byte-buffer result is Incan bytes: it compares with bytes and returns as bytes.

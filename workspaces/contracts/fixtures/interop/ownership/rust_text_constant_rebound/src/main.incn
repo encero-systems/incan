@@ -1,0 +1,28 @@
+# behavior: a mut local first bound to a Rust text constant owns its text, so an Incan text constant and an owned str rebind it
+# expect-stdout:
+#   checker/1
+#   lowering/2
+#   checker/1-local
+
+from rust::profiles import CHECKER_PROFILE
+
+const LOWERING_PROFILE: str = "lowering/2"
+
+
+def pick(family: str) -> str:
+    mut profile = CHECKER_PROFILE
+    if family in ["lowering-demand", "plan-function"]:
+        profile = LOWERING_PROFILE
+    return profile
+
+
+def suffixed() -> str:
+    mut text = CHECKER_PROFILE
+    text = text + "-local"
+    return text
+
+
+def main() -> None:
+    println(pick("local"))
+    println(pick("plan-function"))
+    println(suffixed())
