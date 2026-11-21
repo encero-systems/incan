@@ -2,8 +2,7 @@
 
 use incan_mir_plan_native::{Place, PlanType, RvalueKind, SourceSpan, assign as plan_assign};
 use incan_semantics_core::body_ir::{
-    ArgumentBinding, ArgumentElement, BodyIrModule, LoafCallable, MethodTarget, Operand as SourceOperand,
-    Place as SourcePlace,
+    ArgumentElement, BodyIrModule, LoafCallable, MethodTarget, Operand as SourceOperand, Place as SourcePlace,
 };
 use incan_semantics_core::{IncanType, generic};
 
@@ -28,6 +27,8 @@ use crate::models::model_place;
 use crate::nominal_instances::{instance_arguments, template_base};
 use crate::operand_borrows::lower_display_str;
 use crate::pending::untranslated;
+use crate::sdk_generic_callables::{sdk_callable_type, sdk_callable_type_arguments, sdk_owned_callable_bindings};
+use crate::shared_callables::shared_sdk_operands;
 use crate::type_parameters::substitute;
 use crate::unions::require_native_union_signature;
 
@@ -74,25 +75,37 @@ pub fn lower_library_method(
             )?),
         }
     }
-    if sdk_callable_argument(builder, delegation, &target.binding, arguments)? {
-        return Err(untranslated("sdk_generic_callables::sdk_owned_callable_bindings"));
+    let owned = sdk_owned_callable_bindings(builder, delegation, &target.binding, arguments, &ordinary_types)?;
+    if delegation.declaration_frame().is_none() {
+        for (index, ty) in ordinary_types.iter_mut().enumerate() {
+            *ty = sdk_callable_type(builder, &delegation.parameters[index + 1], &names, &closed, &owned)?;
+        }
     }
     parameters.extend(ordinary_types.iter().cloned());
+    // A cloneable SDK callable is evaluated as the ordinary boxed closure, then transferred into its shared carrier.
+    let argument_types: Vec<PlanType> = ordinary_types
+        .iter()
+        .map(|ty| match ty {
+            PlanType::SharedCallable(signature) => PlanType::Closure(signature.clone()),
+            other => other.clone(),
+        })
+        .collect();
     let result = library_method_result(builder, delegation, target, destination, &names, &closed, span)?;
-    let ordinary = library_call_operands(
+    let boxed_operands = library_call_operands(
         module,
         builder,
         delegation,
         &target.binding,
         arguments,
-        &ordinary_types,
+        &argument_types,
         span,
         1,
         false,
     )?;
+    let ordinary = shared_sdk_operands(builder, &ordinary_types, boxed_operands, span)?;
     let mut operands = vec![read_place(reference.clone(), true, span)];
     operands.extend(ordinary);
-    let type_arguments = sdk_type_arguments(builder, delegation, &names, &closed)?;
+    let type_arguments = sdk_callable_type_arguments(builder, delegation, &names, &closed, &owned)?;
     let output = call_destination(builder, destination, result.clone(), span)?;
     if fallible_factory_slot(target, &result) {
         return Err(untranslated("fallible_factories::fallible_factory"));
@@ -127,75 +140,6 @@ fn fallible_factory_slot(target: &MethodTarget, result: &PlanType) -> bool {
         "map" | "filter" | "flat_map" | "take" | "inspect" | "map_err" | "inspect_err"
     );
     named && matches!(result, PlanType::Model(..))
-}
-
-/// Whether an SDK generic value binder receives an owned callable environment, which keeps its own storage ABI.
-fn sdk_callable_argument(
-    builder: &Builder,
-    delegation: &LoafCallable,
-    binding: &ArgumentBinding,
-    arguments: &[ArgumentElement],
-) -> Result<bool, String> {
-    let ArgumentBinding::Resolved {
-        arguments: bindings,
-        defaulted_slots,
-    } = binding
-    else {
-        return Ok(false);
-    };
-    if !defaulted_slots.is_empty() {
-        return Ok(false);
-    }
-    for (index, bound) in bindings.iter().enumerate() {
-        let Some(IncanType::TypeVar(_)) = delegation.parameters.get(bound.slot + 1) else {
-            continue;
-        };
-        let Some(argument) = arguments.get(index + 1) else {
-            continue;
-        };
-        if let Some(SourceOperand::Place(read)) = argument.as_one()
-            && read.place.projection.is_empty()
-            && read.place.global().is_none()
-            && let Some(local) = read.place.local_id()
-        {
-            let held = &builder.locals[(local.index() as i64 + builder.local_offset + 1) as usize].ty;
-            if matches!(held, PlanType::Closure(_) | PlanType::ClosureRef(_)) {
-                return Ok(true);
-            }
-        }
-    }
-    Ok(false)
-}
-
-/// Retain explicit native argument order, or close declaration binders without constructing substitute Rust types.
-fn sdk_type_arguments(
-    builder: &Builder,
-    delegation: &LoafCallable,
-    names: &[String],
-    closed: &[IncanType],
-) -> Result<Vec<PlanType>, String> {
-    let resolve = |ty: &IncanType| {
-        native_source_type(
-            builder.constructors(),
-            builder.nominals(),
-            builder.enums(),
-            &builder.unions,
-            ty,
-            &builder.intrinsics,
-            "",
-        )
-    };
-    let mut result = Vec::new();
-    if !delegation.native_type_arguments.is_empty() {
-        for argument in &delegation.native_type_arguments {
-            result.push(resolve(&substitute(argument, names, closed)?)?);
-        }
-        return Ok(result);
-    }
-    for argument in closed {
-        result.push(resolve(argument)?);
-    }
-    Ok(result)
 }
 
 /// Close native Self from the concrete nominal frame or checked scalar receiver, then checked trait and method binders.

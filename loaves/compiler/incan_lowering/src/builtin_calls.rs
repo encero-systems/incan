@@ -31,12 +31,12 @@ use crate::list_methods::{
 use crate::list_values::{list_borrow, sequence_read_storage, value_operand};
 use crate::lists::{list_element, list_shape, require_list_shape};
 use crate::newtype_hooks::lower_newtype_hook_result;
+use crate::newtype_sums::{lower_newtype_sum_add, lower_newtype_sum_extract};
 use crate::numerics::{float_conversion, integer_conversion};
 use crate::numerics::{has_sized_numeric, numeric_carrier, numeric_name};
 use crate::operand_borrows::{borrow_str_operand, borrow_text_operand, lower_text_helper};
 use crate::operators::{operand_type, scalar_operator_operand};
 use crate::options::carrier_layout;
-use crate::pending::untranslated;
 use crate::ranges::builtin_range_bounds;
 use crate::sequence_builtins::{
     argument_type, lower_join_helper, lower_list_concat, lower_list_repeat, lower_sequence_builtin, lower_split_helper,
@@ -508,7 +508,8 @@ pub fn lower_runtime_helper(
         }
         HelperOp::NewtypeHookExtract => lower_newtype_hook_result(builder, arguments, destination, false, span),
         HelperOp::NewtypeFieldHookExtract => lower_newtype_hook_result(builder, arguments, destination, true, span),
-        HelperOp::NewtypeSumAdd | HelperOp::NewtypeSumExtract => Err(untranslated("newtype_sums::newtype sums")),
+        HelperOp::NewtypeSumAdd => lower_newtype_sum_add(builder, arguments, destination, span),
+        HelperOp::NewtypeSumExtract => lower_newtype_sum_extract(builder, arguments, destination, span),
         HelperOp::ValidationErrorNew => lower_validation_error(builder, arguments, destination, false, span),
         HelperOp::ValidationErrorWithCode => lower_validation_error(builder, arguments, destination, true, span),
         _ => Err(format!("unsupported Body IR Helper {helper:?}")),
