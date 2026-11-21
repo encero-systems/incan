@@ -147,3 +147,26 @@ pub(super) fn abi(path: &Path) -> Result<Arc<RustAbiCache>, String> {
     }
     Ok(value)
 }
+
+/// The readings this process keeps, store by store: Loaf artifacts (each a decoded manifest) and Rust ABI indexes,
+/// with the bytes of the files each was read from.
+pub(super) fn inventory() -> [(&'static str, usize, u64); 2] {
+    let (artifacts, artifact_bytes) = stored(&ARTIFACTS);
+    let (indexes, index_bytes) = stored(&ABI);
+    [
+        ("Loaf artifacts", artifacts, artifact_bytes),
+        ("Rust ABI indexes", indexes, index_bytes),
+    ]
+}
+
+/// How many readings a store keeps and the bytes of the files they were read from.
+fn stored<T>(store: &OnceLock<Mutex<Store<T>>>) -> (usize, u64) {
+    store
+        .get()
+        .and_then(|store| store.lock().ok())
+        .map(|store| {
+            let bytes = store.readings.values().map(|reading| reading.inputs.bytes).sum();
+            (store.readings.len(), bytes)
+        })
+        .unwrap_or((0, 0))
+}

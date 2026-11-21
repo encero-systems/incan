@@ -20,6 +20,8 @@ const MAX_DECODED_PAGES: usize = 4096;
 struct DecodedPages {
     pages: HashMap<[u8; 32], GraphBodyRecord>,
     generations: HashMap<FileGeneration, [u8; 32]>,
+    /// The bytes the kept pages were decoded from.
+    bytes: u64,
 }
 
 static DECODED: Mutex<Option<DecodedPages>> = Mutex::new(None);
@@ -54,15 +56,18 @@ fn lookup(pages: &DecodedPages, digest: &[u8; 32], identity: &str) -> Option<Gra
 }
 
 /// Keep one newly admitted record and the exact file generation that delivered it.
-pub(super) fn remember(digest: [u8; 32], generation: Option<FileGeneration>, record: &GraphBodyRecord) {
+pub(super) fn remember(digest: [u8; 32], generation: Option<FileGeneration>, record: &GraphBodyRecord, bytes: usize) {
     DECODES.fetch_add(1, Ordering::Relaxed);
     let Ok(mut guard) = DECODED.lock() else { return };
     let pages = guard.get_or_insert_with(DecodedPages::default);
     if pages.pages.len() >= MAX_DECODED_PAGES {
         pages.pages.clear();
         pages.generations.clear();
+        pages.bytes = 0;
     }
-    pages.pages.insert(digest, record.clone());
+    if pages.pages.insert(digest, record.clone()).is_none() {
+        pages.bytes += bytes as u64;
+    }
     remember_generation(pages, generation, digest);
 }
 
@@ -78,4 +83,13 @@ fn remember_generation(pages: &mut DecodedPages, generation: Option<FileGenerati
 /// Pages decoded by this process so far; a check reports the difference across its own activation.
 pub(crate) fn decodes() -> usize {
     DECODES.load(Ordering::Relaxed)
+}
+
+/// The checked pages this worker keeps and the bytes they were decoded from.
+pub(crate) fn inventory() -> (usize, u64) {
+    DECODED
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().map(|pages| (pages.pages.len(), pages.bytes)))
+        .unwrap_or((0, 0))
 }

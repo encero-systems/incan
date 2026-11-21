@@ -127,6 +127,25 @@ impl Timing {
     }
 }
 
+/// Record what a worker keeps between requests when native phase timing was requested: each store, the values it
+/// keeps and the bytes they were read from, beside the worker's physical footprint and live heap.
+pub(crate) fn record_resident_stores(stores: &[(&'static str, usize, u64)]) {
+    if !requested() {
+        return;
+    }
+    let kept: Vec<serde_json::Value> = stores
+        .iter()
+        .map(|(store, values, bytes)| serde_json::json!({"store": store, "values": values, "bytes": bytes}))
+        .collect();
+    let record = serde_json::json!({
+        "process": std::process::id(),
+        "footprint": crate::worker::footprint(),
+        "live": crate::worker::live_heap(),
+        "stores": kept,
+    });
+    write_trace(format!("resident-stores: {record}\n").as_bytes());
+}
+
 /// Whether this invocation asked for native phase timing.
 fn requested() -> bool {
     std::env::var_os("INCAN_NATIVE_TIMING").is_some()
