@@ -3,13 +3,12 @@
 use incan_mir_plan_native::{
     CalleeKind, Carrier, Operand, Place, PlanType, RvalueKind, SourceSpan, assign as plan_assign, carrier_position,
 };
-use incan_semantics_core::body_ir::{
-    ArgumentElement, Body, BodyIrModule, NamedCallableTarget, Place as SourcePlace, StringConversionContract,
-};
+use incan_semantics_core::body_ir::{ArgumentElement, Body, BodyIrModule, NamedCallableTarget, Place as SourcePlace};
 use incan_semantics_core::{CanonicalSymbolId, IncanType, SymbolOrigin, canonical_module_identity};
 
 use crate::async_::{construct_future, is_future};
 use crate::builtin_calls::lower_builtin;
+use crate::call_arguments::{SlotPolicy, ordered_slot_operands};
 use crate::callable_values::owned_callable_value;
 use crate::calls::{lower_loaf_call, ordered_arguments};
 use crate::carrier_operands::boundary_plan_operand;
@@ -31,7 +30,7 @@ use crate::models::model_type;
 use crate::pending::untranslated;
 use crate::reflection::lower_static_field_metadata;
 use crate::statements::is_nominal_type;
-use crate::string_conversion_contracts::conversion_trait;
+use crate::string_conversion::string_conversion_callee;
 use crate::traits::{close_trait_dispatch_arguments, instantiate_type, is_lazy_method_body};
 use crate::type_parameters::{indexed_static_type_arguments, instantiate, request_instance, substitute};
 use crate::value_enum_methods::lower_value_enum_from_value;
@@ -116,6 +115,22 @@ pub fn lower_named_target(
     if is_json_deserialize_method(target) {
         return lower_model_from_json(module, builder, target, arguments, destination, span);
     }
+    if let Some((callee, result)) = string_conversion_callee(module, builder, target, span)? {
+        let policy = SlotPolicy {
+            owned: true,
+            ..SlotPolicy::default()
+        };
+        let operands = ordered_slot_operands(builder, &target.binding, arguments, &[PlanType::String], span, &policy)?;
+        // The result temporary is reserved before the destination, as the reference reserves it.
+        let mut output = temporary(builder, result.clone(), span);
+        if let Some(place) = destination {
+            output = scalar_place(builder, place, span)?;
+        }
+        if place_type(&builder.locals, &output) != result {
+            return Err("unsupported Body IR string conversion Result destination".into());
+        }
+        return lower_callable_result(builder, callee, operands, output, result, span);
+    }
     if let Some(owner) = value_enum_from_value_owner(module, target)? {
         return lower_value_enum_from_value(builder, owner, arguments, destination, span);
     }
@@ -185,12 +200,6 @@ fn special_named_target(
     }
     if builder.constructors().validated_constructors.contains(identity) {
         return Ok(Some("callable_calls::lower_validated_constructor"));
-    }
-    if let StringConversionContract::Selected(selection) = &module.string_conversion_contract
-        && selection.method_identity == *identity
-        && !conversion_trait(module)?.is_empty()
-    {
-        return Ok(Some("string_conversion::string_conversion_callee"));
     }
     Ok(None)
 }
