@@ -837,6 +837,8 @@ fn store_target(target: &CalleeKind, remap: &mut NominalRemap) -> Result<StoredT
         CalleeKind::CloneEnum(owner, name) => {
             StoredTarget::CloneEnum(remap.slot(NominalKind::Enum, *owner, name)?.index)
         }
+        // The formatted carrier names its model or enum by product-local ordinal, like any stored type.
+        CalleeKind::FormatValue(ty, debug) => StoredTarget::FormatValue(store_type(ty, remap)?, *debug),
         _ => return store_closure_target(target, remap),
     })
 }
@@ -884,6 +886,7 @@ fn restore_target(target: &StoredTarget, remap: &mut NominalRemap) -> Result<Cal
         StoredTarget::SharedCallableBody(signature) => CalleeKind::SharedCallableBody(restore_types(signature, remap)?),
         StoredTarget::CloneClosure(signature) => CalleeKind::CloneClosure(restore_types(signature, remap)?),
         StoredTarget::Value(operand) => CalleeKind::Value(restore_operand(operand, remap)?),
+        StoredTarget::FormatValue(ty, debug) => CalleeKind::FormatValue(restore_type(ty, remap)?, *debug),
     })
 }
 

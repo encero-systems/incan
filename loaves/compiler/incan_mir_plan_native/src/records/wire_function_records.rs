@@ -370,6 +370,7 @@ pub(crate) enum StoredTarget {
     SharedCallableBody(Vec<StoredType>),
     CloneClosure(Vec<StoredType>),
     Value(StoredOperand),
+    FormatValue(StoredType, bool),
 }
 
 /// Project one `StoredTarget` alternative onto its identity and positional payload.
@@ -406,6 +407,10 @@ pub(crate) fn wire_stored_target(value: &StoredTarget) -> Result<Wire, String> {
             alternative(b"\x07\xb9v\xcd\xac\xf6", vec![list(field0, wire_stored_type)?])
         }
         StoredTarget::Value(field0) => alternative(b"\x8e7\x95=#\xda", vec![wire_stored_operand(field0)?]),
+        StoredTarget::FormatValue(field0, field1) => alternative(
+            b"\xd6\x8a\xf6\x95\xfc\x92",
+            vec![wire_stored_type(field0)?, Wire::Boolean(*field1)],
+        ),
     })
 }
 
@@ -454,6 +459,10 @@ fn read_stored_target_alternative(
         b"\x8e7\x95=#\xda" if fields.len() == 1 => {
             StoredTarget::Value(read_stored_operand(&fields[0].value, positions)?)
         }
+        b"\xd6\x8a\xf6\x95\xfc\x92" if fields.len() == 2 => StoredTarget::FormatValue(
+            read_stored_type(&fields[0].value, positions)?,
+            boolean_value(&fields[1].value)?,
+        ),
         _ => return Err("unknown or incomplete StoredTarget alternative".to_owned()),
     })
 }
