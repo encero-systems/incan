@@ -191,7 +191,7 @@ def checked_source(path: Path, inspection: bool) -> Result[CheckedSource, str]:
     unit = described_library(path)?
     toolchain = toolchain_for(unit)?
     ready = prepare_native(unit, toolchain)?
-    description = write_unit(ready, crate_name(ready))?
+    description = write_unit(ready, crate_name(ready), typed=toolchain.unit_descriptor_crumb)?
     # 2. A source interface never replaces an earlier publication.
     directory = metadata_directory(ready)?
     mut arguments = ["--source-interface", description.0, toolchain.sysroot, directory.0]

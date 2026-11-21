@@ -264,7 +264,7 @@ def formatted_text(file: str, original: str, toolchain: Toolchain) -> Result[str
     directory.mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
     copy = directory.joinpath(Path(file).name())
     copy.write_bytes(RustString.from(original).into_bytes()).map_err((error) => error.message())?
-    arguments = ["--fmt", write_unit(unit, crate_name(unit))?.0, copy.0]
+    arguments = ["--fmt", write_unit(unit, crate_name(unit), typed=toolchain.unit_descriptor_crumb)?.0, copy.0]
     mut code: i32 = 0
     mut complaint = ""
     match captured_resident(toolchain, arguments)?:

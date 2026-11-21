@@ -8,6 +8,9 @@ from std.encoding.hex import hexlify
 from std.fs import Path
 from std.hash import sha256
 from std.json import JsonValue
+from std.primitives.crumb.values import Value
+from pub::internal_models.crumb_rows import ModelField, model_description, required_value
+from pub::internal_models.graph_crumb_fields import encode_graph_row
 from codegen import DARWIN_UUID_SALT, SOURCE_PREFIX, TOOLCHAIN_PREFIX, native_arguments, native_executable_arguments
 from files import json_text, read_json
 from json_fields import required_text
@@ -23,6 +26,7 @@ from native_references import NATIVE_CLOSURE_SCHEMA, RUST_NATIVE_SCHEMA
 from unit import UnitDescription
 from unit_publication import (
     admitted_identity as admitted_payload_identity,
+    admitted_registry_identity,
     published_facts,
     published_identity,
     publication,
@@ -39,6 +43,7 @@ from std.environ import get_or
 from rust::std::env::consts import OS
 
 const UNIT_DOMAIN: str = "incan.oven.unit/4"
+const INVOKE: bytes = b"invoke\x00"
 const CODEGEN_DOMAIN: str = "incan.oven.codegen/2"
 
 
@@ -70,14 +75,15 @@ pub def artifact_available(path: Path) -> bool:
 
 pub def artifact_identity(path: Path) -> Result[str, str]:
     """
-    Identify a published artifact by its filesystem identity, without reading its bytes.
+    Use an admitted registry entry or frozen generation before observing a local artifact.
 
     That is its device and inode, size and mode, and the nanosecond times of its last modification and last status
     change: replacing the file changes the inode, and rewriting it in place changes the status change time even when
     the modification time is put back.
     """
     if let Some(stamp) = frozen_observation(path):
-        return Ok(stamp)
+        # Registry-page recall adds a filesystem observation to the same authenticated producer.
+        return Ok(admitted_registry_identity(path)?.unwrap_or(stamp))
     if let Some(identity) = admitted_payload_identity(path)?:
         return Ok(identity)
     clock = begin()
@@ -189,6 +195,15 @@ def identified_unit(unit: UnitDescription, toolchain: Toolchain, compiler: str) 
     # Revalidation receives the reusable base and derives the unit-specific SDK dimension once again.
     key.compiler = base_compiler
     return Ok(key)
+
+
+pub def collect_program_reach(unit: UnitDescription, toolchain: Toolchain) -> Result[Option[SourceGraph], str]:
+    """Collect the ordinary unit-key graph before a standalone program has a recorded capture."""
+    mut project = load_ledger(unit_ledger(unit.project_root, ledger_name(unit)), SETTLE_SECONDS)
+    compiler = selected_unit_compiler(unit, toolchain, compiler_fingerprint(toolchain)?)?
+    graph = source_graph(unit, toolchain, f"{compiler} {description_digest(unit)?}", project)?
+    project.save()?
+    return Ok(graph)
 
 
 pub def graph_imports(unit: UnitDescription, toolchain: Toolchain) -> Result[Option[list[JsonValue]], str]:
@@ -365,17 +380,6 @@ pub def description_digest(unit: UnitDescription) -> Result[str, str]:
     mut uuid_salt = ""
     if OS == "macos":
         uuid_salt = DARWIN_UUID_SALT
-    facts = JsonValue.object(
-        {"crate": JsonValue.string(unit.package), "version": JsonValue.string(unit.version), "edition": JsonValue.string(
-            "2024",
-        ), "domain": JsonValue.string("target"), "kind": JsonValue.string(unit.kind), "source_mapping": JsonValue.string(
-            SOURCE_PREFIX,
-        ), "toolchain_mapping": JsonValue.string(TOOLCHAIN_PREFIX), "linker_uuid_salt": JsonValue.string(uuid_salt), "overflow_checks": JsonValue.bool(
-            unit.profile != "release",
-        ), "vocabulary": JsonValue.bool(unit.vocabulary), "vocab_policy": JsonValue.string(unit.vocab_policy), "vocab_desugarer": JsonValue.bool(
-            unit.vocab_desugarer,
-        )},
-    )
     bindings = [f"{loaf.key}={loaf.name}:{loaf.standard}:{loaf.toolchain_provided}" for loaf in unit.loaves]
     mut flags = native_arguments(unit.profile)
     if unit.kind in ["program", "test"]:
@@ -391,11 +395,53 @@ pub def description_digest(unit: UnitDescription) -> Result[str, str]:
         record_identity.append(f"project-library={library}")
     if unit.program_checks:
         record_identity.append("program-checks")
-    return fingerprint(
-        [json_text(facts)?] + flags + selected + declared + sorted(bindings) + sorted(unit.rust_crates) + sorted(
-            unit.vocab_admissions,
-        ) + access_facts(unit) + record_identity + clove_facts(unit),
-    )
+    description = model_description(INVOKE, "incan.oven.compiler-invocation/1", [
+        ModelField(identity=b"crate_", name="crate_name", storage="string"),
+        ModelField(identity=b"versio", name="version", storage="string"),
+        ModelField(identity=b"editio", name="edition", storage="string"),
+        ModelField(identity=b"domain", name="domain", storage="string"),
+        ModelField(identity=b"kind__", name="kind", storage="string"),
+        ModelField(identity=b"srcmap", name="source_mapping", storage="string"),
+        ModelField(identity=b"tchmap", name="toolchain_mapping", storage="string"),
+        ModelField(identity=b"uidslt", name="linker_uuid_salt", storage="string"),
+        ModelField(identity=b"ovrchk", name="overflow_checks", storage="boolean"),
+        ModelField(identity=b"vocabl", name="vocabulary", storage="boolean"),
+        ModelField(identity=b"policy", name="vocabulary_policy", storage="string"),
+        ModelField(identity=b"desugr", name="vocabulary_desugarer", storage="boolean"),
+        ModelField(identity=b"flags_", name="native_flags", storage="list<string>"),
+        ModelField(identity=b"select", name="selected_features", storage="list<string>"),
+        ModelField(identity=b"declrd", name="declared_features", storage="list<string>"),
+        ModelField(identity=b"bindng", name="loaf_bindings", storage="list<string>"),
+        ModelField(identity=b"rustcr", name="rust_crates", storage="list<string>"),
+        ModelField(identity=b"vocadm", name="vocabulary_admissions", storage="list<string>"),
+        ModelField(identity=b"access", name="toolchain_access", storage="list<string>"),
+        ModelField(identity=b"recids", name="record_inputs", storage="list<string>"),
+        ModelField(identity=b"cloves", name="clove_inputs", storage="list<string>"),
+    ])
+    encoded = encode_graph_row(INVOKE, description, [
+        required_value(b"crate_", Value.Text(unit.package)),
+        required_value(b"versio", Value.Text(unit.version)),
+        required_value(b"editio", Value.Text("2024")),
+        required_value(b"domain", Value.Text("target")),
+        required_value(b"kind__", Value.Text(unit.kind)),
+        required_value(b"srcmap", Value.Text(SOURCE_PREFIX)),
+        required_value(b"tchmap", Value.Text(TOOLCHAIN_PREFIX)),
+        required_value(b"uidslt", Value.Text(uuid_salt)),
+        required_value(b"ovrchk", Value.Boolean(unit.profile != "release")),
+        required_value(b"vocabl", Value.Boolean(unit.vocabulary)),
+        required_value(b"policy", Value.Text(unit.vocab_policy)),
+        required_value(b"desugr", Value.Boolean(unit.vocab_desugarer)),
+        required_value(b"flags_", Value.List([Value.Text(item) for item in flags])),
+        required_value(b"select", Value.List([Value.Text(item) for item in selected])),
+        required_value(b"declrd", Value.List([Value.Text(item) for item in declared])),
+        required_value(b"bindng", Value.List([Value.Text(item) for item in sorted(bindings)])),
+        required_value(b"rustcr", Value.List([Value.Text(item) for item in sorted(unit.rust_crates)])),
+        required_value(b"vocadm", Value.List([Value.Text(item) for item in sorted(unit.vocab_admissions)])),
+        required_value(b"access", Value.List([Value.Text(item) for item in access_facts(unit)])),
+        required_value(b"recids", Value.List([Value.Text(item) for item in record_identity])),
+        required_value(b"cloves", Value.List([Value.Text(item) for item in clove_facts(unit)])),
+    ])?
+    return Ok(hexlify(sha256.digest(encoded)))
 
 
 def clove_facts(unit: UnitDescription) -> list[str]:
