@@ -32,7 +32,7 @@ The hook setup selects `.githooks/`. Commit messages are authored by their commi
 | Type checking | `loaves/compiler/incan_frontend/src/typechecker/` |
 | Checked Body IR construction | `loaves/compiler/incan_frontend/src/body_ir/` |
 | Body IR types | `loaves/kernel/incan_semantics_core/src/body_ir.rs` |
-| Incan lowering | `loaves/compiler/incan_mir_lowering/src/` |
+| Lowering | `loaves/compiler/incan_lowering/src/` |
 | Native plan | `loaves/compiler/incan_mir_plan/src/` |
 | rustc adapter | `loaves/toolchain/incan-rustc-driver/src/` |
 | Compilation sessions | `loaves/compiler/incan_driver/src/session.rs` |

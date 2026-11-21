@@ -1,6 +1,6 @@
 # Lowering and plan structure
 
-This page describes the structure that Incan lowering (`loaves/compiler/incan_mir_lowering/src/`) and the native plan (`loaves/compiler/incan_mir_plan/src/`) follow. [DD-0018](../../design_records/0018_drop_elaboration_and_plan_records.md) decides the ownership rule and the record format. The division of construction state is the direction lowering takes as its files change; until a part is built, `Builder` in `loaves/compiler/incan_mir_lowering/src/frame.incn` holds that part's fields.
+This page describes the structure that lowering (`loaves/compiler/incan_lowering/src/`) and the native plan (`loaves/compiler/incan_mir_plan_native/src/`) follow. [DD-0018](../../design_records/0018_drop_elaboration_and_plan_records.md) decides the ownership rule and the record format. The division of construction state is the direction lowering takes as its files change; until a part is built, `Builder` in `loaves/compiler/incan_lowering/src/frame.rs` holds that part's fields.
 
 ## What rustc does after lowering
 

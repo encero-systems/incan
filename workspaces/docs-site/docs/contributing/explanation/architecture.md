@@ -28,7 +28,7 @@ The checker and Body IR own semantic facts. Lowering consumes those facts; it do
 | Language policy and registries | `loaves/kernel/incan_lang/src/` |
 | Checker and Body IR | `loaves/compiler/incan_frontend/src/` |
 | Compiler session and unit boundary | `loaves/compiler/incan_driver/src/` |
-| Incan lowering | `loaves/compiler/incan_mir_lowering/src/` |
+| Lowering | `loaves/compiler/incan_lowering/src/` |
 | Native plan data | `loaves/compiler/incan_mir_plan/src/` |
 | Rust compiler adapter and metadata extraction | `loaves/toolchain/incan-rustc-driver/src/` |
 | Native runtime authored in Incan | `loaves/compiler/incan_native_runtime/src/` |

@@ -12,7 +12,7 @@ Oven reads the project and describes a unit. The frontend checks it and records 
 
 ## Find each owner
 
-Start in `workspaces/oven/src/main.incn` for command dispatch. Read `unit.incn` for the unit description. Then inspect `loaves/compiler/incan_frontend`, `loaves/compiler/incan_driver`, `loaves/compiler/incan_mir_lowering` and `loaves/toolchain/incan-rustc-driver`.
+Start in `workspaces/oven/src/main.incn` for command dispatch. Read `unit.incn` for the unit description. Then inspect `loaves/compiler/incan_frontend`, `loaves/compiler/incan_driver`, `loaves/compiler/incan_lowering` and `loaves/toolchain/incan-rustc-driver`.
 
 Use `incan inspect codegraph PATH --query defs NAME` to locate declarations and `--query callers NAME` for checked call relationships. An unchecked-unit warning means an empty relationship query does not prove no callers exist.
 

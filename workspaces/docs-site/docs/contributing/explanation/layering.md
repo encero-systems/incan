@@ -12,7 +12,7 @@ Kernel packages define shared syntax, identities and language policy. The fronte
 
 ## Native boundary
 
-`incan_mir_lowering` is authored in Incan. It fills the plan defined by `incan_mir_plan`. The Rust adapter in `incan-rustc-driver` maps that plan into rustc APIs. Rust-specific compiler integration stays in this adapter; application semantics and lowering decisions do not move there for convenience.
+`incan_lowering` is authored in Rust. It fills the plan defined by `incan_mir_plan_native`, which `incan_mir_plan` binds for Incan callers. The Rust adapter in `incan-rustc-driver` maps that plan into rustc APIs. Rust-specific compiler integration stays in this adapter; application semantics and lowering decisions do not move there for convenience.
 
 ## Library boundary
 

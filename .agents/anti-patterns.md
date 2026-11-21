@@ -8,7 +8,7 @@ Every anti-pattern the repository's own rules name, with the rule's source, one 
 - Incan scope is every `*.incn` file outside a `fixtures` directory, and Rust scope is every `*.rs` file outside one. Contract and Loaf fixtures keep the shape their cases assert, so they are not counted.
 - **Before** is the count at `dd3ee72d8` (the `queue/square-1` head this inventory was built from). **Now** is the count at the commit that last changed this file. A clearing commit updates its own rule's **Now**.
 - **Real** separates the hits that violate the rule from those the search over-approximates (comments, user-facing advice text, generated pages), as the notes under each rule list them.
-- Some hits sit in paths other lanes were rewriting when this was built: `workspaces/oven/src/compiler_body_publication.incn`, `loaves/compiler/internal_models/src/compiled_body_frames.incn`, `loaves/platform/src/store/index.incn` and `loaves/toolchain/incan-lsp/`. They are counted, and listed as lane hits, but not cleared here.
+- Some hits sit in paths other lanes were rewriting when this was built: `workspaces/oven/src/compiler_body_publication.incn`, `loaves/compiler/internal_models/src/compiled_body_rows.incn`, `loaves/platform/src/store/index.incn` and `loaves/toolchain/incan-lsp/`. They are counted, and listed as lane hits, but not cleared here.
 
 ## Summary
 
