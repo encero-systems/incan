@@ -22,3 +22,20 @@ fn the_crate_root_keeps_the_reference_surface() {
     assert_eq!(RECORD_SCHEMA, "incan.compiler-worker/2");
     assert_eq!(SNAPSHOT_FORMAT_PROFILE, "incan.compiler-records/1");
 }
+
+/// The names the Incan `incan_worker_host` binding re-exports for Oven, reachable from the crate root, where an
+/// Incan caller can construct and call them.
+#[allow(unused_imports)]
+use crate::{
+    Admission, Fault, MISMATCH, PANIC_STATUS, PREFIX, Reply, STORE_VIEW_SCHEMA, SelectedStoreView, WorkerCompletion,
+    admit, compile_frame, encode_store_binding, portable_store_view, read_completion, read_ready, ready_frame,
+    record_frame, reply_frame, select_store_view, staged_key, valid_digest,
+};
+
+#[test]
+fn a_binding_selects_a_store_view_by_its_path_text() {
+    let missing = select_store_view("/nonexistent-runtime-home/bakery.view");
+    assert_eq!(missing.err().as_deref(), Some("No such file or directory (os error 2)"));
+    assert_eq!(PREFIX, "cw3-");
+    assert_eq!(STORE_VIEW_SCHEMA, "incan.store-view/1");
+}
