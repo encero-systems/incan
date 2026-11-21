@@ -10,6 +10,7 @@ use incan_semantics_core::body_ir::{
 use crate::checked_values::{scalar_place, target_read};
 use crate::element_places::is_element_place;
 use crate::explicit_arguments::reference_contract;
+use crate::formatting::display_plan_operand;
 use crate::frame::{Builder, dereferenced_place, place_type, read_place, temporary, value_type};
 use crate::frozen_plan::frozen_literal;
 use crate::layout_types::shared_receiver_type;
@@ -50,7 +51,8 @@ pub fn typed_carrier_operand(
     }
     let value = value_operand(builder, operand, span)?;
     if *ty == PlanType::String && value_type(builder, &value)? == PlanType::FrozenStr {
-        return Err(untranslated("formatting::display_plan_operand"));
+        let text = display_plan_operand(builder, value, span)?;
+        return Ok(read_place(text, true, span));
     }
     Ok(value)
 }

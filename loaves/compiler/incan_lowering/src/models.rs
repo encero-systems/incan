@@ -5,8 +5,8 @@ use incan_mir_plan_native::{
     carrier_position, is_carrier_index, tuple_element_type,
 };
 use incan_semantics_core::body_ir::{
-    EnumDeclaration as SourceEnumDeclaration, NOMINAL_CARRIER_KEY_PREFIX, NominalDeclaration, Place as SourcePlace,
-    PlaceElem, nominal_carrier_key,
+    ArgumentBinding, ConstructorTarget, EnumDeclaration as SourceEnumDeclaration, NOMINAL_CARRIER_KEY_PREFIX,
+    NominalDeclaration, Place as SourcePlace, PlaceElem, nominal_carrier_key,
 };
 use incan_semantics_core::{CanonicalSymbolId, IncanType};
 
@@ -521,4 +521,66 @@ fn receiver_owner(ty: &PlanType) -> Option<(i64, String)> {
         PlanType::ModelRef(owner, name) | PlanType::ModelMutRef(owner, name) => Some((*owner, name.clone())),
         _ => None,
     }
+}
+
+/// Prove the constructor's retained declaration identity, canonical layout, and complete field binding.
+pub fn constructor_index(
+    declarations: &[NominalDeclaration],
+    target: &ConstructorTarget,
+    count: usize,
+    expected: &PlanType,
+) -> Result<usize, String> {
+    let Some(identity) = &target.direct_declaration_id else {
+        return Err("unsupported Body IR nonlocal model constructor".into());
+    };
+    for (index, declaration) in declarations.iter().enumerate() {
+        match expected {
+            PlanType::Model(owner, _) => {
+                if index as i64 != *owner {
+                    continue;
+                }
+            }
+            _ => return Err("unsupported Body IR nonnominal constructor destination".into()),
+        }
+        if *identity != declaration.direct_declaration_id {
+            continue;
+        }
+        if target.canonical.as_ref() != Some(&declaration.canonical)
+            || target.canonical_field_layout.as_ref() != Some(&declaration.fields)
+        {
+            return Err("invalid Body IR model constructor identity or layout".into());
+        }
+        validate_constructor_binding(&target.binding, count, declaration.fields.len())?;
+        return Ok(index);
+    }
+    Err("unsupported Body IR unretained model constructor".into())
+}
+
+/// Require every field slot exactly once; Body IR supplies elements in canonical field order.
+fn validate_constructor_binding(binding: &ArgumentBinding, count: usize, fields: usize) -> Result<(), String> {
+    let ArgumentBinding::Resolved {
+        arguments,
+        defaulted_slots,
+    } = binding
+    else {
+        return Err("unsupported Body IR unresolved model constructor".into());
+    };
+    if arguments.len() != count || arguments.len() + defaulted_slots.len() != fields {
+        return Err("unsupported Body IR incomplete model constructor".into());
+    }
+    let mut slots: Vec<usize> = Vec::new();
+    for argument in arguments {
+        if argument.slot >= fields || slots.contains(&argument.slot) {
+            return Err("invalid Body IR model constructor slot map".into());
+        }
+        slots.push(argument.slot);
+    }
+    for slot in defaulted_slots {
+        if *slot >= fields || slots.contains(slot) {
+            return Err("invalid Body IR model default slot map".into());
+        }
+        slots.push(*slot);
+    }
+    // Aliases change diagnostic spelling, never the retained constructor identity or physical layout.
+    Ok(())
 }

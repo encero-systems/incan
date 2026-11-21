@@ -63,7 +63,10 @@ pub fn emit_boolean_operator(
     name: &str,
     span: &SourceSpan,
 ) -> Result<(), String> {
-    if value_type(builder, &operands[0])? != PlanType::Bool || value_type(builder, &operands[1])? != PlanType::Bool {
+    if operands.len() != 2
+        || value_type(builder, &operands[0])? != PlanType::Bool
+        || value_type(builder, &operands[1])? != PlanType::Bool
+    {
         return Err("unsupported Body IR non-boolean logical operands".into());
     }
     external_call(
