@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use incan_worker_host_bindings::{
-    Lookup, Snapshot, StoreError, begin, commit, disk_root, lease_token, lookup, owned, pin_lease, put, read_manifest,
-    read_store_identity, store_error_text, store_snapshot,
+    Lookup, Snapshot, StoreError, begin, commit, disk_root, get, lease_token, lookup, owned, pin_lease, put,
+    read_manifest, read_store_identity, store_error_text, store_snapshot,
 };
 use internal_models_bindings::Value;
 use internal_models_native::crumb_rows::{ModelField, model_description, required_value};
@@ -127,6 +127,20 @@ pub struct StagedCompilerOutputs {
     pub counter: String,
 }
 
+impl StagedCompilerOutputs {
+    /// One staged page by its kind (`value`, `receipt`, `diagnostic` or `counter`), as bytes for an Incan caller.
+    pub fn staged_page(&self, kind: &str) -> Result<Option<Vec<u8>>, String> {
+        let root = match kind {
+            "value" => &self.value,
+            "receipt" => &self.receipt,
+            "diagnostic" => &self.diagnostic,
+            "counter" => &self.counter,
+            _ => return Err(format!("compiler outputs stage no `{kind}` page")),
+        };
+        get(&self.snapshot, staged_key(kind, root)).map_err(|error| store_error_text(&error))
+    }
+}
+
 /// An exact pinned view whose reads enforce the descriptor's allowed-root invariant.
 pub struct ResolvedSnapshot {
     snapshot: Snapshot,
@@ -148,6 +162,15 @@ impl ResolvedSnapshot {
             return Err(fault(SnapshotFaultKind::RootOutside, key));
         }
         lookup(&self.snapshot, key.to_owned()).map_err(store_fault)
+    }
+
+    /// One selected record as bytes, or none for a tombstone or absence: the read an Incan caller makes, with no store
+    /// type crossing the binding.
+    pub fn read_value(&self, key: &str) -> Result<Option<Vec<u8>>, SnapshotFault> {
+        Ok(match self.read(key)? {
+            Lookup::Found(value) => Some(owned(&value)),
+            Lookup::Deleted | Lookup::Absent => None,
+        })
     }
 
     /// This resolved snapshot and its allowed roots, as the compiler's authenticated read boundary.
