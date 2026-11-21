@@ -113,6 +113,7 @@ impl BodyBuilder<'_, '_> {
         match &source {
             IncanType::Ref(borrowed)
                 if !matches!(destination, IncanType::Ref(_) | IncanType::RefMut(_))
+                    && !self.borrowed_rust_copy(borrowed)
                     && self.same_nominal_carrier(borrowed, &destination) =>
             {
                 self.materialize_borrowed_value(expr, operand, &destination, scope, out)
@@ -166,6 +167,7 @@ impl BodyBuilder<'_, '_> {
         // refused the owned destinations whose `T` has no clone.
         if let IncanType::Ref(borrowed) = &source
             && !matches!(destination, IncanType::Ref(_) | IncanType::RefMut(_))
+            && !self.borrowed_rust_copy(borrowed)
             && self.same_nominal_carrier(borrowed, destination)
         {
             return self.materialize_borrowed_value(expr, operand, destination, scope, out);
@@ -174,6 +176,19 @@ impl BodyBuilder<'_, '_> {
             return operand;
         };
         self.push_assign_temp(bir::Rvalue::Use(operand), member, scope, hir_span(expr.span), out)
+    }
+
+    /// Whether `ty` is a Rust type whose checked layout is `Copy`. An owned use of a borrow of it copies the value, as
+    /// a by-value receiver does, and never calls its `Clone`, which may be observable.
+    fn borrowed_rust_copy(&self, ty: &IncanType) -> bool {
+        let (IncanType::Named(name) | IncanType::Generic { base: name, .. }) = ty else {
+            return false;
+        };
+        self.type_info
+            .rust
+            .checked_layouts
+            .get(name.as_str())
+            .is_some_and(|layout| layout.is_copy)
     }
 
     /// Whether two types name one source nominal with the same arguments, when one is spelled by its source name and
