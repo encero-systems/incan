@@ -120,7 +120,8 @@ def binding_controls(scope: ReadScope, request: RecordRequest, found: SelectedFa
         assert_fault(reads.read(Source.returning(RecordRead.Found(reply)), request), expected)
         assert reads.counters().response_bytes == 2
         assert refused(reads.finish(), expected)
-    mut reads = RecordReads.start(scope, preparation(), [])
+    no_requests: list[RecordRequest] = []
+    mut reads = RecordReads.start(scope, preparation(), no_requests)
     assert_fault(reads.read(Source.returning(RecordRead.Found(found)), request), ReadFault.OutsidePreparation)
     assert reads.counters().operations == 0
     assert refused(reads.finish(), ReadFault.OutsidePreparation)
@@ -128,7 +129,8 @@ def binding_controls(scope: ReadScope, request: RecordRequest, found: SelectedFa
 
 def empty_controls(scope: ReadScope, payload: RecordRequest) -> None:
     """Empty activations and empty membership answers still retain schema, snapshot, profile and selector evidence."""
-    mut empty = RecordReads.start(scope, preparation(), [])
+    no_requests: list[RecordRequest] = []
+    mut empty = RecordReads.start(scope, preparation(), no_requests)
     match empty.finish():
         Ok(receipt) =>
             assert receipt.schema == "incan.compiler-fact-reads/1"
@@ -183,10 +185,11 @@ def assert_fault(result: RecordRead, expected: ReadFault) -> None:
 
 def invalid_controls(scope: ReadScope, request: RecordRequest, found: SelectedFact) -> None:
     """Invalid empty scopes and bounded replies cannot produce reusable evidence."""
-    mut invalid = RecordReads.start(ReadScope(snapshot="", profile=scope.profile), preparation(), [])
+    no_requests: list[RecordRequest] = []
+    mut invalid = RecordReads.start(ReadScope(snapshot="", profile=scope.profile), preparation(), no_requests)
     assert refused(invalid.finish(), ReadFault.InvalidEvidence)
     missing = PreparationEvidence(output=request.key, rank_certificate="certificate", selector_witnesses="")
-    mut invalid = RecordReads.start(scope, missing, [])
+    mut invalid = RecordReads.start(scope, missing, no_requests)
     assert refused(invalid.finish(), ReadFault.InvalidEvidence)
     absent = AbsentFact(scope=scope, request=request, exclusion_digest="")
     mut reads = RecordReads.start(scope, preparation(), [request])
@@ -231,7 +234,7 @@ def preparation_controls(scope: ReadScope, request: RecordRequest, found: Select
     )
     ready = ReadyWork(output=request.key, stage=ProducerStage.BodyIr, profile=profile)
     match prepared_reader(ready, snapshot, prepared):
-        Ok(reader) =>
+        Ok(mut reader) =>
             assert_found(reader.read(Source.returning(RecordRead.Found(found)), request), found)
             match reader.finish():
                 Ok(receipt) => assert receipt.scope == scope

@@ -33,7 +33,7 @@ pub def encode_body_frame(key: RecordKey, profile: str, frame: bytes) -> Result[
 pub def read_body_frame(key: RecordKey, profile: str, encoded: bytes) -> Result[bytes, str]:
     """Verify the selected owner, profile and kernel bytes before forwarding them to native checking or lowering."""
     fields = decode_graph_row(encoded, BODY_FRAME, body_description(), 4)?
-    if read_key(fields[2].value)? != key or text(fields[3].value)? != profile or key.family != "body-ir":
+    if read_key(fields[2].value.clone())? != key or text(fields[3].value)? != profile or key.family != "body-ir":
         return Err("executable owner frame belongs to another key or compiler profile")
     match (fields[0].value, fields[1].value):
         (Value.Binary(digest), Value.Binary(frame)) =>
@@ -62,7 +62,7 @@ pub def encode_eligibility(key: RecordKey, reason: Option[str]) -> Result[bytes,
 
 pub def read_eligibility(key: RecordKey, encoded: bytes) -> Result[Option[str], str]:
     fields = decode_graph_row(encoded, ELIGIBILITY, eligibility_description(), 2)?
-    if read_key(fields[0].value)? != key:
+    if read_key(fields[0].value.clone())? != key:
         return Err("eligibility belongs to another owner")
     match fields[1].value:
         Value.NoneValue => return Ok(None)

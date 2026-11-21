@@ -1,70 +1,7 @@
-"""The compiler's physical checked namespace identity, retained with its engine-selected page."""
+"""The compiler's physical checked namespace identity, retained with its engine-selected page. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
 
-from std.hash import sha256
-from std.primitives.crumb.descriptions import Description
-from std.primitives.crumb.values import Value
-from crumb_rows import ModelField, model_description, required_value
-from graph_crumb_fields import decode_graph_row, encode_graph_row, items, text
-from namespace_rows import NamespaceIdentity
-
-const SELECTOR: bytes = b"nsid01\x00"
-const MAX_PROOF_BYTES: int = 65536
-
-
-pub def namespace_proof_output_suffix() -> str:
-    """Oven requests a proof-capable output directory. Older compilers may publish their existing rows there."""
-    return ".cmpns5.graph-body-output"
-
-
-def description() -> Description:
-    return model_description(SELECTOR, "incan.checked-namespace-identity/1", [
-        ModelField(identity=b"digest", name="physical_binding", storage="binary"),
-        ModelField(identity=b"name__", name="module_name", storage="string"),
-        ModelField(identity=b"path__", name="module_path", storage="list<string>"),
-    ])
-
-
-def binding(source: str, schema: u32, name: str, path: list[str], object_digest: bytes) -> Result[bytes, str]:
-    """Each variable-width identity contributes one fixed-size SHA-256 input in declared order."""
-    if source == "" or name == "" or schema == 0u32 or len(object_digest) != 32:
-        return Err("missing checked namespace physical identity")
-    mut hasher = sha256.new()
-    hasher.update(b"incan.checked-namespace-identity/1")
-    hasher.update(sha256.digest(source.encode()))
-    hasher.update(sha256.digest(str(schema).encode()))
-    hasher.update(sha256.digest(name.encode()))
-    for segment in path:
-        if segment == "":
-            return Err("empty segment in checked namespace physical identity")
-        hasher.update(sha256.digest(segment.encode()))
-    hasher.update(object_digest)
-    return Ok(hasher.finalize_bytes())
-
-
-pub def encode_namespace_proof(source: str, schema: u32, name: str, path: list[str], object_digest: bytes) -> Result[bytes, str]:
-    """Bind a validated compiler declaration to the exact positioned bytes emitted by its writer."""
-    digest = binding(source, schema, name, path, object_digest)?
-    encoded = encode_graph_row(SELECTOR, description(), [
-        required_value(b"digest", Value.Binary(digest)),
-        required_value(b"name__", Value.Text(name)),
-        required_value(b"path__", Value.List([Value.Text(segment) for segment in path])),
-    ])?
-    if len(encoded) > MAX_PROOF_BYTES:
-        return Err("checked namespace physical identity exceeds its byte limit")
-    return Ok(encoded)
-
-
-pub def read_namespace_proof(encoded: bytes, source: str, schema: u32, object_digest: bytes) -> Result[NamespaceIdentity, str]:
-    """Authenticate the compiler's recorded identity against the requested source, reader schema and physical object."""
-    if len(encoded) > MAX_PROOF_BYTES:
-        return Err("checked namespace physical identity exceeds its byte limit")
-    fields = decode_graph_row(encoded, SELECTOR, description(), 3)?
-    name = text(fields[1].value)?
-    path = [text(segment)? for segment in items(fields[2].value)?]
-    expected = binding(source, schema, name, path, object_digest)?
-    match fields[0].value:
-        Value.Binary(actual) =>
-            if actual == expected:
-                return Ok(NamespaceIdentity(name=name, path=path))
-        _ => pass
-    return Err("checked namespace physical identity differs")
+pub from rust::internal_models_native import (
+    namespace_proof_output_suffix,
+    encode_namespace_proof,
+    read_namespace_proof,
+)

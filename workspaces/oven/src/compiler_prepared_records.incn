@@ -108,7 +108,7 @@ pub class PreparedBodyRecordSource with RecordSource:
                 _ => pass
         return reads.finish().map_err((_) => "compiled body publication produced an incomplete receipt")
 
-    def read(self, scope: ReadScope, request: RecordRequest) -> RecordRead:
+    def read(self, scope: &ReadScope, request: &RecordRequest) -> RecordRead:
         """Return one staged selection with full-value evidence, or fail when publication left it unavailable."""
         if scope != self.scope:
             return RecordRead.Failed(ReadFault.SnapshotMismatch)
@@ -133,7 +133,7 @@ pub class PreparedBodyRecordSource with RecordSource:
         mut revision = semantic
         if request.key.identity_profile == SOURCE_PROFILE:
             revision = hexlify(sha256.digest(physical))
-        evidence = RevisionEvidence(scope=scope, request=request, revision=revision, semantic_digest=semantic)
+        evidence = RevisionEvidence(scope=scope.clone(), request=request.clone(), revision=revision, semantic_digest=semantic)
         return RecordRead.Found(SelectedFact(evidence=evidence, value=selected, selection_digest=semantic))
 
 
@@ -146,7 +146,7 @@ class AdmittedPlanDigests with RecordSource:
     pub def open(scope: ReadScope, digests: Dict[str, str]) -> AdmittedPlanDigests:
         return AdmittedPlanDigests(scope=scope, digests=digests)
 
-    def read(self, scope: ReadScope, request: RecordRequest) -> RecordRead:
+    def read(self, scope: &ReadScope, request: &RecordRequest) -> RecordRead:
         if scope != self.scope or not plan_product(request.key) or request != prepared_product_request(request.key):
             return RecordRead.Failed(ReadFault.InvalidEvidence)
         key = match encode_record_key(request.key):
@@ -156,7 +156,7 @@ class AdmittedPlanDigests with RecordSource:
             return RecordRead.Failed(ReadFault.OutsidePreparation)
         # An opaque plan product uses its verified payload digest for both witnesses.
         digest = self.digests[key]
-        proof = RevisionEvidence(scope=scope, request=request, revision=digest, semantic_digest=digest)
+        proof = RevisionEvidence(scope=scope.clone(), request=request.clone(), revision=digest, semantic_digest=digest)
         return RecordRead.Found(SelectedFact(evidence=proof, value=b"", selection_digest=digest))
 
 
