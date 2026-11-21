@@ -32,7 +32,7 @@ mod declaration_validation;
 pub(crate) mod decoded_pages;
 mod graph_body_output;
 mod namespace_crumb;
-mod namespace_pages;
+pub(crate) mod namespace_pages;
 
 use checked_program::*;
 use declaration_validation::*;
@@ -404,7 +404,7 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
             final_value: record.final_fields.into(),
             body_ir: frame,
         };
-        decoded_pages::remember(digest, generation, &record);
+        decoded_pages::remember(digest, generation, &record, encoded.len());
         Ok(Some(record))
     }
 
