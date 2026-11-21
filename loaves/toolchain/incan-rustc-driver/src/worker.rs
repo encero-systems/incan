@@ -1,4 +1,4 @@
-//! The compiler worker's executable entry. The Incan worker host (`incan_worker_host`) owns the private socket, peer
+//! The compiler worker's executable entry. The worker host (`incan_worker_host_native`) owns the private socket, peer
 //! identity, the `incan.compiler-worker/1` protocol and every lifecycle decision. This entry asks the host for one
 //! request at a time, runs it through the entry point its short-lived command uses, and gives the host the outcome
 //! together with the process's physical footprint. A compiler panic is contained here and the adapter's process-global
@@ -10,13 +10,15 @@
 //! in the platform's `release_free_heap`. The caller watch is a thread that observes the caller's socket while the
 //! compiler runs: dev.8 Incan cannot hand a socket to a thread, because a closure for `std::thread::spawn` cannot own a
 //! value without a native `Clone`, and shared carriers (`Arc`, channels, the platform's `Connection`) lack retained
-//! `Send` evidence. What a departed caller means is the host's decision (`incan_worker_host::abandon`).
+//! `Send` evidence. What a departed caller means is the host's decision (`incan_worker_host_native::abandon`).
 
 use std::io::PipeWriter;
 use std::os::fd::{AsRawFd, RawFd};
 use std::path::Path;
 
-use incan_worker_host::{ActivationOutcome, CallerWatch, CompileRequest, WorkerActivation, WorkerCommand, WorkerHost};
+use incan_worker_host_native::{
+    ActivationOutcome, CallerWatch, CompileRequest, WorkerActivation, WorkerCommand, WorkerHost,
+};
 
 use crate::frontend::UnitCompiled;
 
@@ -24,13 +26,13 @@ mod console;
 
 /// Serve the requests the worker host admits until it retires.
 pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    let mut host = incan_worker_host::start(&arguments.to_vec())?;
-    let home = incan_worker_host::selected_home(&host);
-    while let Some(activation) = incan_worker_host::next_activation(&mut host) {
+    let mut host = incan_worker_host_native::start(arguments)?;
+    let home = incan_worker_host_native::selected_home(&host);
+    while let Some(activation) = incan_worker_host_native::next_activation(&mut host) {
         match activation {
             WorkerActivation::Compile(request) => {
                 let mut timing = crate::native_timing::Timing::requested();
-                let watch = incan_worker_host::caller_watch(&mut host)
+                let watch = incan_worker_host_native::caller_watch(&mut host)
                     .map(|watch| Abandonment::watch(watch, request.retire_after));
                 let outcome = activate(&request, &host);
                 timing.mark("worker_compiled");
@@ -52,13 +54,13 @@ pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Erro
                     one_activation = request.retire_after,
                     "compiler worker settlement"
                 );
-                incan_worker_host::complete(&mut host, &outcome, resident_bytes, live_bytes);
+                incan_worker_host_native::complete(&mut host, &outcome, resident_bytes, live_bytes);
                 timing.mark("worker_completed");
             }
             WorkerActivation::Record(request) => {
                 let reply = crate::compiler_record_service::activate(request, &home);
                 incan_platform::release_free_heap();
-                incan_worker_host::complete_record(&mut host, reply, footprint(), live_heap());
+                incan_worker_host_native::complete_record(&mut host, reply, footprint(), live_heap());
             }
         }
     }
@@ -104,7 +106,7 @@ fn run(
 ) -> Result<ActivationOutcome, Box<dyn std::error::Error>> {
     let status = match command {
         WorkerCommand::Unit => {
-            let hands_off = || incan_worker_host::hands_rustc_off(host, footprint());
+            let hands_off = || incan_worker_host_native::hands_rustc_off(host, footprint());
             return Ok(match crate::frontend::compile_resident(arguments, &hands_off)? {
                 UnitCompiled::InProcess => ActivationOutcome::Exited(0),
                 UnitCompiled::HandedOff(path) => ActivationOutcome::HandedOff(path.to_string_lossy().into_owned()),
@@ -175,7 +177,7 @@ impl Abandonment {
         let Ok(descriptor) = RawFd::try_from(watch.descriptor) else {
             return Self::unobserved();
         };
-        let mut observer = Self::observe(descriptor, move || incan_worker_host::abandon(&watch));
+        let mut observer = Self::observe(descriptor, move || incan_worker_host_native::abandon(&watch));
         observer.retiring = retiring;
         observer
     }
