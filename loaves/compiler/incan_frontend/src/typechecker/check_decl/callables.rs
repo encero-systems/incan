@@ -208,12 +208,16 @@ impl TypeChecker {
         let previous_annotation_owner = self.prepare_function_generic_context(func);
 
         // ---- Signature defaults and frame bindings ----
+        let route = self.result_route(&func.params, &func.return_type, func.result_source.as_ref());
         let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(
             &func.params,
-            self.signature_keeps_explicit_borrows(&func.params, &func.return_type, func.result_source.as_ref()),
+            self.signature_keeps_explicit_borrows(&func.params, &route.result, route.source),
             super::ownership_contracts::direct_function_boundary(func),
         );
-        let return_type = self.resolve_callable_return_annotation(&func.return_type, func.result_source.is_some());
+        let return_type = self.resolve_callable_return_annotation(&route.result, route.source.is_some());
+        if let Some(source) = route.native_source {
+            self.check_native_result_elision(&func.name, &func.params, source, None);
+        }
         self.record_function_ownership(func, decl_span, &resolved_param_types, &return_type);
         self.check_route_handler_signature(func, &return_type, &resolved_param_types);
 

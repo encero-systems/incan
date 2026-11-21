@@ -9,8 +9,8 @@ impl TypeChecker {
         let type_params: Vec<String> = func.type_params.iter().map(|tp| tp.name.clone()).collect();
         let (type_param_bounds, type_param_bound_details) = self.collect_function_type_param_bounds(&func.type_params);
 
-        let explicit_borrows =
-            self.signature_keeps_explicit_borrows(&func.params, &func.return_type, func.result_source.as_ref());
+        let route = self.result_route(&func.params, &func.return_type, func.result_source.as_ref());
+        let explicit_borrows = self.signature_keeps_explicit_borrows(&func.params, &route.result, route.source);
         let params: Vec<_> = func
             .params
             .iter()
@@ -25,7 +25,7 @@ impl TypeChecker {
                     .with_surface_type_name(surface_type_name)
             })
             .collect();
-        let return_type = self.resolve_type_checked(&func.return_type);
+        let return_type = self.resolve_type_checked(&route.result);
         let binding = FunctionBindingInfo {
             is_async: func.is_async(),
             params: params.clone(),

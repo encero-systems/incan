@@ -44,6 +44,7 @@
 
 pub(crate) mod body_check;
 mod body_ir_classes;
+mod borrowed_results;
 mod capturing_callables;
 mod check_decl;
 mod check_work;
@@ -587,6 +588,8 @@ pub struct TypeChecker {
     native_local_borrows: std::collections::BTreeMap<CanonicalSymbolId, ownership_contracts::LocalMode>,
     /// Whether the ownership pass being built reports loan conflicts only; only then are native local borrows loans.
     native_borrow_pass: bool,
+    /// While a native borrowed result's body is checked, what its returns must be reached from.
+    native_result_reach: Option<borrowed_results::NativeResultReach>,
     /// Callable bodies containing an optional dictionary lookup whose matched payload may borrow its stored entry.
     /// The marker only activates canonical graph construction and is consumed when that body is finalized.
     dictionary_lookup_bodies: HashSet<CanonicalSymbolId>,
