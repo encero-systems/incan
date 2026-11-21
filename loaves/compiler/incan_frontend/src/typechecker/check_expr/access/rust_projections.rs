@@ -42,6 +42,18 @@ impl TypeChecker {
         self.rust_associated_type_at_depth(ty, trait_path, &[], member, 0)
     }
 
+    /// Resolve a named associated type of the impl selected by explicit trait arguments, such as
+    /// `Index<usize>::Output`, only when one closed impl template supplies its value.
+    pub(in crate::typechecker) fn rust_associated_type_for(
+        &self,
+        ty: &ResolvedType,
+        trait_path: &str,
+        trait_arguments: &[ResolvedType],
+        member: &str,
+    ) -> Option<ResolvedType> {
+        self.rust_associated_type_at_depth(ty, trait_path, trait_arguments, member, 0)
+    }
+
     /// Resolve an associated type of a native binder's inferred binding. Native inference spells a native collection
     /// as its source carrier (`Vec<String>` as `list[str]`), which has no metadata owner of its own; the carrier
     /// answers through the native owner it is stored as. Ordinary associated-type queries keep source collections

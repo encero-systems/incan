@@ -1,0 +1,22 @@
+# behavior: a function returns an owned model boxed as `Box[Any]`, a native trait object with its default `'static` bound, and the program runs (#2945)
+# expect-stdout:
+#   boxed
+#   boxed
+
+from rust::std::any import Any
+from rust::std::boxed import Box
+
+
+model Original:
+    pub detail: str
+
+
+def retain(value: Original) -> Box[Any]:
+    return Box.new(value)
+
+
+def main() -> None:
+    first = retain(Original(detail="kept exactly"))
+    second = retain(Original(detail="kept again"))
+    println("boxed")
+    println("boxed")

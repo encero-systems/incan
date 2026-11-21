@@ -12,6 +12,9 @@ use incan_lang::lang::types::numerics::NumericTypeId;
 
 const DEREF_TRAIT: &str = "std::ops::Deref";
 const DEREF_MUT_TRAIT: &str = "std::ops::DerefMut";
+const INDEX_TRAIT: &str = "std::ops::Index";
+/// The native helper that reads one element of a container through its `Index` impl as an owned copy (#2977).
+const INDEX_VALUE_PATH: &str = "incan_std_primitives::collections::index_value";
 
 impl TypeChecker {
     /// Select byte slicing from the inspected native carrier and its instantiated Deref targets. The checked call
@@ -78,6 +81,47 @@ impl TypeChecker {
             owner = target;
         }
         None
+    }
+
+    /// Select indexing of a native container through the `Index` impl its metadata names for the index's type
+    /// (#2977). The element is that impl's `Output`, read by `incan_std_primitives::collections::index_value` as a
+    /// copy the container keeps, so Body IR receives an ordinary native call. A container with no such impl is not
+    /// admitted here.
+    pub(super) fn retain_rust_index(
+        &mut self,
+        base: &Spanned<Expr>,
+        source: &ResolvedType,
+        index_ty: &ResolvedType,
+        span: Span,
+    ) -> Option<ResolvedType> {
+        if let Expr::Paren(inner) = &base.node {
+            return self.retain_rust_index(inner, source, index_ty, span);
+        }
+        let mut owner = self.rust_native_value_type(base).unwrap_or_else(|| source.clone());
+        while let ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) = owner {
+            owner = *inner;
+        }
+        self.rust_canonical_path_for_receiver_type(&owner)?;
+        let output = self.rust_associated_type_for(&owner, INDEX_TRAIT, std::slice::from_ref(index_ty), "Output")?;
+        self.type_info.rust.checked_calls.insert(
+            span,
+            RustCheckedCall {
+                storage: None,
+                source_type_parameters: self.native_call_type_parameters(),
+                signature_loans: Vec::new(),
+                receiver_adjustments: Vec::new(),
+                path: INDEX_VALUE_PATH.into(),
+                type_arguments: vec![owner.clone(), index_ty.clone()],
+                parameters: vec![
+                    CallableParam::positional(ResolvedType::Ref(Box::new(owner))),
+                    CallableParam::positional(index_ty.clone()),
+                ],
+                return_type: output.clone(),
+                result_item_path: None,
+                has_receiver: false,
+            },
+        );
+        Some(output)
     }
 
     /// Resolve a public field through metadata-selected shared Deref targets. Retain the same field identity and

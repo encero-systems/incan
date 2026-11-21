@@ -131,6 +131,19 @@ pub fn list_contains<T: PartialEq>(list: &[T], value: &T) -> bool {
     list.contains(value)
 }
 
+/// Read one element of a native container through its `Index` impl, as a copy the container keeps (#2977).
+///
+/// Incan's `container[index]` on a Rust container reads its `Index::Output` by value; the container stays whole.
+#[inline]
+#[must_use]
+pub fn index_value<C, I>(container: &C, index: I) -> C::Output
+where
+    C: core::ops::Index<I> + ?Sized,
+    C::Output: Clone + Sized,
+{
+    container[index].clone()
+}
+
 /// Whether a list does *not* contain a value, by equality.
 ///
 /// A real function rather than a negated [`list_contains`] call, mirroring the `str_contains`/`str_not_contains`

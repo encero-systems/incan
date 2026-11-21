@@ -156,6 +156,12 @@ impl TypeChecker {
             ));
             return option_ty(ResolvedType::Named(stdlib::JSON_VALUE_TYPE_NAME.to_string()));
         }
+        // A native container that no source type names is indexed through its own `Index` impl (#2977).
+        if self.is_native_index_receiver(&base_ty)
+            && let Some(output) = self.retain_rust_index(base, &base_ty, &index_ty, span)
+        {
+            return output;
+        }
 
         match base_ty {
             ResolvedType::Generic(name, args) => match collection_type_id(name.as_str()) {
@@ -170,7 +176,7 @@ impl TypeChecker {
                     let key_ty = &args[0];
                     if self.types_compatible(&index_ty, key_ty) {
                         // A numeric key of a narrower type is widened to the key type where it is lowered (RFC 009).
-                        self.record_value_destination_if_compatible(index.span, &index_ty, key_ty);
+                        self.record_read_destination_if_compatible(index.span, &index_ty, key_ty);
                     } else {
                         self.errors.push(errors::index_type_mismatch(
                             &key_ty.to_string(),
@@ -220,7 +226,7 @@ impl TypeChecker {
             ResolvedType::FrozenDict(key_ty, value_ty) => {
                 let text_probe_for_text_key = is_str_like(&index_ty) && is_str_like(&key_ty);
                 if !text_probe_for_text_key && self.types_compatible(&index_ty, &key_ty) {
-                    self.record_value_destination_if_compatible(index.span, &index_ty, &key_ty);
+                    self.record_read_destination_if_compatible(index.span, &index_ty, &key_ty);
                 } else if !text_probe_for_text_key {
                     self.errors.push(errors::index_type_mismatch(
                         &key_ty.to_string(),
@@ -241,6 +247,22 @@ impl TypeChecker {
                 }
             }
             _ => ResolvedType::Unknown,
+        }
+    }
+
+    /// Whether an indexed receiver can only be a native container: a Rust path, or a named or applied type that is no
+    /// builtin collection and no source declaration (#2977). Source collections and types keep their own indexing.
+    fn is_native_index_receiver(&self, ty: &ResolvedType) -> bool {
+        if self.is_std_json_value_type(ty) || self.is_user_operator_receiver(ty) {
+            return false;
+        }
+        match ty {
+            ResolvedType::RustPath(_) => true,
+            ResolvedType::Generic(name, _) => {
+                collection_type_id(name.as_str()).is_none() && self.lookup_semantic_type_info(name).is_none()
+            }
+            ResolvedType::Named(name) => self.lookup_semantic_type_info(name).is_none(),
+            _ => false,
         }
     }
 
