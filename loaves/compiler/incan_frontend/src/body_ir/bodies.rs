@@ -46,6 +46,9 @@ pub(super) fn lower_owner_method_bodies(
             if documented_trait_value_placeholder(method, &receiver_ty, lowering_facts.type_info) {
                 return None;
             }
+            if let Some(body) = lowering_facts.type_info.selected_callable_body(method.span) {
+                return Some(body.clone());
+            }
             lower_method_body(&method.node, method.span, owner_name, &receiver_ty, lowering_facts)
         })
         .collect()
@@ -128,6 +131,7 @@ fn lower_declaration_statements(
             let owner_return_type = builder.owner_return_type.clone();
             return_trailing_value(&owner_return_type, &mut stmts);
             builder.insert_scope_drops(&mut stmts, root_scope);
+            builder.transfer_at_last_reads(&mut stmts);
         }
     }
     stmts
@@ -266,6 +270,8 @@ pub(super) fn lower_function_body(
     decl_span: ast::Span,
     lowering_facts: &BodyIrLoweringFacts<'_, '_>,
 ) -> bir::Body {
+    tracing::trace!(target: "incan::invocation", phase = "body-ir", action = "lower", kind = "function",
+        module = lowering_facts.module_identity, owner = %function.name, input = ?decl_span, "compiler work");
     let direct_call_id = CompilerNodeId::declaration_at(lowering_facts.module_identity, decl_span);
     let decl_id = direct_call_id.clone();
     // The bare-name map is a compatibility projection and collapses top-level overloads. A body is one physical
@@ -420,6 +426,8 @@ pub(super) fn lower_method_body(
     lowering_facts: &BodyIrLoweringFacts<'_, '_>,
 ) -> Option<bir::Body> {
     let body_stmts = method.body.as_ref()?;
+    tracing::trace!(target: "incan::invocation", phase = "body-ir", action = "lower", kind = "method",
+        module = lowering_facts.module_identity, nominal = owner_name, owner = %method.name, input = ?decl_span, "compiler work");
     let checked_receiver = lowering_facts.type_info.qualify_semantic_type(receiver_ty.clone());
     let receiver_ty = &checked_receiver;
 

@@ -7,6 +7,9 @@
 //! mutation contract and complete assignment operations. Physical locators must also match; a semantic digest alone
 //! never grants a hit.
 
+mod wire;
+pub use wire::{CallableCheckerRows, CallableRowFamily};
+
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -568,6 +571,11 @@ impl ValidatedCallableBodies {
                 continue;
             }
             checker.retain_declaration_record(declaration.span, entry.declaration.clone());
+            if checker.graph_selects_body(current.identity()) {
+                // The graph restores the local and final values in the current lexical frame. Installing a scalar
+                // body here would bypass that reconstruction and the completed module's physical-input check.
+                continue;
+            }
             if !entry.local.is_empty() {
                 checker.retain_local_record(declaration.span, entry.local.clone());
             }

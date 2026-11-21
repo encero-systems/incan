@@ -58,21 +58,19 @@ impl TypeChecker {
         manifest: &LibraryManifest,
     ) -> HashMap<String, String> {
         let mut remapping = HashMap::new();
-        let public_names = manifest
-            .contract_metadata
-            .identity_graph
-            .exports
-            .iter()
-            .map(|entry| entry.public_name.clone())
-            .collect::<Vec<_>>();
-        for public_name in public_names {
-            let Some(identity) = self.public_library_nominal_type_identity(library, manifest, &public_name) else {
+        let mut seen = HashSet::new();
+        for entry in &manifest.contract_metadata.identity_graph.exports {
+            let public_name = entry.public_name.as_str();
+            if entry.public_path.len() != 2 || !seen.insert(public_name) {
+                continue;
+            }
+            let Some(identity) = self.public_library_nominal_type_identity(library, manifest, public_name) else {
                 continue;
             };
-            let canonical_name = canonical_public_library_type_name(library, &public_name);
+            let canonical_name = canonical_public_library_type_name(library, public_name);
             self.public_library_type_identities
                 .insert(canonical_name.clone(), identity);
-            remapping.insert(public_name, canonical_name);
+            remapping.insert(public_name.to_owned(), canonical_name);
         }
         remapping.extend(self.public_library_foreign_type_remapping(library, manifest));
         remapping
@@ -504,11 +502,20 @@ impl TypeChecker {
         manifest: &LibraryManifest,
         public_name: &str,
     ) -> Option<PublicLibraryTypeIdentity> {
-        self.manifest_nominal_type_info(manifest, public_name)?;
         let entry = manifest
             .contract_metadata
             .identity_graph
             .entry_for_public_name(public_name)?;
+        match Self::find_manifest_export(manifest, public_name)? {
+            ManifestExportRef::Model(_)
+            | ManifestExportRef::Class(_)
+            | ManifestExportRef::Enum(_)
+            | ManifestExportRef::Newtype(_) => {}
+            ManifestExportRef::Alias(_) => {
+                self.manifest_nominal_type_info(manifest, public_name)?;
+            }
+            _ => return None,
+        }
         let source_path = entry.target_path().unwrap_or(entry.source_path.as_slice());
         Some(self.admitted_public_type_identity(
             library,
