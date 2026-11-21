@@ -3,6 +3,7 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use crate::plan::{CalleeKind, Constant, Operand, OperandKind, Plan, PlanType, RvalueKind, StatementKind};
 use incan_driver::unit::UnitLoaf;
@@ -203,17 +204,18 @@ pub(crate) fn callee_root(path: &str) -> Option<&str> {
 /// dependency. Repeated extern declarations must select the same artifact; conflicting bindings grant no root.
 ///
 /// The resolver's map of extern declarations lists exactly the `extern crate` items and the crates they bind, so a
-/// lookup reads those few items instead of every item of the crate.
+/// lookup reads those few items instead of every item of the crate. During a native compilation it is read once,
+/// after expansion and outside any query ([`bind_extern_crates`]): the resolver's outputs are not hashed, so a query
+/// that read them would be recomputed in every incremental session, and with it every function whose native body
+/// names a crate. The bindings change only with the unit's dependencies, which rustc's incremental state is keyed by.
 pub(crate) fn root(tcx: TyCtxt<'_>, name: &str) -> Option<DefId> {
     if name == "crate" {
         return Some(rustc_hir::def_id::LOCAL_CRATE.as_def_id());
     }
-    let imported: UnordSet<CrateNum> = tcx
-        .resolutions(())
-        .extern_crate_map
-        .items()
-        .filter_map(|(item, krate)| (extern_crate_alias(tcx, *item)?.as_str() == name).then_some(*krate))
-        .collect();
+    let imported: UnordSet<CrateNum> = match bound_extern_crates() {
+        Some(bound) => named_crates(&bound, name),
+        None => named_crates(&extern_crates(tcx), name),
+    };
     if !imported.is_empty() {
         return imported.get_only().map(|krate| krate.as_def_id());
     }
@@ -226,6 +228,45 @@ pub(crate) fn root(tcx: TyCtxt<'_>, name: &str) -> Option<DefId> {
         return None;
     }
     Some(found)
+}
+
+/// Each `extern crate` item's binding: the name it binds and the crate it imports.
+fn extern_crates(tcx: TyCtxt<'_>) -> UnordSet<(String, CrateNum)> {
+    tcx.resolutions(())
+        .extern_crate_map
+        .items()
+        .filter_map(|(item, krate)| Some((extern_crate_alias(tcx, *item)?.as_str().to_owned(), *krate)))
+        .collect()
+}
+
+/// The crates bound to `name`.
+fn named_crates(bound: &UnordSet<(String, CrateNum)>, name: &str) -> UnordSet<CrateNum> {
+    bound
+        .items()
+        .filter(|(alias, _)| alias == name)
+        .map(|(_, krate)| *krate)
+        .collect()
+}
+
+/// The current native compilation's `extern crate` bindings, read once after expansion.
+static EXTERN_CRATES: Mutex<Option<Arc<UnordSet<(String, CrateNum)>>>> = Mutex::new(None);
+
+/// Read this compilation's `extern crate` bindings once, outside any query, for the roots its native bodies name.
+pub(crate) fn bind_extern_crates(tcx: TyCtxt<'_>) {
+    if let Ok(mut slot) = EXTERN_CRATES.lock() {
+        *slot = Some(Arc::new(extern_crates(tcx)));
+    }
+}
+
+/// Forget the bindings when a native compilation ends; their crate numbers belong to its session.
+pub(crate) fn release_extern_crates() {
+    if let Ok(mut slot) = EXTERN_CRATES.lock() {
+        *slot = None;
+    }
+}
+
+fn bound_extern_crates() -> Option<Arc<UnordSet<(String, CrateNum)>>> {
+    EXTERN_CRATES.lock().ok()?.clone()
 }
 
 /// The name an `extern crate` item binds: its alias, or for `as _` the crate it names.
