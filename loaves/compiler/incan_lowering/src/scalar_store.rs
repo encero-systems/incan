@@ -536,7 +536,9 @@ fn publish_record(directory: &str, inputs: &[String], encoded: &[u8]) -> Result<
 
 #[cfg(test)]
 mod tests {
-    use incan_mir_plan_native::{Function, Local, PlanType, TerminatorKind, block, source_span, unit_nominals};
+    use incan_mir_plan_native::{
+        Callee, CalleeKind, Function, Local, PlanType, TerminatorKind, Unwind, block, place, source_span, unit_nominals,
+    };
 
     use super::{retain_scalar, retained_scalar, scalar_inputs, scalar_path};
 
@@ -616,6 +618,75 @@ mod tests {
         assert!(retained_scalar(&directory, &changed, &unit, Some(&span), &[]).is_none());
         let path = scalar_path(&directory, &inputs).expect("path");
         std::fs::write(&path, b"not a product").expect("damage");
+        assert!(retained_scalar(&directory, &inputs, &unit, Some(&span), &[]).is_none());
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    /// A unit function whose one call reaches a computed static through `kind`.
+    fn touching_static(name: &str, kind: CalleeKind) -> Function {
+        let span = source_span("src/main.incn", 3, 1);
+        let locals = vec![
+            Local {
+                ty: PlanType::Unit,
+                span: span.clone(),
+            },
+            Local {
+                ty: PlanType::Int,
+                span: span.clone(),
+            },
+        ];
+        let read = TerminatorKind::Call(
+            Callee {
+                kind,
+                span: span.clone(),
+            },
+            Vec::new(),
+            place(1, &span),
+            1,
+            Unwind::Continue,
+        );
+        let blocks = vec![
+            block(Vec::new(), read, &span),
+            block(Vec::new(), TerminatorKind::Return, &span),
+        ];
+        Function::new(name.to_owned(), Vec::new(), PlanType::Unit, locals, blocks, span)
+    }
+
+    /// Plans name statics by slot, and a static added to an earlier module shifts every later slot. A product never
+    /// holds one: a function that reads, writes or forces a static, or calls a method under its guard, is refused as
+    /// a product, so no reused product can reach a shifted cell; only its module initializer call is stored, by name.
+    #[test]
+    fn a_function_that_touches_a_static_is_never_kept_as_a_product() {
+        let directory = product_directory("static");
+        let span = source_span("src/main.incn", 3, 1);
+        let inputs = scalar_inputs("sha256:ab", "main", &span, false, "witness");
+        let kinds = [
+            CalleeKind::StaticLoad(0),
+            CalleeKind::StaticStore(1),
+            CalleeKind::StaticForce(2),
+            CalleeKind::StaticMethod(3, "push".into()),
+        ];
+        for kind in kinds {
+            let refused = retain_scalar(
+                &directory,
+                &inputs,
+                &touching_static("main", kind),
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+            );
+            assert!(
+                refused.is_err_and(|reason| reason.contains("refuse dynamic or owner-dependent callees")),
+                "a product kept a static slot"
+            );
+        }
+        assert!(
+            !scalar_path(&directory, &inputs).expect("path").is_file(),
+            "a product holding a static slot was written"
+        );
+        let unit = unit_nominals(Vec::new(), Vec::new(), Vec::new(), Vec::new());
         assert!(retained_scalar(&directory, &inputs, &unit, Some(&span), &[]).is_none());
         let _ = std::fs::remove_dir_all(&directory);
     }
