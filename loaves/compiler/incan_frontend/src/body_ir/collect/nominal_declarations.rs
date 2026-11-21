@@ -72,7 +72,9 @@ pub(in crate::body_ir) fn collect_local_enum_declarations(
                     .collect(),
                 variants,
                 derives: type_info.declarations.enum_derives.get(&value.name)?.clone(),
-                named_type_identities: std::sync::Arc::clone(parameter_types::shared_retained_type_identities(type_info)),
+                named_type_identities: std::sync::Arc::clone(parameter_types::shared_retained_type_identities(
+                    type_info,
+                )),
             })
         })
         .collect()
@@ -204,7 +206,9 @@ pub(in crate::body_ir) fn collect_local_nominal_declarations(
                 newtype_deserialize: bir::NewtypeDeserialize::Unselected,
                 newtype_string_conversion: bir::NewtypeStringConversion::Unselected,
                 field_types: nominal_field_types(fields, class_layout, &type_parameters, type_info),
-                named_type_identities: std::sync::Arc::clone(parameter_types::shared_retained_type_identities(type_info)),
+                named_type_identities: std::sync::Arc::clone(parameter_types::shared_retained_type_identities(
+                    type_info,
+                )),
                 type_parameter_count: type_parameters.len(),
                 type_parameters,
             };

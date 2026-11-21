@@ -53,7 +53,6 @@ from release_support import (
     require_candidate_census,
     same_bytes,
     seed_toolchain_directory,
-    shared_relocated_sysroot,
     signal_release_termination,
     start_background_step,
     store_reference_log,
@@ -61,6 +60,7 @@ from release_support import (
     tree_digest,
     verification_program,
 )
+from relocated_sysroot import shared_relocated_sysroot
 from verify_installation import (
     audit_relocation,
     census_arguments,

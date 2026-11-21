@@ -1,0 +1,282 @@
+"""Source projections for compiled-body publication: the projection refusal preflight, owner and dependency owner
+records selected from a recreated projection, and the dependency read and signature keys they expose."""
+
+from std.fs import Path
+from std.environ import get_or
+from rust::incan_semantics_core import encode_incan_symbol_identity
+from rust::incan_semantics_core::executable_representation import decode_owner
+from pub::internal_models import CompiledBodyDependencyRead, CompiledBodyValue
+from pub::internal_models.records import RecordKey
+from compiler_body_keys import project_declaration_slot
+from compiler_source_projection import (
+    SourceProjection,
+    SourceProjectionRecord,
+    compiled_owner_source,
+    project_source,
+    signature_record,
+)
+from compiler_projection_cache import (
+    cached_editable_dependency_signature_record,
+    cached_project_signature_record,
+    project_dependency_module,
+)
+from unit import UnitDescription, dependency_source_roots
+from pub::internal_models import record_root
+
+
+pub enum OwnerRecordFault(str):
+    """Closed owner-selection failures so retained history skips only an owner that is genuinely absent."""
+
+    Absent = "absent"
+    Ambiguous = "ambiguous"
+
+
+@derive(Eq)
+pub enum ProjectionRefusalMode(str):
+    """Whether body publication stops at its first projection refusal or lists every preflight refusal."""
+
+    Default = "default"
+    List = "list"
+
+
+pub def projection_refusal_mode() -> Result[ProjectionRefusalMode, str]:
+    """Select the diagnosis-only preflight without changing ordinary fail-first publication."""
+    selected = get_or("OVEN_BODY_REFUSALS", ProjectionRefusalMode.Default.value())
+    if selected == ProjectionRefusalMode.Default.value():
+        return Ok(ProjectionRefusalMode.Default)
+    if selected == ProjectionRefusalMode.List.value():
+        return Ok(ProjectionRefusalMode.List)
+    return Err("OVEN_BODY_REFUSALS must be default or list")
+
+
+pub def projection_refusals(unit: UnitDescription, origin: str, values: list[CompiledBodyValue]) -> list[str]:
+    """Preflight every body and editable-source dependency projection, retaining one refusal per reference."""
+    mut refusals: list[str] = []
+    editable_packages = [dependency[0] for dependency in dependency_source_roots(unit)]
+    for value in values:
+        match source_projection(unit, origin, value.module):
+            Err(reason) => refusals.append(body_projection_refusal(reason, value))
+            Ok(projection) =>
+                match compiled_owner_source(projection, value.module, value.name, value.identity):
+                    Err(reason) => refusals.append(body_projection_refusal(reason, value))
+                    Ok(_) => pass
+        for dependency in value.dependency_reads:
+            match dependency.package:
+                Some(package) =>
+                    if package in editable_packages:
+                        match dependency_owner_record(
+                            unit,
+                            package,
+                            dependency.module,
+                            dependency.name,
+                            dependency.identity,
+                        ):
+                            Err(reason) => refusals.append(
+                                dependency_projection_refusal(
+                                    reason,
+                                    value.module,
+                                    value.name,
+                                    value.identity,
+                                    dependency,
+                                ),
+                            )
+                            Ok(_) => pass
+                None =>
+                    match project_dependency_module(unit, dependency.module):
+                        Err(reason) => refusals.append(
+                            dependency_projection_refusal(reason, value.module, value.name, value.identity, dependency),
+                        )
+                        Ok(module) =>
+                            match source_projection(unit, origin, module):
+                                Err(reason) => refusals.append(
+                                    dependency_projection_refusal(
+                                        reason,
+                                        value.module,
+                                        value.name,
+                                        value.identity,
+                                        dependency,
+                                    ),
+                                )
+                                Ok(_) =>
+                                    match project_signature_record(
+                                        unit,
+                                        origin,
+                                        dependency.module,
+                                        dependency.name,
+                                        dependency.identity,
+                                    ):
+                                        Err(reason) => refusals.append(
+                                            dependency_projection_refusal(
+                                                reason,
+                                                value.module,
+                                                value.name,
+                                                value.identity,
+                                                dependency,
+                                            ),
+                                        )
+                                        Ok(_) => pass
+    return refusals
+
+
+def body_projection_refusal(reason: str, value: CompiledBodyValue) -> str:
+    """Retain the exact body owner on a source-projection or owner-selection refusal."""
+    return (reason + f"; body_owner={value.module}:{value.name}; body_identity={value.identity}; module={value.module}")
+
+
+pub def source_projection(unit: UnitDescription, origin: str, module: str) -> Result[SourceProjection, str]:
+    """Recreate one already-published projection to select its logical owner and header keys."""
+    path = Path(unit.project_root).joinpath(module)
+    source = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    return project_source(origin, module, source, unit.declared_features, Some(unit.active_features))
+
+
+pub def retained_owner_record(projection: SourceProjection, name: str) -> Result[Option[SourceProjectionRecord], str]:
+    """Skip only an absent retained owner while propagating every malformed owner-selection state."""
+    match owner_record(projection, name):
+        Ok(value) => return Ok(Some(value))
+        Err(OwnerRecordFault.Absent) => return Ok(None)
+        Err(OwnerRecordFault.Ambiguous) => return Err(owner_record_message(OwnerRecordFault.Ambiguous, name))
+
+
+def owner_record(projection: SourceProjection, name: str) -> Result[SourceProjectionRecord, OwnerRecordFault]:
+    """Select exactly one compiled owner's source record across callable and kind-qualified declaration facets."""
+    mut selected: Option[SourceProjectionRecord] = None
+    for owner in projection.owners:
+        if owner.key.facet == name or owner.key.facet.endswith(":" + name):
+            match selected:
+                Some(_) => return Err(OwnerRecordFault.Ambiguous)
+                None =>
+                    selected = Some(owner)
+    match selected:
+        Some(owner) => return Ok(owner)
+        None => return Err(OwnerRecordFault.Absent)
+
+
+def owner_record_message(error: OwnerRecordFault, name: str) -> str:
+    """Render one closed owner-selection refusal at the surrounding string-error boundary."""
+    match error:
+        OwnerRecordFault.Absent => return "compiled body output has no matching owner source: " + name
+        OwnerRecordFault.Ambiguous => return "compiled body output has multiple matching owner sources: " + name
+
+
+pub def dependency_owner(
+    projection: &SourceProjection,
+    module: str,
+    name: str,
+    identity: str,
+) -> Result[SourceProjectionRecord, str]:
+    """Select one dependency declaration through the stable identity emitted by its checked consumer."""
+    return compiled_owner_source(projection, module, name, identity)
+
+
+def dependency_owner_record(
+    unit: UnitDescription,
+    package: str,
+    module: str,
+    name: str,
+    identity: str,
+) -> Result[SourceProjectionRecord, str]:
+    """Read one compiler-witnessed editable dependency owner from its described logical module root and identity."""
+    mut root = ""
+    for dependency in dependency_source_roots(unit):
+        if dependency[0] == package:
+            root = dependency[1]
+    if root == "":
+        return Err("compiled body output names an unselected editable dependency: " + package)
+    base = Path(root).joinpath(module)
+    mut candidates = [Path(base.0 + ".incn"), base.joinpath("mod.incn"), base.joinpath("__init__.incn")]
+    if "/" in module:
+        candidates.append(base.joinpath("prelude.incn"))
+    for candidate in candidates:
+        if candidate.is_file():
+            source = candidate.read_text("utf-8", "strict").map_err((error) => error.message())?
+            return dependency_owner(project_source(package, module, source)?, module, name, identity)
+    return Err(f"compiled body output dependency module is absent: {package}:{module}")
+
+
+pub def lowering_symbol(identity: str, body_ir: bytes) -> Result[str, str]:
+    """Decode one fresh Body IR owner once and index its canonical lowering identity."""
+    decoded = decode_owner(body_ir).map_err((error) => f"cannot decode graph-eligible Body IR owner: {error}")?
+    if decoded.identity != identity:
+        return Err("graph-eligible Body IR owner disagrees with its stable publication identity")
+    match decoded.body.canonical:
+        Some(canonical) => return Ok(encode_incan_symbol_identity(canonical))
+        None => return Ok("")
+
+
+pub def dependency_read_key(
+    projections: &Dict[str, SourceProjection],
+    unit: UnitDescription,
+    origin: str,
+    dependency: CompiledBodyDependencyRead,
+    editable_packages: list[str],
+) -> Result[Option[RecordKey], str]:
+    """Select the producer declaration for a project read or the existing editable-package source witness."""
+    match dependency.package:
+        Some(package) =>
+            if package in editable_packages:
+                return Ok(
+                    Some(
+                        cached_editable_dependency_signature_record(
+                            projections,
+                            package,
+                            dependency.module,
+                            dependency.name,
+                            dependency.identity,
+                        )?.key,
+                    ),
+                )
+            return Ok(None)
+        None => return Ok(Some(project_declaration_slot(origin, dependency.module, dependency.name, dependency.identity)))
+
+
+pub def dependency_projection_refusal(
+    error: str,
+    owner_module: str,
+    owner_name: str,
+    owner_identity: str,
+    dependency: CompiledBodyDependencyRead,
+) -> str:
+    """Attach the producing body owner and checked reference subject to one dependency source refusal."""
+    return (error + f"; body_owner={owner_module}:{owner_name}; body_identity={owner_identity}" + f"; reference_subject={dependency.reference_subject}")
+
+
+def project_signature_record(
+    unit: UnitDescription,
+    origin: str,
+    module: str,
+    name: str,
+    identity: str,
+) -> Result[SourceProjectionRecord, str]:
+    """Bind a checked project callee to its body-independent source header under its stable identity."""
+    projection = source_projection(unit, origin, project_dependency_module(unit, module)?)?
+    return Ok(signature_record(dependency_owner(projection, module, name, identity)?))
+
+
+pub def dependency_signature_key(
+    projections: &Dict[str, SourceProjection],
+    unit: UnitDescription,
+    origin: str,
+    dependency: CompiledBodyDependencyRead,
+    editable_packages: list[str],
+) -> Result[Option[RecordKey], str]:
+    """Expose each editable callee's signature as a direct checker and lowering invalidation dependency."""
+    match dependency.package:
+        None =>
+            return Ok(
+                Some(
+                    cached_project_signature_record(
+                        projections,
+                        unit,
+                        dependency.module,
+                        dependency.name,
+                        dependency.identity,
+                    )?.key,
+                ),
+            )
+        Some(_) => return Ok(None)
+
+
+pub def root(encoded: bytes) -> Result[str, str]:
+    """Map codec faults at the engine boundary without weakening checker-record validation."""
+    return record_root(encoded).map_err((error) => f"compiled checker root refused: {error:?}")
