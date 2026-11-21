@@ -186,11 +186,49 @@ impl TypeChecker {
             self.mutable_bindings.insert(assign.name.clone());
         }
 
+        // A native local borrow, of a value or of another borrow, keeps its loan for the conflict pass.
+        let local_borrow_of_value =
+            explicit_mode.is_none() && matches!(annotated_ty, Some(ResolvedType::Ref(_) | ResolvedType::RefMut(_)));
         let ty = self.new_assignment_binding_type(assign, annotated_ty, value_ty);
         let ty = self.retain_qualified_assignment_binding_owner(assign, ty);
-        self.declare_assignment_binding(assign, ty, is_mutable, introduces_binding, span);
+        self.declare_assignment_binding(assign, ty.clone(), is_mutable, introduces_binding, span);
         self.retain_qualified_assignment_storage(assign, span);
         self.record_explicit_local_mode(assign, explicit_mode, is_mutable);
+        if local_borrow_of_value {
+            self.record_native_local_borrow(assign, ty, is_mutable);
+        }
+    }
+
+    /// RFC 164: a local borrow of a value outside the whole-body proof keeps its loan for the conflict pass, which
+    /// reports an edit of its owner while the borrow, or a closure holding it, is still used.
+    fn record_native_local_borrow(&mut self, assign: &AssignmentStmt, binding: ResolvedType, writable: bool) {
+        use incan_lang::lang::types::ownership::OwnershipMode;
+        let mode = match &binding {
+            ResolvedType::Ref(_) => OwnershipMode::Borrowed,
+            ResolvedType::RefMut(_) => OwnershipMode::BorrowedMut,
+            _ => return,
+        };
+        let (Some(annotation), Some(identity), Some(owner)) = (
+            assign.ty.as_ref(),
+            self.type_info
+                .resolved_write_identity(assign.name_span, &assign.name)
+                .filter(|identity| identity.declaration_span == assign.name_span)
+                .cloned(),
+            self.current_body_identity().cloned(),
+        ) else {
+            return;
+        };
+        self.native_local_borrows.insert(
+            identity,
+            super::ownership_contracts::LocalMode {
+                owner,
+                mode,
+                value_type: binding,
+                writable,
+                annotation: annotation.span,
+            },
+        );
+        self.note_native_borrow_body();
     }
 
     /// Check the value a new binding receives against its annotation. While an unannotated binding's value is checked,

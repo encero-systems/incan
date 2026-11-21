@@ -35,6 +35,21 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return value;
         };
         let ty = self.resolve_ty(expression.span);
+        // RFC 164: a borrowed Copy scalar operand is copied through its borrow at its evaluation point.
+        let reference_local = read
+            .place
+            .local_id()
+            .and_then(|local| self.locals.get(local.index()))
+            .is_some_and(|local| matches!(local.ty, IncanType::Ref(_) | IncanType::RefMut(_)));
+        if let IncanType::Ref(inner) | IncanType::RefMut(inner) = &ty
+            && super::operators::borrowed_scalar(inner)
+            && read.place.projection.is_empty()
+            && reference_local
+        {
+            let scalar = inner.as_ref().clone();
+            let copied = super::operators::read_through_scalar_borrow(&ty, value);
+            return self.push_assign_temp(bir::Rvalue::Use(copied), scalar, scope, hir_span(expression.span), out);
+        }
         let selected_view_call = self
             .input_body
             .as_ref()
@@ -184,8 +199,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.lower_binary_operand(rhs, scope, out),
             )
         };
-        let lhs_operand = read_through_scalar_borrow(&lhs_checked, lhs_operand);
-        let rhs_operand = read_through_scalar_borrow(&rhs_checked, rhs_operand);
         self.restore_constructor_argument_carriers(contextual_types);
         self.lower_binary_from_operands(
             op,
