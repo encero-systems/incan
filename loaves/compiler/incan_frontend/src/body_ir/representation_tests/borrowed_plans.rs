@@ -164,3 +164,18 @@ fn owned_values_are_lent_to_borrows() -> Result<(), Box<dyn std::error::Error>> 
     }
     Ok(())
 }
+
+/// A builtin list or dict method through a borrow plans on the value the borrow names, in both spellings: `append`
+/// through an exclusive borrow, `count`, `keys` and `len` through a shared one.
+#[test]
+fn builtin_methods_through_borrows_plan_on_their_referent() -> Result<(), Box<dyn std::error::Error>> {
+    let template = "def grow(mut items: {borrow_mut:list[int]}) -> None:\n    items.append(1)\n\ndef size(items: {borrow:list[int]}) -> int:\n    return items.count(1) + len(items)\n\ndef names(table: {borrow:dict[str, int]}) -> int:\n    return len(table.keys())\n";
+    for spelling in [NATIVE, EXPLICIT] {
+        let plans = planned(&spelled(template, spelling))?;
+        for name in ["grow", "size", "names"] {
+            let plan = function(&plans, name)?;
+            assert!(!plan.contains("nsupported"), "{name}: {plan}");
+        }
+    }
+    Ok(())
+}
