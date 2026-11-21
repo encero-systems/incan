@@ -196,6 +196,8 @@ pub use unit_admission::{PayloadAdmission, decode_unit_admission, encode_unit_ad
 pub use unit_document::{decode_unit_document, encode_unit_document};
 
 #[cfg(test)]
+mod ported_tests;
+#[cfg(test)]
 mod surface_tests;
 
 #[cfg(test)]
