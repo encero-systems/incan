@@ -763,8 +763,12 @@ impl TypeChecker {
             .iter()
             .filter_map(|(key, exports)| {
                 let path = self.dependency_module_segments(key);
-                let below = path.strip_prefix(namespace.as_slice()).filter(|below| !below.is_empty())?;
-                let reexported = exports.iter().any(|symbol| matches!(symbol, ExportedSymbol::Reexported(n) if n == name));
+                let below = path
+                    .strip_prefix(namespace.as_slice())
+                    .filter(|below| !below.is_empty())?;
+                let reexported = exports
+                    .iter()
+                    .any(|symbol| matches!(symbol, ExportedSymbol::Reexported(n) if n == name));
                 let declared = exported_symbol_names(exports).contains(name) && !reexported;
                 (declared || reexported).then(|| (reexported, below.to_vec()))
             })
