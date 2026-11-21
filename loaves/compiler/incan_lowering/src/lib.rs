@@ -163,6 +163,7 @@ mod type_metadata;
 mod type_parameters;
 mod types;
 mod unions;
+mod validated_constructors;
 mod validation_errors;
 mod value_enum_methods;
 mod value_enums;
