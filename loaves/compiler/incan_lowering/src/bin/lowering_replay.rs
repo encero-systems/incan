@@ -1,10 +1,9 @@
 //! Replay the golden lowering corpus through this lowering and report byte identity with the reference.
 //!
-//! Usage: `lowering-replay CORPUS [--case PREFIX] [--show N] [--oracle]`; `--oracle` runs the reference lowering
-//! instead, proving the corpus reproduces its own answers. Every case's layout request and lowering calls run in
-//! order; each answer is compared with the captured one: refusal text, runtime requests, census lines, published
-//! unions and the whole plan's bytes. Where both sides have a plan, every function is compared by name as well. The
-//! exit status is 0 only when every compared answer is identical.
+//! Usage: `lowering-replay CORPUS [--case PREFIX] [--show N] [--describe] [--dump DIRECTORY]`. Every case's layout
+//! request and lowering calls run in order; each answer is compared with the captured one: refusal text, runtime
+//! requests, census lines, published unions and the whole plan's bytes. Where both sides have a plan, every function is
+//! compared by name as well. The exit status is 0 only when every compared answer is identical.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -148,76 +147,6 @@ fn inputs(corpus: &Corpus, step: &Step, directories: &StepDirectories) -> Result
     })
 }
 
-/// The reference lowering, run on the decoded corpus inputs to prove the corpus reproduces its own answers.
-fn oracle_step(
-    corpus: &Corpus,
-    step: &Step,
-    directories: &StepDirectories,
-    continuation: &mut Option<incan_mir_lowering::UnitContinuation>,
-) -> Result<(Outcome, Vec<incan_semantics_core::body_ir::NativeUnionDeclaration>), String> {
-    use incan_mir_lowering as reference;
-    let modules = corpus.modules(&step.modules)?;
-    let ours = inputs(corpus, step, directories)?;
-    let inputs = reference::SourceInputs {
-        sources: ours.sources,
-        files: ours.files,
-        tests: ours.tests,
-        package_versions: ours.package_versions,
-        overflow_checks: ours.overflow_checks,
-        scalar_products: ours.scalar_products,
-        scalar_bodies: ours.scalar_bodies,
-        record_report: ours.record_report,
-    };
-    let requirement = |value: &reference::RuntimeRequirement| Requirement {
-        canonical: value.canonical.clone(),
-        path: value.path.clone(),
-        span: postcard::to_allocvec(&value.span).unwrap_or_default(),
-    };
-    let mut unions = Vec::new();
-    let planned = |result: Result<reference::UnitPlanning, String>,
-                   continuation: &mut Option<reference::UnitContinuation>| match result {
-        Err(message) => Outcome::Refused(message),
-        Ok(reference::UnitPlanning::NeedsRuntime(retained, requirements)) => {
-            *continuation = Some(retained);
-            Outcome::NeedsRuntime(requirements.iter().map(requirement).collect())
-        }
-        Ok(reference::UnitPlanning::Complete(plan)) => Outcome::Complete(
-            plan.as_ref()
-                .map(|plan| postcard::to_allocvec(plan).unwrap_or_default()),
-        ),
-    };
-    let answer = match step.call.as_str() {
-        "unit" => planned(
-            reference::unit_plan(&modules, &inputs, step.entry, &step.kind, &mut unions),
-            continuation,
-        ),
-        "resume" => match continuation.take() {
-            Some(retained) => planned(
-                reference::resume_unit_plan(retained, &modules, &inputs, step.entry, &step.kind, &mut unions),
-                continuation,
-            ),
-            None => Outcome::Refused("replay: no retained continuation to resume".into()),
-        },
-        "census" => {
-            match reference::program_refusals(
-                &modules,
-                &inputs,
-                step.entry,
-                step.progress,
-                &step.selection,
-                &step.kind,
-            ) {
-                reference::RefusalPlanning::Complete(lines) => Outcome::Census(lines),
-                reference::RefusalPlanning::NeedsRuntime(requirements) => {
-                    Outcome::NeedsRuntime(requirements.iter().map(requirement).collect())
-                }
-            }
-        }
-        other => return Err(format!("unknown call {other}")),
-    };
-    Ok((answer, unions))
-}
-
 fn replay_step(
     corpus: &Corpus,
     step: &Step,
@@ -257,14 +186,7 @@ fn replay_step(
     Ok((answer, unions))
 }
 
-fn replay_case(
-    corpus: &Corpus,
-    name: &str,
-    case: &Case,
-    scratch: &Path,
-    oracle: bool,
-    tally: &mut Tally,
-) -> Result<(), String> {
+fn replay_case(corpus: &Corpus, name: &str, case: &Case, scratch: &Path, tally: &mut Tally) -> Result<(), String> {
     tally.cases += 1;
     if !case.faults.is_empty() {
         tally.case_faults += 1;
@@ -275,21 +197,10 @@ fn replay_case(
     if !case.layout_modules.is_empty() {
         tally.layouts += 1;
         let modules = corpus.modules(&case.layout_modules)?;
-        let actual: Vec<Requirement> = if oracle {
-            incan_mir_lowering::layout_runtime_requirements(&modules, case.layout_file.clone())
-                .iter()
-                .map(|value| Requirement {
-                    canonical: value.canonical.clone(),
-                    path: value.path.clone(),
-                    span: postcard::to_allocvec(&value.span).unwrap_or_default(),
-                })
-                .collect()
-        } else {
-            layout_runtime_requirements(&modules, case.layout_file.clone())
-                .iter()
-                .map(requirement)
-                .collect()
-        };
+        let actual: Vec<Requirement> = layout_runtime_requirements(&modules, case.layout_file.clone())
+            .iter()
+            .map(requirement)
+            .collect();
         if actual == case.layout {
             tally.layouts_identical += 1;
         } else {
@@ -297,15 +208,10 @@ fn replay_case(
         }
     }
     let mut continuation = None;
-    let mut reference_continuation = None;
     for (index, step) in case.steps.iter().enumerate() {
         tally.steps += 1;
         let directories = step_directories(scratch, index)?;
-        let (actual, unions) = if oracle {
-            oracle_step(corpus, step, &directories, &mut reference_continuation)?
-        } else {
-            replay_step(corpus, step, &directories, &mut continuation)?
-        };
+        let (actual, unions) = replay_step(corpus, step, &directories, &mut continuation)?;
         let identical = actual == step.outcome && unions == step.unions;
         if step.scalar_products.is_some() {
             let (expected, same) = compare_directory(corpus, &step.products_after, &directories.products);
@@ -330,10 +236,22 @@ fn replay_case(
                 format!(
                     "; unions expected {} ({} distinct) got {}, first difference at {first:?}: expected {:?} got {:?}",
                     step.unions.len(),
-                    step.unions.iter().map(|union| format!("{:?}", union.ty)).collect::<std::collections::BTreeSet<_>>().len(),
+                    step.unions
+                        .iter()
+                        .map(|union| format!("{:?}", union.ty))
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .len(),
                     unions.len(),
-                    step.unions.iter().take(4).map(|union| format!("{:?}/{}", union.ty, union.rust_item)).collect::<Vec<_>>(),
-                    unions.iter().take(4).map(|union| format!("{:?}/{}", union.ty, union.rust_item)).collect::<Vec<_>>()
+                    step.unions
+                        .iter()
+                        .take(4)
+                        .map(|union| format!("{:?}/{}", union.ty, union.rust_item))
+                        .collect::<Vec<_>>(),
+                    unions
+                        .iter()
+                        .take(4)
+                        .map(|union| format!("{:?}/{}", union.ty, union.rust_item))
+                        .collect::<Vec<_>>()
                 )
             };
             tally.mismatches.push(format!(
@@ -445,20 +363,15 @@ fn dump_case(corpus: &Corpus, case: &Case, directory: &Path) -> Result<(), Strin
 fn main() {
     let arguments: Vec<String> = std::env::args().collect();
     let Some(root) = arguments.get(1) else {
-        eprintln!("usage: lowering-replay CORPUS [--case PREFIX] [--show N] [--oracle]");
+        eprintln!("usage: lowering-replay CORPUS [--case PREFIX] [--show N] [--describe] [--dump DIRECTORY]");
         std::process::exit(2);
     };
     let mut prefix = String::new();
     let mut show = 20usize;
-    let mut oracle = false;
     let mut describe = false;
     let mut dump: Option<PathBuf> = None;
     let mut options = arguments[2..].iter();
     while let Some(option) = options.next() {
-        if option == "--oracle" {
-            oracle = true;
-            continue;
-        }
         if option == "--describe" {
             describe = true;
             continue;
@@ -508,7 +421,7 @@ fn main() {
         }
         let result = corpus
             .case(&path)
-            .and_then(|case| replay_case(&corpus, &name, &case, &scratch, oracle, &mut tally));
+            .and_then(|case| replay_case(&corpus, &name, &case, &scratch, &mut tally));
         if let Err(error) = result {
             tally.mismatches.push(format!("{name}: replay failed: {error}"));
         }

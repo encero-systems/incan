@@ -3,7 +3,7 @@
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
-use internal_models::{CanonicalSymbolId, DeclarationKind, SymbolNamespace, SymbolOrigin};
+use incan_mir_plan_native::record_types::{CanonicalSymbolId, DeclarationKind, SymbolNamespace, SymbolOrigin};
 use std::collections::BTreeSet;
 
 use crate::error::PlanError;

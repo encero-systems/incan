@@ -278,17 +278,17 @@ Key directories:
 - `loaves/kernel/incan_syntax/src/parser/` — Parsing; syntax definitions are in `loaves/kernel/incan_syntax/src/ast/`
 - `loaves/compiler/incan_frontend/src/typechecker/` — Type checking and semantic analysis
 - `loaves/compiler/incan_frontend/src/body_ir/` — checked AST to Body IR
-- `loaves/compiler/incan_mir_lowering/src/` — Body IR to native plan
+- `loaves/compiler/incan_lowering/src/` — Body IR to native plan
 - `loaves/toolchain/incan-rustc-driver/src/` — native plan to rustc MIR
 
 ## Code Locations Reference
 
-The parser column is relative to `loaves/kernel/incan_syntax/src/`; typechecker entries are relative to `loaves/compiler/incan_frontend/src/typechecker/`; lowering entries are relative to `loaves/compiler/incan_mir_lowering/src/`; adapter entries are relative to `loaves/toolchain/incan-rustc-driver/src/`. Fully qualified paths override those bases.
+The parser column is relative to `loaves/kernel/incan_syntax/src/`; typechecker entries are relative to `loaves/compiler/incan_frontend/src/typechecker/`; lowering entries are relative to `loaves/compiler/incan_lowering/src/`; adapter entries are relative to `loaves/toolchain/incan-rustc-driver/src/`. Fully qualified paths override those bases.
 
 | Feature          | Parser                                                 | Typechecker                                                         | Lowering        | Adapter        |
 | ---------------- | ------------------------------------------------------ | ------------------------------------------------------------------- | --------------- | --------------- |
-| Field metadata   | `parser/decl/`                                       | `check_decl.rs`                                                     | `models.incn` | `field_metadata.rs` |
-| Alias resolution | -                                                      | `check_expr/access.rs`, `check_expr/calls.rs`, `check_expr/match_.rs`                     | `unions.incn` | -               |
+| Field metadata   | `parser/decl/`                                       | `check_decl.rs`                                                     | `models.rs` | `field_metadata.rs` |
+| Alias resolution | -                                                      | `check_expr/access.rs`, `check_expr/calls.rs`, `check_expr/match_.rs`                     | `unions.rs` | -               |
 | Soft keywords    | `parser/core.rs`, `parser/helpers.rs`, `parser/decl/*` | `collect/stdlib_imports.rs`                                         | -               | -               |
 | Stdlib registry  | -                                                      | `incan_lang::lang::stdlib` (`loaves/kernel/incan_lang/src/lang/stdlib.rs`) | -               | -               |
 | Diagnostics      | -                                                      | `diagnostics/catalog/errors/*` in `loaves/kernel/incan_syntax/src/`        | -               | -               |

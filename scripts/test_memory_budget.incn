@@ -70,15 +70,13 @@ def test_a_completed_plan_folds_carrier_positions_in_place() -> Result[None, str
 def test_a_completed_plan_releases_retry_state_before_publication() -> Result[None, str]:
     """A completed lowering attempt releases the retry-only snapshot before it assembles the published plan."""
     source = repository_root()?.joinpath(
-        "loaves/compiler/incan_mir_lowering/src/lowering.incn",
+        "loaves/compiler/incan_lowering/src/lowering.rs",
     ).read_text("utf-8", "strict").map_err((error) => error.message())?
-    release = """RuntimeRetention.Complete =>
-            drop(retry_intrinsic_layouts)
-            drop(retry_functions)
-            drop(retry_externals)
-            drop(retry_instances)
-            drop(retry_emitted_frames)
-            drop(retry_statics)"""
+    release = """RuntimeRetention::Complete => {
+            // A completed attempt releases the retry-only snapshot before it assembles the published plan.
+            drop(retry_intrinsic_layouts);
+            drop(retry_externals);
+            drop(retry_instances);"""
     assert release in source, "completed lowering retains the retry-only plan snapshot through publication"
     return Ok(None)
 

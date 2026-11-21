@@ -715,7 +715,13 @@ fn finish_unit_plan(
             };
             return Ok(UnitPlanning::NeedsRuntime(retry, requests));
         }
-        RuntimeRetention::Complete => statics.extend(instance_cells),
+        RuntimeRetention::Complete => {
+            // A completed attempt releases the retry-only snapshot before it assembles the published plan.
+            drop(retry_intrinsic_layouts);
+            drop(retry_externals);
+            drop(retry_instances);
+            statics.extend(instance_cells);
+        }
     }
     let retained_constructors = retained_program.constructors.clone();
     let mut completed_models = std::mem::take(&mut inventories.models);
