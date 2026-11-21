@@ -2,10 +2,13 @@
 
 use std::collections::BTreeMap;
 
-use incan_mir_plan_native::{EnumDeclaration, ExternalFunction, Function, StaticCell};
+use incan_mir_plan_native::{
+    Carrier, EnumDeclaration, ExternalFunction, Function, PlanType, StaticCell, carrier_position,
+};
 use incan_semantics_core::IncanType;
 use incan_semantics_core::body_ir::BodyIrModule;
 
+use crate::decls::{library_enum_item, library_item};
 use crate::instance_products::InstanceProducts;
 use crate::lowering::Inventories;
 use crate::native_type_identity::ConstructorIndex;
@@ -195,4 +198,44 @@ fn conflicting_external_signatures(retained: &ExternalFunction, external: &Exter
         external.span.line,
         external.span.column
     )
+}
+
+/// Report whether a native main's result is a `Result` with a unit success, which Rust's entry point reports itself.
+///
+/// The error side must be text or a type an SDK crate owns: legacy's entry point reports an error through its Debug,
+/// which both have.
+pub fn entry_result(module: &BodyIrModule, ty: &PlanType, intrinsics: &[EnumDeclaration]) -> bool {
+    let PlanType::Enum(owner, _) = ty else {
+        return false;
+    };
+    let index = carrier_position(*owner);
+    if index < 0 || index as usize >= intrinsics.len() {
+        return false;
+    }
+    let declaration = &intrinsics[index as usize];
+    if declaration.carrier != Carrier::Result || declaration.variants.len() != 2 {
+        return false;
+    }
+    let success = &declaration.variants[0].fields;
+    let failure = &declaration.variants[1].fields;
+    if failure.len() != 1 || (!success.is_empty() && success.as_slice() != [PlanType::Unit]) {
+        return false;
+    }
+    entry_error(module, &failure[0])
+}
+
+/// Report whether an entry result's error is text or an SDK crate's model or enum.
+fn entry_error(module: &BodyIrModule, ty: &PlanType) -> bool {
+    match ty {
+        PlanType::String => true,
+        PlanType::Model(index, _) => module
+            .nominal_declarations
+            .get(*index as usize)
+            .is_some_and(|declaration| !library_item(declaration).is_empty()),
+        PlanType::Enum(index, _) => module
+            .enum_declarations
+            .get(*index as usize)
+            .is_some_and(|declaration| !library_enum_item(declaration).is_empty()),
+        _ => false,
+    }
 }

@@ -1,19 +1,27 @@
 //! Scalar, collection, and nominal layout admission from canonical frontend records.
 
-use incan_mir_plan_native::{ListLeaf, PlanType};
-use incan_semantics_core::IncanType;
-use incan_semantics_core::body_ir::{NOMINAL_CARRIER_KEY_PREFIX, NominalDeclaration, nominal_carrier_key};
+use incan_mir_plan_native::{
+    Carrier, EnumDeclaration, FieldProjection, ListLeaf, Local, Place, PlanType, Projection, SourceSpan,
+    carrier_position, is_carrier_index, tuple_element_type,
+};
+use incan_semantics_core::body_ir::{
+    EnumDeclaration as SourceEnumDeclaration, NOMINAL_CARRIER_KEY_PREFIX, NominalDeclaration, Place as SourcePlace,
+    PlaceElem, nominal_carrier_key,
+};
+use incan_semantics_core::{CanonicalSymbolId, IncanType};
 
 use crate::closures::function_pointer_type;
 use crate::collections::primitive_leaf;
 use crate::compiler_record_adapters::authored_plan_symbol_id;
 use crate::generators::generator_type;
-use crate::layout_types::native_source_type as retained_type;
+use crate::layout_types::{native_source_type as retained_type, stored_field_type};
 use crate::native_type_identity::{ConstructorIndex, native_owner, representation_arguments};
 use crate::nominal_instances::nominal_symbol;
+use crate::ranges::range_field;
 use crate::symbols::model_symbol;
-use crate::tuples::{generic_tuple_type, type_name};
+use crate::tuples::{generic_tuple_type, tuple_slot, type_name};
 use crate::types::primitive_type;
+use crate::unions::union_slot;
 
 /// Translate checked types against retained declarations, preserving unsupported types in refusals.
 pub fn model_type(
@@ -189,4 +197,328 @@ pub fn hashed_element(declarations: &[NominalDeclaration], ty: &IncanType) -> Re
 /// Require a checked derive or the explicit canonical source equality witness before hashed carrier admission.
 fn model_equality(declaration: &NominalDeclaration) -> bool {
     declaration.derives.iter().any(|derive| derive == "Eq") || declaration.comparison_equality.is_some()
+}
+
+/// The declaration tables a checked place projects through.
+#[derive(Clone, Copy)]
+pub struct PlaceTables<'a> {
+    pub constructors: &'a ConstructorIndex,
+    pub declarations: &'a [NominalDeclaration],
+    pub enums: &'a [SourceEnumDeclaration],
+    pub unions: &'a [IncanType],
+    pub intrinsics: &'a [EnumDeclaration],
+}
+
+/// Borrow the frame's tables while requiring each selected field's canonical layout; an unprojected local needs no
+/// declaration-table copy. `offset` is the frame's first slot in `locals`; the returned place stays frame-relative.
+pub fn model_place(
+    tables: PlaceTables<'_>,
+    locals: &[Local],
+    value: &SourcePlace,
+    span: &SourceSpan,
+    offset: i64,
+) -> Result<Place, String> {
+    model_prefix(tables, locals, value, value.projection.len(), span, offset)
+}
+
+/// Borrow retained tables to project a checked leading field path without copying or changing the frontend place.
+/// Slots are read at `offset` in the shared locals table; the returned place stays frame-relative.
+pub fn model_prefix(
+    tables: PlaceTables<'_>,
+    locals: &[Local],
+    value: &SourcePlace,
+    count: usize,
+    span: &SourceSpan,
+    offset: i64,
+) -> Result<Place, String> {
+    if count > value.projection.len() {
+        return Err("invalid Body IR model field prefix length".into());
+    }
+    let Some(local) = value.local_id() else {
+        return Err("unsupported Body IR global place".into());
+    };
+    let index = local.index() as i64 + 1;
+    let place = |projection: Projection| {
+        Ok(Place {
+            local: index,
+            projection,
+            span: span.clone(),
+        })
+    };
+    let slot_type = &locals[(index + offset) as usize].ty;
+    if let Some((owner, name)) = receiver_owner(slot_type) {
+        if count == 0 {
+            return place(Projection::Deref(PlanType::Model(owner, name)));
+        }
+        let root = PlanType::Model(owner, tables.declarations[owner as usize].name.clone());
+        let fields = field_path(tables, root, &value.projection, count)?;
+        if fields.len() == 1 {
+            return place(Projection::DerefField(fields[0].slot, fields[0].ty.clone()));
+        }
+        return place(Projection::DerefFields(fields));
+    }
+    // A `mut str` or enum parameter, an in-place binding or an in-place loop item reads through its reference.
+    if let Some(referent) = exclusive_referent(slot_type) {
+        if count == 0 {
+            return place(Projection::Deref(referent));
+        }
+        let fields = field_path(tables, referent, &value.projection, count)?;
+        return place(Projection::DerefFields(fields));
+    }
+    // An enum method's shared receiver reads the whole enum through its reference.
+    match slot_type {
+        PlanType::TupleRef(elements) => {
+            if count == 0 {
+                return place(Projection::Whole);
+            }
+            let fields = field_path(tables, PlanType::Tuple(elements.clone()), &value.projection, count)?;
+            return place(Projection::DerefFields(fields));
+        }
+        PlanType::EnumRef(owner, name) => {
+            if count == 0 {
+                return place(Projection::Deref(PlanType::Enum(*owner, name.clone())));
+            }
+            return Err("unsupported Body IR projection through an enum receiver".into());
+        }
+        _ => {}
+    }
+    if count == 0 {
+        return place(Projection::Whole);
+    }
+    let mut fields = field_path(tables, slot_type.clone(), &value.projection, count)?;
+    if fields.len() == 1 && fields[0].dereferences == 0 {
+        let Some(field) = fields.pop() else {
+            return Err("invalid Body IR empty field path".into());
+        };
+        if field.variant >= 0 {
+            return place(Projection::VariantField(field.variant, field.slot, field.ty));
+        }
+        return place(Projection::Field(field.slot, field.ty));
+    }
+    place(Projection::Fields(fields))
+}
+
+/// Resolve ordered checked carrier payloads and canonical fields; indices and slices keep their separate lowering.
+pub fn field_path(
+    tables: PlaceTables<'_>,
+    root: PlanType,
+    projections: &[PlaceElem],
+    count: usize,
+) -> Result<Vec<FieldProjection>, String> {
+    let mut ty = root;
+    let mut fields: Vec<FieldProjection> = Vec::new();
+    for projection in &projections[..count] {
+        let steps = field_steps(tables, &ty, projection)?;
+        if let Some(last) = steps.last() {
+            ty = last.ty.clone();
+        }
+        fields.extend(steps);
+    }
+    Ok(fields)
+}
+
+/// Select one source field or payload as stored, ending at the value the source names.
+///
+/// A boxed class field adds a dereference through its box, so reading, borrowing, assigning and moving all reach the
+/// stored value; every single-step field projection goes through here.
+pub fn field_steps(
+    tables: PlaceTables<'_>,
+    root: &PlanType,
+    projection: &PlaceElem,
+) -> Result<Vec<FieldProjection>, String> {
+    Ok(stored_steps(field_projection(tables, root, projection)?))
+}
+
+/// Continue a projected stored field to the value the source names, dereferencing a boxed class field's box.
+pub fn stored_steps(field: FieldProjection) -> Vec<FieldProjection> {
+    if let PlanType::Boxed(referent) = &field.ty
+        && let Some(inner) = referent.first()
+    {
+        let mut boxed = FieldProjection::new(-1, inner.clone());
+        boxed.dereferences = 1;
+        return vec![field, boxed];
+    }
+    vec![field]
+}
+
+/// The type of the value one source field step names, through a boxed class field's box.
+pub fn field_step_type(tables: PlaceTables<'_>, root: &PlanType, projection: &PlaceElem) -> Result<PlanType, String> {
+    let steps = field_steps(tables, root, projection)?;
+    steps
+        .last()
+        .map(|step| step.ty.clone())
+        .ok_or_else(|| "invalid Body IR empty field step".to_string())
+}
+
+/// Validate one ordered payload or canonical field through the typed Rust enum boundary required by #459.
+fn field_projection(
+    tables: PlaceTables<'_>,
+    root: &PlanType,
+    projection: &PlaceElem,
+) -> Result<FieldProjection, String> {
+    if let Some(referent) = field_referent(root) {
+        let mut field = field_projection(tables, &referent, projection)?;
+        field.dereferences += 1;
+        return Ok(field);
+    }
+    let resolve = |ty: &IncanType| {
+        retained_type(
+            tables.constructors,
+            tables.declarations,
+            tables.enums,
+            tables.unions,
+            ty,
+            tables.intrinsics,
+            "",
+        )
+    };
+    match projection {
+        PlaceElem::OptionPayload {
+            option_type,
+            payload_type,
+        } => {
+            if resolve(option_type)? != *root {
+                return Err("invalid Body IR optional projection owner".into());
+            }
+            let PlanType::Enum(owner, _) = root else {
+                return Err("invalid Body IR optional projection carrier".into());
+            };
+            if !is_carrier_index(*owner) || carrier_position(*owner) as usize >= tables.intrinsics.len() {
+                return Err("invalid Body IR optional projection carrier".into());
+            }
+            let carrier = &tables.intrinsics[carrier_position(*owner) as usize];
+            let ty = resolve(payload_type)?;
+            if carrier.carrier != Carrier::Option
+                || carrier.variants.len() != 2
+                || carrier.variants[1].fields.len() != 1
+                || carrier.variants[1].fields[0] != ty
+            {
+                return Err("invalid Body IR optional projection payload".into());
+            }
+            let mut field = FieldProjection::new(0, ty);
+            field.variant = 1;
+            return Ok(field);
+        }
+        PlaceElem::UnionMember { ty: member } => {
+            let PlanType::Enum(owner, _) = root else {
+                return Err("invalid Body IR union projection carrier".into());
+            };
+            let ty = resolve(member)?;
+            let variant = union_slot(tables.unions, *owner, &ty, tables.intrinsics)?;
+            let mut field = FieldProjection::new(0, ty);
+            field.variant = variant;
+            return Ok(field);
+        }
+        _ => {}
+    }
+    match root {
+        PlanType::Model(owner, _) => {
+            // Borrow the layout: each field step of every place reaches here, so a copied declaration dominates.
+            let declaration = &tables.declarations[*owner as usize];
+            let slot = field_slot(projection, declaration)?;
+            let ty = stored_field_type(
+                tables.constructors,
+                tables.declarations,
+                tables.enums,
+                tables.unions,
+                declaration,
+                slot,
+                tables.intrinsics,
+            )?;
+            Ok(FieldProjection::new(slot as i64, ty))
+        }
+        PlanType::Tuple(elements) => {
+            let slot = tuple_slot(projection, elements.len() as i64)?;
+            Ok(FieldProjection::new(slot, tuple_element_type(&elements[slot as usize])))
+        }
+        PlanType::RangeValue => range_field(projection),
+        _ => Err(format!(
+            "unsupported Body IR model index or slice projection at root {root:?}; projection {projection:?}"
+        )),
+    }
+}
+
+/// Retain each reference layer traversed before a canonical field, including references stored in tuple slots.
+fn field_referent(ty: &PlanType) -> Option<PlanType> {
+    match ty {
+        PlanType::ModelRef(owner, name) | PlanType::ModelMutRef(owner, name) => {
+            Some(PlanType::Model(*owner, name.clone()))
+        }
+        PlanType::TupleRef(elements) | PlanType::TupleMutRef(elements) => Some(PlanType::Tuple(elements.clone())),
+        PlanType::ScalarRef(elements) | PlanType::ScalarMutRef(elements) if elements.len() == 1 => {
+            Some(elements[0].clone())
+        }
+        _ => None,
+    }
+}
+
+/// Require an exact stored field or its checked trait requirement binding; never resolve a missing identity by name.
+pub fn field_slot(value: &PlaceElem, declaration: &NominalDeclaration) -> Result<usize, String> {
+    let PlaceElem::Field {
+        name,
+        canonical,
+        structural,
+    } = value
+    else {
+        return Err("unsupported Body IR model index or slice projection".into());
+    };
+    if *structural {
+        return Err("unsupported Body IR structural model projection".into());
+    }
+    if let Some(identity) = canonical {
+        let selected = checked_field_identity(declaration, identity)?;
+        for slot in 0..declaration.fields.len() {
+            if declaration.fields[slot] == *name && declaration.field_identities[slot] == selected {
+                return Ok(slot);
+            }
+        }
+    }
+    Err(format!(
+        "unsupported Body IR unproven model field; projection {value:?}; selected owner {:?}; name {:?}; fields {:?}; field identities {:?}; field types {:?}",
+        declaration.canonical,
+        declaration.name,
+        declaration.fields,
+        declaration.field_identities,
+        declaration.field_types
+    ))
+}
+
+/// Apply an exact required-field witness once, refusing conflicting bindings instead of selecting by field name.
+fn checked_field_identity(
+    declaration: &NominalDeclaration,
+    identity: &CanonicalSymbolId,
+) -> Result<CanonicalSymbolId, String> {
+    let mut selected = identity.clone();
+    let mut bound = false;
+    for adoption in &declaration.trait_adoptions {
+        for field in &adoption.fields {
+            if field.requirement != *identity {
+                continue;
+            }
+            if bound && selected != field.implementation {
+                return Err("invalid Body IR conflicting required field bindings".into());
+            }
+            selected = field.implementation.clone();
+            bound = true;
+        }
+    }
+    Ok(selected)
+}
+
+/// The text, enum or tuple value an exclusive reference names; model references keep their receiver projection.
+fn exclusive_referent(ty: &PlanType) -> Option<PlanType> {
+    match ty {
+        PlanType::StringMutRef => Some(PlanType::String),
+        PlanType::EnumMutRef(owner, name) => Some(PlanType::Enum(*owner, name.clone())),
+        PlanType::TupleMutRef(elements) => Some(PlanType::Tuple(elements.clone())),
+        _ => None,
+    }
+}
+
+/// Identify the nominal owner behind either checked receiver-reference shape.
+fn receiver_owner(ty: &PlanType) -> Option<(i64, String)> {
+    match ty {
+        PlanType::ModelRef(owner, name) | PlanType::ModelMutRef(owner, name) => Some((*owner, name.clone())),
+        _ => None,
+    }
 }

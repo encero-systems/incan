@@ -1,10 +1,12 @@
 //! Computed and literal module statics planned as guarded adapter cells (RFC 052).
 
-use incan_mir_plan_native::{EnumDeclaration, StaticCell};
+use incan_mir_plan_native::{EnumDeclaration, PlanType, StaticCell};
 use incan_semantics_core::IncanType;
 use incan_semantics_core::body_ir::{BodyIrModule, StaticInitializer};
 
+use crate::closures::callable_copy_type;
 use crate::lowering::Inventories;
+use crate::numerics::numeric_carrier;
 use crate::pending::untranslated;
 use crate::program_context::ProgramContext;
 
@@ -46,4 +48,12 @@ pub fn lower_computed_statics(
         }
     }
     Ok(cells)
+}
+
+/// Whether a loaded static value owns resources its frame must drop, rather than being a plain copy.
+pub fn snapshot_owns(ty: &PlanType) -> bool {
+    if numeric_carrier(ty) || matches!(ty, PlanType::Bool | PlanType::Unit | PlanType::FrozenStr) {
+        return false;
+    }
+    !callable_copy_type(ty)
 }

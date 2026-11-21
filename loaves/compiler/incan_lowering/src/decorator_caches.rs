@@ -1,6 +1,8 @@
 //! Per-instantiation decorator bindings and their cached frames.
 
-use incan_semantics_core::body_ir::{DecoratedBinding, DecoratedInitialization};
+use incan_semantics_core::body_ir::{BodyIrModule, DecoratedBinding, DecoratedInitialization};
+
+use crate::classes::body_module_identity;
 
 /// Admit a synchronous per-instantiation binding with its initializer; its frames check the closed signature.
 pub fn validate_instance_binding(binding: &DecoratedBinding) -> Result<(), String> {
@@ -31,4 +33,31 @@ pub fn validate_binding_policy(binding: &DecoratedBinding) -> Result<(), String>
             Ok(())
         }
     }
+}
+
+/// The source role of a frame: the normal callable, a decorated binding's original body, or its initializer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DecoratorFrame {
+    Normal,
+    Original,
+    Initializer,
+}
+
+/// Give authenticated hidden frames distinct symbols while retaining the normal closed instance's key.
+pub fn frame_name(base: String, role: DecoratorFrame) -> String {
+    match role {
+        DecoratorFrame::Normal => base,
+        DecoratorFrame::Original => format!("{base}__incan_original"),
+        DecoratorFrame::Initializer => format!("{base}__incan_initializer"),
+    }
+}
+
+/// Bound dynamic name lookup to its registration module independently of signature and cache lifetime policy.
+pub fn callable_name_profile(module: &BodyIrModule, owner: &str) -> Result<bool, String> {
+    for binding in &module.decorated_bindings {
+        if binding.initializer.is_some() && body_module_identity(&binding.original_body)? != owner {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
