@@ -5,7 +5,7 @@
 //! made, so a reused caller still schedules its instances. A closed instance is its own product, keyed by its generic
 //! body's checked witness and that request identity.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use incan_mir_plan_native::{
     ExternalFunction, Function, UnitNominals, decode_instance_request, encode_instance_request,
@@ -20,7 +20,7 @@ use sha2::{Digest, Sha256};
 use crate::checked_values::location;
 use crate::compiler_record_adapters::{checked_type, checked_type_matches_native, native_checked_type};
 use crate::nominal_records::retain_named_scalar;
-use crate::plan_product_inputs::{graph_owner, ordinary_product_inputs, producer_generation};
+use crate::plan_product_inputs::{graph_owner, linked_crates, ordinary_product_inputs, producer_generation};
 use crate::scalar_store::{ProductEvent, report_scalar, report_scalar_refusal, reported, retained_scalar};
 use crate::trace_channel::frame_product;
 use crate::type_parameters::{Instance, request_instance};
@@ -40,6 +40,8 @@ pub struct InstanceProducts {
     pub admitted: BTreeMap<CompilerNodeId, String>,
     pub report: Option<String>,
     pub overflow_checks: bool,
+    /// The crates the unit links; a restored instance names functions of no other crate.
+    pub linked: BTreeSet<String>,
 }
 
 /// A closed instance's reused native function with its runtime demand, carried frames and own requests.
@@ -133,9 +135,14 @@ pub fn reused_instance(
     let settled = reported(products.report.as_deref(), &inputs);
     let current = location(&body.span, frame.source, frame.file);
     // 2. A missing or stale product, or a generic it requests that is gone, is an ordinary miss.
-    let Some((function, runtime, references, frames, encoded)) =
-        retained_scalar(&products.directory, &inputs, nominals, Some(&current), &positions)
-    else {
+    let Some((function, runtime, references, frames, encoded)) = retained_scalar(
+        &products.directory,
+        &inputs,
+        nominals,
+        &products.linked,
+        Some(&current),
+        &positions,
+    ) else {
         return Ok(None);
     };
     let Some(requests) = restore_requests(&encoded, context) else {
@@ -326,6 +333,7 @@ fn template_position(context: &BodyIrModule, declaration: &str) -> Option<usize>
 
 /// Share one records request's keyed-product transport with its closed instances; other requests keep none.
 pub fn instance_transport(
+    context: &BodyIrModule,
     directory: Option<String>,
     admitted: &BTreeMap<CompilerNodeId, String>,
     report: Option<String>,
@@ -339,5 +347,6 @@ pub fn instance_transport(
         report,
         overflow_checks,
         generation,
+        linked: linked_crates(context),
     })
 }

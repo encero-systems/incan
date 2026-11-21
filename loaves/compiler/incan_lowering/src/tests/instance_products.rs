@@ -4,6 +4,7 @@
 //! `record_positions` work that is not yet in Rust, so these use the ordinary key, whose products carry requests the
 //! same way.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use incan_mir_plan_native::record_types::{CheckedPrimitiveType, CheckedType};
@@ -77,7 +78,9 @@ fn a_caller_product_returns_its_instance_requests() -> Result<(), String> {
     assert!(slots == vec![1, 3] && original);
     retain_scalar(&text(&directory), &inputs, &function, &[], &[], &[], &[], &requests)?;
     let unit = unit_nominals(Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    let Some((_, _, _, _, restored)) = retained_scalar(&text(&directory), &inputs, &unit, Some(&owner), &[]) else {
+    let Some((_, _, _, _, restored)) =
+        retained_scalar(&text(&directory), &inputs, &unit, &BTreeSet::new(), Some(&owner), &[])
+    else {
         return Err("a caller product with instance requests was a miss".into());
     };
     assert!(
@@ -121,7 +124,7 @@ fn an_altered_instance_request_makes_the_product_a_miss() -> Result<(), String> 
     record.requests = vec![instance_row(CheckedType::Primitive(CheckedPrimitiveType::Str))?];
     std::fs::write(&path, encode_plan_function_record(&record)?).map_err(|error| error.to_string())?;
     let unit = unit_nominals(Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    let restored = retained_scalar(&text(&directory), &inputs, &unit, Some(&owner), &[]);
+    let restored = retained_scalar(&text(&directory), &inputs, &unit, &BTreeSet::new(), Some(&owner), &[]);
     assert!(restored.is_none(), "an edited request was trusted");
     let _ = std::fs::remove_dir_all(&directory);
     Ok(())

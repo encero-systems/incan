@@ -1,7 +1,8 @@
 //! The checked inputs that key a body's plan product, shared by ordinary frames and closed generic instances.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
+use incan_mir_plan_native::native_crate;
 use incan_semantics_core::body_ir::{Body, BodyIrModule};
 use incan_semantics_core::semantic_digest::semantic_digest;
 use incan_semantics_core::{CompilerNodeId, SymbolNamespace};
@@ -14,6 +15,26 @@ use crate::scalar_store::{record_scalar_inputs, scalar_inputs};
 
 /// A body's product key inputs and, for a records key, its node position map.
 pub type ProductInputs = (Vec<String>, Vec<(i64, i64)>);
+
+/// The crates the unit links, as its checked external callables and runtime bindings name them: a restored product may
+/// name a function of these crates and no other.
+pub fn linked_crates(context: &BodyIrModule) -> BTreeSet<String> {
+    let callables = context.loaf_callables.iter().map(|callable| callable.item.as_str());
+    let bindings = context
+        .runtime_callable_bindings
+        .iter()
+        .map(|binding| binding.path.as_str());
+    let scopes = context
+        .runtime_binding_scopes
+        .iter()
+        .flat_map(|(_, paths)| paths.iter().map(String::as_str));
+    callables
+        .chain(bindings)
+        .chain(scopes)
+        .filter_map(native_crate)
+        .map(str::to_owned)
+        .collect()
+}
 
 /// The immutable producer profile for this request's selected product directory.
 pub fn producer_generation(products: Option<&str>) -> Option<String> {
