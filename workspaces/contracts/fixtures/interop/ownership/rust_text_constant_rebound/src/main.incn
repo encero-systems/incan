@@ -1,8 +1,12 @@
-# behavior: a mut local first bound to a Rust text constant owns its text, so an Incan text constant and an owned str rebind it
+# behavior: a mut local first bound to a Rust text constant owns its text, so an Incan text constant and an owned str rebind it; a tuple holds the Rust constant as owned text, alone and in a list beside tuples holding the Incan constant, as Oven's test_compiler_graph_slots lists its products (once refused in lowering with `expected String, found StrRef` and `tuple value with differing checked field carriers`)
 # expect-stdout:
 #   checker/1
 #   lowering/2
 #   checker/1-local
+#   local checker/1
+#   local checker/1
+#   final checker/1
+#   plan-function lowering/2
 
 from rust::profiles import CHECKER_PROFILE
 
@@ -26,3 +30,8 @@ def main() -> None:
     println(pick("local"))
     println(pick("plan-function"))
     println(suffixed())
+    pair = ("local", CHECKER_PROFILE)
+    println(f"{pair[0]} {pair[1]}")
+    products = [("local", CHECKER_PROFILE), ("final", CHECKER_PROFILE), ("plan-function", LOWERING_PROFILE)]
+    for family, profile in products:
+        println(f"{family} {profile}")
