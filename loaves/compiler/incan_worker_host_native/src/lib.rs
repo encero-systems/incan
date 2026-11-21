@@ -8,10 +8,14 @@
 
 #![forbid(unsafe_code)]
 
+pub mod activation_inputs;
+pub mod checked_activation;
+pub mod checking_preparation;
 pub mod endpoint;
 pub mod host;
 mod json_text;
 pub mod lifecycle;
+pub mod namespace_frames;
 pub mod protocol;
 pub mod record_directory;
 pub mod record_protocol;
