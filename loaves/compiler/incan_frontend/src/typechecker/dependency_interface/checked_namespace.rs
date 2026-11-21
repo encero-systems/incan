@@ -107,6 +107,20 @@ impl CheckedNamespaceInterface {
         if api.declarations.is_empty() && !imports_project_namespace {
             return Ok(None);
         }
+        // A name imported without `pub` is no export, but the project's other modules may import it from this module,
+        // as a check against the module's source admits; the namespace keeps each one its checker bound.
+        api.declarations.extend(
+            crate::api_metadata::private_import_aliases(program, module_path)
+                .into_iter()
+                .filter(|alias| {
+                    checker
+                        .symbols
+                        .lookup(&alias.name)
+                        .and_then(|symbol| checker.symbols.identity_of(symbol))
+                        .is_some()
+                })
+                .map(crate::api_metadata::ApiDeclaration::Alias),
+        );
         let mut identities = std::collections::BTreeMap::new();
         let mut members = std::collections::BTreeMap::new();
         for declaration in &api.declarations {
@@ -832,7 +846,10 @@ fn namespace_exports(declaration: &crate::api_metadata::ApiDeclaration) -> Vec<E
         crate::api_metadata::ApiDeclaration::TypeAlias(item) => vec![ExportedSymbol::Type(item.name.clone())],
         crate::api_metadata::ApiDeclaration::Const(item) => vec![ExportedSymbol::Const(item.name.clone())],
         crate::api_metadata::ApiDeclaration::Static(item) => vec![ExportedSymbol::Static(item.name.clone())],
-        crate::api_metadata::ApiDeclaration::Alias(item) => vec![ExportedSymbol::Reexported(item.name.clone())],
+        crate::api_metadata::ApiDeclaration::Alias(item) if item.is_public => {
+            vec![ExportedSymbol::Reexported(item.name.clone())]
+        }
+        crate::api_metadata::ApiDeclaration::Alias(_) => Vec::new(),
         crate::api_metadata::ApiDeclaration::Partial(item) => vec![ExportedSymbol::Function(item.name.clone())],
     }
 }

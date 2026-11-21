@@ -285,3 +285,23 @@ pub fn collect_checked_api_alias_metadata(program: &Program, module_path: Vec<St
         declarations,
     }
 }
+
+/// The aliases of the names a module imports without `pub`, from another module or a Loaf's namespace, in source
+/// order. They are no export of the module, but the project's other modules may import them from it, as the source
+/// dependency interface admits.
+pub fn private_import_aliases(program: &Program, module_path: &[String]) -> Vec<ApiAlias> {
+    program
+        .declarations
+        .iter()
+        .filter_map(|declaration| match &declaration.node {
+            Declaration::Import(import)
+                if !public(import.visibility)
+                    && matches!(import.kind, ImportKind::From { .. } | ImportKind::PubFrom { .. }) =>
+            {
+                Some(api_aliases(import, declaration.span, module_path))
+            }
+            _ => None,
+        })
+        .flatten()
+        .collect()
+}
