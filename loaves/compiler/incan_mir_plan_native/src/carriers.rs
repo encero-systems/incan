@@ -7,54 +7,45 @@
 //! once, after the last append.
 
 use crate::body::{
-    BasicBlock, Callee, CalleeKind, Constant, FieldProjection, FrozenValue, Local, Operand, OperandKind, Parameter,
-    Place, Projection, Rvalue, RvalueKind, Statement, StatementKind, Terminator, TerminatorKind,
+    BasicBlock, Callee, CalleeKind, Constant, FieldProjection, FrozenValue, Operand, OperandKind, Place, Projection,
+    Rvalue, RvalueKind, Statement, StatementKind, Terminator, TerminatorKind,
 };
 use crate::nominal::{NominalKind, NominalRemap, folding_remap, remap_element, remap_leaf, remap_type, remap_types};
 use crate::plan::{
-    EnumDeclaration, EnumVariant, ExternalFunction, FallibleIteratorMethods, Function, GenericEnumDeclaration,
-    GenericEnumVariant, GenericLayoutField, GenericLayoutType, GenericModelDeclaration, IteratorMethods,
-    ModelDeclaration, Plan, StaticCell, ZipCarrier,
+    EnumDeclaration, ExternalFunction, Function, GenericEnumDeclaration, GenericLayoutType, GenericModelDeclaration,
+    ModelDeclaration, Plan, ZipCarrier,
 };
 
 /// Name every carrier by its place in the plan's enum table, after the `sources` source enums.
 ///
-/// Every other position, and every source enum position, is kept.
-pub fn fold_carrier_positions(plan: &Plan, sources: i64) -> Result<Plan, String> {
+/// Every other position, and every source enum position, is kept. The plan is folded in place, one declaration at a
+/// time, so lowering's peak never holds a second complete plan.
+pub fn fold_carrier_positions(mut plan: Plan, sources: i64) -> Result<Plan, String> {
     let mut remap = folding_remap(sources);
-    let mut statics = Vec::with_capacity(plan.statics.len());
-    for cell in &plan.statics {
-        statics.push(StaticCell {
-            ty: remap_type(&cell.ty, &mut remap)?,
-            ..cell.clone()
-        });
+    for cell in &mut plan.statics {
+        cell.ty = remap_type(&cell.ty, &mut remap)?;
     }
-    let mut zips = Vec::with_capacity(plan.zip_carriers.len());
-    for carrier in &plan.zip_carriers {
-        zips.push(ZipCarrier {
+    for carrier in &mut plan.zip_carriers {
+        *carrier = ZipCarrier {
             left: remap_element(&carrier.left, &mut remap)?,
             right: remap_element(&carrier.right, &mut remap)?,
             target: remap_type(&carrier.target, &mut remap)?,
-        });
+        };
     }
-    Ok(Plan {
-        enums: collect(&plan.enums, |declaration| fold_enum(declaration, &mut remap))?,
-        models: collect(&plan.models, |declaration| fold_model(declaration, &mut remap))?,
-        functions: collect(&plan.functions, |function| fold_function(function, &mut remap))?,
-        externals: collect(&plan.externals, |external| fold_external(external, &mut remap))?,
-        span: plan.span.clone(),
-        statics,
-        exports: plan.exports.clone(),
-        tests: plan.tests.clone(),
-        zip_carriers: zips,
-        programs: plan.programs.clone(),
-        generic_models: collect(&plan.generic_models, |declaration| {
-            fold_generic_model(declaration, &mut remap)
-        })?,
-        generic_enums: collect(&plan.generic_enums, |declaration| {
-            fold_generic_enum(declaration, &mut remap)
-        })?,
-    })
+    fold_tables(
+        &mut plan.functions,
+        &mut plan.models,
+        &mut plan.enums,
+        &mut plan.externals,
+        &mut remap,
+    )?;
+    for declaration in &mut plan.generic_models {
+        fold_generic_model(declaration, &mut remap)?;
+    }
+    for declaration in &mut plan.generic_enums {
+        fold_generic_enum(declaration, &mut remap)?;
+    }
+    Ok(plan)
 }
 
 /// Fold a unit's carrier positions in place once its last carrier is appended after its `sources` source enums.
@@ -65,18 +56,28 @@ pub fn fold_inventories(
     externals: &mut [ExternalFunction],
     sources: i64,
 ) -> Result<(), String> {
-    let mut remap = folding_remap(sources);
+    fold_tables(functions, models, enums, externals, &mut folding_remap(sources))
+}
+
+/// Fold every function, model, enum and external of a unit in place through one fold.
+fn fold_tables(
+    functions: &mut [Function],
+    models: &mut [ModelDeclaration],
+    enums: &mut [EnumDeclaration],
+    externals: &mut [ExternalFunction],
+    remap: &mut NominalRemap,
+) -> Result<(), String> {
     for function in functions.iter_mut() {
-        *function = fold_function(function, &mut remap)?;
+        fold_function(function, remap)?;
     }
     for model in models.iter_mut() {
-        *model = fold_model(model, &mut remap)?;
+        fold_model(model, remap)?;
     }
     for declaration in enums.iter_mut() {
-        *declaration = fold_enum(declaration, &mut remap)?;
+        fold_enum(declaration, remap)?;
     }
     for external in externals.iter_mut() {
-        *external = fold_external(external, &mut remap)?;
+        fold_external(external, remap)?;
     }
     Ok(())
 }
@@ -87,90 +88,53 @@ fn collect<T, R>(values: &[T], mut fold: impl FnMut(&T) -> Result<R, String>) ->
 }
 
 /// Fold the carrier positions in an enum's payloads and closed SDK arguments.
-fn fold_enum(declaration: &EnumDeclaration, remap: &mut NominalRemap) -> Result<EnumDeclaration, String> {
-    let mut variants = Vec::with_capacity(declaration.variants.len());
-    for variant in &declaration.variants {
-        variants.push(EnumVariant {
-            name: variant.name.clone(),
-            fields: remap_types(&variant.fields, remap)?,
-        });
+fn fold_enum(declaration: &mut EnumDeclaration, remap: &mut NominalRemap) -> Result<(), String> {
+    for variant in &mut declaration.variants {
+        variant.fields = remap_types(&variant.fields, remap)?;
     }
-    let library_type_arguments = remap_types(&declaration.library_type_arguments, remap)?;
-    Ok(EnumDeclaration {
-        variants,
-        library_type_arguments,
-        ..declaration.clone()
-    })
+    declaration.library_type_arguments = remap_types(&declaration.library_type_arguments, remap)?;
+    Ok(())
 }
 
 /// Fold the carrier positions in a model's fields, closed SDK arguments and checked bridge carriers.
-fn fold_model(declaration: &ModelDeclaration, remap: &mut NominalRemap) -> Result<ModelDeclaration, String> {
-    let mut kept = declaration.clone();
-    kept.fields = collect(&declaration.fields, |field| fold_parameter(field, remap))?;
-    kept.library_type_arguments = remap_types(&declaration.library_type_arguments, remap)?;
-    kept.callable_signature = remap_types(&declaration.callable_signature, remap)?;
-    if let Some(methods) = &declaration.iterator {
-        kept.iterator = Some(IteratorMethods {
-            item: remap_type(&methods.item, remap)?,
-            next: methods.next.clone(),
-        });
+fn fold_model(declaration: &mut ModelDeclaration, remap: &mut NominalRemap) -> Result<(), String> {
+    for field in &mut declaration.fields {
+        field.ty = remap_type(&field.ty, remap)?;
     }
-    if let Some(methods) = &declaration.fallible_iterator {
-        kept.fallible_iterator = Some(FallibleIteratorMethods {
-            item: remap_type(&methods.item, remap)?,
-            error: remap_type(&methods.error, remap)?,
-            next: methods.next.clone(),
-        });
+    declaration.library_type_arguments = remap_types(&declaration.library_type_arguments, remap)?;
+    declaration.callable_signature = remap_types(&declaration.callable_signature, remap)?;
+    if let Some(methods) = &mut declaration.iterator {
+        methods.item = remap_type(&methods.item, remap)?;
     }
-    Ok(kept)
+    if let Some(methods) = &mut declaration.fallible_iterator {
+        methods.item = remap_type(&methods.item, remap)?;
+        methods.error = remap_type(&methods.error, remap)?;
+    }
+    Ok(())
 }
 
 /// Fold the carrier positions in a dependency signature.
-fn fold_external(external: &ExternalFunction, remap: &mut NominalRemap) -> Result<ExternalFunction, String> {
-    Ok(ExternalFunction {
-        path: external.path.clone(),
-        type_arguments: remap_types(&external.type_arguments, remap)?,
-        parameters: remap_types(&external.parameters, remap)?,
-        return_type: remap_type(&external.return_type, remap)?,
-        span: external.span.clone(),
-    })
+fn fold_external(external: &mut ExternalFunction, remap: &mut NominalRemap) -> Result<(), String> {
+    external.type_arguments = remap_types(&external.type_arguments, remap)?;
+    external.parameters = remap_types(&external.parameters, remap)?;
+    external.return_type = remap_type(&external.return_type, remap)?;
+    Ok(())
 }
 
 /// Fold the concrete carrier positions in a published model template.
-fn fold_generic_model(
-    declaration: &GenericModelDeclaration,
-    remap: &mut NominalRemap,
-) -> Result<GenericModelDeclaration, String> {
-    let mut fields = Vec::with_capacity(declaration.fields.len());
-    for field in &declaration.fields {
-        fields.push(GenericLayoutField {
-            name: field.name.clone(),
-            ty: fold_layout(&field.ty, remap)?,
-            public: field.public,
-        });
+fn fold_generic_model(declaration: &mut GenericModelDeclaration, remap: &mut NominalRemap) -> Result<(), String> {
+    for field in &mut declaration.fields {
+        field.ty = fold_layout(&field.ty, remap)?;
     }
-    Ok(GenericModelDeclaration {
-        fields,
-        ..declaration.clone()
-    })
+    Ok(())
 }
 
 /// Fold the concrete carrier positions in a published enum template.
-fn fold_generic_enum(
-    declaration: &GenericEnumDeclaration,
-    remap: &mut NominalRemap,
-) -> Result<GenericEnumDeclaration, String> {
-    let mut variants = Vec::with_capacity(declaration.variants.len());
-    for variant in &declaration.variants {
-        variants.push(GenericEnumVariant {
-            name: variant.name.clone(),
-            fields: collect(&variant.fields, |ty| fold_layout(ty, remap))?,
-        });
+fn fold_generic_enum(declaration: &mut GenericEnumDeclaration, remap: &mut NominalRemap) -> Result<(), String> {
+    for variant in &mut declaration.variants {
+        variant.fields = collect(&variant.fields, |ty| fold_layout(ty, remap))?;
     }
-    Ok(GenericEnumDeclaration {
-        variants,
-        ..declaration.clone()
-    })
+    Ok(())
 }
 
 /// Fold the concrete types inside a template layout type.
@@ -191,34 +155,25 @@ fn fold_layout(ty: &GenericLayoutType, remap: &mut NominalRemap) -> Result<Gener
     })
 }
 
-/// Fold one typed parameter or field.
-fn fold_parameter(parameter: &Parameter, remap: &mut NominalRemap) -> Result<Parameter, String> {
-    Ok(Parameter {
-        name: parameter.name.clone(),
-        ty: remap_type(&parameter.ty, remap)?,
-        span: parameter.span.clone(),
-    })
-}
-
 /// Fold every carrier position in a function's signature, locals, blocks, loans and future callee.
-fn fold_function(function: &Function, remap: &mut NominalRemap) -> Result<Function, String> {
-    let mut kept = function.clone();
-    kept.parameters = collect(&function.parameters, |parameter| fold_parameter(parameter, remap))?;
-    kept.return_type = remap_type(&function.return_type, remap)?;
-    kept.locals = collect(&function.locals, |local| {
-        Ok(Local {
-            ty: remap_type(&local.ty, remap)?,
-            span: local.span.clone(),
-        })
-    })?;
-    kept.blocks = collect(&function.blocks, |block| fold_block(block, remap))?;
-    for loan in &mut kept.generic_loans {
+fn fold_function(function: &mut Function, remap: &mut NominalRemap) -> Result<(), String> {
+    for parameter in &mut function.parameters {
+        parameter.ty = remap_type(&parameter.ty, remap)?;
+    }
+    function.return_type = remap_type(&function.return_type, remap)?;
+    for local in &mut function.locals {
+        local.ty = remap_type(&local.ty, remap)?;
+    }
+    for block in &mut function.blocks {
+        *block = fold_block(block, remap)?;
+    }
+    for loan in &mut function.generic_loans {
         loan.ty = remap_type(&loan.ty, remap)?;
     }
-    if let Some(callee) = &function.future_callee {
-        kept.future_callee = Some(fold_callee(callee, remap)?);
+    if let Some(callee) = &mut function.future_callee {
+        *callee = fold_callee(callee, remap)?;
     }
-    Ok(kept)
+    Ok(())
 }
 
 /// Fold one block's statements and terminator.

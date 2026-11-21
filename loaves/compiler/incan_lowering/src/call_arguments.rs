@@ -18,9 +18,11 @@ use crate::formatting::display_operand;
 use crate::frame::{
     Builder, forget_moved_arguments, lend_invocation_storage, literal, place_type, read_place, temporary, value_type,
 };
-use crate::generators::is_generator_reference;
+use crate::frozen_equality::{borrow_frozen, frozen_place, frozen_reference_type};
 use crate::generators::is_generator_type;
+use crate::generators::{generator_reference, is_generator_reference};
 use crate::layout_types::native_source_type;
+use crate::list_iteration::list_root_place;
 use crate::list_values::value_operand;
 use crate::lists::exclusive_reference;
 use crate::lists::is_list;
@@ -244,7 +246,7 @@ pub fn call_argument_operand(
         PlanType::ScalarRef(_) | PlanType::ScalarMutRef(_) => {
             return Err(untranslated("operand_borrows::borrow_scalar_operand"));
         }
-        PlanType::FrozenCollectionRef(..) => return Err(untranslated("frozen_plan::borrow_frozen")),
+        PlanType::FrozenCollectionRef(..) => return frozen_reference_argument(builder, value, ty, span),
         _ => {}
     }
     if owned_collection(ty) {
@@ -255,7 +257,14 @@ pub fn call_argument_operand(
         return Err(untranslated("list_values::checked_list_argument"));
     }
     if is_generator_reference(ty) {
-        return Err(untranslated("generators::generator_reference"));
+        let SourceOperand::Place(read) = value else {
+            return Err("unsupported Body IR constant generator argument".into());
+        };
+        if read.fact != OwnershipFact::MutBorrow {
+            return Err("unsupported Body IR generator argument without mutable borrow fact".into());
+        }
+        let root = list_root_place(builder, &read.place, span)?;
+        return generator_reference(builder, root, span);
     }
     if *ty == PlanType::String {
         let text = display_operand(builder, value, span)?;
@@ -482,4 +491,30 @@ fn explicit_constant_argument(
         return Err("unsupported Body IR explicit owned constant carrier mismatch".into());
     }
     Ok(converted)
+}
+
+/// Lend an existing frozen view, or borrow the exact frozen storage a checked argument names.
+fn frozen_reference_argument(
+    builder: &mut Builder,
+    value: &SourceOperand,
+    ty: &PlanType,
+    span: &SourceSpan,
+) -> Result<Operand, String> {
+    if let SourceOperand::Place(read) = value
+        && !is_element_place(builder, &read.place)?
+    {
+        let existing = scalar_place(builder, &read.place, span)?;
+        if place_type(&builder.locals, &existing) == *ty {
+            return Ok(read_place(existing, false, span));
+        }
+    }
+    match frozen_place(builder, value, span)? {
+        Some(storage) => {
+            if frozen_reference_type(&place_type(&builder.locals, &storage))? != *ty {
+                return Err("unsupported Body IR frozen argument owner mismatch".into());
+            }
+            borrow_frozen(builder, storage, span)
+        }
+        None => Err("unsupported Body IR native frozen argument without exact storage".into()),
+    }
 }

@@ -13,7 +13,7 @@ use incan_semantics_core::body_ir::{
 use crate::checked_values::scalar_place;
 use crate::collections::{is_collection, is_owned_collection};
 use crate::decls::library_enum_item;
-use crate::element_places::is_element_place;
+use crate::element_places::{element_place_type, is_element_place};
 use crate::frame::{Builder, drop_owned, forget_owned, place_type, read_place, temporary, terminate_call, value_type};
 use crate::list_values::{element_read, value_operand};
 use crate::lists::{is_list, is_owned_list};
@@ -76,9 +76,11 @@ fn debug_operand(builder: &mut Builder, value: &SourceOperand, span: &SourceSpan
     }
     if let SourceOperand::Place(read) = value {
         if is_element_place(builder, &read.place)? {
-            return Err(untranslated("element_places::element_place_type"));
-        }
-        if read.place.global().is_none() {
+            // An indexed model, including an opaque native one, materializes once for its retained Debug call.
+            if let PlanType::Model(..) = element_place_type(builder, &read.place)? {
+                return Err(untranslated("model_values::debug_model_operand"));
+            }
+        } else if read.place.global().is_none() {
             let place = scalar_place(builder, &read.place, span)?;
             match place_type(&builder.locals, &place) {
                 PlanType::Model(..) => return Err(untranslated("model_values::debug_model_operand")),

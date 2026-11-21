@@ -17,9 +17,11 @@ use crate::frame::{
     Builder, appended_field, bind_read_value, dereferenced_place, forget_moved_arguments, forget_owned, place_type,
     read_place, temporary, track_rvalue_moves, value_type,
 };
+use crate::frozen_plan::frozen_bytes_literal;
 use crate::generators::generator_shape;
 use crate::layout_types::native_alias_boundary;
 use crate::layout_types::shared_receiver_type;
+use crate::list_values::sequence_read_storage;
 use crate::lists::exclusive_reference;
 use crate::lists::is_exclusive_borrow;
 use crate::lists::is_list;
@@ -43,9 +45,9 @@ pub fn boundary_operand(
         return frozen_operand(builder, value, span);
     }
     if *target == PlanType::FrozenBytes
-        && let SourceOperand::Constant(_) = value
+        && let SourceOperand::Constant(constant) = value
     {
-        return Err(untranslated("frozen_plan::frozen_bytes_literal"));
+        return frozen_bytes_literal(builder, constant, span);
     }
     let operand = typed_carrier_operand(builder, value, target, span)?;
     if generator_shape(&value_type(builder, &operand)?).is_some() && is_list(target) {
@@ -81,7 +83,10 @@ pub fn boundary_plan_operand(
         return Ok(copied);
     }
     if source == PlanType::FrozenBytes && *target == PlanType::List(ListLeaf::U8, 1) {
-        return Err(untranslated("sequence_builtins::sequence_read_storage"));
+        let frozen = temporary(builder, source, span);
+        builder.emit(plan_assign(frozen.clone(), RvalueKind::Use(value), span));
+        let storage = sequence_read_storage(builder, frozen, span)?;
+        return Ok(read_place(storage, true, span));
     }
     if source == PlanType::StrRef && *target == PlanType::String {
         let owned = owned_slice_text(builder, value, span);

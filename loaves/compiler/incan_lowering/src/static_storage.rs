@@ -1,10 +1,11 @@
 //! Computed and literal module statics planned as guarded adapter cells (RFC 052).
 
-use incan_mir_plan_native::{EnumDeclaration, PlanType, StaticCell};
+use incan_mir_plan_native::{EnumDeclaration, Place, PlanType, SourceSpan, StaticCell};
 use incan_semantics_core::IncanType;
-use incan_semantics_core::body_ir::{BodyIrModule, StaticInitializer};
+use incan_semantics_core::body_ir::{BodyIrModule, Place as SourcePlace, StaticInitializer};
 
 use crate::closures::callable_copy_type;
+use crate::frame::Builder;
 use crate::lowering::Inventories;
 use crate::numerics::numeric_carrier;
 use crate::pending::untranslated;
@@ -56,4 +57,19 @@ pub fn snapshot_owns(ty: &PlanType) -> bool {
         return false;
     }
     !callable_copy_type(ty)
+}
+
+/// Select a native guarded static's projection, or return None for other storage.
+///
+/// A keyed dictionary entry is read under the storage guard; any other projection is selected inside a fresh snapshot.
+pub fn computed_static_root(
+    builder: &mut Builder,
+    value: &SourcePlace,
+    span: &SourceSpan,
+) -> Result<Option<Place>, String> {
+    if value.global().is_none() {
+        return Ok(None);
+    }
+    let _ = (builder, span);
+    Err(untranslated("static_storage::computed_static_root"))
 }

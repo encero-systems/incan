@@ -16,6 +16,7 @@ use crate::enums::enum_owner;
 use crate::explicit_arguments::reference_contract;
 use crate::formatting::display_plan_operand;
 use crate::frame::{Builder, dereferenced_place, place_type, read_place, temporary, track_rvalue_moves, value_type};
+use crate::frozen_plan::frozen_literal;
 use crate::layout_types::shared_receiver_type;
 use crate::list_values::value_operand;
 use crate::lists::is_exclusive_borrow;
@@ -65,7 +66,7 @@ pub fn typed_carrier_operand(
 /// Keep only checked static literals or existing frozen values; dynamic text remains named-refused.
 pub fn frozen_operand(builder: &mut Builder, value: &SourceOperand, span: &SourceSpan) -> Result<Operand, String> {
     match value {
-        SourceOperand::Constant(_) => Err(untranslated("frozen_plan::frozen_literal")),
+        SourceOperand::Constant(constant) => frozen_literal(builder, constant, span),
         SourceOperand::Place(_) => {
             let operand = value_operand(builder, value, span)?;
             if value_type(builder, &operand)? != PlanType::FrozenStr {

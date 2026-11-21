@@ -969,7 +969,7 @@ fn completed_plan(
         generic_enums: enum_templates,
     };
     // The inventories were folded when the last carrier was appended; storage and templates are folded here.
-    Ok(Some(fold_carrier_positions(&planned, sources as i64)?))
+    Ok(Some(fold_carrier_positions(planned, sources as i64)?))
 }
 
 /// Retain closed storage, restore the source inventory, then finalize with its paired index.
