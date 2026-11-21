@@ -149,11 +149,7 @@ impl TypeChecker {
     }
 
     /// Return whether one bound or adoption names `target` or a trait whose supertraits include it.
-    pub(in crate::typechecker::check_expr) fn bound_reaches_trait(
-        &self,
-        bound: &TypeBoundInfo,
-        target: TraitId,
-    ) -> bool {
+    pub(in crate::typechecker) fn bound_reaches_trait(&self, bound: &TypeBoundInfo, target: TraitId) -> bool {
         self.trait_reaches(&bound.name, target)
             || bound
                 .source_name
