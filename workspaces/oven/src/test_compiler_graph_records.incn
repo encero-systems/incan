@@ -1,7 +1,10 @@
 """Ranked compiler graph records publish their value, receipt and both edge directions atomically."""
 
+from checker_record_fixtures import empty_checker_record
+from store_selection_records import read_binding
 import compiler_source_projection
-from pub::incan_platform.store import Snapshot, begin, commit, delete, get, keys, put
+from pub::internal_models.source_value_records import encode_source_text, read_documentation
+from pub::incan_platform.store import Snapshot, begin, commit, delete, finish_frame_reads, get, keys, lookup_binding, measure_frame_reads, put, read_counts, BindingLookup
 from pub::incan_platform.store import snapshot as store_snapshot
 from pub::incan_platform.store.memory import root as memory_root
 from pub::internal_models.records import (
@@ -25,10 +28,14 @@ from pub::internal_models.records import (
 )
 from pub::internal_models import (
     CompiledBodyFallback,
+    SettledCallRead,
+    SettledCallContract,
     CompiledBodyDependencyRead,
     CompiledBodyOutputs,
     CompiledNamespaceValue,
     CompiledBodyValue,
+    certified_namespace_order,
+    decode_namespace_order,
     DemandPage,
     InputSnapshot,
     PreparedInputs,
@@ -38,25 +45,39 @@ from pub::internal_models import (
     RankCertificate,
     ReadyWork,
     RecordRoot,
+    decode_read_receipt,
     decode_demand_page,
     decode_graph_body_values,
     decode_prepared_inputs,
     decode_ready_work,
     encode_prepared_inputs,
     encode_ready_work,
-    encode_compiled_body_outputs,
+    encode_compiled_body_rows,
 )
-from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily, CheckedRecord, encode_record
-from compiler_graph_records import PublishedEvaluation, publish_evaluation, reusable_evaluation
+from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily
+from pub::internal_models.namespace_references import decode_namespace_references, namespace_reference_filename
+from compiler_namespace_products import contract_key, stage_call_contracts, interface_key, member_key, member_plan_inputs, prepare_namespace_products
+from compiler_graph_records import OutputSlots, PublishedEvaluation, family_outputs, prepare_evaluation, publish_evaluation, readers_of, reusable_evaluation, reusable_family_records, retire_compiler_versions, retire_output, supersede_outputs
+from compiler_owner_retirement import retire_missing_functions
 from compiler_prepared_records import PreparedBodyRecordSource
 from compiler_record_envelopes import RankedActivation, RankedCheckingSweep, persist_activation
+from compiler_ranked_build import RankedBuildInputs, contextual_ranked_pages
+from compiler_body_keys import body_key, namespace_key, project_declaration_slot
+from compiler_plan_values import LOWERING_PROFILE, select_plan_modules
+from compiler_plan_modules import plan_module_key
+from pub::incan_mir_plan import PlanModuleFunction, PlanModuleValue, encode_plan_module
+from compiler_owner_records import encode_body_frame, read_body_frame, read_eligibility
 from compiler_body_values import (
+    invalid_namespace_modules,
     encode_body_inventory,
+    select_body_inventory_except,
+    select_namespace_inventory_except,
     invalid_body_owners,
     publish_body_values,
     select_body_inventory,
     select_body_values,
 )
+from compiler_captured_sources import publish_captured_source_inputs
 from compiler_body_publication import (
     dependency_owner,
     prepare_captured_source_inputs,
@@ -68,14 +89,16 @@ from compiler_body_publication import (
 )
 from engine_capture import CapturedInput, InputRole
 from observation import file_metadata
+from pub::incan_mir_plan import LoweringEvent, LoweringRefusal, encode_lowering_event, encode_lowering_refusal
+from std.primitives.crumb.descriptions import Description, DescriptionMode
+from std.primitives.crumb.values import Value
+from pub::internal_models.crumb_rows import ModelField, model_description, required_value
+from pub::internal_models.graph_crumb_fields import KEY_TYPE, encode_graph_row
 from std.fs import Path
+from std.io import BytesIO
 from compiler_body_fallbacks import fallback_reasons
-from compiler_plan_values import LOWERING_PROFILE
-from compiler_source_projection import project_source, publish_source_projection, signature_record
-from compiler_projection_cache import (
-    cached_editable_dependency_signature_record,
-    editable_dependency_projection_key,
-)
+from compiler_source_projection import project_source, publish_source_projection, scope_member, scope_members, signature_record
+from compiler_projection_cache import cached_editable_dependency_signature_record, editable_dependency_projection_key
 from publication import publish_binary
 from scratch import scratch_directory
 from unit import UnitDescription, UnitLoaf
@@ -85,6 +108,90 @@ from rust::incan_semantics_core import (
     SemanticSourceTargetKind as RustDeclarationKind,
     encode_incan_symbol_identity,
 )
+
+
+pub def test_certified_module_owner_overlap_and_partial_cycle() -> Result[None, str]:
+    """An exact plan witness and a complete namespace cycle are both required to omit individual checker pages."""
+    origin = "coverage"
+    left = "src/left.incn"
+    right = "src/right.incn"
+    order = certified_namespace_order(origin, {left: [right], right: [left]})?
+    selected = store_snapshot(memory_root()).map_err((error) => error.message())?
+    mut graph = commit(put(begin(selected), "incan.compiler.namespace-order\t" + order[left].evidence, order[left].certificate)).map_err((error) => error.message())?
+    rank = ProducerRank(namespace=0, stage=ProducerStage.Signature, dependency=0)
+    for file in [left, right]:
+        scope = ReadScope(snapshot=graph.digest, profile=CHECKER_PROFILE)
+        source = PreparedBodyRecordSource.open(scope)
+        receipt = source.receipt(scope, namespace_key(origin, file), [], order[file].evidence)?
+        graph = publish_evaluation(graph, file, rank, b"selected namespace page", receipt)?.snapshot
+    namespaces = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, [])?
+    assert len(namespaces.pages) == 2 and namespaces.complete == set([left, right])
+    incomplete = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, [right])?
+    assert len(incomplete.pages) == 1 and len(incomplete.complete) == 0
+    measure_frame_reads(true)
+    reference_selection = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, [right], true)
+    reference_reads = finish_frame_reads()
+    offered = reference_selection?
+    assert len(offered.pages) == 1 and len(offered.complete) == 0
+    assert offered.pages[0].key == namespace_reference_filename()
+    references = decode_namespace_references(offered.pages[0].value.clone())?
+    assert len(references) == 1 and references[0].key.identity == left
+    for read in reference_reads:
+        assert not read.key.startswith("namespace\t")
+    owner = "function:left::read|signature"
+    token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    function = PlanModuleFunction(identity=owner, symbol="native-left-read", function="read", key=token, event=b"event")
+    member = PlanModuleFunction(identity="native-method", symbol="native-method", function="method", key=token, event=b"event")
+    extra = PlanModuleFunction(identity="unwitnessed", symbol="native-unwitnessed", function="other", key=token, event=b"event")
+    value = encode_plan_module(PlanModuleValue(module="left", functions=[function, member, extra])).map_err((_) => "plan")?
+    scope = ReadScope(snapshot=graph.digest, profile=LOWERING_PROFILE)
+    mut staged_source = PreparedBodyRecordSource.open(scope)
+    mut reads: list[RecordRequest] = []
+    for product in [function, member]:
+        key = body_key("plan-function", origin, product.identity, "body:" + product.function, token)
+        encoded = encode_record_key(key)?
+        graph = commit(put(begin(graph), encoded, b"product")).map_err((error) => error.message())?
+        staged_source.add(encoded, b"product")
+        reads.append(prepared_product_request(key))
+    receipt = staged_source.receipt(scope, plan_module_key(origin, left, value), reads)?
+    graph = publish_evaluation(graph, "plan", rank, value, receipt)?.snapshot
+    unchanged_positions: set[str] = set()
+    selection = select_plan_modules(graph, origin, [], [], namespaces.complete, unchanged_positions)?
+    assert selection.covered.module_owners[left] == [owner]
+    assert selection.covered.symbols["native-left-read"] == owner
+    assert len(selection.covered.owners) == 1
+    assert len(select_plan_modules(graph, origin, [], [owner], namespaces.complete, unchanged_positions)?.covered.owners) == 0
+    assert len(select_plan_modules(graph, origin, [], [], incomplete.complete, unchanged_positions)?.covered.owners) == 0
+    event = LoweringEvent(identity="native-left-read", key=token, function="read", product=b"product", module="left", reused=true)
+    assert selection.covered.lowering_demands([event], set(), set(["left"])) == []
+    assert selection.covered.lowering_demands([event], set(), set()) == [owner]
+    mut fresh_event = event
+    fresh_event.reused = false
+    assert selection.covered.lowering_demands([fresh_event], set(), set(["left"])) == [owner]
+    assert selection.covered.lowering_demands([fresh_event], set([owner]), set()) == []
+    mut entry = event
+    entry.role = "entry"
+    assert selection.covered.lowering_demands([entry], set(), set(["left"])) == [owner]
+    checking = ReadScope(snapshot=graph.digest, profile=CHECKER_PROFILE)
+    checked = PreparedBodyRecordSource.open(checking)
+    for declaration in [owner, "function:other::read|signature"]:
+        for family in ["local", "final", "body-ir"]:
+            key = body_key(family, origin, declaration, "checked", token)
+            mut payload = b"checked value"
+            if family == "body-ir":
+                payload = encode_body_frame(key, CHECKER_PROFILE, b"native body")?
+            body_receipt = checked.receipt(checking, key, [])?
+            graph = publish_evaluation(graph, declaration + family, rank, payload, body_receipt)?.snapshot
+    measure_frame_reads(true)
+    baseline = select_body_inventory_except(graph, CHECKER_PROFILE, origin, [])?
+    prior = [read.key for read in finish_frame_reads() if read.key.startswith("body-ir\t")]
+    measure_frame_reads(true)
+    after = select_body_inventory_except(graph, CHECKER_PROFILE, origin, [key for key in selection.covered.owners.keys()])?
+    opened = [read.key for read in finish_frame_reads() if read.key.startswith("body-ir\t")]
+    assert len(baseline) == 2 and len(prior) == 2
+    assert len(after) == 1 and after[0].identity == "function:other::read|signature"
+    assert opened == [encode_record_key(body_key("body-ir", origin, after[0].identity, "checked", token))?]
+    return Ok(None)
 
 
 pub def test_value_evaluation_and_edges_publish_in_one_generation() -> Result[None, str]:
@@ -104,11 +211,14 @@ pub def test_value_evaluation_and_edges_publish_in_one_generation() -> Result[No
     assert get(before, published.receipt_key).map_err((error) => error.message())? is None
     assert get(before, published.evaluation_key).map_err((error) => error.message())? is None
     assert get(published.snapshot, published.value_key).map_err((error) => error.message())? == Some(b"checked local")
-    assert get(published.snapshot, published.receipt_key).map_err((error) => error.message())? is not None
-    assert get(published.snapshot, published.evaluation_key).map_err((error) => error.message())? is not None
+    receipt_bytes = required(before=published.snapshot, key=published.receipt_key)?
+    assert receipt_bytes[:4] == b"CRMB"
+    assert decode_read_receipt(receipt_bytes)?.operations == receipt.operations
+    assert decode_read_receipt(receipt_bytes[:-1].clone()).is_err()
+    assert required(before=published.snapshot, key=published.evaluation_key)?[:4] == b"CRMB"
     selected = keys(published.snapshot).map_err((error) => error.message())?
-    assert count_prefix(selected, "incan.engine.edge-out\t") == 4
-    assert count_prefix(selected, "incan.engine.edge-in\t") == 4
+    assert count_prefix(selected, "incan.engine.edge-out/3\t") == 4
+    assert count_prefix(selected, "incan.engine.edge-in/3\t") == 4
     assert published.edge_count == 4
     return Ok(None)
 
@@ -120,9 +230,22 @@ pub def test_local_envelopes_persist_and_sweep_in_rank_order() -> Result[None, s
     second = activation("local", "second", 0)
     final_record = activation("final", "first", 2)
     persisted = persist_activation(before, DemandPage(keys=[first.ready.output]), first.prepared, first.ready)?
-    demand = decode_demand_page(required(before=persisted.snapshot, key=persisted.demand_key)?)?
-    prepared = decode_prepared_inputs(required(before=persisted.snapshot, key=persisted.prepared_key)?)?
-    ready = decode_ready_work(required(before=persisted.snapshot, key=persisted.work_key)?)?
+    demand_bytes = required(before=persisted.snapshot, key=persisted.demand_key)?
+    assert demand_bytes[:4] == b"CRMB"
+    forged = model_description(b"demand\x00", "another.schema", [ModelField(identity=b"keys__", name="keys", storage=f"list<{KEY_TYPE}>")])
+    inline = Description(metadata=forged.metadata, mode=DescriptionMode.Inline)
+    impostor = encode_graph_row(b"demand\x00", inline, [required_value(b"keys__", Value.List([]))])?
+    assert decode_demand_page(impostor).is_err()
+    assert decode_ready_work(demand_bytes).is_err()
+    demand = decode_demand_page(demand_bytes)?
+    prepared_bytes = required(before=persisted.snapshot, key=persisted.prepared_key)?
+    assert prepared_bytes[:4] == b"CRMB"
+    assert decode_demand_page(prepared_bytes).is_err()
+    prepared = decode_prepared_inputs(prepared_bytes)?
+    ready_bytes = required(before=persisted.snapshot, key=persisted.work_key)?
+    assert ready_bytes[:4] == b"CRMB"
+    assert decode_prepared_inputs(ready_bytes).is_err()
+    ready = decode_ready_work(ready_bytes)?
     assert demand.keys == [first.ready.output]
     assert encode_prepared_inputs(prepared)? == encode_prepared_inputs(first.prepared)?
     assert encode_ready_work(ready)? == encode_ready_work(first.ready)?
@@ -133,6 +256,108 @@ pub def test_local_envelopes_persist_and_sweep_in_rank_order() -> Result[None, s
     assert selected_family(sweep.next()) == "final"
     assert selected_identity(sweep.next()) == ""
     assert sweep.evaluation_count() == 3
+    order = certified_namespace_order("project", {
+        "entry": ["consumer", "left", "right", "leaf"],
+        "consumer": ["left", "right", "leaf"],
+        "left": ["right", "leaf"],
+        "right": ["left", "leaf"],
+        "leaf": [],
+        "incomplete": ["absent"],
+    })?
+    assert order["leaf"].rank == 0
+    assert order["left"].members == ["left", "right"]
+    assert order["left"].rank == 1
+    assert order["left"].evidence == order["right"].evidence
+    roundtrip = decode_namespace_order(order["right"].certificate.clone(), "project")?
+    assert roundtrip.members == ["left", "right"]
+    assert roundtrip.rank == 1
+    assert roundtrip.evidence == order["left"].evidence
+    assert decode_namespace_order(order["left"].certificate.clone(), "another-project").is_err()
+    tampered = BytesIO(order["left"].certificate)
+    tampered.seek(0, 2).map_err((error) => error.message())?
+    tampered.write_bytes(b"x").map_err((error) => error.message())?
+    assert decode_namespace_order(tampered.getvalue(), "project").is_err()
+    assert order["consumer"].rank == 3
+    assert order["entry"].rank == 4
+    assert "incomplete" not in order
+    match certified_namespace_order("project", {"first": ["second"], "second": ["third"], "third": []}):
+        Ok(_) => return Err("accepted an incomplete transitive import closure")
+        Err(_) => pass
+    return Ok(None)
+
+
+pub def test_build_admits_a_settled_checker_pair_while_body_ir_is_pending() -> Result[None, str]:
+    """The build can reuse completed checking before Body IR exists, while an invalidated owner stays excluded."""
+    base = commit(put(begin(store_snapshot(memory_root()).map_err((error) => error.message())?), "seed", b"yes")).map_err((error) => error.message())?
+    mut local = family_key("local", "pending-body-ir")
+    local.identity_profile = "incan.stable-declaration/1"
+    mut final = family_key("final", "pending-body-ir")
+    final.identity_profile = local.identity_profile
+    compiled = publish_evaluation(base, "pending-local", ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=0), b"pending", fixture_receipt_many(base, local, [])?)?
+    settled = publish_evaluation(compiled.snapshot, "settled-final", ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=1), b"settled", fixture_receipt(compiled.snapshot, final, record_request(local))?)?
+    assert len(select_body_inventory_except(settled.snapshot, "profile", local.origin, [])?) == 0
+    pair = select_body_inventory_except(settled.snapshot, "profile", local.origin, [], mint_body_ir=true)?
+    assert len(pair) == 1 and pair[0].identity == local.identity
+    assert pair[0].local == b"pending" and pair[0].final == b"settled" and len(pair[0].body_ir) == 0
+    assert len(select_body_inventory_except(settled.snapshot, "profile", local.origin, [local.identity], mint_body_ir=true)?) == 0
+    return Ok(None)
+
+
+pub def test_selected_checker_products_supply_later_witnesses_once() -> Result[None, str]:
+    """Reading one complete owner opens each selected product once, including the inputs of later phases."""
+    empty = store_snapshot(memory_root()).map_err((error) => error.message())?
+    mut graph = commit(put(begin(empty), "seed", b"present")).map_err((error) => error.message())?
+    mut local = family_key("local", "shared-products")
+    local.identity_profile = "incan.stable-declaration/1"
+    mut final = local
+    final.family = "final"
+    mut body = local
+    body.family = "body-ir"
+    first_rank = ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=0)
+    final_rank = ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=1)
+    body_rank = ProducerRank(namespace=0, stage=ProducerStage.BodyIr, dependency=0)
+    scope = ReadScope(snapshot=graph.digest, profile="profile")
+    mut source = PreparedBodyRecordSource.open(scope)
+    local_value = b"local bytes"
+    final_value = b"final bytes"
+    source.add(encode_record_key(local)?, local_value)
+    source.add(encode_record_key(final)?, final_value)
+    graph = publish_evaluation(graph, "local", first_rank, local_value, source.receipt(scope, local, [])?)?.snapshot
+    graph = publish_evaluation(graph, "final", final_rank, final_value, source.receipt(scope, final, [prepared_product_request(local)])?)?.snapshot
+    frame = encode_body_frame(body, "profile", b"native bytes")?
+    graph = publish_evaluation(graph, "body", body_rank, frame, source.receipt(scope, body, [prepared_product_request(final)])?)?.snapshot
+
+    measure_frame_reads(true)
+    selected = select_body_inventory_except(graph, "profile", local.origin, [])?
+    opened = finish_frame_reads()
+    assert len(selected) == 1 and selected[0].body_ir == b"native bytes"
+    for key in [local, final, body]:
+        encoded = encode_record_key(key)?
+        physical = sum([read.reads for read in opened if read.key == encoded])
+        assert physical == 1, f"{key.family} opened {physical} times"
+    return Ok(None)
+
+
+pub def test_shared_family_witness_opens_each_selection_once() -> Result[None, str]:
+    """Independent outputs share one authenticated read, bounded by the request and selected snapshot."""
+    original = store_snapshot(memory_root()).map_err((e) => e.message())?
+    shared = request("shared-family-witness", RecordSelection.Field("value"))
+    shared_key = encode_record_key(shared.key)?
+    start = commit(put(begin(original), shared_key, b"first")).map_err((e) => e.message())?
+    first = publish_fixture(start, "shared-consumer-a", shared)?
+    second = publish_fixture(first.snapshot, "shared-consumer-b", shared)?
+    bounded = RecordRequest(key=shared.key, selection=shared.selection, byte_limit=1024)
+    third = publish_fixture(second.snapshot, "shared-consumer-c", bounded)?
+    measure_frame_reads(true)
+    rows = reusable_family_records(third.snapshot, "local", "profile", Some(OutputSlots(origin="package",
+        included=Some(["shared-consumer-a", "shared-consumer-b", "shared-consumer-c"]))))?
+    observed = finish_frame_reads()
+    assert len(rows) == 3
+    assert sum([r.reads for r in observed if r.key == shared_key]) == 2
+    changed = commit(put(begin(third.snapshot), shared_key, b"second")).map_err((e) => e.message())?
+    invalid = reusable_family_records(changed, "local", "profile", Some(OutputSlots(origin="package",
+        included=Some(["shared-consumer-a", "shared-consumer-b", "shared-consumer-c"]))))?
+    assert len(invalid) == 0
     return Ok(None)
 
 
@@ -204,7 +429,7 @@ pub def test_persisted_evaluations_reuse_only_while_every_witness_validates() ->
         body.snapshot,
         "run44-body-ir-claim",
         ProducerRank(namespace=2, stage=ProducerStage.BodyIr, dependency=0),
-        b"owner-frame",
+        encode_body_frame(body_ir_key, "profile", b"owner-frame")?,
         body_ir_receipt,
     )?
     selected_body = select_body_values(
@@ -272,6 +497,19 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
     assert before.header.text == "from std import env\ntype Count = int", before.header.text
     assert before.header.digest() == after.header.digest()
     verify_documentation_changes_no_record(original, before)?
+    documented = project_source("package", "src/main.incn", original.replace("    return 1", "    \"First version\"\n    return 1"))?
+    revised_docs = project_source("package", "src/main.incn", original.replace("    return 1", "    \"Second version\"\n    return 1"))?
+    assert documented.encoded_documentation()? != revised_docs.encoded_documentation()?
+    assert documented.documentation_key() == revised_docs.documentation_key()
+    original_owner = projected_owner(documented, "first")?
+    edited_docs_owner = projected_owner(revised_docs, "first")?
+    assert original_owner.encoded()? == edited_docs_owner.encoded()?
+    assert original_owner.digest() == edited_docs_owner.digest()
+    assert original_owner.encoded()?[:4] == b"CRMB"
+    assert read_documentation(revised_docs.encoded_documentation()?)? == revised_docs.documentation
+    assert len(revised_docs.documentation) == 1
+    documented_owner, _ = revised_docs.documentation[0]
+    assert documented_owner == "first"
     assert len(before.owners) == 4 and len(after.owners) == 4, f"owner counts: {len(before.owners)}, {len(after.owners)}"
     mut changed = 0
     for index in range(len(before.owners)):
@@ -285,6 +523,10 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
     assert before.owners[2].text.startswith("def first"), before.owners[2].text
     assert before.owners[3].text.startswith("def second"), before.owners[3].text
     assert before.owners[0].start < before.owners[0].end
+
+    branches = "def result(first: bool, second: bool) -> int:\n    if first:\n        pass\n    else:\n        pass\n    if second:\n        return 1\n    else:\n        return 2\n"
+    branch_projection = project_source("package", "src/branches.incn", branches)?
+    assert [owner.key.facet for owner in branch_projection.owners] == ["result"]
 
     projected_bindings = project_source(
         "package",
@@ -314,7 +556,28 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
 
     selected = store_snapshot(memory_root()).map_err((error) => error.message())?
     published = publish_source_projection(selected, before)?
-    assert len(published.keys) == 10
+    assert len(published.keys) == 17
+    assert before.placements["first"].key == after.placements["first"].key
+    assert before.placements["first"].text != after.placements["first"].text
+    assert before.placements["second"].text == after.placements["second"].text
+    shifted = project_source("package", "src/main.incn", original.replace("return 1", "return 123"))?
+    assert before.placements["second"].text != shifted.placements["second"].text
+    assert projected_owner(before, "second")?.digest() == projected_owner(shifted, "second")?.digest()
+    wide = project_source("package", "src/main.incn", "# é\ndef main() -> int:\n    return 1\n")?
+    narrow = project_source("package", "src/main.incn", "# x\ndef main() -> int:\n    return 1\n")?
+    assert wide.placements["main"].text != narrow.placements["main"].text
+    leaf = "def leaf() -> int:\n    return 1\n"
+    appended = project_source("package", "main.incn", leaf + "\n\ndef extra() -> int:\n    return 2\n")?
+    old_leaf = project_source("package", "main.incn", leaf)?
+    assert appended.owners[0].digest() == old_leaf.owners[0].digest()
+    assert appended.placements["leaf"].text != old_leaf.placements["leaf"].text
+    earlier = scope_members("first\nsecond\n")
+    later = scope_members("first\nsecond\nother\n")
+    shadow = scope_members("first\nsecond\nmodel:str\n")
+    assert scope_member(before.census, earlier, "first").text == scope_member(before.census, later, "first").text
+    assert scope_member(before.census, earlier, "str").text == ""
+    assert scope_member(before.census, shadow, "str").text == "model:str"
+    assert scope_member(before.census, scope_members("first\nfirst\n"), "first").text == "first\nfirst"
     for key in published.keys:
         assert get(published.snapshot, key).map_err((error) => error.message())? is not None
 
@@ -337,6 +600,17 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
         "other",
         "field:package::src::default::RecordKey::other|signature",
     )?.key == field_owner.key
+    method_projection = project_source(
+        "package", "src/default.incn", default_source + "\ndef rendered() -> int:\n    return 5\n",
+    )?
+    method = compiler_source_projection.compiled_owner_source(
+        method_projection, "src/default.incn", "rendered", "member/method:default::rendered#in(model:default::RecordKey)[0]",
+    )?
+    assert method.key.facet == "model:RecordKey"
+    wrong_owner = compiler_source_projection.compiled_owner_source(
+        method_projection, "src/default.incn", "rendered", "member/method:default::rendered#in(class:default::RecordKey)[0]",
+    )
+    assert wrong_owner.is_err()
     repeated_field_source = "pub model Snapshot:\n    pub pin: int = 1\n\npub model Publication:\n    pub pin: int = 2\n\npub model PreparedPayload:\n    pub pin: int\n"
     repeated_field_projection = project_source("package", "src/store.incn", repeated_field_source)?
     snapshot_pin = projected_owner(repeated_field_projection, "default:model:Snapshot:pin")?
@@ -460,19 +734,25 @@ pub def test_retained_owner_selection_propagates_an_ambiguous_owner() -> Result[
 
 pub def test_projected_body_witnesses_drive_early_cutoff_and_signature_invalidation() -> Result[None, str]:
     """Owner, header and declaration witnesses identify body, import and signature dirtiness without checking."""
-    source = "from std import env\n\ndef first() -> int:\n    return 1\n\ndef second() -> int:\n    return first()\n"
+    source = "from std import env\n\ndef first() -> int:\n    return 1\n\ndef second() -> int:\n    return first()\n\ndef unrelated() -> int:\n    return 3\n"
     projection = project_source("package", "src/main.incn", source)?
     first_source = projected_owner(projection, "first")?
     second_source = projected_owner(projection, "second")?
+    unrelated_source = projected_owner(projection, "unrelated")?
     selected = store_snapshot(memory_root()).map_err((error) => error.message())?
     projected = publish_source_projection(selected, projection)?
     first_declaration = family_key("declaration", "first")
     second_declaration = family_key("declaration", "second")
+    unrelated_declaration = family_key("declaration", "unrelated")
     declarations = commit(
         put(
-            put(begin(projected.snapshot), encode_record_key(first_declaration)?, b"first declaration"),
-            encode_record_key(second_declaration)?,
-            b"second declaration",
+            put(
+                put(begin(projected.snapshot), encode_record_key(first_declaration)?, b"first declaration"),
+                encode_record_key(second_declaration)?,
+                b"second declaration",
+            ),
+            encode_record_key(unrelated_declaration)?,
+            b"unrelated declaration",
         ),
     ).map_err((error) => error.message())?
     first_pair = publish_owner_pair(
@@ -480,17 +760,25 @@ pub def test_projected_body_witnesses_drive_early_cutoff_and_signature_invalidat
         "first",
         first_source.key,
         projected_header(source)?.key,
-        [first_declaration, projection.declarations.key],
+        [first_declaration, projection.census.key],
     )?
-    complete = publish_owner_pair(
+    second_pair = publish_owner_pair(
         first_pair,
         "second",
         second_source.key,
         projected_header(source)?.key,
-        [second_declaration, first_declaration, projection.declarations.key],
+        [second_declaration, first_declaration, projection.census.key],
+    )?
+    complete = publish_owner_pair(
+        second_pair,
+        "unrelated",
+        unrelated_source.key,
+        projected_header(source)?.key,
+        [unrelated_declaration, projection.census.key],
     )?
     assert select_body_values(complete, family_key("local", "first"), family_key("final", "first"), "profile")? is not None
     assert select_body_values(complete, family_key("local", "second"), family_key("final", "second"), "profile")? is not None
+    assert select_body_values(complete, family_key("local", "unrelated"), family_key("final", "unrelated"), "profile")? is not None
 
     body_edit = project_source("package", "src/main.incn", source.replace("return 1", "return 3"))?
     changed_body = projected_owner(body_edit, "first")?
@@ -502,6 +790,7 @@ pub def test_projected_body_witnesses_drive_early_cutoff_and_signature_invalidat
 
     signature_projection = project_source("package", "src/main.incn", source.replace("first() -> int", "first() -> str"))?
     assert signature_projection.declarations.text != projection.declarations.text
+    assert signature_projection.census.text == projection.census.text
     changed_signature = projected_owner(signature_projection, "first")?
     signature_source = publish_source_projection(complete, signature_projection)?
     signature = commit(
@@ -519,10 +808,12 @@ pub def test_projected_body_witnesses_drive_early_cutoff_and_signature_invalidat
         source.replace("def first() -> int:\n    return 1\n\n", ""),
     )?
     assert removed_projection.declarations.text != projection.declarations.text
+    assert removed_projection.census.text != projection.census.text
     removed = publish_source_projection(complete, removed_projection)?
-    assert invalid_body_owners(removed.snapshot, [removed_projection.declarations.key], "profile")? == [
+    assert invalid_body_owners(removed.snapshot, [removed_projection.census.key], "profile")? == [
         "first",
         "second",
+        "unrelated",
     ]
 
     import_source = source.replace("from std import env", "from std import fs")
@@ -531,7 +822,83 @@ pub def test_projected_body_witnesses_drive_early_cutoff_and_signature_invalidat
     assert invalid_body_owners(imported.snapshot, [projected_header(import_source)?.key], "profile")? == [
         "first",
         "second",
+        "unrelated",
     ]
+    return Ok(None)
+
+
+pub def test_contextual_body_edit_uses_a_certified_receipt_without_opening_prior_values() -> Result[None, str]:
+    """An imported-model body edit schedules one owner and leaves old payloads and unrelated source untouched."""
+    origin = "fixture"
+    consumer = "src/consumer.incn"
+    provider = "src/worker.incn"
+    source = "from worker import Completion\n\ndef reported(report: Completion) -> bool:\n    return report.code == 0\n"
+    projection = project_source(origin, consumer, source)?
+    owner = projected_owner(projection, "reported")?
+    supplier = compiler_source_projection.signature_key(origin, provider, "model:Completion")
+    identity = "function:consumer::reported|signature"
+    declaration = body_key("declaration", origin, identity, "reported", "prior")
+    local = body_key("local", origin, identity, "checked", "prior")
+    orders = certified_namespace_order(origin, {consumer: [provider], provider: []})?
+    order = orders[consumer]
+    before = store_snapshot(memory_root()).map_err((error) => error.message())?
+    certified = commit(put(begin(before), "incan.compiler.namespace-order\t" + order.evidence, order.certificate)).map_err((error) => error.message())?
+    scope = ReadScope(snapshot=certified.digest, profile=CHECKER_PROFILE)
+    mut prepared = PreparedBodyRecordSource.open(scope)
+    prepared.add(encode_record_key(owner.key)?, owner.encoded()?)
+    prepared.add(encode_record_key(declaration)?, b"prior declaration")
+    prepared.add(encode_record_key(supplier)?, encode_source_text("model Completion:")?)
+    reads = [prepared_product_request(owner.key), prepared_product_request(declaration), prepared_product_request(supplier)]
+    receipt = prepared.receipt(scope, local, reads, order.evidence)?
+    rank = ProducerRank(namespace=order.rank, stage=ProducerStage.CheckBody, dependency=0)
+    graph = publish_evaluation(certified, "compiled-local", rank, b"prior local", receipt)?.snapshot
+    mut inputs = RankedBuildInputs(graph=graph, projected=begin(graph), origin=origin, invalid=[identity],
+        changes=[owner.key, projection.positioned.key])
+    measure_frame_reads(true)
+    selected = contextual_ranked_pages(inputs, local)
+    opened = finish_frame_reads()
+    pages = selected?
+    assert len(pages) == 2
+    assert pages[0].key == "ranked-source-edit.crumb"
+    assert pages[1].key == "ranked-source-order.crumb" and pages[1].value == order.certificate
+    demand = decode_demand_page(pages[0].value.clone())?
+    assert len(demand.keys) == 2 and demand.keys[1] == owner.key
+    assert demand.keys[0].identity == identity and demand.keys[0].facet == consumer
+    assert demand.keys[0].context == order.evidence
+    for read in opened:
+        assert read.key not in [encode_record_key(local)?, encode_record_key(owner.key)?, encode_record_key(supplier)?, encode_record_key(declaration)?]
+    inputs.changes.append(supplier)
+    assert len(contextual_ranked_pages(inputs, local)?) == 0
+    return Ok(None)
+
+
+pub def test_store_receipt_binds_payload_without_copying_it() -> Result[None, str]:
+    """A zero-byte request still checks the entire immutable frame and returns its authenticated digest."""
+    key = family_key("body-ir", "digest-only")
+    written = encode_record_key(key)?
+    empty = store_snapshot(memory_root()).map_err((error) => error.message())?
+    value: bytes = list.repeat(47u8, 65537)
+    graph = commit(put(begin(empty), written, value)).map_err((error) => error.message())?
+    expected = match lookup_binding(graph, written).map_err((error) => error.message())?:
+        BindingLookup.Present(binding) => binding
+        _ => return Err("stored fixture has no present binding")
+    scope = ReadScope(snapshot=graph.digest, profile=LOWERING_PROFILE)
+    source = StoreRecordSource.open(graph, scope, [written])
+    request = prepared_product_request(key)
+
+    before = read_counts()
+    answer = source.read(scope, request)
+    after = read_counts()
+    match answer:
+        RecordRead.Found(found) =>
+            assert len(found.value) == 0
+            assert found.evidence.request == request and found.evidence.scope == scope
+            assert found.evidence.revision == expected.revision
+            assert found.evidence.semantic_digest == expected.semantic_digest
+        _ => return Err("zero-byte selection lost its binding")
+    assert after.records - before.records == 1
+    copied = after.decoded - before.decoded
+    assert copied == 0, f"zero-byte selection copied {copied} payload bytes"
     return Ok(None)
 
 
@@ -590,11 +957,125 @@ pub def test_prepared_opaque_products_use_their_bounded_selection() -> Result[No
             _ => return Err("prepared opaque read did not return the staged value")
         receipt = reads.finish().map_err((fault) => f"prepared opaque receipt failed: {fault:?}")?
         assert receipt.response_bytes == 0 and len(receipt.witnesses) == 1
+    # A function with many native signatures can publish a lowering demand larger than a scalar field answer.
+    # The plan observes every demand byte through its semantic witness even when no payload bytes are returned.
+    demand_key = encode_record_key(output)?
+    request = prepared_product_request(output)
+    source.add(demand_key, oversized)
+    first = source.for_profile(LOWERING_PROFILE).receipt(lowering_scope, plan, [request])?
+    extended = BytesIO(oversized)
+    extended.seek(0, 2).map_err((error) => error.message())?
+    extended.write_bytes(b"!").map_err((error) => error.message())?
+    source.add(demand_key, extended.getvalue())
+    changed = source.for_profile(LOWERING_PROFILE).receipt(lowering_scope, plan, [request])?
+    assert first.response_bytes == 0 and changed.response_bytes == 0
+    match first.witnesses[0]:
+        ReadWitness.Found(previous, _) =>
+            match changed.witnesses[0]:
+                ReadWitness.Found(current, _) => assert previous.semantic_digest != current.semantic_digest
+                _ => return Err("changed lowering demand has no value witness")
+        _ => return Err("lowering demand has no value witness")
     return Ok(None)
+
+
+pub def test_publication_reads_repeated_checked_inputs_once() -> Result[None, str]:
+    """Repeated references in one owner share an input. Distinct bounds retain their own authorization."""
+    key = body_key("local", "app", "function:app::read", "checked", "current")
+    scope = ReadScope(snapshot="prepared", profile=CHECKER_PROFILE)
+    mut staged = PreparedBodyRecordSource.open(scope)
+    staged.add(encode_record_key(key)?, b"data")
+    exact = RecordRequest(key=key, selection=RecordSelection.Field("value"), byte_limit=4)
+    ordinary = prepared_product_request(key)
+    receipt = staged.receipt(scope, key, [ordinary, exact, ordinary, exact])?
+    assert receipt.operations == 2 and receipt.response_bytes == 8
+    assert len(receipt.witnesses) == 2
+    short = RecordRequest(key=key, selection=RecordSelection.Field("value"), byte_limit=3)
+    assert staged.receipt(scope, key, [ordinary, short]).is_err()
+    return Ok(None)
+
+
+pub def test_prepared_checked_rows_bind_the_current_extent() -> Result[None, str]:
+    """A checked predecessor may grow between revisions; its receipt records the selected bytes in each revision."""
+    key = RecordKey(family="final", identity_profile="incan.stable-declaration/1", origin="fixture",
+        identity="function:fixture::import_jsonl", facet="checked", context="current")
+    scope = ReadScope(snapshot="prepared", profile=CHECKER_PROFILE)
+    mut source = PreparedBodyRecordSource.open(scope)
+    for size in [79351, 79358]:
+        physical: bytes = list.repeat(90u8, size)
+        source.add(encode_record_key(key)?, physical)
+        receipt = source.receipt(scope, key, [prepared_product_request(key)])?
+        assert receipt.operations == 1 and receipt.response_bytes == size
+        match receipt.witnesses[0]:
+            ReadWitness.Found(evidence, _) =>
+                assert evidence.request.key == key
+                assert evidence.request.selection == RecordSelection.Field("value")
+                assert evidence.request.byte_limit == size
+            _ => return Err("missing final checker row witness")
+        short = RecordRequest(key=key, selection=RecordSelection.Field("value"), byte_limit=size - 1)
+        match source.receipt(scope, key, [short]):
+            Ok(_) => return Err("receipt exceeded its explicit field extent")
+            Err(_) => pass
+    return Ok(None)
+
+
+def check_positioned_namespace_products() -> Result[None, str]:
+    """Check the physical graph values across a shift in the native symbol and a real change to one member."""
+    stable = "method:fixture::Counter::get"
+    interface = b"01234567890123456789012345678901"
+    mut row = CompiledNamespaceValue(module="src/fixture.incn", interface=b"position one", body_ir=b"full body one",
+        dependencies=[], semantic_interface=interface, member_witnesses=[["event at position one", stable, "checked body"]])
+    members = {"event at position one": (row.module, stable)}
+    requests = member_plan_inputs("fixture", row.module, "event at position one", members)?
+    assert [request.key.family for request in requests] == ["namespace-member", "namespace-interface"]
+    assert requests[0].key.identity == stable
+    assert member_plan_inputs("fixture", "different", "event at position one", members).is_err()
+    legacy = member_plan_inputs("fixture", row.module, "unproven owner", members)?
+    assert len(legacy) == 1 and legacy[0].key.family == "namespace"
+    first = staged_namespace_values(row, stable)?
+    row.interface = b"position two"
+    row.body_ir = b"full body two"
+    row.member_witnesses = [["event at position two", stable, "checked body"]]
+    shifted = staged_namespace_values(row, stable)?
+    assert shifted == first, "positioned restoration data or a native event address changed semantic products"
+    row.member_witnesses = [["event at position two", stable, "edited body"]]
+    edited = staged_namespace_values(row, stable)?
+    assert edited[0] == first[0] and edited[1] != first[1]
+    row.semantic_interface = b"11234567890123456789012345678901"
+    changed_interface = staged_namespace_values(row, stable)?
+    assert changed_interface[0] != edited[0] and changed_interface[1] == edited[1]
+    return Ok(None)
+
+
+def staged_namespace_values(row: CompiledNamespaceValue, stable: str) -> Result[list[bytes], str]:
+    """Select just the semantic interface and member products from an independently committed graph."""
+    mut namespace = row
+    namespace.member_witnesses.append(["sibling native event", "method:fixture::Counter::reset", "separate sibling meaning"])
+    fresh = store_snapshot(memory_root()).map_err((error) => error.message())?
+    mut transaction = begin(fresh)
+    scope = ReadScope(snapshot=transaction.id, profile=CHECKER_PROFILE)
+    mut source = PreparedBodyRecordSource.open(scope)
+    rank = ProducerRank(namespace=0, stage=ProducerStage.Signature, dependency=0)
+    prepare_namespace_products(transaction, source, scope, namespace, "fixture", [], rank, "fixture namespace")?
+    committed = commit(transaction).map_err((error) => error.message())?
+    mut products: list[bytes] = []
+    measure_frame_reads(true)
+    for key in [interface_key("fixture", row.module), member_key("fixture", stable)]:
+        match reusable_evaluation(committed, key, CHECKER_PROFILE)?:
+            None => return Err("a staged semantic namespace product is missing")
+            Some(value) =>
+                assert len(value.receipt.witnesses) == 1, "a member projection repeated the namespace source census"
+                match value.receipt.witnesses[0]:
+                    ReadWitness.Found(prior, _) => assert prior.request.key.family == "namespace-inputs"
+                    _ => return Err("a member projection lost its checked semantic authority")
+                products.append(value.value)
+    opened = [frame.key for frame in finish_frame_reads() if frame.key.startswith("namespace-member\t")]
+    assert opened == [encode_record_key(member_key("fixture", stable))?], "reading one member opened a sibling's physical frame"
+    return Ok(products)
 
 
 pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[None, str]:
     """A successful sidecar witnesses editable-package sources and project declaration signatures for the next edit."""
+    check_positioned_namespace_products()?
     scratch = scratch_directory()?
     root = scratch.path().joinpath("project")
     source = root.joinpath("src").joinpath("main.incn")
@@ -637,78 +1118,72 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     )
     identity = "app|module:main|main|function|module|0|() -> unit"
     fallback_identity = "app|module:main|other|function|module|0|() -> unit"
-    semantic_root = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-    declaration = encode_record(
-        CheckedRecord(
-            profile=CHECKER_PROFILE,
-            owner=identity,
-            root=semantic_root,
-            family=CheckedFamily.Declaration,
-            fields=[],
-        ),
-    ).map_err((error) => f"{error:?}")?
-    local = encode_record(
-        CheckedRecord(profile=CHECKER_PROFILE, owner=identity, root=semantic_root, family=CheckedFamily.Local, fields=[]),
-    ).map_err((error) => f"{error:?}")?
-    final = encode_record(
-        CheckedRecord(profile=CHECKER_PROFILE, owner=identity, root=semantic_root, family=CheckedFamily.Final, fields=[]),
-    ).map_err((error) => f"{error:?}")?
+    declaration = empty_checker_record(identity, CheckedFamily.Declaration)?
+    local = empty_checker_record(identity, CheckedFamily.Local)?
+    final = empty_checker_record(identity, CheckedFamily.Final)?
+    helper_symbol = "function:helper::value"
+    helper_signature = helper_symbol + "|incan.source-signature/2:sha256:2d80b426dc13f3912758ac2c52ad2a1235531fa8b4afe5446164ac2275fee1ea"
     output = scratch.path().joinpath("compiled-body-output")
-    publish_binary(
+    publish_compiled_output(
         output,
-        compiled_output_bytes(
-            CompiledBodyOutputs(
-                values=[
-                    CompiledBodyValue(
-                        module="src/main.incn",
-                        name="main",
-                        identity=identity,
-                        declaration=declaration,
-                        local=local,
-                        final=final,
-                        body_ir=b"owner-frame",
-                        dependency_reads=[
-                            CompiledBodyDependencyRead(
-                                package=None,
-                                module="helper",
-                                name="value",
-                                identity="app|module:helper|value|function|module|0|() -> int",
-                                reference_subject="expr:main#10..17",
-                            ),
-                            CompiledBodyDependencyRead(
-                                package=None,
-                                module="lib",
-                                name="other",
-                                identity="function:lib::other|incan.source-signature/2:sha256:fixture",
-                                reference_subject="expr:main#20..27",
-                            ),
-                            CompiledBodyDependencyRead(
-                                package=Some("provider"),
-                                module="lib",
-                                name="CodecFault",
-                                identity="provider|module:lib|CodecFault|enum|module|0|CodecFault",
-                                reference_subject="type:main#expr.30..40/type.0",
-                            ),
-                            CompiledBodyDependencyRead(
-                                package=Some("provider"),
-                                module="lib",
-                                name="value",
-                                identity="provider|module:lib|value|function|module|0|() -> int",
-                                reference_subject="expr:main#50..57",
-                            ),
-                        ],
-                    ),
-                ],
-                fallbacks=[
-                    CompiledBodyFallback(
-                        module="src/main.incn",
-                        name="other",
-                        identity=fallback_identity,
-                        reason="local record output refused: Unsupported(\"fixture\")",
-                    ),
-                ],
-            ),
-        ).map_err((error) => f"{error:?}")?,
+        CompiledBodyOutputs(
+            values=[
+                CompiledBodyValue(
+                    module="src/main.incn",
+                    name="main",
+                    identity=identity,
+                    declaration=declaration,
+                    local=local,
+                    final=final,
+                    body_ir=b"owner-frame",
+                    dependency_reads=[
+                        CompiledBodyDependencyRead(
+                            package=None,
+                            module="helper",
+                            name="value",
+                            identity=helper_symbol,
+                            reference_subject="expr:main#7..9",
+                        ),
+                        CompiledBodyDependencyRead(
+                            package=None,
+                            module="helper",
+                            name="value",
+                            identity=helper_signature,
+                            reference_subject="expr:main#10..17",
+                        ),
+                        CompiledBodyDependencyRead(
+                            package=None,
+                            module="lib",
+                            name="other",
+                            identity="function:lib::other|incan.source-signature/2:sha256:fixture",
+                            reference_subject="expr:main#20..27",
+                        ),
+                        CompiledBodyDependencyRead(
+                            package=Some("provider"),
+                            module="lib",
+                            name="CodecFault",
+                            identity="provider|module:lib|CodecFault|enum|module|0|CodecFault",
+                            reference_subject="type:main#expr.30..40/type.0",
+                        ),
+                        CompiledBodyDependencyRead(
+                            package=Some("provider"),
+                            module="lib",
+                            name="value",
+                            identity="provider|module:lib|value|function|module|0|() -> int",
+                            reference_subject="expr:main#50..57",
+                        ),
+                    ],
+                ),
+            ],
+            fallbacks=[
+                CompiledBodyFallback(
+                    module="src/main.incn",
+                    name="other",
+                    identity=fallback_identity,
+                    reason="local record output refused: Unsupported(\"fixture\")",
+                ),
+            ],
+        ),
     )?
     empty = store_snapshot(memory_root()).map_err((error) => error.message())?
     provider = publish_source_projection(empty, project_source("provider", "lib", provider_source)?)?
@@ -719,33 +1194,31 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     assert published.snapshot.generation == before.generation + 1, "one compiled body publication used more than one generation"
     assert not output.is_file()
     diagnostic_output = scratch.path().joinpath("ambiguous-dependency-output")
-    publish_binary(
+    publish_compiled_output(
         diagnostic_output,
-        compiled_output_bytes(
-            CompiledBodyOutputs(
-                values=[
-                    CompiledBodyValue(
-                        module="src/main.incn",
-                        name="main",
-                        identity=identity,
-                        declaration=declaration,
-                        local=local,
-                        final=final,
-                        body_ir=b"owner-frame",
-                        dependency_reads=[
-                            CompiledBodyDependencyRead(
-                                package=Some("provider"),
-                                module="lib",
-                                name="transaction",
-                                identity="member/field:engine_programs::transaction",
-                                reference_subject="expr:engine_programs#120..131",
-                            ),
-                        ],
-                    ),
-                ],
-                fallbacks=[],
-            ),
-        ).map_err((error) => f"{error:?}")?,
+        CompiledBodyOutputs(
+            values=[
+                CompiledBodyValue(
+                    module="src/main.incn",
+                    name="main",
+                    identity=identity,
+                    declaration=declaration,
+                    local=local,
+                    final=final,
+                    body_ir=b"owner-frame",
+                    dependency_reads=[
+                        CompiledBodyDependencyRead(
+                            package=Some("provider"),
+                            module="lib",
+                            name="transaction",
+                            identity="member/field:engine_programs::transaction",
+                            reference_subject="expr:engine_programs#120..131",
+                        ),
+                    ],
+                ),
+            ],
+            fallbacks=[],
+        ),
     )?
     match publish_compiled_bodies(published.snapshot, unit, diagnostic_output):
         Ok(_) =>
@@ -795,38 +1268,31 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
         facet="other",
         context="checker-record",
     )
-    assert required(published.snapshot, encode_record_key(fallback_key)?)? == b"full-source: local record output refused: Unsupported(\"fixture\")"
+    assert read_eligibility(fallback_key, required(published.snapshot, encode_record_key(fallback_key)?)?)? == Some("local record output refused: Unsupported(\"fixture\")")
     assert fallback_reasons(
         [CompiledBodyFallback(module="src/main.incn", name="other", identity=None, reason="exact producer refusal")],
     ) == ["src/main.incn::other: exact producer refusal"]
 
     fallback_output = scratch.path().joinpath("fallback-body-output")
-    publish_binary(
+    publish_compiled_output(
         fallback_output,
-        compiled_output_bytes(
-            CompiledBodyOutputs(
-                values=[],
-                fallbacks=[
-                    CompiledBodyFallback(
-                        module="src/main.incn",
-                        name="other",
-                        identity=fallback_identity,
-                        reason="local record output refused: Unsupported(\"fixture\")",
-                    ),
-                ],
-            ),
-        ).map_err((error) => f"{error:?}")?,
+        CompiledBodyOutputs(
+            values=[],
+            fallbacks=[
+                CompiledBodyFallback(
+                    module="src/main.incn",
+                    name="other",
+                    identity=fallback_identity,
+                    reason="local record output refused: Unsupported(\"fixture\")",
+                ),
+            ],
+        ),
     )?
     report = scratch.path().joinpath("fallback-plan-report")
     report.mkdir(true, true).map_err((error) => error.message())?
     report
         .joinpath("other.event")
-        .write_text(
-            f"{{\"schema\":2,\"reused\":false,\"identity\":\"{fallback_identity}\",\"key\":\"plan\",\"function\":\"other\",\"product\":\"native\",\"runtime_requirements\":0}}",
-            "utf-8",
-            "strict",
-            None,
-        )
+        .write_bytes(encode_lowering_event(LoweringEvent(identity=fallback_identity, key="plan", function="other", product=b"native", reused=false))?)
         .map_err((error) => error.message())?
     match prepare_compiled_bodies(begin(published.snapshot), unit, fallback_output, Some(report)):
         Ok(_) =>
@@ -834,21 +1300,19 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
         Err(message) =>
             assert message.contains("src/main.incn::other: local record output refused: Unsupported(\"fixture\")"), message
     canonical_fallback_output = scratch.path().joinpath("canonical-fallback-body-output")
-    publish_binary(
+    publish_compiled_output(
         canonical_fallback_output,
-        compiled_output_bytes(
-            CompiledBodyOutputs(
-                values=[],
-                fallbacks=[
-                    CompiledBodyFallback(
-                        module="src/main.incn",
-                        name="other",
-                        identity=fallback_identity,
-                        reason="local record output refused: Unsupported(\"fixture\")",
-                    ),
-                ],
-            ),
-        ).map_err((error) => f"{error:?}")?,
+        CompiledBodyOutputs(
+            values=[],
+            fallbacks=[
+                CompiledBodyFallback(
+                    module="src/main.incn",
+                    name="other",
+                    identity=fallback_identity,
+                    reason="local record output refused: Unsupported(\"fixture\")",
+                ),
+            ],
+        ),
     )?
     canonical_report = scratch.path().joinpath("canonical-fallback-plan-report")
     canonical_report.mkdir(true, true).map_err((error) => error.message())?
@@ -862,21 +1326,11 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     )
     canonical_report
         .joinpath("other.event")
-        .write_text(
-            f"{{\"schema\":2,\"reused\":false,\"identity\":\"{fallback_symbol}\",\"key\":\"plan\",\"function\":\"other\",\"product\":\"native\",\"runtime_requirements\":0}}",
-            "utf-8",
-            "strict",
-            None,
-        )
+        .write_bytes(encode_lowering_event(LoweringEvent(identity=fallback_symbol, key="plan", function="other", product=b"native", reused=false))?)
         .map_err((error) => error.message())?
     canonical_report
         .joinpath("other.refusal")
-        .write_text(
-            "{\"schema\":2,\"function\":\"other\",\"refusal\":\"full-source fallback\"}",
-            "utf-8",
-            "strict",
-            None,
-        )
+        .write_bytes(encode_lowering_refusal(LoweringRefusal(identity=fallback_symbol, function="other", refusal="full-source fallback"))?)
         .map_err((error) => error.message())?
     skipped = prepare_compiled_bodies(begin(published.snapshot), unit, canonical_fallback_output, Some(canonical_report))?
     assert skipped.bodies == 0 and skipped.fallbacks == 1
@@ -884,7 +1338,7 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     assert len(selected) == 1 and selected[0].identity == identity
     pages = encode_body_inventory(selected)?
     assert len(pages) == 1 and len(pages[0].key) == 64
-    decoded = decode_graph_body_values(pages[0].value).map_err((error) => f"{error:?}")?
+    decoded = decode_graph_body_values(pages[0].value.clone()).map_err((error) => f"{error:?}")?
     assert len(decoded) == 1 and decoded[0].identity == identity
     assert invalid_body_owners(published.snapshot, [], CHECKER_PROFILE)? == []
 
@@ -909,19 +1363,17 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
         "src/main.incn",
         source_text.replace("def other() -> None:\n    pass", "def other() -> int:\n    return 1"),
     )?
+    assert module_signature.census.text == project_source("app", "src/main.incn", source_text)?.census.text
     module_signature_edit = publish_source_projection(published.snapshot, module_signature)?
-    assert invalid_body_owners(module_signature_edit.snapshot, [module_signature.declarations.key], CHECKER_PROFILE)? == [
-        identity,
-    ]
+    assert invalid_body_owners(module_signature_edit.snapshot, [module_signature.declarations.key], CHECKER_PROFILE)? == []
 
-    project_slot = RecordKey(
-        family="declaration-slot",
-        identity_profile="incan.stable-declaration/1",
-        origin="app",
-        identity="helper",
-        facet="value",
-        context="checked-signature",
-    )
+    project_slot = project_declaration_slot("app", "helper", "value", helper_signature)
+    for supplier in [helper_symbol, helper_signature]:
+        address = encode_record_key(project_declaration_slot("app", "helper", "value", supplier))?
+        stored = get(published.snapshot, address).map_err((error) => error.message())?
+        match stored:
+            Some(value) => assert read_binding(address, value)? == supplier
+            None => return Err("published declaration slot is absent")
     helper_body = project_source("app", "src/helper.incn", "pub def value() -> int:\n    return 2\n")?
     helper_body_edit = publish_source_projection(published.snapshot, helper_body)?
     assert invalid_body_owners(helper_body_edit.snapshot, [helper_body.owners[0].key], CHECKER_PROFILE)? == []
@@ -943,6 +1395,30 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     projected = publish_source_projection(published.snapshot, edited)?
     assert invalid_body_owners(projected.snapshot, [changed], CHECKER_PROFILE)? == [identity]
     return verify_linked_capture(unit, scratch.path())
+
+
+pub def test_executable_reads_require_the_current_callee_contract() -> Result[None, str]:
+    graph = store_snapshot(memory_root()).map_err((error) => error.message())?
+    mut tx = begin(graph)
+    mut source = PreparedBodyRecordSource.open(ReadScope(snapshot=graph.digest, profile=CHECKER_PROFILE))
+    before = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    after = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    owner = SettledCallContract(target="caller", digest=before, reader="call#1", owner="checked/caller")
+    target = SettledCallContract(target="provider", digest=after, reader="", owner="")
+    mut module = CompiledNamespaceValue(module="file.incn", interface=b"i", body_ir=b"b", dependencies=[],
+        call_contracts=Some([owner, target]), call_reads=[SettledCallRead(reader="call#1", target="provider", digest=after)])
+    links = stage_call_contracts(tx, source, "main", [module])?
+    supplier = contract_key("main", "provider")
+    assert links.owners["checked/caller"] == [supplier]
+    assert links.modules["file.incn"] == [supplier]
+    committed = commit(tx).map_err((error) => error.message())?
+    assert get(committed, encode_record_key(supplier)?).map_err((error) => error.message())?.is_some()
+    mut mismatch = begin(committed)
+    module.call_reads = [SettledCallRead(reader="call#1", target="provider", digest=before)]
+    assert stage_call_contracts(mismatch, source, "main", [module]).is_err()
+    module.call_contracts = Some([owner])
+    assert stage_call_contracts(mismatch, source, "main", [module]).is_err()
+    return Ok(None)
 
 
 pub def test_a_rechecked_namespace_reads_imports_whose_bodies_were_retained() -> Result[None, str]:
@@ -981,14 +1457,25 @@ pub def test_a_rechecked_namespace_reads_imports_whose_bodies_were_retained() ->
     namespace = CompiledNamespaceValue(
         module="main.incn",
         interface=b"interface",
+        semantic_interface=b"01234567890123456789012345678901",
         body_ir=b"namespace-frame",
         dependencies=["helper.incn"],
     )
     output = scratch.path().joinpath("compiled-body-output")
-    publish_binary(output, compiled_output_bytes(CompiledBodyOutputs(namespaces=[namespace], values=[], fallbacks=[]))?)?
+    publish_compiled_output(output, CompiledBodyOutputs(namespaces=[namespace], values=[], fallbacks=[]))?
     empty = store_snapshot(memory_root()).map_err((error) => error.message())?
     published = publish_compiled_bodies(empty, unit, output)?
     assert published.bodies == 0 and published.fallbacks == 0
+    full = namespace_key("main", "main.incn")
+    semantic = interface_key("main", "main.incn")
+    assert reusable_evaluation(published.snapshot, full, CHECKER_PROFILE)?.is_some()
+    assert reusable_evaluation(published.snapshot, semantic, CHECKER_PROFILE)?.is_some()
+    modified = "from helper import value\n\ndef main() -> None:\n    \"\"\"Editor documentation.\"\"\"\n    println(\"edited\")\n"
+    docs = project_source("main", "main.incn", modified)?
+    assert invalid_namespace_modules(published.snapshot, [docs.positioned.key], CHECKER_PROFILE)? == ["main.incn"]
+    edited = publish_source_projection(published.snapshot, docs)?
+    assert reusable_evaluation(edited.snapshot, full, CHECKER_PROFILE)?.is_none()
+    assert reusable_evaluation(edited.snapshot, semantic, CHECKER_PROFILE)?.is_some()
     return Ok(None)
 
 
@@ -1021,6 +1508,22 @@ def verify_linked_capture(mut unit: UnitDescription, root: Path) -> Result[None,
     assert len(declarations) == 2, "symlinked roots dropped captured declaration witnesses"
     assert declarations[0].origin == "app" and declarations[0].identity == "src/main.incn"
     assert declarations[1].origin == "provider" and declarations[1].identity == "lib"
+    first = commit(prepared.transaction).map_err((error) => error.message())?
+    path = project.joinpath("src/main.incn")
+    original = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    extra = "\n\ndef additional(value: int) -> int:\n    return value\n"
+    path.write_text(original + extra, "utf-8", "strict", None).map_err((error) => error.message())?
+    added = publish_captured_source_inputs(first, unit, inputs)?
+    added_memberships = [key for key in added.keys if key.family == "owner-census"]
+    assert len(added_memberships) == 1 and added_memberships[0].origin == "app"
+    signature = extra.replace("value: int", "number: int").replace("return value", "return number")
+    path.write_text(original + signature, "utf-8", "strict", None).map_err((error) => error.message())?
+    renamed = publish_captured_source_inputs(added.snapshot, unit, inputs)?
+    assert len([key for key in renamed.keys if key.family == "declaration-signature"]) == 1
+    assert len([key for key in renamed.keys if key.family == "owner-census"]) == 0
+    path.write_text(original, "utf-8", "strict", None).map_err((error) => error.message())?
+    removed = publish_captured_source_inputs(renamed.snapshot, unit, inputs)?
+    assert [key for key in removed.keys if key.family == "owner-census"] == added_memberships
     return Ok(None)
 
 
@@ -1210,14 +1713,13 @@ def activation(family: str, identity: str, dependency: int) -> RankedActivation:
     )
 
 
-def compiled_output_bytes(outputs: CompiledBodyOutputs) -> Result[bytes, str]:
-    """Join independently bounded test frames exactly as the native compiler sidecar writer does."""
-    mut encoded: list[u8] = []
-    for frame in encode_compiled_body_outputs(outputs).map_err((error) => f"{error:?}")?:
-        for byte in frame:
-            octet: u8 = byte.wrapping_resize()
-            encoded.append(octet)
-    return Ok(encoded)
+def publish_compiled_output(output: Path, outputs: CompiledBodyOutputs) -> Result[None, str]:
+    """Write one independently bounded Crumb row per sidecar page, as the native compiler does."""
+    output.mkdir(true, true).map_err((error) => error.message())?
+    rows = encode_compiled_body_rows(outputs).map_err((error) => f"{error:?}")?
+    for index in range(len(rows)):
+        publish_binary(output.joinpath(str(index) + ".crumb"), rows[index])?
+    return Ok(None)
 
 
 def required(before: Snapshot, key: str) -> Result[bytes, str]:
@@ -1292,4 +1794,139 @@ def verify_documentation_changes_no_record(
         before_owner = projected_owner(project_source("package", "src/value.incn", pair[0])?, "name")?
         after_owner = projected_owner(project_source("package", "src/value.incn", pair[1])?, "name")?
         assert before_owner.digest() != after_owner.digest(), before_owner.text
+    return Ok(None)
+
+
+pub def test_removed_and_replaced_functions_leave_only_their_historical_graph_slots() -> Result[None, str]:
+    origin = "app"
+    module = "main.incn"
+    before = project_source(origin, module, "def gone():\n    pass\ndef same():\n    pass\ndef unknown():\n    pass\n")?
+    after = project_source(origin, module, "def same(value: int):\n    pass\ndef unknown(value: int):\n    pass\n")?
+    empty = store_snapshot(memory_root()).map_err((error) => error.message())?
+    mut graph = publish_source_projection(empty, before)?.snapshot
+    rank = ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=0)
+    products = [("local", CHECKER_PROFILE), ("final", CHECKER_PROFILE), ("body-ir", CHECKER_PROFILE),
+                ("lowering-demand", LOWERING_PROFILE), ("plan-function", LOWERING_PROFILE)]
+    for row in before.owners:
+        owner = "function:main::" + row.key.facet + "|old"
+        for family, profile in products:
+            scope = ReadScope(snapshot=graph.digest, profile=profile)
+            mut source = PreparedBodyRecordSource.open(scope)
+            source.add(encode_record_key(row.key)?, row.encoded()?)
+            output = body_key(family, origin, owner, "owned", "prior")
+            receipt = source.receipt(scope, output, [prepared_product_request(row.key)])?
+            graph = publish_evaluation(graph, owner + family, rank, b"prior-value", receipt)?.snapshot
+    # A checked program can publish individual owner values without a reusable whole-namespace interface.
+    current = CompiledBodyOutputs(
+        namespaces=[],
+        values=[CompiledBodyValue(module=module, name="same", identity="function:main::same|new",
+            declaration=b"d", local=b"l", final=b"f", body_ir=b"ir")],
+        fallbacks=[CompiledBodyFallback(module=module, name="unknown", identity=None, reason="no stable identity")],
+    )
+    changes = [after.census.key, signature_record(after.owners[0]).key, signature_record(after.owners[1]).key]
+    mut next = begin(graph)
+    retire_missing_functions(graph, next, origin, changes, {module: after}, [module], current)?
+    supersede_outputs(graph, next)?
+    edited = commit(next).map_err((error) => error.message())?
+    for row in before.owners:
+        for key in [row.key, signature_record(row).key, before.placements[row.key.facet].key]:
+            present_before = get(graph, encode_record_key(key)?).map_err((error) => error.message())?
+            present_after = get(edited, encode_record_key(key)?).map_err((error) => error.message())?
+            assert present_before is not None
+            assert (present_after is None) == (row.key.facet == "gone")
+    for row in before.owners:
+        owner = "function:main::" + row.key.facet + "|old"
+        scope = Some(OutputSlots(origin=origin, identity_profile="incan.stable-declaration/1", included=Some([owner])))
+        for family, profile in products:
+            assert len(family_outputs(graph, family, profile, scope)?) == 1
+            selected = family_outputs(edited, family, profile, scope)?
+            if row.key.facet == "unknown":
+                assert len(selected) == 1
+            else:
+                assert len(selected) == 0
+                assert len(readers_of(edited, [row.key], profile)?) == 0
+                assert get(edited, encode_record_key(body_key(family, origin, owner, "owned", "prior"))?).map_err((error) => error.message())? == Some(b"prior-value")
+    return Ok(None)
+
+
+pub def test_scope_name_leaves_only_after_its_last_reader_is_retired() -> Result[None, str]:
+    empty = store_snapshot(memory_root()).map_err((error) => error.message())?
+    projection = project_source("app", "main.incn", "def f():\n    pass\n")?
+    binding = scope_member(projection.census, scope_members(projection.census.text), "str")
+    key = encode_record_key(binding.key)?
+    encoded = binding.encoded()?
+    initial = commit(put(begin(empty), key, encoded)).map_err((error) => error.message())?
+    rank = ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=0)
+    owners = [body_key("local", "app", name, "checked", "current") for name in ["first", "second", "third"]]
+    mut graph = initial
+    for owner in owners[:2]:
+        scope = ReadScope(snapshot=graph.digest, profile=CHECKER_PROFILE)
+        mut source = PreparedBodyRecordSource.open(scope)
+        source.add(key, encoded)
+        receipt = source.receipt(scope, owner, [prepared_product_request(binding.key)])?
+        graph = publish_evaluation(graph, owner.identity, rank, b"checked", receipt)?.snapshot
+    mut first = begin(graph)
+    retire_output(first, CHECKER_PROFILE, owners[0])?
+    supersede_outputs(graph, first)?
+    shared = commit(first).map_err((error) => error.message())?
+    assert get(shared, key).map_err((error) => error.message())? == Some(encoded)
+    scope = ReadScope(snapshot=shared.digest, profile=CHECKER_PROFILE)
+    mut source = PreparedBodyRecordSource.open(scope)
+    source.add(key, encoded)
+    receipt = source.receipt(scope, owners[2], [prepared_product_request(binding.key)])?
+    mut transfer = begin(shared)
+    retire_output(transfer, CHECKER_PROFILE, owners[1])?
+    _ = prepare_evaluation(transfer, owners[2].identity, rank, b"checked", receipt)?
+    supersede_outputs(shared, transfer)?
+    moved = commit(transfer).map_err((error) => error.message())?
+    assert get(moved, key).map_err((error) => error.message())? == Some(encoded)
+    mut last = begin(moved)
+    retire_output(last, CHECKER_PROFILE, owners[2])?
+    supersede_outputs(moved, last)?
+    final_view = commit(last).map_err((error) => error.message())?
+    assert get(final_view, key).map_err((error) => error.message())? is None
+    assert get(graph, key).map_err((error) => error.message())? == Some(encoded)
+    return Ok(None)
+
+
+pub def test_checked_declaration_slots_separate_actual_receivers_and_signature_reads() -> None:
+    bare = "function:apple_sdk::selected_sdk"
+    first = "|incan.source-signature/2:sha256:2d80b426dc13f3912758ac2c52ad2a1235531fa8b4afe5446164ac2275fee1ea"
+    next = "|incan.source-signature/2:sha256:1afbf05e3e945151320b9294edf7fc24ac471db805ece1c9c010f3c3669ca4c5"
+    signed = project_declaration_slot("oven", "apple_sdk", "selected_sdk", bare + first)
+    assert signed != project_declaration_slot("oven", "apple_sdk", "selected_sdk", bare)
+    assert signed == project_declaration_slot("oven", "apple_sdk", "selected_sdk", bare + next)
+    field = "member/field:observation::stamp#in(model:observation::"
+    assert project_declaration_slot("oven", "observation", "stamp", field + "FileEntry)[0]") != project_declaration_slot("oven", "observation", "stamp", field + "DirectoryEntry)[0]")
+    nested = field + "Observation" + first + ")[0]"
+    assert project_declaration_slot("oven", "observation", "stamp", nested).context == "symbol:" + nested
+
+
+pub def test_toolchain_transition_retires_only_previous_profiles_of_the_same_source() -> Result[None, str]:
+    """Old compiler indexes leave the current view while another program and prior snapshot keep their values."""
+    empty = store_snapshot(memory_root()).map_err((error) => error.message())?
+    projection = project_source("app", "main.incn", "def pick() -> int:\n    return 1\n")?
+    mut graph = publish_source_projection(empty, projection)?.snapshot
+    dependency = projection.owners[0]
+    rank = ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=0)
+    for origin, profile in [("app", "checker/18"), ("other", "checker/18"), ("app", "unrelated/18")]:
+        scope = ReadScope(snapshot=graph.digest, profile=profile)
+        mut source = PreparedBodyRecordSource.open(scope)
+        source.add(encode_record_key(dependency.key)?, dependency.encoded()?)
+        key = body_key("local", origin, profile, "checked", "context")
+        receipt = source.receipt(scope, key, [prepared_product_request(dependency.key)])?
+        graph = publish_evaluation(graph, profile + origin, rank, b"old", receipt)?.snapshot
+    older = graph
+    mut tx = begin(graph)
+    retire_compiler_versions(graph, tx, "app", "checker/19")?
+    supersede_outputs(graph, tx)?
+    current = commit(tx).map_err((error) => error.message())?
+    app = encode_record_key(body_key("local", "app", "checker/18", "checked", "context"))?
+    other = encode_record_key(body_key("local", "other", "checker/18", "checked", "context"))?
+    assert family_outputs(current, "local", "checker/18")? == [other]
+    assert len(family_outputs(current, "local", "unrelated/18")?) == 1
+    assert app in family_outputs(older, "local", "checker/18")?
+    assert get(older, app).map_err((error) => error.message())? == Some(b"old")
+    assert len(readers_of(current, [dependency.key], "checker/18")?) == 1
+    assert len(readers_of(older, [dependency.key], "checker/18")?) == 2
     return Ok(None)
