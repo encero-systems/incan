@@ -1,0 +1,67 @@
+"""Bind lowering to the certified namespace of the checked value it reads."""
+
+from pub::incan_platform.store import Snapshot, get
+from pub::internal_models.namespace_order import NamespaceOrder, decode_namespace_order
+from compiler_graph_records import ReusableEvaluation
+
+
+pub model LoweringOrder:
+    """The namespace bound of an input and its certificate, when that input supports independent scheduling."""
+
+    pub rank: int = 0
+    pub evidence: str = "compiled-check"
+
+
+pub class LoweringOrders:
+    """Fresh compiler import closures and the prior certificates decoded during this publication."""
+
+    origin: str
+    current: Dict[str, NamespaceOrder]
+    certificates: Dict[str, NamespaceOrder] = {}
+
+    @staticmethod
+    pub def new(origin: str, current: Dict[str, NamespaceOrder]) -> LoweringOrders:
+        return LoweringOrders(origin=origin, current=current)
+
+    pub def fresh(self, module: str) -> LoweringOrder:
+        if module in self.current:
+            order = self.current[module]
+            return LoweringOrder(rank=order.rank, evidence=order.evidence)
+        return LoweringOrder()
+
+    pub def covering_certificate(self, sources: &set[str], namespace: int) -> Result[str, str]:
+        """Bind the native interface to a current compiler closure covering all its source modules."""
+        for module in sorted([file for file in sources]):
+            if module in self.current:
+                order = self.current[module]
+                if order.rank == namespace and order.covers(sources)?:
+                    return Ok(order.evidence)
+        return Ok(LoweringOrder().evidence)
+
+    pub def retained(mut self, graph: Snapshot, module: str, result: &ReusableEvaluation) -> Result[LoweringOrder, str]:
+        """Require the selected producer's origin, owning module, numeric rank and content-addressed namespace page."""
+        return self.selected_order(graph, module, result.receipt.preparation.output.origin, result.namespace, result.receipt.preparation.rank_certificate)
+
+    pub def selected_order(
+        mut self, graph: Snapshot, module: str, origin: str, namespace: int, evidence: str,
+    ) -> Result[LoweringOrder, str]:
+        """Validate the rank recorded by a selected scalar or module against its namespace page and current imports."""
+        if origin != self.origin:
+            return Err("selected lowering input belongs to another origin")
+        conservative = LoweringOrder(rank=namespace)
+        if evidence == conservative.evidence:
+            return Ok(conservative)
+        if evidence not in self.certificates:
+            match get(graph, "incan.compiler.namespace-order\t" + evidence).map_err((error) => error.message())?:
+                None => return Ok(conservative)
+                Some(value) =>
+                    order = decode_namespace_order(value, self.origin)?
+                    if order.evidence != evidence:
+                        return Err("lowering namespace certificate differs from its content identity")
+                    self.certificates[evidence] = order
+        order = self.certificates[evidence]
+        if module not in order.members or namespace != order.rank:
+            return Err("selected lowering input differs from its certified namespace")
+        if module in self.current and self.current[module].evidence != evidence:
+            return Ok(conservative)
+        return Ok(LoweringOrder(rank=order.rank, evidence=evidence))
