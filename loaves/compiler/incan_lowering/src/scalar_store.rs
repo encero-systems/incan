@@ -510,7 +510,7 @@ pub fn admitted_function(
 }
 
 /// Name a native product by the existing semantic digest owner's unambiguous framed serialization.
-fn scalar_path(directory: &str, inputs: &[String]) -> Result<PathBuf, String> {
+pub fn scalar_path(directory: &str, inputs: &[String]) -> Result<PathBuf, String> {
     let digest = fingerprint(inputs)?;
     Ok(Path::new(directory).join(format!("{}.incnfunction", digest.replace("sha256:", ""))))
 }

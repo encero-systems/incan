@@ -14,5 +14,7 @@ mod indexed_field_reads;
 mod input_access;
 mod instance_products;
 mod instance_requests;
+mod model_types;
+mod record_positions;
 mod rust_runtime_calls;
 mod scalar_reads;
