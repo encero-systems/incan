@@ -8,15 +8,34 @@ use incan_semantics_core::CanonicalSymbolId;
 use incan_semantics_core::body_ir::StaticDeclaration;
 use incan_semantics_core::semantic_digest::{enum_layout_witness, model_layout_witness, semantic_digest};
 use incan_semantics_core::stable_identity::StableDeclarationId;
+use std::sync::Arc;
+
 use sha2::{Digest, Sha256};
 
 use crate::program_context::ProgramContext;
 use crate::scalar_store::retain_scalar;
 use crate::symbols::model_symbol;
 
+/// The described rows of a program's model, enum and static tables, each row for the declaration at its position.
+///
+/// A program's tables only grow within one planning (`retain_nominal_tables`, `extend_program_context`), so a row
+/// stays the description of its position, and a table described again describes only the rows it gained.
+#[derive(Clone, Default)]
+pub struct DescribedNominals {
+    models: Vec<(ProductNominal, String)>,
+    enums: Vec<(ProductNominal, String)>,
+    statics: Vec<ProductNominal>,
+}
+
+/// How many model, enum and static rows of the program are described.
+pub fn described_rows(program: &ProgramContext) -> (usize, usize, usize) {
+    let described = &program.described;
+    (described.models.len(), described.enums.len(), described.statics.len())
+}
+
 /// Describe the unit's tables only for a request that reads or retains plan products.
 pub fn product_nominal_table(
-    program: &ProgramContext,
+    program: &mut ProgramContext,
     intrinsics: &[EnumDeclaration],
     products: Option<&str>,
 ) -> UnitNominals {
@@ -29,26 +48,47 @@ pub fn product_nominal_table(
 /// Describe every model and enum position of the program's tables, then each intrinsic carrier at its carrier position.
 ///
 /// A declaration without a stable identity is described with an empty identity, which a product refuses to name.
-pub fn unit_product_nominals(program: &ProgramContext, intrinsics: &[EnumDeclaration]) -> UnitNominals {
-    let mut models = Vec::with_capacity(program.nominals.len());
-    let mut model_names = Vec::with_capacity(program.nominals.len());
-    for declaration in program.nominals.iter() {
-        let witness = model_layout_witness(declaration).map_err(|error| error.to_string());
-        models.push(source_nominal(NominalKind::Model, &declaration.canonical, witness));
-        model_names.push(model_symbol(&declaration.name));
-    }
-    let mut described = Vec::with_capacity(program.enums.len());
-    let mut enum_names = Vec::with_capacity(program.enums.len());
-    for declaration in program.enums.iter() {
-        let carrier = declaration.carrier_name();
-        let witness = enum_layout_witness(declaration).map_err(|error| error.to_string());
-        described.push(source_nominal(NominalKind::Enum, &declaration.canonical, witness));
-        enum_names.push(model_symbol(&carrier));
-    }
-    let statics = program.statics.iter().map(static_nominal).collect();
-    let mut unit = unit_nominals(models, described, model_names, enum_names).with_statics(statics);
+pub fn unit_product_nominals(program: &mut ProgramContext, intrinsics: &[EnumDeclaration]) -> UnitNominals {
+    describe_new_rows(program);
+    let described = &program.described;
+    let (models, model_names) = described.models.iter().cloned().unzip();
+    let (enums, enum_names) = described.enums.iter().cloned().unzip();
+    let mut unit = unit_nominals(models, enums, model_names, enum_names).with_statics(described.statics.clone());
     sync_carriers(&mut unit, intrinsics);
     unit
+}
+
+/// Describe the rows each of the program's tables gained since it was last described. Rows beyond a table's length
+/// cannot occur within one planning; such a table is described afresh.
+fn describe_new_rows(program: &mut ProgramContext) {
+    let (nominals, enums, statics) = (program.nominals.clone(), program.enums.clone(), program.statics.clone());
+    let current = &program.described;
+    if current.models.len() == nominals.len()
+        && current.enums.len() == enums.len()
+        && current.statics.len() == statics.len()
+    {
+        return;
+    }
+    let described = Arc::make_mut(&mut program.described);
+    if described.models.len() > nominals.len()
+        || described.enums.len() > enums.len()
+        || described.statics.len() > statics.len()
+    {
+        *described = DescribedNominals::default();
+    }
+    for declaration in &nominals[described.models.len()..] {
+        let witness = model_layout_witness(declaration).map_err(|error| error.to_string());
+        let row = source_nominal(NominalKind::Model, &declaration.canonical, witness);
+        described.models.push((row, model_symbol(&declaration.name)));
+    }
+    for declaration in &enums[described.enums.len()..] {
+        let carrier = declaration.carrier_name();
+        let witness = enum_layout_witness(declaration).map_err(|error| error.to_string());
+        let row = source_nominal(NominalKind::Enum, &declaration.canonical, witness);
+        described.enums.push((row, model_symbol(&carrier)));
+    }
+    let start = described.statics.len();
+    described.statics.extend(statics[start..].iter().map(static_nominal));
 }
 
 /// Describe one static cell by its stable declaration identity and the digest of its whole checked declaration: its

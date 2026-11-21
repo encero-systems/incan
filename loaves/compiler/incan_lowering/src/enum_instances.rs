@@ -1,5 +1,7 @@
 //! Concrete enum payload layouts selected from checked Body IR declaration binders and uses.
 
+use std::collections::HashMap;
+
 use incan_semantics_core::IncanType;
 use incan_semantics_core::body_ir::{BodyIrModule, EnumDeclaration};
 
@@ -16,19 +18,20 @@ struct EnumInstance {
 
 /// Close the enum payload layouts a module's checked types use; open templates never become physical declarations.
 pub fn specialized_enum_layouts(module: &BodyIrModule) -> Result<Vec<EnumDeclaration>, String> {
+    let generics = generic_carriers(module);
     let mut instances: Vec<EnumInstance> = Vec::new();
     for ty in declaration_storage(module) {
-        collect_type(module, &ty, &mut instances, &[])?;
+        collect_type(module, &generics, &ty, &mut instances, &[])?;
     }
     for body in &module.bodies {
         for local in &body.locals {
-            collect_type(module, &local.ty, &mut instances, &[])?;
+            collect_type(module, &generics, &local.ty, &mut instances, &[])?;
         }
-        collect_type(module, &body.return_type, &mut instances, &[])?;
+        collect_type(module, &generics, &body.return_type, &mut instances, &[])?;
     }
     for declaration in &module.nominal_declarations {
         for field in &declaration.field_types {
-            collect_type(module, field, &mut instances, &[])?;
+            collect_type(module, &generics, field, &mut instances, &[])?;
         }
     }
     let mut layouts: Vec<EnumDeclaration> = Vec::new();
@@ -37,7 +40,7 @@ pub fn specialized_enum_layouts(module: &BodyIrModule) -> Result<Vec<EnumDeclara
             layouts.push(declaration.clone());
             for variant in &declaration.variants {
                 for field in &variant.fields {
-                    collect_type(module, field, &mut instances, &[])?;
+                    collect_type(module, &generics, field, &mut instances, &[])?;
                 }
             }
         }
@@ -56,7 +59,7 @@ pub fn specialized_enum_layouts(module: &BodyIrModule) -> Result<Vec<EnumDeclara
         }
         for variant in &declaration.variants {
             for field in &variant.fields {
-                collect_type(module, field, &mut instances, &lineage)?;
+                collect_type(module, &generics, field, &mut instances, &lineage)?;
             }
         }
         layouts.push(declaration);
@@ -70,9 +73,22 @@ pub fn specialize_enums(module: &mut BodyIrModule) -> Result<(), String> {
     Ok(())
 }
 
+/// The first generic enum declaration of each carrier name, by its position: the one a closed use of that name
+/// instantiates. A nongeneric declaration is never instantiated, so it carries no name here.
+fn generic_carriers(module: &BodyIrModule) -> HashMap<String, usize> {
+    let mut generics = HashMap::new();
+    for (position, declaration) in module.enum_declarations.iter().enumerate() {
+        if !declaration.type_parameters.is_empty() {
+            generics.entry(declaration.carrier_name()).or_insert(position);
+        }
+    }
+    generics
+}
+
 /// Visit checked aggregate positions, retaining only closed enum uses and their exact declared argument order.
 fn collect_type(
     module: &BodyIrModule,
+    generics: &HashMap<String, usize>,
     ty: &IncanType,
     instances: &mut Vec<EnumInstance>,
     ancestors: &[String],
@@ -80,15 +96,15 @@ fn collect_type(
     match ty {
         IncanType::Generic { base, args } => {
             for argument in args {
-                collect_type(module, argument, instances, ancestors)?;
+                collect_type(module, generics, argument, instances, ancestors)?;
             }
             if !closed_arguments(args) {
                 return Ok(());
             }
-            for declaration in &module.enum_declarations {
-                if declaration.carrier_name() != *base || declaration.type_parameters.is_empty() {
-                    continue;
-                }
+            if let Some(declaration) = generics
+                .get(base)
+                .and_then(|position| module.enum_declarations.get(*position))
+            {
                 if declaration.type_parameters.len() != args.len() {
                     return Err(format!("unsupported Body IR enum type argument arity on {base}"));
                 }
@@ -103,10 +119,12 @@ fn collect_type(
         }
         IncanType::Tuple(elements) => {
             for element in elements {
-                collect_type(module, element, instances, ancestors)?;
+                collect_type(module, generics, element, instances, ancestors)?;
             }
         }
-        IncanType::Ref(inner) | IncanType::RefMut(inner) => return collect_type(module, inner, instances, ancestors),
+        IncanType::Ref(inner) | IncanType::RefMut(inner) => {
+            return collect_type(module, generics, inner, instances, ancestors);
+        }
         _ => {}
     }
     Ok(())
