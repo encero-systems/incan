@@ -39,8 +39,8 @@ from json_fields import array, field, strings, text_field, required_items, requi
 from native_closure_input import NativeClosureInput
 from compiler_record_admission import CompilerRecordPin
 pub from toolchain_types import NativeCrate, Toolchain
+from payload_types import PayloadAdmission
 from unit_publication import (
-    PayloadAdmission,
     import_payload,
     import_publication,
     record_path,
