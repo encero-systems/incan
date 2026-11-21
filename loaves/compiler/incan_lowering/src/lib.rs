@@ -22,6 +22,7 @@ mod builtin_calls;
 mod builtin_methods;
 mod builtins;
 mod bytes_plan;
+mod c_bridges;
 mod call_arguments;
 mod callable_calls;
 mod callable_methods;

@@ -9,6 +9,7 @@ use incan_semantics_core::{IncanType, SemanticSourceTargetKind, SymbolOrigin};
 
 use crate::async_::construct_boxed_future;
 use crate::builtin_calls::lower_runtime_helper;
+use crate::c_bridges::lower_checked_bridge;
 use crate::call_arguments::{SlotPolicy, call_parameter_type, has_defaulted_slots, ordered_slot_operands};
 use crate::callable_calls::{checked_type_arguments, lower_callable_result, lower_named_target};
 use crate::callable_values::lower_callable_value;
@@ -21,7 +22,6 @@ use crate::layout_types::native_source_type;
 use crate::list_methods::call_destination;
 use crate::method_calls::lower_method_call;
 use crate::native_callables::native_callable_storage;
-use crate::pending::untranslated;
 use crate::primitive_traits::normalized_primitive_call;
 use crate::tuples::type_name;
 use crate::type_metadata::lower_type_metadata;
@@ -74,7 +74,7 @@ fn lower_checked_call(
             lower_type_metadata(builder, target, destination, span)
         }
         Callee::CheckedForeign(target) => lower_foreign_call(builder, target, args, destination, span),
-        Callee::CheckedBridge(_) => Err(untranslated("c_bridges::lower_checked_bridge")),
+        Callee::CheckedBridge(target) => lower_checked_bridge(builder, target, args, destination, span),
     }
 }
 
