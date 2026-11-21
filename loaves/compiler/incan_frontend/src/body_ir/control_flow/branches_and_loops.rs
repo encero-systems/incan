@@ -8,7 +8,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// inward. Reversing the ownership visit would move an owner in an earlier condition before a later condition
     /// reads it. Pattern conditions use the dedicated `if let` boundary.
     /// An elif condition is itself conditional, so its enclosing owners remain live when an earlier arm wins.
-    /// Its temporary owners drop at the wrapper's exit, before an earlier enclosing owner is released.
+    /// The temporaries a condition made end once it is decided, before the branch it selects runs.
     pub(in crate::body_ir) fn lower_if(
         &mut self,
         if_stmt: &ast::IfStmt,
@@ -23,7 +23,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 return;
             }
         };
-        let cond = self.lower_expr_to_operand(cond_expr, scope, out);
+        let cond = self.lower_decided_condition(cond_expr, scope, span, out);
 
         let subjects = self.input_subject_locals();
         let mut pending_moves = self.input_move_state(&subjects);
@@ -41,7 +41,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let wrapper_scope = self.new_scope(Some(scope), span);
             self.conditional_scopes.push(wrapper_scope);
             self.input_if_scopes.push(wrapper_scope);
-            let cond_operand = self.lower_expr_to_operand(elif_cond, wrapper_scope, &mut wrapper);
+            let cond_operand = self.lower_decided_condition(elif_cond, wrapper_scope, span, &mut wrapper);
             self.input_if_scopes.pop();
             self.conditional_scopes.pop();
             pending_moves = self.input_move_state(&subjects);
@@ -92,6 +92,46 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             },
             span,
         });
+    }
+
+    /// Lower a condition and, once it is decided, end the temporaries it made, before the branch or body it selects.
+    ///
+    /// A decided `bool` holds no loan, so nothing the condition built is read again: in `if weight(build()) > 3:` the
+    /// built value would otherwise stay live through the whole branch, ending only with the `if` statement. A `bool`
+    /// read through a projection of a fresh temporary (`if build().ready:`) is copied out first, so its carrier ends
+    /// too. A condition whose checked type is not `bool` keeps its temporaries until the statement ends.
+    pub(super) fn lower_decided_condition(
+        &mut self,
+        condition: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let first_temporary = self.locals.len();
+        let operand = self.lower_expr_to_operand(condition, scope, out);
+        let boolean = IncanType::Primitive(IncanPrimitiveType::Bool);
+        let checked = self.type_info.expr_type(condition.span).map(|ty| self.checked_type(ty));
+        if checked.as_ref() != Some(&boolean) {
+            return operand;
+        }
+        let decided = match operand {
+            bir::Operand::Place(read)
+                if !read.place.projection.is_empty()
+                    && read
+                        .place
+                        .local_id()
+                        .is_some_and(|local| local.index() >= first_temporary) =>
+            {
+                self.push_assign_temp(bir::Rvalue::Use(bir::Operand::Place(read)), boolean, scope, span, out)
+            }
+            other => other,
+        };
+        let kept = match &decided {
+            bir::Operand::Place(read) => read.place.local_id(),
+            bir::Operand::Constant(_) => None,
+        };
+        self.insert_statement_temporary_drops(out, scope, first_temporary, kept, span);
+        decided
     }
 
     /// Lower one `if`/`elif`/`else` branch body into its own scoped [`bir::Block`]: allocate a child scope, lower
@@ -162,7 +202,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let hir_span_value = hir_span(span);
-        let cond = self.lower_expr_to_operand(&if_expr.condition, scope, out);
+        let cond = self.lower_decided_condition(&if_expr.condition, scope, hir_span_value, out);
         let range_layouts_before = self.materialized_range_locals.clone();
         let then_block = self.lower_branch_block(&if_expr.then_body, scope, hir_span_value);
         let then_range_layouts = self.materialized_range_locals.clone();
@@ -478,7 +518,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let loop_scope = self.new_scope(Some(scope), span);
         // `while` never produces a value from `break`, so the break target is `None` -- see `Self::push_loop`.
         self.push_loop(loop_scope, None, span, out, |builder, loop_scope, body_stmts| {
-            let cond_operand = builder.lower_expr_to_operand(cond_expr, loop_scope, body_stmts);
+            let cond_operand = builder.lower_decided_condition(cond_expr, loop_scope, span, body_stmts);
             let negated = builder.negate_operand(cond_operand, loop_scope, span, body_stmts);
             let break_scope = builder.new_scope(Some(loop_scope), span);
             let break_block = bir::Block {

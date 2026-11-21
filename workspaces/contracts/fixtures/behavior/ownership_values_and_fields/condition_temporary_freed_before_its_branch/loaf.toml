@@ -1,0 +1,9 @@
+[project]
+name = "condition_temporary_freed_before_its_branch"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+drop_probe = { loaf = "drop_probe", path = "rust/drop_probe" }

@@ -1,0 +1,76 @@
+# behavior: a local that owns a socket and is only lent closes that socket right after its last use, even when the call it is lent to returns a value: the socket's peer sees end of file before the statements that follow, not when the scope ends (#1604)
+# expect-stdout:
+#   connected true
+#   peer sees end of file
+#   in a branch: connected true
+#   peer sees end of file
+
+"""Lend a socket's owner to a reader that returns text, then ask the socket's peer whether it was closed."""
+
+from rust::std::cell import RefCell
+from rust::std::io import ErrorKind, Read
+from rust::std::os::unix::net import UnixStream
+from rust::std::rc import Rc
+from rust::std::time import Duration
+
+
+class Endpoint:
+    """One end of a socket pair, shared like a platform connection; dropping the last copy closes it."""
+
+    pub stream: Rc[RefCell[UnixStream]]
+
+    pub def connected(self) -> bool:
+        """Whether the socket still has its peer."""
+        return self.stream.borrow().peer_addr().is_ok()
+
+
+def describe(endpoint: Endpoint) -> str:
+    """Only read the endpoint, and return a value that holds nothing of it."""
+    return f"connected {endpoint.connected()}"
+
+
+def one_byte() -> bytes:
+    return "0".encode("utf-8")
+
+
+def peer_state(mut peer: UnixStream) -> str:
+    """Read one byte, waiting at most a few seconds: a closed peer is an end of file."""
+    _ = peer.set_read_timeout(Some(Duration.from_secs(5)))
+    mut buffer = one_byte()
+    match peer.read_exact(buffer):
+        Ok(_) => return "peer got a byte"
+        Err(error) =>
+            if error.kind() == ErrorKind.UnexpectedEof:
+                return "peer sees end of file"
+            return "peer still connected"
+
+
+def serve(server: UnixStream, peer: UnixStream) -> None:
+    """Lend the endpoint at its last use; the statements after that call run with its socket closed."""
+    endpoint = Endpoint(stream=Rc.new(RefCell.new(server)))
+    label = describe(endpoint)
+    println(label)
+    println(peer_state(peer))
+
+
+def serve_in_a_branch(server: UnixStream, peer: UnixStream, flag: bool) -> None:
+    """Lend the endpoint on one branch only; after the branches join, neither path reads it again."""
+    endpoint = Endpoint(stream=Rc.new(RefCell.new(server)))
+    mut label = "not described"
+    if flag:
+        label = describe(endpoint)
+    println(f"in a branch: {label}")
+    println(peer_state(peer))
+
+
+def main() -> None:
+    match UnixStream.pair():
+        Ok(ends) =>
+            server, peer = ends
+            serve(server, peer)
+        Err(error) => println(f"no socket pair: {error}")
+    match UnixStream.pair():
+        Ok(ends) =>
+            server, peer = ends
+            serve_in_a_branch(server, peer, true)
+        Err(error) => println(f"no socket pair: {error}")

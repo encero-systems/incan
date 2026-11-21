@@ -1,0 +1,121 @@
+# behavior: a value built only to decide a condition is freed once the condition is decided, so the branch or loop body it selects runs without the memory that value held (#1604)
+# expect-stdout:
+#   if branch: freed before the branch
+#   else branch: freed before the branch
+#   elif branch: freed before the branch
+#   while body: freed before the body
+#   condition read from a field: freed before the branch
+
+"""Measure the live heap inside the branch a condition selected, when the condition built a large value to decide."""
+
+from rust::drop_probe import live_heap_bytes
+
+const SIZE: int = 4096
+
+
+model Batch:
+    items: list[str]
+    ready: bool
+
+
+def build(size: int) -> Batch:
+    """Build a value whose items each own heap storage."""
+    mut items: list[str] = []
+    for index in range(size):
+        items.append(f"item number {index} with heap storage of its own")
+    return Batch(items=items, ready=true)
+
+
+def weight(batch: Batch) -> int:
+    """Only read the value, so a caller lends it."""
+    return len(batch.items)
+
+
+def in_if() -> int:
+    """Decide an `if` from a fresh value and return what the heap holds inside the selected branch."""
+    before = live_heap_bytes()
+    if weight(build(SIZE)) > 3:
+        return live_heap_bytes() - before
+    return 0
+
+
+def in_else() -> int:
+    """Decide an `if` from a fresh value and return what the heap holds inside its `else`."""
+    before = live_heap_bytes()
+    if weight(build(SIZE)) < 3:
+        return 0
+    else:
+        return live_heap_bytes() - before
+
+
+def in_elif(first: bool) -> int:
+    """Decide an `elif` from a fresh value and return what the heap holds inside the selected branch."""
+    before = live_heap_bytes()
+    if first:
+        return 0
+    elif weight(build(SIZE)) > 3:
+        return live_heap_bytes() - before
+    return 0
+
+
+def in_while() -> int:
+    """Decide a `while` from a fresh value each round and return what the heap holds inside the body."""
+    before = live_heap_bytes()
+    mut held = 0
+    mut rounds = 0
+    while weight(build(SIZE)) > rounds + SIZE - 1:
+        held = live_heap_bytes() - before
+        rounds += 1
+    return held
+
+
+def from_field() -> int:
+    """Decide an `if` from a field of a fresh value and return what the heap holds inside the selected branch."""
+    before = live_heap_bytes()
+    if build(SIZE).ready:
+        return live_heap_bytes() - before
+    return 0
+
+
+def held_once(shape: int) -> int:
+    """Run one shape and return what the heap held inside the branch its condition selected."""
+    if shape == 0:
+        return in_if()
+    if shape == 1:
+        return in_else()
+    if shape == 2:
+        return in_elif(false)
+    if shape == 3:
+        return in_while()
+    return from_field()
+
+
+def least(shape: int) -> int:
+    """
+    The least the heap holds inside a shape's branch, over several runs.
+
+    The allocator's count of bytes in use settles late now and then, so one run can report bytes that no value holds;
+    a value still held shows in every run.
+    """
+    mut held = held_once(shape)
+    for _ in range(8):
+        next = held_once(shape)
+        if next < held:
+            held = next
+    return held
+
+
+def report(label: str, place: str, held: int) -> None:
+    """Print whether the heap was back where it started, from `held` bytes measured before printing."""
+    if held < SIZE:
+        println(f"{label}: freed before the {place}")
+    else:
+        println(f"{label}: still holds {held} bytes in the {place}")
+
+
+def main() -> None:
+    report("if branch", "branch", least(0))
+    report("else branch", "branch", least(1))
+    report("elif branch", "branch", least(2))
+    report("while body", "body", least(3))
+    report("condition read from a field", "branch", least(4))
