@@ -5,7 +5,7 @@ use incan_mir_plan_native::{
 };
 use incan_semantics_core::body_ir::Operand as SourceOperand;
 
-use crate::builtin_calls::coerce_numeric_operand;
+use crate::builtin_calls::{clone_enum_reference, clone_model_reference, coerce_numeric_operand};
 use crate::callable_calls::carrier_callable_operand;
 use crate::compiler_record_adapters::semantic_key_matches_native;
 use crate::formatting::display_plan_operand;
@@ -94,11 +94,11 @@ pub fn boundary_plan_operand(
                 return Err("unsupported Body IR tuple value with differing checked field carriers".into());
             }
         }
-        (PlanType::ModelRef(owner, _), PlanType::Model(target_owner, _)) if owner == target_owner => {
-            return Err(untranslated("model_construction::clone_model_reference"));
+        (PlanType::ModelRef(owner, name), PlanType::Model(target_owner, _)) if owner == target_owner => {
+            return Ok(clone_model_reference(builder, value, *owner, name, span));
         }
-        (PlanType::EnumRef(owner, _), PlanType::Enum(target_owner, _)) if owner == target_owner => {
-            return Err(untranslated("model_construction::clone_enum_reference"));
+        (PlanType::EnumRef(owner, name), PlanType::Enum(target_owner, _)) if owner == target_owner => {
+            return Ok(clone_enum_reference(builder, value, *owner, name, span));
         }
         _ => {}
     }
@@ -115,7 +115,7 @@ pub fn boundary_plan_operand(
         let text = display_plan_operand(builder, operand, span)?;
         operand = read_place(text, true, span);
     }
-    operand = owned_union_member(builder, operand, target)?;
+    operand = owned_union_member(builder, operand, target, span)?;
     operand = carrier_callable_operand(builder, operand, target, span)?;
     operand = option_payload_operand(builder, operand, target, span)?;
     let actual_source = value_type(builder, &operand)?;
@@ -175,7 +175,12 @@ fn frozen_text_union_member(builder: &Builder, target: &PlanType) -> Result<bool
 ///
 /// A field of a parameter the body only reads arrives as a shared reference to the field; its declared union member is
 /// the owned nominal, which is cloned from that reference. Every other operand is returned unchanged.
-fn owned_union_member(builder: &Builder, value: Operand, target: &PlanType) -> Result<Operand, String> {
+fn owned_union_member(
+    builder: &mut Builder,
+    value: Operand,
+    target: &PlanType,
+    span: &SourceSpan,
+) -> Result<Operand, String> {
     let PlanType::Enum(owner, _) = target else {
         return Ok(value);
     };
@@ -187,8 +192,8 @@ fn owned_union_member(builder: &Builder, value: Operand, target: &PlanType) -> R
         return Ok(value);
     }
     match value_type(builder, &value)? {
-        PlanType::ModelRef(..) => Err(untranslated("model_construction::clone_model_reference")),
-        PlanType::EnumRef(..) => Err(untranslated("model_construction::clone_enum_reference")),
+        PlanType::ModelRef(nominal, name) => Ok(clone_model_reference(builder, value, nominal, &name, span)),
+        PlanType::EnumRef(nominal, name) => Ok(clone_enum_reference(builder, value, nominal, &name, span)),
         _ => Ok(value),
     }
 }

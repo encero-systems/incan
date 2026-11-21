@@ -2,8 +2,8 @@
 
 use incan_lang::lang::types::collections::{CollectionTypeId, from_str as collection_type};
 use incan_mir_plan_native::{
-    Carrier, EnumDeclaration, EnumVariant, Place, PlanType, Projection, RvalueKind, SourceSpan, TerminatorKind, Unwind,
-    assign as plan_assign, source_span,
+    CalleeKind, Carrier, EnumDeclaration, EnumVariant, ExternalFunction, Operand as PlanOperand, Place, PlanType,
+    Projection, RvalueKind, SourceSpan, TerminatorKind, Unwind, assign as plan_assign, source_span,
 };
 use incan_semantics_core::body_ir::{
     Block, Body, BodyIrModule, CallableTarget, Callee, MatchArm, NamedCallableTarget, Operand, Rvalue, StatementKind,
@@ -13,12 +13,16 @@ use incan_semantics_core::{IncanType, SemanticSourceTargetKind, generic};
 
 use crate::compiler_record_adapters::{authored_plan_checked_type, semantic_key_matches_native};
 use crate::frame::{
-    Builder, cleanup_exit, drop_owned, forget_owned, place_type, read_place, temporary, track_rvalue_moves,
+    Builder, cleanup_exit, drop_owned, forget_owned, place_type, read_place, temporary, terminate_call,
+    track_rvalue_moves,
 };
 use crate::layout_types::native_source_type;
 use crate::lists::taking_iterator_locals;
 use crate::native_type_identity::{ConstructorIndex, native_owner};
 use crate::nominal_frames::{closed_arguments, closed_type, declaration_storage};
+use crate::numerics::numeric_carrier;
+use crate::text_plan::clone_text;
+use crate::tuples::{is_tuple_type, tuple_fields, tuple_has_owners};
 use crate::type_parameters::substitute;
 use crate::unions::lower_union_declaration;
 
@@ -403,4 +407,112 @@ pub fn replace_owned_destination(builder: &mut Builder, target: Place, operation
         RvalueKind::Use(read_place(replacement, true, span)),
         span,
     ));
+}
+
+/// Copy primitive, static frozen, function-pointer and immutable scalar-reference payloads, or clone an owned active
+/// payload.
+pub fn carrier_payload_value(builder: &mut Builder, place: Place, span: &SourceSpan) -> Result<PlanOperand, String> {
+    let ty = place_type(&builder.locals, &place);
+    if numeric_carrier(&ty) || matches!(ty, PlanType::Bool | PlanType::Unit) {
+        return Ok(read_place(place, false, span));
+    }
+    match &ty {
+        PlanType::FrozenStr
+        | PlanType::FrozenBytes
+        | PlanType::FunctionPointer(_)
+        | PlanType::ScalarRef(_)
+        | PlanType::StringRef
+        | PlanType::ListRef(..)
+        | PlanType::SetRef(_)
+        | PlanType::DictRef(..)
+        | PlanType::TupleRef(_)
+        | PlanType::ModelRef(..)
+        | PlanType::EnumRef(..)
+        | PlanType::ValidationErrorRef => return Ok(read_place(place, false, span)),
+        PlanType::Tuple(_) => return clone_tuple_operand(builder, place, span),
+        _ => {}
+    }
+    let reference_type = match &ty {
+        PlanType::String => PlanType::StringRef,
+        PlanType::ValidationError => PlanType::ValidationErrorRef,
+        PlanType::List(leaf, depth) => PlanType::ListRef(leaf.clone(), *depth),
+        PlanType::Set(leaf) => PlanType::SetRef(leaf.clone()),
+        PlanType::Dict(key, value) => PlanType::DictRef(key.clone(), value.clone()),
+        PlanType::Enum(owner, name) => PlanType::EnumRef(*owner, name.clone()),
+        PlanType::Model(owner, name) => PlanType::ModelRef(*owner, name.clone()),
+        PlanType::FrozenCollection(name, elements) => PlanType::FrozenCollectionRef(name.clone(), elements.clone()),
+        _ => {
+            return Err(format!(
+                "unsupported Body IR intrinsic payload clone type {ty:?} in {} at {}",
+                builder.name, span.line
+            ));
+        }
+    };
+    let output = borrowed_native_value(
+        builder,
+        "core::clone::Clone::clone",
+        place,
+        ty.clone(),
+        reference_type,
+        ty,
+        span,
+    );
+    Ok(read_place(output, true, span))
+}
+
+/// Snapshot tuple elements without partially moving an owned tuple, cloning each owned element in place.
+pub fn clone_tuple_operand(builder: &mut Builder, value: Place, span: &SourceSpan) -> Result<PlanOperand, String> {
+    let ty = place_type(&builder.locals, &value);
+    let mut operands = Vec::new();
+    for field in tuple_fields(&value, &ty, span)? {
+        let field_type = place_type(&builder.locals, &field);
+        if field_type == PlanType::String {
+            operands.push(read_place(clone_text(builder, field, span)?, true, span));
+        } else if is_tuple_type(&field_type) {
+            operands.push(clone_tuple_operand(builder, field, span)?);
+        } else {
+            // Scalars are copied; an owned list or enum carrier is cloned through its real Clone implementation.
+            operands.push(carrier_payload_value(builder, field, span)?);
+        }
+    }
+    let result = temporary(builder, ty.clone(), span);
+    let operation = RvalueKind::Tuple(operands);
+    track_rvalue_moves(builder, &operation);
+    builder.emit(plan_assign(result.clone(), operation, span));
+    let owned = tuple_has_owners(&ty);
+    if owned {
+        builder.owned.push(result.local);
+    }
+    Ok(read_place(result, true, span))
+}
+
+/// Instantiate one native callee against a checked carrier or payload type and its shared reference.
+pub fn borrowed_native_value(
+    builder: &mut Builder,
+    path: &str,
+    source: Place,
+    ty: PlanType,
+    reference_type: PlanType,
+    result_type: PlanType,
+    span: &SourceSpan,
+) -> Place {
+    let reference = temporary(builder, reference_type.clone(), span);
+    builder.emit(plan_assign(reference.clone(), RvalueKind::Borrow(source), span));
+    let output = temporary(builder, result_type.clone(), span);
+    builder.externals.push(ExternalFunction {
+        path: path.to_string(),
+        type_arguments: vec![ty.clone()],
+        parameters: vec![reference_type],
+        return_type: result_type,
+        span: span.clone(),
+    });
+    terminate_call(
+        builder,
+        CalleeKind::Instantiated(path.to_string(), vec![ty]),
+        vec![read_place(reference, false, span)],
+        output.clone(),
+        span,
+    );
+    builder.owned.push(output.local);
+    output
 }

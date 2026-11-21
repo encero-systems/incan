@@ -11,6 +11,7 @@ use incan_semantics_core::{
 };
 
 use crate::async_::is_future;
+use crate::builtin_calls::lower_builtin;
 use crate::calls::{lower_loaf_call, ordered_arguments};
 use crate::carrier_operands::boundary_plan_operand;
 use crate::classes::function_name;
@@ -91,6 +92,19 @@ pub fn lower_named_target(
     destination: &Option<SourcePlace>,
     span: &SourceSpan,
 ) -> Result<(), String> {
+    if let Some(identity) = &target.canonical
+        && identity.kind == SemanticSourceTargetKind::Method
+        && identity.declaration_name == "__fields__"
+        && target.receiver_type.is_some()
+    {
+        return Err(untranslated("reflection::lower_static_field_metadata"));
+    }
+    if let Some(builtin) = target.builtin {
+        if !target.type_args.is_empty() {
+            return Err("unsupported Body IR builtin type arguments".into());
+        }
+        return lower_builtin(builder, builtin, arguments, destination, span);
+    }
     if let Some(step) = special_named_target(module, builder, target)? {
         return Err(untranslated(step));
     }

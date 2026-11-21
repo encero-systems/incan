@@ -336,6 +336,8 @@ fn replay_case(
                 Outcome::Complete(Some(produced)) => {
                     if produced == expected {
                         tally.plans_identical += 1;
+                    } else {
+                        write_difference(name, index, expected, produced);
                     }
                     compare_functions(expected, produced, tally);
                 }
@@ -344,6 +346,24 @@ fn replay_case(
         }
     }
     Ok(())
+}
+
+/// With `LOWERING_REPLAY_DIFF` naming a directory, write a differing plan pair there as JSON for reading by hand.
+fn write_difference(name: &str, index: usize, expected: &[u8], produced: &[u8]) {
+    let Some(directory) = std::env::var_os("LOWERING_REPLAY_DIFF") else {
+        return;
+    };
+    let directory = Path::new(&directory);
+    for (label, bytes) in [("expected", expected), ("produced", produced)] {
+        let text = postcard::from_bytes::<Plan>(bytes)
+            .map_err(|error| error.to_string())
+            .and_then(|plan| serde_json::to_string_pretty(&plan).map_err(|error| error.to_string()))
+            .unwrap_or_else(|error| error);
+        let file = directory.join(format!("{}-step-{index}-{label}.json", &name[..12.min(name.len())]));
+        if let Err(error) = std::fs::write(&file, text) {
+            eprintln!("{}: {error}", file.display());
+        }
+    }
 }
 
 /// Print one case's calls and the shape of each answer without lowering anything.

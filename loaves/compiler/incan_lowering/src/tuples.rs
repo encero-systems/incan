@@ -1,11 +1,14 @@
 //! Tuple admission and checked constant field selection for the direct route.
 
 use incan_lang::lang::types::collections::{CollectionTypeId, from_str as collection_type};
-use incan_mir_plan_native::{PlanType, TupleElement};
+use incan_mir_plan_native::{
+    FieldProjection, Place, PlanType, Projection, SourceSpan, TupleElement, tuple_element_type,
+};
 use incan_semantics_core::IncanPrimitiveType;
 use incan_semantics_core::IncanType;
 use incan_semantics_core::body_ir::{Constant, Operand, PlaceElem};
 
+use crate::frame::appended_field;
 use crate::numerics::{numeric_type, sized_numeric};
 
 /// Name every canonical type kind even when its legacy Display implementation is empty.
@@ -205,4 +208,41 @@ pub fn element_has_owner(element: &TupleElement) -> bool {
         TupleElement::Tuple(elements) => elements.iter().any(element_has_owner),
         _ => false,
     }
+}
+
+/// Project the admitted tuple layout in canonical element order, after any field path that reached the tuple.
+pub fn tuple_fields(value: &Place, ty: &PlanType, span: &SourceSpan) -> Result<Vec<Place>, String> {
+    let mut owner = value.clone();
+    let mut layout = ty.clone();
+    if let PlanType::TupleRef(elements) | PlanType::TupleMutRef(elements) = ty {
+        layout = PlanType::Tuple(elements.clone());
+        if value.projection != Projection::Whole {
+            return Err("unsupported Body IR projected tuple reference".into());
+        }
+        owner = Place {
+            local: value.local,
+            projection: Projection::Deref(layout.clone()),
+            span: span.clone(),
+        };
+    }
+    let mut fields = Vec::new();
+    if let PlanType::Tuple(elements) = &layout {
+        for (slot, element) in elements.iter().enumerate() {
+            let element = tuple_element_type(element);
+            if owner.projection == Projection::Whole {
+                fields.push(Place {
+                    local: owner.local,
+                    projection: Projection::Field(slot as i64, element),
+                    span: span.clone(),
+                });
+            } else {
+                fields.push(appended_field(
+                    &owner,
+                    FieldProjection::new(slot as i64, element),
+                    span,
+                )?);
+            }
+        }
+    }
+    Ok(fields)
 }
