@@ -6,12 +6,12 @@
 use std::path::{Path, PathBuf};
 
 use incan_mir_plan_native::{
-    Function, Local, PlanType, SourceSpan, TerminatorKind, block, decode_plan_function_record, encode_product,
-    source_span, unit_nominals,
+    Function, Local, PlanType, SourceSpan, TerminatorKind, block, decode_plan_function_record, decode_product_parts,
+    encode_product, product_identities, source_span, unit_nominals,
 };
 
 use crate::record_positions::{
-    index_positions, indexed_product, place_positions, positioned_product, relocate_product,
+    index_positions, indexed_product, place_positions, placed_record, positioned_product, relocate_product,
 };
 use crate::scalar_store::{finalized_plan_product, record_scalar_inputs, retain_scalar, retained_scalar};
 
@@ -105,6 +105,33 @@ fn moved_body_lines_keep_the_plan_product() -> Result<(), String> {
         "moved lines changed the plan product's bytes"
     );
     let _ = std::fs::remove_dir_all(&directory);
+    Ok(())
+}
+
+/// An admitted product placed at moved lines restores from that one read exactly as its placed bytes decode.
+///
+/// Restoring a body of an unchanged module reads its stored product once: the placed record names the product's
+/// declarations and restores its function, runtime demand and helper frames, equal to placing the bytes, encoding
+/// them and decoding them twice, as admission did. A product whose nodes are missing still refuses placement.
+#[test]
+fn an_admitted_product_restores_from_one_placed_read() -> Result<(), String> {
+    let owner = source_span("positions.incn", 10, 1);
+    let function = positioned("relay", &owner, 11, 12);
+    let helper = positioned("helper", &owner, 12, 11);
+    let captured_nodes = [(0, 1), (1, 5), (2, 5)];
+    let wire = encode_product(&function, &[], &[], std::slice::from_ref(&helper))?;
+    let stored = indexed_product(&wire, &captured_nodes, "positions.incn", 10)?;
+    let moved_nodes = [(0, 1), (2, 5), (4, 5)];
+    let bytes = positioned_product(&stored, &moved_nodes, "moved.incn", 20, &mut Vec::new())?;
+    let placed = placed_record(&stored, &moved_nodes, "moved.incn", 20)?;
+    assert!(placed.nominals() == product_identities(&bytes)?.as_slice());
+    let (restored, runtime, frames) = placed.restore(&[])?;
+    let (decoded, decoded_runtime, decoded_frames, _) = decode_product_parts(&bytes, &[])?;
+    assert!(restored == decoded, "the placed record restored another function");
+    assert!(runtime == decoded_runtime && frames == decoded_frames);
+    assert!(restored != function, "the restored function kept the captured lines");
+    assert!(placed.restores_at_own_ordinals());
+    assert!(placed_record(&stored, &[(0, 1)], "moved.incn", 20).is_err());
     Ok(())
 }
 
