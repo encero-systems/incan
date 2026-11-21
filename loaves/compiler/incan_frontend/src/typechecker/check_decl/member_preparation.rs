@@ -178,20 +178,21 @@ impl TypeChecker {
         active_bounds.extend(self.type_param_bound_details_from_type_params(&method.type_params));
         self.current_type_param_bound_details.push(active_bounds);
         let previous_annotation_owner = self.enter_annotation_owner(&method.name, &method.type_params);
+        let receiver = method.receiver_binding.as_ref().map(|binding| binding.node.as_str());
+        let route = self.result_route(&method.params, &method.return_type, method.result_source.as_ref());
         let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(
             &method.params,
             // A trait slot declares its borrows as explicit input obligations its implementations inherit.
             matches!(self_ty, ResolvedType::SelfType)
-                || self.signature_keeps_explicit_borrows(
-                    &method.params,
-                    &method.return_type,
-                    method.result_source.as_ref(),
-                ),
+                || self.signature_keeps_explicit_borrows(&method.params, &route.result, route.source),
             super::ownership_contracts::method_input_header(method),
         );
         let resolved_param_types =
             self.inherited_method_parameter_types(method, method_span, resolved_param_types, owner_params, &self_ty);
-        let return_type = self.resolve_callable_return_annotation(&method.return_type, method.result_source.is_some());
+        let return_type = self.resolve_callable_return_annotation(&route.result, route.source.is_some());
+        if let Some(source) = route.native_source {
+            self.check_native_result_elision(&method.name, &method.params, source, receiver);
+        }
         self.record_method_ownership(method, method_span, &resolved_param_types, &return_type, &self_ty);
 
         // Define the source receiver with its exact declaration token. Classmethod `cls` remains absent from the

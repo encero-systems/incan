@@ -42,6 +42,7 @@ impl TypeChecker {
             native_borrow_bodies: HashSet::new(),
             native_local_borrows: std::collections::BTreeMap::new(),
             native_borrow_pass: false,
+            native_result_reach: None,
             dictionary_lookup_bodies: HashSet::new(),
             loop_item_bodies: HashSet::new(),
             loop_item_candidates: std::collections::BTreeMap::new(),
