@@ -28,6 +28,10 @@ impl TypeChecker {
         if is_kind(expected) {
             return Some(vec![expected]);
         }
+        // A literal passed to a borrowed destination builds the referent; the use site takes the borrow.
+        if let ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) = expected {
+            return self.collection_literal_kinds(inner, is_kind);
+        }
         if let Some(inner) = expected.option_inner_type() {
             return self.collection_literal_kinds(inner, is_kind);
         }
@@ -638,5 +642,30 @@ pub(in crate::typechecker) fn fill_open_result_parts(
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ast::Span;
+    use crate::symbols::ResolvedType;
+    use crate::typechecker::TypeChecker;
+
+    /// A literal passed to a borrowed parameter builds the referent, so `[]` takes the parameter's element type.
+    #[test]
+    fn empty_list_argument_takes_its_element_from_a_borrowed_parameter() -> Result<(), String> {
+        let source = "def count(items: &list[str]) -> int:\n    return len(items)\n\ndef total() -> int:\n    return count([])\n";
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let start = source.rfind("[]").ok_or("the empty list argument")?;
+        match checker.body_ir_checked_value_type(Span::new(start, start + 2)) {
+            Some(ResolvedType::Generic(_, elements)) => assert_eq!(elements, &[ResolvedType::Str]),
+            other => return Err(format!("the empty list argument has type {other:?}")),
+        }
+        Ok(())
     }
 }

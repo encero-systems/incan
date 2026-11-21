@@ -751,6 +751,11 @@ impl TypeChecker {
             _ => self.types_compatible(actual, expected),
         };
 
+        // ---- Owned use of a borrowed value (RFC 164) ----
+        if compatible && self.refuse_borrowed_value_without_clone(actual, expected, span) {
+            return;
+        }
+
         // ---- Boundary coercions and refusal ----
         if !compatible
             && !(compatibility == CallArgumentCompatibility::CheckedCIntegerBridge

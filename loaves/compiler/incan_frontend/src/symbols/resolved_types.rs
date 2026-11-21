@@ -1,6 +1,7 @@
 //! The checked `ResolvedType` vocabulary, its queries, and its source and descriptor display.
 
 use super::*;
+use incan_lang::lang::types::ownership::OwnershipMode;
 
 /// Write a nominal type name the way users spell it: a module-qualified union member as `module.Name`.
 pub(super) fn write_nominal_name(f: &mut std::fmt::Formatter<'_>, name: &str) -> std::fmt::Result {
@@ -444,8 +445,12 @@ impl std::fmt::Display for DisplayType<'_> {
             }
             ResolvedType::TypeVar(name) => write!(f, "{}", name),
             ResolvedType::SelfType => write!(f, "Self"),
-            ResolvedType::Ref(inner) => write!(f, "&{}", self.nested(inner)),
-            ResolvedType::RefMut(inner) => write!(f, "&mut {}", self.nested(inner)),
+            // RFC 164: a native `&T` or `&mut T` reads as `Borrowed[T]` or `BorrowedMut[T]`, and every tool shows it
+            // in that Incan form; no `&`-spelled type reaches user-facing text.
+            ResolvedType::Ref(inner) => write!(f, "{}[{}]", OwnershipMode::Borrowed.as_str(), self.nested(inner)),
+            ResolvedType::RefMut(inner) => {
+                write!(f, "{}[{}]", OwnershipMode::BorrowedMut.as_str(), self.nested(inner))
+            }
             ResolvedType::RustPath(path) => write!(f, "rust::{}", path),
             ResolvedType::CallSiteInfer => write!(f, "_"),
             ResolvedType::Unknown => write!(f, "?"),

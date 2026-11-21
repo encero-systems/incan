@@ -466,8 +466,8 @@ fn field_surface_type_name_uses_canonical_incan_collection_spelling() {
                     vec![ResolvedType::TypeVar("T".to_string())],
                 )))),
             ),
-            "(mut list[int], &str, *bytes, **bool) -> &mut set[T]",
-            "(mut List[Int], &Str, *Bytes, **Bool) -> &mut Set[T]",
+            "(mut list[int], Borrowed[str], *bytes, **bool) -> BorrowedMut[set[T]]",
+            "(mut List[Int], Borrowed[Str], *Bytes, **Bool) -> BorrowedMut[Set[T]]",
         ),
         (
             ResolvedType::FrozenDict(

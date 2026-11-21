@@ -252,7 +252,7 @@ impl TypeChecker {
         }
         if self.types_compatible(actual, member_ty) {
             // A numeric probe of a narrower type is widened to the member type where it is lowered (RFC 009).
-            self.record_value_destination_if_compatible(expr.span, actual, member_ty);
+            self.record_read_destination_if_compatible(expr.span, actual, member_ty);
         } else {
             self.errors.push(errors::call_argument_type_mismatch(
                 callee,

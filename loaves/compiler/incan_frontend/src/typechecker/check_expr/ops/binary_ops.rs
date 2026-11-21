@@ -669,7 +669,7 @@ impl TypeChecker {
             let text_probe_for_text_member = lhs_is_str && is_str_like(member_ty);
             if !text_probe_for_text_member && self.types_compatible(&left_ty, member_ty) {
                 // A numeric probe of a narrower type is widened to the member type where it is lowered.
-                self.record_value_destination_if_compatible(left.span, &left_ty, member_ty);
+                self.record_read_destination_if_compatible(left.span, &left_ty, member_ty);
             } else if !text_probe_for_text_member && !matches!(left_ty, ResolvedType::Unknown) {
                 self.errors.push(errors::type_mismatch(
                     &member_ty.to_string(),
@@ -688,7 +688,7 @@ impl TypeChecker {
                     if self.types_compatible(&left_ty, elem_ty) || matches!(left_ty, ResolvedType::Unknown) {
                         // A numeric probe of a narrower type is widened to the element type where it is
                         // lowered (RFC 009).
-                        self.record_value_destination_if_compatible(left.span, &left_ty, elem_ty);
+                        self.record_read_destination_if_compatible(left.span, &left_ty, elem_ty);
                         // A list finds its item by equality, which the element type must implement (#1870); a
                         // set's element type is held to `Eq` and `Hash` where the set type is written.
                         if collection_type_id(name.as_str()) == Some(CollectionTypeId::List) {
@@ -703,7 +703,7 @@ impl TypeChecker {
                 Some(CollectionTypeId::Dict) if args.len() >= 2 => {
                     let key_ty = &args[0];
                     if self.types_compatible(&left_ty, key_ty) || matches!(left_ty, ResolvedType::Unknown) {
-                        self.record_value_destination_if_compatible(left.span, &left_ty, key_ty);
+                        self.record_read_destination_if_compatible(left.span, &left_ty, key_ty);
                         return ResolvedType::Bool;
                     }
                     self.errors

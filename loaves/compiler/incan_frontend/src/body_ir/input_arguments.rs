@@ -145,6 +145,15 @@ impl BodyBuilder<'_, '_> {
                 .get(*slot)
                 .ok_or("explicit input has no selected value parameter")?;
             let ty = super::parameter_types::physical_type_argument(self.checked_type(&parameter.ty));
+            // RFC 164: an `Owned[T]` parameter never receives an implicit clone of a borrowed value.
+            if argument.access == IncanInputAccess::Owned
+                && matches!(self.resolve_ty(expression.span), IncanType::Ref(_))
+                && !matches!(ty, IncanType::Ref(_) | IncanType::RefMut(_))
+            {
+                return Err(
+                    "an Owned[T] parameter takes no implicit clone of a borrowed value; write `.clone()` on it".into(),
+                );
+            }
             let value = match argument.source {
                 Some(CheckedInputSource::Place { root, fields, elements }) => {
                     if super::parameter_types::physical_type_argument(self.resolve_ty(expression.span)) != ty {

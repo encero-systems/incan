@@ -86,6 +86,42 @@ impl BodyBuilder<'_, '_> {
         }
     }
 
+    /// Clone a `Borrowed[T]` argument whose checked destination owns a `T` (a stored list element), leaving every
+    /// other argument as lowered; ordinary argument lowering keeps its own numeric and probe adaptations.
+    pub(super) fn retain_borrowed_value_destination(
+        &mut self,
+        expr: &ast::Spanned<ast::Expr>,
+        operand: bir::Operand,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let Some(destination) = self
+            .type_info
+            .value_destination_type(expr.span)
+            .map(|ty| self.checked_type(ty))
+        else {
+            return operand;
+        };
+        let source = match &operand {
+            bir::Operand::Place(read) if read.place.projection.is_empty() => read
+                .place
+                .local_id()
+                .and_then(|local| self.locals.get(local.index()))
+                .map_or_else(|| self.resolve_ty(expr.span), |local| local.ty.clone()),
+            _ => self.resolve_ty(expr.span),
+        };
+        match &source {
+            IncanType::Ref(borrowed)
+                if !matches!(destination, IncanType::Ref(_) | IncanType::RefMut(_))
+                    && !self.borrowed_rust_copy(borrowed)
+                    && self.same_nominal_carrier(borrowed, &destination) =>
+            {
+                self.materialize_borrowed_value(expr, operand, &destination, scope, out)
+            }
+            _ => operand,
+        }
+    }
+
     /// Apply an explicitly selected numeric result conversion once, including a native length's usize-to-int edge.
     /// Reading the retained temporary type prevents an enclosing assignment from repeating the same conversion.
     pub(super) fn retain_checked_numeric_result(
@@ -127,8 +163,11 @@ impl BodyBuilder<'_, '_> {
                 .map_or_else(|| self.resolve_ty(expr.span), |local| local.ty.clone()),
             _ => self.resolve_ty(expr.span),
         };
+        // RFC 164: a `Borrowed[T]` value at a destination that owns a `T` receives a clone, for every `T`; the checker
+        // refused the owned destinations whose `T` has no clone.
         if let IncanType::Ref(borrowed) = &source
-            && self.is_source_nominal(borrowed)
+            && !matches!(destination, IncanType::Ref(_) | IncanType::RefMut(_))
+            && !self.borrowed_rust_copy(borrowed)
             && self.same_nominal_carrier(borrowed, destination)
         {
             return self.materialize_borrowed_value(expr, operand, destination, scope, out);
@@ -139,20 +178,17 @@ impl BodyBuilder<'_, '_> {
         self.push_assign_temp(bir::Rvalue::Use(operand), member, scope, hir_span(expr.span), out)
     }
 
-    /// Whether `ty` names a nominal declared in source, by its carrier key or by a source name that has one. A type
-    /// imported from Rust keeps its native copy semantics, so a borrow of it is never cloned for a destination.
-    fn is_source_nominal(&self, ty: &IncanType) -> bool {
+    /// Whether `ty` is a Rust type whose checked layout is `Copy`. An owned use of a borrow of it copies the value, as
+    /// a by-value receiver does, and never calls its `Clone`, which may be observable.
+    fn borrowed_rust_copy(&self, ty: &IncanType) -> bool {
         let (IncanType::Named(name) | IncanType::Generic { base: name, .. }) = ty else {
             return false;
         };
-        name.starts_with(incan_semantics_core::body_ir::NOMINAL_CARRIER_KEY_PREFIX)
-            || self
-                .type_info
-                .declarations
-                .named_type_identities
-                .get(name)
-                .and_then(nominal_carrier_key)
-                .is_some()
+        self.type_info
+            .rust
+            .checked_layouts
+            .get(name.as_str())
+            .is_some_and(|layout| layout.is_copy)
     }
 
     /// Whether two types name one source nominal with the same arguments, when one is spelled by its source name and
@@ -189,7 +225,7 @@ impl BodyBuilder<'_, '_> {
         }
     }
 
-    /// Clone a borrowed source model or class into the owned value its checked destination requires.
+    /// Clone a `Borrowed[T]` value into the owned `T` its checked destination requires (RFC 164).
     ///
     /// The checker admitted the borrow where an owned value is needed; the read of the borrowed place carries the
     /// clone fact, and the owned temporary is the value the destination binds.
