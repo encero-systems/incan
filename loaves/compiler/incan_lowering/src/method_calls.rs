@@ -1,6 +1,7 @@
 //! Method calls: checked receivers, selected implementations and their ordinary arguments.
 
 use incan_lang::lang::surface::iterator_methods::IteratorMethodId;
+use incan_lang::lang::surface::result_methods::ResultMethodId;
 use incan_mir_plan_native::{CalleeKind, Operand, Place, PlanType, RvalueKind, SourceSpan, assign as plan_assign};
 use incan_semantics_core::body_ir::{
     ArgumentBinding, ArgumentElement, Body, BodyIrModule, MethodTarget, Operand as SourceOperand, OwnershipFact,
@@ -8,6 +9,7 @@ use incan_semantics_core::body_ir::{
 };
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 
+use crate::builtin_methods::lower_builtin_method;
 use crate::call_arguments::{SlotPolicy, call_parameter_type, has_defaulted_slots, ordered_slot_operands};
 use crate::callable_calls::{checked_type_arguments, emit_selected_body_call};
 use crate::classes::{frame_type, function_name, receiver_mode};
@@ -19,6 +21,7 @@ use crate::frame::{Builder, dereferenced_place, place_type, read_place, temporar
 use crate::library_methods::lower_library_method;
 use crate::models::model_place;
 use crate::pending::untranslated;
+use crate::sequence_builtins::argument_type;
 use crate::traits::{is_lazy_method_body, receiver_selects_slot_arguments};
 use crate::type_parameters::request_instance;
 
@@ -61,7 +64,7 @@ fn lower_checked_method_call(
         ));
     };
     if identity.origin == SymbolOrigin::Builtin {
-        return Err(untranslated("builtin_methods::lower_builtin_method"));
+        return lower_builtin_origin_method(module, builder, target, arguments, destination, span);
     }
     let Some(receiver) = arguments.first() else {
         return Err("invalid Body IR Method missing receiver".into());
@@ -720,4 +723,36 @@ fn method_ordinary_operands(
         ..SlotPolicy::default()
     };
     ordered_slot_operands(builder, &target.binding, arguments, &types, span, &policy)
+}
+
+/// A builtin registry member: a model-collecting iterator calls its retained default, a Result combinator lowers its
+/// callable, and every other member takes its builtin lowering.
+fn lower_builtin_origin_method(
+    module: &BodyIrModule,
+    builder: &mut Builder,
+    target: &MethodTarget,
+    arguments: &[ArgumentElement],
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let _ = module;
+    if target.builtin_iterator() == Some(IteratorMethodId::Collect)
+        && let PlanType::Model(..) = argument_type(builder, arguments, 0, span)?
+    {
+        return Err(untranslated("method_calls::concrete_iterator_collect"));
+    }
+    if let Some(method) = target.builtin_result()
+        && matches!(
+            method,
+            ResultMethodId::Map
+                | ResultMethodId::MapErr
+                | ResultMethodId::AndThen
+                | ResultMethodId::OrElse
+                | ResultMethodId::Inspect
+                | ResultMethodId::InspectErr
+        )
+    {
+        return Err(untranslated("result_combinators::lower_result_combinator"));
+    }
+    lower_builtin_method(builder, target, arguments, destination, span)
 }
