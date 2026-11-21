@@ -170,3 +170,24 @@ fn stored<T>(store: &OnceLock<Mutex<Store<T>>>) -> (usize, u64) {
         })
         .unwrap_or((0, 0))
 }
+
+/// Drop every retained Loaf artifact reading, so no decoded manifest outlives the request that read it. Rust ABI
+/// indexes stay: they are file-backed and read their items lazily.
+pub(super) fn release_artifacts() {
+    if let Some(store) = ARTIFACTS.get()
+        && let Ok(mut store) = store.lock()
+    {
+        store.readings.clear();
+    }
+}
+
+/// Whether a reading of the Loaf `name` in `dir` is retained.
+#[cfg(test)]
+pub(super) fn retains_artifact(dir: &Path, name: &str) -> bool {
+    let canonical = fs::canonicalize(dir).unwrap_or_else(|_| dir.to_owned());
+    let key = canonical.join(format!("{}.incnlib", artifact_stem(name)));
+    ARTIFACTS
+        .get()
+        .and_then(|store| store.lock().ok())
+        .is_some_and(|store| store.readings.contains_key(&key))
+}

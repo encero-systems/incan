@@ -37,6 +37,12 @@ pub fn retained_inventory() -> [(&'static str, usize, u64); 2] {
     retained::inventory()
 }
 
+/// Release the Loaf manifests this process decoded for the request that just ended: a resident worker keeps no owned
+/// copy of its dependency closure between requests.
+pub fn release_retained_loaves() {
+    retained::release_artifacts();
+}
+
 /// Publish one private cache record atomically: write `bytes` to a new owner-only file beside `path`, named with this
 /// process and `suffix`, and rename it over `path`. A failed write removes the temporary file; concurrent readers see
 /// either the old record or the complete new one.
@@ -1204,6 +1210,23 @@ mod scoped_name_tests {
         assert_eq!(observed_identity, &identity);
         assert_eq!(observed_namespace, &LoafNamespace::Dependency { key: key.to_owned() });
         assert!(!observation.was_demanded());
+        Ok(())
+    }
+
+    /// A request's decoded Loaf manifests are released when it ends: a resident worker keeps no owned copy of its
+    /// dependency closure between requests, and the next request reads the Loaf again.
+    #[test]
+    fn released_loaf_readings_do_not_outlive_their_request() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let name = "released/catalog";
+        let manifest = LibraryManifest::new(name, "1.0.0");
+        let path = directory.path().join(format!("{}.incnlib", artifact_stem(name)));
+        std::fs::write(&path, manifest.to_json_string()?)?;
+        LoafArtifact::read(directory.path(), name)?;
+        assert!(super::retained::retains_artifact(directory.path(), name));
+        super::release_retained_loaves();
+        assert!(!super::retained::retains_artifact(directory.path(), name));
+        assert_eq!(LoafArtifact::read(directory.path(), name)?.manifest.name, name);
         Ok(())
     }
 }
