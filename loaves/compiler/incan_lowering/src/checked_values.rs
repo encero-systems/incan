@@ -13,6 +13,7 @@ use incan_semantics_core::{HirSourceSpan, IncanType};
 use crate::builtin_calls::{clone_enum_reference, clone_model_reference};
 use crate::carrier_operands::boundary_operand;
 use crate::closures::callable_copy_type;
+use crate::decimal_plan::decimal_literal;
 use crate::element_places::is_element_place;
 use crate::frame::{Builder, literal, place_type, read_place, temporary, track_rvalue_moves};
 use crate::frozen_plan::{frozen_collection_literal, frozen_literal, frozen_observation_type};
@@ -125,9 +126,7 @@ pub fn scalar_operand(builder: &mut Builder, value: &SourceOperand, span: &Sourc
         SourceConstant::NumericNewtype(_) => Err(untranslated("newtype_constants::numeric_newtype_literal")),
         SourceConstant::Str(text) => Ok(read_place(owned_literal(builder, text, span), true, span)),
         SourceConstant::FrozenStr(_) => frozen_literal(builder, constant, span),
-        SourceConstant::TypedNumeric(value) if is_decimal_literal(value) => {
-            Err(untranslated("decimal_plan::decimal_literal"))
-        }
+        SourceConstant::TypedNumeric(value) if is_decimal_literal(value) => decimal_literal(builder, value, span),
         _ => scalar_constant(constant, span),
     }
 }

@@ -12,6 +12,7 @@ use crate::carrier_operands::{bind_enum_fields, bind_payload_in_place, boundary_
 use crate::checked_values::{clone_nominal_operand, scalar_operand, scalar_place};
 use crate::closures::callable_copy_type;
 use crate::collections::{is_collection, is_owned_collection};
+use crate::element_places::{element_place_type, is_element_place};
 use crate::frame::{
     Builder, bind_read_value, dereferenced_place, drop_owned, finish_fallthrough, place_type, read_place, temporary,
     track_rvalue_moves,
@@ -892,4 +893,22 @@ fn reborrowed_payload(
     let reborrow = temporary(builder, reference, span);
     builder.emit(plan_assign(reborrow.clone(), RvalueKind::MutBorrow(referent), span));
     Ok(read_place(reborrow, true, span))
+}
+
+/// Classify the retained value type without reading an index; enum comparison materializes the value only once.
+pub fn enum_operand(builder: &mut Builder, value: &SourceOperand, span: &SourceSpan) -> Result<bool, String> {
+    let SourceOperand::Place(read) = value else {
+        return Ok(false);
+    };
+    // Retained static cells are scalar-only; the ordinary read validates their canonical storage identity.
+    if read.place.global().is_some() {
+        return Ok(false);
+    }
+    let ty = if is_element_place(builder, &read.place)? {
+        element_place_type(builder, &read.place)?
+    } else {
+        let place = scalar_place(builder, &read.place, span)?;
+        place_type(&builder.locals, &place)
+    };
+    Ok(matches!(ty, PlanType::Enum(..)))
 }

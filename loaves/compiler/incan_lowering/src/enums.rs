@@ -299,3 +299,48 @@ fn validate_payload_pattern(pattern: &Pattern) -> Result<(), String> {
         _ => Err("unsupported Body IR nested enum payload pattern".into()),
     }
 }
+
+/// Authorize tag equality only for one retained fieldless owner with checked structural equality.
+pub fn validate_unit_comparison(
+    declarations: &[SourceEnumDeclaration],
+    left: &PlanType,
+    right: &PlanType,
+) -> Result<(), String> {
+    if left != right {
+        return Err("unsupported Body IR mixed enum comparison".into());
+    }
+    let PlanType::Enum(owner, _) = left else {
+        return Err("unsupported Body IR nonenum comparison".into());
+    };
+    let Some(declaration) = usize::try_from(*owner).ok().and_then(|index| declarations.get(index)) else {
+        return Err("unsupported Body IR non-source enum comparison".into());
+    };
+    if !declaration.derives.iter().any(|derive| derive == "PartialEq") {
+        return Err("unsupported Body IR enum comparison without retained equality".into());
+    }
+    if declaration.variants.iter().any(|variant| !variant.fields.is_empty()) {
+        return Err("unsupported Body IR payload enum comparison".into());
+    }
+    Ok(())
+}
+
+/// Authorize tag ordering only for a fieldless owner whose checked derives select a derived order.
+///
+/// The checker retains an enum's written derives without their implications, so a derived `Ord` names the order as
+/// well as a derived `PartialOrd`.
+pub fn validate_unit_ordering(declarations: &[SourceEnumDeclaration], ty: &PlanType) -> Result<(), String> {
+    let PlanType::Enum(index, _) = ty else {
+        return Err("unsupported Body IR nonenum ordering".into());
+    };
+    let Some(declaration) = usize::try_from(*index).ok().and_then(|slot| declarations.get(slot)) else {
+        return Err("unsupported Body IR non-source enum ordering".into());
+    };
+    if !declaration
+        .derives
+        .iter()
+        .any(|derive| derive == "PartialOrd" || derive == "Ord")
+    {
+        return Err("unsupported Body IR enum ordering without a derived order".into());
+    }
+    Ok(())
+}
