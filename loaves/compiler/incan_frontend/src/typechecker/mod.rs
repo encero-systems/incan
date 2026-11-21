@@ -590,6 +590,8 @@ pub struct TypeChecker {
     native_borrow_pass: bool,
     /// While a native borrowed result's body is checked, what its returns must be reached from.
     native_result_reach: Option<borrowed_results::NativeResultReach>,
+    /// Written annotations the checking pass has examined for a Rust reference spelling, by their root span.
+    borrow_spellings_examined: HashSet<Span>,
     /// Callable bodies containing an optional dictionary lookup whose matched payload may borrow its stored entry.
     /// The marker only activates canonical graph construction and is consumed when that body is finalized.
     dictionary_lookup_bodies: HashSet<CanonicalSymbolId>,

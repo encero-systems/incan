@@ -271,6 +271,45 @@ impl TypeChecker {
 }
 
 impl TypeChecker {
+    /// RFC 164: in Incan source a borrow is spelled `Borrowed[T]` or `BorrowedMut[T]`; native references exist only in
+    /// imported Rust signatures, which never reach a written annotation. Refuse each Rust reference spelling of one
+    /// written annotation once, at the reference, with the Incan spelling as the fix. Only the checking pass reports,
+    /// and it examines each annotation once, before any canonical respelling, by its root span.
+    pub(super) fn refuse_rust_borrow_spellings(&mut self, written: &Spanned<Type>) {
+        if self.validate_source_type_names && self.borrow_spellings_examined.insert(written.span) {
+            self.refuse_rust_borrow_spelling_nodes(written);
+        }
+    }
+
+    /// One node of [`Self::refuse_rust_borrow_spellings`].
+    fn refuse_rust_borrow_spelling_nodes(&mut self, annotation: &Spanned<Type>) {
+        match &annotation.node {
+            Type::Ref(inner) | Type::RefMut(inner) => {
+                self.errors.push(errors::rust_borrow_spelling(
+                    &inner.node.to_string(),
+                    matches!(annotation.node, Type::RefMut(_)),
+                    annotation.span,
+                ));
+                self.refuse_rust_borrow_spelling_nodes(inner);
+            }
+            Type::Generic(_, arguments) | Type::DottedGeneric(_, arguments) | Type::Tuple(arguments) => {
+                for argument in arguments {
+                    self.refuse_rust_borrow_spelling_nodes(argument);
+                }
+            }
+            Type::Function(parameters, result) => {
+                for parameter in parameters {
+                    self.refuse_rust_borrow_spelling_nodes(parameter);
+                }
+                self.refuse_rust_borrow_spelling_nodes(result);
+            }
+            Type::MutParam(inner) => self.refuse_rust_borrow_spelling_nodes(inner),
+            _ => {}
+        }
+    }
+}
+
+impl TypeChecker {
     /// The parameter and result annotations a free function's checked signature resolves (RFC 164): each borrow as
     /// the signature rule respells it and the result as its route does. Metadata that resolves written annotations
     /// reads these, so it publishes a borrow the same way in both spellings.

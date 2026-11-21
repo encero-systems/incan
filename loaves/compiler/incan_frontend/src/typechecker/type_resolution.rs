@@ -241,6 +241,7 @@ impl TypeChecker {
         defer: impl Fn(incan_lang::lang::types::ownership::OwnershipMode) -> bool,
         carried: bool,
     ) -> ResolvedType {
+        self.refuse_rust_borrow_spellings(ty);
         let respelled = self.native_nested_borrows(ty, false);
         let ty = respelled.as_ref().unwrap_or(ty);
         self.resolve_qualified_type_annotations(ty);

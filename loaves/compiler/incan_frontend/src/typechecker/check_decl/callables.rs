@@ -208,6 +208,7 @@ impl TypeChecker {
         let previous_annotation_owner = self.prepare_function_generic_context(func);
 
         // ---- Signature defaults and frame bindings ----
+        self.refuse_rust_borrow_spellings(&func.return_type);
         let route = self.result_route(&func.params, &func.return_type, func.result_source.as_ref());
         let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(
             &func.params,
@@ -681,6 +682,7 @@ impl TypeChecker {
         params
             .iter()
             .map(|param| {
+                self.refuse_rust_borrow_spellings(&param.node.ty);
                 let annotation = self.parameter_annotation(param, explicit_borrows);
                 let param_ty = self.resolve_type_checked_for_input(&annotation, defer_inputs);
                 let param_ty = self.canonical_borrow_type(param_ty, explicit_borrows);

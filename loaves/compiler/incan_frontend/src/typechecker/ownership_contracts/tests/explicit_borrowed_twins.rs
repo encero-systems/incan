@@ -33,22 +33,33 @@ fn spelled(template: &str, (shared, exclusive): (&str, &str)) -> String {
     out
 }
 
-/// Every error and warning of one checked module, in full and sorted.
+/// Whether a diagnostic is the refusal of a Rust reference spelling in Incan source.
+fn spelling_refusal(diagnostic: &crate::diagnostics::CompileError) -> bool {
+    diagnostic.message.contains("in Incan, not `&")
+}
+
+/// Every error and warning of one checked module, in full and sorted, apart from refused Rust reference spellings.
 fn diagnostics(checker: &TypeChecker) -> Vec<String> {
     let mut all: Vec<String> = checker
         .errors
         .iter()
         .chain(&checker.warnings)
+        .filter(|diagnostic| !spelling_refusal(diagnostic))
         .map(|diagnostic| format!("{diagnostic:?}"))
         .collect();
     all.sort();
     all
 }
 
-/// Check `template` in both spellings and require identical diagnostics; returns the native spelling's checker.
+/// Check `template` in both spellings: the Rust spelling is refused once for every borrow written with it, and its
+/// other diagnostics are the Incan spelling's, so one check serves both. Returns the Incan spelling's checker.
 fn check_twins(template: &str) -> Result<TypeChecker, Box<dyn std::error::Error>> {
     let native = checked(&spelled(template, NATIVE))?;
     let explicit = checked(&spelled(template, EXPLICIT))?;
+    let written = template.matches("{borrow:").count() + template.matches("{borrow_mut:").count();
+    let refused = native.errors.iter().filter(|error| spelling_refusal(error)).count();
+    assert_eq!(refused, written, "{template}: {:?}", native.errors);
+    assert!(!explicit.errors.iter().any(spelling_refusal), "{template}");
     assert_eq!(diagnostics(&explicit), diagnostics(&native), "{template}");
     Ok(explicit)
 }
@@ -173,7 +184,7 @@ fn local_borrows_check_as_their_reference_twins() -> Result<(), Box<dyn std::err
 }
 
 /// A trait method declared with a borrow is implemented with the same borrow in either spelling, and called through
-/// the trait and through the implementation.
+/// the trait and through the implementation; mixing the spellings across the two refuses only the Rust spelling.
 #[test]
 fn trait_methods_check_as_their_reference_twins() -> Result<(), Box<dyn std::error::Error>> {
     let template = format!(
@@ -191,7 +202,12 @@ fn trait_methods_check_as_their_reference_twins() -> Result<(), Box<dyn std::err
             implementation_spelling,
         );
         let mixed = checked(&format!("{ITEM}{trait_part}{implementation}"))?;
-        assert!(mixed.errors.is_empty(), "mixed spellings: {:?}", mixed.errors);
+        // The Rust spelling is refused once; the trait and its implementation agree in either spelling.
+        assert!(
+            mixed.errors.len() == 1 && mixed.errors.iter().all(spelling_refusal),
+            "mixed spellings: {:?}",
+            mixed.errors
+        );
     }
     Ok(())
 }
@@ -330,19 +346,87 @@ fn held_borrowed_results_are_loans_of_their_source() -> Result<(), Box<dyn std::
     Ok(())
 }
 
+/// RFC 164: in Incan source a borrow is spelled `Borrowed[T]` or `BorrowedMut[T]`. The Rust spelling is refused at
+/// every annotation position with one error at the reference, whose hint is the Incan spelling: a parameter, an
+/// exclusive parameter, a result, a local binding, a generic argument, a callable type's parameter, a type alias, a
+/// model field, a method parameter, a trait slot and an enum payload. The refusal has its own stable code,
+/// INCAN-T0137, which `incan explain` describes.
+#[test]
+fn rust_reference_spellings_are_refused_at_every_annotation_position() -> Result<(), Box<dyn std::error::Error>> {
+    for (template, fix) in [
+        (
+            "def read(value: {borrow:int}) -> int:\n    return value\n",
+            "Borrowed[int]",
+        ),
+        (
+            "def write(mut value: {borrow_mut:int}) -> None:\n    value = 1\n",
+            "BorrowedMut[int]",
+        ),
+        (
+            "def view(values: Borrowed[list[int]]) -> {borrow:list[int]} from values:\n    return values\n",
+            "Borrowed[list[int]]",
+        ),
+        (
+            "def local(value: int) -> int:\n    view: {borrow:int} = value\n    return view\n",
+            "Borrowed[int]",
+        ),
+        (
+            "def nested(values: list[{borrow:str}]) -> int:\n    return len(values)\n",
+            "Borrowed[str]",
+        ),
+        (
+            "def callback(read: ({borrow:int}) -> int) -> int:\n    return 0\n",
+            "Borrowed[int]",
+        ),
+        ("type Input = {borrow:int}\n", "Borrowed[int]"),
+        ("model Holder:\n    value: {borrow:int}\n", "Borrowed[int]"),
+        (
+            "class Shelf:\n    pub items: list[int]\n\n    pub def count(self, other: {borrow:list[int]}) -> int:\n        return len(other)\n",
+            "Borrowed[list[int]]",
+        ),
+        (
+            "trait Reader:\n    def read(self, value: {borrow:int}) -> int\n",
+            "Borrowed[int]",
+        ),
+        ("enum Choice:\n    One({borrow:int})\n", "Borrowed[int]"),
+    ] {
+        let source = spelled(template, NATIVE);
+        let checker = checked(&source)?;
+        let refusals: Vec<_> = checker.errors.iter().filter(|error| spelling_refusal(error)).collect();
+        let [refusal] = refusals.as_slice() else {
+            return Err(format!("{template}: {:?}", checker.errors).into());
+        };
+        let place = source.get(refusal.span.start..refusal.span.end).unwrap_or_default();
+        assert!(place.starts_with('&'), "{template}: refused {place:?}");
+        assert!(
+            format!("{refusal:?}").contains(&format!("Write `{fix}`")),
+            "{template}: {refusal:?}"
+        );
+        assert_eq!(refusal.stable_code(), Some("INCAN-T0137"), "{template}");
+        let explicit = checked(&spelled(template, EXPLICIT))?;
+        assert!(!explicit.errors.iter().any(spelling_refusal), "{template}");
+    }
+    let entry = crate::diagnostics::explain("INCAN-T0137").ok_or("INCAN-T0137 has no catalog entry")?;
+    assert_eq!((entry.severity, entry.phase), ("error", "typecheck"));
+    assert!(
+        entry.examples.iter().any(|example| example.contains("&")),
+        "{:?}",
+        entry.examples
+    );
+    Ok(())
+}
+
 /// A function with borrowed parameters is one callable type in both spellings, and an imported function with
 /// borrowed parameters takes owned locals on both dependency routes.
 #[test]
 fn callable_and_imported_borrows_check_as_their_reference_twins() -> Result<(), Box<dyn std::error::Error>> {
-    let template = "def compare(left: {borrow:float}, right: {borrow:float}) -> int:\n    return 0\n\ndef apply(order: (&float, &float) -> int) -> int:\n    return 0\n\ndef main() -> int:\n    return apply(compare)\n";
+    let template = "def compare(left: {borrow:float}, right: {borrow:float}) -> int:\n    return 0\n\ndef apply(order: ({borrow:float}, {borrow:float}) -> int) -> int:\n    return 0\n\ndef main() -> int:\n    return apply(compare)\n";
     let checker = check_twins(template)?;
     assert!(checker.errors.is_empty(), "{:?}", checker.errors);
     let provider = "pub model Entry:\n    pub count: int\n\npub def total(values: {borrow:list[Entry]}) -> int:\n    return len(values)\n\npub def bump(mut counter: {borrow_mut:Entry}) -> None:\n    counter.count += 1\n";
     let consumer = "from views import Entry, bump, total\n\ndef main() -> int:\n    mut entry = Entry(count=1)\n    bump(entry)\n    return total([entry]) + entry.count\n";
-    let native = super::one_type::consumer_checkers(&spelled(provider, NATIVE), consumer)?;
-    let explicit = super::one_type::consumer_checkers(&spelled(provider, EXPLICIT), consumer)?;
-    for ((route, native), (_, explicit)) in native.iter().zip(&explicit) {
-        assert_eq!(diagnostics(explicit), diagnostics(native), "{route}");
+    // The provider is spelled the Incan way: its Rust spelling is refused before it publishes anything.
+    for (route, explicit) in super::one_type::consumer_checkers(&spelled(provider, EXPLICIT), consumer)? {
         assert!(explicit.errors.is_empty(), "{route}: {:?}", explicit.errors);
     }
     Ok(())
@@ -496,12 +580,12 @@ fn api_metadata_publishes_borrows_as_their_reference_twins() -> Result<(), Box<d
             .map(|declaration| format!("{declaration:?}"))
             .collect())
     };
-    let native = published(&spelled(template, NATIVE))?;
+    // The Rust spelling is refused in Incan source, so only the Incan spelling publishes; a borrow-only function's
+    // borrows are the native reference there, as its checked signature says.
     let explicit = published(&spelled(template, EXPLICIT))?;
-    assert_eq!(explicit, native);
     assert!(
-        native.iter().all(|declaration| !declaration.contains("\"Borrowed\"")),
-        "{native:?}"
+        explicit.iter().all(|declaration| !declaration.contains("\"Borrowed\"")),
+        "{explicit:?}"
     );
     Ok(())
 }
@@ -560,8 +644,9 @@ fn a_borrowed_value_without_a_clone_is_not_an_owned_error_payload() -> Result<()
 }
 
 /// Library metadata keeps an exclusive borrow exclusive (RFC 164): a borrow-only function's `BorrowedMut[T]` parameter
-/// is published, in both spellings, as a form a consumer in another package reads back as the exclusive borrow, not
-/// as a shared one, so a call lends its argument exclusively instead of passing a copy.
+/// is published as a form a consumer in another package reads back as the exclusive borrow, not as a shared one, so a
+/// call lends its argument exclusively instead of passing a copy. Published from the Incan spelling, since the Rust
+/// spelling is refused before metadata exists.
 #[test]
 fn library_metadata_keeps_an_exclusive_borrow_exclusive() -> Result<(), Box<dyn std::error::Error>> {
     use crate::library_manifest::{resolved_type_from_manifest_type_ref, type_ref_from_resolved};
@@ -577,7 +662,7 @@ fn library_metadata_keeps_an_exclusive_borrow_exclusive() -> Result<(), Box<dyn 
     );
     let template =
         "pub def advance(mut cursor: {borrow_mut:list[int]}) -> bool:\n    cursor.append(1)\n    return true\n";
-    for spelling in [NATIVE, EXPLICIT] {
+    for spelling in [EXPLICIT] {
         let tokens = crate::lexer::lex(&spelled(template, spelling)).map_err(|errors| format!("{errors:?}"))?;
         let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
         let mut checker = TypeChecker::new();
