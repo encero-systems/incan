@@ -172,6 +172,30 @@ fn identity_namespace_for_kind(kind: &SemanticSourceTargetKind) -> SymbolNamespa
     }
 }
 
+/// A `rust::` item's identity origin and declaration name: its crate path and that path's last segment.
+fn rust_item_origin_and_name(info: &RustItemInfo, binding_name: &str) -> (SymbolOrigin, String) {
+    (
+        SymbolOrigin::RustCrate(info.path.split("::").map(str::to_string).collect()),
+        info.path.rsplit("::").next().unwrap_or(binding_name).to_string(),
+    )
+}
+
+/// The canonical identity of a `rust::` item a module imports by name, as the symbol table mints it for that binding:
+/// anchored to the crate path with a zero declaration span, so every module's import of the item, and every re-export
+/// of such an import, is the one identity.
+pub(crate) fn rust_item_import_identity(info: &RustItemInfo, binding_name: &str) -> CanonicalSymbolId {
+    let kind = SemanticSourceTargetKind::RustItem;
+    let (origin, declaration_name) = rust_item_origin_and_name(info, binding_name);
+    CanonicalSymbolId {
+        namespace: identity_namespace_for_kind(&kind),
+        origin,
+        declaration_name,
+        kind,
+        scope_discriminant: None,
+        declaration_span: HirSourceSpan::new(0, 0),
+    }
+}
+
 /// Return the canonical root identity for one compiler-owned builtin function.
 ///
 /// This is shared by symbol registration and downstream checked-IR consumers so the builtin registry has one

@@ -774,7 +774,9 @@ impl TypeChecker {
                 .get(&key)
                 .and_then(|links| links.get(&target_name))
             else {
-                return Ok(None);
+                // A `rust::` import ends the chain: the member is the Rust item, with the identity every module's
+                // import of it has.
+                return Ok(self.dependency_rust_member(&key, &target_name));
             };
             let node = (owner.clone(), target_name.clone());
             if let Some(start) = visited.get(&node).copied() {
@@ -791,6 +793,16 @@ impl TypeChecker {
             base = owner;
             target_module = link.target_module.clone();
             target_name.clone_from(&link.target_name);
+        }
+    }
+
+    /// The Rust item a dependency module binds as `name` with a by-name `rust::` import, as a resolved member.
+    fn dependency_rust_member(&self, module_key: &str, name: &str) -> Option<ResolvedDependencyMember> {
+        match self.dependency_member_symbols.get(module_key)?.get(name)? {
+            SymbolKind::RustItem(info) if info.binding == RustImportBindingKind::FromImport => Some(
+                ResolvedDependencyMember::declared_as(crate::symbols::rust_item_import_identity(info, name), name),
+            ),
+            _ => None,
         }
     }
 
