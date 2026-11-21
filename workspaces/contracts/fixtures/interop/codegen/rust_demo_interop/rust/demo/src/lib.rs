@@ -203,6 +203,9 @@ pub struct JoinRel {
     pub type_: i64,
 }
 
+/// A text constant an Incan caller reads as `str`.
+pub const GREETING: &str = "hello";
+
 /// A request whose `limit` and `tags` publish defaults, so an Incan caller may leave them out.
 pub struct Request {
     /// The request name, always written.
