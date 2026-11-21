@@ -234,7 +234,8 @@ fn callable_and_imported_borrows_check_as_their_reference_twins() -> Result<(), 
 /// a closure holding a local borrow while its owner is edited.
 #[test]
 fn loan_conflicts_outside_the_proof_are_refused_in_both_spellings() -> Result<(), Box<dyn std::error::Error>> {
-    let replace = "def replace(mut value: {borrow_mut:str}) -> int:\n    value = \"changed\"\n    return len(value)\n\n";
+    let replace =
+        "def replace(mut value: {borrow_mut:str}) -> int:\n    value = \"changed\"\n    return len(value)\n\n";
     for body in [
         "def invalid(mut value: {borrow_mut:str}) -> None:\n    println(value, replace(value))\n",
         "def invalid(mut value: {borrow_mut:str}) -> None:\n    mut view: {borrow_mut:str} = value\n    println(view, replace(view))\n",
@@ -262,6 +263,16 @@ fn separate_loans_outside_the_proof_are_accepted() -> Result<(), Box<dyn std::er
         "{COUNTER}def bump(mut counter: {{borrow_mut:Counter}}) -> None:\n    counter.value += 1\n\ndef peek(counter: {{borrow:Counter}}) -> int:\n    return counter.value\n\ndef twice(mut counter: {{borrow_mut:Counter}}) -> int:\n    bump(counter)\n    bump(counter)\n    return peek(counter)\n\ndef main() -> int:\n    mut owned = 1\n    view: {{borrow:int}} = owned\n    read: () -> int = () => view + 1\n    total = read()\n    owned += 10\n    mut counter = Counter(value=0)\n    bump(counter)\n    return total + owned + twice(counter)\n"
     );
     let checker = check_twins(&template)?;
+    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+    Ok(())
+}
+
+/// A body that still needs the whole-body proof (it calls a returned-view function) calls borrow-only callees in
+/// both spellings: a generic one, an async one awaited, and an async method through a borrowed receiver.
+#[test]
+fn proof_bodies_call_borrow_only_callees() -> Result<(), Box<dyn std::error::Error>> {
+    let template = "class Selection[R]:\n    pub reader: R\n    pub key: int\n\nclass Buffer:\n    pub items: list[int]\n\n    pub async def size_plus(self, extra: {borrow:int}) -> int:\n        return len(self.items) + extra\n\ndef select(reader: Borrowed[list[int]]) -> Selection[Borrowed[list[int]]] from reader:\n    return Selection[Borrowed[list[int]]](reader=reader, key=0)\n\ndef selected_key[R](selection: {borrow:Selection[R]}) -> int:\n    return selection.key\n\nasync def measure(buffer: {borrow:Buffer}) -> int:\n    return len(buffer.items)\n\nasync def total(mut buffer: {borrow_mut:Buffer}) -> int:\n    first = await measure(buffer)\n    return await buffer.size_plus(first)\n\nasync def use(mut values: {borrow_mut:list[int]}, mut buffer: {borrow_mut:Buffer}) -> int:\n    selection = select(values)\n    key = selected_key(selection)\n    return key + await total(buffer)\n";
+    let checker = check_twins(template)?;
     assert!(checker.errors.is_empty(), "{:?}", checker.errors);
     Ok(())
 }
