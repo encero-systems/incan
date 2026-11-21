@@ -1,8 +1,8 @@
 //! Builtin function calls and their scalar boundary checks.
 
 use incan_mir_plan_native::{
-    CalleeKind, Constant, ExternalFunction, ListLeaf, Operand, Place, PlanType, RvalueKind, SourceSpan, TerminatorKind,
-    TupleElement, assign as plan_assign, tuple_element_type,
+    CalleeKind, Constant, ExternalFunction, ListLeaf, Operand, Place, PlanType, Projection, RvalueKind, SourceSpan,
+    TerminatorKind, TupleElement, assign as plan_assign, tuple_element_type,
 };
 use incan_semantics_core::body_ir::{
     ArgumentElement, BuiltinFnId, Constant as SourceConstant, HelperOp, Place as SourcePlace,
@@ -32,6 +32,7 @@ use crate::numerics::{has_sized_numeric, numeric_carrier, numeric_name};
 use crate::operand_borrows::{borrow_str_operand, lower_text_helper};
 use crate::operators::{operand_type, scalar_operator_operand};
 use crate::pending::untranslated;
+use crate::ranges::builtin_range_bounds;
 use crate::sequence_builtins::{
     argument_type, lower_join_helper, lower_list_concat, lower_list_repeat, lower_sequence_builtin, lower_split_helper,
     lower_truth_builtin, source_operand_type, text_argument,
@@ -188,7 +189,7 @@ pub fn lower_builtin(
         BuiltinFnId::Enumerate => lower_enumerate_builtin(builder, arguments, destination, span),
         BuiltinFnId::Len => lower_list_builtin(builder, arguments, destination, span),
         BuiltinFnId::JsonStringify => lower_model_json_builtin(builder, arguments, destination, span),
-        BuiltinFnId::Range => Err(untranslated("builtin_calls::lower_range_builtin")),
+        BuiltinFnId::Range => lower_range_builtin(builder, arguments, destination, span),
         _ => Err(format!("unsupported Body IR builtin {builtin:?}")),
     }
 }
@@ -748,4 +749,46 @@ fn enumerated_byte_argument(
     let source = argument_place(builder, arguments, 0, span)?;
     let snapshot = sequence_read_storage(builder, source, span)?;
     list_borrow(builder, snapshot, false, span)
+}
+
+/// Construct a checked builtin `range` value as legacy's lazy integer range, rejecting a zero step now.
+///
+/// The checker types the call as a list, but legacy never materializes one: the value is a native range that only
+/// iteration consumes. The call's fresh temporary therefore holds the runtime's integer generator, and a consumer that
+/// needs a list materializes that fresh owned range at the checked parameter boundary.
+fn lower_range_builtin(
+    builder: &mut Builder,
+    arguments: &[ArgumentElement],
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let operands = fixed_arguments(builder, arguments, span)?;
+    let bounds = builtin_range_bounds(operands, span)?;
+    for bound in &bounds {
+        if value_type(builder, bound)? != PlanType::Int {
+            return Err("unsupported Body IR builtin range bound type".into());
+        }
+    }
+    let list = PlanType::List(ListLeaf::Int, 1);
+    let output = call_destination(builder, destination, list.clone(), span)?;
+    if output.projection != Projection::Whole || builder.owned.contains(&output.local) {
+        return Err("unsupported Body IR builtin range value outside a fresh temporary".into());
+    }
+    if place_type(&builder.locals, &output) != list {
+        return Err("unsupported Body IR builtin range destination type".into());
+    }
+    let result = PlanType::Generator(ListLeaf::Int, 0);
+    builder.locals[output.local as usize].ty = result.clone();
+    let local = output.local;
+    external_call(
+        builder,
+        "incan_native_runtime::range_generator",
+        vec![PlanType::Int, PlanType::Int, PlanType::Int],
+        result,
+        bounds,
+        output,
+        span,
+    );
+    builder.owned.push(local);
+    Ok(())
 }

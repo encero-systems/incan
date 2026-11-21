@@ -13,6 +13,7 @@ use incan_semantics_core::{IncanType, SemanticSourceTargetKind, SymbolOrigin};
 use crate::builtins::list_call;
 use crate::checked_values::scalar_place;
 use crate::collections::{collection_call, is_collection};
+use crate::defaults::evaluate_default;
 use crate::frame::{Builder, drop_owned, forget_owned, literal, place_type, read_place, temporary, track_rvalue_moves};
 use crate::layout_types::native_source_type;
 use crate::lists::list_element;
@@ -140,7 +141,7 @@ fn default_value(
 
 /// Evaluate each field in declaration order: its declared default, or its type's default when it declares none.
 ///
-/// A declared default evaluates through `defaults::evaluate_default`, which refuses by name until it is in Rust.
+/// A declared default evaluates through `defaults::evaluate_default`.
 fn default_fields(
     module: &BodyIrModule,
     builder: &mut Builder,
@@ -167,7 +168,8 @@ fn default_fields(
         if let Some(body) = &declaration.field_default_body
             && let CallableParamDefault::Source(_) = body.params[slot].default
         {
-            return Err(untranslated("defaults::evaluate_default"));
+            operands.push(evaluate_default(module, builder, body, slot, &ty, span, true)?);
+            continue;
         }
         operands.push(type_default(module, builder, &ty, span)?);
     }

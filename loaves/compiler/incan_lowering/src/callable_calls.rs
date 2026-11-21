@@ -156,9 +156,14 @@ fn lower_type_parameter_call(
     let indexed = indexed_static_type_arguments(builder.constructors(), target)?;
     let closed = checked_type_arguments(builder, &indexed)?;
     let typed_body = instantiate(body, &closed, &[])?;
-    let owned = owned_callable_slots(builder, body, arguments, &target.binding, 0)?;
+    let owned = owned_callable_slots(builder, body, &typed_body, arguments, &target.binding, 0)?;
+    let concrete_body = if owned.is_empty() {
+        typed_body
+    } else {
+        instantiate(body, &closed, &owned)?
+    };
     request_instance(&mut builder.instances, body, closed, owned, false);
-    lower_local_call(module, builder, target, &typed_body, arguments, destination, span)
+    lower_local_call(module, builder, target, &concrete_body, arguments, destination, span)
 }
 
 /// The special call route a named target selects before ordinary dispatch, if any: primitive adapters, generated
