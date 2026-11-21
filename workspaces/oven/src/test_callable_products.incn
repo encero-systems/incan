@@ -61,3 +61,33 @@ pub def test_checked_context_keeps_features_while_lowering_keys_the_checked_body
     alternate = retain_callable_products(unit, setup.toolchain)?
     assert alternate.lowering_context != enabled.lowering_context
     return Ok(None)
+
+
+pub def test_a_changed_loaf_rust_facet_changes_the_lowering_context() -> Result[None, str]:
+    """
+    A plan product stores a Loaf's Rust-facet function by the native path its crate links it at, and is restored only
+    under the lowering context it was keyed by. A Rust facet whose function changes signature or is removed must
+    therefore change that context, so every product of a dependent unit misses.
+    """
+    scratch = scratch_directory()?
+    setup = fixture(scratch.path())?
+    directory = scratch.path().joinpath("loaves").joinpath("facet")
+    write(directory.joinpath("facet.incnlib"), json_text(JsonValue.object({"fixture": JsonValue.string("facet")}))?)?
+    write(directory.joinpath("facet.incnbody"), "facet bodies")?
+    abi = directory.joinpath("facet.rustabi")
+    write(abi, "facet_native::encode_key(text: &str) -> Vec<u8>\nfacet_native::decode_key(bytes: &[u8]) -> String\n")?
+    closure = JsonValue.object(
+        {"externs": JsonValue.array([]), "macro_externs": JsonValue.array([]), "search": JsonValue.array([])},
+    )
+    write(directory.joinpath("facet.native.json"), json_text(closure)?)?
+    mut unit = setup.unit
+    unit.loaves = [UnitLoaf(key="facet", name="facet", dir=directory.0, standard=false)]
+    initial = retain_callable_products(unit, setup.toolchain)?
+    write(abi, "facet_native::encode_key(text: &str, limit: usize) -> Vec<u8>\nfacet_native::decode_key(bytes: &[u8]) -> String\n")?
+    resigned = retain_callable_products(unit, setup.toolchain)?
+    write(abi, "facet_native::encode_key(text: &str, limit: usize) -> Vec<u8>\n")?
+    removed = retain_callable_products(unit, setup.toolchain)?
+    assert initial.lowering_context is not None, "the selection named no lowering context"
+    assert resigned.lowering_context != initial.lowering_context, "a Rust-facet signature change kept the lowering context"
+    assert removed.lowering_context != resigned.lowering_context, "a removed Rust-facet function kept the lowering context"
+    return Ok(None)
