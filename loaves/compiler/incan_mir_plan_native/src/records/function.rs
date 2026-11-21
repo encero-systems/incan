@@ -356,6 +356,7 @@ pub fn positioned_product_requirements(
 ///
 /// A restored body needs the declarations first and its function, runtime demand and helper frames after. Both come
 /// from this one decode: the placed product is not written back to bytes, and those bytes are not read again.
+#[derive(Clone)]
 pub struct PlacedRecord {
     stored: StoredProduct,
 }

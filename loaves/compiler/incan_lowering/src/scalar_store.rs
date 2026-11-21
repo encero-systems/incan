@@ -18,8 +18,9 @@ use incan_semantics_core::semantic_digest::semantic_digest;
 
 use crate::producer_trace::{enter_producer, finish_producer};
 use crate::record_positions::{
-    index_positions, indexed_product, place_positions, placed_record, positioned_product, relocate_product,
+    index_positions, indexed_product, place_positions, positioned_product, relocate_product,
 };
+use crate::resident_products::resident_placed;
 
 /// A record whose key is its checked meaning; its spans name Body IR nodes by ordinal through a request-local position
 /// map.
@@ -360,7 +361,9 @@ fn record_payload(
         && let Some(current) = span
     {
         // Node ordinals take this body's positions; a body without those nodes is a miss.
-        placed_record(&record.function, positions, &current.file.to_string(), current.line).ok()?
+        resident_placed(&record.function, positions, &current.file.to_string(), current.line)
+            .ok()?
+            .0
     } else {
         place_product_record(&record.function, &WirePositions::preserve()).ok()?
     };
@@ -527,7 +530,8 @@ pub fn admitted_payload(
     if positions.len() != decoded.positions.len() {
         return Err("its node positions differ in number from the page event's");
     }
-    let placed = placed_record(&record.function, &positions, &span.file.to_string(), span.line)
+    let placed = resident_placed(&record.function, &positions, &span.file.to_string(), span.line)
+        .map(|(placed, _)| placed)
         .map_err(|_| "its page product does not place at the body's nodes")?;
     Ok((placed, record.requests, decoded))
 }
