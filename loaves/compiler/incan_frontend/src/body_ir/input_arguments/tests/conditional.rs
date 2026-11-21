@@ -250,7 +250,7 @@ fn conditional_profiles_retain_exact_owned_initializer_authority() -> Result<(),
             0,
         ),
         (
-            "def main(value: Borrowed[str], flag: bool) -> None:\n    if flag:\n        print(value)\n",
+            "def main(value: Borrowed[str], flag: bool, proof: Owned[int] = 0) -> None:\n    if flag:\n        print(value)\n",
             0,
         ),
     ] {

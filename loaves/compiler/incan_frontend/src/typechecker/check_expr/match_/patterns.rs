@@ -132,12 +132,17 @@ impl TypeChecker {
         if self.check_nominal_constructor_pattern(name, ctor_name, sub_patterns, subject_ty, borrow) {
             return;
         }
+        // RFC 164: a borrowed enum subject matches as its enum, and its payloads bind through the same borrow.
+        let (enum_subject, enum_borrow) = match borrow {
+            Some(_) if matches!(expected_ty, ResolvedType::Ref(_) | ResolvedType::RefMut(_)) => (subject_ty, borrow),
+            _ => (expected_ty, None),
+        };
         self.check_enum_constructor_pattern(
             name,
             ctor_name,
             enum_qualifier_opt,
             sub_patterns,
-            expected_ty,
+            (enum_subject, enum_borrow),
             pattern_span,
         );
     }
@@ -259,7 +264,7 @@ impl TypeChecker {
         ctor_name: &str,
         enum_qualifier_opt: Option<&str>,
         sub_patterns: &[PatternArg],
-        expected_ty: &ResolvedType,
+        (expected_ty, borrow): (&ResolvedType, Option<PatternBorrow>),
         pattern_span: Span,
     ) {
         let variant_name = ctor_name;
@@ -271,10 +276,17 @@ impl TypeChecker {
 
         let incan_resolution = self.incan_enum_constructor_payload_types(expected_ty, variant_name, enum_qualifier_opt);
         let rust_resolution = self.rust_enum_constructor_payload_types(expected_ty, name.node.as_str(), name.span);
-        let field_types: Option<Vec<ResolvedType>> =
-            incan_resolution.clone().or_else(|| match rust_resolution.as_ref() {
+        let field_types: Option<Vec<ResolvedType>> = incan_resolution
+            .clone()
+            .or_else(|| match rust_resolution.as_ref() {
                 Some(RustEnumPatternResolution::PayloadTypes { fields, .. }) => Some(fields.clone()),
                 Some(RustEnumPatternResolution::QualifierMismatch) | None => None,
+            })
+            .map(|fields| {
+                fields
+                    .into_iter()
+                    .map(|field| borrowed_pattern_payload(field, borrow))
+                    .collect()
             });
 
         match field_types {

@@ -258,8 +258,9 @@ impl TypeChecker {
             self.validate_exact_float_literals_in_arithmetic(left, expected_ty);
             self.validate_exact_float_literals_in_arithmetic(right, expected_ty);
         }
-        let left_ty = self.check_expr(left);
-        let right_ty = self.check_expr(right);
+        // RFC 164: an operator reads a borrowed operand through its borrow, whichever way the borrow is spelled.
+        let left_ty = crate::typechecker::helpers::borrowed_value_type(self.check_expr(left));
+        let right_ty = crate::typechecker::helpers::borrowed_value_type(self.check_expr(right));
 
         match op {
             BinaryOp::Add

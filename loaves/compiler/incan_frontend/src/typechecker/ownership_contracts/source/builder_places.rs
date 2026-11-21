@@ -38,21 +38,27 @@ impl Builder<'_> {
                 parameter.span,
                 SemanticSourceTargetKind::Parameter,
             )?;
-            let mode = self.checker.checked_input_contract(identity, slot);
-            let writable = parameter.node.is_mut && mode.is_none_or(|mode| mode.mode != OwnershipMode::Borrowed);
+            // A native reference parameter is the same borrow as its explicit spelling (RFC 164): `&T` is a shared and
+            // `&mut T` an exclusive borrowed input, though it carries no contract mode of its own.
+            let mode = self
+                .checker
+                .checked_input_contract(identity, slot)
+                .map(|mode| mode.mode)
+                .or_else(|| self.checker.type_info.native_borrow_input(identity, slot));
+            let writable = parameter.node.is_mut && mode.is_none_or(|mode| mode != OwnershipMode::Borrowed);
             let exclusive = mode.map_or(writable, |mode| {
-                mode.mode == OwnershipMode::BorrowedMut || (mode.mode == OwnershipMode::Owned && writable)
+                mode == OwnershipMode::BorrowedMut || (mode == OwnershipMode::Owned && writable)
             });
             self.graph.permissions.insert(
                 Root::Binding(root.clone()),
                 Permission {
                     exclusive,
                     writable,
-                    transferable: mode.is_none_or(|mode| mode.mode == OwnershipMode::Owned),
+                    transferable: mode.is_none_or(|mode| mode == OwnershipMode::Owned),
                 },
             );
             if mode.is_some() {
-                if mode.is_some_and(|mode| matches!(mode.mode, OwnershipMode::Borrowed | OwnershipMode::BorrowedMut)) {
+                if mode.is_some_and(|mode| matches!(mode, OwnershipMode::Borrowed | OwnershipMode::BorrowedMut)) {
                     self.borrowed_inputs.insert(Root::Binding(root.clone()));
                 }
                 let root = Root::Binding(root);

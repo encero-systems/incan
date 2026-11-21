@@ -238,13 +238,23 @@ fn method_info_from_decl(
             )
         })
         .collect();
+    // A trait slot (collected without an owner) declares its borrows as explicit input obligations its
+    // implementations inherit.
+    let explicit_borrows = owner_name.is_none()
+        || checker.signature_keeps_explicit_borrows(
+            &method.node.params,
+            &method.node.return_type,
+            method.node.result_source.as_ref(),
+        );
     let params: Vec<CallableParam> = method
         .node
         .params
         .iter()
         .map(|p| {
             let surface_type_name = checker.alias_surface_type_name(&p.node.ty.node);
-            let ty = resolve_declared_type(checker, &p.node.ty, &active_type_params, owner_name, owner_self_ty);
+            let annotation = checker.parameter_annotation(p, explicit_borrows);
+            let ty = resolve_declared_type(checker, &annotation, &active_type_params, owner_name, owner_self_ty);
+            let ty = checker.canonical_borrow_type(ty, explicit_borrows);
             let is_mut = checker.def_param_shows_changes_to_caller(&p.node, &ty);
             CallableParam::named_with_default(p.node.name.clone(), ty, p.node.kind, p.node.default.is_some())
                 .with_mut(is_mut)

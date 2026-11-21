@@ -310,7 +310,7 @@ fn standard_path_joinpath_independent_result_requires_exact_canonical_surface() 
 #[test]
 fn standard_path_wrapped_slot_survives_the_complete_value_lifecycle() -> Result<(), Box<dyn std::error::Error>> {
     let provider = "pub type Path = newtype str:\n    pub def joinpath(self, segment: str) -> Path:\n        return Path(self.0 + segment)\n\n    pub def parent(self) -> Path:\n        return Path(self.0)\n";
-    let consumer = "from views import Path\n\ndef owned_child(root: Borrowed[Path]) -> Owned[Path]:\n    return root.joinpath(\"owned\")\n\ndef stored_path(seed: Borrowed[int]) -> str:\n    config = Path(\"config\").joinpath(\"app.toml\")\n    return config.0\n\ndef parent_path(seed: Borrowed[int]) -> str:\n    config = Path(\"config\").joinpath(\"app.toml\")\n    return config.parent().0\n\ndef direct_join(seed: Borrowed[int]) -> str:\n    return Path(\"config\").joinpath(\"log.txt\").0\n\ndef chained_join(seed: Borrowed[int]) -> str:\n    return Path(\"project\").joinpath(\"src\").joinpath(\"main.incn\").0\n\ndef helper_result(seed: Borrowed[int]) -> str:\n    return owned_child(Path(\"config\")).0\n";
+    let consumer = "from views import Path\n\ndef owned_child(root: Borrowed[Path]) -> Owned[Path]:\n    return root.joinpath(\"owned\")\n\ndef stored_path(seed: Owned[int]) -> str:\n    config = Path(\"config\").joinpath(\"app.toml\")\n    return config.0\n\ndef parent_path(seed: Owned[int]) -> str:\n    config = Path(\"config\").joinpath(\"app.toml\")\n    return config.parent().0\n\ndef direct_join(seed: Owned[int]) -> str:\n    return Path(\"config\").joinpath(\"log.txt\").0\n\ndef chained_join(seed: Owned[int]) -> str:\n    return Path(\"project\").joinpath(\"src\").joinpath(\"main.incn\").0\n\ndef helper_result(seed: Owned[int]) -> str:\n    return owned_child(Path(\"config\")).0\n";
     let program = parsed(consumer)?;
     let expected = [
         ("stored_path", "config.0", flow::ValueUseKind::Read),
@@ -467,7 +467,7 @@ fn assert_unavailable_reason(
 #[test]
 fn builtin_result_map_err_requires_fresh_selected_package_result() -> Result<(), Box<dyn std::error::Error>> {
     let provider = "pub def encode(value: int) -> Result[int, str]:\n    return Ok(value)\n";
-    let consumer = "from views import encode\n\ndef use(value: Borrowed[int]) -> Result[int, int]:\n    return encode(value).map_err((_) => 1)\n";
+    let consumer = "from views import encode\n\ndef use(value: Borrowed[int], proof: Owned[int] = 0) -> Result[int, int]:\n    return encode(value).map_err((_) => 1)\n";
     for (route, checker) in package_consumer_checkers(provider, consumer)? {
         let (owner, flow) = checker
             .type_info
@@ -567,7 +567,7 @@ fn builtin_result_map_err_requires_fresh_selected_package_result() -> Result<(),
     }
 
     let method_provider = "pub class Encoder:\n    pub def encode(self) -> Result[int, str]:\n        return Ok(1)\n";
-    let method_consumer = "from views import Encoder\n\ndef use_method(seed: Borrowed[int]) -> Result[int, int]:\n    encoder = Encoder()\n    return encoder.encode().map_err((_) => 1)\n";
+    let method_consumer = "from views import Encoder\n\ndef use_method(seed: Owned[int]) -> Result[int, int]:\n    encoder = Encoder()\n    return encoder.encode().map_err((_) => 1)\n";
     let method_program = parsed(method_consumer)?;
     let method_function = method_program
         .declarations
@@ -642,7 +642,7 @@ fn builtin_result_map_err_requires_fresh_selected_package_result() -> Result<(),
         );
     }
 
-    let stored_method_consumer = "from views import Encoder\n\ndef use_method(seed: Borrowed[int]) -> Result[int, int]:\n    encoder = Encoder()\n    result = encoder.encode()\n    return result.map_err((_) => 1)\n";
+    let stored_method_consumer = "from views import Encoder\n\ndef use_method(seed: Owned[int]) -> Result[int, int]:\n    encoder = Encoder()\n    result = encoder.encode()\n    return result.map_err((_) => 1)\n";
     for (route, checker) in package_consumer_checkers(method_provider, stored_method_consumer)? {
         let state = checker
             .type_info
@@ -657,7 +657,7 @@ fn builtin_result_map_err_requires_fresh_selected_package_result() -> Result<(),
         }
     }
 
-    let user_source = "model Mapper:\n    value: int\n\n    def map_err(self, replacement: str) -> int:\n        return len(replacement)\n\ndef user_map(value: Borrowed[str]) -> int:\n    mapper = Mapper(value=1)\n    return mapper.map_err(value)\n";
+    let user_source = "model Mapper:\n    value: int\n\n    def map_err(self, replacement: str) -> int:\n        return len(replacement)\n\ndef user_map(value: Borrowed[str], proof: Owned[int] = 0) -> int:\n    mapper = Mapper(value=1)\n    return mapper.map_err(value)\n";
     let user_program = parsed(user_source)?;
     let mut user = TypeChecker::default();
     if let Err(errors) = user.check_program(&user_program) {
@@ -689,7 +689,7 @@ fn builtin_result_map_err_requires_fresh_selected_package_result() -> Result<(),
             .all(|error| error.stable_code() == Some("INCAN-T0123"))
     );
 
-    let view_source = "def result_view(value: Borrowed[Result[int, str]]) -> Borrowed[Result[int, str]] from value:\n    return value\n\ndef mapped_view(value: Borrowed[Result[int, str]]) -> Result[int, int]:\n    return result_view(value).map_err((_) => 1)\n";
+    let view_source = "def result_view(value: Borrowed[Result[int, str]]) -> Borrowed[Result[int, str]] from value:\n    return value\n\ndef mapped_view(value: Borrowed[Result[int, str]], proof: Owned[int] = 0) -> Result[int, int]:\n    return result_view(value).map_err((_) => 1)\n";
     let view_program = parsed(view_source)?;
     let mut view = TypeChecker::default();
     if let Err(errors) = view.check_program(&view_program) {
@@ -752,7 +752,7 @@ fn imported_explicit_result_reads_as_its_value_type() -> Result<(), Box<dyn std:
 /// access, so passing it for `BorrowedMut[T]` is refused (shape A).
 #[test]
 fn native_reference_is_an_explicit_view_value() -> Result<(), Box<dyn std::error::Error>> {
-    let declarations = "model State:\n    count: int\n\n    def bump(self, mut state: BorrowedMut[State]) -> int:\n        state.count += self.count\n        return state.count\n\ndef bump(mut state: BorrowedMut[State]) -> int:\n    state.count += 1\n    return state.count\n\ndef peek(state: Borrowed[State]) -> int:\n    return state.count\n\n";
+    let declarations = "model State:\n    count: int\n\n    def bump(self, mut state: BorrowedMut[State], proof: Owned[int] = 0) -> int:\n        state.count += self.count\n        return state.count\n\ndef bump(mut state: BorrowedMut[State], proof: Owned[int] = 0) -> int:\n    state.count += 1\n    return state.count\n\ndef peek(state: Borrowed[State], proof: Owned[int] = 0) -> int:\n    return state.count\n\n";
     let admitted = format!(
         "{declarations}def exclusive(state: &mut State, step: State) -> int:\n    return bump(state) + peek(state) + step.bump(state)\n\ndef shared(state: &State) -> int:\n    return peek(state)\n"
     );

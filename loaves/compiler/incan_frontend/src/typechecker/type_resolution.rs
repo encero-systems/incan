@@ -26,6 +26,123 @@ impl TypeChecker {
         )
     }
 
+    /// RFC 164: `Borrowed[T]` and `&T` are one type, and so are `BorrowedMut[T]` and `&mut T`. A top-level borrow on a
+    /// parameter or a local binding takes one spelling, whichever was written, so both resolve, check and lower as one
+    /// type. It is the native spelling, with no contract mode and no whole-body proof, unless `explicit`: a callable
+    /// whose signature already needs the proof keeps every top-level borrow parameter as its explicit contract mode
+    /// ([`Self::signature_keeps_explicit_borrows`]). The annotation keeps its span; only the canonical prelude modes
+    /// are respelled, never a same-named user type.
+    pub(super) fn canonical_borrow_annotation(
+        &self,
+        annotation: &Spanned<Type>,
+        explicit: bool,
+    ) -> Option<Spanned<Type>> {
+        use incan_lang::lang::types::ownership::OwnershipMode;
+        let node = match (&annotation.node, explicit) {
+            (Type::Generic(name, arguments), false) => {
+                let [argument] = arguments.as_slice() else {
+                    return None;
+                };
+                match self.explicit_ownership_mode(name)? {
+                    OwnershipMode::Borrowed => Type::Ref(Box::new(argument.clone())),
+                    OwnershipMode::BorrowedMut => Type::RefMut(Box::new(argument.clone())),
+                    OwnershipMode::Owned | OwnershipMode::Reference => return None,
+                }
+            }
+            (Type::Ref(inner), true) => self.explicit_borrow_spelling(OwnershipMode::Borrowed, inner)?,
+            (Type::RefMut(inner), true) => self.explicit_borrow_spelling(OwnershipMode::BorrowedMut, inner)?,
+            _ => return None,
+        };
+        Some(Spanned::new(node, annotation.span))
+    }
+
+    /// The explicit spelling of one borrow mode around `inner`, when the prelude mode is not shadowed.
+    fn explicit_borrow_spelling(
+        &self,
+        mode: incan_lang::lang::types::ownership::OwnershipMode,
+        inner: &Spanned<Type>,
+    ) -> Option<Type> {
+        let name = mode.as_str();
+        (self.explicit_ownership_mode(name) == Some(mode)).then(|| Type::Generic(name.to_owned(), vec![inner.clone()]))
+    }
+
+    /// Whether a callable's signature already needs the whole-body proof, so its top-level borrow parameters keep their
+    /// explicit contract mode: it names a `from` source, takes an `Owned[T]` input, or its result carries an explicit
+    /// mode. A signature of plain borrows needs no proof (RFC 164: the whole-body proof belongs to inferred passing
+    /// modes, owned inputs and returned views, not to an explicit borrow).
+    pub(super) fn signature_keeps_explicit_borrows(
+        &self,
+        parameters: &[Spanned<Param>],
+        result: &Spanned<Type>,
+        source: Option<&Spanned<crate::ast::ResultSource>>,
+    ) -> bool {
+        use incan_lang::lang::types::ownership::OwnershipMode;
+        source.is_some()
+            || parameters.iter().any(|parameter| {
+                matches!(&parameter.node.ty.node, Type::Generic(name, arguments)
+                    if arguments.len() == 1
+                        && matches!(self.explicit_ownership_mode(name), Some(OwnershipMode::Owned | OwnershipMode::Reference)))
+            })
+            || self.annotation_mentions_ownership_mode(&result.node)
+    }
+
+    /// Whether an annotation names a canonical ownership mode at any depth.
+    fn annotation_mentions_ownership_mode(&self, annotation: &Type) -> bool {
+        match annotation {
+            Type::Simple(name) => self.explicit_ownership_mode(name).is_some(),
+            Type::Generic(name, arguments) => {
+                self.explicit_ownership_mode(name).is_some()
+                    || arguments
+                        .iter()
+                        .any(|argument| self.annotation_mentions_ownership_mode(&argument.node))
+            }
+            Type::DottedGeneric(_, arguments) | Type::Tuple(arguments) => arguments
+                .iter()
+                .any(|argument| self.annotation_mentions_ownership_mode(&argument.node)),
+            Type::Function(parameters, result) => {
+                parameters
+                    .iter()
+                    .any(|parameter| self.annotation_mentions_ownership_mode(&parameter.node))
+                    || self.annotation_mentions_ownership_mode(&result.node)
+            }
+            Type::Ref(inner) | Type::RefMut(inner) | Type::MutParam(inner) => {
+                self.annotation_mentions_ownership_mode(&inner.node)
+            }
+            _ => false,
+        }
+    }
+
+    /// The type a resolved top-level borrow takes when its annotation reached it through an alias (`type Input =
+    /// Borrowed[int]`): the native reference, as the written spelling takes, unless `explicit`.
+    pub(super) fn canonical_borrow_type(&self, ty: ResolvedType, explicit: bool) -> ResolvedType {
+        use incan_lang::lang::types::ownership::OwnershipMode;
+        if explicit {
+            return ty;
+        }
+        match ty {
+            ResolvedType::Generic(name, mut arguments) if arguments.len() == 1 => {
+                match self.explicit_ownership_mode(&name) {
+                    Some(OwnershipMode::Borrowed) => ResolvedType::Ref(Box::new(arguments.remove(0))),
+                    Some(OwnershipMode::BorrowedMut) => ResolvedType::RefMut(Box::new(arguments.remove(0))),
+                    _ => ResolvedType::Generic(name, arguments),
+                }
+            }
+            other => other,
+        }
+    }
+
+    /// The annotation one callable parameter resolves through; see [`Self::canonical_borrow_annotation`].
+    pub(super) fn parameter_annotation<'a>(
+        &self,
+        parameter: &'a Spanned<Param>,
+        explicit: bool,
+    ) -> std::borrow::Cow<'a, Spanned<Type>> {
+        match self.canonical_borrow_annotation(&parameter.node.ty, explicit) {
+            Some(annotation) => std::borrow::Cow::Owned(annotation),
+            None => std::borrow::Cow::Borrowed(&parameter.node.ty),
+        }
+    }
+
     /// Resolve an annotation whose outer ownership mode, when `defer` selects it, is checked by its declaration's
     /// contract instead of being refused here. With `carried`, the mode of one `Result` or `Option` payload, or of one
     /// tuple element, is deferred the same way, for a view carried in the result. Other nested modes are always

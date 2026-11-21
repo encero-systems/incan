@@ -210,6 +210,7 @@ impl TypeChecker {
         // ---- Signature defaults and frame bindings ----
         let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(
             &func.params,
+            self.signature_keeps_explicit_borrows(&func.params, &func.return_type, func.result_source.as_ref()),
             super::ownership_contracts::direct_function_boundary(func),
         );
         let return_type = self.resolve_callable_return_annotation(&func.return_type, func.result_source.is_some());
@@ -599,7 +600,9 @@ impl TypeChecker {
                 self.record_mut_param_marker(&param.node, param.span, &resolved_ty);
             }
         }
+        // A shared borrow is read-only in its body whatever its spelling (RFC 164); `mut` cannot upgrade its access.
         let writable = param.node.is_mut
+            && !matches!(resolved_ty, ResolvedType::Ref(_))
             && !input
                 .as_ref()
                 .is_some_and(|contract| contract.mode == incan_lang::lang::types::ownership::OwnershipMode::Borrowed);
@@ -664,12 +667,15 @@ impl TypeChecker {
     pub(super) fn resolve_callable_parameter_types_and_check_defaults(
         &mut self,
         params: &[Spanned<Param>],
+        explicit_borrows: bool,
         defer_inputs: bool,
     ) -> Vec<ResolvedType> {
         params
             .iter()
             .map(|param| {
-                let param_ty = self.resolve_type_checked_for_input(&param.node.ty, defer_inputs);
+                let annotation = self.parameter_annotation(param, explicit_borrows);
+                let param_ty = self.resolve_type_checked_for_input(&annotation, defer_inputs);
+                let param_ty = self.canonical_borrow_type(param_ty, explicit_borrows);
                 self.refuse_unbounded_nominal_type_arguments(&param_ty, param.node.ty.span);
                 self.refuse_trait_type_nested_in_annotation(&param_ty, param.node.ty.span);
                 if param.node.kind != ParamKind::Normal {
@@ -679,15 +685,20 @@ impl TypeChecker {
                     return param_ty;
                 };
 
+                // A default is a fresh value of the parameter's value type; an explicit mode is how that value is
+                // passed.
+                let value_ty = self
+                    .explicit_ownership_value_type(&param_ty)
+                    .unwrap_or_else(|| param_ty.clone());
                 let previous_callable_default_context = std::mem::replace(&mut self.checking_callable_default, true);
                 self.check_work.callable_defaults += 1;
-                let default_ty = self.check_expr_with_expected(default, Some(&param_ty));
+                let default_ty = self.check_expr_with_expected(default, Some(&value_ty));
                 self.checking_callable_default = previous_callable_default_context;
-                if !self.types_compatible(&default_ty, &param_ty)
-                    && !self.record_validated_newtype_coercion_if_possible(&default_ty, &param_ty, default.span)
+                if !self.types_compatible(&default_ty, &value_ty)
+                    && !self.record_validated_newtype_coercion_if_possible(&default_ty, &value_ty, default.span)
                 {
                     self.errors.push(errors::type_mismatch(
-                        &param_ty.to_string(),
+                        &value_ty.to_string(),
                         &default_ty.to_string(),
                         default.span,
                     ));

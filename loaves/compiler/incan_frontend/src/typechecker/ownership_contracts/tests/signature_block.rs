@@ -75,7 +75,7 @@ fn checked_graph(source: &str, owner: &str) -> Result<flow::Graph, Box<dyn std::
 #[test]
 fn signature_block_value_use_mutations_reject_access_substitution() -> Result<(), Box<dyn std::error::Error>> {
     let snapshot = checked_graph(
-        "enum Family:\n    Local\ndef read_family(value: str) -> Result[Family, str]:\n    return Ok(Family.Local)\ndef collect(seed: Borrowed[int], rows: list[list[str]]) -> Result[Family, str]:\n    header = rows[0]\n    family = read_family(header[3])?\n    return Ok(family)\n",
+        "enum Family:\n    Local\ndef read_family(value: str) -> Result[Family, str]:\n    return Ok(Family.Local)\ndef collect(seed: Owned[int], rows: list[list[str]]) -> Result[Family, str]:\n    header = rows[0]\n    family = read_family(header[3])?\n    return Ok(family)\n",
         "collect",
     )?;
     let retained = snapshot
@@ -148,7 +148,7 @@ fn signature_block_value_use_mutations_reject_access_substitution() -> Result<()
     assert!(flow::analyze(&repointed).is_err());
 
     let mut matched = checked_graph(
-        "enum Fault:\n    Bad\n@derive(Clone)\nmodel Cell:\n    value: str\n@derive(Clone)\nenum Payload:\n    Record(list[Cell])\n@derive(Clone)\nmodel Row:\n    value: Payload\ndef decode(seed: Borrowed[int]) -> Result[list[Cell], Fault]:\n    row = Row(value=Payload.Record([Cell(value=\"a\")]))\n    values = match row.value:\n        Payload.Record(fields) => fields\n        _ => return Err(Fault.Bad)\n    return Ok(values)\n",
+        "enum Fault:\n    Bad\n@derive(Clone)\nmodel Cell:\n    value: str\n@derive(Clone)\nenum Payload:\n    Record(list[Cell])\n@derive(Clone)\nmodel Row:\n    value: Payload\ndef decode(seed: Owned[int]) -> Result[list[Cell], Fault]:\n    row = Row(value=Payload.Record([Cell(value=\"a\")]))\n    values = match row.value:\n        Payload.Record(fields) => fields\n        _ => return Err(Fault.Bad)\n    return Ok(values)\n",
         "decode",
     )?;
     let match_use = matched
@@ -174,20 +174,20 @@ fn signature_block_value_use_mutations_reject_access_substitution() -> Result<()
 #[test]
 fn signature_block_classifies_snapshot_and_element_field_reads() -> Result<(), Box<dyn std::error::Error>> {
     let snapshot = checked(
-        "enum Family:\n    Local\ndef read_family(value: str) -> Result[Family, str]:\n    return Ok(Family.Local)\ndef collect(seed: Borrowed[int], rows: list[list[str]]) -> Result[Family, str]:\n    header = rows[0]\n    family = read_family(header[3])?\n    return Ok(family)\n",
+        "enum Family:\n    Local\ndef read_family(value: str) -> Result[Family, str]:\n    return Ok(Family.Local)\ndef collect(seed: Owned[int], rows: list[list[str]]) -> Result[Family, str]:\n    header = rows[0]\n    family = read_family(header[3])?\n    return Ok(family)\n",
     )?;
     let element_field = checked(
-        "@derive(Clone)\nmodel Cell:\n    value: str\ndef keep(value: str) -> str:\n    return value\ndef decode(seed: Borrowed[int]) -> str:\n    values = [Cell(value=\"a\")]\n    return keep(values[0].value)\n",
+        "@derive(Clone)\nmodel Cell:\n    value: str\ndef keep(value: str) -> str:\n    return value\ndef decode(seed: Owned[int]) -> str:\n    values = [Cell(value=\"a\")]\n    return keep(values[0].value)\n",
     )?;
 
     require_unavailable(
-        "enum Family:\n    Local\ndef read_family(value: str) -> Result[Family, str]:\n    return Ok(Family.Local)\ndef collect(seed: Borrowed[int], rows: Owned[list[list[str]]]) -> Result[Family, str]:\n    header = rows[0]\n    family = read_family(header[3])?\n    return Ok(family)\n",
+        "enum Family:\n    Local\ndef read_family(value: str) -> Result[Family, str]:\n    return Ok(Family.Local)\ndef collect(seed: Owned[int], rows: Owned[list[list[str]]]) -> Result[Family, str]:\n    header = rows[0]\n    family = read_family(header[3])?\n    return Ok(family)\n",
         "collect",
         "ordinary argument requires inferred access or mutable binding facts",
         "header[3]",
     )?;
     require_unavailable(
-        "@derive(Clone)\nmodel Cell:\n    value: str\ndef keep(value: str) -> str:\n    return value\ndef decode(values: Borrowed[list[Cell]]) -> str:\n    return keep(values[0].value)\n",
+        "@derive(Clone)\nmodel Cell:\n    value: str\ndef keep(value: str) -> str:\n    return value\ndef decode(values: Borrowed[list[Cell]], proof: Owned[int] = 0) -> str:\n    return keep(values[0].value)\n",
         "decode",
         "ordinary argument requires inferred access or mutable binding facts",
         "values[0].value",
@@ -201,7 +201,7 @@ fn signature_block_classifies_snapshot_and_element_field_reads() -> Result<(), B
 /// source place, loan, source node or stored-value classification.
 #[test]
 fn signature_block_admits_exact_fresh_ordinary_scalars_without_authority() -> Result<(), Box<dyn std::error::Error>> {
-    let accepted_source = "enum Projection:\n    Canonical\n    Named(str)\ndef observe_bytes(value: bytes) -> int:\n    return len(value)\ndef observe_projection(value: Projection) -> int:\n    match value:\n        Projection.Canonical => return 1\n        Projection.Named(name) => return len(name)\ndef inspect(seed: Borrowed[int]) -> int:\n    return observe_bytes(b\"family\") + observe_projection(Projection.Canonical) + observe_projection(Projection.Named(\"value\"))\n";
+    let accepted_source = "enum Projection:\n    Canonical\n    Named(str)\ndef observe_bytes(value: bytes) -> int:\n    return len(value)\ndef observe_projection(value: Projection) -> int:\n    match value:\n        Projection.Canonical => return 1\n        Projection.Named(name) => return len(name)\ndef inspect(seed: Owned[int]) -> int:\n    return observe_bytes(b\"family\") + observe_projection(Projection.Canonical) + observe_projection(Projection.Named(\"value\"))\n";
     let graph = checked_graph(accepted_source, "inspect")?;
     for (callee, source) in [
         ("observe_bytes", "b\"family\""),
@@ -248,7 +248,7 @@ fn ordinary_scalar_inputs_preserve_fresh_literals_and_indexed_reads() -> Result<
     return len(text)
 def count(value: bytes) -> int:
     return len(value)
-def inspect(seed: Borrowed[int], at: int) -> int:
+def inspect(seed: Owned[int], at: int) -> int:
     rows = [b"one", b"two"]
     first = count(rows[at])
     return first + count(rows[at]) + labels("utf-8", None)
@@ -269,7 +269,7 @@ def inspect(seed: Borrowed[int], at: int) -> int:
 /// source-less payload-Variant authority.
 #[test]
 fn signature_block_keeps_ordinary_enum_functions_on_call_result_route() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "enum Projection:\n    Named(str)\ndef make() -> Projection:\n    return Projection.Named(\"value\")\ndef observe(value: Projection) -> int:\n    return 1\ndef inspect(seed: Borrowed[int]) -> int:\n    return observe(make())\n";
+    let source = "enum Projection:\n    Named(str)\ndef make() -> Projection:\n    return Projection.Named(\"value\")\ndef observe(value: Projection) -> int:\n    return 1\ndef inspect(seed: Owned[int]) -> int:\n    return observe(make())\n";
     let graph = checked_graph(source, "inspect")?;
     let value_use = graph
         .value_uses
@@ -285,7 +285,7 @@ fn signature_block_keeps_ordinary_enum_functions_on_call_result_route() -> Resul
 /// The outer value retains source-less CallResult authority while source and replay execute the inner call once.
 #[test]
 fn signature_block_admits_exact_direct_call_field_result_and_replays_it() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Description:\n    metadata: Metadata\ndef make() -> Description:\n    return Description(metadata=Metadata(value=\"value\"))\ndef observe(value: Metadata) -> int:\n    return len(value.value)\ndef inspect(seed: Borrowed[int]) -> int:\n    return observe(make().metadata)\n";
+    let source = "@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Description:\n    metadata: Metadata\ndef make() -> Description:\n    return Description(metadata=Metadata(value=\"value\"))\ndef observe(value: Metadata) -> int:\n    return len(value.value)\ndef inspect(seed: Owned[int]) -> int:\n    return observe(make().metadata)\n";
     let checker = checked(source)?;
     let (make_span, make_call) = checker
         .type_info
@@ -356,7 +356,7 @@ fn signature_block_admits_exact_direct_call_field_result_and_replays_it() -> Res
 /// A field on an existing local remains a stored Read and never borrows fresh call-result authority.
 #[test]
 fn signature_block_keeps_stored_field_on_ordinary_read_route() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Description:\n    metadata: Metadata\ndef make() -> Description:\n    return Description(metadata=Metadata(value=\"value\"))\ndef observe(value: Metadata) -> int:\n    return len(value.value)\ndef inspect(seed: Borrowed[int]) -> int:\n    stored = make()\n    return observe(stored.metadata)\n";
+    let source = "@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Description:\n    metadata: Metadata\ndef make() -> Description:\n    return Description(metadata=Metadata(value=\"value\"))\ndef observe(value: Metadata) -> int:\n    return len(value.value)\ndef inspect(seed: Owned[int]) -> int:\n    stored = make()\n    return observe(stored.metadata)\n";
     let graph = checked_graph(source, "inspect")?;
     let argument = graph
         .invocations
@@ -382,25 +382,25 @@ fn signature_block_keeps_stored_field_on_ordinary_read_route() -> Result<(), Box
 #[test]
 fn signature_block_refuses_other_call_result_projection_shapes() -> Result<(), Box<dyn std::error::Error>> {
     require_unavailable(
-        "@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Inner:\n    metadata: Metadata\n@derive(Clone)\nmodel Description:\n    inner: Inner\ndef make() -> Description:\n    return Description(inner=Inner(metadata=Metadata(value=\"value\")))\ndef observe(value: Metadata) -> int:\n    return 1\ndef inspect(seed: Borrowed[int]) -> int:\n    return observe(make().inner.metadata)\n",
+        "@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Inner:\n    metadata: Metadata\n@derive(Clone)\nmodel Description:\n    inner: Inner\ndef make() -> Description:\n    return Description(inner=Inner(metadata=Metadata(value=\"value\")))\ndef observe(value: Metadata) -> int:\n    return 1\ndef inspect(seed: Owned[int]) -> int:\n    return observe(make().inner.metadata)\n",
         "inspect",
         "expression is not a stored place",
         "make()",
     )?;
     require_unavailable(
-        "@derive(Clone)\nmodel Description:\n    values: list[str]\ndef make() -> Description:\n    return Description(values=[\"value\"])\ndef observe(value: str) -> int:\n    return 1\ndef inspect(seed: Borrowed[int]) -> int:\n    return observe(make().values[0])\n",
+        "@derive(Clone)\nmodel Description:\n    values: list[str]\ndef make() -> Description:\n    return Description(values=[\"value\"])\ndef observe(value: str) -> int:\n    return 1\ndef inspect(seed: Owned[int]) -> int:\n    return observe(make().values[0])\n",
         "inspect",
         "expression is not a stored place",
         "make()",
     )?;
     require_unavailable(
-        "enum Fault:\n    Bad\n@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Description:\n    metadata: Metadata\ndef make() -> Result[Description, Fault]:\n    return Ok(Description(metadata=Metadata(value=\"value\")))\ndef observe(value: Metadata) -> int:\n    return 1\ndef inspect(seed: Borrowed[int]) -> Result[int, Fault]:\n    return Ok(observe(make()?.metadata))\n",
+        "enum Fault:\n    Bad\n@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Description:\n    metadata: Metadata\ndef make() -> Result[Description, Fault]:\n    return Ok(Description(metadata=Metadata(value=\"value\")))\ndef observe(value: Metadata) -> int:\n    return 1\ndef inspect(seed: Owned[int]) -> Result[int, Fault]:\n    return Ok(observe(make()?.metadata))\n",
         "inspect",
         "expression is not a stored place",
         "make()?",
     )?;
     require_unavailable(
-        "@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Description:\n    metadata: Metadata\nclass Factory:\n    pub marker: int\n    pub def make(self) -> Description:\n        return Description(metadata=Metadata(value=\"value\"))\ndef observe(value: Metadata) -> int:\n    return 1\ndef inspect(seed: Borrowed[int]) -> int:\n    factory = Factory(marker=1)\n    return observe(factory.make().metadata)\n",
+        "@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Description:\n    metadata: Metadata\nclass Factory:\n    pub marker: int\n    pub def make(self) -> Description:\n        return Description(metadata=Metadata(value=\"value\"))\ndef observe(value: Metadata) -> int:\n    return 1\ndef inspect(seed: Owned[int]) -> int:\n    factory = Factory(marker=1)\n    return observe(factory.make().metadata)\n",
         "inspect",
         "expression is not a stored place",
         "factory.make()",
@@ -411,25 +411,25 @@ fn signature_block_refuses_other_call_result_projection_shapes() -> Result<(), B
 #[test]
 fn signature_block_refuses_open_or_dependent_call_result_fields() -> Result<(), Box<dyn std::error::Error>> {
     require_unavailable(
-        "@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Description:\n    raw: Metadata\n    property metadata -> Metadata:\n        return Metadata(value=self.raw.value)\ndef make() -> Description:\n    return Description(raw=Metadata(value=\"value\"))\ndef observe(value: Metadata) -> int:\n    return 1\ndef inspect(seed: Borrowed[int]) -> int:\n    return observe(make().metadata)\n",
+        "@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Description:\n    raw: Metadata\n    property metadata -> Metadata:\n        return Metadata(value=self.raw.value)\ndef make() -> Description:\n    return Description(raw=Metadata(value=\"value\"))\ndef observe(value: Metadata) -> int:\n    return 1\ndef inspect(seed: Owned[int]) -> int:\n    return observe(make().metadata)\n",
         "inspect",
         "computed property access",
         "make().metadata",
     )?;
     require_unavailable(
-        "@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Description:\n    metadata: Metadata\ndef view(value: Borrowed[Description]) -> Borrowed[Description] from value:\n    return value\ndef observe(value: Metadata) -> int:\n    return 1\ndef inspect(seed: Borrowed[int], value: Borrowed[Description]) -> int:\n    return observe(view(value).metadata)\n",
+        "@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Description:\n    metadata: Metadata\ndef view(value: Borrowed[Description]) -> Borrowed[Description] from value:\n    return value\ndef observe(value: Metadata) -> int:\n    return 1\ndef inspect(seed: Owned[int], value: Borrowed[Description]) -> int:\n    return observe(view(value).metadata)\n",
         "inspect",
         "expression is not a stored place",
         "view(value)",
     )?;
     require_unavailable(
-        "@derive(Clone)\nmodel Metadata:\n    value: str\nmodel Envelope:\n    metadata: Borrowed[Metadata]\ndef make(value: Borrowed[Metadata]) -> Envelope from value:\n    return Envelope(metadata=value)\ndef observe(value: Metadata) -> int:\n    return 1\ndef inspect(seed: Borrowed[int], value: Borrowed[Metadata]) -> int:\n    return observe(make(value).metadata)\n",
+        "@derive(Clone)\nmodel Metadata:\n    value: str\nmodel Envelope:\n    metadata: Borrowed[Metadata]\ndef make(value: Borrowed[Metadata]) -> Envelope from value:\n    return Envelope(metadata=value)\ndef observe(value: Metadata) -> int:\n    return 1\ndef inspect(seed: Owned[int], value: Borrowed[Metadata]) -> int:\n    return observe(make(value).metadata)\n",
         "inspect",
         "expression is not a stored place",
         "make(value)",
     )?;
     require_unavailable(
-        "@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Description:\n    metadata: Metadata\ndef make(value: Borrowed[Description]) -> Owned[Description] from value:\n    return Description(metadata=value.metadata)\ndef observe(value: Metadata) -> int:\n    return 1\ndef inspect(seed: Borrowed[int], value: Borrowed[Description]) -> int:\n    return observe(make(value).metadata)\n",
+        "@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Description:\n    metadata: Metadata\ndef make(value: Borrowed[Description]) -> Owned[Description] from value:\n    return Description(metadata=value.metadata)\ndef observe(value: Metadata) -> int:\n    return 1\ndef inspect(seed: Owned[int], value: Borrowed[Description]) -> int:\n    return observe(make(value).metadata)\n",
         "inspect",
         "expression is not a stored place",
         "make(value)",
@@ -440,7 +440,7 @@ fn signature_block_refuses_open_or_dependent_call_result_fields() -> Result<(), 
 /// route before any source-less CallResult is retained.
 #[test]
 fn signature_block_direct_call_field_identity_tamper_refuses() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Description:\n    metadata: Metadata\ndef make() -> Description:\n    return Description(metadata=Metadata(value=\"value\"))\ndef observe(value: Metadata) -> int:\n    return 1\ndef inspect(seed: Borrowed[int]) -> int:\n    return observe(make().metadata)\n";
+    let source = "@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Description:\n    metadata: Metadata\ndef make() -> Description:\n    return Description(metadata=Metadata(value=\"value\"))\ndef observe(value: Metadata) -> int:\n    return 1\ndef inspect(seed: Owned[int]) -> int:\n    return observe(make().metadata)\n";
     let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
     let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
     let declaration = program
@@ -494,7 +494,7 @@ fn signature_block_direct_call_field_identity_tamper_refuses() -> Result<(), Box
 /// syntax or an equal result spelling.
 #[test]
 fn signature_block_payload_variant_identity_tamper_refuses_fresh_route() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "enum Projection:\n    Named(str)\ndef observe(value: Projection) -> int:\n    return 1\ndef inspect(seed: Borrowed[int]) -> int:\n    return observe(Projection.Named(\"value\"))\n";
+    let source = "enum Projection:\n    Named(str)\ndef observe(value: Projection) -> int:\n    return 1\ndef inspect(seed: Owned[int]) -> int:\n    return observe(Projection.Named(\"value\"))\n";
     let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
     let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
     let declaration = program
@@ -576,7 +576,7 @@ fn signature_block_payload_variant_identity_tamper_refuses_fresh_route() -> Resu
 /// than acquiring source-less fresh ordinary authority.
 #[test]
 fn signature_block_preserves_stored_and_borrowed_ordinary_routes() -> Result<(), Box<dyn std::error::Error>> {
-    let stored_source = "def observe(value: bytes) -> int:\n    return len(value)\ndef inspect(seed: Borrowed[int]) -> int:\n    stored = b\"family\"\n    return observe(stored)\n";
+    let stored_source = "def observe(value: bytes) -> int:\n    return len(value)\ndef inspect(seed: Owned[int]) -> int:\n    stored = b\"family\"\n    return observe(stored)\n";
     let stored = checked_graph(stored_source, "inspect")?;
     let argument = stored
         .invocations
@@ -611,7 +611,7 @@ fn signature_block_preserves_stored_and_borrowed_ordinary_routes() -> Result<(),
         "stored ordinary argument acquired fresh ValueUse authority"
     );
 
-    let borrowed_source = "def observe(value: Borrowed[bytes]) -> int:\n    return len(value)\ndef inspect(seed: Borrowed[int]) -> int:\n    return observe(b\"family\")\n";
+    let borrowed_source = "def observe(value: Borrowed[bytes]) -> int:\n    return len(value)\ndef inspect(seed: Owned[int]) -> int:\n    return observe(b\"family\")\n";
     let borrowed = checked_graph(borrowed_source, "inspect")?;
     let invocation = borrowed
         .invocations
@@ -667,7 +667,7 @@ fn signature_block_preserves_stored_and_borrowed_ordinary_routes() -> Result<(),
 /// Local source and ordinary Read events without creating a loan, Move or stored ValueUse authority.
 #[test]
 fn signature_block_admits_only_exact_mutable_cloneable_local_reads() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "@derive(Clone)\nmodel Budget:\n    value: int\ndef charge(mut budget: Budget) -> int:\n    return budget.value\ndef inspect(seed: Borrowed[int]) -> int:\n    mut budget = Budget(value=1)\n    first = charge(budget)\n    return first + charge(budget)\n";
+    let source = "@derive(Clone)\nmodel Budget:\n    value: int\ndef charge(mut budget: Budget) -> int:\n    return budget.value\ndef inspect(seed: Owned[int]) -> int:\n    mut budget = Budget(value=1)\n    first = charge(budget)\n    return first + charge(budget)\n";
     let graph = checked_graph(source, "inspect")?;
     let arguments = graph
         .invocations
@@ -702,32 +702,32 @@ fn signature_block_admits_only_exact_mutable_cloneable_local_reads() -> Result<(
     }
 
     require_unavailable(
-        "@derive(Clone)\nmodel Budget:\n    value: int\ndef charge(mut budget: Budget) -> int:\n    return budget.value\ndef inspect(seed: Borrowed[int]) -> int:\n    budget = Budget(value=1)\n    return charge(budget)\n",
+        "@derive(Clone)\nmodel Budget:\n    value: int\ndef charge(mut budget: Budget) -> int:\n    return budget.value\ndef inspect(seed: Owned[int]) -> int:\n    budget = Budget(value=1)\n    return charge(budget)\n",
         "inspect",
         "ordinary argument requires inferred access or mutable binding facts",
         "budget",
     )?;
     require_unavailable(
-        "@derive(Clone)\nmodel Budget:\n    value: int\n@derive(Clone)\nmodel Holder:\n    budget: Budget\ndef charge(mut budget: Budget) -> int:\n    return budget.value\ndef inspect(seed: Borrowed[int]) -> int:\n    mut holder = Holder(budget=Budget(value=1))\n    return charge(holder.budget)\n",
+        "@derive(Clone)\nmodel Budget:\n    value: int\n@derive(Clone)\nmodel Holder:\n    budget: Budget\ndef charge(mut budget: Budget) -> int:\n    return budget.value\ndef inspect(seed: Owned[int]) -> int:\n    mut holder = Holder(budget=Budget(value=1))\n    return charge(holder.budget)\n",
         "inspect",
         "ordinary argument requires inferred access or mutable binding facts",
         "holder.budget",
     )?;
     require_unavailable(
-        "def numbers() -> Generator[int]:\n    yield 1\ndef charge(mut values: Generator[int]) -> int:\n    return 1\ndef inspect(seed: Borrowed[int]) -> int:\n    mut values = numbers()\n    return charge(values)\n",
+        "def numbers() -> Generator[int]:\n    yield 1\ndef charge(mut values: Generator[int]) -> int:\n    return 1\ndef inspect(seed: Owned[int]) -> int:\n    mut values = numbers()\n    return charge(values)\n",
         "inspect",
         "ordinary argument requires inferred access or mutable binding facts",
         "values",
     )?;
 
     require_unavailable(
-        "@derive(Clone)\nmodel Budget:\n    value: int\ndef charge(mut budget: Budget) -> int:\n    return budget.value\ndef inspect(seed: Borrowed[int]) -> int:\n    mut budget = Budget(value=1)\n    held: Borrowed[Budget] = budget\n    result = charge(budget)\n    return result + held.value\n",
+        "@derive(Clone)\nmodel Budget:\n    value: int\ndef charge(mut budget: Budget) -> int:\n    return budget.value\ndef inspect(seed: Owned[int]) -> int:\n    mut budget = Budget(value=1)\n    held: Borrowed[Budget] = budget\n    result = charge(budget)\n    return result + held.value\n",
         "inspect",
         "ordinary argument requires inferred access or mutable binding facts",
         "budget",
     )?;
     require_unavailable(
-        "@derive(Clone)\nmodel Budget:\n    value: int\ndef take(value: Owned[Budget]) -> None:\n    pass\ndef charge(mut budget: Budget) -> int:\n    return budget.value\ndef inspect(seed: Borrowed[int]) -> int:\n    mut budget = Budget(value=1)\n    take(budget)\n    return charge(budget)\n",
+        "@derive(Clone)\nmodel Budget:\n    value: int\ndef take(value: Owned[Budget]) -> None:\n    pass\ndef charge(mut budget: Budget) -> int:\n    return budget.value\ndef inspect(seed: Owned[int]) -> int:\n    mut budget = Budget(value=1)\n    take(budget)\n    return charge(budget)\n",
         "inspect",
         "ordinary argument requires inferred access or mutable binding facts",
         "budget",
@@ -739,13 +739,13 @@ fn signature_block_admits_only_exact_mutable_cloneable_local_reads() -> Result<(
 #[test]
 fn signature_block_refuses_mutable_fresh_ordinary_route() -> Result<(), Box<dyn std::error::Error>> {
     require_unavailable(
-        "def observe(mut value: bytes) -> int:\n    return len(value)\ndef inspect(seed: Borrowed[int]) -> int:\n    return observe(b\"family\")\n",
+        "def observe(mut value: bytes) -> int:\n    return len(value)\ndef inspect(seed: Owned[int]) -> int:\n    return observe(b\"family\")\n",
         "inspect",
         "ordinary argument requires inferred access or mutable binding facts",
         "b\"family\"",
     )?;
     require_unavailable(
-        "enum Projection:\n    Named(str)\ndef observe(mut value: Projection) -> int:\n    return 1\ndef inspect(seed: Borrowed[int]) -> int:\n    return observe(Projection.Named(\"value\"))\n",
+        "enum Projection:\n    Named(str)\ndef observe(mut value: Projection) -> int:\n    return 1\ndef inspect(seed: Owned[int]) -> int:\n    return observe(Projection.Named(\"value\"))\n",
         "inspect",
         "ordinary argument requires inferred access or mutable binding facts",
         "Projection.Named(\"value\")",
@@ -757,7 +757,7 @@ fn signature_block_refuses_mutable_fresh_ordinary_route() -> Result<(), Box<dyn 
 #[test]
 fn signature_block_refuses_open_payload_variant_fresh_ordinary_route() -> Result<(), Box<dyn std::error::Error>> {
     require_unavailable(
-        "enum Envelope:\n    Held(Borrowed[str])\ndef observe(value: Envelope) -> int:\n    return 1\ndef inspect(value: Borrowed[str]) -> int:\n    return observe(Envelope.Held(value))\n",
+        "enum Envelope:\n    Held(Borrowed[str])\ndef observe(value: Envelope) -> int:\n    return 1\ndef inspect(value: Borrowed[str], proof: Owned[int] = 0) -> int:\n    return observe(Envelope.Held(value))\n",
         "inspect",
         "ordinary argument requires inferred access or mutable binding facts",
         "Envelope.Held(value)",
@@ -768,7 +768,7 @@ fn signature_block_refuses_open_payload_variant_fresh_ordinary_route() -> Result
 #[test]
 fn signature_block_refuses_payload_variant_callback_fresh_ordinary_route() -> Result<(), Box<dyn std::error::Error>> {
     require_unavailable(
-        "enum Projection:\n    Named(str)\ndef invoke(factory: (str) -> Projection) -> Projection:\n    return factory(\"value\")\ndef inspect(seed: Borrowed[int]) -> Projection:\n    return invoke(Projection.Named)\n",
+        "enum Projection:\n    Named(str)\ndef invoke(factory: (str) -> Projection) -> Projection:\n    return factory(\"value\")\ndef inspect(seed: Owned[int]) -> Projection:\n    return invoke(Projection.Named)\n",
         "inspect",
         "call result needs retained dependency facts",
         "invoke(Projection.Named)",
@@ -806,30 +806,30 @@ fn signature_block_nominal_fallback_refuses_same_leaf_different_origins() -> Res
 #[test]
 fn signature_block_classifies_enum_parameter_and_local_list_moves() -> Result<(), Box<dyn std::error::Error>> {
     let enum_value = checked(
-        "enum Family:\n    Local\nmodel Field:\n    family: Family\ndef collect(seed: Borrowed[int], family: Family) -> Field:\n    return Field(family=family)\n",
+        "enum Family:\n    Local\nmodel Field:\n    family: Family\ndef collect(seed: Owned[int], family: Family) -> Field:\n    return Field(family=family)\n",
     )?;
     let list_value = checked(
-        "@derive(Clone)\nmodel Field:\n    value: str\nmodel Record:\n    fields: list[Field]\ndef collect(seed: Borrowed[int]) -> Record:\n    mut fields: list[Field] = []\n    fields.append(Field(value=\"a\"))\n    return Record(fields=fields)\n",
+        "@derive(Clone)\nmodel Field:\n    value: str\nmodel Record:\n    fields: list[Field]\ndef collect(seed: Owned[int]) -> Record:\n    mut fields: list[Field] = []\n    fields.append(Field(value=\"a\"))\n    return Record(fields=fields)\n",
     )?;
     let mutable_final_value = checked(
-        "model Record:\n    profile: str\ndef collect(seed: Borrowed[int]) -> Record:\n    mut profile = \"\"\n    if seed > 0:\n        profile = \"positive\"\n    else:\n        profile = \"other\"\n    return Record(profile=profile)\n",
+        "model Record:\n    profile: str\ndef collect(seed: Owned[int]) -> Record:\n    mut profile = \"\"\n    if seed > 0:\n        profile = \"positive\"\n    else:\n        profile = \"other\"\n    return Record(profile=profile)\n",
     )?;
 
     require_unavailable(
-        "enum Family:\n    Local\nmodel Field:\n    family: Family\ndef collect(family: Borrowed[Family]) -> Field:\n    return Field(family=family)\n",
+        "enum Family:\n    Local\nmodel Field:\n    family: Family\ndef collect(family: Borrowed[Family], proof: Owned[int] = 0) -> Field:\n    return Field(family=family)\n",
         "collect",
         source::BORROWED_VALUE_IN_OWNED_FIELD,
         "family",
     )?;
     require_unavailable(
-        "enum Family:\n    Local\nmodel Field:\n    family: Family\ndef collect(seed: Borrowed[int], family: Owned[Family]) -> Field:\n    return Field(family=family)\n",
+        "enum Family:\n    Local\nmodel Field:\n    family: Family\ndef collect(seed: Owned[int], family: Owned[Family]) -> Field:\n    return Field(family=family)\n",
         "collect",
         "non-Copy constructor field needs checked ownership transfer materialization",
         "family",
     )?;
 
     for source in [
-        "enum Family:\n    Local\nmodel Field:\n    family: Family\ndef collect(seed: Borrowed[int], family: Family) -> Field:\n    first = Field(family=family)\n    second = Field(family=family)\n    return second\n",
+        "enum Family:\n    Local\nmodel Field:\n    family: Family\ndef collect(seed: Owned[int], family: Family) -> Field:\n    first = Field(family=family)\n    second = Field(family=family)\n    return second\n",
     ] {
         let checker = checked(source)?;
         assert!(
@@ -890,7 +890,7 @@ fn signature_block_retains_builtin_clone_invocation() -> Result<(), Box<dyn std:
     };
     assert!(graph.invocations.contains_key(clone_span));
 
-    let user_source = "model Copier:\n    def clone(self) -> str:\n        return \"user\"\ndef copy(seed: Borrowed[int]) -> str:\n    copier = Copier()\n    return copier.clone()\n";
+    let user_source = "model Copier:\n    def clone(self) -> str:\n        return \"user\"\ndef copy(seed: Owned[int]) -> str:\n    copier = Copier()\n    return copier.clone()\n";
     let user = checked(user_source)?;
     require_checked(&user, "copy")?;
     assert!(
@@ -910,7 +910,7 @@ fn match_admits_a_closed_nominal_error_from_an_ordinary_call() -> Result<(), Box
     detail: str
 def create(value: int) -> Result[None, Fault]:
     return Err(Fault(detail="failed"))
-def inspect(seed: Borrowed[int]) -> bool:
+def inspect(seed: Owned[int]) -> bool:
     match create(seed):
         Ok(_) => return true
         Err(_) => return false
@@ -923,17 +923,17 @@ def inspect(seed: Borrowed[int]) -> bool:
 #[test]
 fn signature_block_classifies_closed_try_call_results() -> Result<(), Box<dyn std::error::Error>> {
     let accepted = checked(
-        "enum Fault:\n    Bad\nenum Family:\n    Local\n@derive(Clone)\nmodel Row:\n    value: str\nmodel Record:\n    text: str\n    family: Family\n    rows: list[Row]\ndef text_value() -> Result[str, Fault]:\n    return Ok(\"value\")\ndef family_value() -> Result[Family, Fault]:\n    return Ok(Family.Local)\ndef row_values() -> Result[list[Row], Fault]:\n    return Ok([Row(value=\"value\")])\ndef decode(seed: Borrowed[int]) -> Result[Record, Fault]:\n    return Ok(Record(text=text_value()?, family=family_value()?, rows=row_values()?))\n",
+        "enum Fault:\n    Bad\nenum Family:\n    Local\n@derive(Clone)\nmodel Row:\n    value: str\nmodel Record:\n    text: str\n    family: Family\n    rows: list[Row]\ndef text_value() -> Result[str, Fault]:\n    return Ok(\"value\")\ndef family_value() -> Result[Family, Fault]:\n    return Ok(Family.Local)\ndef row_values() -> Result[list[Row], Fault]:\n    return Ok([Row(value=\"value\")])\ndef decode(seed: Owned[int]) -> Result[Record, Fault]:\n    return Ok(Record(text=text_value()?, family=family_value()?, rows=row_values()?))\n",
     )?;
 
     require_unavailable(
-        "enum Fault:\n    Bad\nmodel Record:\n    text: str\ndef decode(seed: Borrowed[int], value: str) -> Result[Record, Fault]:\n    result: Result[str, Fault] = Ok(value)\n    return Ok(Record(text=result?))\n",
+        "enum Fault:\n    Bad\nmodel Record:\n    text: str\ndef decode(seed: Owned[int], value: str) -> Result[Record, Fault]:\n    result: Result[str, Fault] = Ok(value)\n    return Ok(Record(text=result?))\n",
         "decode",
         "non-Copy constructor field needs checked ownership transfer materialization",
         "result?",
     )?;
     require_unavailable(
-        "enum Fault:\n    Bad\nmodel Record:\n    text: str\ndef decode(seed: Borrowed[int], value: str) -> Result[Record, Fault]:\n    return Ok(Record(text=Ok(value)?))\n",
+        "enum Fault:\n    Bad\nmodel Record:\n    text: str\ndef decode(seed: Owned[int], value: str) -> Result[Record, Fault]:\n    return Ok(Record(text=Ok(value)?))\n",
         "decode",
         "non-Copy constructor field needs checked ownership transfer materialization",
         "Ok(value)?",
@@ -952,24 +952,24 @@ fn signature_block_classifies_closed_try_call_results() -> Result<(), Box<dyn st
 /// borrowed subject and a second continuing arm remain refused, and post-extraction reuse remains a T0126 conflict.
 #[test]
 fn signature_block_classifies_match_payload_extraction() -> Result<(), Box<dyn std::error::Error>> {
-    let accepted_source = "enum Fault:\n    Bad\n@derive(Clone)\nmodel Cell:\n    value: str\n@derive(Clone)\nenum Payload:\n    Record(list[Cell])\n@derive(Clone)\nmodel Row:\n    value: Payload\ndef decode(seed: Borrowed[int]) -> Result[list[Cell], Fault]:\n    row = Row(value=Payload.Record([Cell(value=\"a\")]))\n    values = match row.value:\n        Payload.Record(fields) => fields\n        _ => return Err(Fault.Bad)\n    return Ok(values)\n";
+    let accepted_source = "enum Fault:\n    Bad\n@derive(Clone)\nmodel Cell:\n    value: str\n@derive(Clone)\nenum Payload:\n    Record(list[Cell])\n@derive(Clone)\nmodel Row:\n    value: Payload\ndef decode(seed: Owned[int]) -> Result[list[Cell], Fault]:\n    row = Row(value=Payload.Record([Cell(value=\"a\")]))\n    values = match row.value:\n        Payload.Record(fields) => fields\n        _ => return Err(Fault.Bad)\n    return Ok(values)\n";
     let accepted = checked(accepted_source)?;
 
     require_unavailable(
-        "enum Fault:\n    Bad\n@derive(Clone)\nmodel Cell:\n    value: str\n@derive(Clone)\nenum Payload:\n    Record(list[Cell])\ndef select(value: Borrowed[Payload]) -> Result[list[Cell], Fault]:\n    values = match value:\n        Payload.Record(fields) => fields\n        _ => return Err(Fault.Bad)\n    return Ok(values)\n",
+        "enum Fault:\n    Bad\n@derive(Clone)\nmodel Cell:\n    value: str\n@derive(Clone)\nenum Payload:\n    Record(list[Cell])\ndef select(value: Borrowed[Payload], proof: Owned[int] = 0) -> Result[list[Cell], Fault]:\n    values = match value:\n        Payload.Record(fields) => fields\n        _ => return Err(Fault.Bad)\n    return Ok(values)\n",
         "select",
         "expression needs checked call or dependency access facts",
         "match value:\n        Payload.Record(fields) => fields\n        _ => return Err(Fault.Bad)",
     )?;
     require_unavailable(
-        "enum Fault:\n    Bad\n@derive(Clone)\nmodel Cell:\n    value: str\n@derive(Clone)\nenum Payload:\n    Record(list[Cell])\n    Empty\n@derive(Clone)\nmodel Row:\n    value: Payload\ndef select(seed: Borrowed[int]) -> Result[list[Cell], Fault]:\n    row = Row(value=Payload.Record([]))\n    values = match row.value:\n        Payload.Record(fields) => fields\n        Payload.Empty => []\n    return Ok(values)\n",
+        "enum Fault:\n    Bad\n@derive(Clone)\nmodel Cell:\n    value: str\n@derive(Clone)\nenum Payload:\n    Record(list[Cell])\n    Empty\n@derive(Clone)\nmodel Row:\n    value: Payload\ndef select(seed: Owned[int]) -> Result[list[Cell], Fault]:\n    row = Row(value=Payload.Record([]))\n    values = match row.value:\n        Payload.Record(fields) => fields\n        Payload.Empty => []\n    return Ok(values)\n",
         "select",
         "expression needs checked call or dependency access facts",
         "match row.value:\n        Payload.Record(fields) => fields\n        Payload.Empty => []",
     )?;
 
     let reused = checked(
-        "enum Fault:\n    Bad\n@derive(Clone)\nmodel Cell:\n    value: str\n@derive(Clone)\nenum Payload:\n    Record(list[Cell])\n@derive(Clone)\nmodel Row:\n    value: Payload\ndef decode(seed: Borrowed[int]) -> Result[list[Cell], Fault]:\n    row = Row(value=Payload.Record([Cell(value=\"a\")]))\n    values = match row.value:\n        Payload.Record(fields) => fields\n        _ => return Err(Fault.Bad)\n    again = row.value\n    return Ok(values)\n",
+        "enum Fault:\n    Bad\n@derive(Clone)\nmodel Cell:\n    value: str\n@derive(Clone)\nenum Payload:\n    Record(list[Cell])\n@derive(Clone)\nmodel Row:\n    value: Payload\ndef decode(seed: Owned[int]) -> Result[list[Cell], Fault]:\n    row = Row(value=Payload.Record([Cell(value=\"a\")]))\n    values = match row.value:\n        Payload.Record(fields) => fields\n        _ => return Err(Fault.Bad)\n    again = row.value\n    return Ok(values)\n",
     )?;
     assert!(
         !reused.errors.is_empty()
@@ -1019,7 +1019,7 @@ fn signature_block_classifies_match_payload_extraction() -> Result<(), Box<dyn s
 /// and the final whole-list move. The grouped controls above remain the refusal matrix for each individual route.
 #[test]
 fn signature_block_classifies_full_header_record() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "enum Family:\n    Local\nmodel CanonicalField:\n    value: str\nmodel Record:\n    profile: str\n    owner: str\n    root: str\n    family: Family\n    fields: list[CanonicalField]\ndef read_family(value: str) -> Result[Family, str]:\n    return Ok(Family.Local)\ndef from_native(seed: Borrowed[int], rows: list[list[str]]) -> Result[Record, str]:\n    header = rows[0]\n    mut fields: list[CanonicalField] = []\n    for row in rows[1:]:\n        fields.append(CanonicalField(value=row[0]))\n    record = Record(profile=header[4], owner=header[1], root=header[2], family=read_family(header[3])?, fields=fields)\n    return Ok(record)\ndef from_family(seed: Borrowed[int], rows: list[list[str]], family: Family) -> Record:\n    header = rows[0]\n    mut fields: list[CanonicalField] = []\n    for row in rows[1:]:\n        fields.append(CanonicalField(value=row[0]))\n    return Record(profile=header[4], owner=header[1], root=header[2], family=family, fields=fields)\n";
+    let source = "enum Family:\n    Local\nmodel CanonicalField:\n    value: str\nmodel Record:\n    profile: str\n    owner: str\n    root: str\n    family: Family\n    fields: list[CanonicalField]\ndef read_family(value: str) -> Result[Family, str]:\n    return Ok(Family.Local)\ndef from_native(seed: Owned[int], rows: list[list[str]]) -> Result[Record, str]:\n    header = rows[0]\n    mut fields: list[CanonicalField] = []\n    for row in rows[1:]:\n        fields.append(CanonicalField(value=row[0]))\n    record = Record(profile=header[4], owner=header[1], root=header[2], family=read_family(header[3])?, fields=fields)\n    return Ok(record)\ndef from_family(seed: Owned[int], rows: list[list[str]], family: Family) -> Record:\n    header = rows[0]\n    mut fields: list[CanonicalField] = []\n    for row in rows[1:]:\n        fields.append(CanonicalField(value=row[0]))\n    return Record(profile=header[4], owner=header[1], root=header[2], family=family, fields=fields)\n";
     let checker = checked(source)?;
     require_checked(&checker, "from_native")?;
     require_checked(&checker, "from_family")

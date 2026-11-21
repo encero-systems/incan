@@ -129,3 +129,13 @@ pub fn decimal_types_compatible(actual: &ResolvedType, expected: &ResolvedType) 
         expected.scale,
     ))
 }
+
+/// The value read through a borrow (RFC 164): a shared or exclusive reference, in either spelling, is read through, so
+/// `Borrowed[int] + 1` adds two `int` values and `"a" in names` probes the borrowed dictionary. The expression keeps
+/// its checked borrowed type, which tells lowering to read through the reference.
+pub(crate) fn borrowed_value_type(ty: ResolvedType) -> ResolvedType {
+    match ty {
+        ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => borrowed_value_type(*inner),
+        other => other,
+    }
+}

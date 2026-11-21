@@ -3,6 +3,52 @@
 use super::*;
 
 impl TypeCheckInfo {
+    /// RFC 164: the borrow a native reference parameter of `owner` spells at `slot` (`&T` shared, `&mut T` exclusive).
+    /// The source-flow proof treats it as the same borrowed input its explicit spelling is, though it carries no
+    /// contract mode; only a binding whose canonical identity is `owner` answers.
+    pub(crate) fn native_borrow_input(
+        &self,
+        owner: &CanonicalSymbolId,
+        slot: usize,
+    ) -> Option<incan_lang::lang::types::ownership::OwnershipMode> {
+        use incan_lang::lang::types::ownership::OwnershipMode;
+        let binding = [
+            self.declarations.function_bindings_by_span.get(&owner.declaration_span),
+            self.declarations.method_bindings_by_span.get(&owner.declaration_span),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|binding| binding.identity.as_ref() == Some(owner))?;
+        match &binding.params.get(slot)?.ty {
+            ResolvedType::Ref(_) => Some(OwnershipMode::Borrowed),
+            ResolvedType::RefMut(_) => Some(OwnershipMode::BorrowedMut),
+            _ => None,
+        }
+    }
+
+    /// The access one parameter slot of `owner` takes in its own body: its canonical input request or, for a native
+    /// reference parameter with none, the borrow it spells (RFC 164).
+    pub(crate) fn body_input_access(
+        &self,
+        owner: &CanonicalSymbolId,
+        slot: usize,
+    ) -> Result<incan_semantics_core::IncanInputAccess, &'static str> {
+        let access =
+            crate::ownership_metadata::direct_input_access(self.declarations.ownership_contracts.get(owner), slot)?;
+        if access != incan_semantics_core::IncanInputAccess::Inferred {
+            return Ok(access);
+        }
+        Ok(match self.native_borrow_input(owner, slot) {
+            Some(incan_lang::lang::types::ownership::OwnershipMode::Borrowed) => {
+                incan_semantics_core::IncanInputAccess::Shared
+            }
+            Some(incan_lang::lang::types::ownership::OwnershipMode::BorrowedMut) => {
+                incan_semantics_core::IncanInputAccess::Exclusive
+            }
+            _ => access,
+        })
+    }
+
     /// The retained executable frame that source lowering will take for this exact declaration.
     pub fn selected_callable_body(&self, span: Span) -> Option<&incan_semantics_core::body_ir::Body> {
         self.reused_callable_bodies.get(&span)
