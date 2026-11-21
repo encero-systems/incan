@@ -113,11 +113,11 @@ pub model Stored:
     pub variants: list[Variant]
 
 
-def count_labels(labels: &list[str]) -> int:
+def count_labels(labels: Borrowed[list[str]]) -> int:
     return len(labels)
 
 
-def via_index(stored: &Stored, at: int) -> int:
+def via_index(stored: Borrowed[Stored], at: int) -> int:
     return count_labels(stored.variants[at].labels)
 
 
@@ -146,7 +146,7 @@ pub model ValueField:
     pub empty_omits: bool
 
 
-def omitted(field: &ValueField) -> bool:
+def omitted(field: Borrowed[ValueField]) -> bool:
     match field.value:
         Value.NoneValue => return true
         Value.List(items) => return field.empty_omits and len(items) == 0
