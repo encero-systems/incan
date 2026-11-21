@@ -1,4 +1,4 @@
-# behavior: Rust interop preserves constructors, loans, trait calls, callbacks and facade macros (#2256)
+# behavior: Rust interop preserves constructors (leaving out fields whose defaults the crate publishes), loans, trait calls, callbacks and facade macros (#2256)
 # expect-stdout:
 #   1 2 3 2
 #   7
@@ -28,6 +28,9 @@
 #   5
 #   5
 #   5
+#   plain 4096 1
+#   tagged 4096 2
+#   sized 8 1
 
 from rust::demo import (
     Builder,
@@ -52,6 +55,7 @@ from rust::demo import (
     PairFactory,
     PlainBar,
     Predicate,
+    Request,
     SessionContext,
     Static,
     Widget,
@@ -224,6 +228,10 @@ pub def sign_local(chunk: bytes) -> str:
     return f"{len(chunk)} {ready} {len(Mac.finalize(input))}"
 
 
+pub def describe(request: Request) -> str:
+    return f"{request.name} {request.limit} {len(request.tags)}"
+
+
 model CfgSnapshot:
     target: str
 
@@ -280,3 +288,6 @@ def main() -> None:
     facade_function = native_macros.facade_value
     println(facade_function(2, 3))
     println(facade_alias(2, 3))
+    println(describe(Request(name="plain")))
+    println(describe(Request(name="tagged", tags=["a", "b"])))
+    println(describe(Request(limit=8, name="sized")))
