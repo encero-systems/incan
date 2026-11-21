@@ -477,6 +477,42 @@ fn elapsed_ns(started: Instant) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::evaluate_semantic_case;
+    use super::hash::{Node, closed_selector, frame, hex_string, selector_spelling, unsigned};
+
+    /// A row read and a written row find every nested record's description by its closed selector: the nominal
+    /// identity, the argument count and each framed argument spelling. Spelling a selector writes each identity byte as
+    /// two lowercase hex digits.
+    #[test]
+    fn closed_selectors_frame_identity_count_and_argument_spellings() {
+        assert_eq!(hex_string(&[0x00, 0x0a, 0xff, 0x5c]), "000aff5c");
+        assert_eq!(hex_string(&[]), "");
+        let record =
+            |identity: &[u8], arguments: Vec<Node>| Node::Nominal("record".to_string(), identity.to_vec(), arguments);
+        let plain = record(&[0x23, 0x4b, 0x6c, 0x9b, 0x62, 0xc7], Vec::new());
+        assert_eq!(selector_spelling(&plain).as_deref(), Some("record@234b6c9b62c7"));
+        let mut expected = vec![0x23, 0x4b, 0x6c, 0x9b, 0x62, 0xc7];
+        unsigned(&mut expected, 0);
+        assert_eq!(closed_selector(&plain), Some(expected));
+        let argument = record(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06], Vec::new());
+        let applied = record(&[0xab; 6], vec![Node::Scalar("i8".to_string()), argument]);
+        let mut framed = vec![0xab; 6];
+        unsigned(&mut framed, 2);
+        frame(&mut framed, b"i8");
+        frame(&mut framed, b"record@010203040506");
+        assert_eq!(closed_selector(&applied), Some(framed));
+        assert_eq!(
+            closed_selector(&record(&[0xab; 5], Vec::new())),
+            None,
+            "a five-byte identity is no selector"
+        );
+        let broken = record(&[0xab; 6], vec![record(&[0x01], Vec::new())]);
+        assert_eq!(
+            closed_selector(&broken),
+            None,
+            "an argument without a selector spelling closes no selector"
+        );
+        assert_eq!(closed_selector(&Node::Scalar("i8".to_string())), None);
+    }
 
     #[test]
     fn member_identity_hashes_exact_utf8_without_normalization() {
