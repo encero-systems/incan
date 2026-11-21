@@ -4,7 +4,7 @@ A builtin needs a language-owned spelling and contract, a checked representation
 
 ## Trace a precedent
 
-Inspect the builtin registry in `loaves/kernel/incan_lang/src/lang/builtins.rs`, then trace a nearby builtin through the frontend and Body IR into `incan_mir_lowering`. Use codegraph definitions and caller queries before assuming two similarly named helpers own the same boundary.
+Inspect the builtin registry in `loaves/kernel/incan_lang/src/lang/builtins.rs`, then trace a nearby builtin through the frontend and Body IR into `incan_lowering`. Use codegraph definitions and caller queries before assuming two similarly named helpers own the same boundary.
 
 ## State the contract
 

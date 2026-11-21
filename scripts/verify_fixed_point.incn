@@ -56,14 +56,18 @@ pub def prove_fixed_point(context: NativeContext) -> Result[None, str]:
 
 
 pub def named_artifacts(context: NativeContext) -> list[Artifact]:
-    """Return DD-0010's six byte-bearing release outputs in stable order."""
+    """
+    Return DD-0010's byte-bearing release outputs in stable order.
+
+    The lowering is Rust and statically linked into the driver, so the driver artifact carries it; it is no longer a
+    separate library the toolchain compiles.
+    """
     driver = context.repo.joinpath("loaves/toolchain/incan-rustc-driver/target/incan")
     runtime = context.repo.joinpath("loaves/compiler/incan_native_runtime/target/incan/native/release")
     primitives = context.home.joinpath(f"{TOOLCHAIN_DIRECTORY}/loaves/incan_stdlib_primitives/release")
     return [
         Artifact(name="driver", path=driver.joinpath("rust/release/bin/incan-rustc-driver")),
         Artifact(name="runtime", path=runtime.joinpath("libincan_native_runtime.rlib")),
-        Artifact(name="lowering", path=driver.joinpath("loaves/incan_mir_lowering/release/libincan_mir_lowering.rlib")),
         Artifact(name="standard-floor", path=primitives.joinpath("libincan_stdlib_primitives.rlib")),
         Artifact(name="oven", path=context.lane.joinpath("oven-bin/incan")),
         Artifact(name="runner", path=context.lane.joinpath("contracts-bin/contracts")),
@@ -95,7 +99,6 @@ def rebuild_generation(context: NativeContext, evidence: Path, builder: Path, ge
             builder=builder.0,
             stdlib=context.stdlib,
             profile="release",
-            refresh=true,
             log=evidence.joinpath(f"{generation}-driver.log"),
         ),
     )?

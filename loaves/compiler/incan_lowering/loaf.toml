@@ -18,8 +18,6 @@ path = "src/bin/lowering_replay.rs"
 [dependencies]
 hex = { loaf = "crates-io/hex", version = "0.4.3" }
 incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
-# Until the plan records are Rust, their types come from the reference lowering, which the replay also runs as an oracle.
-incan_mir_lowering = { loaf = "incan_mir_lowering", path = "../incan_mir_lowering" }
 incan_mir_plan_native = { loaf = "incan_mir_plan_native", path = "../incan_mir_plan_native" }
 internal_models_native = { loaf = "internal_models_native", path = "../internal_models_native" }
 incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }

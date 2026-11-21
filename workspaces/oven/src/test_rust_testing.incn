@@ -168,7 +168,7 @@ def verify_scheduler_policy() -> Result[None, str]:
     schedule.finish(1)?
     assert schedule.done()
 
-    lowering = scheduling_facet("incan_mir_lowering")
+    lowering = scheduling_facet("incan_lowering")
     ordinary = scheduling_facet("ordinary")
     mut bounded = RustUnitSchedule.start([lowering, ordinary], jobs=2, memory=LOWERING_RESERVATION_BYTES)
     assert bounded.admit() == [0], "lowering shared its six-GiB reservation"

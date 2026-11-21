@@ -106,7 +106,7 @@ pub class RustUnitSchedule:
 
 pub def unit_reservation(facet: LocalFacet) -> int:
     """Reserve 6 GiB for lowering and 2 GiB for every other project or standard unit."""
-    if facet.package == "incan_mir_lowering" or facet.project.endswith("/incan_mir_lowering"):
+    if facet.package == "incan_lowering" or facet.project.endswith("/incan_lowering"):
         return LOWERING_RESERVATION_BYTES
     return UNIT_RESERVATION_BYTES
 

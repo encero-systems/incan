@@ -260,6 +260,13 @@ pub fn owned_capture(ty: PlanType) -> bool {
     closures::owned_capture(&ty)
 }
 
+/// Publish a records request's whole-program plan functions under their keyed products, for Bakery admission; the step
+/// `record_plan_outputs::publish_plan_records` names, which refuses until it is in Rust.
+pub fn publish_plan_records(plan: &Plan, products: String, report: String) -> Result<(), String> {
+    let _ = (plan, products, report);
+    Err(pending::untranslated("record_plan_outputs::publish_plan_records"))
+}
+
 /// Whether a plan type is an ordinary or sized numeric carrier, shared with native owned-result validation.
 pub fn numeric_carrier(ty: &PlanType) -> bool {
     numerics::numeric_carrier(ty)

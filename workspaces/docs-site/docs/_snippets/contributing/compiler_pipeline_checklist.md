@@ -6,7 +6,7 @@ Keep the pipeline aligned (to avoid language/tooling drift):
 - **Compiler (`loaves/compiler/`)**:
     - **typechecker** (`incan_frontend/`) validates and annotates
     - **Body IR** records resolved semantic facts
-    - **Incan lowering** (`incan_mir_lowering/`) consumes those facts and constructs a native plan
+    - **Lowering** (`incan_lowering/`) consumes those facts and constructs a native plan
     - **Rust adapter** (`incan-rustc-driver/`) translates the plan to the pinned Rust compiler's MIR
 - **Runtime/stdlib (`loaves/stdlib/<component>/{src,rust}/`)**: behavior that can live outside the compiler should live here
 

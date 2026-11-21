@@ -43,7 +43,6 @@ pub model Relink:
     pub builder: str
     pub stdlib: str
     pub profile: str
-    pub refresh: bool
     pub log: Path
     # Re-admit each home whose installation this relink rewrites. Release production re-admits through its own
     # helper, so only a standalone relink asks its builder.
@@ -71,15 +70,12 @@ def main() -> None:
 
 
 def options() -> Result[Relink, str]:
-    """Read `--lowering`, `--release` and `--standard` and the lane's environment."""
+    """Read `--release` and `--standard` and the lane's environment."""
     mut profile = "debug"
-    mut refresh = false
     mut standard = false
     arguments = [argument for argument in args()]
     for argument in arguments[1:]:
-        if argument == "--lowering":
-            refresh = true
-        elif argument == "--release":
+        if argument == "--release":
             profile = "release"
         elif argument == "--standard":
             standard = true
@@ -99,7 +95,6 @@ def options() -> Result[Relink, str]:
             builder=get_or("SELFBUILD_OVEN", lane.joinpath("oven-bin/incan").0),
             stdlib=get_or("SELFBUILD_STDLIB", repo.joinpath("loaves/stdlib").0),
             profile=profile,
-            refresh=refresh,
             log=Path(get_or("INCAN_RELINK_LOG", lane.joinpath("bootstrap/driver-build.log").0)),
             readmit=true,
             standard=standard,
@@ -112,13 +107,6 @@ pub def run(relink: Relink) -> Result[None, str]:
     """Build the driver against a compiler home bound to the installation, then install it unless asked not to."""
     started = Instant.now()
     toolchain = relink.toolchain_home.joinpath(TOOLCHAIN_DIRECTORY)
-    if relink.refresh:
-        # Withdraw only the generated library stamp; Oven recompiles the lowering through the installed driver.
-        stamp = relink.repo.joinpath(
-            f"{DRIVER_LOAF}/target/incan/loaves/incan_mir_lowering/{relink.profile}/.oven-inputs.sha256",
-        )
-        if stamp.is_file():
-            stamp.unlink().map_err((error) => error.message())?
     sysroot = absolute(manifest_text(read_manifest(toolchain)?, "sysroot")?, toolchain.0)
     mut helper: Option[Path] = None
     if relink.standard:
