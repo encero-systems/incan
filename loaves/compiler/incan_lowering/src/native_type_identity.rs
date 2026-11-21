@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use incan_lang::lang::types::collections::from_str as collection_type;
-use incan_semantics_core::body_ir::NominalDeclaration;
+use incan_semantics_core::body_ir::{NOMINAL_CARRIER_KEY_PREFIX, NominalDeclaration};
 use incan_semantics_core::{
     CanonicalSymbolId, IncanCallableParam, IncanType, SymbolOrigin, function_type, generic, native_array_type,
 };
@@ -113,6 +113,64 @@ pub fn named_positions(constructors: &ConstructorIndex, name: &str) -> Vec<usize
 /// Authenticate Rust-owned layouts independently of source Loaf artifacts that also have a native item.
 pub fn native_owner(declaration: &NominalDeclaration) -> bool {
     matches!(declaration.canonical.origin, SymbolOrigin::RustCrate(_))
+}
+
+/// The checked identity of each source carrier a closed argument list names, from the declaration that owns it.
+///
+/// A closed native layout over a source model, as `Rc[RefCell[Packet]]` lowers to, keeps these beside its own
+/// identities, so its layout witness names each argument by declaration, as a source layout names its fields' types;
+/// without them the witness refuses the argument as an unbound carrier and no product can name the layout.
+pub fn argument_identities(
+    declarations: &[NominalDeclaration],
+    arguments: &[IncanType],
+) -> BTreeMap<String, CanonicalSymbolId> {
+    let mut names = Vec::new();
+    for argument in arguments {
+        carrier_names(argument, &mut names);
+    }
+    let mut identities = BTreeMap::new();
+    for name in names {
+        if identities.contains_key(&name) {
+            continue;
+        }
+        let owner = declarations
+            .iter()
+            .find(|declaration| declaration.named_type_identities.get(&name) == Some(&declaration.canonical));
+        if let Some(owner) = owner {
+            identities.insert(name, owner.canonical.clone());
+        }
+    }
+    identities
+}
+
+/// Collect every source carrier key a type names, in written order.
+fn carrier_names(ty: &IncanType, names: &mut Vec<String>) {
+    match ty {
+        IncanType::Named(name) if name.starts_with(NOMINAL_CARRIER_KEY_PREFIX) => names.push(name.clone()),
+        IncanType::Generic { base, args } => {
+            if base.starts_with(NOMINAL_CARRIER_KEY_PREFIX) {
+                names.push(base.clone());
+            }
+            for argument in args {
+                carrier_names(argument, names);
+            }
+        }
+        IncanType::Function { params, return_type } => {
+            for parameter in params {
+                carrier_names(&parameter.ty, names);
+            }
+            carrier_names(return_type, names);
+        }
+        IncanType::TypeToken(inner) | IncanType::Ref(inner) | IncanType::RefMut(inner) => carrier_names(inner, names),
+        IncanType::Tuple(items) => {
+            for item in items {
+                carrier_names(item, names);
+            }
+        }
+        IncanType::NativeArray { element, .. } => carrier_names(element, names),
+        IncanType::NativePointer { pointee, .. } => carrier_names(pointee, names),
+        _ => {}
+    }
 }
 
 /// Close authenticated native arguments by erasing metadata absent from native callable storage.
