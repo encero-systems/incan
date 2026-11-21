@@ -3,7 +3,7 @@
 use incan_lang::lang::surface::dict_methods::DictMethodId;
 use incan_lang::lang::surface::set_methods::SetMethodId;
 use incan_mir_plan_native::{
-    Constant, Operand, Place, PlanType, Projection, RvalueKind, SourceSpan, UnaryOp, assign as plan_assign,
+    Carrier, Constant, Operand, Place, PlanType, Projection, RvalueKind, SourceSpan, UnaryOp, assign as plan_assign,
 };
 use incan_semantics_core::body_ir::{
     AggregateKind, ArgumentElement, DictEntry, OwnershipFact, Place as SourcePlace, PlaceElem, PlaceOperand, Rvalue,
@@ -16,7 +16,7 @@ use crate::collections::{
     dictionary_method_signature, extend_collection, finish_collection, insert_collection, is_collection,
     is_owned_collection, require_mutable_receiver, transfer_collection,
 };
-use crate::frame::{Builder, literal, place_type, read_place, temporary};
+use crate::frame::{Builder, drop_owned, literal, place_type, read_place, temporary};
 use crate::list_iteration::{frozen_dictionary_contains, list_root_place, set_constructor_source};
 use crate::list_methods::{
     argument_place, argument_value, call_destination, lower_list_helper, shared_receiver_place,
@@ -24,6 +24,7 @@ use crate::list_methods::{
 };
 use crate::list_values::{list_base_place, projected_element_read, value_operand};
 use crate::lists::{is_owned_list, list_element, require_list_shape};
+use crate::options::carrier_layout;
 use crate::options::replace_owned_destination;
 use crate::pending::untranslated;
 use crate::sequence_builtins::argument_type;
@@ -361,7 +362,7 @@ pub fn dictionary_method(
     let receiver = shared_receiver_place(builder, arguments, 0, span)?;
     let ty = place_type(&builder.locals, &receiver);
     if method == DictMethodId::Get && arguments.len() == 2 {
-        return Err(untranslated("options::carrier_layout"));
+        return optional_dictionary_get(builder, receiver, arguments, destination, span);
     }
     let (operation, parameters, result) = dictionary_method_signature(&ty, method, arguments.len() as i64)?;
     let mut operands = Vec::with_capacity(parameters.len());
@@ -460,5 +461,52 @@ pub fn iterable_call(
         destination,
         span,
     );
+    Ok(())
+}
+
+/// Copy a present value into the checked Option destination, replacing that destination's earlier value.
+fn optional_dictionary_get(
+    builder: &mut Builder,
+    receiver: Place,
+    arguments: &[ArgumentElement],
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let Some(place) = destination else {
+        return Err("unsupported Body IR discarded optional dictionary get".into());
+    };
+    let output = list_root_place(builder, place, span)?;
+    let ty = place_type(&builder.locals, &receiver);
+    let types = collection_arguments(&ty);
+    let result = builder.locals[output.local as usize].ty.clone();
+    let (_, declaration) = carrier_layout(builder, &result)?;
+    let carrier = "unsupported Body IR optional dictionary get carrier";
+    let Some(value_type) = types.get(1) else {
+        return Err(carrier.into());
+    };
+    if declaration.carrier != Carrier::Option || declaration.variants[1].fields != [value_type.clone()] {
+        return Err(carrier.into());
+    }
+    let key = argument_value(builder, arguments, 1, span)?;
+    let reference = borrow_collection(builder, &receiver, false, span)?;
+    let found = temporary(builder, result.clone(), span);
+    collection_call(
+        builder,
+        &ty,
+        "optional",
+        vec![collection_reference(&ty, false), types[0].clone()],
+        result,
+        vec![reference, key],
+        found.clone(),
+        span,
+    )?;
+    drop_owned(builder, output.local, span);
+    let local = output.local;
+    builder.emit(plan_assign(
+        output,
+        RvalueKind::Use(read_place(found, true, span)),
+        span,
+    ));
+    builder.owned.push(local);
     Ok(())
 }

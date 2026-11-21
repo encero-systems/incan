@@ -32,7 +32,7 @@ use crate::list_methods::{
 };
 use crate::lists::require_list_shape;
 use crate::numerics::{integer_carrier, numeric_carrier};
-use crate::operand_borrows::borrow_text_operand;
+use crate::operand_borrows::{borrow_text_operand, lower_text_helper};
 use crate::options::replace_owned_destination;
 use crate::pending::untranslated;
 use crate::resize::emit_resize;
@@ -180,8 +180,6 @@ fn lower_collection_builtin_method(
 }
 
 /// Lower one checker-selected runtime or frozen string operation.
-///
-/// A selected text helper is `operand_borrows::lower_text_helper`, which refuses by name until it is in Rust.
 fn lower_string_method(
     builder: &mut Builder,
     target: &MethodTarget,
@@ -202,7 +200,7 @@ fn lower_string_method(
     }
     let receiver_type = argument_type(builder, arguments, 0, span)?;
     match text_method(method, &receiver_type) {
-        Some(_) => Err(untranslated("operand_borrows::lower_text_helper")),
+        Some((name, result)) => lower_text_helper(builder, name, result, arguments, destination, span),
         None => refuse_remaining_builtin_method(target),
     }
 }

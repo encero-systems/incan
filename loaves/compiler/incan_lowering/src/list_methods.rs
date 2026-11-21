@@ -34,6 +34,8 @@ use crate::list_values::{
 };
 use crate::lists::{list_element, list_shape, require_list_shape};
 use crate::model_lists::prefix_place;
+use crate::operand_borrows::lower_text_helper;
+use crate::options::none_operand;
 use crate::pending::untranslated;
 use crate::sequence_builtins::argument_type;
 
@@ -538,7 +540,7 @@ pub fn lower_list_builtin(
         return frozen_bytes_length(builder, arguments, destination, span);
     }
     if matches!(ty, PlanType::String | PlanType::StringRef | PlanType::FrozenStr) {
-        return Err(untranslated("operand_borrows::lower_text_helper"));
+        return lower_text_helper(builder, "length_text", PlanType::Int, arguments, destination, span);
     }
     let receiver = shared_receiver_place(builder, arguments, 0, span)?;
     if is_collection(&place_type(&builder.locals, &receiver)) {
@@ -686,8 +688,8 @@ pub fn indexed_assignment(
 
 /// Write one checked list element whose list is reached after `start` structural steps (zero for a bare list).
 ///
-/// A `None` element takes `options::none_operand` and every other element `carrier_operands::element_plan_operand`;
-/// both refuse by name until they are in Rust.
+/// Every element other than `None` converts through `carrier_operands::element_plan_operand`, which refuses by name
+/// until it is in Rust.
 pub fn indexed_assignment_at(
     builder: &mut Builder,
     destination: &SourcePlace,
@@ -708,14 +710,29 @@ pub fn indexed_assignment_at(
         let index = list_index_operand(builder, destination, slot, span)?;
         receiver = borrow_element_mut(builder, receiver, index, span)?;
     }
-    require_list_shape(
+    let (leaf, depth) = require_list_shape(
         &place_type(&builder.locals, &receiver),
         "unsupported Body IR indexed assignment on non-list",
     )?;
-    if let Rvalue::Use(SourceOperand::Constant(SourceConstant::None)) = value {
-        return Err(untranslated("options::none_operand"));
-    }
-    Err(untranslated("carrier_operands::element_plan_operand"))
+    let element = list_element(&leaf, depth);
+    let argument = match value {
+        Rvalue::Use(SourceOperand::Constant(SourceConstant::None)) => none_operand(builder, &element, span)?,
+        _ => return Err(untranslated("carrier_operands::element_plan_operand")),
+    };
+    let subscript = list_index_operand(builder, destination, destination.projection.len() - 1, span)?;
+    let reference = list_borrow(builder, receiver, true, span)?;
+    let unit = temporary(builder, PlanType::Unit, span);
+    list_call(
+        builder,
+        "set_list",
+        element.clone(),
+        vec![PlanType::ListMutRef(leaf, depth), PlanType::Int, element],
+        PlanType::Unit,
+        vec![reference, subscript, argument],
+        unit,
+        span,
+    );
+    Ok(())
 }
 
 /// Materialize the checked single value before borrowing its indexing destination mutably.

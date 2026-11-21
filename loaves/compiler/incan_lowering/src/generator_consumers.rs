@@ -2,13 +2,13 @@
 //! generator.
 
 use incan_lang::lang::surface::iterator_methods::IteratorMethodId;
-use incan_mir_plan_native::{CalleeKind, ExternalFunction, ListLeaf, Operand, Place, PlanType, SourceSpan};
+use incan_mir_plan_native::{CalleeKind, Carrier, ExternalFunction, ListLeaf, Operand, Place, PlanType, SourceSpan};
 
 use crate::calls::instantiated_external_call;
 use crate::frame::{Builder, external_call, terminate_call, value_type};
 use crate::generator_adapters::adapter_callable;
 use crate::generators::{generator_element, generator_runtime_call, generator_shape};
-use crate::pending::untranslated;
+use crate::options::carrier_layout;
 
 /// Report whether a checker-selected iterator operation drains its receiver into one value.
 pub fn is_generator_consumer(method: IteratorMethodId) -> bool {
@@ -146,8 +146,6 @@ fn text_any(
 }
 
 /// Drain an integer generator; each function value takes its items by value, as legacy's callable ABI does.
-///
-/// `find` reads its Option carrier through `options::carrier_layout`, which refuses by name until it is in Rust.
 fn int_consumer(
     builder: &mut Builder,
     method: IteratorMethodId,
@@ -186,7 +184,21 @@ fn int_consumer(
     let callable = adapter_callable(builder, function, signature.clone(), span)?;
     let parameters = vec![generator, PlanType::FunctionPointer(signature)];
     if method == IteratorMethodId::Find {
-        return Err(untranslated("options::carrier_layout"));
+        let result = builder.locals[output.local as usize].ty.clone();
+        let (_, declaration) = carrier_layout(builder, &result)?;
+        if declaration.carrier != Carrier::Option || declaration.variants[1].fields != [PlanType::Int] {
+            return Err("unsupported Body IR generator find carrier".into());
+        }
+        let operands = vec![source, callable];
+        return consume(
+            builder,
+            "find_int_generator",
+            parameters,
+            result,
+            operands,
+            output,
+            span,
+        );
     }
     let name = int_consumer_name(method)?;
     consume(builder, name, parameters, returns, vec![source, callable], output, span)
