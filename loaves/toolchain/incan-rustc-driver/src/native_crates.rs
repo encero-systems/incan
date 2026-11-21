@@ -117,7 +117,9 @@ impl<'ast> Visitor<'ast> for DeclarationRoots {
     }
 }
 
-/// Select exact artifacts needed by a checked plan from direct inputs and its reached Loaves' native closures.
+/// Select exact artifacts needed by a checked plan, and by the library's root re-exports (`facades`), from direct inputs
+/// and its reached Loaves' native closures. A root re-export of a Rust item names that item's crate, which the unit
+/// declares as it declares a crate its bodies call, so it is linked the same way.
 /// Every offered binding of a required root must name the same complete artifact. Compiled providers and checked
 /// source interfaces both contribute their exact native dependencies, including dependencies used by governed source
 /// templates. A direct input cannot replace a provider's native type identity: its exported fields and signatures
@@ -129,6 +131,7 @@ impl<'ast> Visitor<'ast> for DeclarationRoots {
 /// Each closure's anchored references resolve against the current home's `anchors`.
 pub(crate) fn link_externs(
     plan: &crate::plan::Plan,
+    facades: &[crate::library_exports::LibraryFacade],
     direct: &[(String, PathBuf)],
     loaves: &[UnitLoaf],
     reached: &BTreeSet<String>,
@@ -136,6 +139,7 @@ pub(crate) fn link_externs(
 ) -> Result<Vec<(String, PathBuf)>, String> {
     let roots = native_roots(plan)
         .into_iter()
+        .chain(facades.iter().filter_map(crate::library_exports::LibraryFacade::native_root))
         .filter(|root| !matches!(*root, "" | "std" | "core" | "alloc" | "crate"))
         .collect::<BTreeSet<_>>();
     let closures = loaves
