@@ -30,7 +30,15 @@ from lock_format import (
     read_lock,
     write_lock,
 )
-from project_lock import ensure_project_lock, local_interop, selected_mode, toolchain_entry, untested_bounds
+from project_lock import (
+    LockCommand,
+    ensure_project_lock,
+    local_interop,
+    lock_project,
+    selected_mode,
+    toolchain_entry,
+    untested_bounds,
+)
 from registry_units import RegistryUnit, RegistryUnits
 from rust_activation import DependencyDomain
 from rust_registry import resolve_registry
@@ -291,7 +299,7 @@ pub def test_a_settled_lock_is_not_resolved_again_until_its_inputs_change() -> R
     A root lock reconciled to no change is not resolved again by the next command while it and its manifest keep
     their bytes; an edited manifest is resolved again, even one that keeps its size and modification time.
 
-    1. The first command writes the lock; the second reconciles it to no change, with no wait for the files to settle.
+    1. `oven lock` writes the lock; the next command reconciles it to no change, with no wait for the files to settle.
     2. The next command parses no manifest.
     3. A rewritten manifest is parsed and resolved again.
     4. So is one rewritten in place to bytes of the same size, with its modification time put back.
@@ -305,30 +313,30 @@ pub def test_a_settled_lock_is_not_resolved_again_until_its_inputs_change() -> R
     write(root.joinpath("loaf.toml"), "[project]\nname = \"app\"\nversion = \"0.1.0\"\n")?
     write(root.joinpath("src/main.incn"), "def main() -> None:\n    println(\"app\")\n")?
     physical = root.resolve().map_err((error) => error.message())?.0 + "/"
-    # 1. The second command's no-change reconciliation is retained at once: it is keyed by bytes, not by time.
-    ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), false)?
-    ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), false)?
+    # 1. The command's no-change reconciliation is retained at once: it is keyed by bytes, not by time.
+    _ = lock_project(LockCommand(path=root.0))?
+    _ = ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), false)?
     # 2. Nothing the lock is resolved from changed.
     count_work(physical)
-    ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), false)?
+    _ = ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), false)?
     settled = finish_counting()
     assert settled.parses == 0, f"an unchanged lock was resolved again: {settled.parses} manifest parses"
     # 3. An edit to the manifest is resolved again.
     write(root.joinpath("loaf.toml"), "[project]\nname = \"app\"\nversion = \"0.1.0\"\ndescription = \"edited\"\n")?
     count_work(physical)
-    ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), false)?
+    _ = ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), false)?
     edited = finish_counting()
     assert edited.parses > 0, "an edited manifest was not resolved again"
     # 4. The same size and modification time do not hide an edit.
     count_work(physical)
-    ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), false)?
+    _ = ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), false)?
     assert finish_counting().parses == 0, "the edited manifest's no-change reconciliation was not retained"
     rewrite_in_place(
         root.joinpath("loaf.toml"),
         "[project]\nname = \"app\"\nversion = \"0.1.0\"\ndescription = \"EDITED\"\n",
     )?
     count_work(physical)
-    ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), false)?
+    _ = ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), false)?
     rewritten = finish_counting()
     assert rewritten.parses > 0, "a manifest rewritten to the same size and modification time was not resolved again"
     return Ok(None)
@@ -344,7 +352,7 @@ pub def test_a_changed_static_archive_is_refused_by_a_locked_build() -> Result[N
     write(root.joinpath("src/main.incn"), "def main() -> None:\n    println(\"app\")\n")?
     archive = root.joinpath("libbridge.a")
     write(archive, "first archive generation")?
-    ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), false)?
+    _ = lock_project(LockCommand(path=root.0))?
     write(archive, "second archive generation")?
     match ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), true):
         Ok(_) => return Err("locked mode accepted a changed static archive")

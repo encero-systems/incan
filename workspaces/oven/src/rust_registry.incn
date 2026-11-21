@@ -16,11 +16,11 @@ from std.json import JsonValue
 from bakery import bakery, claim
 from files import read_json
 from json_fields import field, required_items, required_text, strings
-from intake import ManifestReader
+from intake import ManifestReader, resolved_lock_text
 from home_paths import TOOLCHAIN
-from lock_format import lock_path, read_lock, recorded_bindings
+from lock_format import OvenLock, lock_path, read_lock, read_lock_text, recorded_bindings
 from loaf_local_graph import LocalFacet
-from observation import Observation, observe
+from observation import Observation, observe, trace
 from pub::incan_platform.trace import Operation
 from jec import begin, record as record_work
 from registry_units import RegistryUnit, RegistrySelection, RegistryDemand, RegistryUnits
@@ -120,6 +120,22 @@ def catalog_registry(units: list[RegistryUnit], path: Path) -> Result[RegistryUn
     )
 
 
+def selected_project_lock(path: Path, reader: ManifestReader) -> Result[Option[OvenLock], str]:
+    """
+    The closure this preparation resolved in memory for the root, keyed by the root's physical path as lock
+    reconciliation names it, else the root's lock file, else nothing.
+    """
+    match path.parent().resolve():
+        Ok(root) =>
+            match resolved_lock_text(reader, lock_path(root).0):
+                Some(text) => return Ok(Some(read_lock_text(text, path.0)?))
+                None => pass
+        Err(_) => pass
+    if not path.is_file():
+        return Ok(None)
+    return Ok(Some(read_lock(path)?))
+
+
 pub def project_registry(
     registry: RegistryUnits,
     project: str,
@@ -127,19 +143,19 @@ pub def project_registry(
     use_project_lock: bool = true,
 ) -> Result[RegistryUnits, str]:
     """Apply the root project's validated oven.lock as the exact producer constraint for registry selection."""
-    _ = reader
     if not use_project_lock or project == "" or not Path(project).joinpath("loaf.toml").is_file():
         return Ok(registry)
     path = lock_path(Path(project))
-    if not path.is_file():
-        return Ok(registry)
-    lock = read_lock(path)?
+    # A missing or stale lock file is never rewritten here: a closure this process resolved in memory selects instead,
+    # and a lock another toolchain wrote pins nothing.
+    lock = match selected_project_lock(path, reader)?:
+        Some(value) => value
+        None => return Ok(registry)
     toolchain = load_toolchain()?
     identity = compiler_fingerprint(toolchain)?
     if lock.toolchain.version != TOOLCHAIN or lock.toolchain.identity != identity:
-        return Err(
-            f"{path.0}: toolchain {lock.toolchain.version} ({lock.toolchain.identity}) differs from {TOOLCHAIN} ({identity}); run `oven lock`",
-        )
+        trace(f"lock stale {path.0}: toolchain {lock.toolchain.version} ({lock.toolchain.identity}), not {TOOLCHAIN} ({identity})")
+        return Ok(registry)
     mut selected = registry
     selected.recorded_bindings = recorded_bindings(lock, registry.units)?
     selected.installation_bindings = []
