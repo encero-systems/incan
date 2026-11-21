@@ -75,7 +75,7 @@ static RESIDENT: Mutex<Option<ResidentBodies>> = Mutex::new(None);
 #[derive(Debug, Default)]
 pub(super) struct NamespacePages {
     references: Vec<NamespaceReference>,
-    reader: Option<Mutex<incan_worker_host::NamespaceFrameReader>>,
+    reader: Option<Mutex<incan_worker_host_native::NamespaceFrameReader>>,
     scope: Option<ProgramScope>,
     checked: Mutex<HashMap<String, SelectedBody>>,
 }
@@ -102,7 +102,7 @@ impl NamespacePages {
         let bakery = bakery
             .and_then(Path::to_str)
             .ok_or("namespace frame references require a UTF-8 Bakery anchor")?;
-        let reader = Some(Mutex::new(incan_worker_host::namespace_frame_reader(bakery.to_owned())));
+        let reader = Some(Mutex::new(incan_worker_host_native::namespace_frame_reader(bakery)));
         let bytes = std::fs::read(path).map_err(|error| format!("cannot read namespace frame references: {error}"))?;
         let mut references = internal_models::decode_namespace_references(&bytes)?;
         references.sort_unstable_by(|left, right| left.key.identity.cmp(&right.key.identity));
@@ -117,7 +117,7 @@ impl NamespacePages {
 
     fn with_selection(
         references: Vec<NamespaceReference>,
-        reader: Option<Mutex<incan_worker_host::NamespaceFrameReader>>,
+        reader: Option<Mutex<incan_worker_host_native::NamespaceFrameReader>>,
         bakery: Option<&Path>,
         project: &Path,
         retain_bodies: bool,
@@ -222,7 +222,8 @@ impl NamespacePages {
             let mut reader = reader
                 .lock()
                 .map_err(|_| RecordAdapterFault::InvalidField("Bakery namespace reader is poisoned".into()))?;
-            incan_worker_host::read_namespace_frame(&mut reader, reference).map_err(RecordAdapterFault::InvalidField)?
+            incan_worker_host_native::read_namespace_frame(&mut reader, &frame_reference(reference))
+                .map_err(RecordAdapterFault::InvalidField)?
         };
         let record = {
             let _row = tracing::trace_span!(
@@ -467,4 +468,25 @@ fn admit_namespace(
         interface_digest,
         wire_bytes,
     )))
+}
+
+/// The worker host's frame reference for one admitted namespace reference: the same fields in the Rust record model,
+/// until the record models are one Rust type.
+fn frame_reference(reference: &NamespaceReference) -> internal_models_native::namespace_references::NamespaceReference {
+    let key = &reference.key;
+    internal_models_native::namespace_references::NamespaceReference {
+        key: internal_models_native::records::RecordKey {
+            family: key.family.clone(),
+            identity: key.identity.clone(),
+            identity_profile: key.identity_profile.clone(),
+            origin: key.origin.clone(),
+            facet: key.facet.clone(),
+            context: key.context.clone(),
+        },
+        segment: reference.segment.clone(),
+        offset: reference.offset,
+        length: reference.length,
+        frame_digest: reference.frame_digest.clone(),
+        value_digest: reference.value_digest.clone(),
+    }
 }
