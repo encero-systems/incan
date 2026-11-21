@@ -8,6 +8,10 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use incan_mir_plan_native::{
+    CalleeKind, Function, NominalReference, Plan, TerminatorKind, decode_plan_function_record, decode_product_parts,
+    product_identities,
+};
 use incan_semantics_core::body_ir::{
     Body, BodyIrModule, NativeAttribute, NativeUnionDeclaration, RuntimeCallableBinding, StaticInitializer,
     TraitDefaultInstantiation, TraitFieldImplementation, TraitTypeArgument,
@@ -252,4 +256,132 @@ impl Corpus {
         }
         Ok(())
     }
+}
+
+/// The prefix of a module static initializer's planned name.
+const MODULE_INITIALIZER: &str = "__incan_init_module_statics_";
+
+/// Rename a reference plan's module static initializers to the names a produced plan gives the same modules.
+///
+/// The reference named a module's initializer by its first static slot, which another module's static can shift; this
+/// lowering names it by the module's identity. Each reference name is matched to the produced initializer of the same
+/// slot, read from the slot that initializer checks first, so a comparison of the renamed plan sees every other
+/// difference. Returns the renamed plan's bytes and how many names changed, or nothing when no name changes.
+pub fn renamed_initializers(expected: &[u8], produced: &[u8]) -> Option<(Vec<u8>, usize)> {
+    let produced: Plan = postcard::from_bytes(produced).ok()?;
+    let names = initializer_names(&produced);
+    if names.is_empty() {
+        return None;
+    }
+    let mut plan: Plan = postcard::from_bytes(expected).ok()?;
+    let mut renamed = 0;
+    for function in &mut plan.functions {
+        if let Some(name) = slot_name(&function.name, &names) {
+            function.name = name;
+            renamed += 1;
+        }
+        for block in &mut function.blocks {
+            if let TerminatorKind::Call(callee, ..) = &mut block.terminator.kind
+                && let CalleeKind::Planned(target) = &mut callee.kind
+                && let Some(name) = slot_name(target, &names)
+            {
+                *target = name;
+                renamed += 1;
+            }
+        }
+    }
+    if renamed == 0 {
+        return None;
+    }
+    Some((postcard::to_allocvec(&plan).ok()?, renamed))
+}
+
+/// The produced name for a reference initializer name `__incan_init_module_statics_<slot>`.
+fn slot_name(name: &str, names: &BTreeMap<i64, String>) -> Option<String> {
+    let slot: i64 = name.strip_prefix(MODULE_INITIALIZER)?.parse().ok()?;
+    names.get(&slot).cloned()
+}
+
+/// Each produced module initializer by the slot its completion probe checks.
+fn initializer_names(plan: &Plan) -> BTreeMap<i64, String> {
+    let mut names = BTreeMap::new();
+    for function in &plan.functions {
+        if !function.name.starts_with(MODULE_INITIALIZER) {
+            continue;
+        }
+        for block in &function.blocks {
+            if let TerminatorKind::Call(callee, ..) = &block.terminator.kind
+                && let CalleeKind::ModuleInitialized(slot) = &callee.kind
+            {
+                names.insert(*slot, function.name.clone());
+            }
+        }
+    }
+    names
+}
+
+/// Each produced module initializer's name by the slot it initializes, read from a produced plan's bytes.
+pub fn produced_initializers(produced: &[u8]) -> BTreeMap<i64, String> {
+    match postcard::from_bytes::<Plan>(produced) {
+        Ok(plan) => initializer_names(&plan),
+        Err(_) => BTreeMap::new(),
+    }
+}
+
+/// Rename every reference initializer a function's call terminators name.
+fn rename_calls(function: &mut Function, names: &BTreeMap<i64, String>) {
+    for block in &mut function.blocks {
+        if let TerminatorKind::Call(callee, ..) = &mut block.terminator.kind
+            && let CalleeKind::Planned(target) = &mut callee.kind
+            && let Some(name) = slot_name(target, names)
+        {
+            *target = name;
+        }
+    }
+}
+
+/// Whether two keyed product records differ only in the module initializer names their functions call.
+///
+/// Both carry the same inputs, generic requests and named declarations. Their payloads decode, at the same placeholder
+/// declaration positions, to a function, runtime demand and helper frames that are equal once the reference's
+/// slot-named initializers take the produced names.
+pub fn product_differs_only_by_initializers(expected: &[u8], produced: &[u8], names: &BTreeMap<i64, String>) -> bool {
+    let (Ok(want), Ok(have)) = (
+        decode_plan_function_record(expected),
+        decode_plan_function_record(produced),
+    ) else {
+        return false;
+    };
+    if want.inputs != have.inputs || want.requests != have.requests {
+        return false;
+    }
+    let (Ok(identities), Ok(produced_identities)) =
+        (product_identities(&want.function), product_identities(&have.function))
+    else {
+        return false;
+    };
+    if identities != produced_identities {
+        return false;
+    }
+    let references: Vec<NominalReference> = identities
+        .iter()
+        .enumerate()
+        .map(|(index, nominal)| NominalReference {
+            kind: nominal.kind.clone(),
+            index: index as i64,
+            name: String::new(),
+        })
+        .collect();
+    let (Ok(reference), Ok(current)) = (
+        decode_product_parts(&want.function, &references),
+        decode_product_parts(&have.function, &references),
+    ) else {
+        return false;
+    };
+    let (mut function, runtime, mut frames, _) = reference;
+    rename_calls(&mut function, names);
+    for frame in &mut frames {
+        rename_calls(frame, names);
+    }
+    function == current.0 && runtime == current.1 && frames == current.2
 }

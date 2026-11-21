@@ -12,7 +12,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use incan_lowering::corpus::{Case, Corpus, Outcome, Requirement, Step};
+use incan_lowering::corpus::{
+    Case, Corpus, Outcome, Requirement, Step, produced_initializers, product_differs_only_by_initializers,
+    renamed_initializers,
+};
 use incan_lowering::reuse_proof::{FrameOutcomes, FrameTrace, changed_bodies, check_records_keys};
 use incan_lowering::{
     Plan, RefusalPlanning, RuntimeRequirement, SourceInputs, UnitContinuation, UnitPlanning,
@@ -44,6 +47,9 @@ struct Tally {
     products_identical: usize,
     reports: usize,
     reports_identical: usize,
+    renamed_plans: usize,
+    products_renamed: usize,
+    renamed_names: usize,
     publications: usize,
     publications_identical: usize,
     publication_files: usize,
@@ -110,15 +116,29 @@ fn compare_functions(expected: &[u8], actual: &[u8], tally: &mut Tally) {
 
 /// Count the captured files of a directory and how many exist here with identical bytes.
 fn compare_directory(corpus: &Corpus, expected: &[(String, String)], directory: &Path) -> (usize, usize) {
+    let (count, same, _) = differing_files(corpus, expected, directory);
+    (count, same)
+}
+
+/// Count the captured files of a directory and how many exist here with identical bytes, keeping each pair that
+/// exists on both sides but differs.
+fn differing_files(
+    corpus: &Corpus,
+    expected: &[(String, String)],
+    directory: &Path,
+) -> (usize, usize, Vec<(String, Vec<u8>, Vec<u8>)>) {
     let mut same = 0;
+    let mut differing = Vec::new();
     for (name, digest) in expected {
         if let (Ok(want), Ok(have)) = (corpus.blob(digest), std::fs::read(directory.join(name))) {
             if want == have {
                 same += 1;
+            } else {
+                differing.push((name.clone(), want, have));
             }
         }
     }
-    (expected.len(), same)
+    (expected.len(), same, differing)
 }
 
 /// A case's private product and report directories. As in the driver's request, every call of a case shares them: a
@@ -239,15 +259,32 @@ fn replay_case(
     let mut continuation = None;
     let directories = case_directories(scratch)?;
     let mut published: Option<(Vec<u8>, Vec<u8>)> = None;
+    let mut renamed_products: Vec<(String, Vec<u8>, Vec<u8>)> = Vec::new();
+    let mut last_plan: Option<Vec<u8>> = None;
     for (index, step) in case.steps.iter().enumerate() {
         tally.steps += 1;
         let (actual, unions) = replay_step(corpus, step, &directories, &mut continuation)?;
         if let Some(cursor) = trace.as_mut() {
             report_reuse(corpus, name, index, step, &cursor.take(), evidence.base.as_ref())?;
         }
-        let identical = actual == step.outcome && unions == step.unions;
+        // The reference named module static initializers by slot; this lowering names them by module identity.
+        let expected_outcome = match (&step.outcome, &actual) {
+            (Outcome::Complete(Some(expected)), Outcome::Complete(Some(produced))) => {
+                match renamed_initializers(expected, produced) {
+                    Some((renamed, count)) => {
+                        tally.renamed_plans += 1;
+                        tally.renamed_names += count;
+                        Outcome::Complete(Some(renamed))
+                    }
+                    None => step.outcome.clone(),
+                }
+            }
+            _ => step.outcome.clone(),
+        };
+        let identical = actual == expected_outcome && unions == step.unions;
         if step.scalar_products.is_some() {
-            let (expected, same) = compare_directory(corpus, &step.products_after, &directories.products);
+            let (expected, same, differing) = differing_files(corpus, &step.products_after, &directories.products);
+            renamed_products.extend(differing);
             tally.products += expected;
             tally.products_identical += same;
         }
@@ -294,12 +331,15 @@ fn replay_case(
                 short(&actual)
             ));
         }
-        if let Outcome::Complete(Some(expected)) = &step.outcome {
+        if let (Outcome::Complete(Some(expected)), Outcome::Complete(Some(reference))) =
+            (&expected_outcome, &step.outcome)
+        {
             tally.plans += 1;
             match &actual {
                 Outcome::Complete(Some(produced)) => {
+                    last_plan = Some(produced.clone());
                     if step.record_report.is_some() {
-                        published = Some((expected.clone(), produced.clone()));
+                        published = Some((reference.clone(), produced.clone()));
                     }
                     if produced == expected {
                         tally.plans_identical += 1;
@@ -314,6 +354,17 @@ fn replay_case(
     }
     if let Some((expected, produced)) = published {
         compare_publication(corpus, name, &expected, &produced, &directories, tally)?;
+    }
+    // A product the reference wrote with slot-named module initializers must differ in those names alone.
+    let names = last_plan.as_deref().map(produced_initializers).unwrap_or_default();
+    for (file, expected, produced) in renamed_products {
+        if !names.is_empty() && product_differs_only_by_initializers(&expected, &produced, &names) {
+            tally.products_renamed += 1;
+        } else {
+            tally
+                .mismatches
+                .push(format!("{name}: product {file} differs beyond the initializer rename"));
+        }
     }
     Ok(())
 }
@@ -663,6 +714,12 @@ fn print_tally(tally: &Tally, show: usize) {
         tally.publication_files_identical,
         tally.publication_files
     );
+    if tally.renamed_plans > 0 || tally.products_renamed > 0 {
+        println!(
+            "reference module initializers renamed by module identity: {} names in {} plans; {} products differ only by those names",
+            tally.renamed_names, tally.renamed_plans, tally.products_renamed
+        );
+    }
 }
 
 fn main() {
@@ -744,7 +801,7 @@ fn main() {
     let _ = std::fs::remove_dir_all(&scratch);
     print_tally(&tally, show);
     let complete = tally.mismatches.is_empty()
-        && tally.products_identical == tally.products
+        && tally.products_identical + tally.products_renamed == tally.products
         && tally.reports_identical == tally.reports
         && tally.publications_identical == tally.publications;
     std::process::exit(if complete { 0 } else { 1 });
