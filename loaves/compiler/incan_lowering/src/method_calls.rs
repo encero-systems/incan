@@ -30,9 +30,9 @@ use crate::iterator_methods::standard_protocol as standard_iterator_protocol;
 use crate::layout_types::native_source_type;
 use crate::library_methods::{lower_library_method, lower_standard_slot};
 use crate::list_methods::materialized_receiver;
+use crate::method_refusals::owner_method_refusal;
 use crate::model_values::is_json_serialize_method;
 use crate::models::model_place;
-use crate::pending::untranslated;
 use crate::reflection::lower_reflection;
 use crate::result_carriers::lower_carrier_method;
 use crate::result_combinators::{lower_result_combinator, result_combinator};
@@ -630,8 +630,15 @@ pub fn owner_method_index(
     if let Some(index) = selected_index {
         return Ok(index);
     }
-    let _ = identity;
-    Err(untranslated("traits::owner_method_index refusal text"))
+    Err(owner_method_refusal(
+        module,
+        builder,
+        target,
+        owner,
+        &identity,
+        &selected_identity,
+        &candidates,
+    ))
 }
 
 /// Match the declared receiver frame against the caller's checked concrete model or enum carrier.

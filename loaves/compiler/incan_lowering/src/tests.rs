@@ -14,6 +14,7 @@ mod indexed_field_reads;
 mod input_access;
 mod instance_products;
 mod instance_requests;
+mod method_refusals;
 mod model_types;
 mod record_plan_outputs;
 mod record_positions;
