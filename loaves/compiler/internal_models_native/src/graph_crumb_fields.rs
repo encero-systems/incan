@@ -80,6 +80,37 @@ pub fn tuple_items(value: &Value, expected: usize) -> Result<&Vec<Value>, String
     }
 }
 
+/// By-value form of [`text`] for Incan callers: a field read from a list element passes as it is held.
+pub fn text_value(value: Value) -> Result<String, String> {
+    match value {
+        Value::Text(item) => Ok(item),
+        other => text(&other),
+    }
+}
+
+/// By-value form of [`number`] for Incan callers.
+pub fn number_value(value: Value) -> Result<i64, String> {
+    number(&value)
+}
+
+/// By-value form of [`items`] for Incan callers; the elements move out of the value.
+pub fn items_value(value: Value) -> Result<Vec<Value>, String> {
+    match value {
+        Value::List(elements) => Ok(elements),
+        other => items(&other).cloned(),
+    }
+}
+
+/// By-value form of [`tuple_items`] for Incan callers, whose arity is an Incan `int`.
+pub fn tuple_items_value(value: Value, expected: i64) -> Result<Vec<Value>, String> {
+    let expected = usize::try_from(expected).map_or(usize::MAX, |count| count);
+    tuple_items(&value, expected)?;
+    match value {
+        Value::Tuple(elements) => Ok(elements),
+        other => tuple_items(&other, expected).cloned(),
+    }
+}
+
 /// Preserve each identity component independently, including the optional context.
 pub fn key_value(key: &RecordKey) -> Value {
     Value::Tuple(vec![
