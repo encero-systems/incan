@@ -12,6 +12,7 @@ use incan_semantics_core::body_ir::{BodyIrModule, NativeUnionDeclaration};
 
 pub mod corpus;
 
+mod array_views;
 mod assignments;
 mod async_;
 mod attributes;
@@ -46,6 +47,8 @@ mod fallible_factories;
 mod fallible_methods;
 mod frame;
 mod frame_instances;
+mod frozen_equality;
+mod frozen_plan;
 mod function_frames;
 mod generators;
 mod generic_enums;
@@ -71,6 +74,7 @@ mod nominal_instances;
 mod numerics;
 mod operand_borrows;
 mod options;
+mod owned_lists;
 mod pair_generators;
 mod parallel_ranges;
 mod pending;

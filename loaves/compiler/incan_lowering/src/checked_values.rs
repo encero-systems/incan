@@ -14,6 +14,7 @@ use crate::carrier_operands::boundary_operand;
 use crate::closures::callable_copy_type;
 use crate::element_places::is_element_place;
 use crate::frame::{Builder, literal, place_type, read_place, temporary, track_rvalue_moves};
+use crate::frozen_plan::{frozen_collection_literal, frozen_literal, frozen_observation_type};
 use crate::layout_types::{native_source_type, shared_receiver_type};
 use crate::list_values::element_read;
 use crate::lists::{is_exclusive_borrow, is_list};
@@ -116,11 +117,11 @@ pub fn scalar_operand(builder: &mut Builder, value: &SourceOperand, span: &Sourc
             if is_tuple_type(&layout) {
                 return retained_tuple_constant(builder, layout, elements, span);
             }
-            Err(untranslated("frozen_plan::frozen_collection_literal"))
+            frozen_collection_literal(builder, constant, span)
         }
         SourceConstant::NumericNewtype(_) => Err(untranslated("newtype_constants::numeric_newtype_literal")),
         SourceConstant::Str(text) => Ok(read_place(owned_literal(builder, text, span), true, span)),
-        SourceConstant::FrozenStr(_) => Err(untranslated("frozen_plan::frozen_literal")),
+        SourceConstant::FrozenStr(_) => frozen_literal(builder, constant, span),
         SourceConstant::TypedNumeric(value) if is_decimal_literal(value) => {
             Err(untranslated("decimal_plan::decimal_literal"))
         }
@@ -506,18 +507,6 @@ fn reads_through_reference(place: &Place) -> bool {
     matches!(
         place.projection,
         Projection::Deref(_) | Projection::DerefField(..) | Projection::DerefFields(_)
-    )
-}
-
-/// Recognize immutable static carriers whose read-only wrapper observations own no allocation.
-pub fn frozen_observation_type(ty: &PlanType) -> bool {
-    matches!(
-        ty,
-        PlanType::StaticText
-            | PlanType::StaticBytes
-            | PlanType::FrozenStr
-            | PlanType::FrozenBytes
-            | PlanType::FrozenCollection(..)
     )
 }
 

@@ -11,6 +11,7 @@ use crate::compiler_record_adapters::semantic_key_matches_native;
 use crate::frame::{
     Builder, dereferenced_place, forget_moved_arguments, read_place, temporary, track_rvalue_moves, value_type,
 };
+use crate::frozen_plan::frozen_bytes_literal;
 use crate::generators::generator_shape;
 use crate::layout_types::native_alias_boundary;
 use crate::lists::is_list;
@@ -32,9 +33,9 @@ pub fn boundary_operand(
         return frozen_operand(builder, value, span);
     }
     if *target == PlanType::FrozenBytes
-        && let SourceOperand::Constant(_) = value
+        && let SourceOperand::Constant(constant) = value
     {
-        return Err(untranslated("frozen_plan::frozen_bytes_literal"));
+        return frozen_bytes_literal(builder, constant, span);
     }
     let operand = typed_carrier_operand(builder, value, target, span)?;
     if generator_shape(&value_type(builder, &operand)?).is_some() && is_list(target) {
