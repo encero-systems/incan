@@ -12,6 +12,7 @@ mod comparison;
 mod equality;
 mod metadata;
 mod native_defaults;
+mod native_payloads;
 mod read_patterns;
 mod seed;
 mod shared_loans;
