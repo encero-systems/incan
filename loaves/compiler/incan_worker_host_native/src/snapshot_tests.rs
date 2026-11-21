@@ -41,7 +41,7 @@ fn store_views_keep_their_json_portable_and_crumb_bytes() -> Result<(), String> 
     };
     assert_eq!(
         encode_store_view(&view)?,
-        "{\"home_view\":\"home \\"v\\" é\",\"locator\":\"/b/bakery\",\"schema\":\"incan.store-view/1\",\"store_id\":\"store-1\"}"
+        r#"{"home_view":"home \"v\" é","locator":"/b/bakery","schema":"incan.store-view/1","store_id":"store-1"}"#
     );
     assert_eq!(hex(&portable_store_view(&view)?), PORTABLE_VIEW);
     assert_eq!(hex(&encode_store_binding(&view)?), STORE_BINDING);
@@ -52,7 +52,7 @@ fn store_views_keep_their_json_portable_and_crumb_bytes() -> Result<(), String> 
 fn snapshot_descriptors_keep_their_json_crumb_and_digest() -> Result<(), String> {
     assert_eq!(
         encode_snapshot_handle(&handle(3, &["incan.a", "incan.b\tsub"]))?,
-        "{\"allowed_roots\":[\"incan.a\",\"incan.b\tsub\"],\"format_profile\":\"incan.compiler-records/1\",\"generation\":3,\"lease\":\"lease-\\"x\\"\",\"manifest\":\"manifest-é\",\"schema\":\"incan.compiler-snapshot/1\",\"store_id\":\"store-1\",\"view\":\"home\",\"view_revision\":\"rev-2\"}"
+        r#"{"allowed_roots":["incan.a","incan.b\tsub"],"format_profile":"incan.compiler-records/1","generation":3,"lease":"lease-\"x\"","manifest":"manifest-é","schema":"incan.compiler-snapshot/1","store_id":"store-1","view":"home","view_revision":"rev-2"}"#
     );
     let canonical = handle(3, &["incan.a", "incan.b"]);
     let record = encode_snapshot_record(&canonical)?;
