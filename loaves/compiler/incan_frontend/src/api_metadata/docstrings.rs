@@ -569,7 +569,12 @@ pub(super) fn type_ref_doc_name(ty: &TypeRef) -> String {
         }
         TypeRef::TypeParam { name } => name.clone(),
         TypeRef::SelfType => "Self".to_string(),
-        TypeRef::Ref { inner } => format!("&{}", type_ref_doc_name(inner)),
+        // RFC 164: a native reference reads as `Borrowed[T]` in every tool.
+        TypeRef::Ref { inner } => format!(
+            "{}[{}]",
+            incan_lang::lang::types::ownership::OwnershipMode::Borrowed.as_str(),
+            type_ref_doc_name(inner)
+        ),
         TypeRef::MutParam { inner } => format!("mut {}", type_ref_doc_name(inner)),
         TypeRef::Ownership { mode, inner } => format!("{}[{}]", mode.as_str(), type_ref_doc_name(inner)),
         TypeRef::RustPath { path } => path.clone(),
