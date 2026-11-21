@@ -3,13 +3,14 @@
 use std::collections::BTreeMap;
 
 use incan_semantics_core::body_ir::{Body, BodyIrModule};
+use incan_semantics_core::semantic_digest::semantic_digest;
 use incan_semantics_core::{CompilerNodeId, SymbolNamespace};
 use sha2::{Digest, Sha256};
 
 use crate::async_::evaluator_name;
+use crate::body_positions::body_position_map;
 use crate::checked_values::location;
-use crate::pending::untranslated;
-use crate::scalar_store::scalar_inputs;
+use crate::scalar_store::{record_scalar_inputs, scalar_inputs};
 
 /// A body's product key inputs and, for a records key, its node position map.
 pub type ProductInputs = (Vec<String>, Vec<(i64, i64)>);
@@ -24,9 +25,9 @@ pub fn producer_generation(products: Option<&str>) -> Option<String> {
 
 /// Retain exact checked input only for frames whose complete read witnesses the source producer proved.
 ///
-/// A records key is the checked meaning; the body's node positions return beside it as the product's position map,
-/// and that records route refuses by name until `body_positions` is in Rust. A body no consumer checks, such as a
-/// toolchain runtime generic, keys by `unchecked` in place of a witness. `Ok(None)` is a body with no product.
+/// A records key is the checked meaning; the body's node positions return beside it as the product's position map. A
+/// body no consumer checks, such as a toolchain runtime generic, keys by `unchecked` in place of a witness. `Ok(None)`
+/// is a body with no product.
 #[allow(clippy::too_many_arguments)]
 pub fn ordinary_product_inputs(
     context: &BodyIrModule,
@@ -50,15 +51,22 @@ pub fn ordinary_product_inputs(
             None => return Ok(None),
         },
     };
-    if records {
-        // A records key needs the producer profile; without one the body has no product, as in the reference.
-        if generation.is_none() {
-            return Ok(None);
-        }
-        return Err(untranslated("body_positions::body_position_map"));
-    }
     let span = location(&body.span, source, file);
     let name = evaluator_name(context, body);
+    if records {
+        // A records key is the checked meaning; positions travel beside it, and without a producer profile the body
+        // has no product.
+        let Ok(meaning) = semantic_digest(body) else {
+            return Ok(None);
+        };
+        let positions = body_position_map(body, source, file, &span);
+        let Some(profile) = generation else {
+            return Ok(None);
+        };
+        let mut inputs = record_scalar_inputs(&meaning, &name, &span, overflow_checks, &witness, positions.len());
+        inputs.push(profile.to_owned());
+        return Ok(Some((inputs, positions)));
+    }
     // The cold scalar witness includes all checked fields and physical positions; only its digest enters the graph.
     let Ok(encoded) = postcard::to_allocvec(body) else {
         return Ok(None);

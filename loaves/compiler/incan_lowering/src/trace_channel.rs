@@ -40,6 +40,15 @@ pub fn emit(category: &str, former: &str, text: &str) {
     }
 }
 
+/// Trace whether one keyed frame was restored from its product or lowered, into the channel only.
+///
+/// `outcome` is `reused` or `lowered`; `kind` is `ordinary` or `instance`. A frame without a product key is not traced.
+pub fn frame_product(outcome: &str, kind: &str, name: &str) {
+    if !channel().is_empty() {
+        emit("lowering_product", "", &format!("{outcome} {kind} {name}"));
+    }
+}
+
 fn channel() -> String {
     std::env::var(CHANNEL).unwrap_or_default()
 }

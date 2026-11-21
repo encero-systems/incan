@@ -28,7 +28,7 @@ use crate::plan_modules::{report_admitted, require_unadmitted};
 use crate::plan_product_inputs::{ordinary_product_inputs, producer_generation};
 use crate::program_context::ProgramContext;
 use crate::scalar_store::retained_scalar;
-use crate::trace_channel::emit;
+use crate::trace_channel::{emit, frame_product};
 use crate::traits::is_lazy_method_body;
 use crate::type_parameters::{Instance, merge_instance_requests, request_instance};
 
@@ -232,6 +232,7 @@ fn lower_ordinary_frame(
             retained_scalar(directory, witness, &keyed.nominals, Some(&current), positions)
             && let Some(requests) = restore_requests(&encoded, context)
         {
+            frame_product("reused", "ordinary", &frame_label(body));
             return Ok((function, runtime, requests, frames));
         }
     }
@@ -247,13 +248,14 @@ fn lower_ordinary_frame(
         DecoratorFrame::Normal,
     )?;
     let (function, runtime, pending, synthesized) = &lowered;
+    let mut kept = false;
     if let (Some(directory), Some((witness, positions)), Ok(requests)) =
         (keyed.directory, &inputs, encode_requests(pending))
     {
         sync_carriers(&mut keyed.nominals, intrinsics);
         // The ordinary compiler already has its complete lowered function; a product this frame cannot keep changes
         // nothing about that verdict.
-        let _ = retain_named_scalar(
+        kept = retain_named_scalar(
             directory,
             witness,
             function,
@@ -262,9 +264,18 @@ fn lower_ordinary_frame(
             positions,
             synthesized,
             &requests,
-        );
+        )
+        .is_ok();
+    }
+    if inputs.is_some() {
+        frame_product(if kept { "lowered" } else { "unkept" }, "ordinary", &frame_label(body));
     }
     Ok(lowered)
+}
+
+/// A traced frame's module and source name, as the reuse proof matches bodies across captures.
+fn frame_label(body: &Body) -> String {
+    format!("{}::{}", body_module_identity(body).unwrap_or_default(), body.name)
 }
 
 /// Apply standalone entry naming against the current modules or their already validated retained bodies.

@@ -6,14 +6,22 @@
 //! unions and the whole plan's bytes. Where both sides have a plan, every function is compared by name as well. The
 //! exit status is 0 only when every compared answer is identical.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use incan_lowering::corpus::{Case, Corpus, Outcome, Requirement, Step};
+use incan_lowering::reuse_proof::{FrameOutcomes, FrameTrace, changed_bodies};
 use incan_lowering::{
     Plan, RefusalPlanning, RuntimeRequirement, SourceInputs, UnitContinuation, UnitPlanning,
     layout_runtime_requirements, program_refusals, resume_unit_plan, unit_plan,
 };
+
+/// What a replay prints beyond identity: the keyed frames each call reused or lowered, and a base capture to compare
+/// the edited bodies with.
+struct Evidence {
+    report: bool,
+    base: Option<Case>,
+}
 
 #[derive(Default)]
 struct Tally {
@@ -264,8 +272,13 @@ fn replay_case(
     scratch: &Path,
     oracle: bool,
     tally: &mut Tally,
+    evidence: &Evidence,
 ) -> Result<(), String> {
     tally.cases += 1;
+    let mut trace = if evidence.report { FrameTrace::open() } else { None };
+    if evidence.report && trace.is_none() {
+        return Err("--reuse needs INCAN_ENGINE_TRACE naming a directory".into());
+    }
     if !case.faults.is_empty() {
         tally.case_faults += 1;
         tally
@@ -304,7 +317,11 @@ fn replay_case(
         let (actual, unions) = if oracle {
             oracle_step(corpus, step, &directories, &mut reference_continuation)?
         } else {
-            replay_step(corpus, step, &directories, &mut continuation)?
+            let answer = replay_step(corpus, step, &directories, &mut continuation)?;
+            if let Some(cursor) = trace.as_mut() {
+                report_reuse(corpus, name, index, step, &cursor.take(), evidence.base.as_ref())?;
+            }
+            answer
         };
         let identical = actual == step.outcome && unions == step.unions;
         if step.scalar_products.is_some() {
@@ -330,10 +347,22 @@ fn replay_case(
                 format!(
                     "; unions expected {} ({} distinct) got {}, first difference at {first:?}: expected {:?} got {:?}",
                     step.unions.len(),
-                    step.unions.iter().map(|union| format!("{:?}", union.ty)).collect::<std::collections::BTreeSet<_>>().len(),
+                    step.unions
+                        .iter()
+                        .map(|union| format!("{:?}", union.ty))
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .len(),
                     unions.len(),
-                    step.unions.iter().take(4).map(|union| format!("{:?}/{}", union.ty, union.rust_item)).collect::<Vec<_>>(),
-                    unions.iter().take(4).map(|union| format!("{:?}/{}", union.ty, union.rust_item)).collect::<Vec<_>>()
+                    step.unions
+                        .iter()
+                        .take(4)
+                        .map(|union| format!("{:?}/{}", union.ty, union.rust_item))
+                        .collect::<Vec<_>>(),
+                    unions
+                        .iter()
+                        .take(4)
+                        .map(|union| format!("{:?}/{}", union.ty, union.rust_item))
+                        .collect::<Vec<_>>()
                 )
             };
             tally.mismatches.push(format!(
@@ -357,6 +386,80 @@ fn replay_case(
                 _ => compare_functions(expected, &[], tally),
             }
         }
+    }
+    Ok(())
+}
+
+/// Print which keyed frames one step restored or lowered and, against a base capture of the same unit, which bodies
+/// changed: the evidence that an edit lowers only the functions whose Body IR changed.
+fn report_reuse(
+    corpus: &Corpus,
+    name: &str,
+    index: usize,
+    step: &Step,
+    outcomes: &FrameOutcomes,
+    base: Option<&Case>,
+) -> Result<(), String> {
+    println!(
+        "REUSE {name} step {index} ({}): {} keyed frames reused, {} lowered and kept, {} lowered without a product",
+        step.call,
+        outcomes.reused.len(),
+        outcomes.lowered.len(),
+        outcomes.unkept.len()
+    );
+    for lowered in &outcomes.lowered {
+        println!("  lowered {lowered}");
+    }
+    let Some(before) = base
+        .and_then(|case| case.steps.get(index))
+        .filter(|before| before.call == step.call)
+    else {
+        return Ok(());
+    };
+    let changes = changed_bodies(
+        &corpus.modules(&before.modules)?,
+        &before.scalar_bodies,
+        &corpus.modules(&step.modules)?,
+        &step.scalar_bodies,
+    );
+    let shifted = changes
+        .iter()
+        .filter(|change| change.base_start.is_some_and(|start| start != change.edited_start))
+        .count();
+    let witness_only = changes.iter().filter(|change| !change.body_differs).count();
+    println!(
+        "CHANGED {name} step {index}: {} bodies differ from the base ({shifted} moved, {witness_only} witness only)",
+        changes.len()
+    );
+    for change in &changes {
+        println!(
+            "  changed {} in {} at {:?} -> {}{}",
+            change.function,
+            change.module,
+            change.base_start,
+            change.edited_start,
+            if change.body_differs { "" } else { " (witness only)" }
+        );
+    }
+    let changed: BTreeSet<&str> = changes.iter().map(|change| change.function.as_str()).collect();
+    let ordinary = |entry: &&String| entry.strip_prefix("ordinary ").map(str::to_owned);
+    let kept: BTreeSet<String> = outcomes.lowered.iter().filter_map(|entry| ordinary(&entry)).collect();
+    let reused: BTreeSet<String> = outcomes.reused.iter().filter_map(|entry| ordinary(&entry)).collect();
+    let kept_unchanged: Vec<&String> = kept.iter().filter(|label| !changed.contains(label.as_str())).collect();
+    let changed_reused: Vec<&&str> = changed.iter().filter(|label| reused.contains(**label)).collect();
+    println!(
+        "KEPT-UNCHANGED {name} step {index}: {} ordinary frames lowered into a new product whose body did not change",
+        kept_unchanged.len()
+    );
+    for label in kept_unchanged {
+        println!("  {label}");
+    }
+    println!(
+        "CHANGED-REUSED {name} step {index}: {} changed bodies restored from an earlier product",
+        changed_reused.len()
+    );
+    for label in changed_reused {
+        println!("  {label}");
     }
     Ok(())
 }
@@ -445,7 +548,7 @@ fn dump_case(corpus: &Corpus, case: &Case, directory: &Path) -> Result<(), Strin
 fn main() {
     let arguments: Vec<String> = std::env::args().collect();
     let Some(root) = arguments.get(1) else {
-        eprintln!("usage: lowering-replay CORPUS [--case PREFIX] [--show N] [--oracle]");
+        eprintln!("usage: lowering-replay CORPUS [--case PREFIX] [--show N] [--oracle] [--reuse [--base PREFIX]]");
         std::process::exit(2);
     };
     let mut prefix = String::new();
@@ -453,6 +556,8 @@ fn main() {
     let mut oracle = false;
     let mut describe = false;
     let mut dump: Option<PathBuf> = None;
+    let mut report = false;
+    let mut base_prefix: Option<String> = None;
     let mut options = arguments[2..].iter();
     while let Some(option) = options.next() {
         if option == "--oracle" {
@@ -463,10 +568,15 @@ fn main() {
             describe = true;
             continue;
         }
+        if option == "--reuse" {
+            report = true;
+            continue;
+        }
         match (option.as_str(), options.next()) {
             ("--case", Some(value)) => prefix = value.clone(),
             ("--show", Some(value)) => show = value.parse().unwrap_or(20),
             ("--dump", Some(value)) => dump = Some(PathBuf::from(value)),
+            ("--base", Some(value)) => base_prefix = Some(value.clone()),
             _ => {
                 eprintln!("unknown option {option}");
                 std::process::exit(2);
@@ -483,6 +593,16 @@ fn main() {
             std::process::exit(2);
         }
     };
+    let base = base_prefix.and_then(|wanted| {
+        cases
+            .iter()
+            .find(|path| {
+                path.file_stem()
+                    .is_some_and(|stem| stem.to_string_lossy().starts_with(&wanted))
+            })
+            .and_then(|path| corpus.case(path).ok())
+    });
+    let evidence = Evidence { report, base };
     for path in cases {
         let name = path
             .file_stem()
@@ -508,7 +628,7 @@ fn main() {
         }
         let result = corpus
             .case(&path)
-            .and_then(|case| replay_case(&corpus, &name, &case, &scratch, oracle, &mut tally));
+            .and_then(|case| replay_case(&corpus, &name, &case, &scratch, oracle, &mut tally, &evidence));
         if let Err(error) = result {
             tally.mismatches.push(format!("{name}: replay failed: {error}"));
         }

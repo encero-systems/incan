@@ -11,6 +11,7 @@ use incan_semantics_core::CompilerNodeId;
 use incan_semantics_core::body_ir::{BodyIrModule, NativeUnionDeclaration};
 
 pub mod corpus;
+pub mod reuse_proof;
 
 mod array_views;
 mod assertions;
@@ -18,6 +19,7 @@ mod assignments;
 mod async_;
 mod attributes;
 mod body_index;
+mod body_positions;
 mod builtin_calls;
 mod builtin_methods;
 mod builtins;
@@ -262,3 +264,6 @@ pub fn owned_capture(ty: PlanType) -> bool {
 pub fn numeric_carrier(ty: &PlanType) -> bool {
     numerics::numeric_carrier(ty)
 }
+
+#[cfg(test)]
+mod tests;
