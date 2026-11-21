@@ -296,6 +296,20 @@ impl TypeChecker {
         }))
     }
 
+    /// The Rust item a package-root alias publishes when its canonical identity is one, as a module member's alias
+    /// resolves (see [`Self::symbol_kind_from_canonical_identity`]): the root re-export of another Loaf's re-export
+    /// names no Rust path of its own provider.
+    pub(in crate::typechecker::collect) fn rust_item_for_canonical(
+        &self,
+        canonical: Option<&CanonicalSymbolId>,
+    ) -> Option<SymbolKind> {
+        let canonical = canonical?;
+        let SymbolOrigin::RustCrate(path) = &canonical.origin else {
+            return None;
+        };
+        self.rust_item_from_canonical_identity(&canonical.kind, path)
+    }
+
     /// Reconstruct one trait from the exact canonical identity admitted by its declaring manifest.
     ///
     /// `expected_provider` retains the older named-projection check that the alias metadata and selected artifact name
@@ -768,7 +782,8 @@ impl TypeChecker {
                 canonical
                     .filter(|identity| identity.kind == SemanticSourceTargetKind::Function)
                     .and_then(|identity| self.symbol_kind_from_canonical_identity(identity))
-                    .or_else(|| self.symbol_kind_from_manifest_alias(manifest, export, &mut HashSet::new()))?
+                    .or_else(|| self.symbol_kind_from_manifest_alias(manifest, export, &mut HashSet::new()))
+                    .or_else(|| self.rust_item_for_canonical(canonical))?
             }
         };
         Some((kind, type_alias_target))
