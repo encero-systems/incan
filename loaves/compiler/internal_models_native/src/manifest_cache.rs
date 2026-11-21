@@ -1,6 +1,6 @@
 //! Generation-bound optional facts from ordinary admission of a published Loaf manifest.
 
-use crate::crumb_rows::{ModelField, encode_rows, model_description, operation_budget, required_value};
+use crate::crumb_rows::{ModelField, encode_rows_within, model_description, operation_budget, required_value};
 use crate::graph_crumb_fields::{admit_graph_row, decode_graph_row, encode_graph_row, items, text};
 use internal_models_bindings::{Description, RowRecord, Value, binary_message, read_record_at};
 use sha2::{Digest, Sha256};
@@ -21,6 +21,11 @@ fn family(kind: &str) -> Result<(&'static [u8], i64), String> {
         _ => Err("unknown Loaf manifest cache family".into()),
     }
 }
+
+/// Codec work allowed per byte of a cache record's bound. Writing and admitting one binary payload charges each of its
+/// bytes for the copy, the digest and the framing; the default of four per byte refuses a facts record well inside its
+/// bound, so the cache of a dependency with a large Rust ABI was never written.
+const WORK_PER_BOUND_BYTE: i64 = 16;
 
 fn header(key: &[u8], kind: &str) -> Description {
     model_description(
@@ -63,7 +68,12 @@ pub fn encode_manifest_cache(kind: &str, guard: &[u8], digest: &[u8], payload: &
             required_value(b"value_", Value::Binary(payload.to_vec())),
         ]),
     };
-    encode_rows(&header(key, kind), vec![record], maximum)
+    encode_rows_within(
+        &header(key, kind),
+        vec![record],
+        maximum,
+        &mut operation_budget(maximum * WORK_PER_BOUND_BYTE)?,
+    )
 }
 
 /// Accept exactly one matching row with an intact checksum and the independently observed generation.
@@ -72,7 +82,7 @@ pub fn decode_manifest_cache(kind: &str, guard: &[u8], encoded: &[u8]) -> Result
     if guard.len() != 32 || encoded.len() as i64 > maximum {
         return Err("invalid Loaf manifest cache size".into());
     }
-    let mut budget = operation_budget(maximum * 4)?;
+    let mut budget = operation_budget(maximum * WORK_PER_BOUND_BYTE)?;
     let rows = admit_graph_row(encoded, &header(key, kind), &mut budget, maximum)?;
     let row = read_record_at(&rows, 0, &mut budget).map_err(|error| binary_message(&error))?;
     if row.key != key {
