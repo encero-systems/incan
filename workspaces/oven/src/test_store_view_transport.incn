@@ -26,19 +26,19 @@ pub def test_store_view_transport() -> Result[None, str]:
     portable = descriptor.read_bytes().map_err((error) => error.message())?
     frame = row.read_bytes().map_err((error) => error.message())?
     assert frame[:4] == b"CRMB" and required_text(read_json(descriptor)?, "home_view")? == view
-    assert not select_store_view(descriptor)?.backfill
+    assert not select_store_view(descriptor.0)?.backfill
 
     # A legacy reader copies only the portable descriptor. Its first current owner adopts the identical view.
     copy = copied.joinpath("bakery.view")
     copy.write_bytes(portable).map_err((error) => error.message())?
-    assert select_store_view(copy)?.backfill
+    assert select_store_view(copy.0)?.backfill
     assert bind_home_view(copied, location)?.unwrap_or("") == view
     assert copied.joinpath("bakery.view.crumb").read_bytes().map_err((error) => error.message())? == frame
 
     # Another home's well-formed row must never override this portable configuration.
     other_frame = second.joinpath("bakery.view.crumb").read_bytes().map_err((error) => error.message())?
     row.write_bytes(other_frame).map_err((error) => error.message())?
-    selected = select_store_view(descriptor)?
+    selected = select_store_view(descriptor.0)?
     assert selected.binding.home_view == view and selected.backfill
     assert bind_home_view(first, location)?.unwrap_or("") == view
     assert row.read_bytes().map_err((error) => error.message())? == frame
@@ -46,5 +46,5 @@ pub def test_store_view_transport() -> Result[None, str]:
     assert bind_home_view(first, location)?.unwrap_or("") == view
     assert row.read_bytes().map_err((error) => error.message())? == frame
     descriptor.write_bytes(b"invalid portable configuration").map_err((error) => error.message())?
-    assert select_store_view(descriptor).is_err()
+    assert select_store_view(descriptor.0).is_err()
     return Ok(None)
