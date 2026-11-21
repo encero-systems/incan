@@ -464,6 +464,29 @@ fn collect_path_root(path: &syn::Path, type_params: &[String], roots: &mut BTree
     }
 }
 
+/// Rewrite every whole occurrence of the item path `from` in a Rust type display to `to`, generic arguments included.
+///
+/// A path token is a run of identifier characters and `::`; a longer path that merely contains `from` names another
+/// item and stays as written.
+pub fn replace_rust_display_path(display: &str, from: &str, to: &str) -> String {
+    let mut out = String::with_capacity(display.len());
+    let mut token = String::new();
+    let flush = |token: &mut String, out: &mut String| {
+        out.push_str(if token == from { to } else { token.as_str() });
+        token.clear();
+    };
+    for ch in display.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' || ch == ':' {
+            token.push(ch);
+        } else {
+            flush(&mut token, &mut out);
+            out.push(ch);
+        }
+    }
+    flush(&mut token, &mut out);
+    out
+}
+
 /// Return whether one Rust crate root is supplied by the compiler toolchain instead of a package dependency bridge.
 pub fn is_shared_rust_crate(name: &str) -> bool {
     matches!(name, "std" | "core" | "alloc" | "incan_lang") || incan_lang::lang::stdlib::facets::is_facet(name)
