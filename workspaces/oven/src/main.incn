@@ -1,5 +1,6 @@
 """Dispatch Oven's public commands and report command syntax before accessing projects or the toolchain."""
 
+from compiler_reopened_peers import supply as supply_reopened_peers
 from rust::std::env import args
 from rust::std::io import Write, stderr
 from rust::std::process import exit
@@ -45,6 +46,7 @@ from testing import (
 )
 from runner_options import RUNNER_VALUE_OPTIONS, RunnerOptions, split_runner_options
 from test_batches import batch_groups, batch_of, module_of
+from project_library import with_testing_features
 from inline_source import inline, inline_arguments
 from owner_client import owned, status_code
 from owner_protocol import Reply
@@ -208,6 +210,11 @@ def dispatch(command: str, rest: list[str]) -> None:
                     Ok(document) =>
                         println(document)
                         return
+        return
+    if command == "--internal-reopened-peers":
+        match supply_reopened_peers(rest):
+            Err(reason) => fail("reopened peer selection: " + reason, 1)
+            Ok(_) => return
         return
     if command == "--internal-readmit":
         # A relink rewrote the installation it owns; this is its explicit re-admission, never a user command. Owners and
@@ -638,7 +645,10 @@ def enclosing_loaf(directory: Path) -> Result[Path, str]:
 
 
 def prepared_lock(command: str, options: Options) -> None:
-    """Reconcile a project command's root lock; explicit direct source execution has no project lock to prepare."""
+    """
+    Read a project command's root lock, which only `oven lock`, `oven add` and `oven update` write, and say in one line
+    when it is stale; explicit direct source execution has no project lock.
+    """
     if options.direct:
         return
     match ensure_project_lock(
@@ -650,7 +660,12 @@ def prepared_lock(command: str, options: Options) -> None:
         options.locked,
     ):
         Err(reason) => fail(f"{invoked()} {command}: {reason}", 1)
-        Ok(_) => warn_tolerated_entries(command, Path(options.path))
+        Ok(notice) =>
+            if let Some(stale) = notice:
+                mut err = stderr()
+                # A closed standard error cannot be told about, so a failed write is ignored.
+                _ = err.write_all(RustString.from(f"{invoked()} {command}: warning: {stale}\n").into_bytes())
+            warn_tolerated_entries(command, Path(options.path))
 
 
 def warn_tolerated_entries(command: str, path: Path) -> None:
@@ -858,9 +873,7 @@ def batch_cases(
     mut unit = describe(members[0], options.profile, options.request, options.manifests, purpose=ActivationPurpose.Test)?
     unit.kind = "test"
     unit.test_batch = [member.0 for member in members[1:]]
-    for feature in runner.features:
-        if feature not in unit.active_features:
-            unit.active_features.append(feature)
+    unit = with_testing_features(unit, runner.features)
     code, binary = compile_tests(unit, toolchain_for(unit)?)?
     if code != 0:
         return Ok((code, []))
@@ -905,9 +918,7 @@ def compiled_tests(options: Options, runner: RunnerOptions) -> Result[tuple[i32,
     )?
     unit = with_c_abi_target(unit, options.interop_target)?
     unit.kind = "test"
-    for feature in runner.features:
-        if feature not in unit.active_features:
-            unit.active_features.append(feature)
+    unit = with_testing_features(unit, runner.features)
     return compile_tests(unit, toolchain_for(unit)?)
 
 
@@ -1079,7 +1090,8 @@ def print_description(options: Options) -> None:
     """
     # 1. Options that only a run or build understands are refused with the usage exit status.
     # 2. A unit that cannot be described against the toolchain ends the command with status 1.
-    match describe_native(Path(options.path), options.profile, options.request, options.unattended):
+    consumer_crumb = get_or("INCAN_DESCRIBE_SEARCH_INDEX", "") == "crumb"
+    match describe_native(Path(options.path), options.profile, options.request, options.unattended, consumer_crumb):
         Err(reason) => fail(f"oven describe-unit: {reason}", 1)
         Ok(unit) =>
             if unit.trust_stop != "":

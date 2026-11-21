@@ -1,8 +1,10 @@
-# behavior: A plain build writes a root and path graph silently, then locked mode consumes it without stream changes.
+# behavior: `oven lock` writes the root and path graph, a plain build reads it without writing it, and locked mode consumes it without stream changes.
 # cli-commands:
+#   oven lock .
 #   oven build .
 #   oven build --locked .
-# expect-stdout:
+# expect-stdout-contains:
+#   locked locked_path_build 0.1.0 (lowest)
 # expect-stderr:
 # expect-exit: 0
 
