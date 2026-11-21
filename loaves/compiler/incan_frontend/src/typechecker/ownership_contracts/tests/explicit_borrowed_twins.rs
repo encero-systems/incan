@@ -211,6 +211,80 @@ fn returned_views_from_borrows_check_as_their_reference_twins() -> Result<(), Bo
     Ok(())
 }
 
+/// Slice 06's chained-call relation with slice 09B's lifetime elision: a borrowed result `from` its only borrowed
+/// input, reached from that input rather than being it, keeps native passing in both spellings. Its result is the
+/// native reference, it has no ownership contract, and callers read through it.
+#[test]
+fn borrowed_results_reached_from_their_source_check_as_their_reference_twins() -> Result<(), Box<dyn std::error::Error>>
+{
+    let template = format!(
+        "{ITEM}def first(values: {{borrow:list[Item]}}, position: int) -> {{borrow:Item}} from values:\n    item: {{borrow:Item}} = values[position]\n    return item\n\ndef first_label(values: {{borrow:list[Item]}}) -> str:\n    return first(values, 0).label()\n\ndef main() -> int:\n    items = [Item(name=\"a\", count=1)]\n    chosen = first(items, 0)\n    return len(first_label(items)) + chosen.count\n"
+    );
+    let checker = check_twins(&template)?;
+    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+    let contracts: Vec<_> = checker
+        .type_info
+        .declarations
+        .ownership_contracts
+        .keys()
+        .map(|identity| identity.declaration_name.clone())
+        .collect();
+    assert!(contracts.is_empty(), "{contracts:?}");
+    let Some(crate::symbols::SymbolKind::Function(first)) = checker.lookup_symbol("first").map(|symbol| &symbol.kind)
+    else {
+        return Err("missing function first".into());
+    };
+    assert!(
+        matches!(first.return_type, ResolvedType::Ref(_)),
+        "{:?}",
+        first.return_type
+    );
+    Ok(())
+}
+
+/// The `from` clause of such a result names the input Rust's lifetime elision ties it to: the receiver, or else the
+/// only borrowed input. Naming another input, or a signature with two borrowed inputs, is refused at the clause with
+/// INCAN-T0124 in both spellings, with a hint naming the input elision chose where there is one.
+#[test]
+fn borrowed_results_name_the_input_elision_ties_them_to() -> Result<(), Box<dyn std::error::Error>> {
+    for (body, hint) in [
+        (
+            "def pick(a: {borrow:list[Item]}, b: {borrow:list[Item]}) -> {borrow:Item} from b:\n    item: {borrow:Item} = b[0]\n    return item\n",
+            None,
+        ),
+        (
+            "class Shelf:\n    pub items: list[Item]\n\n    pub def first(self, other: {borrow:list[Item]}) -> {borrow:Item} from other:\n        item: {borrow:Item} = other[0]\n        return item\n",
+            Some("from self"),
+        ),
+    ] {
+        let checker = check_twins(&format!("{ITEM}{body}"))?;
+        let refusal = checker
+            .errors
+            .iter()
+            .find(|error| error.stable_code() == Some("INCAN-T0124"))
+            .ok_or_else(|| format!("{body}: {:?}", checker.errors))?;
+        if let Some(hint) = hint {
+            assert!(format!("{refusal:?}").contains(hint), "{refusal:?}");
+        }
+    }
+    Ok(())
+}
+
+/// Such a result returns a borrow reached from its source; a value created in the body (a temporary list's element
+/// field, a fresh local) is refused with one INCAN-T0124 at the returned value, in both spellings.
+#[test]
+fn borrowed_results_cannot_return_values_created_in_the_body() -> Result<(), Box<dyn std::error::Error>> {
+    for body in [
+        "def invalid(source: {borrow:list[Item]}) -> {borrow:str} from source:\n    temporary = [Item(name=\"temporary\", count=1)]\n    return temporary[0].name\n",
+        "def invalid(source: {borrow:list[Item]}) -> {borrow:Item} from source:\n    fresh = Item(name=\"fresh\", count=1)\n    return fresh\n",
+    ] {
+        let checker = check_twins(&format!("{ITEM}{body}"))?;
+        let codes: Vec<_> = checker.errors.iter().map(|error| error.stable_code()).collect();
+        assert_eq!(codes, [Some("INCAN-T0124")], "{body}: {:?}", checker.errors);
+    }
+    Ok(())
+}
+
 /// A function with borrowed parameters is one callable type in both spellings, and an imported function with
 /// borrowed parameters takes owned locals on both dependency routes.
 #[test]
