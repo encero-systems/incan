@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use incan_mir_plan_native::{
     AdmittedFunction, AdmittedPlacement, Carrier, EnumDeclaration, Function, GenericEnumDeclaration,
     GenericModelDeclaration, ModelDeclaration, NominalReference, PlanExport, PlanType, UnitNominals, resolve_nominals,
+    unresolved_nominal,
 };
 use incan_semantics_core::body_ir::{Body, BodyIrModule};
 use incan_semantics_core::{
@@ -254,9 +255,17 @@ fn lower_ordinary_frame(
     keyed: &mut KeyedProducts<'_>,
     admission: &mut ModuleAdmission<'_>,
 ) -> Result<LoweredFrame, String> {
-    if let Some(restored) = restore_admitted(context, program, body, frame, intrinsics, keyed, admission) {
-        frame_product("admitted", "ordinary", &frame_label(body));
-        return Ok(restored);
+    match restore_admitted(context, program, body, frame, intrinsics, keyed, admission) {
+        Admission::Restored(restored) => {
+            frame_product("admitted", "ordinary", &frame_label(body));
+            return Ok(restored);
+        }
+        // The module's page holds this body's event, yet the body is lowered: name why, so a reuse proof can tell an
+        // edit's own bodies from bodies an unchanged module should have restored.
+        Admission::Missed(reason) => {
+            frame_product("unadmitted", "ordinary", &format!("{} {reason}", frame_label(body)));
+        }
+        Admission::NoEvent => {}
     }
     let records = keyed.report.is_some();
     let inputs = ordinary_product_inputs(
@@ -426,10 +435,21 @@ impl RecordOwner {
     }
 }
 
+/// What a body of a module with an admitted page gets from that page.
+enum Admission {
+    /// The page has no event for the body, or the module has no page.
+    NoEvent,
+    /// The page has the body's event, but it does not restore, for the reason named.
+    Missed(&'static str),
+    /// The body's function, runtime demand, generic instance requests and helper frames, restored from the event.
+    Restored(LoweredFrame),
+}
+
 /// Restore a body of an admitted module from its final event in the module's plan record.
 ///
-/// Its function, helper frames and generic instance requests come from the event. An event that does not restore, as
-/// when the owner moved, the witness changed or a named declaration is gone, leaves the body on the keyed route.
+/// Its function, helper frames and generic instance requests come from the event, whose product is read once. An event
+/// that does not restore, as when the owner moved, the witness changed or a named declaration is gone, leaves the body
+/// on the keyed route with the reason it missed.
 fn restore_admitted(
     context: &BodyIrModule,
     program: &ProgramContext,
@@ -438,12 +458,14 @@ fn restore_admitted(
     intrinsics: &[EnumDeclaration],
     keyed: &mut KeyedProducts<'_>,
     admission: &mut ModuleAdmission<'_>,
-) -> Option<LoweredFrame> {
+) -> Admission {
     if admission.page.events.is_empty() {
-        return None;
+        return Admission::NoEvent;
     }
     let name = evaluator_name(context, body);
-    let selected = admission.page.event(&name)?;
+    let Some(selected) = admission.page.event(&name) else {
+        return Admission::NoEvent;
+    };
     let current_identity = body
         .canonical
         .as_ref()
@@ -451,9 +473,11 @@ fn restore_admitted(
         .unwrap_or_default();
     // A physical-symbol fallback has no independent stable owner to carry across a rename or move.
     if selected.identity == selected.symbol && selected.symbol != current_identity {
-        return None;
+        return Admission::Missed("its physical symbol changed");
     }
-    let reads = keyed.admitted.get(&body.direct_call_id)?;
+    let Some(reads) = keyed.admitted.get(&body.direct_call_id) else {
+        return Admission::Missed("the checker supplied no witness for it");
+    };
     let lines = admission.placement_lines;
     let span = if lines.is_empty() {
         location(&body.span, frame.source, frame.file)
@@ -463,7 +487,7 @@ fn restore_admitted(
     let current = (!lines.is_empty()).then(|| indexed_body_positions(body, lines, frame.file, &span));
     sync_carriers(&mut keyed.nominals, intrinsics);
     let generation = keyed.generation.as_deref().unwrap_or("");
-    let (payload, identities, encoded, previous) = admitted_payload(
+    let (placed, encoded, previous) = match admitted_payload(
         &selected.event,
         &span,
         &name,
@@ -471,13 +495,24 @@ fn restore_admitted(
         reads,
         generation,
         current.clone(),
-    )?;
+    ) {
+        Ok(admitted) => admitted,
+        Err(reason) => return Admission::Missed(reason),
+    };
     if previous.key != selected.key || previous.function != selected.function || previous.identity != selected.symbol {
-        return None;
+        return Admission::Missed("its page entry names another event");
     }
-    let resolved = resolve_nominals(&identities, &keyed.nominals)?;
-    let (function, runtime, frames) = admitted_function(&payload, &resolved)?;
-    let requests = restore_requests(&encoded, context)?;
+    let Some(resolved) = resolve_nominals(placed.nominals(), &keyed.nominals) else {
+        return Admission::Missed(
+            unresolved_nominal(placed.nominals(), &keyed.nominals).unwrap_or("a declaration it names does not resolve"),
+        );
+    };
+    let Some((function, runtime, frames)) = admitted_function(&placed, &resolved) else {
+        return Admission::Missed("its product does not restore at the resolved declarations");
+    };
+    let Some(requests) = restore_requests(&encoded, context) else {
+        return Admission::Missed("a generic instance it requests is gone");
+    };
     let references: Vec<_> = resolved.iter().map(event_reference).collect();
     let nodes = match &current {
         Some(positions) => event_nodes(positions),
@@ -494,7 +529,7 @@ fn restore_admitted(
             positions: nodes,
         }),
     });
-    Some((function, runtime, requests, frames))
+    Admission::Restored((function, runtime, requests, frames))
 }
 
 /// A traced frame's module and source name, as the reuse proof matches bodies across captures.

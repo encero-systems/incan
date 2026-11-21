@@ -8,17 +8,16 @@ use std::path::{Path, PathBuf};
 
 use incan_mir_plan_native::{
     EventPosition, EventReference, ExternalFunction, Function, LoweringEvent, LoweringRefusal, NominalKind,
-    NominalReference, PlanFunctionRecord, PositionChange, ProductNominal, SourceSpan, UnitNominals, WirePositions,
-    decode_lowering_event, decode_plan_function_record, decode_product_parts, encode_lowering_event,
-    encode_lowering_refusal, encode_plan_function_record, encode_product, matches_product, plan_function_digest,
-    positioned_product_requirements, product_identities, product_nominals, restore_named_product,
-    valid_ordinal_product,
+    NominalReference, PlacedRecord, PlanFunctionRecord, PositionChange, ProductNominal, SourceSpan, UnitNominals,
+    WirePositions, decode_lowering_event, decode_plan_function_record, decode_product_parts, encode_lowering_event,
+    encode_lowering_refusal, encode_plan_function_record, encode_product, matches_product, place_product_record,
+    plan_function_digest, positioned_product_requirements, product_nominals, resolve_nominals,
 };
 use incan_semantics_core::semantic_digest::semantic_digest;
 
 use crate::producer_trace::{enter_producer, finish_producer};
 use crate::record_positions::{
-    index_positions, indexed_product, place_positions, positioned_product, relocate_product,
+    index_positions, indexed_product, place_positions, placed_record, positioned_product, relocate_product,
 };
 
 /// A record whose key is its checked meaning; its spans name Body IR nodes by ordinal through a request-local position
@@ -93,8 +92,10 @@ pub fn retained_scalar(
     let path = scalar_path(directory, inputs).ok()?;
     let encoded = std::fs::read(path).ok()?;
     // 2. A changed or missing named declaration is a miss, never a stale position.
-    let (payload, requests) = record_payload(&encoded, inputs, span, positions)?;
-    let (function, runtime, resolved, frames) = restore_named_product(&payload, unit)?;
+    let (placed, requests) = record_payload(&encoded, inputs, span, positions)?;
+    let resolved = resolve_nominals(placed.nominals(), unit)?;
+    // 3. The record placed in step 2 restores directly; its placed bytes are never written or read.
+    let (function, runtime, frames) = placed.restore(&resolved).ok()?;
     Some((function, runtime, resolved, frames, requests))
 }
 
@@ -302,13 +303,14 @@ fn encoded_record(
     encode_plan_function_record(&record)
 }
 
-/// Verify one decoded record and hand its positioned payload and generic requests to the caller.
+/// Verify one decoded record and hand its product, read once and placed at this body's positions, and its generic
+/// requests to the caller.
 fn record_payload(
     encoded: &[u8],
     inputs: &[String],
     span: Option<&SourceSpan>,
     positions: &[(i64, i64)],
-) -> Option<(Vec<u8>, Vec<Vec<u8>>)> {
+) -> Option<(PlacedRecord, Vec<Vec<u8>>)> {
     let record = decode_plan_function_record(encoded).ok()?;
     if record.inputs != inputs {
         return None;
@@ -316,21 +318,15 @@ fn record_payload(
     if plan_function_digest(&record.function, &record.requests).ok()? != record.digest {
         return None;
     }
-    let mut payload = record.function;
-    if inputs.first().map(String::as_str) == Some(RECORD_FUNCTION)
+    let placed = if inputs.first().map(String::as_str) == Some(RECORD_FUNCTION)
         && let Some(current) = span
     {
         // Node ordinals take this body's positions; a body without those nodes is a miss.
-        payload = positioned_product(
-            &payload,
-            positions,
-            &current.file.to_string(),
-            current.line,
-            &mut Vec::new(),
-        )
-        .ok()?;
-    }
-    Some((payload, record.requests))
+        placed_record(&record.function, positions, &current.file.to_string(), current.line).ok()?
+    } else {
+        place_product_record(&record.function, &WirePositions::preserve()).ok()?
+    };
+    Some((placed, record.requests))
 }
 
 /// Move a records product's spans into its owner's node coordinate space after proving the move loses nothing.
@@ -369,7 +365,7 @@ fn indexed_record(
 
 /// Require a record to decode completely, binding each named declaration to its own ordinal.
 fn valid_record(encoded: &[u8], inputs: &[String]) -> bool {
-    record_payload(encoded, inputs, None, &[]).is_some_and(|(payload, _)| valid_ordinal_product(&payload))
+    record_payload(encoded, inputs, None, &[]).is_some_and(|(placed, _)| placed.restores_at_own_ordinals())
 }
 
 /// A finalized keyed product: its storage record, its resolved ordinals and the native product at this request's
@@ -460,9 +456,9 @@ pub fn finalized_plan_product(
     Ok((last, whole, positioned))
 }
 
-/// A product restored from a module's admitted page: its placed payload, the declarations it names, the generic
-/// instance requests its lowering made and the event it came from.
-pub type AdmittedPayload = (Vec<u8>, Vec<ProductNominal>, Vec<Vec<u8>>, LoweringEvent);
+/// A product restored from a module's admitted page: the product read once and placed at the body's positions, the
+/// generic instance requests its lowering made and the event it came from.
+pub type AdmittedPayload = (PlacedRecord, Vec<Vec<u8>>, LoweringEvent);
 
 /// Read the product of a body from the final event of its module's admitted plan record.
 ///
@@ -470,7 +466,7 @@ pub type AdmittedPayload = (Vec<u8>, Vec<ProductNominal>, Vec<Vec<u8>>, Lowering
 /// computed from the body: the body is neither serialized nor digested. Every input of the product but the checked
 /// meaning is compared with what the body has now: its producer, overflow policy, frame name, file, checker witness and
 /// node count. Only an unchanged physical source can use the recorded ordinal positions directly. A product that does
-/// not fit is a miss: the body takes the keyed route.
+/// not fit is a miss, returned with the reason it does not fit: the body takes the keyed route.
 #[allow(clippy::too_many_arguments)]
 pub fn admitted_payload(
     event: &[u8],
@@ -480,36 +476,54 @@ pub fn admitted_payload(
     reads: &str,
     generation: &str,
     current: Option<Vec<(i64, i64)>>,
-) -> Option<AdmittedPayload> {
-    let decoded = decode_lowering_event(event).ok()?;
-    let record = decode_plan_function_record(&decoded.product).ok()?;
-    let meaning = record.inputs.get(1)?;
+) -> Result<AdmittedPayload, &'static str> {
+    let decoded = decode_lowering_event(event).map_err(|_| "its page event does not decode")?;
+    let record = decode_plan_function_record(&decoded.product).map_err(|_| "its page product does not decode")?;
+    let meaning = record.inputs.get(1).ok_or("its page product has no checked meaning")?;
     let positions = current.unwrap_or_else(|| event_positions(&decoded));
     let mut expected = record_scalar_inputs(meaning, name, span, overflow, reads, positions.len());
     expected.push(generation.to_owned());
-    if record.inputs != expected || positions.len() != decoded.positions.len() {
-        return None;
+    if record.inputs != expected {
+        return Err(input_difference(&record.inputs, &expected));
     }
-    let payload = positioned_product(
-        &record.function,
-        &positions,
-        &span.file.to_string(),
-        span.line,
-        &mut Vec::new(),
-    )
-    .ok()?;
-    let identities = product_identities(&payload).ok()?;
-    Some((payload, identities, record.requests, decoded))
+    if positions.len() != decoded.positions.len() {
+        return Err("its node positions differ in number from the page event's");
+    }
+    let placed = placed_record(&record.function, &positions, &span.file.to_string(), span.line)
+        .map_err(|_| "its page product does not place at the body's nodes")?;
+    Ok((placed, record.requests, decoded))
 }
 
-/// Decode an admitted product whose declarations resolved in the current unit: its function, the runtime it demands
-/// and the helper frames it carries. A product that does not decode is a miss.
+/// Name the first records-key input in which an admitted product differs from the body it would restore.
+fn input_difference(stored: &[String], current: &[String]) -> &'static str {
+    const NAMES: [&str; 8] = [
+        "its page product has another producer",
+        "its page product has another checked meaning",
+        "its page product names another frame",
+        "its page product names another file",
+        "its page product has another overflow policy",
+        "its checker witness differs from the page product's",
+        "its node count differs from the page product's",
+        "its page product has another producer profile",
+    ];
+    if stored.len() != current.len() {
+        return "its page product has another number of key inputs";
+    }
+    stored
+        .iter()
+        .zip(current)
+        .position(|(left, right)| left != right)
+        .and_then(|index| NAMES.get(index).copied())
+        .unwrap_or("its page product has other key inputs")
+}
+
+/// Restore an admitted product whose declarations resolved in the current unit: its function, the runtime it demands
+/// and the helper frames it carries, from the record already read. A product that does not restore is a miss.
 pub fn admitted_function(
-    payload: &[u8],
+    placed: &PlacedRecord,
     resolved: &[NominalReference],
 ) -> Option<(Function, Vec<ExternalFunction>, Vec<Function>)> {
-    let (function, runtime, frames, _identities) = decode_product_parts(payload, resolved).ok()?;
-    Some((function, runtime, frames))
+    placed.restore(resolved).ok()
 }
 
 /// Name a native product by the existing semantic digest owner's unambiguous framed serialization.

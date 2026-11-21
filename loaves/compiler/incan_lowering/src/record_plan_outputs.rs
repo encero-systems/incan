@@ -25,11 +25,21 @@ pub fn publish_plan_records(plan: &Plan, products: &str, report: &str) -> Result
     let report_path = Path::new(report);
     let mut events = scalar_events(report_path)?;
     append_admitted_events(&mut events, products, report_path)?;
-    // Every keyed declaration retains its whole-plan function, including in a unit that publishes no interface.
+    // Every keyed declaration retains its whole-plan function, including in a unit that publishes no interface. Only a
+    // unit whose every function has an event can publish one; otherwise no placed product is kept for it.
+    let publishable = events.len() == plan.functions.len();
     let mut references = Vec::new();
     let mut carried = Vec::new();
-    let keyed = keyed_plan_products(plan, products, report_path, &events, &mut references, &mut carried)?;
-    if events.len() != plan.functions.len() {
+    let keyed = keyed_plan_products(
+        plan,
+        products,
+        report_path,
+        &events,
+        publishable,
+        &mut references,
+        &mut carried,
+    )?;
+    if !publishable {
         return refuse_interface(plan, report, &events, &carried);
     }
     if keyed.len() != plan.functions.len() {
@@ -138,11 +148,15 @@ fn refuse_interface(plan: &Plan, report: &str, events: &[LoweringEvent], carried
 /// reused product must already be final. A declaration without a product stays ordinary. `references` receives, per
 /// keyed product, the positions its declaration ordinals take in this unit, and `carried` the names of the helper
 /// frames those products carry.
+///
+/// An admitted product is final already; it is placed at its declaration's positions only for a `publishable`
+/// interface, the one consumer of those bytes. Otherwise only the helper frames it carries are read.
 fn keyed_plan_products(
     plan: &Plan,
     products: &str,
     report: &Path,
     events: &[LoweringEvent],
+    publishable: bool,
     references: &mut Vec<Vec<NominalReference>>,
     carried: &mut Vec<String>,
 ) -> Result<Vec<Vec<u8>>, String> {
@@ -169,14 +183,25 @@ fn keyed_plan_products(
                 function.name
             ));
         };
-        let mut event = events[*index].clone();
-        let resolved = plan_positions(plan, base, &event_references(&event)?)?;
-        let nodes = event_positions(&event);
+        let reported = &events[*index];
+        let resolved = plan_positions(plan, base, &event_references(reported)?)?;
+        let nodes = event_positions(reported);
         let file = function.span.file.to_string();
-        if event.admitted {
-            let product = decode_plan_function_record(&event.product)?.function;
+        if reported.admitted {
+            let product = decode_plan_function_record(&reported.product)?.function;
             let mut names = Vec::new();
-            let positioned = positioned_product(&product, &nodes, &file, function.span.line, &mut names)?;
+            let positioned = if publishable {
+                Some(positioned_product(
+                    &product,
+                    &nodes,
+                    &file,
+                    function.span.line,
+                    &mut names,
+                )?)
+            } else {
+                names = product_frame_names(&product)?;
+                None
+            };
             for name in names {
                 if !function_indexes.contains_key(name.as_str()) {
                     return Err(format!(
@@ -185,10 +210,13 @@ fn keyed_plan_products(
                 }
                 carried.push(name);
             }
-            keyed.push(positioned);
-            references.push(resolved);
+            if let Some(positioned) = positioned {
+                keyed.push(positioned);
+                references.push(resolved);
+            }
             continue;
         }
+        let mut event = reported.clone();
         let frames = carried_frames(plan, &function_indexes, &event.product, carried)?;
         let attempt = enter_producer("compiler", "plan-function-finalize", &event.identity, &event.key);
         let (last, positions, positioned) = finalized_plan_product(
