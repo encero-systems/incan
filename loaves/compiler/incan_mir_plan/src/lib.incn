@@ -8,6 +8,7 @@ including operands and places, so native diagnostics retain provenance.
 """
 
 pub from rust::incan_mir_plan_native import (
+    SpanFile,
     TupleElement,
     SourceSpan,
     ListLeaf,
