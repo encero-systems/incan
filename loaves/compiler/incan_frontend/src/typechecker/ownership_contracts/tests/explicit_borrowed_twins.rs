@@ -473,3 +473,35 @@ fn builtin_methods_reach_through_borrows() -> Result<(), Box<dyn std::error::Err
     assert!(!refused.errors.is_empty(), "a shared borrow changed its list");
     Ok(())
 }
+
+/// A package's API metadata, which a consumer in another package reads for a module's functions, publishes a borrow
+/// the same way in both spellings: a borrow-only function's borrowed parameter and result are the native reference, as
+/// its checked signature says. (A `Borrowed[str]` parameter published as an explicit contract mode made a consumer
+/// refuse an owned argument: "expected 'Borrowed[Str]', found 'Str'".)
+#[test]
+fn api_metadata_publishes_borrows_as_their_reference_twins() -> Result<(), Box<dyn std::error::Error>> {
+    let template = "pub model Write:\n    pub key: int\n\npub def append(destination: str, text: {borrow:str}) -> int:\n    return len(destination) + len(text)\n\npub def matches(mut write: {borrow_mut:Write}, key: int) -> bool:\n    write.key += 1\n    return write.key == key\n\npub def first(values: {borrow:list[int]}) -> {borrow:list[int]} from values:\n    return values\n";
+    let published = |source: &str| -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_package_identity(Some("provider".into()));
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let api = crate::api_metadata::collect_checked_api_metadata(&program, &checker, vec!["views".to_owned()]);
+        Ok(api
+            .declarations
+            .iter()
+            .map(|declaration| format!("{declaration:?}"))
+            .collect())
+    };
+    let native = published(&spelled(template, NATIVE))?;
+    let explicit = published(&spelled(template, EXPLICIT))?;
+    assert_eq!(explicit, native);
+    assert!(
+        native.iter().all(|declaration| !declaration.contains("\"Borrowed\"")),
+        "{native:?}"
+    );
+    Ok(())
+}
