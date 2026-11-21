@@ -24,7 +24,7 @@ from std.primitives.crumb.identity import closed_selector, check_arity
 from std.primitives.crumb.records import RowRecord
 from std.primitives.crumb.registrations import KindRegistry
 from std.primitives.crumb.row_twin import read_twin_rows
-from std.primitives.crumb.row_writer import write_rows
+from std.primitives.crumb.row_writer import write_twin_rows
 from std.primitives.crumb.selectors import parse_type
 from std.primitives.crumb.spelling import selector_spelling
 from std.primitives.crumb.text_printer import print_comic
@@ -531,7 +531,7 @@ def row_twin_encode(document: JsonValue) -> Result[Option[bytes], str]:
             for index in range(rows.len()):
                 records.append(rows.read_record(index, setup).map_err((e) => e.message())?)
             writer = KindRegistry.create([], setup).map_err((e) => e.message())?
-            encoded = write_rows(descriptions, records, writer, rows.is_sealed(), setup).map_err((e) => e.message())?
+            encoded = write_twin_rows(descriptions, records, writer, rows.is_sealed(), setup).map_err((e) => e.message())?
             return Ok(Some(encoded))
 
 

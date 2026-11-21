@@ -1,17 +1,62 @@
 """Write one finite, bounded Crumb row envelope with complete descriptions and an optional logical seal."""
 
-from rust::incan_std_primitives::crumb import row_envelope as native_row_envelope
+from rust::incan_std_primitives::crumb import (
+    RowWriteRequest,
+    count_twin_row_write,
+    row_envelope as native_row_envelope,
+)
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.hashes import start_seal, append_seal
 from crate.primitives.crumb.registrations import KindRegistry
 from crate.primitives.crumb.cells import root, scalar_record_batch
-from crate.primitives.crumb.descriptions import Description, encode_entry
+from crate.primitives.crumb.descriptions import Description, DescriptionMode, encode_entry
 from crate.primitives.crumb.description_dictionary import admit_dictionary, slot
+from crate.primitives.crumb.metadata_values import encode
 from crate.primitives.crumb.records import RowRecord
+from crate.primitives.crumb.types import NominalKind, TypeNode
+from crate.primitives.crumb.values import IntegerValue, MapEntry, Value, ValueField
 
 
 pub def write_rows(
+    descriptions: list[Description],
+    records: list[RowRecord],
+    registry: KindRegistry,
+    sealed: bool,
+    mut budget: Budget,
+) -> Result[bytes, CrumbError]:
+    """Admit and encode one complete row envelope through the native semantic writer."""
+    mut request = RowWriteRequest.new(sealed)
+    mut boundary = Budget.create(
+        bytes=9223372036854775807,
+        elements=9223372036854775807,
+        depth=9223372036854775807,
+    )?
+    for description in descriptions:
+        request.description(
+            encode(description.metadata, boundary)?,
+            description.mode == DescriptionMode.Inline,
+        )
+    for registration in registry.registered():
+        request.register(registration.kind, registration.shape == NominalKind.Record)
+    for record in records:
+        request.record(record.key)
+        request = append_value(request, record.value)
+    bytes_left, elements_left = budget.codec_allowance()
+    request.allow(bytes_left, elements_left, budget.depth_allowance())
+    result = request.write()
+    budget.charge_bytes(result.bytes_charged)?
+    budget.charge_elements(result.elements_charged)?
+    if result.category == "":
+        return Ok(result.data)
+    if result.category == "limit_exceeded":
+        if result.cause == "":
+            return Err(CrumbError.limit("native row writer"))
+        return Err(CrumbError.limit(result.cause))
+    return Err(CrumbError.invalid_input(result.category))
+
+
+pub def write_twin_rows(
     descriptions: list[Description],
     records: list[RowRecord],
     registry: KindRegistry,
@@ -26,6 +71,7 @@ pub def write_rows(
     order. The optional seal hashes logical values, not physical rows. This finite owned API is
     bounded by the caller's budget; it does not promise a spooled or streaming output sink.
     """
+    count_twin_row_write()
     dictionary = admit_dictionary(descriptions, registry, budget)?
     mut entries: list[bytes] = []
     for description in dictionary.entries:
@@ -60,3 +106,118 @@ pub def write_rows(
     budget.charge_bytes(layout.byte_charge.saturating_resize[int]())?
     budget.charge_elements(layout.element_charge.saturating_resize[int]())?
     return Ok(layout.data)
+
+
+def append_value(mut request: RowWriteRequest, value: Value) -> RowWriteRequest:
+    """Append one complete logical value to the native request in pre-order."""
+    match value:
+        Value.NoneValue => return node(request, 0)
+        Value.Some(items) =>
+            request = node(request, 1, count=len(items))
+            return append_values(request, items)
+        Value.Boolean(flag) => return node(request, 2, flag=flag)
+        Value.Integer(IntegerValue.Signed(number)) => return node(request, 3, signed=number)
+        Value.Integer(IntegerValue.Unsigned(number)) => return node(request, 4, unsigned=number)
+        Value.Float(width, bits) => return node(request, 5, number=width, data=bits)
+        Value.Decimal(coefficient, scale) => return node(request, 6, signed=coefficient, number=scale)
+        Value.Text(text) => return node(request, 7, text=text)
+        Value.Binary(data) => return node(request, 8, data=data)
+        Value.Withheld => return node(request, 9)
+        Value.List(items) =>
+            request = node(request, 10, count=len(items))
+            return append_values(request, items)
+        Value.Tuple(items) =>
+            request = node(request, 11, count=len(items))
+            return append_values(request, items)
+        Value.Set(items) =>
+            request = node(request, 12, count=len(items))
+            return append_values(request, items)
+        Value.Map(entries) =>
+            request = node(request, 13, count=len(entries))
+            return append_entries(request, entries)
+        Value.Record(fields) =>
+            request = node(request, 14, count=len(fields))
+            return append_fields(request, fields)
+        Value.Enum(identity, fields) =>
+            request = node(request, 15, count=len(fields), data=identity)
+            return append_fields(request, fields)
+        Value.Union(selector, items) =>
+            request = node(request, 16, count=len(items))
+            request = append_selector(request, selector)
+            return append_values(request, items)
+        Value.Reference(target, identity) => return node(request, 17, data=target, other=identity)
+
+
+def append_values(mut request: RowWriteRequest, values: list[Value]) -> RowWriteRequest:
+    for value in values:
+        request = append_value(request, value)
+    return request
+
+
+def append_entries(mut request: RowWriteRequest, entries: list[MapEntry]) -> RowWriteRequest:
+    for entry in entries:
+        request = append_value(request, entry.key)
+        request = append_value(request, entry.value)
+    return request
+
+
+def append_fields(mut request: RowWriteRequest, fields: list[ValueField]) -> RowWriteRequest:
+    for field in fields:
+        request = node(request, 18, flag=field.canonical, data=field.identity, text=field.absent.value())
+        request = append_value(request, field.value)
+    return request
+
+
+def append_selector(mut request: RowWriteRequest, selector: TypeNode) -> RowWriteRequest:
+    """Append the finite closed selector subset the row value ABI admits."""
+    match selector:
+        TypeNode.Scalar(kind) => return node(request, 19, text=kind.value())
+        TypeNode.Decimal(precision, scale) => return node(request, 20, number=precision, second=scale)
+        TypeNode.Container(kind, arguments) =>
+            request = node(request, 21, count=len(arguments), text=kind.value())
+            return append_selectors(request, arguments)
+        TypeNode.Nominal(kind, _, identity, arguments) =>
+            mut raw: bytes = b""
+            if let Some(known) = identity:
+                raw = known
+            request = node(request, 22, count=len(arguments), data=raw, text=kind.value())
+            return append_selectors(request, arguments)
+        TypeNode.Reference(arguments) =>
+            request = node(request, 23, count=len(arguments))
+            return append_selectors(request, arguments)
+        _ => return node(request, -1)
+
+
+def append_selectors(mut request: RowWriteRequest, selectors: list[TypeNode]) -> RowWriteRequest:
+    for selector in selectors:
+        request = append_selector(request, selector)
+    return request
+
+
+def node(
+    mut request: RowWriteRequest,
+    code: int,
+    count: int = 0,
+    flag: bool = false,
+    signed: i128 = 0i128,
+    unsigned: u128 = 0u128,
+    number: int = 0,
+    second: int = 0,
+    data: bytes = b"",
+    other: bytes = b"",
+    text: str = "",
+) -> RowWriteRequest:
+    """Append one transport node without interpreting it as admission proof."""
+    request.node(
+        code.saturating_resize[i64](),
+        count.saturating_resize[i64](),
+        flag,
+        signed,
+        unsigned,
+        number.saturating_resize[i64](),
+        second.saturating_resize[i64](),
+        data,
+        other,
+        text,
+    )
+    return request

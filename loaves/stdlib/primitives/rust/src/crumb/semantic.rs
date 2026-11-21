@@ -25,6 +25,8 @@ mod row_cells;
 mod row_cursor;
 #[path = "semantic_row_entry.rs"]
 mod row_entry;
+#[path = "semantic_row_request.rs"]
+mod row_request;
 #[path = "semantic_row_set.rs"]
 mod row_set;
 #[path = "semantic_row_write.rs"]
@@ -35,6 +37,7 @@ mod rows;
 mod scan;
 
 pub use row_entry::{RowAdmission, RowRequest};
+pub use row_request::{RowWrite, RowWriteRequest};
 pub use row_set::RowRead;
 
 /// One native semantic-codec attempt with independently measured encode and decode stages.
