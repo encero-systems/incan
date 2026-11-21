@@ -5,6 +5,7 @@ from std.testing import fail
 from intake import ManifestReader, read_project
 from loaf_local_graph import LocalDemand, LocalFacet, catalog, local_facets, local_facet_session
 from rust_activation import ActivationPurpose, CfgSnapshot, DependencyDomain, TargetConfiguration
+from rust_build import ordered
 from registry_units import RegistryDemand, RegistrySelection, RegistryUnit, RegistryUnits
 from toolchain_native import retain_support_facet
 
@@ -257,4 +258,21 @@ pub def test_local_graph_does_not_visit_inactive_targets() -> Result[None, str]:
         assert not facet.project.endswith("/absent")
         for edge in facet.local:
             assert edge.alias != "absent"
+    return Ok(None)
+
+
+pub def test_fixture_links_production_package_under_test() -> Result[None, str]:
+    """The fixture reaches the production library; only the harness selects that fixture."""
+    path = Path("tests/fixtures/test-production-backedge/subject").resolve().map_err((error) => error.message())?
+    harness = LocalDemand(
+        project=path.0, domain=DependencyDomain.Target, features=[], defaults=true, purpose=ActivationPurpose.Test,
+    )
+    facets = ordered(local_facets(harness, configuration())?)?
+    assert len(facets) == 3
+    assert facets[0].is_root(path.0, ActivationPurpose.Normal)
+    assert len(facets[0].local) == 0
+    assert facets[1].package == "backedge_reader"
+    assert len(facets[1].local) == 1 and facets[1].local[0].key() == facets[0].key()
+    assert facets[2].is_root(path.0, ActivationPurpose.Test)
+    assert len(facets[2].local) == 1 and facets[2].local[0].key() == facets[1].key()
     return Ok(None)

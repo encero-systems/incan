@@ -11,6 +11,7 @@ from codegen import rust_arguments, unit_metadata
 from driver_command import driver_command
 from intake import ManifestReader
 from loaf_local_graph import LocalFacet
+from rust_activation import ActivationPurpose
 from registry_units import RegistryUnits, is_dynamic_library
 from retained_readings import installed_digest
 from rust_target import compiler_sysroot, compiler_version, decoded, deployment_target, inherited_deployment_selection
@@ -48,7 +49,9 @@ pub def facet_slot(facet: LocalFacet, profile: str) -> str:
     mut owner = facet.project
     if facet.package != "" and facet.version != "":
         owner = f"{facet.package}\n{facet.version}"
-    text = f"{owner}\n{facet.domain.value()}\n{",".join(sorted(facet.features))}\n{profile}"
+    mut text = f"{owner}\n{facet.domain.value()}\n{",".join(sorted(facet.features))}\n{profile}"
+    if facet.purpose == ActivationPurpose.Test:
+        text += "\ntest"
     return hexlify(sha256.digest(text.encode("utf-8")))[0:16]
 
 

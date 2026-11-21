@@ -27,7 +27,7 @@ from json_fields import field, required_items, required_text, strings
 from intake import library_source, ManifestReader
 from native_closure_input import NativeClosureInput
 from native_references import closure_reference, native_anchors, rust_native_document
-from loaf_local_graph import LocalDemand, LocalFacet, local_facets
+from loaf_local_graph import LocalDemand, LocalFacet, local_facets, root_purpose
 from observation import trace
 from publication import place, publish
 from rust_activation import DependencyDomain
@@ -49,7 +49,7 @@ from rust_bakery import baked_rust, claim_rust, rust_store, rust_unit_name, seal
 from installed_sources import differing_crates, mismatch
 from source_security import validate_native_sources
 from compile_time_trust import combine as combine_trust, decide, decide_registry
-from bakery import bakery, forget_view, library_directory
+from bakery import bakery, forget_view, library_directory, rebind_refreshed_file
 from rust_registry import selected_registry
 from rust_manifest import RustFacet, package_environment, rust_facet
 from rust_build import (
@@ -544,8 +544,9 @@ def build_prepared_dependencies(
     mut built: Dict[str, BuiltUnit] = {}
     # The libraries built for the graph; `linking` adds the registry's and the toolchain's directories.
     mut search: list[str] = []
+    purpose = root_purpose(facets, request.project)
     for facet in ordered(facets)?:
-        own = facet.project == request.project and facet.domain == DependencyDomain.Target
+        own = facet.is_root(request.project, purpose)
         if own and not include_root:
             continue
         declared = rust_facet(facet.project, not own, request.manifests)?
@@ -553,7 +554,7 @@ def build_prepared_dependencies(
             if own:
                 continue
             return Err(f"{facet.project} declares no Rust library")
-        unit = covered_unit(compile_library(facet, declared, output, request, built, search)?, facet, request)
+        unit = covered_unit(compile_library(facet, declared, output, request, built, search, not own)?, facet, request)
         built[facet.key()] = unit
         search = search + [unit.directory] + unit.search
     return Ok(built)
@@ -624,14 +625,15 @@ pub def compile_library(
     request: RustBuild,
     built: Dict[str, BuiltUnit],
     search: list[str],
+    dependency: bool = false,
 ) -> Result[BuiltUnit, str]:
-    """Prepare a foreign Incan provider's complete facade, or the Rust facet of the root or a Rust-only dependency."""
+    """Prepare an Incan provider's complete facade, or the Rust facet of the root or a Rust-only dependency."""
     if request.rust_facet_dependencies and declared.library.endswith(".rs"):
         return compile_rust_library(facet, declared, output, request, built, search)
     source = library_source(Path(facet.project), request.manifests)?
     if source.is_file():
         root = Path(request.project).resolve().map_err((error) => f"cannot {error.message()}")?
-        if facet.project != root.0:
+        if dependency or facet.project != root.0:
             return compile_incan_library(facet, declared, output, request, built, search)
     return compile_rust_library(facet, declared, output, request, built, search)
 
@@ -1086,6 +1088,10 @@ def refresh_baked_rust_graph(
         facet.project,
         linked,
     )?
+    # A refresh writes the graph beside a bound library's payload links: bind it again and describe that generation.
+    if artifact.is_symlink() and rebind_refreshed_file(store, graph)?:
+        record(directory.joinpath("library.oven-inputs"), native, outputs)?
+        record(directory.joinpath("library.graph-inputs"), rust_library_graph_key(native, toolchain.driver)?, [graph])?
     trace(
         f"unit {declared.crate_name} rust: reused native identity={native.digest}; refreshed graph identity={identity}",
     )

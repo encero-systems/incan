@@ -1,0 +1,7 @@
+"""A test-only fixture can call the ordinary production library under test."""
+
+from rust::backedge_reader import observed_answer
+
+
+pub def test_reader_uses_the_production_subject() -> None:
+    assert observed_answer() == 42

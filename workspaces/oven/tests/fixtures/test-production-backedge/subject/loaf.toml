@@ -1,0 +1,6 @@
+[project]
+name = "backedge_subject"
+version = "1.0.0"
+
+[envs.test.dependencies]
+backedge_reader = { loaf = "backedge_reader", path = "../reader" }
