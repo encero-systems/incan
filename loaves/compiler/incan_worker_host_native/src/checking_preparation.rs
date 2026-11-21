@@ -284,13 +284,10 @@ fn stage_preparation(
     Ok(Prepared { prepared_root })
 }
 
-/// Bind a staged predecessor value to the completed worker receipt that actually produced it.
-pub fn completed_checker_key(key: &RecordKey) -> Result<String, String> {
-    let encoded = encode_record_key(key)?;
-    Ok(format!(
-        "incan.compiler.completed-checking\t{}",
-        digest(encoded.as_bytes())
-    ))
+/// Bind a staged predecessor value to the completed worker receipt that actually produced it, by the predecessor's
+/// encoded record key.
+pub fn completed_checker_key(encoded_key: &str) -> String {
+    format!("incan.compiler.completed-checking\t{}", digest(encoded_key.as_bytes()))
 }
 
 /// Verify a completed earlier stage under the same source, rank evidence and authenticated content.
@@ -301,7 +298,7 @@ fn current_predecessor(
     certified: &Certified,
 ) -> Result<RecordRequest, String> {
     let value = required_record(resolved, &encode_record_key(key)?)?;
-    let completion = required_record(resolved, &completed_checker_key(key)?)?;
+    let completion = required_record(resolved, &completed_checker_key(&encode_record_key(key)?))?;
     let receipt = decode_read_receipt(&checking_completion_receipt(&completion, &value)?)?;
     let produced = &receipt.preparation.output;
     if produced.family != key.family

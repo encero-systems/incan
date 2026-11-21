@@ -312,8 +312,9 @@ def evaluate(store: Path, view: str, toolchain: Toolchain, pending: BuildOwner, 
         return Err("ranked compiler returned a different checking stage")
     mut completed = output
     completed.context = checked.root
-    owner.inputs[encode_record_key(completed)?] = value
-    owner.inputs[completed_checker_key(completed)?] = encode_checking_completion(produced.staged_root, encoded)?
+    completed_key = encode_record_key(completed)?
+    owner.inputs[completed_key] = value
+    owner.inputs[completed_checker_key(completed_key)] = encode_checking_completion(produced.staged_root, encoded)?
     owner.predecessors.append(completed)
     if output.family == "declaration":
         owner.equal_declaration = produced.staged_root == owner.prior_declaration_root
