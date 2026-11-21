@@ -2,7 +2,8 @@
 
 use incan_lang::lang::surface::iterator_methods::{IteratorMethodId, as_str as iterator_method_name};
 use incan_mir_plan_native::{
-    CalleeKind, Operand, Place, PlanType, Projection, RvalueKind, SourceSpan, assign as plan_assign,
+    CalleeKind, Function, Operand, Parameter, Place, PlanType, Projection, RvalueKind, SourceSpan, TerminatorKind,
+    assign as plan_assign, place as plan_place,
 };
 use incan_semantics_core::body_ir::{
     ArgumentBinding, ArgumentElement, Body, BodyIrModule, MethodTarget, Operand as SourceOperand, OwnershipFact,
@@ -16,12 +17,14 @@ use crate::call_arguments::{SlotPolicy, call_parameter_type, has_defaulted_slots
 use crate::callable_calls::{checked_type_arguments, emit_selected_body_call};
 use crate::checked_values::scalar_place;
 use crate::classes::{frame_type, function_name, receiver_mode};
+use crate::closure_lifting::{lifted_frame, synthesize};
+use crate::comparison_methods::source_equality_value;
 use crate::decls::{library_enum_item, library_item};
 use crate::defaults::{DefaultCall, default_arguments};
 use crate::element_borrows::{element_method_owner, element_method_receiver};
 use crate::element_places::{element_place_type, is_element_place};
 use crate::explicit_arguments::parameter_accesses;
-use crate::frame::{Builder, dereferenced_place, place_type, read_place, temporary};
+use crate::frame::{Builder, dereferenced_place, drop_all_owned, place_type, read_place, temporary, terminate_call};
 use crate::generic_callables::owned_callable_slots;
 use crate::iterator_methods::standard_protocol as standard_iterator_protocol;
 use crate::layout_types::native_source_type;
@@ -699,9 +702,6 @@ fn call_method_body(
     let typed = instantiated_method_body(module, builder, target, index, arguments, span)?;
     let body = &typed;
     retain_sdk_factory_result(module, builder, target, body, destination, span)?;
-    if source_equality_target(module, target, body) {
-        return Err(untranslated("comparison_methods::source_equality_value"));
-    }
     let ordinary = method_ordinary_operands(module, builder, target, arguments, body, span)?;
     let mut operands = vec![read_place(reference, true, span)];
     operands.extend(ordinary);
@@ -712,7 +712,7 @@ fn call_method_body(
         let output = scalar_place(builder, place, span)?;
         return construct_future(module, builder, body, operands, output, span);
     }
-    let callee = CalleeKind::Planned(function_name(module, body));
+    let callee = CalleeKind::Planned(source_method_symbol(module, builder, target, body, span)?);
     emit_selected_body_call(module, builder, body, callee, operands, destination, span)
 }
 
@@ -779,29 +779,6 @@ fn retain_sdk_factory_result(
     Ok(())
 }
 
-/// Whether an explicit equality source member keeps its owned input, which a borrowing wrapper adapts.
-fn source_equality_target(module: &BodyIrModule, target: &MethodTarget, body: &Body) -> bool {
-    if body.canonical.is_none() {
-        return false;
-    }
-    if target.canonical == body.canonical
-        && module
-            .nominal_declarations
-            .iter()
-            .any(|owner| owner.comparison_equality == body.canonical)
-    {
-        return true;
-    }
-    module.trait_implementations.iter().any(|implementation| {
-        Some(&implementation.implementation) == body.canonical.as_ref()
-            && implementation.method.declaration_name == "__eq__"
-            && module
-                .enum_declarations
-                .iter()
-                .any(|declaration| implementation.owner == declaration.canonical)
-    })
-}
-
 /// Bind the ordinary slots once, excluding the method's separately prepared receiver.
 pub fn method_ordinary_operands(
     module: &BodyIrModule,
@@ -818,8 +795,10 @@ pub fn method_ordinary_operands(
         return Ok(Vec::new());
     }
     let mut types = Vec::with_capacity(body.params.len().saturating_sub(1));
+    let owned_equality = source_equality_value(module, target, body);
     for parameter in body.params.iter().skip(1) {
-        types.push(call_parameter_type(builder, body, parameter)?);
+        let declared = call_parameter_type(builder, body, parameter)?;
+        types.push(owned_equality.clone().unwrap_or(declared));
     }
     if let Some(values) = method_partial_arguments(module, builder, target, arguments, body, &types, span)? {
         return Ok(values);
@@ -1024,13 +1003,64 @@ fn iterator_default_pair(
     })
 }
 
-/// Preserve an explicit equality source member's owned input and drop timing while its native trait slot borrows; its
-/// owned-equality wrapper is `comparison_methods::source_equality_value`.
-pub fn source_method_symbol(module: &BodyIrModule, target: &MethodTarget, body: &Body) -> Result<String, String> {
-    if source_equality_target(module, target, body) {
-        return Err(untranslated("comparison_methods::source_equality_value"));
-    }
-    Ok(function_name(module, body))
+/// Preserve an explicit equality source member's owned input and drop timing while its native trait slot borrows.
+pub fn source_method_symbol(
+    module: &BodyIrModule,
+    builder: &mut Builder,
+    target: &MethodTarget,
+    body: &Body,
+    span: &SourceSpan,
+) -> Result<String, String> {
+    let symbol = function_name(module, body);
+    let Some(value) = source_equality_value(module, target, body) else {
+        return Ok(symbol);
+    };
+    let reference = match &value {
+        PlanType::Model(owner, name) => PlanType::ModelRef(*owner, name.clone()),
+        PlanType::Enum(owner, name) => PlanType::EnumRef(*owner, name.clone()),
+        _ => return Ok(symbol),
+    };
+    let wrapper_name = format!("{}__owned_equality_{symbol}", builder.name);
+    let inputs = [reference.clone(), value.clone()];
+    let mut wrapper = lifted_frame(builder, &wrapper_name, &inputs, PlanType::Bool, span);
+    wrapper.locals.truncate(3);
+    wrapper.local_offset = 0;
+    wrapper.scoped_locals = Vec::new();
+    wrapper.scope_parents = Vec::new();
+    wrapper.owned = vec![2];
+    let other = temporary(&mut wrapper, reference.clone(), span);
+    wrapper.emit(plan_assign(
+        other.clone(),
+        RvalueKind::Borrow(plan_place(2, span)),
+        span,
+    ));
+    terminate_call(
+        &mut wrapper,
+        CalleeKind::Planned(symbol),
+        vec![
+            read_place(plan_place(1, span), false, span),
+            read_place(other, false, span),
+        ],
+        plan_place(0, span),
+        span,
+    );
+    drop_all_owned(&mut wrapper, span);
+    wrapper.finish(TerminatorKind::Return, span);
+    let parameter = |name: &str, ty: PlanType| Parameter {
+        name: name.into(),
+        ty,
+        span: span.clone(),
+    };
+    let function = Function::new(
+        wrapper_name.clone(),
+        vec![parameter("__incan_self", reference), parameter("other", value)],
+        PlanType::Bool,
+        wrapper.locals,
+        wrapper.blocks,
+        span.clone(),
+    );
+    synthesize(builder, function);
+    Ok(wrapper_name)
 }
 
 /// Prefer retained Incan Iterator identity and collection defaults absent from the native SDK trait.

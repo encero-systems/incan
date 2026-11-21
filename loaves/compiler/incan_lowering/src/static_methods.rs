@@ -352,7 +352,7 @@ pub fn lower_static_method_body(
     let operands = method_ordinary_operands(module, builder, target, arguments, &body, span)?;
     let owner_module = static_owner(&builder.program.statics[slot]);
     initialize_module_statics(builder, &owner_module, span);
-    let mut symbol = source_method_symbol(module, target, &body)?;
+    let mut symbol = source_method_symbol(module, builder, target, &body, span)?;
     if !read.place.projection.is_empty() {
         let fields = field_path(
             builder.tables(),

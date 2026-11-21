@@ -6,7 +6,7 @@ use incan_mir_plan_native::{
     CalleeKind, EnumDeclaration, ExternalFunction, Function, Parameter, PlanType, RvalueKind, SourceSpan,
     TerminatorKind, assign as plan_assign, place as plan_place, source_span as plan_span,
 };
-use incan_semantics_core::body_ir::{BodyIrModule, NominalDeclaration};
+use incan_semantics_core::body_ir::{BodyIrModule, NamedCallableTarget, NominalDeclaration, StringConversionContract};
 use incan_semantics_core::{IncanPrimitiveType, IncanType, generic};
 
 use crate::frame::{Builder, drop_all_owned, forget_owned, read_place, temporary, terminate_call, track_rvalue_moves};
@@ -15,6 +15,7 @@ use crate::native_type_identity::ConstructorIndex;
 use crate::options::{propagate_result, result_layout, retain_carrier};
 use crate::string_conversion_contracts::{conversion_name, conversion_trait};
 use crate::string_input::owned_string_frame;
+use crate::type_parameters::substitute;
 use crate::unions::collect_unions;
 
 /// Plan selected raw chain roots from `start`, leaving a continuation's unchanged roots intact.
@@ -194,5 +195,71 @@ fn underlying_conversion(
             Err("unsupported Body IR automatic string conversion underlying selection".into())
         }
         _ => Err("unsupported Body IR automatic string conversion primitive".into()),
+    }
+}
+
+/// Dispatch only the actual selected Package trait slot at its checked closed receiver, never a method spelling.
+pub fn string_conversion_callee(
+    module: &BodyIrModule,
+    builder: &mut Builder,
+    target: &NamedCallableTarget,
+    span: &SourceSpan,
+) -> Result<Option<(CalleeKind, PlanType)>, String> {
+    if conversion_trait(module)?.is_empty() {
+        return Ok(None);
+    }
+    let StringConversionContract::Selected(selection) = &module.string_conversion_contract else {
+        return Ok(None);
+    };
+    if target.canonical.as_ref() != Some(&selection.method_identity) {
+        return Ok(None);
+    }
+    if !target.type_args.is_empty() {
+        return Err("unsupported Body IR string conversion method type arguments".into());
+    }
+    if target.direct_call_id.is_some() {
+        return Err("unsupported Body IR string conversion local trait slot".into());
+    }
+    let Some(receiver) = &target.receiver_type else {
+        return Err("unsupported Body IR string conversion without checked receiver".into());
+    };
+    let closed = substitute(receiver, &builder.type_parameters, &builder.type_arguments)?;
+    let output = generic(
+        "Result".into(),
+        vec![closed.clone(), IncanType::Primitive(IncanPrimitiveType::Str)],
+    );
+    let result = native_source_type(
+        builder.constructors(),
+        builder.nominals(),
+        builder.enums(),
+        &builder.unions,
+        &output,
+        &builder.intrinsics,
+        "",
+    )?;
+    match &closed {
+        IncanType::Primitive(IncanPrimitiveType::Int) => {
+            let path = "incan_native_runtime::parse_newtype_int";
+            builder.externals.push(ExternalFunction {
+                path: path.to_owned(),
+                type_arguments: Vec::new(),
+                parameters: vec![PlanType::String],
+                return_type: result.clone(),
+                span: span.clone(),
+            });
+            Ok(Some((CalleeKind::External(path.to_owned()), result)))
+        }
+        IncanType::Named(name) => {
+            for declaration in &module.nominal_declarations {
+                if declaration.name == *name || declaration.carrier_name() == *name {
+                    let root = conversion_name(module, declaration)?;
+                    if !root.is_empty() {
+                        return Ok(Some((CalleeKind::Planned(root), result)));
+                    }
+                }
+            }
+            Err("unsupported Body IR automatic string conversion underlying selection".into())
+        }
+        _ => Err("unsupported Body IR string conversion receiver profile".into()),
     }
 }
