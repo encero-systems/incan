@@ -11,6 +11,8 @@ use incan_mir_plan_native::{
     write_module_placement,
 };
 
+use sha2::{Digest, Sha256};
+
 use crate::resident_products::{ResidentPage, resident_page};
 
 /// Where Bakery places the plan record of an admitted module: named by the module, never by a product key.
@@ -38,12 +40,15 @@ impl AdmittedPage {
     }
 }
 
-/// One module's page as one request reads it: the page this worker keeps for its bytes, which holds each event's
-/// identity but not its bytes, and this request's copy of the bytes, from which an event the worker has not restored
-/// for these inputs yet is read.
+/// One module's page as one request reads it: the page this worker keeps for its content, which holds each event's
+/// identity but not its bytes, and where this request's copy of the bytes is, read only for a restore the worker has
+/// not kept and only when they match the page's content digest.
 pub struct ModulePage {
     resident: Arc<ResidentPage>,
-    encoded: Vec<u8>,
+    path: PathBuf,
+    content: [u8; 32],
+    /// This request's page bytes, read at most once and refused when they do not match `content`.
+    encoded: OnceLock<Option<Vec<u8>>>,
     module: String,
     /// This request's page with its event bytes, read on its first restore the worker has not kept.
     full: OnceLock<Option<AdmittedPage>>,
@@ -62,13 +67,15 @@ impl ModulePage {
     fn empty() -> Self {
         Self {
             resident: ResidentPage::unkept(no_page()),
-            encoded: Vec::new(),
+            path: PathBuf::new(),
+            content: [0; 32],
+            encoded: OnceLock::new(),
             module: String::new(),
             full: OnceLock::new(),
         }
     }
 
-    /// The page this worker keeps for these bytes.
+    /// The page this worker keeps for this content.
     pub fn resident(&self) -> &Arc<ResidentPage> {
         &self.resident
     }
@@ -78,38 +85,79 @@ impl ModulePage {
         let inspect = self.resident.inspect_placement;
         let page = self
             .full
-            .get_or_init(|| read_page(&self.encoded, &self.module, inspect))
+            .get_or_init(|| read_page(self.bytes()?, &self.module, inspect))
             .as_ref()?;
         page.event(function).map(|event| event.event.as_slice())
     }
+
+    /// This request's page bytes, when they match the page's content digest.
+    fn bytes(&self) -> Option<&[u8]> {
+        page_bytes(&self.encoded, &self.path, &self.content)
+    }
+}
+
+/// Read a page's bytes into `cell` once, keeping them only when their digest is `content`.
+fn page_bytes<'a>(cell: &'a OnceLock<Option<Vec<u8>>>, path: &Path, content: &[u8; 32]) -> Option<&'a [u8]> {
+    cell.get_or_init(|| {
+        let bytes = std::fs::read(path).ok()?;
+        (<[u8; 32]>::from(Sha256::digest(&bytes)) == *content).then_some(bytes)
+    })
+    .as_deref()
+}
+
+/// The content digest Oven named a staged page by, from its `.digest` companion: 64 lowercase hexadecimal digits.
+fn named_content(path: &Path) -> Option<[u8; 32]> {
+    let named = std::fs::read(format!("{}.digest", path.display())).ok()?;
+    if named.len() != 64
+        || !named
+            .iter()
+            .all(|digit| digit.is_ascii_digit() || (b'a'..=b'f').contains(digit))
+    {
+        return None;
+    }
+    hex::decode(&named).ok()?.try_into().ok()
 }
 
 /// The final events of an admitted module, by the native function name of the body each belongs to.
 ///
 /// Bakery writes the page only for a module whose every witness still validates. No page, or a page that does not
-/// decode or names another module, admits nothing: every body then takes the keyed route. A page this worker already
-/// read from the same bytes is the page it kept, with the products it restored from it.
+/// decode or names another module, admits nothing: every body then takes the keyed route. A page is known by the
+/// digest of its bytes: the one Oven names it by when it stages one, else the digest of the bytes read here. A page
+/// this worker already read for that content is the page it kept, with the products it restored from it, and its
+/// bytes are not read again.
 pub fn admitted_page(products: Option<&str>, module: &str, generation: Option<&str>) -> ModulePage {
     let (Some(directory), Some(_)) = (products, generation) else {
         return ModulePage::empty();
     };
     let path = module_page(directory, module);
-    let Ok(encoded) = std::fs::read(&path) else {
-        return ModulePage::empty();
-    };
     let inspect = path.to_string_lossy().ends_with(REPOSITION_MODULE_PAGE);
+    let encoded = OnceLock::new();
+    let content = match named_content(&path) {
+        Some(content) => content,
+        None => {
+            let Ok(bytes) = std::fs::read(&path) else {
+                return ModulePage::empty();
+            };
+            let content = Sha256::digest(&bytes).into();
+            let _ = encoded.set(Some(bytes));
+            content
+        }
+    };
     let full = OnceLock::new();
-    let resident = resident_page(&encoded, module, inspect, || {
-        let page = read_page(&encoded, module, inspect)?;
+    let resident = resident_page(&content, module, inspect, || {
+        let bytes = page_bytes(&encoded, &path, &content)?;
+        let page = read_page(bytes, module, inspect)?;
         let kept = without_event_bytes(&page);
         let _ = full.set(Some(page));
-        Some(kept)
+        Some((kept, bytes.len() as u64))
     });
     let Some(resident) = resident else {
         return ModulePage::empty();
     };
     ModulePage {
         resident,
+        path,
+        content,
         encoded,
         module: module.to_owned(),
         full,
@@ -322,6 +370,7 @@ mod tests {
     use crate::record_positions::{indexed_product, placed_record};
     use crate::resident_products::RestoreInputs;
     use crate::scalar_store::AdmittedPayload;
+    use sha2::{Digest, Sha256};
 
     /// A fresh directory for one test.
     fn directory(test: &str) -> PathBuf {
@@ -589,7 +638,6 @@ mod tests {
     /// name is unchanged, and refuses bytes that do not match the name when it does read them.
     #[test]
     fn a_page_named_by_its_identity_is_not_read_again() -> Result<(), String> {
-        use sha2::{Digest, Sha256};
         let root = directory("named");
         let products = root.to_string_lossy().into_owned();
         let page = PlanModuleValue {
