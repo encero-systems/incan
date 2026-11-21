@@ -3,6 +3,7 @@
 from std.fs import Path
 from std.tempfile import TemporaryDirectory
 from check_test_support import write
+from pub::incan_platform.probes import process_table
 from oven_tests import (
     HEADROOM_BYTES,
     LOWERING_RESERVATION_BYTES,
@@ -15,6 +16,7 @@ from oven_tests import (
     free_worker,
     invocations,
     join_logs,
+    planned_outcome,
     log_name,
     parse_options,
     remove_worker_projects,
@@ -29,6 +31,7 @@ from oven_tests import (
 )
 from verify_installation import (
     VerificationPhase,
+    pin_phase_verifier,
     verification_phase_arguments,
     verification_phase_plans,
     verification_trace_environment,
@@ -140,6 +143,16 @@ def test_verification_phases_reserve_their_complete_parallel_work() -> Result[No
         "900",
     ]
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    # A later phase can start after the shared script output has been replaced by a sibling script.
+    run = temporary.path()
+    shared_output = run.joinpath("incan_release_scripts")
+    replacement = run.joinpath("new-script")
+    write(run, "incan_release_scripts", "verifier")?
+    pinned = pin_phase_verifier(shared_output, run)?
+    write(run, "new-script", "oven tests")?
+    _ = replacement.replace(shared_output).map_err((error) => error.message())?
+    assert pinned.read_text("utf-8", "strict").map_err((error) => error.message())? == "verifier"
+    assert shared_output.read_text("utf-8", "strict").map_err((error) => error.message())? == "oven tests"
     assert selected_builder_bakery("") == ""
     assert selected_builder_bakery(temporary.path().0) == ""
     temporary.path().joinpath("bakery").mkdir(true, true).map_err((error) => error.message())?
@@ -400,7 +413,7 @@ def test_joined_log_keeps_invocation_order_whatever_the_schedule() -> Result[Non
     joined = join_logs(planned, root.joinpath("joined.log"))?
     assert joined == "line 0\nline 1\nline 2\nline 3\nline 4\nline 5\nline 6\n"
     assert not run_all("/usr/bin/false", planned, 4, 0)?
-    assert run_all_failures("/usr/bin/false", planned, 4, 0)? == [0, 1, 2, 3, 4, 5, 6]
+    assert run_all_failures("/usr/bin/false", planned, 1, 0)? == [0]
     environment_log = logs.joinpath("environment.log")
     environment = Invocation(
         arguments=["OVEN_TEST_PROBE"],
@@ -412,6 +425,234 @@ def test_joined_log_keeps_invocation_order_whatever_the_schedule() -> Result[Non
     assert run_all("/usr/bin/printenv", [environment], 1, 0)?
     assert environment_log.read_text("utf-8", "strict").map_err((error) => error.message())? == "visible\n"
     return Ok(None)
+
+
+def test_concurrent_invocations_have_distinct_compiler_worker_scopes() -> Result[None, str]:
+    """Each child receives its own compiler worker identity before the scheduler manages its lifetime."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    mut planned: list[Invocation] = []
+    for name in ["first", "second"]:
+        log = root.joinpath(name + ".log")
+        planned.append(Invocation(arguments=["INCAN_RELEASE_INVOCATION"], directory=root.0, reservation=GIB, log=log))
+    assert run_all("/usr/bin/printenv", planned, 2, 2 * GIB)?
+    for item in planned:
+        found = item.log.read_text("utf-8", "strict").map_err((error) => error.message())?
+        assert found == item.log.0 + "\n"
+    return Ok(None)
+
+
+def test_first_failure_stops_later_admission_and_cancels_a_running_child_tree() -> Result[None, str]:
+    """One real failure prevents queued work and stops a concurrently running shell plus its child."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    logs = root.joinpath("logs")
+    logs.mkdir(true, true).map_err((error) => error.message())?
+    failure = Invocation(
+        arguments=["-c", "while [ ! -e ready ]; do sleep 0.01; done; exit 1"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("000-failure.log"),
+    )
+    running = Invocation(
+        arguments=["-c", "echo $$ > root.pid; sleep 60 & echo $! > child.pid; touch ready; wait"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("001-running.log"),
+    )
+    queued = Invocation(
+        arguments=["-c", "touch queued"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("002-queued.log"),
+    )
+    assert run_all_failures("/bin/sh", [failure, running, queued], 2, 0)? == [0]
+    assert not root.joinpath("queued").exists()
+    # Evidence directories can be reused. A queued invocation's older file must never enter this run's report.
+    queued.log.write_text("stale output", "utf-8", "strict", None).map_err((error) => error.message())?
+    first = Invocation(arguments=["-c", "echo failure-message; exit 1"], directory=root.0, reservation=GIB, log=failure.log)
+    outcome = planned_outcome("/bin/sh", [first, queued], 1, 0)?
+    assert not outcome.succeeded
+    assert [item.log.0 for item in outcome.started] == [first.log.0]
+    assert join_logs(outcome.started, root.joinpath("joined.log"))? == "failure-message\n"
+    pids = [read_pid(root.joinpath("root.pid"))?, read_pid(root.joinpath("child.pid"))?]
+    assert live_pids(pids)? == [], f"fail-fast cancellation left processes alive: {pids}"
+    return Ok(None)
+
+
+def test_keep_going_runs_every_planned_invocation_after_a_failure() -> Result[None, str]:
+    """With `--keep-going` a failure stops nothing: later pooled and settled invocations still run and are reported."""
+    assert parse_options(["oven", "evidence", "--keep-going"], "", 2, 4 * GIB)?.keep_going
+    assert not parse_options(["oven", "evidence"], "", 2, 4 * GIB)?.keep_going
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    logs = root.joinpath("logs")
+    logs.mkdir(true, true).map_err((error) => error.message())?
+    failure = Invocation(
+        arguments=["-c", "echo failure-message; exit 1"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("000-failure.log"),
+    )
+    queued = Invocation(
+        arguments=["-c", "touch queued; echo queued-message"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("001-queued.log"),
+    )
+    settled = Invocation(
+        arguments=["-c", "touch settled; echo settled-message"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("002-settled.log"),
+        alone=true,
+    )
+    outcome = planned_outcome("/bin/sh", [failure, queued, settled], 1, 0, true)?
+    assert not outcome.succeeded
+    assert [item.log.0 for item in outcome.started] == [failure.log.0, queued.log.0, settled.log.0]
+    assert root.joinpath("queued").exists() and root.joinpath("settled").exists()
+    joined = join_logs(outcome.started, root.joinpath("joined.log"))?
+    assert joined == "failure-message\nqueued-message\nsettled-message\n"
+    return Ok(None)
+
+
+def test_an_ignored_prefix_covering_every_position_stops_no_invocation() -> Result[None, str]:
+    """Independent release gates ignore every position, so each gate runs and each failure is named."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    logs = root.joinpath("logs")
+    logs.mkdir(true, true).map_err((error) => error.message())?
+    first = Invocation(arguments=["-c", "exit 1"], directory=root.0, reservation=GIB, log=logs.joinpath("000-first.log"))
+    second = Invocation(
+        arguments=["-c", "touch second; exit 1"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("001-second.log"),
+    )
+    third = Invocation(
+        arguments=["-c", "touch third"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("002-third.log"),
+    )
+    assert run_all_failures("/bin/sh", [first, second, third], 1, 0, 3)? == [0, 1]
+    assert root.joinpath("second").exists() and root.joinpath("third").exists()
+    return Ok(None)
+
+
+def test_completed_slot_is_settled_before_queued_admission() -> Result[None, str]:
+    """A failure raised during another child's cleanup is observed before its freed slot admits queued work."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    logs = root.joinpath("logs")
+    logs.mkdir(true, true).map_err((error) => error.message())?
+    failure = Invocation(
+        arguments=["-c", "while [ ! -e gate ]; do sleep 0.01; done; exit 1"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("000-failure.log"),
+    )
+    completed = Invocation(
+        arguments=[
+            "-c",
+            "(trap 'touch gate; exit 0' TERM; touch armed; while :; do sleep 1; done) & " + "while [ ! -e armed ]; do sleep 0.01; done",
+        ],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("001-completed.log"),
+    )
+    queued_log = logs.joinpath("002-queued.log")
+    queued = Invocation(arguments=["-c", "touch queued"], directory=root.0, reservation=GIB, log=queued_log)
+    assert run_all_failures("/bin/sh", [failure, completed, queued], 2, 0)? == [0]
+    assert not queued_log.exists(), "the queued invocation was admitted before the active failure was settled"
+    assert not root.joinpath("queued").exists()
+    return Ok(None)
+
+
+def test_start_error_drains_every_owned_process_tree() -> Result[None, str]:
+    """A later admission error stops both active shells and both of their children before returning the error."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    logs = root.joinpath("logs")
+    logs.mkdir(true, true).map_err((error) => error.message())?
+    mut planned: list[Invocation] = []
+    for index in range(2):
+        planned.append(
+            Invocation(
+                arguments=[
+                    "-c",
+                    f"trap 'touch stopped-{index}; exit 0' TERM; echo $$ > root-{index}.pid; " + f"sleep 60 & echo $! > child-{index}.pid; touch ready-{index}; wait",
+                ],
+                directory=root.0,
+                reservation=GIB,
+                log=logs.joinpath(f"00{index}-running.log"),
+            ),
+        )
+    planned.append(
+        Invocation(
+            arguments=["-c", "while [ ! -e ready-0 ] || [ ! -e ready-1 ]; do sleep 0.01; done"],
+            directory=root.0,
+            reservation=GIB,
+            log=logs.joinpath("002-completed.log"),
+        ),
+    )
+    planned.append(
+        Invocation(
+            arguments=["-c", "exit 0"],
+            directory=root.joinpath("absent").0,
+            reservation=GIB,
+            log=logs.joinpath("003-cannot-start.log"),
+        ),
+    )
+    message = refusal(run_all_failures("/bin/sh", planned, 3, 0))
+    assert message.contains("cannot start `/bin/sh`"), message
+    assert root.joinpath("stopped-0").exists()
+    assert root.joinpath("stopped-1").exists()
+    pids = [
+        read_pid(root.joinpath("root-0.pid"))?,
+        read_pid(root.joinpath("child-0.pid"))?,
+        read_pid(root.joinpath("root-1.pid"))?,
+        read_pid(root.joinpath("child-1.pid"))?,
+    ]
+    assert live_pids(pids)? == [], f"start-error cleanup left processes alive: {pids}"
+    return Ok(None)
+
+
+def test_timeout_stops_the_complete_child_tree_and_later_admission() -> Result[None, str]:
+    """One invocation deadline stops its shell and child before any queued invocation starts."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    logs = root.joinpath("logs")
+    logs.mkdir(true, true).map_err((error) => error.message())?
+    timed = Invocation(
+        arguments=["-c", "echo $$ > root.pid; sleep 60 & echo $! > child.pid; wait"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("000-timed.log"),
+        timeout_seconds=1,
+    )
+    queued = Invocation(
+        arguments=["-c", "touch queued"],
+        directory=root.0,
+        reservation=GIB,
+        log=logs.joinpath("001-queued.log"),
+    )
+    assert run_all_failures("/bin/sh", [timed, queued], 1, 0)? == [0]
+    assert not root.joinpath("queued").exists()
+    pids = [read_pid(root.joinpath("root.pid"))?, read_pid(root.joinpath("child.pid"))?]
+    assert live_pids(pids)? == [], f"timeout cancellation left processes alive: {pids}"
+    return Ok(None)
+
+
+def read_pid(path: Path) -> Result[int, str]:
+    """Read one decimal process identity written by a shell fixture."""
+    text = path.read_text("utf-8", "strict").map_err((error) => error.message())?.strip()
+    return Ok(int(text))
+
+
+def live_pids(wanted: list[int]) -> Result[list[int], str]:
+    """Return fixture process identities that remain in the operating-system process table."""
+    return Ok([row.pid for row in process_table()? if row.pid in wanted])
 
 
 def fixture(root: Path) -> Result[None, str]:

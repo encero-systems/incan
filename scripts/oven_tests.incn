@@ -1,9 +1,10 @@
 """
 Run installed CI's Oven test step through an installed Oven, with isolated projects tested concurrently.
 
-Run `incan run scripts/oven_tests.incn -- OVEN EVIDENCE [--jobs N] [--memory GIB]` from a checkout. OVEN is the
-installed command; EVIDENCE is the run's evidence directory. The step runs, one source per invocation so a source can
-be excluded on its own:
+Run `incan run scripts/oven_tests.incn -- OVEN EVIDENCE [--jobs N] [--memory GIB] [--keep-going]` from a checkout.
+OVEN is the installed command; EVIDENCE is the run's evidence directory. Without `--keep-going` the first failure stops
+the step; with it every planned invocation runs, so one run names every failure. The step runs, one source per
+invocation so a source can be excluded on its own:
 
 1. `OVEN test` for every `workspaces/oven/src/test_*.incn`, from `workspaces/oven`.
 2. `OVEN test --profile release` for every `loaves/*/*/tests/test_*.incn`, from its Loaf.
@@ -27,6 +28,7 @@ from rust::std::cell import RefCell
 from rust::std::env import args
 from rust::std::fs import File
 from rust::std::io import copy as copy_stream
+from rust::std::os::unix::process import CommandExt
 from rust::std::process import Child, Command, Stdio, exit
 from rust::std::rc import Rc
 from rust::std::string import String as RustString
@@ -36,6 +38,13 @@ from std.environ import get_or
 from std.fs import Path
 from std.regex import Regex
 from check_support import read, repository_root, write_stderr
+from release_support import (
+    ReleaseMember,
+    ReleaseTermination,
+    merge_release_terminations,
+    observe_release_processes,
+    stop_child_process_tree,
+)
 
 const GIB: int = 1073741824
 # What one invocation reserves. Peaks measured one invocation at a time, as the summed RSS of its processes and the
@@ -50,7 +59,7 @@ const FAILED: str = "^test_[A-Za-z0-9_]+[.]incn::test_[A-Za-z0-9_]+ (FAILED|XPAS
 # These read the installed toolchain and require it unchanged, which another invocation's first use of a native crate can
 # break, so they run after the others have finished; only their compilation runs beside the others.
 const NEEDS_SETTLED_INSTALLATION: FrozenList[str] = ["test_engine_protocol.incn"]
-const USAGE: str = "usage: oven_tests.incn OVEN EVIDENCE [--jobs N] [--memory GIB]"
+const USAGE: str = "usage: oven_tests.incn OVEN EVIDENCE [--jobs N] [--memory GIB] [--keep-going]"
 # The step reports failures under the installed-verification program's name.
 const REPORTER: str = "verify-installation"
 
@@ -63,6 +72,8 @@ pub model Options:
     pub jobs: int
     # Bytes the reservations may take together; zero when physical memory is unknown, which bounds nothing.
     pub memory: int
+    # Whether a failure leaves the remaining invocations running, so one run reports every failure.
+    pub keep_going: bool = false
 
 
 pub model Invocation:
@@ -95,6 +106,20 @@ pub model Summary:
     pub expected_ids: list[str]
 
 
+pub model PlannedOutcome:
+    """Invocations actually started, in their declared log order, and whether every planned invocation passed."""
+
+    pub started: list[Invocation]
+    pub succeeded: bool
+
+
+model PoolOutcome:
+    """Positions admitted and failed in a single bounded pool."""
+
+    started: list[int]
+    failed: list[int]
+
+
 model Running:
     """One started invocation, its planned position and the memory it reserved."""
 
@@ -103,8 +128,29 @@ model Running:
     timeout_seconds: int
     started: Instant
     child: Rc[RefCell[Child]]
+    # Every descendant observed while the root was alive, retained for fail-fast cleanup after the root exits.
+    members: list[ReleaseMember]
+    census_error: Option[str]
     # The worker project it runs in; empty when it has none.
     worker: str
+
+
+model ActiveSettlement:
+    """Owned invocations after polling reaches a stable pass, plus outcomes that forbid further admission."""
+
+    running: list[Running]
+    failed: list[int]
+    stopped: bool
+    errors: list[str]
+    completed: bool
+
+
+model Admission:
+    """The active and waiting invocations after one bounded admission step, plus any fully-drained start error."""
+
+    active: list[Running]
+    waiting: list[int]
+    errors: list[str]
 
 
 def main() -> None:
@@ -126,12 +172,13 @@ def main() -> None:
 
 pub def parse_options(arguments: list[str], configured: str, cores: int, physical: int) -> Result[Options, str]:
     """
-    OVEN and EVIDENCE, then optional `--jobs N` and `--memory GIB`. Without them `configured` or `cores` selects the
-    count, and `physical` bytes less the headroom the shared memory.
+    OVEN and EVIDENCE, then optional `--jobs N`, `--memory GIB` and `--keep-going`. Without the first two, `configured`
+    or `cores` selects the count, and `physical` bytes less the headroom the shared memory.
     """
     mut operands: list[str] = []
     mut jobs = default_jobs(configured, cores)
     mut memory = shared_memory(physical)
+    mut keep_going = false
     mut pending = ""
     for argument in arguments:
         if pending != "":
@@ -144,6 +191,8 @@ pub def parse_options(arguments: list[str], configured: str, cores: int, physica
             pending = ""
         elif argument == "--jobs" or argument == "--memory":
             pending = argument
+        elif argument == "--keep-going":
+            keep_going = true
         elif argument.startswith("-"):
             return Err(f"unknown option `{argument}`")
         else:
@@ -153,7 +202,7 @@ pub def parse_options(arguments: list[str], configured: str, cores: int, physica
     if len(operands) != 2:
         return Err("OVEN and EVIDENCE are required")
     evidence = Path(operands[1]).absolute().map_err((error) => error.message())?
-    return Ok(Options(oven=operands[0], evidence=evidence, jobs=jobs, memory=memory))
+    return Ok(Options(oven=operands[0], evidence=evidence, jobs=jobs, memory=memory, keep_going=keep_going))
 
 
 pub def default_jobs(configured: str, cores: int) -> int:
@@ -189,13 +238,13 @@ def run(options: Options) -> Result[str, str]:
     logs.mkdir(true, true).map_err((error) => error.message())?
     bakery = selected_builder_bakery(get_or("INCAN_BUILDER_HOME", ""))
     planned = invocations(root, options.evidence, logs, options.jobs, bakery)?
-    succeeded = run_planned(options.oven, planned, options.jobs, options.memory)?
+    outcome = planned_outcome(options.oven, planned, options.jobs, options.memory, options.keep_going)?
     remove_worker_projects(planned)?
     log = options.evidence.joinpath("oven-tests.log")
-    joined = join_logs(planned, log)?
+    joined = join_logs(outcome.started, log)?
     expected = read(root.joinpath("workspaces/contracts/oven-tests.txt"))?
     summary = summarize(joined, expected)?
-    return report(options.evidence, summary, succeeded)
+    return report(options.evidence, summary, outcome.succeeded)
 
 
 pub def invocations(
@@ -251,20 +300,44 @@ pub def selected_builder_bakery(builder_home: str) -> str:
 
 
 pub def run_planned(oven: str, planned: list[Invocation], jobs: int, memory: int) -> Result[bool, str]:
+    """Whether every planned invocation passed."""
+    return Ok(planned_outcome(oven, planned, jobs, memory)?.succeeded)
+
+
+pub def planned_outcome(
+    oven: str,
+    planned: list[Invocation],
+    jobs: int,
+    memory: int,
+    keep_going: bool = false,
+) -> Result[PlannedOutcome, str]:
     """
     Run the pooled invocations beside each settled source's compile-ahead, then each settled source alone.
 
     1. The compile-ahead invocations start first in the pool, so a settled source's compilation overlaps the others.
     2. Each settled source then runs alone and reuses its compiled unit when its inputs are unchanged.
     3. Only the planned invocations decide the outcome: a compile-ahead failure repeats in the settled run itself.
+    4. With `keep_going` no failure stops admission, so every planned invocation runs and the outcome covers them all.
     """
     # 1. The compile-ahead invocations lead the pool, so their failed positions are the lowest ones.
     early = compile_ahead(planned)
-    failed = run_all_failures(oven, early + [item for item in planned if not item.alone], jobs, memory)?
-    # 2. A settled source requires an installation that no other invocation changes any more.
-    ran_alone = run_all(oven, [item for item in planned if item.alone], 1, memory)?
-    # 3. The settled runs decide again what a compile-ahead failure showed.
-    return Ok(len([index for index in failed if index >= len(early)]) == 0 and ran_alone)
+    pooled = early + [item for item in planned if not item.alone]
+    mut pooled_ignored = len(early)
+    if keep_going:
+        pooled_ignored = len(pooled)
+    first = run_pool(oven, pooled, jobs, memory, pooled_ignored)?
+    mut logs = [pooled[index].log.0 for index in first.started if index >= len(early)]
+    mut succeeded = len([index for index in first.failed if index >= len(early)]) == 0
+    if succeeded or keep_going:
+        settled = [item for item in planned if item.alone]
+        mut settled_ignored = 0
+        if keep_going:
+            settled_ignored = len(settled)
+        second = run_pool(oven, settled, 1, memory, settled_ignored)?
+        for index in second.started:
+            logs.append(settled[index].log.0)
+        succeeded = succeeded and len(second.failed) == 0
+    return Ok(PlannedOutcome(started=[item for item in planned if item.log.0 in logs], succeeded=succeeded))
 
 
 pub def compile_ahead(planned: list[Invocation]) -> list[Invocation]:
@@ -325,6 +398,8 @@ def isolated_oven_project(root: Path, evidence: Path, position: int) -> Result[P
         .map_err((error) => error.message())?
     _ = root.joinpath("workbench").copy(checkout.joinpath("workbench"), true, false).map_err((error) => error.message())?
     checkout.joinpath("loaves").symlink_to(root.joinpath("loaves")).map_err((error) => error.message())?
+    # Tests read example projects as fixtures through the same relative path as in the checkout.
+    checkout.joinpath("examples").symlink_to(root.joinpath("examples")).map_err((error) => error.message())?
     return Ok(project)
 
 
@@ -414,51 +489,194 @@ pub def run_all(oven: str, planned: list[Invocation], jobs: int, memory: int) ->
     return Ok(len(run_all_failures(oven, planned, jobs, memory)?) == 0)
 
 
-pub def run_all_failures(oven: str, planned: list[Invocation], jobs: int, memory: int) -> Result[list[int], str]:
-    """Run every invocation within the count and memory budgets and return failed positions in planned order."""
+pub def run_all_failures(
+    oven: str,
+    planned: list[Invocation],
+    jobs: int,
+    memory: int,
+    ignored_prefix: int = 0,
+) -> Result[list[int], str]:
+    """Run within the count and memory budgets, stopping after the first failure outside `ignored_prefix`."""
+    return Ok(run_pool(oven, planned, jobs, memory, ignored_prefix)?.failed)
+
+
+def run_pool(oven: str, planned: list[Invocation], jobs: int, memory: int, ignored_prefix: int) -> Result[PoolOutcome, str]:
+    """Keep the positions this run admitted so earlier logs cannot stand in for unscheduled work."""
     reservations = [item.reservation for item in planned]
     mut waiting = [index for index in range(len(planned))]
     mut active: list[Running] = []
     mut failed: list[int] = []
     while len(waiting) > 0 or len(active) > 0:
-        chosen = admitted(reservations, waiting, [item.reservation for item in active], jobs, memory)
-        mut busy = [item.worker for item in active]
-        mut started: list[int] = []
-        for index in chosen:
-            worker = free_worker(planned[index].workers, busy)
-            if len(planned[index].workers) > 0 and worker == "":
-                continue
-            child = start(oven, planned[index], worker)?
-            busy.append(worker)
-            started.append(index)
-            active.append(
-                Running(
-                    position=index,
-                    reservation=reservations[index],
-                    timeout_seconds=planned[index].timeout_seconds,
-                    started=Instant.now(),
-                    child=Rc.new(RefCell.new(child)),
-                    worker=worker,
-                ),
-            )
-        waiting = [index for index in waiting if index not in started]
-        mut running: list[Running] = []
-        for item in active:
-            match item.child.borrow_mut().try_wait().map_err((error) => str(error))?:
-                Some(status) =>
-                    if not status.success():
-                        failed.append(item.position)
-                None =>
-                    if item.timeout_seconds > 0 and item.started.elapsed().as_secs() >= item.timeout_seconds:
-                        _ = item.child.borrow_mut().kill()
-                        _ = item.child.borrow_mut().wait()
-                        failed.append(item.position)
-                    else:
-                        running.append(item)
-        if len(running) == len(active):
+        settled = settle_active(active, ignored_prefix)
+        for position in settled.failed:
+            failed.append(position)
+        if len(settled.errors) > 0:
+            return Err("; ".join(settled.errors))
+        if settled.stopped:
+            break
+
+        admission = start_waiting(oven, planned, reservations, waiting, settled.running, jobs, memory)
+        if len(admission.errors) > 0:
+            return Err("; ".join(admission.errors))
+        waiting = admission.waiting
+        active = admission.active
+        if len(active) > 0:
             sleep(Duration.from_millis(20))
-        active = running
-    return Ok(sorted(failed))
+    return Ok(PoolOutcome(started=[index for index in range(len(planned)) if index not in waiting], failed=sorted(failed)))
+
+
+def settle_active(active: list[Running], ignored_prefix: int) -> ActiveSettlement:
+    """Poll to a stable pass before admission, draining every owned tree after a failure or custody error."""
+    mut running = active
+    mut failed: list[int] = []
+    while len(running) > 0:
+        polled = poll_active_once(running, ignored_prefix)
+        for position in polled.failed:
+            failed.append(position)
+        if polled.stopped or len(polled.errors) > 0:
+            return ActiveSettlement(
+                running=polled.running,
+                failed=failed,
+                stopped=polled.stopped,
+                errors=polled.errors,
+                completed=polled.completed,
+            )
+        running = polled.running
+        if not polled.completed:
+            break
+    return ActiveSettlement(running=running, failed=failed, stopped=false, errors=[], completed=false)
+
+
+def poll_active_once(active: list[Running], ignored_prefix: int) -> ActiveSettlement:
+    """Take one prompt status pass, retaining live custody and recording rather than short-circuiting cleanup errors."""
+    mut running: list[Running] = []
+    mut failed: list[int] = []
+    mut errors: list[str] = []
+    mut stopped = false
+    mut completed = false
+    for item in active:
+        custody = running_custody(item)
+        if stopped:
+            if let Some(message) = stop_owned_child(item.child, custody, item.position):
+                errors.append(message)
+            completed = true
+            continue
+        match item.child.borrow_mut().try_wait():
+            Err(error) =>
+                errors.append(f"cannot poll Oven test invocation {item.position}: {error}")
+                if let Some(message) = stop_owned_child(item.child, custody, item.position):
+                    errors.append(message)
+                stopped = true
+                completed = true
+            Ok(Some(status)) =>
+                if let Some(message) = stop_owned_child(item.child, custody, item.position):
+                    errors.append(message)
+                    stopped = true
+                if not status.success():
+                    failed.append(item.position)
+                    if item.position >= ignored_prefix:
+                        stopped = true
+                completed = true
+            Ok(None) =>
+                if item.timeout_seconds > 0 and item.started.elapsed().as_secs() >= item.timeout_seconds:
+                    if let Some(message) = stop_owned_child(item.child, custody, item.position):
+                        errors.append(message)
+                        stopped = true
+                    failed.append(item.position)
+                    if item.position >= ignored_prefix:
+                        stopped = true
+                    completed = true
+                else:
+                    running.append(
+                        Running(
+                            position=item.position,
+                            reservation=item.reservation,
+                            timeout_seconds=item.timeout_seconds,
+                            started=item.started,
+                            child=item.child,
+                            members=custody.members,
+                            census_error=custody.census_error,
+                            worker=item.worker,
+                        ),
+                    )
+    if stopped or len(errors) > 0:
+        for message in stop_owned_children(running):
+            errors.append(message)
+        running = []
+        stopped = true
+    return ActiveSettlement(running=running, failed=failed, stopped=stopped, errors=errors, completed=completed)
+
+
+def start_waiting(
+    oven: str,
+    planned: list[Invocation],
+    reservations: list[int],
+    waiting: list[int],
+    active: list[Running],
+    jobs: int,
+    memory: int,
+) -> Admission:
+    """Admit work only after settlement; one start error drains every child already owned by this scheduler."""
+    mut running = active
+    chosen = admitted(reservations, waiting, [item.reservation for item in running], jobs, memory)
+    mut busy = [item.worker for item in running]
+    mut started: list[int] = []
+    mut errors: list[str] = []
+    for index in chosen:
+        worker = free_worker(planned[index].workers, busy)
+        if len(planned[index].workers) > 0 and worker == "":
+            continue
+        match start(oven, planned[index], worker):
+            Err(message) =>
+                errors.append(f"Oven test invocation {index}: {message}")
+                break
+            Ok(child) =>
+                root = int(child.id())
+                busy.append(worker)
+                started.append(index)
+                running.append(
+                    Running(
+                        position=index,
+                        reservation=reservations[index],
+                        timeout_seconds=planned[index].timeout_seconds,
+                        started=Instant.now(),
+                        child=Rc.new(RefCell.new(child)),
+                        members=[],
+                        census_error=None,
+                        worker=worker,
+                    ),
+                )
+    if len(errors) > 0:
+        for message in stop_owned_children(running):
+            errors.append(message)
+        running = []
+    remaining = [index for index in waiting if index not in started]
+    return Admission(active=running, waiting=remaining, errors=errors)
+
+
+def running_custody(item: &Running) -> ReleaseTermination:
+    """Merge one invocation's retained descendants with the operating system's current observation."""
+    root = int(item.child.borrow().id())
+    known = ReleaseTermination(root=root, members=item.members.clone(), census_error=item.census_error.clone())
+    observed = observe_release_processes(root)
+    return merge_release_terminations(known, observed)
+
+
+def stop_owned_children(active: list[Running]) -> list[str]:
+    """Attempt to stop every owned invocation, retaining all cleanup failures instead of abandoning later children."""
+    mut errors: list[str] = []
+    for item in active:
+        custody = running_custody(item)
+        if let Some(message) = stop_owned_child(item.child, custody, item.position):
+            errors.append(message)
+    return errors
+
+
+def stop_owned_child(child: Rc[RefCell[Child]], custody: ReleaseTermination, position: int) -> Option[str]:
+    """Stop one owned process tree and convert its cleanup result into an accumulable diagnostic."""
+    match stop_child_process_tree(child, custody, f"Oven test invocation {position}"):
+        Ok(_) => return None
+        Err(message) => return Some(message)
 
 
 pub def free_worker(workers: list[str], busy: list[str]) -> str:
@@ -503,7 +721,10 @@ def start(oven: str, planned: Invocation, worker: str = "") -> Result[Child, str
         command.current_dir(planned.directory)
     for name in sorted([name for name in planned.environment.keys()]):
         command.env(name, planned.environment[name])
-    command.stdin(Stdio.null())
+    # The scheduler drains each child's descendants when the invocation settles. Keep its resident compiler
+    # workers in that same lifetime while allowing artifact reuse through the selected Bakery.
+    command.env("INCAN_RELEASE_INVOCATION", planned.log.0)
+    command.stdin(Stdio.null()).process_group(0)
     command.stdout(log)
     command.stderr(errors)
     return command.spawn().map_err((error) => f"cannot start `{oven}`: {error}")
