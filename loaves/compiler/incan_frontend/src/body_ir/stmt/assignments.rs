@@ -111,6 +111,25 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         {
             self.retain_argument_borrow(read, false);
         }
+        // RFC 164: a local exclusive borrow bound to another exclusive borrow held in a named place (a local, a field
+        // or an element) reborrows what it borrows (`&mut *x`); a reference never takes a clone of another. A call's
+        // exclusive result is bound as it is.
+        if matches!(ty, IncanType::RefMut(_))
+            && replacement.is_none()
+            && matches!(self.resolve_ty(assignment.value.span), IncanType::RefMut(_))
+            && let bir::Operand::Place(read) = &mut value
+            && (!read.place.projection.is_empty()
+                || read
+                    .place
+                    .local_id()
+                    .and_then(|local| self.locals.get(local.index()))
+                    .is_some_and(|local| {
+                        matches!(local.ty, IncanType::RefMut(_)) && !matches!(local.origin, bir::LocalOrigin::Temporary)
+                    }))
+        {
+            read.place.projection.push(bir::PlaceElem::Deref);
+            self.retain_argument_borrow(read, true);
+        }
         // RFC 164: a local exclusive borrow of a value lends it exclusively, as an `&mut T` argument does.
         if matches!(ty, IncanType::RefMut(_))
             && replacement.is_none()

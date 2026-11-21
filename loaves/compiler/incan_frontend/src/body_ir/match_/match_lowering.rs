@@ -36,8 +36,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
 
         let first_temporary = self.locals.len();
-        let scrutinee_place = self.lower_expr_to_place(subject, scope, out);
-        let scrutinee_ty = if scrutinee_place.projection.is_empty() {
+        let mut scrutinee_place = self.lower_expr_to_place(subject, scope, out);
+        let mut scrutinee_ty = if scrutinee_place.projection.is_empty() {
             scrutinee_place
                 .local_id()
                 .and_then(|local| self.locals.get(local.index()))
@@ -45,6 +45,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         } else {
             self.resolve_ty(subject.span)
         };
+        // RFC 164: a match on a borrowed Copy scalar matches the value it borrows (`*x`).
+        if let IncanType::Ref(inner) | IncanType::RefMut(inner) = scrutinee_ty.clone()
+            && super::super::operators::borrowed_scalar(&inner)
+            && scrutinee_place.projection.is_empty()
+        {
+            scrutinee_place.projection.push(bir::PlaceElem::Deref);
+            scrutinee_ty = *inner;
+        }
         let in_place = self.matches_in_place(subject.span, &scrutinee_ty);
         self.end_scrutinee_temporaries(subject.span, &scrutinee_place, in_place, first_temporary, scope, out);
         // Always read as `Borrow` -- see `bir::Rvalue::Match::scrutinee`'s own docs for why the overall scrutinee

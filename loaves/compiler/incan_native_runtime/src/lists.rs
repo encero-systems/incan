@@ -45,6 +45,12 @@ pub fn borrow_list_mut<T>(values: &mut Vec<T>, index: i64) -> &mut T {
     list_get_mut(values, index)
 }
 
+/// Reborrow what an exclusive reference stored as a list element borrows (`&mut *values[index]`), through the
+/// negative-index and bounds checks.
+pub fn reborrow_list_mut<'a, T>(values: &'a mut Vec<&mut T>, index: i64) -> &'a mut T {
+    &mut **list_get_mut(values, index)
+}
+
 /// Replace an element through a mutable list borrow.
 pub fn set_list<T>(values: &mut Vec<T>, index: i64, value: T) {
     *list_get_mut(values, index) = value;
