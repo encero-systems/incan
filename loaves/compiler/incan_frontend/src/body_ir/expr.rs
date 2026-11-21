@@ -453,13 +453,20 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 {
                     bir::Operand::Constant(constant)
                 } else {
-                    let operand = self.lower_expr_to_operand(inner, scope, out);
+                    // RFC 164: a borrowed scalar operand is read through its borrow.
+                    let operand = super::operators::read_through_scalar_borrow(
+                        &self.resolve_ty(inner.span),
+                        self.lower_expr_to_operand(inner, scope, out),
+                    );
                     self.push_assign_temp(bir::Rvalue::UnaryOp(bir::UnOp::Neg, operand), ty, scope, span, out)
                 }
             }
             ast::Expr::Unary(op, inner) => {
                 let un_op = lower_unary_op(*op);
-                let operand = self.lower_expr_to_operand(inner, scope, out);
+                let operand = super::operators::read_through_scalar_borrow(
+                    &self.resolve_ty(inner.span),
+                    self.lower_expr_to_operand(inner, scope, out),
+                );
                 let ty = self.resolve_ty(expr.span);
                 self.push_assign_temp(bir::Rvalue::UnaryOp(un_op, operand), ty, scope, span, out)
             }

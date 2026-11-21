@@ -269,7 +269,11 @@ impl TypeChecker {
             if expected_param.kind != found_param.kind {
                 return false;
             }
-            if !self.types_compatible(&expected_param.ty, &found_param.ty) {
+            // RFC 164: a trait slot's explicit borrow and an implementation's native borrow are one type.
+            if !self.types_compatible(
+                &self.callable_view_parameter_type(&expected_param.ty),
+                &self.callable_view_parameter_type(&found_param.ty),
+            ) {
                 return false;
             }
         }

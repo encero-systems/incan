@@ -162,6 +162,25 @@ pub(crate) fn direct_input_access(
         .map_or(incan_semantics_core::IncanInputAccess::Inferred, |(_, access)| access))
 }
 
+/// The access one argument slot takes at a call: its canonical input request, or, for a slot with none, the borrow a
+/// native reference parameter spells, which is the same borrow as its explicit spelling (RFC 164).
+pub(crate) fn slot_input_access(
+    contract: Option<&CheckedOwnershipContract>,
+    slot: usize,
+    parameter: &crate::symbols::ResolvedType,
+) -> Result<incan_semantics_core::IncanInputAccess, &'static str> {
+    let access = direct_input_access(contract, slot)?;
+    Ok(match (access, parameter) {
+        (incan_semantics_core::IncanInputAccess::Inferred, crate::symbols::ResolvedType::Ref(_)) => {
+            incan_semantics_core::IncanInputAccess::Shared
+        }
+        (incan_semantics_core::IncanInputAccess::Inferred, crate::symbols::ResolvedType::RefMut(_)) => {
+            incan_semantics_core::IncanInputAccess::Exclusive
+        }
+        (access, _) => access,
+    })
+}
+
 /// A result that is a view of exactly one source place: the declared parameter or receiver with its stored field
 /// path. The access is shared for `Borrowed[T]` and exclusive for `Reference[T]`. A carried view is one payload of a
 /// `Result` or `Option` result, or one element of a tuple result, rather than the whole result; the declaration's

@@ -6,7 +6,7 @@ use super::*;
 #[test]
 fn invocation_projection_retains_slots_and_loans() -> Result<(), Box<dyn std::error::Error>> {
     let checker = checked(
-        "def choose(first: Borrowed[int], second: Borrowed[int]) -> int:\n    return first + second\ndef use(left: int, right: int) -> int:\n    return choose(second=right, first=left)\n",
+        "def choose(first: Borrowed[int], second: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return first + second\ndef use(left: int, right: int) -> int:\n    return choose(second=right, first=left)\n",
     )?;
     let (owner, output) = checker
         .type_info
@@ -125,7 +125,7 @@ fn invocation_projection_retains_slots_and_loans() -> Result<(), Box<dyn std::er
 /// analysis is recomputed to hide that conflict.
 #[test]
 fn invocation_final_use_follows_all_argument_evaluations() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def choose(first: Borrowed[int], second: bool) -> int:\n    return first\ndef mutate(mut value: BorrowedMut[int]) -> bool:\n    value = 2\n    return true\ndef use(mut value: int) -> int:\n    return choose(value, mutate(value))\n";
+    let source = "def choose(first: Borrowed[int], second: bool, proof: Owned[int] = 0) -> int:\n    return first\ndef mutate(mut value: BorrowedMut[int], proof: Owned[int] = 0) -> bool:\n    value = 2\n    return true\ndef use(mut value: int) -> int:\n    return choose(value, mutate(value))\n";
     let mut checker = checked(source)?;
     assert!(
         checker
@@ -509,7 +509,8 @@ fn source_access_cannot_invent_reinitialization() -> Result<(), Box<dyn std::err
 /// liveness. Recomputing an otherwise harmless Copy-only graph cannot authorize those mutations.
 #[test]
 fn source_accesses_preserve_multiplicity_and_order() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def read(left: Borrowed[int], right: Borrowed[int]) -> int:\n    return left + right\n";
+    let source =
+        "def read(left: Borrowed[int], right: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return left + right\n";
     let checker = checked(source)?;
     assert!(checker.errors.is_empty(), "{:?}", checker.errors);
     let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
@@ -696,7 +697,7 @@ fn conditional_transfer_inventory_uses_actual_source_events() -> Result<(), Box<
             vec![],
         ),
         (
-            "def choose(flag: bool) -> None:\n    value = \"x\"\n    if flag:\n        read(value)\ndef read(value: Borrowed[str]) -> None:\n    pass\n",
+            "def choose(flag: bool) -> None:\n    value = \"x\"\n    if flag:\n        read(value)\ndef read(value: Borrowed[str], proof: Owned[int] = 0) -> None:\n    pass\n",
             vec![],
         ),
     ] {

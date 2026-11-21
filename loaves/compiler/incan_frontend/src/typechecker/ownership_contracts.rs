@@ -122,7 +122,12 @@ impl TypeChecker {
     /// Mark a statement loop as borrowing a direct stored list. This is activation metadata only: the ownership graph
     /// later resolves the canonical place, loan, loop back-edge and any conflicting replacement.
     pub(in crate::typechecker) fn note_borrowed_iteration_loop(&mut self, iter: &Spanned<Expr>) {
-        if !matches!(self.type_info.expr_type(iter.span), Some(ResolvedType::Generic(name, _))
+        // A borrowed list, in either spelling, is iterated through its borrow (RFC 164).
+        let iterated = self
+            .type_info
+            .expr_type(iter.span)
+            .map(|ty| super::helpers::borrowed_value_type(ty.clone()));
+        if !matches!(&iterated, Some(ResolvedType::Generic(name, _))
                 if collections::from_str(name) == Some(CollectionTypeId::List))
         {
             return;

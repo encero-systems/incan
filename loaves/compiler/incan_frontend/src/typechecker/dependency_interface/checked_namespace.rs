@@ -1030,7 +1030,7 @@ mod tests {
     /// Reopening a namespace must preserve each explicit argument contract under the identity the caller resolves.
     #[test]
     fn reopened_namespace_retains_explicit_function_and_method_contracts() -> Result<(), String> {
-        let source = "pub model Parcel:\n    pub value: int\n    pub def inspect(self, other: Borrowed[Parcel]) -> int:\n        return other.value\n\npub def inspect(other: Borrowed[Parcel]) -> int:\n    return other.value\n";
+        let source = "pub model Parcel:\n    pub value: int\n    pub def inspect(self, other: Borrowed[Parcel], proof: Owned[int] = 0) -> int:\n        return other.value\n\npub def inspect(other: Borrowed[Parcel], proof: Owned[int] = 0) -> int:\n    return other.value\n";
         let program = crate::parser::parse(&crate::lexer::lex(source).map_err(|e| format!("{e:?}"))?)
             .map_err(|e| format!("{e:?}"))?;
         let path = vec!["parcels".to_owned()];

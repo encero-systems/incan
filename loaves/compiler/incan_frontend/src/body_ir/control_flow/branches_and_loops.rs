@@ -108,9 +108,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let first_temporary = self.locals.len();
-        let operand = self.lower_expr_to_operand(condition, scope, out);
+        // RFC 164: a borrowed `bool` condition is read through its borrow.
+        let operand = super::super::operators::read_through_scalar_borrow(
+            &self.resolve_ty(condition.span),
+            self.lower_expr_to_operand(condition, scope, out),
+        );
         let boolean = IncanType::Primitive(IncanPrimitiveType::Bool);
-        let checked = self.type_info.expr_type(condition.span).map(|ty| self.checked_type(ty));
+        let checked = self
+            .type_info
+            .expr_type(condition.span)
+            .map(|ty| super::super::operators::borrowed_operand_view(&self.checked_type(ty)));
         if checked.as_ref() != Some(&boolean) {
             return operand;
         }
