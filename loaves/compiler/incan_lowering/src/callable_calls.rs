@@ -33,6 +33,7 @@ use crate::statements::is_nominal_type;
 use crate::string_conversion::string_conversion_callee;
 use crate::traits::{close_trait_dispatch_arguments, instantiate_type, is_lazy_method_body};
 use crate::type_parameters::{indexed_static_type_arguments, instantiate, request_instance, substitute};
+use crate::validated_constructors::lower_validated_constructor;
 use crate::value_enum_methods::{lower_value_enum_from_value, lower_value_enum_ordinal_encoding};
 use crate::value_enums::value_enum_from_value_owner;
 
@@ -105,8 +106,8 @@ pub fn lower_named_target(
         }
         return lower_builtin(builder, builtin, arguments, destination, span);
     }
-    if let Some(step) = special_named_target(builder, target)? {
-        return Err(untranslated(step));
+    if lower_validated_constructor(module, builder, target, arguments, destination, span)? {
+        return Ok(());
     }
     if is_derived_default(target) {
         return lower_derived_default(module, builder, target, destination, span);
@@ -181,21 +182,6 @@ fn lower_type_parameter_call(
     };
     request_instance(&mut builder.instances, body, closed, owned, false);
     lower_local_call(module, builder, target, &concrete_body, arguments, destination, span)
-}
-
-/// The special call route a named target selects before ordinary dispatch that is not yet in Rust, if any: builtins
-/// (dispatched before this check) and validated constructors.
-fn special_named_target(builder: &Builder, target: &NamedCallableTarget) -> Result<Option<&'static str>, String> {
-    if target.builtin.is_some() {
-        return Ok(Some("builtin_calls::lower_builtin"));
-    }
-    let Some(identity) = &target.canonical else {
-        return Ok(None);
-    };
-    if builder.constructors().validated_constructors.contains(identity) {
-        return Ok(Some("callable_calls::lower_validated_constructor"));
-    }
-    Ok(None)
 }
 
 /// Authenticate an exact retained adapter slot before inspecting an unrelated call's operands.

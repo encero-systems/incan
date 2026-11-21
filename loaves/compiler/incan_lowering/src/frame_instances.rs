@@ -3,7 +3,8 @@
 use std::collections::BTreeMap;
 
 use incan_mir_plan_native::{
-    Carrier, EnumDeclaration, ExternalFunction, Function, GenericLoan, PlanType, StaticCell, carrier_position,
+    Carrier, EnumDeclaration, ExternalFunction, Function, GenericLoan, PlanType, StaticCell, UnitNominals,
+    carrier_position,
 };
 use incan_semantics_core::IncanType;
 use incan_semantics_core::body_ir::{Body, BodyIrModule, DecoratedInitialization};
@@ -16,12 +17,13 @@ use crate::decorator_caches::{CachedBinding, cached_binding_frames, frame_signat
 use crate::decorator_caches::{DecoratorFrame, validate_binding_policy};
 use crate::function_frames::lower_function;
 use crate::generators::append_generator_constructor;
-use crate::instance_products::InstanceProducts;
+use crate::instance_products::{InstanceProducts, InstanceSource, retain_instance_product, reused_instance};
 use crate::layout_types::native_source_type;
 use crate::lowering::Inventories;
 use crate::native_type_identity::ConstructorIndex;
 use crate::nominal_instances::NominalInstance;
 use crate::nominal_instances::retain_frame_nominals;
+use crate::nominal_records::{product_nominal_table, sync_carriers};
 use crate::options::retain_body_carriers;
 use crate::program_context::ProgramContext;
 use crate::program_context::retain_nominal_tables;
@@ -56,6 +58,7 @@ pub fn lower_instances(
     let mut runtime_unions = unions.to_vec();
     let mut redirects = runtime_redirects();
     let mut names = function_names();
+    let mut nominals = product_nominal_table(program, intrinsics, products.map(|keyed| keyed.directory.as_str()));
     let governed_runtime = !context.runtime_callable_bindings.is_empty()
         || !context.runtime_binding_scopes.is_empty()
         || governed_runtime_module(owners);
@@ -81,10 +84,6 @@ pub fn lower_instances(
     }
     enqueue_instances(&mut queue, instances);
     while let Some(request) = queue.pending.pop_front() {
-        // Keyed instance products, reused or retained under a records request, are not yet produced here; a records
-        // request lowers each closed instance afresh, as an empty product directory would, and the replay counts the
-        // missing product files separately from the plans.
-        let _ = products;
         let body = instantiate(&request.body, &request.arguments, &request.owned_callable_slots)?;
         let storage_arguments =
             callable_storage_arguments(&request.body, &request.arguments, &request.owned_callable_slots)?;
@@ -118,6 +117,7 @@ pub fn lower_instances(
             source: &sources[source_index],
             file: &files[source_index],
         };
+        let keyed = (products, &mut nominals);
         let mut scheduled = lower_instance_frame(
             context,
             program,
@@ -127,6 +127,7 @@ pub fn lower_instances(
             intrinsics,
             inventories,
             &mut names,
+            keyed,
         )?;
         enqueue_instances(&mut queue, &mut scheduled);
         if governed_runtime {
@@ -178,7 +179,30 @@ fn lower_instance_frame(
     intrinsics: &mut Vec<EnumDeclaration>,
     inventories: &mut Inventories,
     names: &mut FunctionNames,
+    (products, nominals): (Option<&InstanceProducts>, &mut UnitNominals),
 ) -> Result<Vec<Instance>, String> {
+    let source = InstanceSource {
+        source: frame.source,
+        file: frame.file,
+    };
+    if let Some(transport) = products {
+        sync_carriers(nominals, intrinsics);
+        if let Some(product) = reused_instance(transport, context, frame.request, frame.body, &source, nominals)? {
+            retain_instance(&mut inventories.functions, names, product.function)?;
+            append_synthesized(&mut inventories.functions, names, product.frames)?;
+            append_generator_constructor(
+                &program.constructors,
+                &mut inventories.functions,
+                context,
+                frame.body,
+                frame.source,
+                frame.file,
+                intrinsics,
+            )?;
+            merge_externals(&mut inventories.externals, product.runtime)?;
+            return Ok(product.requests);
+        }
+    }
     let diagnostic_context = format!("{} at {}", frame.body.name, frame.file);
     let (function, runtime, pending, synthesized) = lower_function(
         context,
@@ -195,6 +219,16 @@ fn lower_instance_frame(
     let mut retained_function = function;
     retained_function.signature_lifetimes = frame.lifetimes.clone();
     retained_function.generic_loans = instance_loans(program, context, frame.request, runtime_unions, intrinsics)?;
+    if let Some(transport) = products {
+        sync_carriers(nominals, intrinsics);
+        let lowered = (
+            &retained_function,
+            runtime.as_slice(),
+            synthesized.as_slice(),
+            pending.as_slice(),
+        );
+        retain_instance_product(transport, context, frame.request, lowered, &source, nominals)?;
+    }
     retain_instance(&mut inventories.functions, names, retained_function)?;
     append_synthesized(&mut inventories.functions, names, synthesized)?;
     append_generator_constructor(

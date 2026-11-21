@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use incan_mir_plan_native::{
     Carrier, EnumDeclaration, Function, GenericEnumDeclaration, GenericModelDeclaration, ModelDeclaration, PlanExport,
-    PlanType,
+    PlanType, UnitNominals,
 };
 use incan_semantics_core::body_ir::{Body, BodyIrModule};
 use incan_semantics_core::{
@@ -12,15 +12,22 @@ use incan_semantics_core::{
 };
 
 use crate::async_::{async_entry, async_test_name, boxed_future_constructor, evaluator_name};
+use crate::checked_values::location;
 use crate::classes::{body_module_identity, function_name, is_program_entry};
 use crate::decorator_caches::DecoratorFrame;
 use crate::frame_instances::{
     append_synthesized, external_index, function_names, merge_externals, merge_indexed, named_functions,
 };
-use crate::function_frames::lower_function;
+use crate::function_frames::{LoweredFrame, lower_function};
 use crate::generators::append_generator_constructor;
+use crate::instance_products::{encode_requests, restore_requests};
 use crate::lowering::Inventories;
+use crate::nominal_records::{product_nominal_table, retain_named_scalar, sync_carriers};
+use crate::pending::untranslated;
+use crate::plan_modules::{report_admitted, require_unadmitted};
+use crate::plan_product_inputs::{ordinary_product_inputs, producer_generation};
 use crate::program_context::ProgramContext;
+use crate::scalar_store::retained_scalar;
 use crate::trace_channel::emit;
 use crate::traits::is_lazy_method_body;
 use crate::type_parameters::{Instance, merge_instance_requests, request_instance};
@@ -84,15 +91,15 @@ pub fn lower_ordinary_bodies(
     overflow_checks: bool,
     record_report: Option<String>,
 ) -> Result<(), String> {
-    let _ = (
-        source_context,
-        source_files,
-        package_versions,
-        scalar_products,
-        scalar_bodies,
-        overflow_checks,
-    );
-    let _ = record_report;
+    let _ = (source_context, source_files, package_versions, overflow_checks);
+    let directory = scalar_products.as_deref();
+    let mut keyed = KeyedProducts {
+        directory,
+        admitted: scalar_bodies,
+        report: record_report.as_deref(),
+        generation: producer_generation(directory),
+        nominals: product_nominal_table(program, intrinsics, directory),
+    };
     let mut module_bodies: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     for (position, body) in context.bodies.iter().enumerate() {
         module_bodies
@@ -104,24 +111,21 @@ pub fn lower_ordinary_bodies(
     let mut signatures = external_index();
     for (index, owner) in owners.iter().enumerate() {
         let positions = module_bodies.get(owner).cloned().unwrap_or_default();
+        // An admitted module restores its bodies from its plan record; without one every body takes the keyed route.
+        require_unadmitted(keyed.directory, owner, keyed.generation.as_deref())?;
         for position in positions {
             let body = &context.bodies[position];
             if !ordinary_body(context, body, emitted_frames, kind) {
                 continue;
             }
             let diagnostic_owner = format!(" in {} at {}", body.name, files[index]);
-            let (function, runtime, pending, synthesized) = lower_function(
-                context,
-                program,
-                body,
-                unions,
-                &sources[index],
-                &files[index],
-                intrinsics,
-                &[],
-                DecoratorFrame::Normal,
-            )
-            .map_err(|reason| reason + &diagnostic_owner)?;
+            let frame = FrameSource {
+                source: &sources[index],
+                file: &files[index],
+            };
+            let (function, runtime, pending, synthesized) =
+                lower_ordinary_frame(context, program, body, unions, &frame, intrinsics, &mut keyed)
+                    .map_err(|reason| reason + &diagnostic_owner)?;
             if trace {
                 emit(
                     "lowering",
@@ -167,8 +171,100 @@ pub fn lower_ordinary_bodies(
             )?;
             merge_indexed(&mut inventories.externals, &mut signatures, runtime)?;
         }
+        report_admitted(keyed.report, keyed.directory)?;
     }
     Ok(())
+}
+
+/// The keyed-product state one unit's ordinary frames share: the product directory, the checker's witnesses by body,
+/// the records report, the producer profile and the unit's described declaration tables.
+pub struct KeyedProducts<'a> {
+    pub directory: Option<&'a str>,
+    pub admitted: &'a BTreeMap<CompilerNodeId, String>,
+    pub report: Option<&'a str>,
+    pub generation: Option<String>,
+    pub nominals: UnitNominals,
+}
+
+/// The source text and file an ordinary frame lowers in.
+pub struct FrameSource<'a> {
+    pub source: &'a str,
+    pub file: &'a str,
+}
+
+/// Read only producer-admitted products, or lower normally and retain an exact witnessed result.
+///
+/// A product names the unit's models and enums by declaration identity; `keyed.nominals` describes the current
+/// tables. A reused product returns the helper frames and generic instance requests its lowering once made, as lowering
+/// would; a request whose generic is gone makes the product a miss. A fresh product carries the synthesized helper
+/// frames and the generic instance requests this lowering made; a request only a source position names keeps the frame
+/// without a product.
+fn lower_ordinary_frame(
+    context: &BodyIrModule,
+    program: &ProgramContext,
+    body: &Body,
+    unions: &[IncanType],
+    frame: &FrameSource<'_>,
+    intrinsics: &mut Vec<EnumDeclaration>,
+    keyed: &mut KeyedProducts<'_>,
+) -> Result<LoweredFrame, String> {
+    let records = keyed.report.is_some();
+    let inputs = ordinary_product_inputs(
+        context,
+        body,
+        frame.source,
+        frame.file,
+        program.overflow_checks,
+        keyed.directory,
+        keyed.admitted,
+        records,
+        keyed.generation.as_deref(),
+        None,
+    )?;
+    if records {
+        // Records mode reports each frame's product event or refusal for Bakery admission.
+        return Err(untranslated("scalar_store::report_scalar"));
+    }
+    if let (Some(directory), Some((witness, positions))) = (keyed.directory, &inputs) {
+        sync_carriers(&mut keyed.nominals, intrinsics);
+        let current = location(&body.span, frame.source, frame.file);
+        if let Some((function, runtime, _references, frames, encoded)) =
+            retained_scalar(directory, witness, &keyed.nominals, Some(&current), positions)
+            && let Some(requests) = restore_requests(&encoded, context)
+        {
+            return Ok((function, runtime, requests, frames));
+        }
+    }
+    let lowered = lower_function(
+        context,
+        program,
+        body,
+        unions,
+        frame.source,
+        frame.file,
+        intrinsics,
+        &[],
+        DecoratorFrame::Normal,
+    )?;
+    let (function, runtime, pending, synthesized) = &lowered;
+    if let (Some(directory), Some((witness, positions)), Ok(requests)) =
+        (keyed.directory, &inputs, encode_requests(pending))
+    {
+        sync_carriers(&mut keyed.nominals, intrinsics);
+        // The ordinary compiler already has its complete lowered function; a product this frame cannot keep changes
+        // nothing about that verdict.
+        let _ = retain_named_scalar(
+            directory,
+            witness,
+            function,
+            runtime,
+            &keyed.nominals,
+            positions,
+            synthesized,
+            &requests,
+        );
+    }
+    Ok(lowered)
 }
 
 /// Apply standalone entry naming against the current modules or their already validated retained bodies.
