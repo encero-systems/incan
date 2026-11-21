@@ -36,6 +36,10 @@ pub model BuiltUnit:
     pub loaf: str = ""
     # Authority that covered this Loaf's compile-time code for the request, empty when it carries none.
     pub covered_by: str = ""
+    # A hybrid Incan provider's own Rust facet: a Rust edge that names the provider by this crate name links it, any
+    # other alias links the provider's Incan facade. Both empty for a provider without a Rust facet.
+    pub native_crate: str = ""
+    pub native_artifact: str = ""
 
 
 pub def facet_slot(facet: LocalFacet, profile: str) -> str:
@@ -284,12 +288,23 @@ pub def facet_search(facet: LocalFacet, built: Dict[str, BuiltUnit]) -> Result[l
 
 
 def local_bindings(facet: LocalFacet, built: Dict[str, BuiltUnit]) -> Result[list[NativeCrate], str]:
-    """Retain each local graph edge's exact alias and built artifact for compilation and its native receipt."""
+    """
+    Retain each local graph edge's exact alias and built artifact for compilation and its native receipt.
+
+    An edge that names a hybrid provider by its Rust facet's crate name links that Rust facet, as a standard package's
+    facet reads `incan_std_primitives::errors`; any other alias links the provider's Incan facade, whose functions a
+    Rust consumer calls like an Incan one.
+    """
     mut bindings: list[NativeCrate] = []
     for edge in facet.local:
         if edge.key() not in built:
             return Err(f"{facet.project} links {edge.alias}, which has no compiled library")
-        bindings.append(NativeCrate(name=edge.alias.replace("-", "_"), path=built[edge.key()].artifact))
+        unit = built[edge.key()]
+        alias = edge.alias.replace("-", "_")
+        mut path = unit.artifact
+        if unit.native_artifact != "" and alias == unit.native_crate:
+            path = unit.native_artifact
+        bindings.append(NativeCrate(name=alias, path=path))
     return Ok(bindings)
 
 
