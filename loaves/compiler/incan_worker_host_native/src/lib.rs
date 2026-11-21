@@ -19,6 +19,8 @@ pub mod record_snapshot;
 pub mod worker_packets;
 
 #[cfg(test)]
+mod activation_tests;
+#[cfg(test)]
 mod host_tests;
 #[cfg(test)]
 mod snapshot_tests;

@@ -58,15 +58,32 @@ fn snapshot_descriptors_keep_their_json_crumb_and_digest() -> Result<(), String>
     let record = encode_snapshot_record(&canonical)?;
     assert_eq!(hex(&record), SNAPSHOT_RECORD);
     let refusal = "snapshot descriptor requires a positive generation and canonical allowed roots";
-    assert_eq!(encode_snapshot_record(&handle(0, &["incan.a"])).err().as_deref(), Some(refusal));
-    assert_eq!(encode_snapshot_record(&handle(1, &["incan.b", "incan.a"])).err().as_deref(), Some(refusal));
+    assert_eq!(
+        encode_snapshot_record(&handle(0, &["incan.a"])).err().as_deref(),
+        Some(refusal)
+    );
+    assert_eq!(
+        encode_snapshot_record(&handle(1, &["incan.b", "incan.a"]))
+            .err()
+            .as_deref(),
+        Some(refusal)
+    );
     assert_eq!(snapshot_handle_digest(&canonical)?, SNAPSHOT_DIGEST);
     assert_eq!(read_snapshot_record(&record, SNAPSHOT_DIGEST)?, canonical);
-    assert_eq!(read_snapshot_record(&record, D1).err().as_deref(), Some("descriptor digest mismatch"));
-    assert_eq!(read_snapshot_record(&record[..30], SNAPSHOT_DIGEST).err().as_deref(), Some("descriptor digest mismatch"));
+    assert_eq!(
+        read_snapshot_record(&record, D1).err().as_deref(),
+        Some("descriptor digest mismatch")
+    );
+    assert_eq!(
+        read_snapshot_record(&record[..30], SNAPSHOT_DIGEST).err().as_deref(),
+        Some("descriptor digest mismatch")
+    );
     let legacy = encode_snapshot_handle(&handle(2, &["incan.a"]))?;
     let legacy_digest = crate::record_snapshot::digest(legacy.as_bytes());
-    assert_eq!(read_snapshot_record(legacy.as_bytes(), &legacy_digest)?, handle(2, &["incan.a"]));
+    assert_eq!(
+        read_snapshot_record(legacy.as_bytes(), &legacy_digest)?,
+        handle(2, &["incan.a"])
+    );
     Ok(())
 }
 
