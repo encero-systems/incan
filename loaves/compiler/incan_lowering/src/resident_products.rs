@@ -24,7 +24,7 @@ const MAX_PLACEMENTS: usize = 16384;
 /// Distinct module pages one worker keeps.
 const MAX_PAGES: usize = 4096;
 
-static PLACED: Mutex<Option<HashMap<[u8; 32], PlacedRecord>>> = Mutex::new(None);
+static PLACED: Mutex<Option<HashMap<[u8; 32], (PlacedRecord, u64)>>> = Mutex::new(None);
 static PAGES: Mutex<Option<HashMap<[u8; 32], Arc<ResidentPage>>>> = Mutex::new(None);
 
 /// What a product restored from a module page is a function of besides the page's bytes: the body's frame name, its
@@ -45,6 +45,8 @@ pub struct RestoreInputs {
 /// added once and never changed.
 pub struct ResidentPage {
     page: AdmittedPage,
+    /// The bytes the page was read from; none for a page read for one request only.
+    bytes: u64,
     restored: Mutex<HashMap<RestoreInputs, Arc<AdmittedPayload>>>,
 }
 
@@ -61,6 +63,7 @@ impl ResidentPage {
     pub fn unkept(page: AdmittedPage) -> Arc<Self> {
         Arc::new(Self {
             page,
+            bytes: 0,
             restored: Mutex::new(HashMap::new()),
         })
     }
@@ -104,7 +107,11 @@ pub fn resident_page(
     {
         return Some(kept.clone());
     }
-    let page = ResidentPage::unkept(read()?);
+    let page = Arc::new(ResidentPage {
+        page: read()?,
+        bytes: encoded.len() as u64,
+        restored: Mutex::new(HashMap::new()),
+    });
     if let Ok(mut guard) = PAGES.lock() {
         let pages = guard.get_or_insert_with(HashMap::new);
         if pages.len() >= MAX_PAGES {
@@ -125,7 +132,7 @@ pub fn resident_placed(
 ) -> Result<(PlacedRecord, bool), String> {
     let key = placement_key(encoded, positions, file, line);
     if let Ok(guard) = PLACED.lock()
-        && let Some(kept) = guard.as_ref().and_then(|placements| placements.get(&key))
+        && let Some((kept, _)) = guard.as_ref().and_then(|placements| placements.get(&key))
     {
         return Ok((kept.clone(), true));
     }
@@ -135,9 +142,33 @@ pub fn resident_placed(
         if placements.len() >= MAX_PLACEMENTS {
             placements.clear();
         }
-        placements.insert(key, placed.clone());
+        placements.insert(key, (placed.clone(), encoded.len() as u64));
     }
     Ok((placed, false))
+}
+
+/// What this worker keeps between requests, store by store: the values kept and the bytes they were read from (a
+/// restored product is read from its page's bytes, so it adds none of its own).
+pub fn resident_inventory() -> Vec<(&'static str, usize, u64)> {
+    let mut inventory = Vec::new();
+    if let Ok(guard) = PAGES.lock() {
+        let pages: Vec<&Arc<ResidentPage>> = guard.as_ref().map(|pages| pages.values().collect()).unwrap_or_default();
+        let bytes = pages.iter().map(|page| page.bytes).sum();
+        let restored = pages
+            .iter()
+            .map(|page| page.restored.lock().map_or(0, |restored| restored.len()))
+            .sum();
+        inventory.push(("lowering module pages", pages.len(), bytes));
+        inventory.push(("lowering restored products", restored, 0));
+    }
+    if let Ok(guard) = PLACED.lock() {
+        let placements: Vec<u64> = guard
+            .as_ref()
+            .map(|placements| placements.values().map(|(_, bytes)| *bytes).collect())
+            .unwrap_or_default();
+        inventory.push(("lowering placed products", placements.len(), placements.iter().sum()));
+    }
+    inventory
 }
 
 /// The digest of everything a placement is a function of: the product bytes, each node position, the file and line.

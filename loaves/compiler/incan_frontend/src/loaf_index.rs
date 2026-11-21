@@ -32,6 +32,11 @@ mod retained;
 use lazy_entry::IndexedLoaf;
 pub use native_reference::{NATIVE_CLOSURE_SCHEMA, NativeAnchors, PublishedNativeClosure};
 
+/// What this process keeps of the Loaves it read: each store, how many readings it holds and their files' bytes.
+pub fn retained_inventory() -> [(&'static str, usize, u64); 2] {
+    retained::inventory()
+}
+
 /// Publish one private cache record atomically: write `bytes` to a new owner-only file beside `path`, named with this
 /// process and `suffix`, and rename it over `path`. A failed write removes the temporary file; concurrent readers see
 /// either the old record or the complete new one.

@@ -490,3 +490,16 @@ fn frame_reference(reference: &NamespaceReference) -> internal_models_native::na
         value_digest: reference.value_digest.clone(),
     }
 }
+
+/// The namespace bodies this worker keeps for its program and the wire bytes they were read from.
+pub(crate) fn resident_inventory() -> (usize, u64) {
+    RESIDENT
+        .lock()
+        .ok()
+        .and_then(|guard| {
+            guard
+                .as_ref()
+                .map(|bodies| (bodies.values.len(), bodies.wire_bytes as u64))
+        })
+        .unwrap_or((0, 0))
+}

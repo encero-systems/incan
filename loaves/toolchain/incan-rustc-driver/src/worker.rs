@@ -55,6 +55,7 @@ pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Erro
                     "compiler worker settlement"
                 );
                 incan_worker_host_native::complete(&mut host, &outcome, resident_bytes, live_bytes);
+                crate::native_timing::record_resident_stores(&resident_stores());
                 timing.mark("worker_completed");
             }
             WorkerActivation::Record(request) => {
@@ -118,6 +119,19 @@ fn run(
         WorkerCommand::RustImports => crate::rust_imports::export(arguments).map(|()| 0)?,
     };
     Ok(ActivationOutcome::Exited(status.into()))
+}
+
+/// What this worker keeps between requests, store by store: the values kept and the bytes they were read from.
+fn resident_stores() -> Vec<(&'static str, usize, u64)> {
+    let (pages, page_bytes) = crate::frontend::decoded_pages::inventory();
+    let (namespaces, namespace_bytes) = crate::frontend::namespace_pages::resident_inventory();
+    let mut stores = vec![
+        ("checked pages", pages, page_bytes),
+        ("namespace bodies", namespaces, namespace_bytes),
+    ];
+    stores.extend(incan_frontend::loaf_index::retained_inventory());
+    stores.extend(incan_lowering::resident_products::resident_inventory());
+    stores
 }
 
 /// The process's physical footprint in bytes, or -1 when it cannot be read.
