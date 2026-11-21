@@ -108,7 +108,7 @@ static PLACEMENT_SHAPE: Shape = Shape {
 };
 static PLACEMENT_SCHEMA: Schema = Schema::new(&[&PLACEMENT_SHAPE]);
 
-/// A named ordinal's position in the current model or enum table.
+/// A named ordinal's position in the current model, enum or static cell table.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct EventReference {
     pub kind: String,
@@ -257,7 +257,7 @@ fn position_value(position: &EventPosition) -> Wire {
 fn read_reference(item: &Wire, refusal: &str) -> Result<EventReference, String> {
     let parts = tuple_items(item, 3)?;
     let kind = text(&parts[0])?;
-    if kind != "model" && kind != "enum" {
+    if kind != "model" && kind != "enum" && kind != "static" {
         return Err(refusal.to_owned());
     }
     Ok(EventReference {
