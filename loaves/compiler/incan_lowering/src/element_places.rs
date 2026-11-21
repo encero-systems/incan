@@ -80,6 +80,10 @@ fn projected_type(builder: &Builder, ty: PlanType, projection: &PlaceElem) -> Re
         other => other,
     };
     match projection {
+        // RFC 164: a whole reference-valued local read or written through its reference names its referent.
+        PlaceElem::Deref => {
+            return Ok(crate::explicit_arguments::reference_contract(&source).map_or(source, |(referent, _)| referent));
+        }
         PlaceElem::Index(_) => {
             if matches!(source, PlanType::String | PlanType::FrozenStr) {
                 return Ok(PlanType::String);
