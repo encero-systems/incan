@@ -1,141 +1,20 @@
-"""Shared Crumb field contracts for ranked compiler work and completed read witnesses."""
+"""Shared Crumb field contracts for ranked compiler work and completed read witnesses. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
 
-from std.primitives.crumb import Budget
-from std.primitives.crumb.descriptions import Description, DescriptionMode
-from std.primitives.crumb.records import RowRecord
-from std.primitives.crumb.row_reader import RowSet
-from std.primitives.crumb.values import IntegerValue, Value, ValueField
-from crumb_rows import admit_rows, encode_rows
-from record_scope import MemberSelection, PayloadSelection, RecordKey, RecordRequest, RecordSelection, valid_key
-
-pub const KEY_TYPE: str = "tuple<string,string,string,string,string,string>"
-pub const REQUEST_TYPE: str = "tuple<tuple<string,string,string,string,string,string>,i64,string,list<string>,list<i64>>"
-const MAX_GRAPH_RECORD_BYTES: int = 67108864
-
-
-pub def encode_graph_row(key: bytes, description: Description, fields: list[ValueField]) -> Result[bytes, str]:
-    """Serialize exactly one typed compiler graph record through the public Crumb row codec."""
-    return encode_rows(description, [RowRecord(key=key, value=Value.Record(fields))], MAX_GRAPH_RECORD_BYTES)
-
-
-pub def decode_graph_row(encoded: bytes, key: bytes, description: Description, count: int) -> Result[list[ValueField], str]:
-    """Require exactly the expected row, selector and field count before any domain projection."""
-    mut budget = graph_read_budget()?
-    rows = admit_graph_row(encoded, description, budget)?
-    row = rows.read_record(0, budget).map_err((error) => error.message())?
-    if row.key != key:
-        return Err("unexpected compiler graph Crumb row")
-    match row.value:
-        Value.Record(fields) =>
-            if len(fields) == count:
-                return Ok(fields)
-            return Err("compiler graph Crumb row has the wrong field count")
-        _ => return Err("expected compiler graph Crumb record")
-
-
-pub def text(value: Value) -> Result[str, str]:
-    """Read one required text field without coercion."""
-    match value:
-        Value.Text(item) => return Ok(item)
-        _ => return Err("expected compiler graph text")
-
-
-pub def integer(item: int) -> Value:
-    """Project one signed compiler integer to a Crumb i64."""
-    return Value.Integer(IntegerValue.Signed(item.wrapping_resize[i128]()))
-
-
-pub def number(value: Value) -> Result[int, str]:
-    """Read a signed integer admitted under the i64 field contract."""
-    match value:
-        Value.Integer(IntegerValue.Signed(item)) => return Ok(item.wrapping_resize[int]())
-        _ => return Err("expected signed compiler graph integer")
-
-
-pub def items(value: Value) -> Result[list[Value], str]:
-    """Read one list; list and tuple have different Crumb representations."""
-    match value:
-        Value.List(elements) => return Ok(elements)
-        _ => return Err("expected compiler graph list")
-
-
-pub def tuple_items(value: Value, expected: int) -> Result[list[Value], str]:
-    """Read a fixed tuple and verify its cardinality before indexing."""
-    match value:
-        Value.Tuple(elements) =>
-            if len(elements) == expected:
-                return Ok(elements)
-            return Err("compiler graph tuple has the wrong arity")
-        _ => return Err("expected compiler graph tuple")
-
-
-pub def key_value(key: RecordKey) -> Value:
-    """Preserve each identity component independently, including the optional context."""
-    return Value.Tuple([Value.Text(key.family), Value.Text(key.identity_profile), Value.Text(key.origin), Value.Text(key.identity), Value.Text(key.facet), Value.Text(key.context)])
-
-
-pub def read_key(value: Value) -> Result[RecordKey, str]:
-    """Decode a complete logical identity before selecting graph work."""
-    fields = tuple_items(value, 6)?
-    key = RecordKey(family=text(fields[0])?, identity_profile=text(fields[1])?, origin=text(fields[2])?, identity=text(fields[3])?, facet=text(fields[4])?, context=text(fields[5])?)
-    if not valid_key(key):
-        return Err("compiler record key authority fields must be nonempty")
-    return Ok(key)
-
-
-pub def request_value(request: RecordRequest) -> Value:
-    """Keep selector arguments typed and preserve arbitrary strings without delimiters."""
-    key = key_value(request.key)
-    bound = integer(request.byte_limit)
-    match request.selection:
-        RecordSelection.Field(name) =>
-            return Value.Tuple([key, bound, Value.Text("field"), Value.List([Value.Text(name)]), Value.List([])])
-        RecordSelection.Payload(payload) =>
-            return Value.Tuple([key, bound, Value.Text("payload"), Value.List([Value.Text(payload.reference)]), Value.List([integer(payload.offset), integer(payload.length)])])
-        RecordSelection.Members(members) =>
-            return Value.Tuple([key, bound, Value.Text("members"), Value.List([Value.Text(members.selector), Value.Text(members.order), Value.Text(members.lower), Value.Text(members.upper), Value.Text(members.continuation)]), Value.List([])])
-
-
-pub def read_request(value: Value) -> Result[RecordRequest, str]:
-    """Reconstruct only known selectors with their exact argument arities."""
-    fields = tuple_items(value, 5)?
-    key = read_key(fields[0])?
-    limit = number(fields[1])?
-    if limit < 0:
-        return Err("compiler record byte limit must be nonnegative")
-    kind = text(fields[2])?
-    strings = items(fields[3])?
-    numbers = items(fields[4])?
-    if kind == "field" and len(strings) == 1 and len(numbers) == 0:
-        return Ok(RecordRequest(key=key, selection=RecordSelection.Field(text(strings[0])?), byte_limit=limit))
-    if kind == "payload" and len(strings) == 1 and len(numbers) == 2:
-        payload = PayloadSelection(reference=text(strings[0])?, offset=number(numbers[0])?, length=number(numbers[1])?)
-        return Ok(RecordRequest(key=key, selection=RecordSelection.Payload(payload), byte_limit=limit))
-    if kind == "members" and len(strings) == 5 and len(numbers) == 0:
-        members = MemberSelection(selector=text(strings[0])?, order=text(strings[1])?, lower=text(strings[2])?, upper=text(strings[3])?, continuation=text(strings[4])?)
-        return Ok(RecordRequest(key=key, selection=RecordSelection.Members(members), byte_limit=limit))
-    return Err("invalid compiler record selection")
-
-
-pub def decode_graph_field(encoded: bytes, description: Description, field: bytes) -> Result[Value, str]:
-    """Read one projected field only after admission of the complete envelope and exact row type."""
-    mut budget = graph_read_budget()?
-    rows = admit_graph_row(encoded, description, budget)?
-    return rows.read_field(0, field, budget).map_err((error) => error.message())
-
-
-pub def graph_read_budget() -> Result[Budget, str]:
-    """Use the same bound whether materializing a graph row or projecting a single field."""
-    return Budget.create(bytes=MAX_GRAPH_RECORD_BYTES * 4, elements=4194304, depth=128).map_err((error) => error.message())
-
-
-pub def admit_graph_row(encoded: bytes, description: Description, mut budget: Budget, maximum: int = MAX_GRAPH_RECORD_BYTES) -> Result[RowSet, str]:
-    """Authenticate the sole dictionary schema before exposing any logical fields."""
-    rows = admit_rows(encoded, [description], maximum, budget)?
-    dictionary = rows.descriptions(budget).map_err((error) => error.message())?
-    if rows.len() != 1 or len(dictionary) != 1:
-        return Err("unexpected compiler graph Crumb row")
-    # The only referenced dictionary entry was resolved using our one supplied description.
-    match dictionary[0].mode:
-        DescriptionMode.Reference => return Ok(rows)
-        DescriptionMode.Inline => return Err("unexpected inline compiler graph description")
+pub from rust::internal_models_native import (
+    KEY_TYPE,
+    REQUEST_TYPE,
+    encode_graph_row,
+    decode_graph_row,
+    text_value as text,
+    integer,
+    number_value as number,
+    items_value as items,
+    tuple_items_value as tuple_items,
+    key_value,
+    read_key,
+    request_value,
+    read_request,
+    decode_graph_field,
+    graph_read_budget,
+    admit_graph_row,
+)

@@ -4,6 +4,7 @@ version = "0.6.0-dev.9"
 description = "The compiler's shared record contracts: canonical checker records, scoped record reads and the producer interface"
 
 [dependencies]
+internal_models_native = { loaf = "internal_models_native", path = "../internal_models_native" }
 incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
 incan_platform = { path = "../../platform" }
 serde = { features = ["derive"], loaf = "crates-io/serde", version = "1" }

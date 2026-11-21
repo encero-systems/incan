@@ -1,170 +1,18 @@
-"""Canonical Crumb envelopes shared by the graph publisher and the selected compiler worker."""
+"""Canonical Crumb envelopes shared by the graph publisher and the selected compiler worker. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
 
-from std.primitives.crumb.descriptions import Description
-from std.primitives.crumb.values import Value
-from crumb_rows import ModelField, model_description, required_value
-from graph_crumb_fields import (
-    KEY_TYPE, REQUEST_TYPE, decode_graph_row, encode_graph_row, integer, items, key_value, number,
-    read_key, read_request, request_value, text,
+pub from rust::internal_models_native import (
+    DEMAND_SCHEMA,
+    PREPARED_SCHEMA,
+    WORK_SCHEMA,
+    DEMAND_FAMILY,
+    PREPARED_FAMILY,
+    WORK_FAMILY,
+    encode_demand_page,
+    decode_demand_page,
+    encode_prepared_inputs,
+    decode_prepared_inputs,
+    encode_ready_work,
+    decode_ready_work,
+    envelope_key,
+    stage_name,
 )
-from record_scope import RecordKey, RecordRequest
-from record_service import (
-    DemandPage, InputSnapshot, PreparedInputs, ProducerProfile, ProducerRank, ProducerStage,
-    RankCertificate, ReadyWork, RecordRoot,
-)
-
-pub const DEMAND_SCHEMA: str = "incan.engine.demand-page/2"
-pub const PREPARED_SCHEMA: str = "incan.engine.prepared-inputs/2"
-pub const WORK_SCHEMA: str = "incan.engine.ready-work/2"
-pub const DEMAND_FAMILY: str = "incan.engine.demand-page"
-pub const PREPARED_FAMILY: str = "incan.engine.prepared-inputs"
-pub const WORK_FAMILY: str = "incan.engine.ready-work"
-
-const DEMAND: bytes = b"demand\x00"
-const PREPARED: bytes = b"prepar\x00"
-const READY: bytes = b"ready_\x00"
-
-
-def demand_description() -> Description:
-    """The exact sequence of demanded logical keys."""
-    return model_description(DEMAND, DEMAND_SCHEMA, [ModelField(identity=b"keys__", name="keys", storage=f"list<{KEY_TYPE}>")])
-
-
-pub def encode_demand_page(value: DemandPage) -> Result[bytes, str]:
-    """Write one typed demand page without assigning producer meaning to its keys."""
-    keys = Value.List([key_value(key) for key in value.keys])
-    return encode_graph_row(DEMAND, demand_description(), [required_value(b"keys__", keys)])
-
-
-pub def decode_demand_page(encoded: bytes) -> Result[DemandPage, str]:
-    """Decode every logical key under the exact demand-page schema."""
-    fields = decode_graph_row(encoded, DEMAND, demand_description(), 1)?
-    mut keys: list[RecordKey] = []
-    for value in items(fields[0].value)?:
-        keys.append(read_key(value)?)
-    return Ok(DemandPage(keys=keys))
-
-
-def prepared_description() -> Description:
-    """Separate the output, authority, request sequence, rank and selector evidence into independently typed fields."""
-    return model_description(PREPARED, PREPARED_SCHEMA, [
-        ModelField(identity=b"dep___", name="rank_dependency", storage="i64"),
-        ModelField(identity=b"eviden", name="rank_evidence", storage="string"),
-        ModelField(identity=b"namesp", name="rank_namespace", storage="i64"),
-        ModelField(identity=b"output", name="output", storage=KEY_TYPE),
-        ModelField(identity=b"profil", name="profile", storage="string"),
-        ModelField(identity=b"reads_", name="required_reads", storage=f"list<{REQUEST_TYPE}>"),
-        ModelField(identity=b"select", name="selector_witnesses", storage="string"),
-        ModelField(identity=b"snapsh", name="snapshot", storage="string"),
-        ModelField(identity=b"stage_", name="rank_stage", storage="string"),
-    ])
-
-
-pub def encode_prepared_inputs(value: PreparedInputs) -> Result[bytes, str]:
-    """Encode the certified rank and read requests of one prepared graph activation."""
-    rank = value.rank_certificate.rank
-    return encode_graph_row(PREPARED, prepared_description(), [
-        required_value(b"dep___", integer(rank.dependency)),
-        required_value(b"eviden", Value.Text(value.rank_certificate.evidence.digest)),
-        required_value(b"namesp", integer(rank.namespace)),
-        required_value(b"output", key_value(value.output)),
-        required_value(b"profil", Value.Text(value.profile.identity.digest)),
-        required_value(b"reads_", Value.List([request_value(request) for request in value.required_reads])),
-        required_value(b"select", Value.Text(value.selector_witnesses.digest)),
-        required_value(b"snapsh", Value.Text(value.snapshot.root.digest)),
-        required_value(b"stage_", Value.Text(stage_name(rank.stage))),
-    ])
-
-
-pub def decode_prepared_inputs(encoded: bytes) -> Result[PreparedInputs, str]:
-    """Restore exact prepared work without resolving or evaluating its requested records."""
-    fields = decode_graph_row(encoded, PREPARED, prepared_description(), 9)?
-    mut requests: list[RecordRequest] = []
-    for item in items(fields[5].value)?:
-        requests.append(read_request(item)?)
-    rank = ProducerRank(namespace=number(fields[2].value)?, stage=read_stage(text(fields[8].value)?)?, dependency=number(fields[0].value)?)
-    return Ok(PreparedInputs(
-        output=read_key(fields[3].value)?,
-        snapshot=InputSnapshot(root=RecordRoot(digest=text(fields[7].value)?)),
-        profile=ProducerProfile(identity=RecordRoot(digest=text(fields[4].value)?)),
-        required_reads=requests,
-        rank_certificate=RankCertificate(rank=rank, evidence=RecordRoot(digest=text(fields[1].value)?)),
-        selector_witnesses=RecordRoot(digest=text(fields[6].value)?),
-    ))
-
-
-def work_description() -> Description:
-    """The output and producer selected to perform ready work."""
-    return model_description(READY, WORK_SCHEMA, [
-        ModelField(identity=b"output", name="output", storage=KEY_TYPE),
-        ModelField(identity=b"profil", name="profile", storage="string"),
-        ModelField(identity=b"stage_", name="stage", storage="string"),
-    ])
-
-
-pub def encode_ready_work(value: ReadyWork) -> Result[bytes, str]:
-    """Encode a selected output, producer profile and stage as one Crumb record."""
-    return encode_graph_row(READY, work_description(), [
-        required_value(b"output", key_value(value.output)),
-        required_value(b"profil", Value.Text(value.profile.identity.digest)),
-        required_value(b"stage_", Value.Text(stage_name(value.stage))),
-    ])
-
-
-pub def decode_ready_work(encoded: bytes) -> Result[ReadyWork, str]:
-    """Reject a foreign selector, field type or unknown stage."""
-    fields = decode_graph_row(encoded, READY, work_description(), 3)?
-    return Ok(ReadyWork(
-        output=read_key(fields[0].value)?,
-        profile=ProducerProfile(identity=RecordRoot(digest=text(fields[1].value)?)),
-        stage=read_stage(text(fields[2].value)?)?,
-    ))
-
-
-pub def envelope_key(family: str, root: str) -> Result[str, str]:
-    """Resolve one content root only inside its engine-owned envelope family."""
-    supported = family == DEMAND_FAMILY or family == PREPARED_FAMILY or family == WORK_FAMILY
-    if not supported or not valid_digest(root):
-        return Err("invalid compiler activation envelope root")
-    return Ok(family + "\t" + root)
-
-
-pub def stage_name(stage: ProducerStage) -> str:
-    """Encode the closed producer-stage set independently of enum ordinals."""
-    match stage:
-        ProducerStage.Discover => return "discover"
-        ProducerStage.Signature => return "signature"
-        ProducerStage.Layout => return "layout"
-        ProducerStage.Default => return "default"
-        ProducerStage.CheckBody => return "check-body"
-        ProducerStage.BodyIr => return "body-ir"
-        ProducerStage.Instance => return "instance"
-        ProducerStage.LoweringDemand => return "lowering-demand"
-        ProducerStage.PlanFunction => return "plan-function"
-        ProducerStage.NativeInterface => return "native-interface"
-
-
-def read_stage(value: str) -> Result[ProducerStage, str]:
-    """Decode the closed producer-stage spelling without silently widening the current profile."""
-    match value:
-        "discover" => return Ok(ProducerStage.Discover)
-        "signature" => return Ok(ProducerStage.Signature)
-        "layout" => return Ok(ProducerStage.Layout)
-        "default" => return Ok(ProducerStage.Default)
-        "check-body" => return Ok(ProducerStage.CheckBody)
-        "body-ir" => return Ok(ProducerStage.BodyIr)
-        "instance" => return Ok(ProducerStage.Instance)
-        "lowering-demand" => return Ok(ProducerStage.LoweringDemand)
-        "plan-function" => return Ok(ProducerStage.PlanFunction)
-        "native-interface" => return Ok(ProducerStage.NativeInterface)
-        _ => return Err("unknown compiler producer stage")
-
-
-def valid_digest(value: str) -> bool:
-    """Whether one root is a lowercase SHA-256 digest."""
-    if len(value) != 64:
-        return false
-    for character in value:
-        if character not in "0123456789abcdef":
-            return false
-    return true

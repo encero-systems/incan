@@ -1,12 +1,6 @@
-"""
-The compiler's shared record contracts, one module per contract; none names Oven, a worker or a native compiler object.
+"""The compiler's shared record contracts, one module per contract; none names Oven, a worker or a native compiler object. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
 
-`records` reads keyed compiler facts through one revision-bound scope, `record_service` is the producer interface and
-`checker_records` the canonical checker record codec. A consumer imports a module, for example
-`from pub::internal_models.checker_records import encode_record`, or the read and producer contracts from this facade.
-"""
-
-pub from compiler_records import (
+pub from rust::internal_models_native import (
     IDENTITY_ADAPTER_PROFILE,
     IDENTITY_ADAPTER_SOURCE,
     IDENTITY_ADAPTER_GENERATION,
@@ -25,8 +19,6 @@ pub from compiler_records import (
     valid_hir_source_span,
     valid_canonical_symbol_id,
     valid_stable_declaration_id,
-)
-pub from checked_types import (
     CheckedNumericType,
     CheckedPrimitiveType,
     CheckedInputAccess,
@@ -35,9 +27,11 @@ pub from checked_types import (
     CheckedCallableParam,
     CheckedType,
     valid_checked_type,
-)
-pub from body_ir_values import CompilerBlock, CompilerCallee, CompilerRvalue, CompilerStatement, CompilerStatementKind
-pub from body_ir_declarations import (
+    CompilerBlock,
+    CompilerCallee,
+    CompilerRvalue,
+    CompilerStatement,
+    CompilerStatementKind,
     BODY_IR_ADAPTER_PROFILE,
     BODY_IR_ADAPTER_SOURCE,
     BODY_IR_ADAPTER_GENERATION,
@@ -61,8 +55,6 @@ pub from body_ir_declarations import (
     valid_invocation_view,
     valid_published_expanded_body,
     invalidate_owned_callable_fields,
-)
-pub from records import (
     RecordKey,
     ReadScope,
     PayloadSelection,
@@ -86,8 +78,6 @@ pub from records import (
     StoreRecordSource,
     encode_record_key,
     selected_record_bytes,
-)
-pub from record_service import (
     RECORD_SERVICE_SCHEMA,
     prepared_reader,
     CompilerRecordService,
@@ -109,8 +99,6 @@ pub from record_service import (
     RecordRoot,
     SemanticRefusal,
     ValueReference,
-)
-pub from activation_envelopes import (
     DEMAND_SCHEMA,
     PREPARED_SCHEMA,
     WORK_SCHEMA,
@@ -125,10 +113,14 @@ pub from activation_envelopes import (
     decode_ready_work,
     envelope_key,
     stage_name,
-)
-pub from namespace_order import encode_import_closures, ranked_output_suffix
-pub from namespace_order import NamespaceOrder, certified_namespace_order, checking_basis_key, checking_completion_receipt, decode_namespace_order, encode_checking_completion
-pub from checker_record_models import (
+    encode_import_closures,
+    ranked_output_suffix,
+    NamespaceOrder,
+    certified_namespace_order,
+    checking_basis_key,
+    checking_completion_receipt,
+    decode_namespace_order,
+    encode_checking_completion,
     CheckedFamily,
     CodecFault,
     GraphBodyValue,
@@ -142,8 +134,6 @@ pub from checker_record_models import (
     CompiledBodyFallback,
     CompiledNamespaceValue,
     CompiledBodyOutputs,
-)
-pub from checker_records import (
     decode_owned_record,
     callable_checker_fields,
     native_fields,
@@ -163,40 +153,83 @@ pub from checker_records import (
     decode_owned_namespace_view,
     decode_graph_namespace_view,
     record_root,
-)
-pub from compiled_body_rows import (
     CompiledBodyOutput,
     encode_compiled_body_rows,
     decode_compiled_body_row,
+    PlanFunctionRecord,
+    encode_plan_function_record,
+    decode_plan_function_record,
+    plan_function_digest,
+    RECEIPT_SCHEMA,
+    decode_read_receipt,
+    encode_read_receipt,
+    INTERFACE_REPORT,
+    native_interface_filename,
+    decode_native_interface,
+    decode_lowering_event,
+    ADMITTED_DEFINITIONS,
+    admitted_definitions_filename,
+    decode_admitted_definitions,
+    PayloadAdmission,
+    decode_unit_admission,
+    encode_unit_admission,
+    encode_binding,
+    read_binding,
+    SOURCE_PROFILE,
+    encode_source_text,
+    source_value,
+    NamespaceReference,
+    encode_namespace_references,
+    decode_namespace_references,
+    namespace_reference_filename,
+    encode_namespace_proof,
+    read_namespace_proof,
+    namespace_proof_output_suffix,
+    NamespaceAtom,
+    NamespaceEntry,
+    NamespaceField,
+    NamespaceIdentity,
+    NamespacePublication,
+    PreparedNamespaceReader,
+    prepare_namespace_reader,
+    decode_prepared_namespace,
+    decode_prepared_namespace_view,
+    identify_prepared_namespace,
+    identify_prepared_namespace_view,
+    namespace_identity,
+    decode_namespace_interface,
+    encode_namespace_interface,
+    publish_namespace_interface,
+    CompilerContributors,
+    decode_compiler_contributors,
+    encode_compiler_contributors,
+    CheckerRecordCounts,
+    checker_report_suffix,
+    encode_checker_counts,
+    decode_checker_counts,
+    encode_callable_inventory,
+    decode_callable_inventory,
+    encode_search_paths,
+    decode_search_paths,
+    CheckedBodyCounts,
+    encode_checked_body_counts,
+    decode_checked_body_counts,
+    ManifestCacheValue,
+    ManifestInventory,
+    encode_manifest_cache,
+    decode_manifest_cache,
+    encode_manifest_inventory,
+    decode_manifest_inventory,
+    encode_unit_document,
+    decode_unit_document,
+    CompilerExportMember,
+    decode_compiler_export,
+    encode_compiler_export,
+    encode_owner_call_reads,
+    decode_owner_call_reads,
+    scope_output_suffix,
+    contract_output_suffix,
+    coordinate_output_suffix,
+    encode_method_lookups,
+    method_lookup_suffix,
 )
-pub from plan_function_records import PlanFunctionRecord, encode_plan_function_record, decode_plan_function_record, plan_function_digest
-pub from read_receipts import RECEIPT_SCHEMA, decode_read_receipt, encode_read_receipt
-pub from lowering_events import INTERFACE_REPORT, native_interface_filename, decode_native_interface, decode_lowering_event
-pub from lowering_events import ADMITTED_DEFINITIONS, admitted_definitions_filename, decode_admitted_definitions
-
-pub from unit_admission import PayloadAdmission, decode_unit_admission, encode_unit_admission
-
-pub from selection_bindings import encode_binding, read_binding
-pub from source_value_records import SOURCE_PROFILE, encode_source_text, source_value
-
-pub from namespace_references import NamespaceReference, encode_namespace_references, decode_namespace_references, namespace_reference_filename
-pub from namespace_proof import encode_namespace_proof, read_namespace_proof, namespace_proof_output_suffix
-pub from std.primitives.views import MappedView
-pub from namespace_rows import NamespaceAtom, NamespaceEntry, NamespaceField, NamespaceIdentity, NamespacePublication, PreparedNamespaceReader, prepare_namespace_reader, decode_prepared_namespace, decode_prepared_namespace_view, identify_prepared_namespace, identify_prepared_namespace_view, namespace_identity, decode_namespace_interface, encode_namespace_interface, publish_namespace_interface
-
-pub from compiler_contributors import CompilerContributors, decode_compiler_contributors, encode_compiler_contributors
-pub from checker_publication import CheckerRecordCounts, checker_report_suffix, encode_checker_counts, decode_checker_counts
-
-pub from namespace_rows import encode_callable_inventory, decode_callable_inventory
-
-pub from toolchain_search import encode_search_paths, decode_search_paths
-
-pub from checked_body_counts import CheckedBodyCounts, encode_checked_body_counts, decode_checked_body_counts
-
-pub from manifest_cache import ManifestCacheValue, ManifestInventory, encode_manifest_cache, decode_manifest_cache, encode_manifest_inventory, decode_manifest_inventory
-pub from unit_document import encode_unit_document, decode_unit_document
-pub from compiler_export import CompilerExportMember, decode_compiler_export, encode_compiler_export
-
-pub from settled_call_reads import encode_owner_call_reads, decode_owner_call_reads
-
-pub from overload_members import scope_output_suffix, contract_output_suffix, coordinate_output_suffix, encode_method_lookups, method_lookup_suffix

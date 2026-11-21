@@ -248,7 +248,7 @@ def compiled_output_controls(source: str) -> Result[None, str]:
         call_reads=[SettledCallRead(reader="invoke", target="provider", digest="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")],
     )
     legacy = encoded_body_rows(CompiledBodyOutputs(namespaces=[namespace], values=[], fallbacks=[])).map_err((_) => "legacy namespace encode")?
-    match decode_compiled_body_row(legacy[0]).map_err((_) => "legacy namespace decode")?:
+    match decode_compiled_body_row(legacy[0].clone()).map_err((_) => "legacy namespace decode")?:
         CompiledBodyOutput.Namespace(decoded) => assert decoded.call_contracts is None
         _ => return Err("legacy namespace row lost")
     mut scoped = value
@@ -256,7 +256,7 @@ def compiled_output_controls(source: str) -> Result[None, str]:
     assert encoded_body_rows(CompiledBodyOutputs(values=[scoped], fallbacks=[])).is_err()
     scoped.dependency_reads = []
     scoped_rows = encoded_body_rows(CompiledBodyOutputs(values=[scoped], fallbacks=[])).map_err((_) => "scope name encode")?
-    match decode_compiled_body_row(scoped_rows[0]).map_err((_) => "scope name decode")?:
+    match decode_compiled_body_row(scoped_rows[0].clone()).map_err((_) => "scope name decode")?:
         CompiledBodyOutput.Value(decoded) => assert decoded.scope_names == ["main", "str"]
         _ => return Err("scoped scalar value lost")
     scoped.scope_names = ["str", "main"]
@@ -271,7 +271,7 @@ def compiled_output_controls(source: str) -> Result[None, str]:
     assert len(encoded) == 4
     for row in encoded:
         assert row[:4] == b"CRMB"
-    match decode_compiled_body_row(encoded[0]).map_err((_) => "compiled value decode")?:
+    match decode_compiled_body_row(encoded[0].clone()).map_err((_) => "compiled value decode")?:
         CompiledBodyOutput.Namespace(decoded) =>
             assert decoded.module == namespace.module and decoded.interface == namespace.interface
             assert decoded.body_ir == namespace.body_ir and decoded.dependencies == namespace.dependencies
@@ -282,7 +282,7 @@ def compiled_output_controls(source: str) -> Result[None, str]:
             assert decoded.lowering_inputs == namespace.lowering_inputs
             assert decoded.semantic_interface == namespace.semantic_interface and decoded.member_witnesses == namespace.member_witnesses
         _ => return Err("compiled namespace decoded as another output kind")
-    match decode_compiled_body_row(encoded[1]).map_err((_) => "compiled value decode")?:
+    match decode_compiled_body_row(encoded[1].clone()).map_err((_) => "compiled value decode")?:
         CompiledBodyOutput.Value(decoded) =>
             assert decoded.module == value.module and decoded.name == value.name and decoded.identity == value.identity
             assert decoded.dependency_reads[0].reference_subject == "expr:main#10..17"
@@ -294,11 +294,11 @@ def compiled_output_controls(source: str) -> Result[None, str]:
                 and decoded.body_ir == value.body_ir
             )
         _ => return Err("compiled value decoded as another output kind")
-    match decode_compiled_body_row(encoded[2]).map_err((_) => "compiled fallback decode")?:
+    match decode_compiled_body_row(encoded[2].clone()).map_err((_) => "compiled fallback decode")?:
         CompiledBodyOutput.Fallback(decoded) =>
             assert decoded == fallback
         _ => return Err("compiled fallback decoded as another output kind")
-    match decode_compiled_body_row(encoded[3]).map_err((_) => "identityless fallback decode")?:
+    match decode_compiled_body_row(encoded[3].clone()).map_err((_) => "identityless fallback decode")?:
         CompiledBodyOutput.Fallback(decoded) =>
             assert decoded == identityless
         _ => return Err("identityless fallback decoded as another output kind")
@@ -345,7 +345,7 @@ def compiled_output_size_controls(
     large_rows = encoded_body_rows(CompiledBodyOutputs(namespaces=[large_namespace], values=[], fallbacks=[])).map_err(
         (_) => "large compiled namespace encode",
     )?
-    match decode_compiled_body_row(large_rows[0]).map_err((_) => "large compiled namespace decode")?:
+    match decode_compiled_body_row(large_rows[0].clone()).map_err((_) => "large compiled namespace decode")?:
         CompiledBodyOutput.Namespace(decoded) =>
             assert decoded.module == large_namespace.module and decoded.body_ir == large_namespace.body_ir
         _ => return Err("large compiled namespace decoded as another output kind")
@@ -404,7 +404,7 @@ def compiled_fallback_reason_controls() -> Result[None, str]:
         (_) => "a fallback with a long reason refused the compiled output",
     )?
     assert len(rows) == 1
-    match decode_compiled_body_row(rows[0]).map_err((_) => "long-reason fallback decode")?:
+    match decode_compiled_body_row(rows[0].clone()).map_err((_) => "long-reason fallback decode")?:
         CompiledBodyOutput.Fallback(decoded) =>
             assert decoded.module == fallback.module and decoded.name == fallback.name
             assert decoded.identity == fallback.identity
@@ -597,8 +597,8 @@ def graph_transport_controls(local: CheckedRecord, final: CheckedRecord) -> Resu
     ).map_err((_) => "large graph transport encode")?
     large_selected = decode_graph_body_values(large_transport).map_err((_) => "large graph transport decode")?
     assert large_selected[0].body_ir == large_body_ir
-    selected_local = from_native_local_fields(selected[0].local).map_err((_) => "selected local re-encode")?
-    selected_final = from_native_final_fields(selected[0].final_fields).map_err((_) => "selected final re-encode")?
+    selected_local = from_native_local_fields(selected[0].local.clone()).map_err((_) => "selected local re-encode")?
+    selected_final = from_native_final_fields(selected[0].final_fields.clone()).map_err((_) => "selected final re-encode")?
     assert encoded_record(selected_local).map_err((_) => "selected local bytes")? == local_bytes
     assert encoded_record(selected_final).map_err((_) => "selected final bytes")? == final_bytes
     match encode_graph_body_values(

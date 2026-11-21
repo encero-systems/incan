@@ -134,7 +134,7 @@ pub def test_certified_module_owner_overlap_and_partial_cycle() -> Result[None, 
     offered = reference_selection?
     assert len(offered.pages) == 1 and len(offered.complete) == 0
     assert offered.pages[0].key == namespace_reference_filename()
-    references = decode_namespace_references(offered.pages[0].value)?
+    references = decode_namespace_references(offered.pages[0].value.clone())?
     assert len(references) == 1 and references[0].key.identity == left
     for read in reference_reads:
         assert not read.key.startswith("namespace\t")
@@ -214,7 +214,7 @@ pub def test_value_evaluation_and_edges_publish_in_one_generation() -> Result[No
     receipt_bytes = required(before=published.snapshot, key=published.receipt_key)?
     assert receipt_bytes[:4] == b"CRMB"
     assert decode_read_receipt(receipt_bytes)?.operations == receipt.operations
-    assert decode_read_receipt(receipt_bytes[:-1]).is_err()
+    assert decode_read_receipt(receipt_bytes[:-1].clone()).is_err()
     assert required(before=published.snapshot, key=published.evaluation_key)?[:4] == b"CRMB"
     selected = keys(published.snapshot).map_err((error) => error.message())?
     assert count_prefix(selected, "incan.engine.edge-out/3\t") == 4
@@ -268,11 +268,11 @@ pub def test_local_envelopes_persist_and_sweep_in_rank_order() -> Result[None, s
     assert order["left"].members == ["left", "right"]
     assert order["left"].rank == 1
     assert order["left"].evidence == order["right"].evidence
-    roundtrip = decode_namespace_order(order["right"].certificate, "project")?
+    roundtrip = decode_namespace_order(order["right"].certificate.clone(), "project")?
     assert roundtrip.members == ["left", "right"]
     assert roundtrip.rank == 1
     assert roundtrip.evidence == order["left"].evidence
-    assert decode_namespace_order(order["left"].certificate, "another-project").is_err()
+    assert decode_namespace_order(order["left"].certificate.clone(), "another-project").is_err()
     tampered = BytesIO(order["left"].certificate)
     tampered.seek(0, 2).map_err((error) => error.message())?
     tampered.write_bytes(b"x").map_err((error) => error.message())?
@@ -861,7 +861,7 @@ pub def test_contextual_body_edit_uses_a_certified_receipt_without_opening_prior
     assert len(pages) == 2
     assert pages[0].key == "ranked-source-edit.crumb"
     assert pages[1].key == "ranked-source-order.crumb" and pages[1].value == order.certificate
-    demand = decode_demand_page(pages[0].value)?
+    demand = decode_demand_page(pages[0].value.clone())?
     assert len(demand.keys) == 2 and demand.keys[1] == owner.key
     assert demand.keys[0].identity == identity and demand.keys[0].facet == consumer
     assert demand.keys[0].context == order.evidence
@@ -1338,7 +1338,7 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     assert len(selected) == 1 and selected[0].identity == identity
     pages = encode_body_inventory(selected)?
     assert len(pages) == 1 and len(pages[0].key) == 64
-    decoded = decode_graph_body_values(pages[0].value).map_err((error) => f"{error:?}")?
+    decoded = decode_graph_body_values(pages[0].value.clone()).map_err((error) => f"{error:?}")?
     assert len(decoded) == 1 and decoded[0].identity == identity
     assert invalid_body_owners(published.snapshot, [], CHECKER_PROFILE)? == []
 
