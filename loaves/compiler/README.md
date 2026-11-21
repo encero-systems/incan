@@ -9,6 +9,7 @@ The checked source pipeline, native lowering and runtime. Compiler units depend 
 | `incan_frontend/` | Typechecker, semantic analysis, vocabulary expansion, Body IR and checked API metadata. |
 | `incan_mir_lowering/` | Incan-authored lowering from checked Body IR to the native plan. |
 | `incan_mir_plan/` | Native-plan data and builders shared with lowering and the rustc adapter. |
+| `incan_mir_plan_native/` | The native-plan types and plan records in Rust: keyed function products, layouts, the native interface, plan-function rows and lowering demands. |
 | `incan_native_runtime/` | Incan-authored runtime used by native programs. |
 | `incan_format/` | Source formatter. |
 | `incan_semantics_stdlib/` | Standard-library semantics packs used by the compiler. |
