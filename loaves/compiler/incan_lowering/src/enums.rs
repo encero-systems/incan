@@ -4,7 +4,7 @@ use incan_mir_plan_native::{EnumDeclaration as PlanEnumDeclaration, EnumVariant,
 use incan_semantics_core::IncanType;
 use incan_semantics_core::body_ir::{
     ArgumentBinding, BodyIrModule, Constant, EnumDeclaration as SourceEnumDeclaration, EnumVariantTarget,
-    FieldlessEnumVariantTarget, ValueEnumBacking,
+    FieldlessEnumVariantTarget, OwnershipFact, Pattern, ValueEnumBacking,
 };
 
 use crate::decls::{ViewLifetimeLayout, library_enum_item, serde_propagation, with_serde_derives};
@@ -217,4 +217,85 @@ pub fn validate_binding(binding: &ArgumentBinding, count: usize) -> Result<(), S
         }
     }
     Ok(())
+}
+
+/// Resolve exact variant identities while allowing checked owner aliases; payload layout and ownership stay explicit.
+pub fn pattern_variant(declaration: &SourceEnumDeclaration, pattern: &Pattern) -> Result<i64, String> {
+    match pattern {
+        Pattern::Wildcard => return Ok(-1),
+        Pattern::Enum {
+            canonical,
+            variant: written,
+            fields,
+            ..
+        } => {
+            for (slot, variant) in declaration.variants.iter().enumerate() {
+                if canonical.as_ref() == Some(&variant.canonical) {
+                    // The exact variant identity above proves the owner; reexports can rename its written path. Retain
+                    // the member-spelling check without treating the source owner alias as a carrier name.
+                    let member = written.split("::").last().unwrap_or_default();
+                    if member != variant.name || fields.len() != variant.fields.len() {
+                        return Err("invalid Body IR enum pattern layout".into());
+                    }
+                    validate_payload_patterns(fields)?;
+                    return Ok(slot as i64);
+                }
+            }
+        }
+        Pattern::FieldlessEnumVariant(target) => {
+            if target.enum_canonical != declaration.canonical
+                || target.enum_declaration_id != declaration.direct_declaration_id
+            {
+                return Err("invalid Body IR fieldless enum pattern owner".into());
+            }
+            for (slot, variant) in declaration.variants.iter().enumerate() {
+                if target.variant_canonical == variant.canonical
+                    && target.variant_declaration_id == variant.direct_declaration_id
+                    && variant.fields.is_empty()
+                {
+                    return Ok(slot as i64);
+                }
+            }
+        }
+        _ => {}
+    }
+    Err("unsupported Body IR enum pattern".into())
+}
+
+/// Admit payload patterns whose tests and bindings are represented: bindings with a known ownership, literals, nested
+/// carrier and tuple patterns, and alternations of those; anything else stays refused by name.
+pub fn validate_payload_patterns(patterns: &[Pattern]) -> Result<(), String> {
+    for pattern in patterns {
+        validate_payload_pattern(pattern)?;
+    }
+    Ok(())
+}
+
+/// Admit one payload pattern, recursing into the payloads a nested pattern names.
+fn validate_payload_pattern(pattern: &Pattern) -> Result<(), String> {
+    match pattern {
+        Pattern::Wildcard | Pattern::Literal(_) | Pattern::FieldlessEnumVariant(_) => Ok(()),
+        // A moved payload binding reads like a cloned one: legacy matches a cloned enum by value. A payload its arm
+        // changes in place is borrowed exclusively from the scrutinee instead.
+        Pattern::Var(binding) => match binding.fact {
+            OwnershipFact::Copy
+            | OwnershipFact::Clone
+            | OwnershipFact::Borrow
+            | OwnershipFact::Move
+            | OwnershipFact::MutBorrow => Ok(()),
+            _ => Err("unsupported Body IR enum payload binding ownership".into()),
+        },
+        Pattern::Enum { fields, .. }
+        | Pattern::Result { fields, .. }
+        | Pattern::UnionMember { fields, .. }
+        | Pattern::Tuple(fields)
+        | Pattern::Or(fields) => validate_payload_patterns(fields),
+        Pattern::Nominal { fields, .. } => {
+            for (_, field_pattern) in fields {
+                validate_payload_pattern(field_pattern)?;
+            }
+            Ok(())
+        }
+        _ => Err("unsupported Body IR nested enum payload pattern".into()),
+    }
 }

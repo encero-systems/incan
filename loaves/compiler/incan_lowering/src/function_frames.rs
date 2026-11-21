@@ -36,6 +36,7 @@ use crate::pending::untranslated;
 use crate::program_context::ProgramContext;
 use crate::redo_counts::record_lowering;
 use crate::result_requirements::validate_result_requirements;
+use crate::signature_lifetimes::signature_lifetimes;
 use crate::statements::{is_nominal_type, is_owned_callable, lower_block};
 use crate::text_plan::owned_literal;
 use crate::traits::append_default_type_bindings;
@@ -176,7 +177,7 @@ pub fn lower_function(
     if let Some(view) = &body.returned_view
         && view.access != IncanInputAccess::Owned
     {
-        return Err(untranslated("signature_lifetimes::signature_lifetimes"));
+        function.signature_lifetimes = signature_lifetimes(body, type_arguments)?;
     }
     if body.is_generator() {
         let Some((leaf, depth)) = generator_shape(&declared_type) else {

@@ -9,12 +9,12 @@ use incan_mir_plan_native::{
 };
 use incan_semantics_core::IncanType;
 use incan_semantics_core::body_ir::{
-    Body, BodyIrModule, EnumDeclaration as SourceEnumDeclaration, NativeUnionDeclaration, NominalDeclaration,
+    Body, BodyIrModule, EnumDeclaration as SourceEnumDeclaration, NativeUnionDeclaration, NominalDeclaration, Pattern,
     Place as SourcePlace, PlaceElem, StaticInitializer,
 };
 
 use crate::compiler_record_adapters::{authored_plan_checked_type, semantic_key_matches_native};
-use crate::enums::enum_owner;
+use crate::enums::{enum_owner, validate_payload_patterns};
 use crate::frame::Builder;
 use crate::layout_types::native_source_type;
 use crate::native_type_identity::ConstructorIndex;
@@ -572,4 +572,28 @@ pub fn carrier_injection(
     }
     let slot = union_slot(&builder.unions, *owner, source, &builder.intrinsics)?;
     Ok(RvalueKind::Enum(*owner, slot, vec![operand]))
+}
+
+/// Dispatch checker-retained member patterns; subset, literal and binding fallback refinements stay refused.
+pub fn union_pattern_slot(builder: &Builder, owner: i64, pattern: &Pattern) -> Result<i64, String> {
+    match pattern {
+        Pattern::Wildcard => Ok(-1),
+        Pattern::UnionMember { ty, fields } => {
+            if fields.len() > 1 {
+                return Err("unsupported Body IR union payload pattern arity".into());
+            }
+            validate_payload_patterns(fields)?;
+            let member = native_source_type(
+                builder.constructors(),
+                builder.nominals(),
+                builder.enums(),
+                &builder.unions,
+                ty,
+                &builder.intrinsics,
+                "",
+            )?;
+            union_slot(&builder.unions, owner, &member, &builder.intrinsics)
+        }
+        _ => Err("unsupported Body IR union pattern".into()),
+    }
 }

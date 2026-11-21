@@ -1,23 +1,33 @@
 //! Values at typed boundaries: carrier construction, native aliases and payload conversion.
 
 use incan_mir_plan_native::{
-    Carrier, ListLeaf, Operand, OperandKind, PlanType, RvalueKind, SourceSpan, assign as plan_assign, carrier_position,
+    Carrier, FieldProjection, ListLeaf, Operand, OperandKind, Place, PlanType, Projection, RvalueKind, SourceSpan,
+    assign as plan_assign, carrier_position, place as plan_place,
 };
-use incan_semantics_core::body_ir::Operand as SourceOperand;
+use incan_semantics_core::body_ir::{Operand as SourceOperand, OwnershipFact, Pattern};
 
-use crate::builtin_calls::coerce_numeric_operand;
+use crate::builtin_calls::{clone_enum_reference, clone_model_reference, coerce_numeric_operand};
 use crate::callable_calls::carrier_callable_operand;
+use crate::checked_values::reference_read_fact;
 use crate::compiler_record_adapters::semantic_key_matches_native;
+use crate::decls::library_enum_item;
+use crate::enums::enum_owner;
 use crate::formatting::display_plan_operand;
 use crate::frame::{
-    Builder, dereferenced_place, forget_moved_arguments, read_place, temporary, track_rvalue_moves, value_type,
+    Builder, appended_field, bind_read_value, dereferenced_place, forget_moved_arguments, forget_owned, place_type,
+    read_place, temporary, track_rvalue_moves, value_type,
 };
 use crate::frozen_plan::frozen_bytes_literal;
 use crate::generators::generator_shape;
 use crate::layout_types::native_alias_boundary;
+use crate::layout_types::shared_receiver_type;
 use crate::list_values::sequence_read_storage;
+use crate::lists::exclusive_reference;
+use crate::lists::is_exclusive_borrow;
 use crate::lists::is_list;
+use crate::matches::{bind_enum_payload, bind_structural_pattern, enum_payload_read};
 use crate::numerics::numeric_carrier;
+use crate::patterns::{carrier_pattern_slot, carrier_payload_types, pattern_binds};
 use crate::pending::untranslated;
 use crate::result_carriers::{frozen_operand, typed_carrier_operand};
 use crate::static_storage::snapshot_owns;
@@ -99,11 +109,11 @@ pub fn boundary_plan_operand(
                 return Err("unsupported Body IR tuple value with differing checked field carriers".into());
             }
         }
-        (PlanType::ModelRef(owner, _), PlanType::Model(target_owner, _)) if owner == target_owner => {
-            return Err(untranslated("model_construction::clone_model_reference"));
+        (PlanType::ModelRef(owner, name), PlanType::Model(target_owner, _)) if owner == target_owner => {
+            return Ok(clone_model_reference(builder, value, *owner, name, span));
         }
-        (PlanType::EnumRef(owner, _), PlanType::Enum(target_owner, _)) if owner == target_owner => {
-            return Err(untranslated("model_construction::clone_enum_reference"));
+        (PlanType::EnumRef(owner, name), PlanType::Enum(target_owner, _)) if owner == target_owner => {
+            return Ok(clone_enum_reference(builder, value, *owner, name, span));
         }
         _ => {}
     }
@@ -120,7 +130,7 @@ pub fn boundary_plan_operand(
         let text = display_plan_operand(builder, operand, span)?;
         operand = read_place(text, true, span);
     }
-    operand = owned_union_member(builder, operand, target)?;
+    operand = owned_union_member(builder, operand, target, span)?;
     operand = carrier_callable_operand(builder, operand, target, span)?;
     operand = option_payload_operand(builder, operand, target, span)?;
     let actual_source = value_type(builder, &operand)?;
@@ -180,7 +190,12 @@ fn frozen_text_union_member(builder: &Builder, target: &PlanType) -> Result<bool
 ///
 /// A field of a parameter the body only reads arrives as a shared reference to the field; its declared union member is
 /// the owned nominal, which is cloned from that reference. Every other operand is returned unchanged.
-fn owned_union_member(builder: &Builder, value: Operand, target: &PlanType) -> Result<Operand, String> {
+fn owned_union_member(
+    builder: &mut Builder,
+    value: Operand,
+    target: &PlanType,
+    span: &SourceSpan,
+) -> Result<Operand, String> {
     let PlanType::Enum(owner, _) = target else {
         return Ok(value);
     };
@@ -192,8 +207,8 @@ fn owned_union_member(builder: &Builder, value: Operand, target: &PlanType) -> R
         return Ok(value);
     }
     match value_type(builder, &value)? {
-        PlanType::ModelRef(..) => Err(untranslated("model_construction::clone_model_reference")),
-        PlanType::EnumRef(..) => Err(untranslated("model_construction::clone_enum_reference")),
+        PlanType::ModelRef(nominal, name) => Ok(clone_model_reference(builder, value, nominal, &name, span)),
+        PlanType::EnumRef(nominal, name) => Ok(clone_enum_reference(builder, value, nominal, &name, span)),
         _ => Ok(value),
     }
 }
@@ -275,4 +290,205 @@ fn option_payload_operand(
         PlanType::Enum(..) => boundary_plan_operand(builder, value, &payload, span),
         _ => Ok(value),
     }
+}
+
+/// Preserve a checker-retained shared reference binding: copy a reference payload or borrow its owned nominal field.
+/// Match declaration slots rather than diagnostic names, and never materialize owned text or move an owner's payload
+/// into a reference slot.
+fn bind_shared_enum_payload(
+    builder: &mut Builder,
+    local: i64,
+    payload: &Place,
+    fact: OwnershipFact,
+    span: &SourceSpan,
+) -> Result<bool, String> {
+    let target = builder.locals[local as usize].ty.clone();
+    if !builder.reference_values.contains(&local) || is_exclusive_borrow(&target) {
+        return Ok(false);
+    }
+    if !reference_read_fact(fact) {
+        return Err(format!(
+            "unsupported Body IR shared enum payload reference read {fact:?} in {}",
+            builder.name
+        ));
+    }
+    let source = place_type(&builder.locals, payload);
+    if source == target {
+        let value = read_place(payload.clone(), false, span);
+        builder.emit(plan_assign(plan_place(local, span), RvalueKind::Use(value), span));
+        return Ok(true);
+    }
+    match (&target, &source) {
+        (PlanType::ModelRef(owner, _), PlanType::Model(held, _)) => {
+            if owner != held {
+                return Err("unsupported Body IR shared model payload owner mismatch".into());
+            }
+        }
+        (PlanType::EnumRef(owner, _), PlanType::Enum(held, _)) => {
+            if owner != held {
+                return Err("unsupported Body IR shared enum payload owner mismatch".into());
+            }
+        }
+        _ => return Ok(false),
+    }
+    builder.emit(plan_assign(
+        plan_place(local, span),
+        RvalueKind::Borrow(payload.clone()),
+        span,
+    ));
+    Ok(true)
+}
+
+/// Bind checked enum payload slots through the same downcast and ownership path for source enums and unions.
+pub fn bind_enum_fields(
+    builder: &mut Builder,
+    source: &Place,
+    variant: i64,
+    fields: &[Pattern],
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let owner = enum_owner(&place_type(&builder.locals, source))?;
+    let payload_types = carrier_payload_types(builder, owner, variant)?;
+    for (slot, field) in fields.iter().enumerate() {
+        let Pattern::Var(binding) = field else {
+            if pattern_binds(field) {
+                bind_nested_payload(builder, source, variant, slot, field, span)?;
+            }
+            continue;
+        };
+        let local = binding.local.index() as i64 + 1 + builder.local_offset;
+        let ty = builder.locals[local as usize].ty.clone();
+        let mut projection = FieldProjection::new(slot as i64, payload_types[slot].clone());
+        projection.variant = variant;
+        let projected = appended_field(source, projection, span)?;
+        if ty != payload_types[slot] {
+            // A reference binding borrows its exact payload. Other representation changes, such as native borrowed text
+            // becoming owned source text, keep their ordinary materialization path below.
+            if let Ok(reference) = shared_receiver_type(payload_types[slot].clone())
+                && ty == reference
+            {
+                builder.emit(plan_assign(
+                    plan_place(local, span),
+                    RvalueKind::Borrow(projected),
+                    span,
+                ));
+                continue;
+            }
+            // An exclusive subject binds each payload as an exclusive reference to it.
+            if let Some(exclusive) = exclusive_reference(&payload_types[slot])
+                && ty == exclusive
+            {
+                builder.emit(plan_assign(
+                    plan_place(local, span),
+                    RvalueKind::MutBorrow(projected),
+                    span,
+                ));
+                continue;
+            }
+        }
+        if binding.fact == OwnershipFact::MutBorrow {
+            bind_payload_in_place(builder, local, projected, span)?;
+            continue;
+        }
+        if bind_shared_enum_payload(builder, local, &projected, binding.fact, span)? {
+            continue;
+        }
+        let payload = moved_native_enum_payload(builder, source, projected, fields, binding.fact, span)?;
+        let value = boundary_plan_operand(builder, payload, &ty, span)?;
+        bind_read_value(builder, local, value, span);
+    }
+    Ok(())
+}
+
+/// Transfer a checked payload move, retiring its carrier's drop entry when present.
+///
+/// Intrinsic call temporaries can be drop-free; checked Body IR supplies their move authority. A source enum the frame
+/// owns gives its single payload up the same way; any other source carrier keeps its payload, and the binding takes a
+/// clone that it owns.
+fn moved_native_enum_payload(
+    builder: &mut Builder,
+    source: &Place,
+    payload: Place,
+    fields: &[Pattern],
+    fact: OwnershipFact,
+    span: &SourceSpan,
+) -> Result<Operand, String> {
+    let owner = enum_owner(&place_type(&builder.locals, source))?;
+    if fact != OwnershipFact::Move {
+        return enum_payload_read(builder, payload, fact, span);
+    }
+    let source_enum = owner < builder.enums().len() as i64;
+    if source_enum {
+        if library_enum_item(&builder.enums()[owner as usize]).is_empty()
+            && (fields.len() != 1 || source.projection != Projection::Whole || !builder.owned.contains(&source.local))
+        {
+            return enum_payload_read(builder, payload, fact, span);
+        }
+    } else if builder.intrinsics[carrier_position(owner) as usize].carrier == Carrier::Declared {
+        return enum_payload_read(builder, payload, fact, span);
+    }
+    if fields.len() != 1 || source.projection != Projection::Whole {
+        return Err("unsupported Body IR native enum payload move outside a whole owned single-field carrier".into());
+    }
+    if source_enum && !builder.owned.contains(&source.local) {
+        return Err("unsupported Body IR native enum payload move without its carrier's drop owner".into());
+    }
+    forget_owned(builder, source.local);
+    Ok(read_place(payload, true, span))
+}
+
+/// Bind the names a nested carrier or tuple payload pattern names, from the payload its tests already matched.
+fn bind_nested_payload(
+    builder: &mut Builder,
+    source: &Place,
+    variant: i64,
+    slot: usize,
+    pattern: &Pattern,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let PlanType::Enum(owner, _) = place_type(&builder.locals, source) else {
+        return Err("invalid Body IR nested payload carrier".into());
+    };
+    let types = carrier_payload_types(builder, owner, variant)?;
+    let mut projection = FieldProjection::new(slot as i64, types[slot].clone());
+    projection.variant = variant;
+    let payload = appended_field(source, projection, span)?;
+    match place_type(&builder.locals, &payload) {
+        PlanType::Enum(nested_owner, _) => {
+            let nested = carrier_pattern_slot(builder, nested_owner, pattern)?;
+            bind_enum_payload(builder, &payload, nested, pattern, span)
+        }
+        _ => bind_structural_pattern(builder, &payload, pattern, span),
+    }
+}
+
+/// Bind a name its arm changes as an exclusive reference to the payload it names, as legacy matches `&mut`.
+///
+/// The change then lands in the scrutinee itself. The reference owns nothing, so the binding never enters the drop
+/// ledger. Tuple payloads retain their complete layout behind that reference. A scalar payload reaches here only for a
+/// name written `mut`, which changes the scalar where it is stored, so it binds a scalar reference; every read and
+/// assignment of the name then goes through that reference.
+pub fn bind_payload_in_place(
+    builder: &mut Builder,
+    local: i64,
+    payload: Place,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let payload_type = place_type(&builder.locals, &payload);
+    let reference = match exclusive_reference(&payload_type) {
+        Some(exclusive) => exclusive,
+        None => {
+            if !numeric_carrier(&payload_type) && payload_type != PlanType::Bool {
+                return Err("unsupported Body IR in-place pattern payload without an exclusive reference".into());
+            }
+            PlanType::ScalarMutRef(vec![payload_type])
+        }
+    };
+    builder.locals[local as usize].ty = reference;
+    builder.emit(plan_assign(
+        plan_place(local, span),
+        RvalueKind::MutBorrow(payload),
+        span,
+    ));
+    Ok(())
 }

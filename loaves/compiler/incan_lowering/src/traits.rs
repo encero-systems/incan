@@ -319,7 +319,7 @@ fn owner_identity(module: &BodyIrModule, owner: &PlanType) -> Result<CanonicalSy
 }
 
 /// Select the checked adoption of one concrete receiver even when several instances share its declaration.
-fn receiver_selects_slot_arguments(
+pub fn receiver_selects_slot_arguments(
     module: &BodyIrModule,
     implementation: &TraitImplementation,
     owner: &PlanType,

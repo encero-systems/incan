@@ -10,6 +10,7 @@ use incan_semantics_core::body_ir::{
 };
 use incan_semantics_core::{HirSourceSpan, IncanType};
 
+use crate::builtin_calls::{clone_enum_reference, clone_model_reference};
 use crate::carrier_operands::boundary_operand;
 use crate::closures::callable_copy_type;
 use crate::element_places::is_element_place;
@@ -18,8 +19,10 @@ use crate::frozen_plan::{frozen_collection_literal, frozen_literal, frozen_obser
 use crate::layout_types::{native_source_type, shared_receiver_type};
 use crate::list_values::element_read;
 use crate::lists::{is_exclusive_borrow, is_list};
+use crate::matches::enum_payload_read;
 use crate::models::model_place;
 use crate::numerics::{numeric_carrier, numeric_constant};
+use crate::options::{carrier_payload_value, clone_tuple_operand};
 use crate::pending::untranslated;
 use crate::scalar_reads::scalar_storage_place;
 use crate::statements::is_nominal_type;
@@ -410,10 +413,10 @@ fn owned_target_read(
                 });
             }
             if is_tuple_type(&selected) {
-                return Err(untranslated("options::clone_tuple_operand"));
+                return clone_tuple_operand(builder, target, span);
             }
             if is_list(&selected) && is_tuple_type(&holder) {
-                return Err(untranslated("options::carrier_payload_value"));
+                return carrier_payload_value(builder, target, span);
             }
             if selected == PlanType::String {
                 let cloned = clone_text(builder, target, span)?;
@@ -439,11 +442,11 @@ fn borrowed_target_read(
         return Ok(read_place(target, false, span));
     }
     if is_tuple_type(&selected) {
-        return Err(untranslated("options::clone_tuple_operand"));
+        return clone_tuple_operand(builder, target, span);
     }
     // A list held by a tuple element is materialized by cloning it, leaving the owning tuple whole.
     if is_list(&selected) && is_tuple_type(holder) {
-        return Err(untranslated("options::carrier_payload_value"));
+        return carrier_payload_value(builder, target, span);
     }
     // Materialize only the selected enum or model through its real Clone implementation; copying or moving that field
     // would invalidate the still-owned parent. A model read through a shared receiver is cloned the same way, as legacy
@@ -472,7 +475,7 @@ fn borrowed_target_read(
         _ => {}
     }
     if let Projection::VariantField(..) = target.projection {
-        return Err(untranslated("matches::enum_payload_read"));
+        return enum_payload_read(builder, target, OwnershipFact::Borrow, span);
     }
     // A checked borrow of a value of an open type parameter, a field of a generic model say, reads a copy once the
     // instance makes it a concrete scalar, which owns nothing the borrow would protect.
@@ -555,9 +558,77 @@ pub fn validate_callback_place(builder: &Builder, value: &SourcePlace) -> Result
 }
 
 /// Materialize the checker's clone fact through a source nominal's real derived Clone implementation.
-fn clone_nominal_operand(builder: &mut Builder, value: Place, span: &SourceSpan) -> Result<Operand, String> {
+///
+/// A shared model reference, such as a receiver, already is the borrow that Clone takes. An immutable scalar reference,
+/// including a text reference, function pointer or static frozen wrapper copies the value through the ordinary
+/// carrier-payload read.
+pub fn clone_nominal_operand(builder: &mut Builder, value: Place, span: &SourceSpan) -> Result<Operand, String> {
     match place_type(&builder.locals, &value) {
+        PlanType::FunctionPointer(_)
+        | PlanType::ScalarRef(_)
+        | PlanType::FrozenStr
+        | PlanType::FrozenBytes
+        | PlanType::StringRef
+        | PlanType::ValidationError => carrier_payload_value(builder, value, span),
+        PlanType::ValidationErrorRef => {
+            let owned = Place {
+                local: value.local,
+                projection: Projection::Deref(PlanType::ValidationError),
+                span: span.clone(),
+            };
+            carrier_payload_value(builder, owned, span)
+        }
         PlanType::TupleRef(_) | PlanType::FrozenCollectionRef(..) => Ok(read_place(value, false, span)),
-        _ => Err(untranslated("model_construction::clone_nominal_operand")),
+        PlanType::ModelRef(index, name) => Ok(clone_model_reference(
+            builder,
+            read_place(value, false, span),
+            index,
+            &name,
+            span,
+        )),
+        PlanType::EnumRef(index, name) => Ok(clone_enum_reference(
+            builder,
+            read_place(value, false, span),
+            index,
+            &name,
+            span,
+        )),
+        PlanType::Model(index, name) => {
+            let reference = temporary(builder, PlanType::ModelRef(index, name.clone()), span);
+            builder.emit(plan_assign(reference.clone(), RvalueKind::Borrow(value), span));
+            Ok(clone_model_reference(
+                builder,
+                read_place(reference, false, span),
+                index,
+                &name,
+                span,
+            ))
+        }
+        PlanType::Enum(index, name) => {
+            // SDK enums own their Clone implementation; the local derive callee cannot validate a foreign layout.
+            let native = builder
+                .enums()
+                .get(index as usize)
+                .is_some_and(|declaration| !crate::decls::library_enum_item(declaration).is_empty());
+            if index >= 0 && native {
+                return carrier_payload_value(builder, value, span);
+            }
+            let reference = temporary(builder, PlanType::EnumRef(index, name.clone()), span);
+            builder.emit(plan_assign(reference.clone(), RvalueKind::Borrow(value), span));
+            Ok(clone_enum_reference(
+                builder,
+                read_place(reference, false, span),
+                index,
+                &name,
+                span,
+            ))
+        }
+        ty => {
+            let site = format!("{}:{}:{} in {}", builder.file, span.line, span.column, builder.name);
+            Err(format!(
+                "unsupported Body IR ownership Clone outside models or formatting at {site}; type {ty:?}; projection {:?}",
+                value.projection
+            ))
+        }
     }
 }

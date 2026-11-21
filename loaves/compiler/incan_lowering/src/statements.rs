@@ -16,6 +16,7 @@ use crate::calls::lower_call;
 use crate::carrier_operands::boundary_operand;
 use crate::checked_values::{builder_location, scalar_place};
 use crate::closures::callable_copy_type;
+use crate::explicit_arguments::explicit_place_argument;
 use crate::formatting::display_operand;
 use crate::frame::{
     Builder, drop_all_owned, drop_owned, finish_fallthrough, forget_owned, literal, place_type, read_place,
@@ -228,7 +229,8 @@ fn lower_return(builder: &mut Builder, value: Option<&SourceOperand>, span: &Sou
 pub fn return_operand(builder: &mut Builder, operand: &SourceOperand, span: &SourceSpan) -> Result<Operand, String> {
     let return_type = builder.locals[0].ty.clone();
     if builder.returned_view != IncanInputAccess::Inferred {
-        return Err(untranslated("explicit_arguments::explicit_place_argument"));
+        let access = builder.returned_view;
+        return view_operand(builder, operand, &return_type, access, span);
     }
     if return_type == PlanType::String {
         let text = display_operand(builder, operand, span)?;
@@ -238,6 +240,23 @@ pub fn return_operand(builder: &mut Builder, operand: &SourceOperand, span: &Sou
     let result = boundary_operand(builder, operand, &return_type, span)?;
     track_rvalue_moves(builder, &RvalueKind::Use(result.clone()));
     Ok(result)
+}
+
+/// The one loan of a view's source place, for a direct view's return and a carried view's payload alike.
+fn view_operand(
+    builder: &mut Builder,
+    operand: &SourceOperand,
+    expected: &PlanType,
+    access: IncanInputAccess,
+    span: &SourceSpan,
+) -> Result<Operand, String> {
+    match operand {
+        SourceOperand::Place(read) => {
+            let source = scalar_place(builder, &read.place, span)?;
+            explicit_place_argument(builder, source, read.fact, expected, access, span)
+        }
+        _ => Err("unsupported Body IR returned view without a source place".into()),
+    }
 }
 
 /// Store a materialized result in the return slot, drop every live owner, and return.
