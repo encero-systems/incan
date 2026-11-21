@@ -146,7 +146,7 @@ pub def read_outgoing(encoded: bytes) -> Result[OutgoingEdge, str]:
     """Read a persisted outgoing edge to retire its reverse entry."""
     fields = decode_graph_row(encoded, OUTGOING, outgoing_description(), 5)?
     return Ok(OutgoingEdge(evidence=text(fields[0].value)?, kind=text(fields[1].value)?, profile=text(fields[2].value)?,
-        reader=text(fields[3].value)?, request=read_request(fields[4].value)?))
+        reader=text(fields[3].value)?, request=read_request(fields[4].value.clone())?))
 
 
 pub def read_identity(reader_slot: str, edge: OutgoingEdge) -> Result[str, str]:

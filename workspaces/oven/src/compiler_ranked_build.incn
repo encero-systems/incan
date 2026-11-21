@@ -296,7 +296,7 @@ def evaluate(store: Path, view: str, toolchain: Toolchain, pending: BuildOwner, 
         key = encode_record_key(expected_read.key)?
         if key not in owner.inputs:
             return Err("ranked compiler returned a read outside its captured inputs")
-        input = source_value(expected_read.key, owner.inputs[key])?
+        input = source_value(expected_read.key, owner.inputs[key].clone())?
         match receipt.witnesses[index]:
             ReadWitness.Found(observed, _) =>
                 if observed.scope != receipt.scope or observed.request != expected_read or observed.semantic_digest != digest(input):
@@ -320,7 +320,7 @@ def evaluate(store: Path, view: str, toolchain: Toolchain, pending: BuildOwner, 
         if not owner.equal_declaration:
             mut previous = owner.prior_declaration
             previous.family = "prior-declaration"
-            prior = decode_owned_record(owner.inputs[encode_record_key(previous)?], CHECKER_PROFILE, output.identity).map_err((_) => "invalid prior ranked declaration")?
+            prior = decode_owned_record(owner.inputs[encode_record_key(previous)?].clone(), CHECKER_PROFILE, output.identity).map_err((_) => "invalid prior ranked declaration")?
             owner.label_edit = parameter_label_edit(prior, checked)
     elif output.family == "local":
         owner.local = value

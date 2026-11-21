@@ -1,4 +1,4 @@
-# behavior: Rust interop preserves constructors, loans, trait calls, callbacks and facade macros (#2256)
+# behavior: Rust interop preserves constructors (leaving out fields whose defaults the crate publishes), text constants, re-exported types, loans, trait calls, callbacks and facade macros (#2256)
 # expect-stdout:
 #   1 2 3 2
 #   7
@@ -28,6 +28,12 @@
 #   5
 #   5
 #   5
+#   plain 4096 1
+#   tagged 4096 2
+#   sized 8 1
+#   hello!
+#   5
+#   3
 
 from rust::demo import (
     Builder,
@@ -42,7 +48,9 @@ from rust::demo import (
     File,
     FooBar,
     FooBar2,
+    GREETING,
     Gadget,
+    Holder,
     JoinRel,
     Kind,
     Mac,
@@ -52,8 +60,10 @@ from rust::demo import (
     PairFactory,
     PlainBar,
     Predicate,
+    Request,
     SessionContext,
     Static,
+    Token,
     Widget,
     WriteOptions,
     accept_f32,
@@ -224,6 +234,14 @@ pub def sign_local(chunk: bytes) -> str:
     return f"{len(chunk)} {ready} {len(Mac.finalize(input))}"
 
 
+pub def describe(request: Request) -> str:
+    return f"{request.name} {request.limit} {len(request.tags)}"
+
+
+def shout(text: str) -> str:
+    return text + "!"
+
+
 model CfgSnapshot:
     target: str
 
@@ -280,3 +298,10 @@ def main() -> None:
     facade_function = native_macros.facade_value
     println(facade_function(2, 3))
     println(facade_alias(2, 3))
+    println(describe(Request(name="plain")))
+    println(describe(Request(name="tagged", tags=["a", "b"])))
+    println(describe(Request(limit=8, name="sized")))
+    println(shout(GREETING))
+    greeting: str = GREETING
+    println(len(greeting))
+    println(Holder(token=Token(id=3)).token.id)

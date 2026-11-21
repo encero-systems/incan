@@ -11,7 +11,9 @@ pub def test_only_a_complete_scoped_lookup_can_authenticate_overload_members() -
     key = RecordKey(family="overload-members", identity_profile="stable", origin="app", identity="main", facet="Describable.describe", context="instance")
     other = RecordKey(family="overload-members", identity_profile="stable", origin="other-app", identity="main", facet="Describable.describe", context="instance")
     scope = ReadScope(snapshot="snapshot", profile="checking")
-    page = encode_method_members(key, lookups.groups["reader"][0].candidates)?
+    readers = lookups.groups["reader"]
+    candidates = readers[0].candidates
+    page = encode_method_members(key, candidates)?
     match read_method_members(scope, method_member_request(key), page):
         RecordRead.Members(read) =>
             assert read.value == b"signature:int\nsignature:str" and read.continuation == "end"

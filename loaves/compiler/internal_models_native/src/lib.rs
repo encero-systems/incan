@@ -39,6 +39,7 @@ pub mod plan_function_records;
 pub mod plan_module_records;
 pub mod plan_wire_rows;
 pub mod plan_wire_schema;
+mod published_defaults;
 pub mod read_receipts;
 pub mod record_scope;
 pub mod record_service;
@@ -117,7 +118,8 @@ pub use crumb_rows::{
 };
 pub use graph_crumb_fields::{
     KEY_TYPE, REQUEST_TYPE, admit_graph_row, decode_graph_field, decode_graph_row, encode_graph_row, graph_read_budget,
-    integer, items, key_value, number, read_key, read_request, request_value, text, tuple_items,
+    integer, items, items_value, key_value, number, number_value, read_key, read_request, request_value, text,
+    text_value, tuple_items, tuple_items_value,
 };
 pub use internal_models_bindings::MappedView;
 pub use lowering_events::{

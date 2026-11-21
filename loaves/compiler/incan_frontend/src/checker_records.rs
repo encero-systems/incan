@@ -2113,12 +2113,7 @@ mod tests {
             digest: read.digest.clone(),
         }];
         for (identity, allowed) in [(&owner.identity, true), (&"other".to_owned(), false)] {
-            let witness = internal_models::encode_owner_call_reads(
-                identity.clone(),
-                read.reader.clone(),
-                source.clone(),
-                &encoded_reads,
-            )?;
+            let witness = internal_models::encode_owner_call_reads(identity, &read.reader, &source, &encoded_reads)?;
             let mut guarded = wire.clone();
             guarded.extend_from_slice(&witness);
             record.body_ir = Some(incan_semantics_core::executable_representation::decode_owner(&guarded)?);
@@ -2336,9 +2331,9 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
             bytes.extend_from_slice(&internal_models::encode_owner_call_reads(
-                owner.identity.clone(),
-                reader.to_owned(),
-                "main.incn".to_owned(),
+                &owner.identity,
+                reader,
+                "main.incn",
                 &calls,
             )?);
             let frame = decode_owner(&bytes)?;

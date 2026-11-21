@@ -16,7 +16,8 @@ pub def test_checking_basis_requires_the_matching_output_and_digest() -> Result[
     assert encoded[:4] == b"CRMB" and read_checking_basis(local, encoded)? == root
     assert read_checking_basis(final, encoded).is_err()
     assert read_checking_basis(local, root.encode("utf-8")).is_err()
-    assert encode_checking_basis(local, root[:12]).is_err()
+    short_root = root[:12]
+    assert encode_checking_basis(local, short_root).is_err()
     return Ok(None)
 
 
