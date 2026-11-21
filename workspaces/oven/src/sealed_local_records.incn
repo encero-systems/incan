@@ -1,0 +1,128 @@
+"""Store admitted sealed-set membership and revisions as typed records in a local bakery."""
+
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from pub::internal_models.crumb_rows import ModelField, model_description, required_value
+from pub::internal_models.graph_crumb_fields import (
+    decode_graph_field, decode_graph_row, encode_graph_row, integer as signed, items, number, text, tuple_items,
+)
+from sealed_set_types import Entry, ExternalReference, Object, Profile, Record, SetSpec, VerifiedSet
+
+const ENVELOPE: bytes = b"sealen\x00"
+const RECEIPT: bytes = b"sealrc\x00"
+const STRINGS: str = "list<string>"
+const PROFILE: str = "tuple<string,string,string>"
+const MEMBER: str = "tuple<string,string,string,list<string>,list<string>,list<tuple<string,string,string,string>>>"
+
+
+def envelope_description() -> Description:
+    return model_description(ENVELOPE, "incan.sealed.revision/1", [
+        ModelField(identity=b"extern", name="external_revisions", storage="list<tuple<string,string,string>>"),
+        ModelField(identity=b"key___", name="record_key", storage="string"),
+        ModelField(identity=b"origin", name="origin", storage="string"),
+        ModelField(identity=b"paylod", name="value_and_payloads", storage=STRINGS),
+        ModelField(identity=b"profil", name="profile", storage=PROFILE),
+        ModelField(identity=b"refers", name="record_references", storage=STRINGS),
+        ModelField(identity=b"revisi", name="revision", storage="string"),
+    ])
+
+
+def receipt_description() -> Description:
+    return model_description(RECEIPT, "incan.sealed.receipt/1", [
+        ModelField(identity=b"deps__", name="set_dependencies", storage=STRINGS),
+        ModelField(identity=b"entrie", name="entries", storage=f"list<{MEMBER}>"),
+        ModelField(identity=b"index_", name="transport_index", storage="string"),
+        ModelField(identity=b"namesp", name="namespaces", storage=STRINGS),
+        ModelField(identity=b"object", name="objects", storage="list<tuple<string,i64>>"),
+        ModelField(identity=b"origin", name="origin", storage="string"),
+        ModelField(identity=b"produc", name="producer", storage="string"),
+        ModelField(identity=b"profil", name="profile", storage=PROFILE),
+        ModelField(identity=b"receip", name="receipt", storage="string"),
+        ModelField(identity=b"setroo", name="transport_root", storage="string"),
+    ])
+
+
+def strings(values: list[str]) -> Value:
+    return Value.List([Value.Text(item) for item in values])
+
+
+def read_strings(value: Value) -> Result[list[str], str]:
+    mut found: list[str] = []
+    for item in items(value)?:
+        found.append(text(item)?)
+    return Ok(found)
+
+
+def profile_value(profile: Profile) -> Value:
+    return Value.Tuple([Value.Text(profile.identity), Value.Text(profile.schema), Value.Text(profile.codec)])
+
+
+pub def local_envelope(spec: SetSpec, entry: Entry) -> Result[bytes, str]:
+    """Two supplying sets may refer to the same external revision. Its immutable envelope names that target once."""
+    mut targets: set[tuple[str, str, str]] = set()
+    for reference in entry.record.external:
+        targets.add((reference.key, reference.revision, reference.value))
+    mut external: list[Value] = []
+    for key, revision, identity in sorted([target for target in targets]):
+        external.append(Value.Tuple([Value.Text(key), Value.Text(revision), Value.Text(identity)]))
+    return encode_graph_row(ENVELOPE, envelope_description(), [
+        required_value(b"extern", Value.List(external)), required_value(b"key___", Value.Text(entry.record.key)),
+        required_value(b"origin", Value.Text(spec.origin)), required_value(b"paylod", strings([entry.value] + entry.record.payloads)),
+        required_value(b"profil", profile_value(spec.profile)), required_value(b"refers", strings(entry.record.references)),
+        required_value(b"revisi", Value.Text(entry.record.revision)),
+    ])
+
+
+pub def local_envelope_objects(data: bytes) -> Result[list[str], str]:
+    """Collection projects the owned objects without materializing the dependencies of the revision."""
+    return read_strings(decode_graph_field(data, envelope_description(), b"paylod")?)
+
+
+def member(item: Entry) -> Value:
+    mut references: list[Value] = []
+    for reference in item.record.external:
+        references.append(Value.Tuple([Value.Text(reference.set_root), Value.Text(reference.key), Value.Text(reference.revision), Value.Text(reference.value)]))
+    return Value.Tuple([Value.Text(item.record.key), Value.Text(item.record.revision), Value.Text(item.value),
+        strings(item.record.payloads), strings(item.record.references), Value.List(references)])
+
+
+pub def local_receipt(root: str, supplied: VerifiedSet) -> Result[bytes, str]:
+    """Retain the complete verified membership and object inventory independently of the transport serialization."""
+    spec = supplied.spec
+    return encode_graph_row(RECEIPT, receipt_description(), [
+        required_value(b"deps__", strings(spec.dependencies)),
+        required_value(b"entrie", Value.List([member(item) for item in supplied.entries])),
+        required_value(b"index_", Value.Text(supplied.index)), required_value(b"namesp", strings(spec.namespaces)),
+        required_value(b"object", Value.List([Value.Tuple([Value.Text(item.digest), signed(item.length)]) for item in supplied.objects])),
+        required_value(b"origin", Value.Text(spec.origin)), required_value(b"produc", Value.Text(spec.producer)),
+        required_value(b"profil", profile_value(spec.profile)), required_value(b"receip", Value.Text(spec.receipt)),
+        required_value(b"setroo", Value.Text(root)),
+    ])
+
+
+pub def read_local_receipt(root: str, data: bytes) -> Result[VerifiedSet, str]:
+    """Reconstruct the exact admitted facts used to authenticate the portable set root."""
+    f = decode_graph_row(data, RECEIPT, receipt_description(), 10)?
+    if text(f[9].value)? != root:
+        return Err("sealed receipt names another transport root")
+    mut entries: list[Entry] = []
+    for item in items(f[1].value)?:
+        values = tuple_items(item, 6)?
+        mut external: list[ExternalReference] = []
+        for reference in items(values[5])?:
+            parts = tuple_items(reference, 4)?
+            external.append(ExternalReference(set_root=text(parts[0])?, key=text(parts[1])?, revision=text(parts[2])?, value=text(parts[3])?))
+        entries.append(Entry(record=Record(key=text(values[0])?, revision=text(values[1])?, payloads=read_strings(values[3])?,
+            references=read_strings(values[4])?, external=external), value=text(values[2])?))
+    mut objects: list[Object] = []
+    for object_value in items(f[4].value)?:
+        parts = tuple_items(object_value, 2)?
+        length = number(parts[1])?
+        if length < 0:
+            return Err("negative sealed object length")
+        objects.append(Object(digest=text(parts[0])?, length=length))
+    contract = tuple_items(f[7].value, 3)?
+    spec = SetSpec(profile=Profile(identity=text(contract[0])?, schema=text(contract[1])?, codec=text(contract[2])?),
+        origin=text(f[5].value)?, producer=text(f[6].value)?, receipt=text(f[8].value)?,
+        namespaces=read_strings(f[3].value)?, dependencies=read_strings(f[0].value)?, records=[item.record for item in entries])
+    return Ok(VerifiedSet(spec=spec, entries=entries, objects=objects, index=text(f[2].value)?, document=b""))
