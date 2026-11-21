@@ -5,10 +5,12 @@ use std::collections::BTreeMap;
 use incan_semantics_core::body_ir::{
     Body, BodyIrModule, EnumDeclaration, LocalOrigin, NominalDeclaration, TraitImplementation, TraitTypeArgument,
 };
-use incan_semantics_core::{IncanType, SemanticSourceTargetKind, SymbolOrigin};
+use incan_semantics_core::{CanonicalSymbolId, IncanType, SemanticSourceTargetKind, SymbolOrigin};
 
 use crate::class_inheritance::specialize_classes;
-use crate::native_type_identity::{ConstructorIndex, named_positions, native_owner, representation_arguments};
+use crate::native_type_identity::{
+    ConstructorIndex, argument_identities, named_positions, native_owner, representation_arguments,
+};
 use crate::nominal_frames::{SelectedMember, called_members, closed_arguments, declaration_storage, nominal_frames};
 use crate::symbols::type_component;
 use crate::type_parameters::{close_result_requirements, close_trait_environment, substitute};
@@ -19,6 +21,8 @@ pub struct NominalInstance {
     pub declaration: NominalDeclaration,
     pub arguments: Vec<IncanType>,
     pub ancestors: Vec<String>,
+    /// A native owner's source argument carriers by checked identity; empty for a source owner.
+    pub argument_identities: BTreeMap<String, CanonicalSymbolId>,
 }
 
 /// Match checked nominal uses by their retained carrier key; native owners retain their public Rust path.
@@ -583,10 +587,16 @@ fn retain_nominal_instance(
             declaration.name
         ));
     }
+    let identities = if native_owner(declaration) {
+        argument_identities(declarations, &retained_arguments)
+    } else {
+        BTreeMap::new()
+    };
     instances.push(NominalInstance {
         declaration: declaration.clone(),
         arguments: retained_arguments,
         ancestors: ancestors.to_vec(),
+        argument_identities: identities,
     });
     Ok(())
 }
@@ -602,6 +612,12 @@ pub fn close_layout(instance: &NominalInstance) -> Result<NominalDeclaration, St
         }
     }
     result.native_type_arguments = instance.arguments.clone();
+    if !instance.argument_identities.is_empty() {
+        let identities = std::sync::Arc::make_mut(&mut result.named_type_identities);
+        for (key, identity) in &instance.argument_identities {
+            identities.entry(key.clone()).or_insert_with(|| identity.clone());
+        }
+    }
     result.name = nominal_symbol(&template.name, &instance.arguments);
     result.field_types.clear();
     for ty in &template.field_types {
