@@ -30,7 +30,6 @@ use crate::patterns::{
     binds_in_place, carrier_pattern_slot, enum_pattern_place, has_refutable_payload, nominal_field, pattern_binds,
     pattern_tests,
 };
-use crate::pending::untranslated;
 use crate::statements::{is_nominal_type, lower_statement};
 use crate::text_plan::clone_text;
 use crate::tuples::{is_tuple_type, owned_carrier, tuple_fields, tuple_has_owners};

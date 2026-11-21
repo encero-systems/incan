@@ -26,7 +26,6 @@ use crate::models::model_place;
 use crate::newtype_constants::numeric_newtype_literal;
 use crate::numerics::{numeric_carrier, numeric_constant};
 use crate::options::{carrier_payload_value, clone_tuple_operand};
-use crate::pending::untranslated;
 use crate::scalar_reads::scalar_storage_place;
 use crate::statements::is_nominal_type;
 use crate::static_storage::read_static;

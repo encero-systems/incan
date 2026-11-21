@@ -10,17 +10,19 @@ use incan_semantics_core::{IncanType, SemanticSourceTargetKind, SymbolOrigin};
 use crate::async_::construct_boxed_future;
 use crate::builtin_calls::lower_runtime_helper;
 use crate::call_arguments::{SlotPolicy, call_parameter_type, has_defaulted_slots, ordered_slot_operands};
-use crate::callable_calls::{checked_type_arguments, has_adapter_slot, lower_callable_result, lower_named_target};
+use crate::callable_calls::{checked_type_arguments, lower_callable_result, lower_named_target};
 use crate::callable_values::lower_callable_value;
 use crate::closures::return_representation;
 use crate::defaults::{DefaultCall, default_arguments, library_default_arguments};
 use crate::explicit_arguments::{parameter_accesses, validate_source_input_call};
+use crate::foreign_calls::lower_foreign_call;
 use crate::frame::Builder;
 use crate::layout_types::native_source_type;
 use crate::list_methods::call_destination;
 use crate::method_calls::lower_method_call;
 use crate::native_callables::native_callable_storage;
 use crate::pending::untranslated;
+use crate::primitive_traits::normalized_primitive_call;
 use crate::tuples::type_name;
 use crate::type_metadata::lower_type_metadata;
 use crate::type_parameters::substitute;
@@ -28,6 +30,19 @@ use crate::unions::require_native_union_signature;
 
 /// Normalize checked primitive adapters before the existing dispatcher consumes the complete call record.
 pub fn lower_call(
+    module: &BodyIrModule,
+    builder: &mut Builder,
+    statement: &Statement,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    match normalized_primitive_call(module, builder, statement, span)? {
+        Some(selected) => lower_checked_call(module, builder, &selected, span),
+        None => lower_checked_call(module, builder, statement, span),
+    }
+}
+
+/// Dispatch by the retained callee kind, preserving the call's operand and result facts.
+fn lower_checked_call(
     module: &BodyIrModule,
     builder: &mut Builder,
     statement: &Statement,
@@ -49,14 +64,7 @@ pub fn lower_call(
         Callee::Function(CallableTarget::Local(target)) => {
             lower_callable_value(builder, target, args, destination, span)
         }
-        Callee::Method(target) => {
-            if let Some(identity) = &target.canonical
-                && has_adapter_slot(module, identity)
-            {
-                return Err(untranslated("primitive_traits::normalized_primitive_receiver"));
-            }
-            lower_method_call(module, builder, target, args, destination, span)
-        }
+        Callee::Method(target) => lower_method_call(module, builder, target, args, destination, span),
         Callee::Helper(helper) => lower_runtime_helper(builder, *helper, args, destination, span),
         Callee::ProviderOperation(_) => Err("unsupported Body IR ProviderOperation".into()),
         Callee::TypeMetadata(target) => {
@@ -65,7 +73,7 @@ pub fn lower_call(
             }
             lower_type_metadata(builder, target, destination, span)
         }
-        Callee::CheckedForeign(_) => Err(untranslated("foreign_calls::lower_foreign_call")),
+        Callee::CheckedForeign(target) => lower_foreign_call(builder, target, args, destination, span),
         Callee::CheckedBridge(_) => Err(untranslated("c_bridges::lower_checked_bridge")),
     }
 }

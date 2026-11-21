@@ -26,7 +26,6 @@ use crate::list_values::{checked_list_argument, has_slice_projection, list_borro
 use crate::lists::is_list;
 use crate::lists::{list_element, require_list_shape};
 use crate::numerics::numeric_carrier;
-use crate::pending::untranslated;
 use crate::static_storage::read_static;
 use crate::strings::{emit_text_helper, text_helper_arity};
 use crate::text_ownership::drop_borrowed_text_temporaries;
