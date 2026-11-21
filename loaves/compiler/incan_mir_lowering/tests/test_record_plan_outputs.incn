@@ -5,7 +5,7 @@ from pub::internal_models.lowering_events import (
     INTERFACE_REPORT, LoweringRefusal, decode_lowering_event, decode_lowering_refusal, decode_native_interface, encode_lowering_refusal,
 )
 from std.tempfile import TemporaryDirectory
-from pub::internal_models.plan_function_records import decode_plan_function_record
+from pub::incan_mir_plan import decode_plan_function_record
 from pub::incan_mir_plan import (
     BasicBlock,
     ModelDeclaration,

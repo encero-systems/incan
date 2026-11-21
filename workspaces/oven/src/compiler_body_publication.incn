@@ -4,7 +4,7 @@ from pub::incan_platform.trace import enter_producer, finish_producer
 from std.fs import Path
 from std.environ import get_or
 from pub::internal_models.lowering_events import INTERFACE_REPORT, LoweringEvent, decode_lowering_event, decode_lowering_refusal, decode_native_interface
-from pub::internal_models.plan_function_records import LoweringDemands, decode_plan_function_record
+from pub::incan_mir_plan import LoweringDemands, decode_plan_function_record
 from rust::std::fs import remove_dir_all
 from rust::incan_semantics_core import encode_incan_symbol_identity
 from rust::incan_semantics_core::executable_representation import decode_owner
@@ -1052,7 +1052,7 @@ def prepare_lowering_records(
     mut plan_keys: list[RecordKey] = []
     mut staged: list[StagedPlan] = []
     mut interface_namespace = 0
-    mut demands = LoweringDemands()
+    mut demands = LoweringDemands.new()
     mut work = LoweringDemandWork()
     # Scalar demand and plan suppliers settle before the entry-binding contribution reads main's demand.
     for event in events:

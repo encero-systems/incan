@@ -4,7 +4,7 @@ from pub::incan_mir_plan import encode_instance_request, decode_instance_request
 from pub::internal_models.checked_types import CheckedType, CheckedPrimitiveType
 from std.fs import Path
 from std.tempfile import TemporaryDirectory
-from pub::internal_models.plan_function_records import decode_plan_function_record, encode_plan_function_record
+from pub::incan_mir_plan import decode_plan_function_record, encode_plan_function_record
 from pub::incan_mir_plan import (
     BasicBlock,
     ExternalFunction,
