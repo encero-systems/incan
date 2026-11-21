@@ -149,3 +149,15 @@ fn namespace_frame_readers_describe_their_bakery_anchor() {
         "NamespaceFrameReader { directory: \"/nonexistent-runtime-home\", mapped_segments: 0 }"
     );
 }
+
+/// Ported from `test_projected_owner_source_preserves_the_module_boundary` in the Incan host's tests.
+#[test]
+fn projected_owner_source_preserves_the_module_boundary() {
+    let header = "from std.json import JsonError, JsonErrorKind, parse_jsonl\nfrom std.serde.json import Serialize";
+    let owner =
+        "def supported_schema(schema_version: int) -> bool:\n    return schema_version >= 1 and schema_version <= 9";
+    let expected = format!("{header}\n{owner}");
+    assert_eq!(projected_owner_source(header, owner), expected);
+    assert_eq!(projected_owner_source(&format!("{header}\n"), owner), expected);
+    assert_eq!(projected_owner_source("", owner), owner);
+}
