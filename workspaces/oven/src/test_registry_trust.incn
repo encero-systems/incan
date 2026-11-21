@@ -1,0 +1,268 @@
+"""RFC 125 registry roots, delegated signing keys and signed statements."""
+
+from std.encoding.hex import unhexlify
+from rust_registry import (
+    Advisory,
+    AdvisoryAction,
+    Checkpoint,
+    Key,
+    KeyKind,
+    Revocation,
+    RevocationKind,
+    Root,
+    Signature,
+    StatementKind,
+    Trust,
+    audit_advisories,
+    delegate,
+    pin,
+    require_active_trust,
+    require_not_revoked,
+    verify_advisory,
+    verify_checkpoint,
+    verify_key_revocation,
+    verify_revocation,
+    verify_statement,
+)
+
+const REGISTRY: str = "0073f8c44b82ef7f3f0fd95558bfe9261e8500a2de9e214bc1983cad43c57a67"
+const ROOT_KEY: str = "c84248d610c216a70ac930c7cbf36b3a3c8c84f8aa9472ca522344f5360d5b85"
+const DELEGATED_KEY: str = "cd62abd5b7a3f6364e2e2693485f589b77da3fef5b2a1b6a0d6e0f969865a23b"
+const DELEGATION_SIGNATURE: str = "17f7acc196e7e1e35c1330d66297b78ab31de54c6a56b841f1c7ca5e615a1a47d64605f0d88b1e1527563f20b1a9afa35fefcc3c3019f912567fcb3810792f07"
+const STATEMENT_SIGNATURE: str = "2961d41c64c5efba3893c948551347968816c96e8698f9af43854464959fa00b920705dc0a26abd2e74df605b80186ebafcb30984152a4f8b85667f1a7bd7808"
+const CHECKPOINT_SIGNATURE: str = "365659fdfdcc4112a663232595df04b7c7b3c4448ab8bcae7a9524dbca97e8b097afe2f8781082ed5eafb033d54a2f62a89ddd1957940e1fa82e930b39fb860a"
+const ADVISORY_SIGNATURE: str = "1625065e7a5641b472bdef895601ae28a6dd2b51d89bf1eca459850da719724ebd4266c778350662b45fd608621c4086560553d65bf14cd81c466f7326c39a0e"
+const WITHDRAWAL_SIGNATURE: str = "bdce9d3e4537dcbb6cca7f8c55e0e9b79e710d894a97cf2a390381245db688e8c022ca38f39503ad7d754522c91f58f3f3abfda6c11e21efd08e34effbaf4003"
+const KEY_REVOCATION_SIGNATURE: str = "3551cae58a5002baf206a274f1299b91aac2c187e1eebc1a53ea167a288bf17fe9a911ab4f8bd6554fc9aef0ab34843778933876fb4826117c53195a2d69020b"
+const ARTIFACT_REVOCATION_SIGNATURE: str = "b3863db52ec77e689d894e32dc0c19dfdb4fe170d43d8db97d27a6cdce2554b8409fb61bfc9f3610b70dea45c09ba5d19cd43849cbdcacc09ff822f19255a00c"
+
+
+def octets(text: str) -> Result[bytes, str]:
+    """Decode one hexadecimal fixture value."""
+    return unhexlify(text).map_err((error) => error.message())
+
+
+def key(text: str) -> Result[Key, str]:
+    """Build an Ed25519 registry key."""
+    return Ok(Key(kind=KeyKind.Ed25519, material=octets(text)?))
+
+
+def signature(text: str) -> Result[Signature, str]:
+    """Build an Ed25519 registry signature."""
+    return Ok(Signature(raw=octets(text)?, r=b"", s=b""))
+
+
+def changed(value: bytes) -> bytes:
+    """Return a same-sized byte string with its last bit changed."""
+    mut result: list[u8] = []
+    for byte in value:
+        result.append(byte.wrapping_resize())
+    last = len(result) - 1
+    result[last] = result[last] ^ 1
+    return result
+
+
+def trusted() -> Result[Trust, str]:
+    """Build the fixture's root-delegated registry authority."""
+    return delegate(pin(REGISTRY, key(ROOT_KEY)?)?, key(DELEGATED_KEY)?, signature(DELEGATION_SIGNATURE)?)
+
+
+def rooted() -> Result[Root, str]:
+    """Build the fixture's pinned root authority."""
+    return pin(REGISTRY, key(ROOT_KEY)?)
+
+
+def checkpoint() -> Checkpoint:
+    """The signed fixture checkpoint."""
+    return Checkpoint(
+        head="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        length=12,
+        timestamp=1794657900,
+    )
+
+
+def advisory(action: AdvisoryAction, sequence: int, reason: str) -> Advisory:
+    """Build the fixture advisory event."""
+    return Advisory(
+        identifier="INCAN-2026-0001",
+        package="example/loaf",
+        version="1.2.3",
+        action=action,
+        reason=reason,
+        sequence=sequence,
+    )
+
+
+pub def test_a_pinned_root_delegates_the_key_that_signs_registry_statements() -> Result[None, str]:
+    """The root-key digest is the registry identity; its delegated key signs an index statement."""
+    root = pin(REGISTRY, key(ROOT_KEY)?)?
+    trust = delegate(root, key(DELEGATED_KEY)?, signature(DELEGATION_SIGNATURE)?)?
+    verified = verify_statement(
+        trust,
+        StatementKind.Index,
+        7,
+        b"catalog entry",
+        signature(STATEMENT_SIGNATURE)?,
+    )?
+    assert verified.registry == REGISTRY
+    assert verified.sequence == 7
+    assert verified.kind == StatementKind.Index
+    return Ok(None)
+
+
+pub def test_registry_identity_delegation_and_statement_tampering_are_refused() -> Result[None, str]:
+    """A false pin, changed root authorization, changed payload or changed registry signature is refused."""
+    root_key = key(ROOT_KEY)?
+    match pin("sha256:another-registry", root_key):
+        Ok(_) => return Err("a false registry pin was admitted")
+        Err(reason) => assert reason == "the registry root key does not match its pinned identity"
+    root = pin(REGISTRY, key(ROOT_KEY)?)?
+    altered_delegation = Signature(raw=changed(octets(DELEGATION_SIGNATURE)?), r=b"", s=b"")
+    match delegate(root, key(DELEGATED_KEY)?, altered_delegation):
+        Ok(_) => return Err("a changed root delegation was admitted")
+        Err(reason) => assert reason == "the registry root did not authorize its signing key"
+    trust = delegate(pin(REGISTRY, key(ROOT_KEY)?)?, key(DELEGATED_KEY)?, signature(DELEGATION_SIGNATURE)?)?
+    match verify_statement(trust, StatementKind.Index, 7, b"changed catalog entry", signature(STATEMENT_SIGNATURE)?):
+        Ok(_) => return Err("a changed registry statement was admitted")
+        Err(reason) => assert reason == "the registry statement signature does not verify"
+    changed_signature = Signature(raw=changed(octets(STATEMENT_SIGNATURE)?), r=b"", s=b"")
+    assert verify_statement(trust, StatementKind.Index, 7, b"catalog entry", changed_signature).is_err()
+    return Ok(None)
+
+
+pub def test_a_signed_checkpoint_is_fresh_online_and_unbounded_offline() -> Result[None, str]:
+    """The default seven-day online bound is inclusive; offline use has no age bound but still verifies the signature."""
+    signed = signature(CHECKPOINT_SIGNATURE)?
+    current = checkpoint()
+    week = 7 * 24 * 60 * 60
+    accepted = verify_checkpoint(trusted()?, current, signed, None, current.timestamp + week, week, true)?
+    assert accepted.length == 12
+    match verify_checkpoint(trusted()?, current, signature(CHECKPOINT_SIGNATURE)?, None, current.timestamp + week + 1, week, true):
+        Ok(_) => return Err("an expired online registry checkpoint was admitted")
+        Err(reason) => assert reason == "the registry checkpoint is older than the configured freshness bound"
+    assert verify_checkpoint(
+        trusted()?,
+        current,
+        signature(CHECKPOINT_SIGNATURE)?,
+        None,
+        current.timestamp + 10 * week,
+        week,
+        false,
+    ).is_ok()
+    return Ok(None)
+
+
+pub def test_a_signed_checkpoint_cannot_roll_back_fork_or_precede_observed_time() -> Result[None, str]:
+    """A valid signature cannot move behind the length, head or time Oven already observed."""
+    current = checkpoint()
+    later = Checkpoint(head=current.head, length=13, timestamp=current.timestamp + 100)
+    match verify_checkpoint(trusted()?, current, signature(CHECKPOINT_SIGNATURE)?, Some(later), current.timestamp, 604800, true):
+        Ok(_) => return Err("a registry checkpoint rolled back its log length")
+        Err(reason) => assert reason == "the registry checkpoint rolls back the observed log length"
+    fork = Checkpoint(
+        head="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        length=current.length,
+        timestamp=current.timestamp,
+    )
+    match verify_checkpoint(trusted()?, current, signature(CHECKPOINT_SIGNATURE)?, Some(fork), current.timestamp, 604800, true):
+        Ok(_) => return Err("a registry checkpoint forked an observed log head")
+        Err(reason) => assert reason == "the registry checkpoint conflicts with the observed log head"
+    observed_time = Checkpoint(head=current.head, length=11, timestamp=current.timestamp + 1)
+    assert verify_checkpoint(
+        trusted()?,
+        current,
+        signature(CHECKPOINT_SIGNATURE)?,
+        Some(observed_time),
+        current.timestamp + 1,
+        604800,
+        true,
+    ).is_err()
+    changed_head = Checkpoint(
+        head="cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        length=current.length,
+        timestamp=current.timestamp,
+    )
+    assert verify_checkpoint(trusted()?, changed_head, signature(CHECKPOINT_SIGNATURE)?, None, current.timestamp, 604800, true).is_err()
+    return Ok(None)
+
+
+pub def test_a_signed_advisory_fails_audit_until_its_signed_withdrawal() -> Result[None, str]:
+    """Audit reports an authenticated advisory's reason; a later authenticated withdrawal clears that advisory."""
+    published = verify_advisory(
+        trusted()?,
+        advisory(AdvisoryAction.Publish, 20, "unsafe fixture"),
+        signature(ADVISORY_SIGNATURE)?,
+    )?
+    match audit_advisories("example/loaf", "1.2.3", [published]):
+        Ok(_) => return Err("an active advisory passed audit")
+        Err(reason) => assert reason == "example/loaf 1.2.3 has advisory INCAN-2026-0001: unsafe fixture"
+    assert audit_advisories("example/loaf", "1.2.4", [published]).is_ok()
+    withdrawn = verify_advisory(
+        trusted()?,
+        advisory(AdvisoryAction.Withdraw, 21, "fixed in 1.2.4"),
+        signature(WITHDRAWAL_SIGNATURE)?,
+    )?
+    assert audit_advisories("example/loaf", "1.2.3", [published, withdrawn]).is_ok()
+    return Ok(None)
+
+
+pub def test_an_unsigned_or_retargeted_advisory_is_refused() -> Result[None, str]:
+    """The delegated signature covers identifier, target, action, reason and event sequence."""
+    retargeted = Advisory(
+        identifier="INCAN-2026-0001",
+        package="example/loaf",
+        version="9.9.9",
+        action=AdvisoryAction.Publish,
+        reason="unsafe fixture",
+        sequence=20,
+    )
+    assert verify_advisory(trusted()?, retargeted, signature(ADVISORY_SIGNATURE)?).is_err()
+    changed_signature = Signature(raw=changed(octets(ADVISORY_SIGNATURE)?), r=b"", s=b"")
+    assert verify_advisory(
+        trusted()?,
+        advisory(AdvisoryAction.Publish, 20, "unsafe fixture"),
+        changed_signature,
+    ).is_err()
+    return Ok(None)
+
+
+pub def test_only_the_root_can_revoke_a_registry_signing_key() -> Result[None, str]:
+    """A root-signed key revocation disables its delegated authority; a delegated signature cannot do so."""
+    trust = trusted()?
+    revoked = verify_key_revocation(
+        rooted()?,
+        trust,
+        30,
+        "compromised fixture",
+        signature(KEY_REVOCATION_SIGNATURE)?,
+    )?
+    match require_active_trust(trust, [revoked]):
+        Ok(_) => return Err("a revoked registry signing key remained active")
+        Err(reason) => assert reason == f"registry signing key {trust.key_id} is revoked: compromised fixture"
+    assert verify_key_revocation(
+        rooted()?,
+        trust,
+        30,
+        "compromised fixture",
+        signature(STATEMENT_SIGNATURE)?,
+    ).is_err()
+    return Ok(None)
+
+
+pub def test_a_signed_artifact_revocation_is_enforced_and_cannot_be_retargeted() -> Result[None, str]:
+    """A delegated registry event revokes exactly its signed artifact target and states the reason."""
+    target = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    event = Revocation(kind=RevocationKind.Artifact, target=target, reason="malicious fixture", sequence=31)
+    revoked = verify_revocation(trusted()?, event, signature(ARTIFACT_REVOCATION_SIGNATURE)?)?
+    match require_not_revoked(RevocationKind.Artifact, target, [revoked]):
+        Ok(_) => return Err("a revoked artifact remained admissible")
+        Err(reason) => assert reason == f"artifact {target} is revoked: malicious fixture"
+    assert require_not_revoked(RevocationKind.Publisher, target, [revoked]).is_ok()
+    retargeted = Revocation(
+        kind=RevocationKind.Artifact,
+        target="sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        reason="malicious fixture",
+        sequence=31,
+    )
+    assert verify_revocation(trusted()?, retargeted, signature(ARTIFACT_REVOCATION_SIGNATURE)?).is_err()
+    return Ok(None)

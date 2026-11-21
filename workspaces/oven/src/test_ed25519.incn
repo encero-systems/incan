@@ -1,0 +1,44 @@
+"""Ed25519 verification against the first two RFC 8032 test vectors."""
+
+from std.encoding.hex import unhexlify
+from ed25519 import verify
+
+const KEY_1: str = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+const SIGNATURE_1: str = "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b"
+const KEY_2: str = "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c"
+const SIGNATURE_2: str = "92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00"
+
+
+def octets(text: str) -> Result[bytes, str]:
+    """Decode one hexadecimal test vector."""
+    return unhexlify(text).map_err((error) => error.message())
+
+
+def changed(value: bytes) -> bytes:
+    """Return a same-sized value with its last bit changed."""
+    mut result: list[u8] = []
+    for byte in value:
+        result.append(byte.wrapping_resize())
+    last = len(result) - 1
+    result[last] = result[last] ^ 1
+    return result
+
+
+pub def test_verifies_rfc_8032_ed25519_signatures() -> Result[None, str]:
+    """The empty and one-octet RFC 8032 messages verify under their published keys."""
+    assert verify(octets(KEY_1)?, b"", octets(SIGNATURE_1)?)
+    assert verify(octets(KEY_2)?, octets("72")?, octets(SIGNATURE_2)?)
+    return Ok(None)
+
+
+pub def test_refuses_changed_or_malformed_ed25519_material() -> Result[None, str]:
+    """A changed key, message or signature and malformed lengths are refused."""
+    key = octets(KEY_2)?
+    message = octets("72")?
+    signature = octets(SIGNATURE_2)?
+    assert not verify(changed(key), message, signature)
+    assert not verify(key, changed(message), signature)
+    assert not verify(key, message, changed(signature))
+    assert not verify(key[0:31], message, signature)
+    assert not verify(key, message, signature[0:63])
+    return Ok(None)
