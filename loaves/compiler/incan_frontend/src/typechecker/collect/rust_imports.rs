@@ -136,6 +136,7 @@ impl TypeChecker {
     /// Validate and register a Rust import symbol for codegen and RFC 041 provenance.
     pub(super) fn define_rust_import_binding(&mut self, name: Ident, info: RustItemInfo, span: Span) {
         self.validate_root_namespace(&name, span);
+        let info = self.rust_type_import_at_definition(info);
         if info.binding != RustImportBindingKind::CrateRoot && !self.admit_source_rust_item(&name, &info.path, span) {
             return;
         }
@@ -187,6 +188,35 @@ impl TypeChecker {
                 method_signatures: trait_method_signatures,
             },
         );
+    }
+
+    /// Bind a Rust type import at its native definition when its metadata names a public one of the same name in the
+    /// same crate: a public module path and a crate-root reexport of one type then bind one path, so every module and
+    /// library that imports the type by either spelling names one owner and publishes one signature type. The
+    /// definition is the path rustc shows for the type. A renamed reexport (`pub use Semaphore as RawSemaphore`), a
+    /// definition that is not public or one in another crate keeps the source spelling.
+    fn rust_type_import_at_definition(&self, mut info: RustItemInfo) -> RustItemInfo {
+        let Some(metadata) = &info.metadata else {
+            return info;
+        };
+        let (RustItemKind::Type(_), Some(definition)) = (&metadata.kind, &metadata.definition_path) else {
+            return info;
+        };
+        let spelled = Self::normalize_rust_namespace_path(&info.path);
+        let same_crate = definition.split("::").next() == spelled.split("::").next();
+        let same_name = definition.rsplit("::").next() == spelled.rsplit("::").next();
+        if definition == spelled || !same_crate || !same_name {
+            return info;
+        }
+        if self
+            .lookup_rust_item_metadata_for_path(definition)
+            .is_some_and(|owner| {
+                matches!(owner.kind, RustItemKind::Type(_)) && owner.visibility == RustVisibility::Public
+            })
+        {
+            info.path = definition.clone();
+        }
+        info
     }
 
     /// Refuse known restricted imports, including unused imports and paths under a private namespace. Metadata that
