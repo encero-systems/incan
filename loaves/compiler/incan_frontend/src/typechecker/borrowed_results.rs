@@ -1,8 +1,11 @@
-//! Borrowed results reached from their source (RFC 164). A returned view is exact: every return is its declared source
+//! Borrowed results of borrow-only signatures (RFC 164). A returned view is exact: every return is its declared source
 //! place, or a chained call whose relation is that place (slice 06); a native call takes that relation from its Rust
-//! signature's lifetime elision (slice 09B). So a borrowed result `from` a borrowed input whose referent is not the
-//! input's own (an element selected by `Index.index`, the target of `as_ref()`) is the native reference, on a signature
-//! that keeps native passing; its `from` clause names the input elision ties the result to.
+//! signature's lifetime elision (slice 09B). A signature whose inputs are borrows or plain values and whose borrowed
+//! result is `from` one of its borrowed inputs (the input itself, an element selected by `Index.index`, the target of
+//! `as_ref()`) keeps native passing, and its result is the native reference: no whole-body proof for it or for its
+//! callers. Its `from` clause names the input elision ties the result to, and callers hold the result as a loan of that
+//! argument. The explicit view route stays for an `Owned[T]` or `Reference[T]` input, an explicit or carried result
+//! mode, a receiver or field-path source, and a trait slot.
 
 use super::*;
 use incan_lang::lang::types::ownership::OwnershipMode;
@@ -43,27 +46,25 @@ impl TypeChecker {
         }
     }
 
-    /// Whether a borrowed result `from` a borrowed input is reached from that input rather than being it: the result's
-    /// referent differs from the input's, on a signature with no owned or reference input (which keeps the proof). A
-    /// `from` naming the receiver or a field path keeps the explicit view route.
+    /// Whether a top-level borrowed result is `from` a borrowed parameter on a signature with no owned or reference
+    /// input (which keeps the proof). A `from` naming the receiver or a field path keeps the explicit view route.
     fn reaches_result_from_input(
         &self,
         parameters: &[Spanned<Param>],
         result: &Spanned<Type>,
         source: &Spanned<crate::ast::ResultSource>,
     ) -> bool {
-        let Some(referent) = self.borrow_referent(result) else {
-            return false;
-        };
-        if !source.node.fields.is_empty() || self.has_owned_or_reference_parameter(parameters) {
+        if self.borrow_referent(result).is_none()
+            || !source.node.fields.is_empty()
+            || self.has_owned_or_reference_parameter(parameters)
+        {
             return false;
         }
         let root = source.node.binding.node.as_str();
         parameters
             .iter()
             .find(|parameter| parameter.node.name == root)
-            .and_then(|parameter| self.borrow_referent(&parameter.node.ty))
-            .is_some_and(|input| input.node.to_string() != referent.node.to_string())
+            .is_some_and(|parameter| self.borrow_referent(&parameter.node.ty).is_some())
     }
 
     /// The referent of a top-level borrow annotation, in either spelling.
@@ -210,6 +211,24 @@ impl TypeChecker {
                 locals: HashMap::new(),
             });
         std::mem::replace(&mut self.native_result_reach, next)
+    }
+
+    /// A local bound to a call of a function whose result is the native reference holds that result as a loan of the
+    /// input it borrows from, so its body's loan conflicts are reported outside the whole-body proof.
+    pub(super) fn note_held_borrowed_result(&mut self, value: &Spanned<Expr>) {
+        let Expr::Call(callee, _, _) = &value.node else {
+            return;
+        };
+        let Expr::Ident(name) = &callee.node else {
+            return;
+        };
+        let borrowed = self.lookup_symbol(name).is_some_and(|symbol| {
+            matches!(&symbol.kind, SymbolKind::Function(function)
+                if matches!(function.return_type, ResolvedType::Ref(_) | ResolvedType::RefMut(_)))
+        });
+        if borrowed {
+            self.note_native_borrow_body();
+        }
     }
 
     /// Record whether a local bound in a native borrowed result's body is reached from its source.

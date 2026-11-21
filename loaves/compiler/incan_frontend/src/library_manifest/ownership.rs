@@ -525,7 +525,7 @@ mod tests {
 
     /// Real checked source feeds provider metadata; the provider's returned view executes in its own package.
     fn source_export() -> Result<crate::library_exports::CheckedNamedExport, Box<dyn std::error::Error>> {
-        let source = "pub def view(value: Borrowed[str]) -> Borrowed[str] from value:\n    return value\n";
+        let source = "pub def view(value: Borrowed[str], marker: Owned[int] = 0) -> Borrowed[str] from value:\n    return value\n";
         let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
         let mut checker = TypeChecker::new();
@@ -570,7 +570,7 @@ mod tests {
     /// Same-name source overloads retain their own parameter and result-source contracts in API metadata.
     #[test]
     fn source_overloads_keep_their_canonical_ownership_contracts() -> Result<(), Box<dyn std::error::Error>> {
-        let source = "pub def view(value: Borrowed[str]) -> Borrowed[str] from value:\n    return value\npub def view(prefix: str, value: Borrowed[str]) -> Borrowed[str] from value:\n    return value\n";
+        let source = "pub def view(value: Borrowed[str], marker: Owned[int] = 0) -> Borrowed[str] from value:\n    return value\npub def view(prefix: str, value: Borrowed[str], marker: Owned[int] = 0) -> Borrowed[str] from value:\n    return value\n";
         let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
         let mut checker = TypeChecker::new();
@@ -587,7 +587,7 @@ mod tests {
             let Some(OwnershipExport::Checked(contract)) = &function.ownership else {
                 return Err("missing checked ownership".into());
             };
-            assert_eq!(function.params.len(), index + 1);
+            assert_eq!(function.params.len(), index + 2);
             assert_eq!(
                 contract.result_source.as_ref().ok_or("missing source")?.slot,
                 crate::ownership_metadata::SourceSlot::Parameter(index)
@@ -616,7 +616,7 @@ mod tests {
             collect_checked_api_metadata, materialize_api_alias_projections, materialize_checked_api_public_namespaces,
         };
 
-        const TARGET: &str = "pub enum Notice:\n    Empty\n    One(int)\n    Three(int, int, int)\npub def view(value: Borrowed[str]) -> Borrowed[str] from value:\n    return value\n";
+        const TARGET: &str = "pub enum Notice:\n    Empty\n    One(int)\n    Three(int, int, int)\npub def view(value: Borrowed[str], marker: Owned[int] = 0) -> Borrowed[str] from value:\n    return value\n";
         const FACADE: &str = "pub from crate.views import Notice, view as forwarded_view\n";
 
         let target_tokens = lexer::lex(TARGET).map_err(|errors| format!("{errors:?}"))?;
@@ -838,7 +838,7 @@ mod tests {
             CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
             materialize_checked_api_public_namespaces,
         };
-        let source = "pub def view(value: Borrowed[str]) -> Borrowed[str] from value:\n    return value\n";
+        let source = "pub def view(value: Borrowed[str], marker: Owned[int] = 0) -> Borrowed[str] from value:\n    return value\n";
         let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
         let mut checker = TypeChecker::new();

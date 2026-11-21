@@ -209,7 +209,7 @@ fn explicit_conflicts_report_origin_and_dependent_use() -> Result<(), Box<dyn st
 /// remain unavailable and are diagnosed by their declaration-owned check, without duplicate source errors.
 #[test]
 fn function_headers_supply_ownership_before_bodies() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def caller() -> None:\n    pass\ndef view(value: Borrowed[Page]) -> Borrowed[str] from value.title:\n    return value.title\ndef view(prefix: str, value: Borrowed[str]) -> Borrowed[str] from value:\n    return value\ndef invalid(value: Borrowed[str]) -> Borrowed[str] from absent:\n    return value\nmodel Page:\n    title: str\n";
+    let source = "def caller() -> None:\n    pass\ndef view(value: Borrowed[Page]) -> Borrowed[str] from value.title:\n    return value.title\ndef view(prefix: str, value: Borrowed[str], marker: Owned[int] = 0) -> Borrowed[str] from value:\n    return value\ndef invalid(value: Borrowed[str]) -> Borrowed[str] from absent:\n    return value\nmodel Page:\n    title: str\n";
     let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
     let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
     let mut checker = TypeChecker::new();

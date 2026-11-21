@@ -435,13 +435,14 @@ impl Builder<'_> {
             span,
             reason: "missing call result type".into(),
         })?;
-        let native_dependencies = if call.kind == super::super::InputCallKind::Native {
-            self.checker
-                .native_result_dependencies(span)
-                .map_err(|reason| Unavailable { span, reason })?
-        } else {
-            None
-        };
+        let native_dependencies =
+            if call.kind == super::super::InputCallKind::Native || self.checker.ordinary_borrowed_result(span) {
+                self.checker
+                    .native_result_dependencies(span)
+                    .map_err(|reason| Unavailable { span, reason })?
+            } else {
+                None
+            };
         let native_independent_result =
             call.kind == super::super::InputCallKind::Native && self.checker.native_result_is_independent(span);
         let owned_independent_result = crate::ownership_metadata::owned_result(contract)

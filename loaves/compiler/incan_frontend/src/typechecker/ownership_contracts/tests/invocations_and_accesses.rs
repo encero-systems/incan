@@ -807,7 +807,7 @@ fn body_projection_distinguishes_absent_and_refused_flows() -> Result<(), Box<dy
             false,
         ),
         (
-            "def read(value: Borrowed[int], other: Borrowed[int]) -> Borrowed[int] from value:\n    return other\n",
+            "def read(value: Borrowed[int], other: Borrowed[int], marker: Owned[int] = 0) -> Borrowed[int] from value:\n    return other\n",
             false,
         ),
     ] {
