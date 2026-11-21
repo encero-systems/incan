@@ -26,6 +26,7 @@ use crate::lists::is_list;
 use crate::lists::{list_element, require_list_shape};
 use crate::numerics::numeric_carrier;
 use crate::pending::untranslated;
+use crate::static_storage::read_static;
 use crate::strings::{emit_text_helper, text_helper_arity};
 use crate::text_ownership::drop_borrowed_text_temporaries;
 use crate::text_plan::{owned_literal, owned_slice_text};
@@ -91,8 +92,14 @@ pub fn borrow_text_operand(builder: &mut Builder, value: &SourceOperand, span: &
             return Ok(borrow_string(builder, owner, span));
         }
     };
-    if read.place.global().is_some() {
-        return Err(untranslated("static_storage::read_static"));
+    if let Some(global) = read.place.global() {
+        let owner = read_static(builder, &read.place, global, read.fact, span)?;
+        let OperandKind::Move(place) = owner.kind else {
+            return Err("unsupported Body IR non-string static text operand".into());
+        };
+        let reference = temporary(builder, PlanType::StringRef, span);
+        builder.emit(plan_assign(reference.clone(), RvalueKind::Borrow(place), span));
+        return Ok(read_place(reference, false, span));
     }
     if is_element_place(builder, &read.place)? {
         return Err(untranslated("operand_borrows::borrow_element_text"));

@@ -22,6 +22,7 @@ use crate::library_methods::{lower_library_method, lower_standard_slot};
 use crate::models::model_place;
 use crate::pending::untranslated;
 use crate::sequence_builtins::argument_type;
+use crate::static_storage::computed_static_type;
 use crate::traits::{is_lazy_method_body, receiver_selects_slot_arguments};
 use crate::type_parameters::request_instance;
 
@@ -277,8 +278,11 @@ fn receiver_owner(
     match argument.as_one() {
         None => Err("unsupported Body IR Method spread receiver".into()),
         Some(SourceOperand::Place(read)) => {
-            if read.place.global().is_some() {
-                return Err(untranslated("static_storage::computed_static_type"));
+            if let Some(global) = read.place.global() {
+                return Ok(nominal_owner(
+                    module,
+                    &computed_static_type(builder, &read.place, global)?,
+                ));
             }
             if is_element_place(builder, &read.place)? {
                 return Ok(nominal_owner(module, &element_place_type(builder, &read.place)?));

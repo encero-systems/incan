@@ -1,11 +1,12 @@
 //! Construct models, enum variants and tuples from checked aggregates, with their retained field order and ownership.
 
 use incan_mir_plan_native::{
-    CalleeKind, ExternalFunction, Operand, PlanType, RvalueKind, SourceSpan, TupleElement, tuple_element_type,
+    CalleeKind, ExternalFunction, Operand, Place, PlanType, RvalueKind, SourceSpan, TerminatorKind, TupleElement,
+    Unwind, assign as plan_assign, tuple_element_type,
 };
 use incan_semantics_core::body_ir::{
     AggregateKind, ArgumentBinding, ArgumentElement, BodyIrModule, Constant as SourceConstant, NominalDeclaration,
-    Operand as SourceOperand,
+    Operand as SourceOperand, Rvalue,
 };
 
 use crate::builtin_calls::coerce_numeric_operand;
@@ -15,8 +16,10 @@ use crate::defaults::model_default_arguments;
 use crate::element_places::is_element_place;
 use crate::enums::variant_index;
 use crate::explicit_arguments::reference_contract;
-use crate::formatting::{display_operand, display_plan_operand};
-use crate::frame::{Builder, place_type, read_place, temporary, terminate_call, value_type};
+use crate::formatting::{display_operand, display_plan_operand, lower_format};
+use crate::frame::{
+    Builder, cleanup_exit, forget_owned, place_type, read_place, temporary, terminate_call, value_type,
+};
 use crate::layout_types::{native_source_type, stored_field_type};
 use crate::list_values::value_operand;
 use crate::models::constructor_index;
@@ -256,4 +259,34 @@ fn boxed_operand(builder: &mut Builder, value: Operand, referent: PlanType, span
     );
     builder.owned.push(destination.local);
     read_place(destination, true, span)
+}
+
+/// Replace a projected string after evaluating its new value, retaining the containing owner or borrowed slot.
+pub fn lower_string_field_assignment(
+    builder: &mut Builder,
+    destination: Place,
+    value: &Rvalue,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    // The text temporary is reserved before a displayed value selects its own storage, as the reference reserves it.
+    let mut replacement = temporary(builder, PlanType::String, span);
+    match value {
+        Rvalue::Use(operand) => replacement = display_operand(builder, operand, span)?,
+        Rvalue::Format(parts) => lower_format(builder, replacement.clone(), parts, span)?,
+        _ => return Err("unsupported Body IR string field Rvalue outside formatting".into()),
+    }
+    let continuation = builder.new_block(span);
+    let cleanup = cleanup_exit(builder, span);
+    builder.finish(
+        TerminatorKind::Drop(destination.clone(), continuation, Unwind::Cleanup(cleanup)),
+        span,
+    );
+    builder.current = continuation as usize;
+    forget_owned(builder, replacement.local);
+    builder.emit(plan_assign(
+        destination,
+        RvalueKind::Use(read_place(replacement, true, span)),
+        span,
+    ));
+    Ok(())
 }
