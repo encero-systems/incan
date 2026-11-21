@@ -232,9 +232,15 @@ def body_reading(store: Path, view: str, ready: UnitDescription, inputs: list[Ca
     mut graph_view = str(HOME_VIEW)
     if is_editor_view(view):
         graph_view = view
+    reading = begin_work()
     graph = snapshot(store, graph_view).map_err((error) => error.message())?
+    record_work(Operation.EngineSelect, "graph-snapshot", reading)
+    projecting = begin_work()
     projected = prepare_captured_source_inputs(graph, begin(graph), ready, inputs)?
+    record_work(Operation.EngineSelect, "captured-sources", projecting)
+    invalidating = begin_work()
     invalid = body_owners_reading(graph, projected.keys, CHECKER_PROFILE)?
+    record_work(Operation.EngineSelect, "invalid-owners", invalidating)
     return Ok(BodyReading(graph=graph, projected=projected, invalid=invalid))
 
 
@@ -345,16 +351,22 @@ pub def obtain(
     projected = selection.projected
     invalid = selection.invalid
     origin = source_origin(ready)
+    # Each selection stage before the unit request is one span, so an edit's fixed selection cost is measured.
+    mut selecting = begin_work()
     invalid_namespaces = invalid_namespace_modules(graph, projected.keys, CHECKER_PROFILE)?
     # Only an evaluation that reads a record this edit changed, or reads such an evaluation, can be stale; every other
     # selected evaluation is valid by the graph it is selected from. Listing refusals validates every owner.
     mut cutoff = EditCutoff()
     if not listing_refusals:
         cutoff = edit_cutoff(graph, projected.keys, [CHECKER_PROFILE, LOWERING_PROFILE])?
+    record_work(Operation.EngineSelect, "edit-cutoff", selecting)
+    selecting = begin_work()
     namespaces = select_namespace_inventory_except(
         graph, CHECKER_PROFILE, origin, invalid_namespaces, toolchain.namespace_references and toolchain.closure_anchors,
         cutoff,
     )?
+    record_work(Operation.EngineSelect, "namespace-inventory", selecting)
+    selecting = begin_work()
     # A checked owner travels once when its exact plan slot and its whole checked namespace are both admitted.
     plan_reads = plan_reads_changed(graph, projected.keys)?
     invalid_plans = sorted([owner for owner in plan_reads.keys()])
@@ -363,18 +375,23 @@ pub def obtain(
         graph, origin, invalid_namespaces, invalid + invalid_plans, namespaces.complete, positioned, cutoff,
     )?
     covered = plan_modules.covered
+    record_work(Operation.EngineSelect, "plan-modules", selecting)
+    selecting = begin_work()
     retained_bodies = select_body_inventory_except(
         graph, CHECKER_PROFILE, origin, invalid + [owner for owner in covered.owners.keys()], mint_body_ir=true,
         cutoff=cutoff,
     )?
     mut selected_bodies = encode_body_inventory(retained_bodies)?
+    record_work(Operation.EngineSelect, "body-inventory", selecting)
     mut checking: Option[RankedBuildInputs] = None
     if not listing_refusals and len(invalid) > 0:
         checking = Some(RankedBuildInputs(graph=graph, projected=projected.transaction, origin=origin, invalid=invalid, changes=projected.keys, covered=covered, plan_reads=plan_reads))
     if len(covered.owners) > 0:
         selected_bodies.append(reopen_selection(graph, origin)?)
     selected_bodies.extend(namespaces.pages)
+    selecting = begin_work()
     scalar_plans = select_plan_inventory_except(graph, origin, invalid_plans, plan_modules.outputs, cutoff=cutoff)?
+    record_work(Operation.EngineSelect, "plan-inventory", selecting)
     selected_bodies.extend(scalar_plans.pages)
     selected_bodies.extend(plan_modules.pages)
     # The descriptor is shared across source edits and stores. Each active compile owns its selected pages and
