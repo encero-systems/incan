@@ -7,6 +7,7 @@
 
 use super::TypeChecker;
 use crate::ast::{CallArg, Expr, Spanned};
+use crate::diagnostics::CompileError;
 use crate::diagnostics::errors::{self, TaskArgument};
 use crate::symbols::{CallableParam, ResolvedType, SymbolKind, TypeBoundInfo};
 
@@ -54,7 +55,7 @@ impl TypeChecker {
         arg_ty: &ResolvedType,
     ) -> bool {
         if self.task_argument_is_admitted(expr, arg_ty) {
-            return false;
+            return self.refuse_task_holding_a_borrow(callee, expr);
         }
         let spelling = Self::function_value_spelling(&expr.node);
         let rendered_type = arg_ty.to_string();
@@ -68,6 +69,54 @@ impl TypeChecker {
         };
         self.errors
             .push(errors::argument_is_not_a_task(callee, argument, expr.span));
+        true
+    }
+
+    /// Refuse a task that holds a borrow, and report whether it was refused (RFC 164).
+    ///
+    /// A runtime future capability runs its task after the call that starts it returns, so the task may outlive any
+    /// source it borrows. An async call that lends an argument to a borrow parameter, or passes a borrowed value on,
+    /// is refused with `INCAN-T0123` at that argument rather than left to the host's `Static` bound.
+    fn refuse_task_holding_a_borrow(&mut self, callee: &str, expr: &Spanned<Expr>) -> bool {
+        let task = match &expr.node {
+            Expr::Paren(inner) => inner.as_ref(),
+            _ => expr,
+        };
+        let Expr::Call(function, _, args) = &task.node else {
+            return false;
+        };
+        let Expr::Ident(name) = &function.node else {
+            return false;
+        };
+        let params = match self.lookup_symbol(name).map(|symbol| &symbol.kind) {
+            Some(SymbolKind::Function(info)) if info.is_async => info.params.clone(),
+            _ => return false,
+        };
+        let borrowed = Self::arguments_with_parameters(&params, args)
+            .into_iter()
+            .find(|(argument, param)| {
+                param.is_some_and(|param| matches!(param.ty, ResolvedType::Ref(_) | ResolvedType::RefMut(_)))
+                    || matches!(
+                        self.type_info.expr_type(argument.span),
+                        Some(ResolvedType::Ref(_) | ResolvedType::RefMut(_))
+                    )
+            })
+            .map(|(argument, _)| argument.span);
+        let Some(span) = borrowed else {
+            return false;
+        };
+        self.errors.push(
+            CompileError::type_error(
+                format!("The task passed to `{callee}` cannot hold a borrow: it may outlive the borrowed source"),
+                span,
+            )
+            .with_stable_code("INCAN-T0123")
+            .with_primary_label(format!("`{name}` borrows this argument for as long as its task runs"))
+            .with_note(format!(
+                "`{callee}` runs its task after the call returns, so the task needs owned inputs"
+            ))
+            .with_hint("Pass an owned value (`Owned[T]` or a clone) to the async function, or await it instead"),
+        );
         true
     }
 
