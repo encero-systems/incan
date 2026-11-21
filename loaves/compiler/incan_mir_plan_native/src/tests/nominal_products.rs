@@ -1,7 +1,7 @@
 //! Keyed plan products name models and enums by declaration identity, never by a position in the unit's tables.
 
-use super::support::{block, local, returning};
-use crate::body::Parameter;
+use super::support::{block, local, place_at, returning};
+use crate::body::{Callee, CalleeKind, Parameter, Projection, Terminator, TerminatorKind, Unwind};
 use crate::nominal::{
     NominalKind, NominalReference, ProductNominal, UnitNominals, describe_nominals, resolve_nominals, unit_nominals,
 };
@@ -96,6 +96,63 @@ fn product_refuses_a_nominal_without_an_identity() -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+/// A call that formats a value through rustc's Debug or Display implementation keeps its carrier type: a model's
+/// carrier is named by declaration, so the restored call formats the model at the position it has now.
+#[test]
+fn product_keeps_a_formatted_value_call() -> Result<(), String> {
+    let span = source_span("nominal_products.incn", 3, 1);
+    let before = unit(vec![point("v1")], vec![shape("v1")], &["Point_0_37"], &["Shape_39_75"]);
+    let captured = formatting_function(0, "Point_0_37", &span);
+    let product = keyed_product(&captured, &[], &before)?;
+    let after = unit(
+        vec![line_model(), point("v1")],
+        vec![shape("v1")],
+        &["Line_0_20", "Point_22_59"],
+        &["Shape_92_128"],
+    );
+    let references = resolve_nominals(&product_identities(&product)?, &after)
+        .ok_or("an unrelated declaration made a formatting product miss")?;
+    let (restored, _) = decode_product(&product, &references)?;
+    assert!(
+        restored == formatting_function(1, "Point_22_59", &span),
+        "a formatted value call did not restore at the model's current position"
+    );
+    Ok(())
+}
+
+/// A function that formats a `Point` reference with Display, then a string with Debug.
+fn formatting_function(model_position: i64, point_name: &str, span: &SourceSpan) -> Function {
+    let format = |ty: PlanType, debug: bool, target: i64| Terminator {
+        kind: TerminatorKind::Call(
+            Callee {
+                kind: CalleeKind::FormatValue(ty, debug),
+                span: span.clone(),
+            },
+            Vec::new(),
+            place_at(0, Projection::Whole, span),
+            target,
+            Unwind::Continue,
+        ),
+        span: span.clone(),
+    };
+    Function::new(
+        "show".to_owned(),
+        Vec::new(),
+        PlanType::Unit,
+        vec![local(PlanType::String, span)],
+        vec![
+            block(
+                Vec::new(),
+                format(PlanType::ModelRef(model_position, point_name.to_owned()), false, 1),
+                span,
+            ),
+            block(Vec::new(), format(PlanType::String, true, 2), span),
+            block(Vec::new(), returning(span), span),
+        ],
+        span.clone(),
+    )
 }
 
 /// Capture a product the way lowering does: name every referenced position, then encode.
