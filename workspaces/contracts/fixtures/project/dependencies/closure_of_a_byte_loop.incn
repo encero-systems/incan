@@ -1,10 +1,8 @@
-# behavior: a loop over bytes reaches the runtime's list operations, and no standard package
+# behavior: a loop over bytes reaches no package: its list operations are native calls into the Rust runtime, and no standard package is reached
 # cli-commands:
 #   oven inspect dependencies src/main.incn
 # expect-stdout-contains:
-#   program `closure_of_a_byte_loop` reaches 1 package
-#   incan_native_runtime
-#     function pub::incan_native_runtime::lists::get_list
+#   program `closure_of_a_byte_loop` reaches 0 packages
 # expect-exit: 0
 
 def total(data: bytes) -> int:

@@ -4,8 +4,8 @@
 # environment:
 #   INCAN_REGISTRATION_SECRET=must-not-reach-registration
 # expect-stdout-contains:
+#   program `direct_path_dependency` reaches 1 package
 #   helper
-#   incan_native_runtime
 # expect-exit: 0
 
 from pub::helper import helper_value

@@ -2,11 +2,10 @@
 # cli-commands:
 #   oven inspect dependencies src/main.incn
 # expect-stdout-contains:
-#   program `closure_skips_an_unused_dependency` reaches 2 packages
+#   program `closure_skips_an_unused_dependency` reaches 1 package
 #   alpha
 #     function pub::alpha::main::alpha_value
 #       requested by checked source
-#   incan_native_runtime
 # expect-exit: 0
 
 from pub::alpha import alpha_value
