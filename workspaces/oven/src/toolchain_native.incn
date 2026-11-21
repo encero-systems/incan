@@ -1,4 +1,4 @@
-"""Build native support once and bind runtime and standard source units to that exact generation."""
+"""Build native support once, the Rust runtime among its crates, and bind standard source units to that generation."""
 
 from rust::incan_loaf_names import native_crate_name
 from rust::std::env import args
@@ -20,17 +20,18 @@ from registry_units import RegistryUnits
 from rust_target import target_configuration
 from source_security import validate_native_sources
 from toolchain import NativeCrate, Toolchain, load_toolchain, readmit_selected_installation, rust_compiler, toolchain_file
-from unit import UnitDescription, UnitLoaf, dependency_source_roots, describe
+from unit import UnitDescription, dependency_source_roots, describe
 from unit_rust import add_extern, add_rust_root, prepare_linked
 from vocabulary import published_workers, stage_vocabulary
 from unit_reading import read_unit
+from unit_transport import read_unit_document
 from unit_freshness import artifact_files, record, unit_key
 from codegen import compiled_arguments
 
 
 def main() -> Result[None, str]:
     """
-    Prepare native support or a runtime or standard unit description bound to that generation.
+    Prepare native support or a standard unit description bound to that generation.
 
     1. Validate the requested production mode.
     2. Read the selected source root and installed toolchain.
@@ -44,15 +45,12 @@ def main() -> Result[None, str]:
     if len(arguments) >= 4 and arguments[2] in ["identify", "publish", "codegraph"]:
         return publish_prepared(arguments)
     if len(arguments) != 2 and len(arguments) != 4:
-        return Err("usage: toolchain_native REPOSITORY [PACKAGE|runtime PROFILE]")
+        return Err("usage: toolchain_native REPOSITORY [PACKAGE PROFILE]")
     # 2. Both modes use the same selected source tree and native generation.
     repository = Path(arguments[1]).resolve().map_err((error) => f"cannot {error.message()}")?
-    # 3. Describing source never rebuilds dependencies beneath an installed runtime.
+    # 3. Describing source never rebuilds the installed native support it binds.
     if len(arguments) == 4:
-        toolchain = load_toolchain()?
-        if arguments[2] == "runtime":
-            return describe_runtime(repository, arguments[3], toolchain)
-        return describe_standard(repository, arguments[2], arguments[3], toolchain)
+        return describe_standard(repository, arguments[2], arguments[3], load_toolchain()?)
     return publish_support(repository)
 
 
@@ -65,7 +63,7 @@ def publish_prepared(arguments: list[str]) -> Result[None, str]:
     2. Retain its identity before compilation or refuse input changes after compilation.
     3. Record completed native payloads, or publish a separately proved graph from the shared checked export.
     """
-    # 1. The script supplies the same unit JSON the compiler consumes, including checked source interfaces.
+    # 1. The script supplies the same prepared inputs the compiler consumes, including checked source interfaces.
     if (
         (arguments[2] == "identify" and len(arguments) != 4)
         or (arguments[2] in ["publish", "codegraph"] and len(arguments) != 5)
@@ -74,7 +72,7 @@ def publish_prepared(arguments: list[str]) -> Result[None, str]:
             "usage: toolchain_native REPOSITORY identify UNIT | publish UNIT DIRECTORY | codegraph UNIT DIRECTORY",
         )
     path = Path(arguments[3])
-    mut unit = read_unit(read_json(path)?)?
+    mut unit = read_unit(read_unit_document(path)?)?
     if get_or("SELFBUILD_METADATA_ONLY", "") == "1":
         unit.kind = "metadata-only"
     # 2. An input edit during compilation cannot be certified as the completed producer's identity.
@@ -116,8 +114,8 @@ def publish_support(repository: Path) -> Result[None, str]:
     """
     Publish the installed generation's source-built support closure.
 
-    1. Lock the generation and select native facets from the standard packages' existing manifests.
-    2. Compile only those Rust facets, before any Incan runtime or standard provider exists.
+    1. Lock the generation and select native facets from the runtime's and standard packages' existing manifests.
+    2. Compile only those Rust facets, the native runtime among them, before any standard provider exists.
     3. Publish their exact artifacts and directories as the installed support generation.
     """
     # 1. Re-read publication only after the generation lock excludes another support producer.
@@ -127,9 +125,9 @@ def publish_support(repository: Path) -> Result[None, str]:
     toolchain = load_toolchain()?
     require_fresh_generation(toolchain)?
     rustc = rust_compiler(toolchain)
-    facets = support_facets(rustc)?
+    facets = support_facets(repository, rustc)?
     registry = selected_registry(read_registry_units(Path(toolchain.registry_units))?, facets, "release")?
-    # 2. These are the runtime's Rust support crates, never compiled Incan standard facades.
+    # 2. These are the runtime and its Rust support crates, never compiled Incan standard facades.
     externs, directories = build_support(repository, rustc, registry, facets)?
     # 3. No artifact or directory from the builder's runtime or standard packages enters this closure.
     manifest = toolchain_file()?
@@ -151,24 +149,9 @@ def describe_standard(repository: Path, package: str, profile: str, toolchain: T
     """
     # 1. Standard providers retain their admitted compiled dependencies.
     project = repository.joinpath("loaves").joinpath("stdlib").joinpath(package)
-    ready = prepared_source_unit(project, profile, toolchain, false)?
+    ready = prepared_source_unit(project, profile, toolchain)?
     # 2. Only standard publication stages a vocabulary worker.
     stage_standard_worker(ready)?
-    println(json_text(ready.to_json())?)
-    return Ok(None)
-
-
-def describe_runtime(repository: Path, profile: str, toolchain: Toolchain) -> Result[None, str]:
-    """
-    Describe runtime source without compiling another copy of its native dependencies.
-
-    1. Bind runtime source to the installed native support, excluding compiled runtime and standard providers.
-    2. Emit the unit for the caller to add explicitly selected checked source interfaces.
-    """
-    # 1. Runtime source cannot depend on an earlier runtime or a compiled standard facade.
-    project = repository.joinpath("loaves").joinpath("compiler").joinpath("incan_native_runtime")
-    ready = prepared_source_unit(project, profile, toolchain, true)?
-    # 2. Checking-only interfaces remain explicit inputs of the runtime build script.
     println(json_text(ready.to_json())?)
     return Ok(None)
 
@@ -177,7 +160,6 @@ def prepared_source_unit(
     project: Path,
     profile: str,
     toolchain: Toolchain,
-    runtime: bool,
 ) -> Result[UnitDescription, str]:
     """
     Prepare a source library with the exact native artifacts already installed for its graph.
@@ -203,7 +185,7 @@ def prepared_source_unit(
     if own_key in built:
         own = built[own_key]
         unit = add_rust_root(unit, NativeCrate(name=own.crate_name, path=own.artifact))?
-    # 2. A Rust edge selects its Rust facet, never an Incan facade that links this same runtime.
+    # 2. A Rust edge selects its Rust facet, never an Incan facade of that same crate.
     mut native_edges: list[str] = []
     for facet in facets:
         if facet.project == project.0:
@@ -211,11 +193,7 @@ def prepared_source_unit(
                 unit = add_extern(unit, binding)?
                 native_edges.append(binding.name)
     unit.loaves = [loaf for loaf in unit.loaves if loaf.standard or loaf.key.replace("-", "_") not in native_edges]
-    # 3. Runtime publication uses checked source interfaces in place of compiled providers.
-    if runtime:
-        selected = runtime_support_toolchain(toolchain, unit.loaves)
-        unit.loaves = [loaf for loaf in unit.loaves if not loaf.standard and loaf.name != "incan_native_runtime"]
-        return prepare_linked(unit, selected)
+    # 3. Only the admitted compiled standard providers join the closure.
     admitted = get_or("SELFBUILD_ADMITTED_STDLIB", "")
     if admitted != "":
         allowed = Path(admitted).read_text("utf-8", "strict").map_err((error) => f"cannot {error.message()}")?.split(
@@ -223,21 +201,6 @@ def prepared_source_unit(
         )
         unit.loaves = [loaf for loaf in unit.loaves if not loaf.standard or loaf.name in allowed]
     return prepare_linked(unit, toolchain)
-
-
-def runtime_support_toolchain(toolchain: Toolchain, loaves: list[UnitLoaf]) -> Toolchain:
-    """Retain support artifacts while removing compiled providers and their directories before runtime linking."""
-    excluded = [Path(native.path).parent().0 for native in toolchain.externs if compiled_runtime_provider(native.name)]
-    retired = unique(excluded + [loaf.dir for loaf in loaves if loaf.standard or loaf.name == "incan_native_runtime"])
-    mut selected = toolchain
-    selected.externs = [native for native in selected.externs if not compiled_runtime_provider(native.name)]
-    selected.search = [directory for directory in selected.search if directory not in retired]
-    return selected
-
-
-def compiled_runtime_provider(name: str) -> bool:
-    """Identify compiled providers forbidden in the runtime producer's native closure."""
-    return name == "incan_native_runtime" or name.startswith("incan_stdlib_")
 
 
 def stage_standard_worker(unit: UnitDescription) -> Result[None, str]:
@@ -315,14 +278,19 @@ def require_fresh_generation(toolchain: Toolchain) -> Result[None, str]:
     return Ok(None)
 
 
-def support_facets(rustc: str) -> Result[list[LocalFacet], str]:
-    """Select each native facet once from source manifests, refusing divergent feature demands."""
+def support_facets(repository: Path, rustc: str) -> Result[list[LocalFacet], str]:
+    """
+    Select each native facet once from source manifests, refusing divergent feature demands: the standard packages'
+    facets and the Rust native runtime's, which every compiled program and standard provider links.
+    """
     configuration = target_configuration(rustc)?
     mut session = local_facet_session(configuration)
     mut facets: Dict[str, LocalFacet] = {}
     mut native: Dict[str, bool] = {}
-    for package in standard_packages()?:
-        demand = LocalDemand(project=package.root, domain=DependencyDomain.Target, features=[], defaults=true)
+    runtime = repository.joinpath("loaves").joinpath("compiler").joinpath("incan_native_runtime")
+    roots = [package.root for package in standard_packages()?] + [runtime.0]
+    for root in roots:
+        demand = LocalDemand(project=root, domain=DependencyDomain.Target, features=[], defaults=true)
         for facet in session.facets(demand)?:
             if not native_support_owner(native, facet.project)?:
                 continue

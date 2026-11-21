@@ -1,12 +1,20 @@
 [project]
 name = "incan_native_runtime"
 version = "0.6.0-dev.9"
+description = "The native runtime every compiled Incan program links, built with the native support crates"
+private = true
 
-[build]
-rust-edition = "2024"
+[rust]
+name = "incan_native_runtime"
+type = "lib"
+edition = "2024"
 
-# Planned model declarations use serde's derives at the native output boundary (#1337, #1698).
-# Retain their explicit extern in this runtime's receipt-selected closure.
+# Planned model declarations use serde's derives at the native output boundary (#1337, #1698); the support build
+# keeps serde as an explicit toolchain extern because this crate depends on it.
 [dependencies]
 incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
+incan_std_primitives = { loaf = "incan_stdlib_primitives", path = "../../stdlib/primitives" }
+incan_std_async = { loaf = "incan_stdlib_async", path = "../../stdlib/async" }
+incan_std_testing = { loaf = "incan_stdlib_testing", path = "../../stdlib/testing" }
+incan_std_data = { loaf = "incan_stdlib_data", path = "../../stdlib/data" }
 serde = { loaf = "crates-io/serde", version = "1.0", features = ["derive"] }
