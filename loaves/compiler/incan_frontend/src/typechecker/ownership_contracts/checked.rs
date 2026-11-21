@@ -369,12 +369,13 @@ impl TypeChecker {
                 continue;
             }
             let parameters: Vec<_> = binding.params.iter().map(|parameter| parameter.ty.clone()).collect();
+            let route = self.result_route(&function.params, &function.return_type, function.result_source.as_ref());
             let signature = Signature {
                 parameters: &function.params,
                 parameter_types: &parameters,
-                result: &function.return_type,
+                result: &route.result,
                 result_type: &binding.return_type,
-                source: function.result_source.as_ref(),
+                source: route.source,
                 receiver: None,
                 receiver_mode: None,
             };
@@ -446,12 +447,17 @@ impl TypeChecker {
                 };
                 let Some(identity) = header.identity else { continue };
                 let parameters: Vec<_> = header.params.iter().map(|parameter| parameter.ty.clone()).collect();
+                let route = self.result_route(
+                    &method.node.params,
+                    &method.node.return_type,
+                    method.node.result_source.as_ref(),
+                );
                 let signature = Signature {
                     parameters: &method.node.params,
                     parameter_types: &parameters,
-                    result: &method.node.return_type,
+                    result: &route.result,
                     result_type: &header.return_type,
-                    source: method.node.result_source.as_ref(),
+                    source: route.source,
                     receiver: method
                         .node
                         .receiver_binding
@@ -522,14 +528,15 @@ impl TypeChecker {
         let identity =
             self.symbols
                 .module_declaration_identity(&function.name, SemanticSourceTargetKind::Function, span);
+        let route = self.result_route(&function.params, &function.return_type, function.result_source.as_ref());
         self.record_ownership_signature(
             identity,
             Signature {
                 parameters: &function.params,
                 parameter_types: parameters,
-                result: &function.return_type,
+                result: &route.result,
                 result_type: result,
-                source: function.result_source.as_ref(),
+                source: route.source,
                 receiver: None,
                 receiver_mode: None,
             },
@@ -548,14 +555,15 @@ impl TypeChecker {
         let identity = self
             .symbols
             .member_declaration_identity(&method.name, SemanticSourceTargetKind::Method, span);
+        let route = self.result_route(&method.params, &method.return_type, method.result_source.as_ref());
         self.record_ownership_signature(
             identity,
             Signature {
                 parameters: &method.params,
                 parameter_types: parameters,
-                result: &method.return_type,
+                result: &route.result,
                 result_type: result,
-                source: method.result_source.as_ref(),
+                source: route.source,
                 receiver: method
                     .receiver_binding
                     .as_ref()

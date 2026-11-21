@@ -689,7 +689,7 @@ fn builtin_result_map_err_requires_fresh_selected_package_result() -> Result<(),
             .all(|error| error.stable_code() == Some("INCAN-T0123"))
     );
 
-    let view_source = "def result_view(value: Borrowed[Result[int, str]]) -> Borrowed[Result[int, str]] from value:\n    return value\n\ndef mapped_view(value: Borrowed[Result[int, str]], proof: Owned[int] = 0) -> Result[int, int]:\n    return result_view(value).map_err((_) => 1)\n";
+    let view_source = "def result_view(value: Borrowed[Result[int, str]], marker: Owned[int] = 0) -> Borrowed[Result[int, str]] from value:\n    return value\n\ndef mapped_view(value: Borrowed[Result[int, str]], proof: Owned[int] = 0) -> Result[int, int]:\n    return result_view(value).map_err((_) => 1)\n";
     let view_program = parsed(view_source)?;
     let mut view = TypeChecker::default();
     if let Err(errors) = view.check_program(&view_program) {

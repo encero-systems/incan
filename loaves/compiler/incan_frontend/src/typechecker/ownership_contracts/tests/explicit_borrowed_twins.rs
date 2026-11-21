@@ -211,6 +211,125 @@ fn returned_views_from_borrows_check_as_their_reference_twins() -> Result<(), Bo
     Ok(())
 }
 
+/// Slice 06's chained-call relation with slice 09B's lifetime elision: a borrowed result `from` its only borrowed
+/// input, reached from that input rather than being it, keeps native passing in both spellings. Its result is the
+/// native reference, it has no ownership contract, and callers read through it.
+#[test]
+fn borrowed_results_reached_from_their_source_check_as_their_reference_twins() -> Result<(), Box<dyn std::error::Error>>
+{
+    let template = format!(
+        "{ITEM}def first(values: {{borrow:list[Item]}}, position: int) -> {{borrow:Item}} from values:\n    item: {{borrow:Item}} = values[position]\n    return item\n\ndef first_label(values: {{borrow:list[Item]}}) -> str:\n    return first(values, 0).label()\n\ndef main() -> int:\n    items = [Item(name=\"a\", count=1)]\n    chosen = first(items, 0)\n    return len(first_label(items)) + chosen.count\n"
+    );
+    let checker = check_twins(&template)?;
+    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+    let contracts: Vec<_> = checker
+        .type_info
+        .declarations
+        .ownership_contracts
+        .keys()
+        .map(|identity| identity.declaration_name.clone())
+        .collect();
+    assert!(contracts.is_empty(), "{contracts:?}");
+    let Some(crate::symbols::SymbolKind::Function(first)) = checker.lookup_symbol("first").map(|symbol| &symbol.kind)
+    else {
+        return Err("missing function first".into());
+    };
+    assert!(
+        matches!(first.return_type, ResolvedType::Ref(_)),
+        "{:?}",
+        first.return_type
+    );
+    Ok(())
+}
+
+/// The `from` clause of such a result names the input Rust's lifetime elision ties it to: the receiver, or else the
+/// only borrowed input. Naming another input, or a signature with two borrowed inputs, is refused at the clause with
+/// INCAN-T0124 in both spellings, with a hint naming the input elision chose where there is one.
+#[test]
+fn borrowed_results_name_the_input_elision_ties_them_to() -> Result<(), Box<dyn std::error::Error>> {
+    for (body, hint) in [
+        (
+            "def pick(a: {borrow:list[Item]}, b: {borrow:list[Item]}) -> {borrow:Item} from b:\n    item: {borrow:Item} = b[0]\n    return item\n",
+            None,
+        ),
+        (
+            "class Shelf:\n    pub items: list[Item]\n\n    pub def first(self, other: {borrow:list[Item]}) -> {borrow:Item} from other:\n        item: {borrow:Item} = other[0]\n        return item\n",
+            Some("from self"),
+        ),
+    ] {
+        let checker = check_twins(&format!("{ITEM}{body}"))?;
+        let refusal = checker
+            .errors
+            .iter()
+            .find(|error| error.stable_code() == Some("INCAN-T0124"))
+            .ok_or_else(|| format!("{body}: {:?}", checker.errors))?;
+        if let Some(hint) = hint {
+            assert!(format!("{refusal:?}").contains(hint), "{refusal:?}");
+        }
+    }
+    Ok(())
+}
+
+/// Such a result returns a borrow reached from its source; a value created in the body (a temporary list's element
+/// field, a fresh local) is refused with one INCAN-T0124 at the returned value, in both spellings.
+#[test]
+fn borrowed_results_cannot_return_values_created_in_the_body() -> Result<(), Box<dyn std::error::Error>> {
+    for body in [
+        "def invalid(source: {borrow:list[Item]}) -> {borrow:str} from source:\n    temporary = [Item(name=\"temporary\", count=1)]\n    return temporary[0].name\n",
+        "def invalid(source: {borrow:list[Item]}) -> {borrow:Item} from source:\n    fresh = Item(name=\"fresh\", count=1)\n    return fresh\n",
+    ] {
+        let checker = check_twins(&format!("{ITEM}{body}"))?;
+        let codes: Vec<_> = checker.errors.iter().map(|error| error.stable_code()).collect();
+        assert_eq!(codes, [Some("INCAN-T0124")], "{body}: {:?}", checker.errors);
+    }
+    Ok(())
+}
+
+/// A borrow-only signature takes the native route even when its borrowed result is exactly its source: no ownership
+/// contract and no whole-body proof for it or for its caller. This is the guarded native callback's shape: a caller
+/// matches on a lookup keyed through the returned borrow.
+#[test]
+fn exact_borrowed_results_of_borrow_only_signatures_take_the_native_route() -> Result<(), Box<dyn std::error::Error>> {
+    let template = "model Key:\n    name: str\n\ndef borrowed_key(value: {borrow:Key}) -> {borrow:Key} from value:\n    return value\n\ndef lookup(entries: dict[str, int]) -> int:\n    key = Key(name=\"key\")\n    match entries.get(borrowed_key(key).name):\n        Some(value) =>\n            println(value)\n            return value\n        None => return 0\n";
+    let checker = check_twins(template)?;
+    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+    assert!(
+        checker.type_info.declarations.ownership_contracts.is_empty(),
+        "{:?}",
+        checker.type_info.declarations.ownership_contracts.keys()
+    );
+    assert!(
+        checker.type_info.protocols.explicit_input_flow.is_empty(),
+        "{:?}",
+        checker.type_info.protocols.explicit_input_flow.keys()
+    );
+    Ok(())
+}
+
+/// A caller holds such a result as a loan of the argument it borrows from, alive while the result is used: an edit of
+/// that argument while the result is still read is refused with INCAN-T0126 in both spellings, and the same edit after
+/// the last read is accepted.
+#[test]
+fn held_borrowed_results_are_loans_of_their_source() -> Result<(), Box<dyn std::error::Error>> {
+    let table = "def table(items: {borrow:list[int]}) -> {borrow:list[int]} from items:\n    return items\n\n";
+    let refused = check_twins(&format!(
+        "{table}def edit(start: int) -> int:\n    mut items = [start]\n    view = table(items)\n    items.append(2)\n    return len(view)\n"
+    ))?;
+    assert!(
+        refused
+            .errors
+            .iter()
+            .any(|error| error.stable_code() == Some("INCAN-T0126")),
+        "{:?}",
+        refused.errors
+    );
+    let accepted = check_twins(&format!(
+        "{table}def edit(start: int) -> int:\n    mut items = [start]\n    view = table(items)\n    size = len(view)\n    items.append(2)\n    return size + len(items)\n"
+    ))?;
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+    Ok(())
+}
+
 /// A function with borrowed parameters is one callable type in both spellings, and an imported function with
 /// borrowed parameters takes owned locals on both dependency routes.
 #[test]
@@ -226,6 +345,29 @@ fn callable_and_imported_borrows_check_as_their_reference_twins() -> Result<(), 
         assert_eq!(diagnostics(explicit), diagnostics(native), "{route}");
         assert!(explicit.errors.is_empty(), "{route}: {:?}", explicit.errors);
     }
+    Ok(())
+}
+
+/// A borrow nested in a callable type, in a Rust type's argument or inside a parameter or binding annotation is the
+/// native reference in both spellings: a callback over a borrowed item, given a function and a closure; a Rust
+/// generic over exclusive borrows, as a parameter and as a result; and a local list of borrows.
+#[test]
+fn nested_borrows_check_as_their_reference_twins() -> Result<(), Box<dyn std::error::Error>> {
+    let callback = format!(
+        "{ITEM}def apply(select: ({{borrow:Item}}, int) -> int, item: Item) -> int:\n    return select(item, 1)\n\ndef pick(item: {{borrow:Item}}, step: int) -> int:\n    return item.count + step\n\ndef main() -> int:\n    item = Item(name=\"a\", count=1)\n    return apply(pick, item) + apply((it, step) => len(it.label()) + step, item)\n"
+    );
+    let checker = check_twins(&callback)?;
+    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+    let rust = "from rust::std::vec import Vec as Handle\n\ndef keep(mut items: Handle[tuple[{borrow_mut:int}, {borrow_mut:int}]]) -> None:\n    pass\n\ndef escaped() -> Handle[{borrow_mut:int}]:\n    return Handle.new()\n\ndef gather(value: {borrow:int}) -> int:\n    values: list[{borrow:int}] = [value]\n    return len(values)\n";
+    let checker = check_twins(rust)?;
+    assert!(
+        !checker
+            .errors
+            .iter()
+            .any(|error| error.stable_code() == Some("INCAN-T0123")),
+        "{:?}",
+        checker.errors
+    );
     Ok(())
 }
 
