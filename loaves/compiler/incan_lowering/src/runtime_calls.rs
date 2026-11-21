@@ -13,9 +13,15 @@ use crate::frame_instances::merge_externals;
 use crate::function_frames::frame_parameter_type;
 use crate::layout_types::native_source_type;
 use crate::native_type_identity::ConstructorIndex;
+use crate::nominal_instances::{NominalInstance, retain_frame_nominals};
+use crate::options::retain_body_carriers;
 use crate::pending::untranslated;
+use crate::program_context::{ProgramContext, retain_nominal_tables};
+use crate::runtime_arguments::{RuntimeTypes, runtime_argument};
 use crate::runtime_frames::runtime_frame_adapter;
 use crate::runtime_requirements::RuntimeRequirement;
+use crate::type_parameters::{Instance, instantiate, request_instance};
+use crate::unions::collect_unions;
 
 /// One authenticated external signature and its selected compiled or governed implementation.
 #[derive(Clone, Debug)]
@@ -299,7 +305,16 @@ pub struct RuntimeInventories<'a> {
     pub functions: &'a mut Vec<Function>,
     pub externals: &'a mut Vec<ExternalFunction>,
     pub intrinsics: &'a mut Vec<EnumDeclaration>,
-    pub unions: &'a [IncanType],
+    pub unions: &'a mut Vec<IncanType>,
+}
+
+/// The unit's program, templates and instance queues a governed generic runtime body closes into.
+pub struct GovernedFrames<'a> {
+    pub template_constructors: &'a ConstructorIndex,
+    pub templates: &'a BodyIrModule,
+    pub program: &'a mut ProgramContext,
+    pub nominal_instances: &'a mut Vec<NominalInstance>,
+    pub instances: &'a mut Vec<Instance>,
 }
 
 /// Retain runtime selections: 1. Retain coroutines. 2. Close frames and register implementations. 3. Retain native
@@ -311,8 +326,8 @@ pub struct RuntimeInventories<'a> {
 /// linkage, and its requirement waits in `redirects.missing` until the queue drains. A generic runtime function whose
 /// runtime publishes no governed body is a native generic item, and its call keeps the instantiated external ABI.
 pub fn retain_runtime_instances(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
+    module: &mut BodyIrModule,
+    frames: GovernedFrames<'_>,
     inventories: RuntimeInventories<'_>,
     redirects: &mut RuntimeRedirects,
 ) -> Result<(), String> {
@@ -338,6 +353,11 @@ pub fn retain_runtime_instances(
         }
     }
     // 2. Register each implementation; each exact signature settles once.
+    let mut governed = GovernedRuntime {
+        frames,
+        intrinsics,
+        unions,
+    };
     let mut keep: Vec<bool> = Vec::with_capacity(externals.len());
     let mut dropped = false;
     let mut linked: Vec<ExternalFunction> = Vec::new();
@@ -352,16 +372,18 @@ pub fn retain_runtime_instances(
             dropped = true;
             continue;
         }
-        if runtime_body(module, &external.path)?.is_some() {
-            return Err(untranslated(
-                "runtime_calls::retain_runtime_instances governed generic body",
-            ));
+        if let Some(body) = runtime_body(module, &external.path)? {
+            retain_governed_body(module, &mut governed, functions, &external, &body, redirects)?;
+            keep.push(false);
+            dropped = true;
+            continue;
         }
+        let constructors = governed.frames.program.constructors.clone();
         let frame = RuntimeFrameCall {
-            constructors,
+            constructors: &constructors,
             module,
-            intrinsics,
-            unions,
+            intrinsics: governed.intrinsics,
+            unions: governed.unions,
         };
         if retain_runtime_frame_call(&frame, functions, &mut linked, &external, redirects)? {
             keep.push(false);
@@ -382,6 +404,121 @@ pub fn retain_runtime_instances(
         *externals = retained;
     }
     merge_externals(externals, linked)
+}
+
+/// The queues and inventories one governed generic runtime body closes into.
+struct GovernedRuntime<'a, 'b> {
+    frames: GovernedFrames<'a>,
+    intrinsics: &'b mut Vec<EnumDeclaration>,
+    unions: &'b mut Vec<IncanType>,
+}
+
+/// Close a selected generic runtime body, adapt its inputs and retain its canonical instance and final redirection.
+fn retain_governed_body(
+    module: &mut BodyIrModule,
+    governed: &mut GovernedRuntime<'_, '_>,
+    functions: &mut Vec<Function>,
+    external: &ExternalFunction,
+    body: &Body,
+    redirects: &mut RuntimeRedirects,
+) -> Result<(), String> {
+    if body.type_parameters.len() != external.type_arguments.len() {
+        return Err(format!(
+            "invalid governed runtime type argument arity for {}",
+            external.path
+        ));
+    }
+    let mut arguments = Vec::with_capacity(external.type_arguments.len());
+    for argument in &external.type_arguments {
+        let types = RuntimeTypes {
+            module,
+            intrinsics: governed.intrinsics,
+            unions: governed.unions,
+        };
+        match runtime_argument(&types, argument) {
+            Ok(typed) => arguments.push(typed),
+            Err(reason) => return Err(format!("{}: {reason}", external.path)),
+        }
+    }
+    let owned = runtime_owned_slots(body, external)?;
+    // 2. Close frame layouts before reading their parameter and result storage.
+    let closed = instantiate(body, &arguments, &owned)?;
+    let frames = &mut governed.frames;
+    let added = retain_frame_nominals(
+        frames.template_constructors,
+        module,
+        frames.templates,
+        &closed,
+        frames.nominal_instances,
+    )?;
+    let any_added = !added.is_empty();
+    module.nominal_declarations.extend(added);
+    retain_nominal_tables(frames.program, module)?;
+    if any_added {
+        *governed.unions = collect_unions(module);
+    }
+    let file = external.span.file.to_string();
+    let constructors = frames.program.constructors.clone();
+    retain_body_carriers(&constructors, module, governed.intrinsics, &closed, &file)?;
+    let nominals = &module.nominal_declarations;
+    let enums = &module.enum_declarations;
+    let symbol = function_name(module, &closed);
+    let mut parameters = Vec::with_capacity(closed.params.len());
+    for parameter in &closed.params {
+        parameters.push(frame_parameter_type(
+            &constructors,
+            nominals,
+            enums,
+            &closed,
+            parameter,
+            governed.intrinsics,
+            &file,
+        )?);
+    }
+    let result = native_source_type(
+        &constructors,
+        nominals,
+        enums,
+        governed.unions,
+        &closed.return_type,
+        governed.intrinsics,
+        "",
+    )?;
+    let mut called = symbol.clone();
+    let callee = CalleeKind::Planned(symbol.clone());
+    if let Some(adapter) = runtime_frame_adapter(module, external, &parameters, &result, &symbol, &callee)? {
+        called = adapter.name.clone();
+        retain_runtime_adapter(functions, adapter)?;
+    }
+    // Register the checked call selection; the completed queue rewrites each block once.
+    retain_runtime_redirect(redirects, external, CalleeKind::Planned(called), &symbol)?;
+    request_instance(frames.instances, body, arguments, owned, false);
+    Ok(())
+}
+
+/// Keep environment ownership for original generic value slots selected by the exact runtime call ABI.
+fn runtime_owned_slots(body: &Body, external: &ExternalFunction) -> Result<Vec<i64>, String> {
+    if body.params.len() != external.parameters.len() {
+        return Err(format!(
+            "invalid governed runtime parameter arity for {}",
+            external.path
+        ));
+    }
+    let mut owned = Vec::new();
+    for (slot, (parameter, ty)) in body.params.iter().zip(&external.parameters).enumerate() {
+        if let incan_mir_plan_native::PlanType::Closure(_) = ty {
+            match parameter.ty {
+                IncanType::TypeVar(_) => {
+                    if parameter.mutable {
+                        return Err("unsupported governed runtime mutable captured callable parameter".into());
+                    }
+                    owned.push(slot as i64);
+                }
+                _ => return Err("invalid governed runtime captured callable outside a generic value slot".into()),
+            }
+        }
+    }
+    Ok(owned)
 }
 
 /// The callee kind a call with this exact external signature names, as its redirect binding selects it.

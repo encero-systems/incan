@@ -10,6 +10,7 @@ use incan_semantics_core::body_ir::{
     StatementKind as SourceStatementKind,
 };
 
+use crate::assertions::lower_assertion;
 use crate::assignments::lower_assignment;
 use crate::builtin_calls::{coerce_numeric_operand, validate_exact_float};
 use crate::calls::lower_call;
@@ -204,7 +205,7 @@ pub fn lower_statement(
         SourceStatementKind::Await { .. } => Err(untranslated("async_::await_future")),
         SourceStatementKind::Race { .. } => Err(untranslated("statements::lower_native_race")),
         SourceStatementKind::Yield { .. } => Err(untranslated("statements::lower_yield")),
-        SourceStatementKind::Assert { .. } => Err(untranslated("assertions::lower_assertion")),
+        SourceStatementKind::Assert { kind, message, .. } => lower_assertion(builder, kind, message.as_ref(), &span),
         SourceStatementKind::TryPropagate {
             destination,
             operand,

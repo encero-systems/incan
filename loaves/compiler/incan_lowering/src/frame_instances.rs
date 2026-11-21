@@ -22,7 +22,9 @@ use crate::options::retain_body_carriers;
 use crate::pending::untranslated;
 use crate::program_context::ProgramContext;
 use crate::program_context::retain_nominal_tables;
-use crate::runtime_calls::{RuntimeInventories, redirect_runtime_calls, retain_runtime_instances, runtime_redirects};
+use crate::runtime_calls::{
+    GovernedFrames, RuntimeInventories, redirect_runtime_calls, retain_runtime_instances, runtime_redirects,
+};
 use crate::runtime_requirements::RuntimeRetention;
 use crate::signature_lifetimes::{generic_loans, signature_lifetimes};
 use crate::type_parameters::{Instance, callable_storage_arguments, enqueue_instances, instance_queue, instantiate};
@@ -54,14 +56,20 @@ pub fn lower_instances(
         || !context.runtime_binding_scopes.is_empty()
         || governed_runtime_module(owners);
     if governed_runtime {
-        let constructors = program.constructors.clone();
+        let frames = GovernedFrames {
+            template_constructors,
+            templates,
+            program,
+            nominal_instances,
+            instances,
+        };
         let runtime = RuntimeInventories {
             functions: &mut inventories.functions,
             externals: &mut inventories.externals,
             intrinsics,
-            unions: &runtime_unions,
+            unions: &mut runtime_unions,
         };
-        retain_runtime_instances(&constructors, context, runtime, &mut redirects)?;
+        retain_runtime_instances(context, frames, runtime, &mut redirects)?;
     }
     let mut source_indexes: BTreeMap<String, usize> = BTreeMap::new();
     for (index, owner) in owners.iter().enumerate() {
@@ -111,14 +119,21 @@ pub fn lower_instances(
         )?;
         enqueue_instances(&mut queue, &mut scheduled);
         if governed_runtime {
-            let constructors = program.constructors.clone();
+            let frames = GovernedFrames {
+                template_constructors,
+                templates,
+                program,
+                nominal_instances,
+                instances,
+            };
             let runtime = RuntimeInventories {
                 functions: &mut inventories.functions,
                 externals: &mut inventories.externals,
                 intrinsics,
-                unions: &runtime_unions,
+                unions: &mut runtime_unions,
             };
-            retain_runtime_instances(&constructors, context, runtime, &mut redirects)?;
+            retain_runtime_instances(context, frames, runtime, &mut redirects)?;
+            enqueue_instances(&mut queue, instances);
         }
     }
     let _ = cells;

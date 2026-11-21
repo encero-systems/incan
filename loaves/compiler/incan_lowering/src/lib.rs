@@ -13,6 +13,7 @@ use incan_semantics_core::body_ir::{BodyIrModule, NativeUnionDeclaration};
 pub mod corpus;
 
 mod array_views;
+mod assertions;
 mod assignments;
 mod async_;
 mod attributes;
@@ -104,6 +105,7 @@ mod reflection_carriers;
 mod resize;
 mod result_carriers;
 mod result_requirements;
+mod runtime_arguments;
 mod runtime_calls;
 mod runtime_frames;
 mod runtime_layouts;
