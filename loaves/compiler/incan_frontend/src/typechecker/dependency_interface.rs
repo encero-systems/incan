@@ -23,6 +23,8 @@ pub const MODULE_DEPENDENCY_INTERFACE_SNAPSHOT_VERSION: u32 = 6;
 #[derive(Clone, Debug, Default)]
 pub struct DependencyInterfacePreparationCache {
     pub(super) foreign_remappings: Arc<std::sync::Mutex<HashMap<String, Arc<PreparedForeignRemapping>>>>,
+    /// Each compiled library's nominal public types with their canonical spellings and admitted identities.
+    pub(super) canonical_remappings: Arc<std::sync::Mutex<HashMap<String, Arc<[CanonicalTypeEntry]>>>>,
     /// How often each compiled library's canonical type remapping was evaluated by the checkers sharing this cache.
     #[cfg(test)]
     pub(super) canonical_evaluations: Arc<std::sync::Mutex<std::collections::BTreeMap<String, usize>>>,
@@ -46,6 +48,15 @@ impl DependencyInterfacePreparationCache {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }
+}
+
+/// One nominal public type of a compiled Loaf: its public spelling, the canonical spelling every consumer of the Loaf
+/// binds it to, and the provider identity it is admitted under.
+#[derive(Clone, Debug)]
+pub(super) struct CanonicalTypeEntry {
+    pub(super) public_name: String,
+    pub(super) canonical_name: String,
+    pub(super) identity: PublicLibraryTypeIdentity,
 }
 
 /// One compiled Loaf's prepared foreign nominal remapping and the effects its installation replays.
