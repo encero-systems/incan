@@ -1,15 +1,17 @@
 //! Lower checked condition and carrier-pattern assertions through the legacy assertion runtime contracts.
 
-use incan_mir_plan_native::{Carrier, PlanType, SourceSpan, TerminatorKind};
+use incan_lang::errors::ErrorKind;
+use incan_lang::lang::errors::as_str as runtime_error_name;
+use incan_mir_plan_native::{Carrier, PlanType, SourceSpan, TerminatorKind, assign as plan_assign};
 use incan_semantics_core::body_ir::{AssertionKind, Constant as SourceConstant, Operand as SourceOperand, Pattern};
 
 use crate::checked_values::{scalar_operand, scalar_place};
+use crate::closures::function_assignment;
 use crate::formatting::display_operand;
-use crate::frame::{Builder, external_call, place_type, read_place, temporary};
+use crate::frame::{Builder, external_call, place_type, read_place, temporary, value_type};
 use crate::matches::bind_enum_payload;
 use crate::options::{carrier_layout, intrinsic_pattern, variant_condition};
 use crate::patterns::has_refutable_payload;
-use crate::pending::untranslated;
 use crate::text_plan::owned_literal;
 
 /// Branch before materializing failure text, or invoke a retained unit callable inside the unwind boundary.
@@ -24,7 +26,9 @@ pub fn lower_assertion(
         AssertionKind::Pattern { scrutinee, pattern } => {
             return lower_pattern_assertion(builder, scrutinee, pattern, message, span);
         }
-        AssertionKind::Raises { .. } => return Err(untranslated("assertions::lower_raises_assertion")),
+        AssertionKind::Raises { call, expected_error } => {
+            return lower_raises_assertion(builder, call, *expected_error, message, span);
+        }
     };
     // Body IR's lazy-message failure block ends in `assert false`; it has no success edge or owner merge.
     if let AssertionKind::Condition {
@@ -44,6 +48,55 @@ pub fn lower_assertion(
     lower_failure(builder, message, span)?;
     builder.select(passed);
     builder.owned = incoming;
+    Ok(())
+}
+
+/// Reify a checked zero-argument unit function and retain only effect-free literal messages.
+fn lower_raises_assertion(
+    builder: &mut Builder,
+    call: &SourceOperand,
+    expected: ErrorKind,
+    message: Option<&SourceOperand>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let text = match message {
+        Some(SourceOperand::Constant(SourceConstant::Str(value))) => value.to_string(),
+        Some(_) => return Err("unsupported Body IR computed raises Assert message".into()),
+        None => String::new(),
+    };
+    let operand = scalar_operand(builder, call, span)?;
+    let unit_function = vec![PlanType::Unit];
+    let pointer_type = PlanType::FunctionPointer(unit_function.clone());
+    let source_type = value_type(builder, &operand)?;
+    match &source_type {
+        PlanType::FunctionItem(_, signature) | PlanType::FunctionPointer(signature) => {
+            if *signature != unit_function {
+                return Err("unsupported Body IR raises Assert callable outside zero-argument unit functions".into());
+            }
+        }
+        _ => return Err("unsupported Body IR raises Assert without a deferred function".into()),
+    }
+    let context = format!("raises Assert callable in {}", builder.name);
+    let (ty, operation) = function_assignment(&pointer_type, &source_type, operand, true, &context)?;
+    let pointer = temporary(builder, ty, span);
+    builder.emit(plan_assign(pointer.clone(), operation, span));
+    let error_name = owned_literal(builder, runtime_error_name(expected), span);
+    let failure_message = owned_literal(builder, &text, span);
+    let destination = temporary(builder, PlanType::Unit, span);
+    let arguments = vec![
+        read_place(pointer, false, span),
+        read_place(error_name, true, span),
+        read_place(failure_message, true, span),
+    ];
+    external_call(
+        builder,
+        "incan_native_runtime::assert_raises_deferred",
+        vec![pointer_type, PlanType::String, PlanType::String],
+        PlanType::Unit,
+        arguments,
+        destination,
+        span,
+    );
     Ok(())
 }
 

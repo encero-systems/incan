@@ -27,6 +27,7 @@ use crate::list_methods::{
 };
 use crate::list_values::{list_borrow, sequence_read_storage, value_operand};
 use crate::lists::{list_element, list_shape, require_list_shape};
+use crate::newtype_hooks::lower_newtype_hook_result;
 use crate::numerics::{float_conversion, integer_conversion};
 use crate::numerics::{has_sized_numeric, numeric_carrier, numeric_name};
 use crate::operand_borrows::{borrow_str_operand, lower_text_helper};
@@ -497,9 +498,8 @@ pub fn lower_runtime_helper(
             );
             Ok(())
         }
-        HelperOp::NewtypeHookExtract | HelperOp::NewtypeFieldHookExtract => {
-            Err(untranslated("newtype_hooks::lower_newtype_hook_result"))
-        }
+        HelperOp::NewtypeHookExtract => lower_newtype_hook_result(builder, arguments, destination, false, span),
+        HelperOp::NewtypeFieldHookExtract => lower_newtype_hook_result(builder, arguments, destination, true, span),
         HelperOp::NewtypeSumAdd | HelperOp::NewtypeSumExtract => Err(untranslated("newtype_sums::newtype sums")),
         HelperOp::ValidationErrorNew | HelperOp::ValidationErrorWithCode => {
             Err(untranslated("validation_errors::lower_validation_error"))
@@ -540,7 +540,7 @@ fn lower_raise_value_error(
 }
 
 /// Read already ordered positional elements, refusing spreading by name.
-fn fixed_arguments(
+pub fn fixed_arguments(
     builder: &mut Builder,
     elements: &[ArgumentElement],
     span: &SourceSpan,

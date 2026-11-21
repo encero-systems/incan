@@ -23,6 +23,7 @@ use crate::list_values::element_read;
 use crate::lists::{is_exclusive_borrow, is_list};
 use crate::matches::enum_payload_read;
 use crate::models::model_place;
+use crate::newtype_constants::numeric_newtype_literal;
 use crate::numerics::{numeric_carrier, numeric_constant};
 use crate::options::{carrier_payload_value, clone_tuple_operand};
 use crate::pending::untranslated;
@@ -125,7 +126,7 @@ pub fn scalar_operand(builder: &mut Builder, value: &SourceOperand, span: &Sourc
             }
             frozen_collection_literal(builder, constant, span)
         }
-        SourceConstant::NumericNewtype(_) => Err(untranslated("newtype_constants::numeric_newtype_literal")),
+        SourceConstant::NumericNewtype(_) => numeric_newtype_literal(builder, constant, span),
         SourceConstant::Str(text) => Ok(read_place(owned_literal(builder, text, span), true, span)),
         SourceConstant::FrozenStr(_) => frozen_literal(builder, constant, span),
         SourceConstant::TypedNumeric(value) if is_decimal_literal(value) => decimal_literal(builder, value, span),
