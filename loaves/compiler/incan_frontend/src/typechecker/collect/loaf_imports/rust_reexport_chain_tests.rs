@@ -299,13 +299,18 @@ fn published_identity(exports: &[CheckedNamedExport], name: &str) -> Option<Cano
 }
 
 /// A library module that re-exports a Rust item another module of the same library re-exports from its crate (std.web's
-/// prelude taking `Html` from `std.web.response`, which takes it with `pub from rust::incan_std_web`) publishes the Rust
-/// item's own canonical identity: the chain ends at the `rust::` import. The library's manifest, with both modules, is
-/// valid, and a consumer importing the items from the second module checks and lowers with every local typed.
+/// prelude taking `Html` from `std.web.response`, which takes it with `pub from rust::incan_std_web`) publishes the
+/// Rust item's own canonical identity: the chain ends at the `rust::` import. The library's manifest, with both
+/// modules, is valid, and a consumer importing the items from the second module checks and lowers with every local
+/// typed.
 #[test]
 fn a_rust_item_a_library_reexports_through_a_second_module_keeps_its_identity() -> TestResult {
-    let (vendor, vendor_checker) =
-        checked_library_module("web", "vendor", "pub from rust::native import RecordKey, read_key\n", &[])?;
+    let (vendor, vendor_checker) = checked_library_module(
+        "web",
+        "vendor",
+        "pub from rust::native import RecordKey, read_key\n",
+        &[],
+    )?;
     let (facade, facade_checker) = checked_library_module(
         "web",
         "facade",
@@ -374,7 +379,12 @@ fn a_rust_item_a_library_reexports_through_a_second_module_keeps_its_identity() 
     let module = crate::body_ir::build_body_ir_module(&program, &[], &facts, &context);
     for body in &module.bodies {
         for local in &body.locals {
-            assert!(!matches!(local.ty, IncanType::Unknown), "{}: local {:?} has no type", body.name, local.name);
+            assert!(
+                !matches!(local.ty, IncanType::Unknown),
+                "{}: local {:?} has no type",
+                body.name,
+                local.name
+            );
         }
     }
     Ok(())

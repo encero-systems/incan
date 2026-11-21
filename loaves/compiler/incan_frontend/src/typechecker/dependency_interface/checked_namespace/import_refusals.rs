@@ -72,7 +72,11 @@ impl Providers {
                 .collect::<Vec<_>>();
             return consumer.check_with_imports(source, &dependencies);
         }
-        let dependencies = self.sources.iter().map(|(key, program)| (*key, program)).collect::<Vec<_>>();
+        let dependencies = self
+            .sources
+            .iter()
+            .map(|(key, program)| (*key, program))
+            .collect::<Vec<_>>();
         consumer.check_with_imports(source, &dependencies)
     }
 }
@@ -153,7 +157,8 @@ fn a_non_pub_import_is_refused_from_source_and_from_the_published_namespace() ->
 #[test]
 fn a_name_a_namespace_imports_without_pub_is_refused_with_a_hint_to_re_export_it() -> Result<(), String> {
     const FILE: &str = "pub model File:\n    pub name: str\n";
-    let importer = program("from pkg.store import File\n\npub def file_name(file: File) -> str:\n    return file.name\n")?;
+    let importer =
+        program("from pkg.store import File\n\npub def file_name(file: File) -> str:\n    return file.name\n")?;
     let namespace = |prelude: &'static str| {
         [
             Module {
