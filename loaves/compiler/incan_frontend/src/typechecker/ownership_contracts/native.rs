@@ -144,11 +144,63 @@ impl crate::typechecker::TypeChecker {
         })
     }
 
+    /// RFC 164 with slice 09B for an Incan callee: an ordinary call whose result is the native reference borrows from
+    /// the input Rust's lifetime elision ties it to, the receiver or else the only argument slot holding a borrow. A
+    /// borrow-only signature's borrowed result names that input with `from`, checked at its declaration.
+    fn ordinary_result_dependencies(&self, span: Span) -> Result<Option<NativeResultDependencies>, String> {
+        let Some(call) = self
+            .type_info
+            .protocols
+            .explicit_input_calls
+            .get(&span)
+            .filter(|call| call.kind == InputCallKind::Ordinary)
+        else {
+            return Ok(None);
+        };
+        if !matches!(
+            self.type_info.expr_type(span),
+            Some(ResolvedType::Ref(_) | ResolvedType::RefMut(_))
+        ) {
+            return Ok(None);
+        }
+        let sources = if call.receiver.is_some() {
+            vec![SourceSlot::Receiver]
+        } else {
+            let borrowed: Vec<usize> = call
+                .parameters
+                .iter()
+                .enumerate()
+                .filter(|(_, parameter)| holds_reference(&parameter.ty))
+                .map(|(slot, _)| slot)
+                .collect();
+            match borrowed.as_slice() {
+                [slot] => vec![SourceSlot::Parameter(*slot)],
+                _ => {
+                    return Err(format!(
+                        "`{}` returns a borrow that Rust's elision ties to no single input",
+                        call.callee.declaration_name
+                    ));
+                }
+            }
+        };
+        Ok(Some(NativeResultDependencies {
+            call: call.callee.declaration_name.clone(),
+            sources,
+            carried: None,
+        }))
+    }
+
+    /// Whether a call is an ordinary call whose result is a borrow of one of its inputs.
+    pub(super) fn ordinary_borrowed_result(&self, span: Span) -> bool {
+        self.ordinary_result_dependencies(span)
+            .is_ok_and(|dependencies| dependencies.is_some())
+    }
+
     /// Select every caller-owned input whose Rust loan identity occurs in this native call's result. Missing facts
     /// retain the established refusal, while an exact empty result set represents a static lifetime.
     pub(super) fn native_result_dependencies(&self, span: Span) -> Result<Option<NativeResultDependencies>, String> {
         let Some(call) = self.type_info.rust.checked_calls.get(&span) else {
-            return Ok(None);
+            return self.ordinary_result_dependencies(span);
         };
         if !self.type_holds_native_signature_loan(&call.return_type) {
             return Ok(None);
@@ -244,4 +296,15 @@ fn native_result_payload(
         };
     }
     Ok(None)
+}
+
+/// Whether a type holds a native reference at any depth: one input lifetime for Rust's elision.
+fn holds_reference(ty: &ResolvedType) -> bool {
+    match ty {
+        ResolvedType::Ref(_) | ResolvedType::RefMut(_) => true,
+        ResolvedType::Generic(_, arguments) | ResolvedType::Tuple(arguments) => arguments.iter().any(holds_reference),
+        ResolvedType::FrozenList(inner) | ResolvedType::FrozenSet(inner) => holds_reference(inner),
+        ResolvedType::FrozenDict(key, value) => holds_reference(key) || holds_reference(value),
+        _ => false,
+    }
 }
