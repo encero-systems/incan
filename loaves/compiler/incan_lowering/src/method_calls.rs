@@ -27,6 +27,7 @@ use crate::iterator_methods::standard_protocol as standard_iterator_protocol;
 use crate::layout_types::native_source_type;
 use crate::library_methods::{lower_library_method, lower_standard_slot};
 use crate::list_methods::materialized_receiver;
+use crate::model_values::is_json_serialize_method;
 use crate::models::model_place;
 use crate::pending::untranslated;
 use crate::reflection::lower_reflection;
@@ -143,7 +144,10 @@ fn special_method_route(
         if Some(&selected) != target.canonical.as_ref()
             && let Some(index) = compiled_callable_index(module, &selected)
         {
-            return Ok(MethodRoute::Library(index, implementation_target(target, selected)));
+            return Ok(MethodRoute::Library(
+                index,
+                Box::new(implementation_target(target, selected)),
+            ));
         }
         implementation = Some(selected);
     }
@@ -170,7 +174,10 @@ fn special_method_route(
         && let Some(identity) = implementation
         && let Some(index) = compiled_callable_index(module, &identity)
     {
-        return Ok(MethodRoute::Library(index, implementation_target(target, identity)));
+        return Ok(MethodRoute::Library(
+            index,
+            Box::new(implementation_target(target, identity)),
+        ));
     }
     Ok(MethodRoute::Retained)
 }
@@ -209,7 +216,10 @@ fn element_route(module: &BodyIrModule, target: &MethodTarget, owner: PlanType) 
     if sdk_model {
         let selected = owner_method_identity(module, target, &owner)?;
         if let Some(index) = compiled_callable_index(module, &selected) {
-            return Ok(MethodRoute::Library(index, implementation_target(target, selected)));
+            return Ok(MethodRoute::Library(
+                index,
+                Box::new(implementation_target(target, selected)),
+            ));
         }
     }
     Ok(MethodRoute::Element(owner))
@@ -318,7 +328,7 @@ fn implementation_target(target: &MethodTarget, canonical: CanonicalSymbolId) ->
 /// How a method call lowers once its special routes are excluded.
 enum MethodRoute {
     Lowered,
-    Library(usize, MethodTarget),
+    Library(usize, Box<MethodTarget>),
     SelectedLibrary,
     Reflection,
     EnumMessage(usize),
@@ -850,26 +860,6 @@ fn lower_builtin_origin_method(
         return lower_result_combinator(module, builder, combinator, arguments, destination, span);
     }
     lower_builtin_method(builder, target, arguments, destination, span)
-}
-
-/// Recognize the JSON protocol default in source and compiled SDK identities, never a same-name override.
-pub fn is_json_serialize_method(target: &MethodTarget) -> bool {
-    let Some(identity) = &target.canonical else {
-        return false;
-    };
-    if identity.kind != SemanticSourceTargetKind::Method || identity.declaration_name != "to_json" {
-        return false;
-    }
-    match &identity.origin {
-        SymbolOrigin::Module(path) => path.len() == 3 && path[0] == "std" && path[1] == "serde" && path[2] == "json",
-        SymbolOrigin::Package { library, module_path } => {
-            library == "incan_stdlib_data"
-                && module_path.len() == 2
-                && module_path[0] == "serde"
-                && module_path[1] == "json"
-        }
-        _ => false,
-    }
 }
 
 /// Whether a retained implementation record fills the selected slot for the receiver's concrete nominal.

@@ -34,7 +34,7 @@ use crate::statements::is_nominal_type;
 use crate::string_conversion_contracts::conversion_trait;
 use crate::traits::{close_trait_dispatch_arguments, instantiate_type, is_lazy_method_body};
 use crate::type_parameters::{indexed_static_type_arguments, instantiate, request_instance, substitute};
-use crate::value_enum_methods::lower_value_enum_from_value;
+use crate::value_enum_methods::{lower_value_enum_from_value, lower_value_enum_ordinal_encoding};
 use crate::value_enums::value_enum_from_value_owner;
 
 /// Fill an environment-owning payload selected by the retained union declaration, preserving captured values.
@@ -114,6 +114,9 @@ pub fn lower_named_target(
     }
     if is_json_deserialize_method(target) {
         return lower_model_from_json(module, builder, target, arguments, destination, span);
+    }
+    if lower_value_enum_ordinal_encoding(module, builder, target, arguments, destination, span)? {
+        return Ok(());
     }
     if let Some(owner) = value_enum_from_value_owner(module, target)? {
         return lower_value_enum_from_value(builder, owner, arguments, destination, span);

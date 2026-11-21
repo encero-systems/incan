@@ -173,10 +173,8 @@ fn hold_closure(
                     );
                 }
             }
-            PlanType::ClosureOnce(held) => {
-                if !consumes_environment || held != signature {
-                    return Err("unsupported Body IR binding changing callable consumption or signature".into());
-                }
+            PlanType::ClosureOnce(held) if !consumes_environment || held != signature => {
+                return Err("unsupported Body IR binding changing callable consumption or signature".into());
             }
             _ => {}
         }

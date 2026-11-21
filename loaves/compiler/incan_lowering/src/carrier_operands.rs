@@ -32,7 +32,7 @@ use crate::lists::is_list;
 use crate::matches::{bind_enum_payload, bind_structural_pattern, enum_payload_read};
 use crate::numerics::numeric_carrier;
 use crate::operators::enum_comparison_tag;
-use crate::option_tests::option_isinstance;
+use crate::option_tests::{is_option_carrier, option_isinstance};
 use crate::options::{assign_carrier, variant_condition};
 use crate::patterns::{carrier_pattern_slot, carrier_payload_types, pattern_binds};
 use crate::result_carriers::{frozen_operand, typed_carrier_operand};
@@ -624,16 +624,6 @@ pub fn lower_union_isinstance(
     // The same discriminant read as `option_tests::enum_tag`.
     let tag = enum_comparison_tag(builder, &source, span);
     Ok(test_union_tag(builder, &tag, &slots, span))
-}
-
-/// Whether a retained enum owner is the intrinsic Option carrier rather than a source enum or a union; the predicate
-/// `option_tests::is_option_carrier` names.
-fn is_option_carrier(builder: &Builder, owner: i64) -> bool {
-    let index = carrier_position(owner);
-    usize::try_from(index)
-        .ok()
-        .and_then(|slot| builder.intrinsics.get(slot))
-        .is_some_and(|declaration| declaration.carrier == Carrier::Option)
 }
 
 /// Use retained place storage for carrier views, preserving full union indexes after a checker-proven narrowing.
