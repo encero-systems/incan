@@ -1,5 +1,7 @@
 """Verify release argument, baseline, receipt, and byte-comparison contracts without native production."""
 
+from rust::std::os::unix::process import CommandExt
+from rust::std::process import Child, Command, Stdio
 from rust::std::thread import sleep
 from rust::std::time import Duration
 from std.fs import Path
@@ -22,6 +24,9 @@ from release_support import (
     TOOLCHAIN_DIRECTORY,
     BaselineReport,
     Counts,
+    ProcessIdentity,
+    ReleaseMember,
+    ReleaseTermination,
     ReleaseTrace,
     Step,
     append_bytes,
@@ -29,12 +34,14 @@ from release_support import (
     check_baseline,
     cancel_background_step,
     digest,
+    parse_process_identities,
     parse_release_options,
     parse_verification_options,
     reference_cache_identity,
     reference_cache_root,
     reference_census_jobs,
     reference_worker_arguments,
+    process_identities,
     release_process_census,
     release_process_tree,
     reclaim_paths,
@@ -47,6 +54,7 @@ from release_support import (
     same_bytes,
     seed_toolchain_directory,
     shared_relocated_sysroot,
+    signal_release_termination,
     start_background_step,
     store_reference_log,
     tree_bytes,
@@ -136,10 +144,125 @@ def test_release_process_tree_follows_complete_parent_chains() -> Result[None, s
 
 
 def test_failed_process_census_keeps_root_and_group_custody() -> Result[None, str]:
-    """A failed descendant probe still returns the root identity for mandatory process and group termination."""
-    termination = release_process_census(Err("probe refused"), 41)
-    assert termination.members == [41]
+    """A failed descendant probe still keeps the unreaped root for mandatory process and group termination."""
+    termination = release_process_census(Err("probe refused"), Ok({}), 41)
+    assert termination.root == 41
+    assert len(termination.members) == 0
     assert termination.census_error == Some("probe refused")
+    return Ok(None)
+
+
+def test_process_identities_name_each_pid_with_its_group_and_start_time() -> Result[None, str]:
+    """The kernel's start time tells a process apart from a later one that reuses its pid."""
+    identities = parse_process_identities("  412   400 Sat Nov 21 06:37:19 2026\n    7     7 Fri Nov 20 23:01:02 2026\nmalformed\n")
+    assert len(identities) == 2
+    assert identities[412].group == 400 and identities[412].started == "Sat Nov 21 06:37:19 2026"
+    assert identities[7].group == 7 and identities[7].started == "Fri Nov 20 23:01:02 2026"
+    return Ok(None)
+
+
+def test_release_census_records_each_member_with_its_start_time() -> Result[None, str]:
+    """A descendant that exited before its identity was read is not recorded, so its pid can never be signaled later."""
+    rows = [
+        ProcessResource(pid=30, parent=20, footprint=0, lifetime_peak=0, resident=0, name="grandchild"),
+        ProcessResource(pid=40, parent=1, footprint=0, lifetime_peak=0, resident=0, name="foreign"),
+        ProcessResource(pid=10, parent=1, footprint=0, lifetime_peak=0, resident=0, name="root"),
+        ProcessResource(pid=20, parent=10, footprint=0, lifetime_peak=0, resident=0, name="child"),
+    ]
+    identities = {
+        10: ProcessIdentity(group=10, started="root start"),
+        20: ProcessIdentity(group=10, started="child start"),
+        40: ProcessIdentity(group=40, started="foreign start"),
+    }
+    termination = release_process_census(Ok(rows), Ok(identities), 10)
+    assert termination.root == 10 and termination.census_error == None
+    assert termination.members == [
+        ReleaseMember(pid=10, started="root start"),
+        ReleaseMember(pid=20, started="child start"),
+    ]
+    return Ok(None)
+
+
+def sleeper(own_group: bool) -> Result[Child, str]:
+    """Start one long sleep this test owns; a group leader also starts a sleeping child in its group."""
+    if not own_group:
+        mut single = Command.new("/bin/sleep")
+        single.arg("60").stdin(Stdio.null())
+        return single.spawn().map_err((error) => f"cannot start a sleeper: {error}")
+    mut command = Command.new("/bin/sh")
+    command.arg("-c").arg("sleep 60 & wait").stdin(Stdio.null()).process_group(0)
+    return command.spawn().map_err((error) => f"cannot start a sleeper: {error}")
+
+
+def started_at(pid: int) -> Result[str, str]:
+    """The kernel's start time of one live process."""
+    identities = process_identities()?
+    if pid not in identities:
+        return Err(f"process {pid} is not live")
+    return Ok(identities[pid].started)
+
+
+def group_members(group: int) -> Result[list[int], str]:
+    """The live processes of one process group, its leader included."""
+    identities = process_identities()?
+    return sorted([pid for pid in identities.keys() if identities[pid].group == group])
+
+
+def release_root() -> Result[Child, str]:
+    """A release root: an unreaped child leading its own group, whose pid stays the release's until it is reaped."""
+    return sleeper(true)
+
+
+def test_a_member_whose_pid_now_names_another_process_is_not_signaled() -> Result[None, str]:
+    """A recorded member that exited, its pid since reused by an unrelated process, is left alone at cleanup."""
+    mut root = release_root()?
+    mut unrelated = sleeper(false)?
+    stale = ReleaseMember(pid=int(unrelated.id()), started="Thu Jan  1 00:00:00 1970")
+    signal_release_termination(ReleaseTermination(root=int(root.id()), members=[stale], census_error=None))
+    _ = root.wait()
+    survived = unrelated.try_wait().map_err((error) => str(error))?.is_none()
+    _ = unrelated.kill()
+    _ = unrelated.wait()
+    assert survived, "cleanup signaled a process whose start time differs from the recorded member"
+    return Ok(None)
+
+
+def test_a_member_with_its_recorded_identity_is_signaled_and_stopped() -> Result[None, str]:
+    """A recorded member whose pid still names the same process is stopped, however it was reparented."""
+    mut root = release_root()?
+    mut member = sleeper(false)?
+    pid = int(member.id())
+    recorded = ReleaseMember(pid=pid, started=started_at(pid)?)
+    signal_release_termination(ReleaseTermination(root=int(root.id()), members=[recorded], census_error=None))
+    _ = root.wait()
+    stopped = member.wait().map_err((error) => str(error))?
+    assert not stopped.success(), "the recorded member kept running after cleanup"
+    return Ok(None)
+
+
+def test_a_group_is_signaled_only_through_its_confirmed_leader() -> Result[None, str]:
+    """A group whose recorded leader no longer matches stays untouched; a matching leader's whole group stops."""
+    mut root = release_root()?
+    mut stale_leader = sleeper(true)?
+    mut leader = sleeper(true)?
+    sleep(Duration.from_millis(100))
+    stale_group = int(stale_leader.id())
+    group = int(leader.id())
+    assert len(group_members(stale_group)?) >= 2 and len(group_members(group)?) >= 2, "sleeper groups did not form"
+    stale = ReleaseMember(pid=stale_group, started="Thu Jan  1 00:00:00 1970")
+    matching = ReleaseMember(pid=group, started=started_at(group)?)
+    signal_release_termination(ReleaseTermination(root=int(root.id()), members=[stale, matching], census_error=None))
+    _ = root.wait()
+    _ = leader.wait()
+    sleep(Duration.from_millis(100))
+    stale_left = len(group_members(stale_group)?)
+    group_left = len(group_members(group)?)
+    _ = stale_leader.kill()
+    _ = stale_leader.wait()
+    for pid in group_members(stale_group)?:
+        _ = Command.new("/bin/kill").arg("-KILL").arg(str(pid)).status()
+    assert stale_left >= 2, "cleanup signaled a group whose recorded leader no longer matches"
+    assert group_left == 0, f"a matching leader's group kept {group_left} processes"
     return Ok(None)
 
 
