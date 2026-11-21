@@ -170,19 +170,54 @@ pub def prepare_evaluation(
     )
 
 
+pub model EditCutoff:
+    """
+    The selected evaluations whose witnesses an edit can have made stale, named once from the prior graph's reverse
+    edges: every evaluation that reads a record the edit changed, and every evaluation that reads such an
+    evaluation's output, in the profiles the edit is read in. Every other evaluation is valid by the snapshot it is
+    selected from, so its witnesses are not read back through the store. The default cutoff is inactive and validates
+    every selected evaluation.
+    """
+
+    pub active: bool = false
+    pub stale: set[str] = set()
+
+    pub def revalidates(self, value_key: str) -> bool:
+        """Whether the evaluation of this output must have its witnesses read back before it is reused."""
+        return not self.active or value_key in self.stale
+
+
+pub def edit_cutoff(selected: Snapshot, changed: list[RecordKey], profiles: list[str]) -> Result[EditCutoff, str]:
+    """Name every evaluation of `profiles` that reads one of the `changed` records, directly or through other readers."""
+    mut cutoff = EditCutoff(active=true)
+    mut frontier = changed
+    while len(frontier) > 0:
+        mut readers: list[RecordKey] = []
+        for profile in profiles:
+            for reader in readers_of(selected, frontier, profile)?:
+                encoded = encode_record_key(reader)?
+                if encoded not in cutoff.stale:
+                    cutoff.stale.add(encoded)
+                    readers.append(reader)
+        frontier = readers
+    return Ok(cutoff)
+
+
 pub def reusable_evaluation(
     selected: Snapshot,
     output: RecordKey,
     profile: str,
+    cutoff: EditCutoff = EditCutoff(),
 ) -> Result[Option[ReusableEvaluation], str]:
     """
     Read one selected evaluation and admit its value only while every recorded dependency still witnesses the input.
+    Under an active `cutoff`, only an evaluation the edit can have made stale reads its witnesses back.
 
     Absence is an ordinary miss. Malformed or incomplete graph state is damage and fails closed rather than silently
     recomputing through a second authority.
     """
     mut selected_witnesses: Dict[str, tuple[RecordRequest, str]] = {}
-    return select_evaluation(selected, output, profile, selected_witnesses)
+    return select_evaluation(selected, output, profile, selected_witnesses, cutoff=cutoff)
 
 
 pub def evaluation_authority(selected: Snapshot, output: RecordKey, profile: str) -> Result[Option[tuple[Evaluation, ReadReceipt]], str]:
@@ -215,8 +250,12 @@ def select_evaluation(
     profile: str,
     mut selected_witnesses: Dict[str, tuple[RecordRequest, str]],
     defer_payload: bool = false,
+    cutoff: EditCutoff = EditCutoff(),
 ) -> Result[Option[ReusableEvaluation], str]:
-    """Validate an output and share only successful selections of the same pinned family read."""
+    """
+    Validate an output, unless the edit's `cutoff` leaves it valid by the snapshot, and share only successful
+    selections of the same pinned family read.
+    """
     evaluation, receipt = match evaluation_authority(selected, output, profile)?:
         Some(authority) => authority
         None => return Ok(None)
@@ -234,7 +273,7 @@ def select_evaluation(
         value = required_value(selected, value_key)?
         if digest(value) != value_digest:
             return Err("selected compiler value differs from its evaluation digest")
-    if not witnesses_validate(selected, receipt, selected_witnesses)?:
+    if cutoff.revalidates(value_key) and not witnesses_validate(selected, receipt, selected_witnesses)?:
         return Ok(None)
     # A checked row is already authenticated by this snapshot and the evaluation digest. Its complete
     # contents have the same digest as the canonical whole-row witness used by the next checker phase.
@@ -256,29 +295,33 @@ pub model OutputSlots:
 
 pub def reusable_family_records(
     selected: Snapshot, family: str, profile: str, slots: Option[OutputSlots] = None, defer_payload: bool = false,
+    cutoff: EditCutoff = EditCutoff(),
 ) -> Result[list[ReusableRecord], str]:
     """
     Select every witnessed value in one family/profile from the graph's engine-owned output index, reading only that
-    family's range of it. The index holds one entry per slot, which names the slot's current record.
+    family's range of it. The index holds one entry per slot, which names the slot's current record. Under an active
+    `cutoff`, only the values the edit can have made stale read their witnesses back.
     """
     mut verified: Dict[str, tuple[RecordRequest, str]] = {}
-    return select_family_records(selected, family, profile, slots, verified, defer_payload)
+    return select_family_records(selected, family, profile, slots, verified, defer_payload, cutoff)
 
 
-pub def reusable_checker_records(selected: Snapshot, profile: str, slots: Option[OutputSlots], executable: bool = true) -> Result[tuple[list[ReusableRecord], list[ReusableRecord], list[ReusableRecord]], str]:
+pub def reusable_checker_records(
+    selected: Snapshot, profile: str, slots: Option[OutputSlots], executable: bool = true, cutoff: EditCutoff = EditCutoff(),
+) -> Result[tuple[list[ReusableRecord], list[ReusableRecord], list[ReusableRecord]], str]:
     """Validate the selected checker families against one pinned snapshot, sharing their exact input reads."""
     mut verified: Dict[str, tuple[RecordRequest, str]] = {}
-    locals = select_family_records(selected, "local", profile, slots, verified)?
-    finals = select_family_records(selected, "final", profile, slots, verified)?
+    locals = select_family_records(selected, "local", profile, slots, verified, false, cutoff)?
+    finals = select_family_records(selected, "final", profile, slots, verified, false, cutoff)?
     mut bodies: list[ReusableRecord] = []
     if executable:
-        bodies = select_family_records(selected, "body-ir", profile, slots, verified)?
+        bodies = select_family_records(selected, "body-ir", profile, slots, verified, false, cutoff)?
     return Ok((locals, finals, bodies))
 
 
 def select_family_records(
     selected: Snapshot, family: str, profile: str, slots: Option[OutputSlots], mut verified: Dict[str, tuple[RecordRequest, str]],
-    defer_payload: bool = false,
+    defer_payload: bool = false, cutoff: EditCutoff = EditCutoff(),
 ) -> Result[list[ReusableRecord], str]:
     """Read one family under the snapshot and profile that own the verified selections."""
     mut excluded: set[str] = set()
@@ -289,7 +332,7 @@ def select_family_records(
         if output in excluded:
             continue
         key = decode_record_key(output)?
-        match select_evaluation(selected, key, profile, verified, defer_payload)?:
+        match select_evaluation(selected, key, profile, verified, defer_payload, cutoff)?:
             Some(reused) =>
                 records.append(ReusableRecord(key=key, value=reused.value, value_digest=reused.value_digest,
                     receipt=reused.receipt, namespace=reused.namespace, location=reused.location))

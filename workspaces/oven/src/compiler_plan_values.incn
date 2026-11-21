@@ -6,7 +6,7 @@ from compiler_source_projection import positioned_source_key
 from compiler_prepared_records import prepared_product_request
 from compiler_body_keys import IDENTITY_PROFILE, body_key
 from compiler_body_values import CoveredBodyOwners, SelectedBodyPage
-from compiler_graph_records import OutputSlots, reusable_evaluation, reusable_family_records, readers_of
+from compiler_graph_records import EditCutoff, OutputSlots, reusable_evaluation, reusable_family_records, readers_of
 from pub::incan_mir_plan import PLAN_MODULE_FAMILY, POSITIONED_MODULE_PAGE, REPOSITION_MODULE_PAGE, PlanModuleValue, decode_plan_module
 from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
@@ -48,6 +48,7 @@ pub def select_plan_inventory_except(
     invalid: list[str],
     admitted_outputs: list[str] = [],
     keyed_readers: Option[list[str]] = None,
+    cutoff: EditCutoff = EditCutoff(),
 ) -> Result[PlanFunctionSelection, str]:
     """
     Materialize only witnessed plan functions whose stable declaration owner was not invalidated by this edit. A
@@ -55,7 +56,7 @@ pub def select_plan_inventory_except(
     """
     mut inventory = PlanFunctionSelection(retained=RetainedPlanInputs(snapshot=selected.digest))
     slots = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, excluded=invalid, excluded_outputs=admitted_outputs, included=keyed_readers)
-    for record in reusable_family_records(selected, "plan-function", LOWERING_PROFILE, Some(slots))?:
+    for record in reusable_family_records(selected, "plan-function", LOWERING_PROFILE, Some(slots), cutoff=cutoff)?:
         # A rechecked reader may probe its old ordinary scalar by the compiler's newly computed full key.
         # A module or entry admission bypasses that lookup and therefore remains unavailable on this path.
         if keyed_readers is not None and not record.key.facet.startswith("body:"):
@@ -152,6 +153,7 @@ pub def select_plan_modules(
     invalid_owners: list[str],
     complete_namespaces: set[str] = set(),
     changed_positions: set[str] = set(),
+    cutoff: EditCutoff = EditCutoff(),
 ) -> Result[PlanModuleSelection, str]:
     """
     Admit whole every module whose plan record still validates in the selected graph and that this request leaves
@@ -165,7 +167,7 @@ pub def select_plan_modules(
         refused.add(owner)
     mut selection = PlanModuleSelection()
     slots = OutputSlots(origin=origin, identity_profile=IDENTITY_PROFILE, excluded=invalid_modules)
-    for record in reusable_family_records(selected, PLAN_MODULE_FAMILY, LOWERING_PROFILE, Some(slots))?:
+    for record in reusable_family_records(selected, PLAN_MODULE_FAMILY, LOWERING_PROFILE, Some(slots), cutoff=cutoff)?:
         value = decode_plan_module(record.value).map_err((error) => f"selected plan-module record refused: {error:?}")?
         mut valid = true
         for function in value.functions:
