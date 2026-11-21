@@ -290,7 +290,7 @@ impl TypeChecker {
             })
             .collect::<Vec<_>>();
         let previous_variables = self.mutation.loop_variables.len();
-        let destructured = !matches!(pattern, Pattern::Binding(_));
+        let destructured = !matches!(pattern, Pattern::Binding(_) | Pattern::MutBinding(_));
         self.mutation
             .loop_variables
             .extend(bindings.iter().map(|(_, span)| (*span, destructured)));
@@ -451,7 +451,7 @@ impl TypeChecker {
         pattern: &Pattern,
     ) -> Vec<(String, ViewSource)> {
         let direct = match pattern {
-            Pattern::Binding(name)
+            Pattern::Binding(name) | Pattern::MutBinding(name)
                 if self
                     .type_info
                     .expr_type(iter.span)
@@ -588,6 +588,7 @@ impl TypeChecker {
             self.view_root_source(&node.node)
                 .unwrap_or_else(|| ViewSource::with_access(ViewAccess::Owned))
         };
+        source.copied_element = through_other_index && matches!(node.node, Expr::Ident(_) | Expr::SelfExpr);
         if through_dict_value && matches!(source.access, ViewAccess::Writable) {
             source.access = ViewAccess::ReadOnly(ReadOnlyPlace::DictValue);
         }
@@ -602,6 +603,9 @@ impl TypeChecker {
         pattern: &Pattern,
         source: Option<ViewSource>,
     ) -> usize {
+        if let Some(source) = &source {
+            self.admit_mut_pattern_bindings(pattern, source);
+        }
         let mut names = Vec::new();
         if source.is_some() {
             collect_pattern_bindings(pattern, &mut names);
@@ -625,6 +629,50 @@ impl TypeChecker {
             }));
         }
         previous
+    }
+
+    /// Admit each binding `pattern` writes `mut name` against the place its subject is (RFC 129 writable alias rule 8).
+    ///
+    /// A `mut` binding of a place borrows its payload writably, so the place must permit mutation: a read-only place
+    /// refuses the binding itself, whether or not the arm goes on to change it, and is never copied or moved to make
+    /// the binding legal. A writable place is matched in place, so the binding names the payload where it is stored. A
+    /// subject that is no place gives the binding a payload of its own.
+    fn admit_mut_pattern_bindings(&mut self, pattern: &Pattern, source: &ViewSource) {
+        let mut names = Vec::new();
+        collect_mut_pattern_bindings(pattern, &mut names);
+        if names.is_empty() {
+            return;
+        }
+        if source.copied_element {
+            for name in names {
+                let Some(span) = self.lookup_symbol(&name).map(|symbol| symbol.span) else {
+                    continue;
+                };
+                self.errors
+                    .push(errors::writable_binding_of_copied_element(&name, span));
+            }
+            return;
+        }
+        match &source.access {
+            ViewAccess::Owned => {}
+            ViewAccess::Writable => {
+                for scrutinee in &source.scrutinees {
+                    self.type_info.record_match_scrutinee_changed_in_place(*scrutinee);
+                }
+            }
+            ViewAccess::ReadOnly(place) => {
+                for name in names {
+                    let Some(span) = self.lookup_symbol(&name).map(|symbol| symbol.span) else {
+                        continue;
+                    };
+                    self.errors.push(errors::writable_binding_of_read_only_place(
+                        &name,
+                        place.as_scrutinee(),
+                        span,
+                    ));
+                }
+            }
+        }
     }
 
     /// Leave the views entered with [`Self::enter_pattern_views`] or [`Self::enter_for_loop_body`].

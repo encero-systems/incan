@@ -1,0 +1,61 @@
+# behavior: a binding pattern written `mut name` is writable: it owns the payload of an owned subject such as a call result, and borrows the payload of a place writably, so a change, a replacement and a scalar compound assignment through it reach the place; nothing is copied to make the binding legal (RFC 129 writable alias rule 8, #1846).
+# expect-stdout:
+#   [1, 2]
+#   [9]
+#   Some([1, 2])
+#   Some([7, 8])
+#   Some(2)
+#   Some([7, 8, 3])
+#   ["left!", "right"]
+#   (["a", "b"], 1)
+
+model Holder:
+    count: Option[int]
+    items: Option[list[int]]
+
+
+def make() -> Result[list[int], str]:
+    return Ok([1])
+
+
+def pair() -> tuple[list[str], int]:
+    return (["a"], 1)
+
+
+def main() -> None:
+    # An owned subject: the binding owns the payload, and assignment replaces the binding's own value.
+    match make():
+        Ok(mut items) =>
+            items.append(2)
+            println(items)
+            items = [9]
+            println(items)
+        Err(message) => println(message)
+
+    # A place: the binding borrows the payload where it is stored.
+    mut holder = Holder(count=Some(1), items=Some([1]))
+    match holder.items:
+        Some(mut found) => found.append(2)
+        None => pass
+    println(holder.items)
+    match holder.items:
+        Some(mut found) => found = [7, 8]
+        None => pass
+    println(holder.items)
+    match holder.count:
+        Some(mut count) => count += 1
+        None => pass
+    println(holder.count)
+    if let Some(mut found) = holder.items:
+        found.append(3)
+    println(holder.items)
+
+    # Tuple patterns take `mut` per binding; a plain binding beside it stays read-only.
+    mut names = (["left"], ["right"])
+    match names:
+        (mut first, second) => first[0] = first[0] + "!"
+    println([names.0[0], names.1[0]])
+    match pair():
+        (mut letters, number) =>
+            letters.append("b")
+            println((letters, number))

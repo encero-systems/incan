@@ -144,6 +144,21 @@ impl<'a> Parser<'a> {
             return self.parenthesized_pattern(start);
         }
 
+        // Writable binding: `mut name` (RFC 129). Only a plain name follows `mut`; a constructor or qualified path
+        // is not a binding.
+        if self.check_keyword(KeywordId::Mut) {
+            self.advance();
+            let name = self.identifier()?;
+            if name == "_" {
+                return Err(errors::expected_pattern(
+                    "`mut _`; a writable binding needs a name",
+                    Span::new(start, self.tokens[self.pos - 1].span.end),
+                ));
+            }
+            let end = self.tokens[self.pos - 1].span.end;
+            return Ok(Spanned::new(Pattern::MutBinding(name), Span::new(start, end)));
+        }
+
         // Identifier (binding) or constructor pattern
         if let TokenKind::Ident(name) = &self.peek().kind {
             let mut name = Spanned::new(name.clone(), self.current_span());

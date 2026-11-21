@@ -1,0 +1,9 @@
+# behavior: a `mut` pattern binding never binds a copy: a subject reached through an index that is not a list's, such as a tuple element spelled `pair[0]`, is read out as a copy, so `Some(mut items)` on it is refused at the binding and names the shape (RFC 129 writable alias rule 8, #1846).
+# expect-diagnostic: INCAN-T0126
+
+def main() -> None:
+    mut pair = (Some([1]), Some([2]))
+    match pair[0]:
+        Some(mut items) => items.append(3)
+        None => pass
+    println(pair)

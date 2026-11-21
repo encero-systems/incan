@@ -67,19 +67,22 @@ impl TypeChecker {
         self.record_expr_type(pattern.span, expected_ty.clone());
         match &pattern.node {
             Pattern::Wildcard => {}
-            Pattern::Binding(name) => {
+            Pattern::Binding(name) | Pattern::MutBinding(name) => {
                 self.validate_protected_builtin_binding(name, pattern.span);
                 self.symbols.define(Symbol {
                     name: name.clone(),
                     kind: SymbolKind::Variable(VariableInfo {
                         ty: expected_ty.clone(),
-                        is_mutable: false,
+                        is_mutable: matches!(pattern.node, Pattern::MutBinding(_)),
                         is_used: false,
                     }),
                     span: pattern.span,
                     scope: 0,
                 });
                 self.record_write_target_identity(pattern.span, name);
+                if matches!(pattern.node, Pattern::MutBinding(_)) {
+                    self.mutable_bindings.insert(name.clone());
+                }
             }
             Pattern::Group(inner) => {
                 self.check_pattern(inner, expected_ty);
@@ -506,6 +509,13 @@ impl TypeChecker {
                     ));
                     agreement_ok = false;
                 }
+                if expected.is_mutable != found.is_mutable {
+                    self.errors
+                        .push(errors::pattern_alternation_binding_mutability_mismatch(
+                            name, found.span,
+                        ));
+                    agreement_ok = false;
+                }
             }
         }
 
@@ -521,7 +531,7 @@ impl TypeChecker {
                 name: name.clone(),
                 kind: SymbolKind::Variable(VariableInfo {
                     ty: binding.ty.clone(),
-                    is_mutable: false,
+                    is_mutable: binding.is_mutable,
                     is_used: false,
                 }),
                 span: binding.span,

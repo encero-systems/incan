@@ -1,0 +1,18 @@
+# behavior: a payload bound `mut name` from a call result is the arm's own writable value, so a Rust `&mut self` method is called on it directly, with no second `mut` local to take it over (RFC 129 writable alias rule 8, #1846).
+# expect-stdout:
+#   wrote 5
+
+from rust::std::fs import OpenOptions
+from rust::std::io import Write
+from rust::std::string import String as RustString
+
+
+def main() -> None:
+    mut options = OpenOptions.new()
+    options.write(true)
+    match options.open("/dev/null"):
+        Ok(mut sink) =>
+            match sink.write(RustString.from("hello").into_bytes()):
+                Ok(count) => println(f"wrote {count}")
+                Err(_) => println("write failed")
+        Err(_) => println("open failed")
