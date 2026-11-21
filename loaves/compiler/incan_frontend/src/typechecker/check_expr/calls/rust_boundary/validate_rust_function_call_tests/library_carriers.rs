@@ -19,7 +19,7 @@ fn frozen_carriers_named_by_rust_path_stay_native() {
 }
 
 /// A compiled library's source-named layout (`<crate>::__incan_layout_<carrier>::<Name>`) is the source declaration
-/// its carrier names, alone and nested in a collection; an unknown carrier keeps its native path.
+/// its carrier names, alone, borrowed and nested in a collection; an unknown carrier keeps its native path.
 #[test]
 fn compiled_library_layout_paths_keep_their_source_declaration() {
     let key = "__incan_carrier_model_3_646570_5_56616c7565";
@@ -35,6 +35,9 @@ fn compiled_library_layout_paths_keep_their_source_declaration() {
         checker.resolved_type_from_rust_display(&format!("alloc::vec::Vec<{path}>")),
         ResolvedType::Generic("List".to_string(), vec![named])
     );
+    let borrowed = ResolvedType::Ref(Box::new(ResolvedType::Named(key.to_owned())));
+    assert_eq!(checker.native_rust_signature_type(&format!("&{path}"), ""), borrowed);
+    assert_eq!(checker.resolved_type_from_rust_display(&format!("&{path}")), borrowed);
     let unknown = "dep_lib::__incan_layout___incan_carrier_model_3_646570_1_59::Y";
     assert_eq!(
         checker.resolved_type_from_rust_display(unknown),
