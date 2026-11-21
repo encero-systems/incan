@@ -1,33 +1,31 @@
 //! Keep the by-value input of a parameter its body consumes on any path. A caller that passes such a value at its
 //! last use moves it into the frame, so lending it would only turn that caller's free transfer into a copy inside the
 //! callee, on the paths that consume it. Only a parameter the body never consumes is shared: a caller then copies
-//! nothing for it, even when it keeps its value. This rule decides only callables nothing outside the module can name;
-//! a published callable keeps the base's read-only rule (`published_reads`).
+//! nothing for it, even when it keeps its value. A published callable follows the same rule, and also keeps each input
+//! the base's read-only rule lends (`published_reads`), so no published input that was shared before becomes owned.
 
-use crate::body_ir::ContextModules;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::{
-    Candidate, FieldTypes, ReadContext, Signatures, bir, closure_reads, collect_signatures, pattern_is_read_only,
-    published_body, walk, walk_neighbors,
+    Candidate, FieldTypes, ReadContext, Signatures, bir, closure_reads, pattern_is_read_only, walk, walk_neighbors,
 };
 
 /// Refuse shared input to every candidate its body consumes on any path, to a decreasing fixed point. A callee that
 /// loses shared input turns its callers' forwarding moves into consumptions, so those callers are proved again.
 pub(super) fn refuse_consumed_parameters(
     modules: &[bir::BodyIrModule],
-    context: ContextModules<'_>,
+    signatures: &Signatures,
     field_types: &FieldTypes,
+    kept: &HashSet<Candidate>,
     candidates: &mut HashSet<Candidate>,
 ) {
-    let signatures = collect_signatures(modules, context, candidates);
     let mut dependents: HashMap<Candidate, HashSet<Candidate>> = HashMap::new();
     let mut refused = VecDeque::new();
     for &candidate in candidates.iter() {
-        if consumed(modules, candidate, &signatures, field_types, candidates) {
+        if consumed(modules, candidate, signatures, field_types, kept, candidates) {
             refused.push_back(candidate);
         }
-        for dependency in forwarded_inputs(modules, candidate, &signatures, field_types, candidates) {
+        for dependency in forwarded_inputs(modules, candidate, signatures, field_types, candidates) {
             dependents.entry(dependency).or_default().insert(candidate);
         }
     }
@@ -41,7 +39,7 @@ pub(super) fn refuse_consumed_parameters(
         for &candidate in affected {
             if candidates.contains(&candidate)
                 && !refused.contains(&candidate)
-                && consumed(modules, candidate, &signatures, field_types, candidates)
+                && consumed(modules, candidate, signatures, field_types, kept, candidates)
             {
                 refused.push_back(candidate);
             }
@@ -49,18 +47,18 @@ pub(super) fn refuse_consumed_parameters(
     }
 }
 
-/// Resolve one candidate and prove whether its body consumes it under the current hypothesis. Published inputs keep
-/// the base rule's decision.
+/// Resolve one candidate and prove whether its body consumes it under the current hypothesis. An input in `kept`, which
+/// the base's read-only rule lends to a published callable, is never refused.
 fn consumed(
     modules: &[bir::BodyIrModule],
     candidate: Candidate,
     signatures: &Signatures,
     field_types: &FieldTypes,
+    kept: &HashSet<Candidate>,
     candidates: &HashSet<Candidate>,
 ) -> bool {
     let (module_index, body_index, parameter_index) = candidate;
-    // A published input was settled by the base's read-only rule and is never refused here.
-    if published_body(modules, module_index, body_index) {
+    if kept.contains(&candidate) {
         return false;
     }
     let Some(body) = modules
