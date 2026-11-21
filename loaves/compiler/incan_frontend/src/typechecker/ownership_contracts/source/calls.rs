@@ -20,7 +20,10 @@ use incan_lang::lang::traits::{self as core_traits, TraitId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_semantics_core::{IncanInputAccess, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 
+mod two_phase;
 mod views;
+
+use two_phase::{Reservation, ReservedSlot};
 
 impl Builder<'_> {
     /// Apply a selected free-function contract without inspecting its body. Borrowed arguments remain live until
@@ -533,6 +536,7 @@ impl Builder<'_> {
             paired.sort_by_key(|(_, (_, slot))| *slot);
         }
         let mut loans = Vec::new();
+        let mut reservations: Vec<Reservation> = Vec::new();
         let mut invocation = Invocation {
             callee: call.callee.clone(),
             result_requirement,
@@ -662,8 +666,19 @@ impl Builder<'_> {
                         source
                     }
                 };
+                // A `mut self` receiver is Rust's two-phase autoref: outside the whole-body proof it is reserved, as a
+                // shared loan, until the call.
                 let mutable = call.receiver == Some(Receiver::Mutable);
-                let loan = self.call_loan(source, mutable, mutable, receiver.span);
+                let reserved = mutable && self.checker.native_borrow_pass;
+                let loan = self.call_loan(source, mutable && !reserved, mutable && !reserved, receiver.span);
+                if reserved {
+                    reservations.push(Reservation {
+                        slot: ReservedSlot::Receiver,
+                        loan,
+                        writable: true,
+                        span: receiver.span,
+                    });
+                }
                 let source_node = self.graph.nodes.len();
                 incoming = self.event(incoming, Event::Borrow(loan), receiver.span);
                 let end_node = self.graph.nodes.len();
@@ -720,12 +735,15 @@ impl Builder<'_> {
                     call.kind == super::super::InputCallKind::Ordinary,
                 )?
             };
+            // An exclusive reborrow of a `&mut` binding is reserved, as a shared loan, until the call.
+            let reserved =
+                mode == Some(OwnershipMode::BorrowedMut) && self.reborrowed_exclusive_argument(expression)?;
             let start_node = self.graph.nodes.len();
             incoming = self.event(incoming, Event::Nothing, expression.span);
             let (outgoing, loan) = self.call_argument(
                 expression,
                 &call.parameters[slot],
-                mode,
+                if reserved { Some(OwnershipMode::Borrowed) } else { mode },
                 call.kind == super::super::InputCallKind::Ordinary,
                 closed_enum_parameter_observer,
                 selected_result_map_err,
@@ -755,6 +773,14 @@ impl Builder<'_> {
             incoming = self.event(incoming, Event::Nothing, expression.span);
             if let Some(loan) = loan {
                 loans.push(loan);
+                if reserved {
+                    reservations.push(Reservation {
+                        slot: ReservedSlot::Argument(invocation.arguments.len()),
+                        loan,
+                        writable: call.parameters[slot].is_mut,
+                        span: expression.span,
+                    });
+                }
             }
             let classified_move = self
                 .graph
@@ -788,6 +814,7 @@ impl Builder<'_> {
                 },
             });
         }
+        incoming = self.activate_reservations(&reservations, &mut invocation, &mut loans, incoming)?;
         invocation.completion_node = self.graph.nodes.len();
         incoming = self.event(incoming, Event::Nothing, span);
         // ---- Invocation retains every loan, independently of callee body use ----
