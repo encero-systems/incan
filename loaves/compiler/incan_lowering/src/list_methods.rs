@@ -39,9 +39,8 @@ use crate::lists::{list_element, list_shape, require_list_shape};
 use crate::model_lists::prefix_place;
 use crate::operand_borrows::{borrow_slice_operand, list_slice_view, lower_text_helper};
 use crate::options::none_operand;
-use crate::pending::untranslated;
 use crate::sequence_builtins::argument_type;
-use crate::static_storage::read_static;
+use crate::static_storage::{persist_static_value, read_static};
 
 /// A static receiver's identity and the snapshot a method reads or changes before it is committed.
 type StaticReceiver = Option<(GlobalPlace, Place)>;
@@ -385,8 +384,8 @@ pub fn lower_list_method(
         output,
         span,
     );
-    if mutable && cell.is_some() {
-        return Err(untranslated("static_storage::persist_static_value"));
+    if mutable && let Some((global, receiver)) = cell {
+        persist_static_value(builder, &global, receiver, span)?;
     }
     Ok(())
 }
@@ -427,8 +426,8 @@ fn lower_list_reservation(
         output,
         span,
     )?;
-    if cell.is_some() {
-        return Err(untranslated("static_storage::persist_static_value"));
+    if let Some((global, receiver)) = cell {
+        persist_static_value(builder, &global, receiver, span)?;
     }
     Ok(())
 }
