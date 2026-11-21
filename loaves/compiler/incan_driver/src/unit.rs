@@ -8,14 +8,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+mod search_index;
+use search_index::read_search_index;
 
 use crate::error::{CliError, CliResult};
 
 /// The schema of a unit description.
 pub const UNIT_DESCRIPTION_SCHEMA: &str = "incan.unit/1";
 
-/// The schema of a toolchain generation's search index, which a unit description names.
+/// The compatibility schema of JSON search indexes published by an earlier compiler generation.
 pub const SEARCH_INDEX_SCHEMA: &str = "incan.search-index/1";
 
 /// The entry contract of a compilation unit; all kinds share source analysis and Body IR lowering.
@@ -145,9 +146,9 @@ pub struct UnitDescription {
     /// Directories containing the transitive dependencies of the named libraries. Once read, this also holds the
     /// directories of the search index, sorted by their bytes without repeats.
     pub search: Vec<PathBuf>,
-    /// The toolchain generation's search index (`incan.search-index/1`): the directories of the toolchain's crates
-    /// and of its compiled registry, published once by Oven and named by the SHA-256 of its content. The description
-    /// lists in `search` only the directories beyond it.
+    /// The toolchain generation's content-named search index (Crumb v2 or legacy JSON v1): the directories of the
+    /// toolchain's crates and of its compiled registry, published once by Oven and named by the SHA-256 of its
+    /// content. The description lists in `search` only the directories beyond it.
     #[serde(default)]
     pub search_index: Option<PathBuf>,
     /// Rust ABI caches supplied by the toolchain for this unit.
@@ -199,16 +200,6 @@ impl ToolchainAccess {
     pub fn links_sysroot(&self) -> bool {
         !self.sysroot_dependencies.is_empty()
     }
-}
-
-/// A toolchain generation's search index, as Oven publishes it.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SearchIndex {
-    /// Always [`SEARCH_INDEX_SCHEMA`].
-    schema: String,
-    /// The directories every unit of the generation searches.
-    search: Vec<PathBuf>,
 }
 
 /// Preserve the default policy when reading unit descriptions written before explicit provider evidence.
@@ -330,8 +321,14 @@ impl UnitDescription {
     /// Decode and validate a description from Oven, retaining its origin in schema and registration failures.
     /// Every client receives the same search-index merge and prepared-vocabulary admission checks.
     pub fn parse(bytes: &[u8], origin: &Path) -> CliResult<Self> {
-        let mut unit: Self = serde_json::from_slice(bytes)
-            .map_err(|error| CliError::failure(format!("{} is not a unit description: {error}", origin.display())))?;
+        let mut unit: Self = if bytes.starts_with(b"CRMB") {
+            let fields = internal_models::decode_unit_document(&bytes.to_vec())
+                .map_err(|error| CliError::failure(format!("{}: {error}", origin.display())))?;
+            serde_json::to_value(fields).and_then(serde_json::from_value)
+        } else {
+            serde_json::from_slice(bytes)
+        }
+        .map_err(|error| CliError::failure(format!("{} is not a unit description: {error}", origin.display())))?;
         if unit.schema != UNIT_DESCRIPTION_SCHEMA {
             return Err(CliError::failure(format!(
                 "{} has schema `{}`; this compiler reads `{UNIT_DESCRIPTION_SCHEMA}`",
@@ -387,32 +384,13 @@ impl UnitDescription {
     }
 }
 
-/// The Rust ABI extraction directory Oven keeps beside a `<name>.unit.json` description, when it exists.
+/// The Rust ABI extraction directory Oven keeps beside a `<name>.unit.crumb` or legacy `<name>.unit.json` description,
+/// when it exists.
 fn rust_facts_directory(origin: &Path) -> Option<PathBuf> {
-    let name = origin.file_name()?.to_str()?.strip_suffix(".unit.json")?;
+    let file = origin.file_name()?.to_str()?;
+    let name = file
+        .strip_suffix(".unit.crumb")
+        .or_else(|| file.strip_suffix(".unit.json"))?;
     let directory = origin.with_file_name(format!("{name}.rust-facts"));
     directory.is_dir().then_some(directory)
-}
-
-/// Read a search index, refusing one whose bytes are not those its name, their SHA-256, promises.
-fn read_search_index(path: &Path) -> CliResult<Vec<PathBuf>> {
-    let bytes = fs::read(path)
-        .map_err(|error| CliError::failure(format!("cannot read the search index {}: {error}", path.display())))?;
-    let named = path.file_stem().and_then(|stem| stem.to_str()).unwrap_or_default();
-    if hex::encode(Sha256::digest(&bytes)) != named {
-        return Err(CliError::failure(format!(
-            "the search index {} does not match the digest it is named by",
-            path.display()
-        )));
-    }
-    let index: SearchIndex = serde_json::from_slice(&bytes)
-        .map_err(|error| CliError::failure(format!("{} is not a search index: {error}", path.display())))?;
-    if index.schema != SEARCH_INDEX_SCHEMA {
-        return Err(CliError::failure(format!(
-            "{} has schema `{}`; this compiler reads `{SEARCH_INDEX_SCHEMA}`",
-            path.display(),
-            index.schema
-        )));
-    }
-    Ok(index.search)
 }

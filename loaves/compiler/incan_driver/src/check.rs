@@ -16,9 +16,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::diagnostics::{CliDiagnostic, CliDiagnosticFailure};
 use crate::error::{CliError, CliResult};
-use crate::modules::collect_modules_detailed_with_session;
-use crate::session::{CompilationSession, RustFactsSetup};
-use crate::unit::UnitDescription;
+use crate::modules::{SourceModuleImports, collect_modules_detailed_with_session};
+use crate::session::{CompilationSession, RustFactsSetup, imported_rust_paths};
+use crate::unit::{UnitDescription, UnitKind};
+
+mod retained_modules;
+pub use retained_modules::RetainedModuleChecks;
 
 /// Schema of the check's body report, the sidecar an engine reads to count a check's body work.
 pub const CHECKED_BODIES_SCHEMA: &str = "incan.checked-bodies/1";
@@ -104,7 +107,20 @@ pub fn check_unit(
     rust: &RustFactsSetup,
     records: GraphBodyRecords,
 ) -> CliResult<(CheckOutput, CheckedBodies)> {
-    let (result, warnings) = crate::diagnostics::capture_warning_output(|| check_report(unit, rust, records));
+    check_unit_with_retained_modules(unit, rust, records, None)
+}
+
+/// Check an ordinary editor project while retaining successful module diagnostics and interfaces in its worker.
+/// The caller supplies the unit's authenticated checked context and may drop the retained state at any time.
+pub fn check_unit_with_retained_modules(
+    unit: &UnitDescription,
+    rust: &RustFactsSetup,
+    records: GraphBodyRecords,
+    retained: Option<&mut RetainedModuleChecks>,
+) -> CliResult<(CheckOutput, CheckedBodies)> {
+    let (result, warnings) = crate::diagnostics::capture_warning_output(|| {
+        check_report_observed(unit, rust, records, &mut |_, _| {}, retained)
+    });
     match result {
         Ok(mut report) => {
             let bodies = std::mem::take(&mut report.bodies);
@@ -168,6 +184,17 @@ pub fn check_report(
     rust: &RustFactsSetup,
     records: GraphBodyRecords,
 ) -> CliResult<DiagnosticReport> {
+    check_report_observed(unit, rust, records, &mut |_, _| {}, None)
+}
+
+/// Inspect completed semantic products in the same project and provider environment that performed the check.
+fn check_report_observed(
+    unit: &UnitDescription,
+    rust: &RustFactsSetup,
+    records: GraphBodyRecords,
+    observe: &mut dyn FnMut(&ParsedModule, &TypeChecker),
+    retained: Option<&mut RetainedModuleChecks>,
+) -> CliResult<DiagnosticReport> {
     let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::check_pipeline").entered();
     // Opening the session and extracting Rust facts read artifacts and run rustc, so their failures stay retryable.
     let import_failure = |error: CliError| DiagnosticReport {
@@ -188,7 +215,8 @@ pub fn check_report(
         Ok(modules) => modules,
         Err(failure) => return Ok(diagnostic_report_from_failure(failure)),
     };
-    if let Err(error) = session.resolve_rust_facts(&modules) {
+    let rust_paths = imported_rust_paths(&modules);
+    if let Err(error) = session.resolve_rust_facts_for(&rust_paths) {
         return Ok(import_failure(error));
     }
     // Module paths are physical; the root is compared as given and resolved, as checked-body publication does.
@@ -196,9 +224,36 @@ pub fn check_report(
     let mut roots = vec![unit.project_root.as_path()];
     roots.extend(resolved_root.as_deref());
     let mut bodies = CheckedBodies::default();
-    let typecheck = session.typecheck_unit(&modules, None, &mut |module, checker| {
-        bodies.observe(&roots, module, checker)
+    let imports = SourceModuleImports::new(&modules, session.own_standard_package());
+    let mut retained = retained.filter(|_| {
+        unit.kind == UnitKind::Program
+            && unit.vocab.is_none()
+            && unit.vocab_admissions.is_empty()
+            && !unit.vocabulary
+            && !unit.vocab_desugarer
+            && unit.c_headers.is_empty()
+            && unit.c_abi_target.is_none()
+            && unit.cloves.is_empty()
+            && unit.contract_models.is_empty()
     });
+    if let Some(cache) = retained.as_deref_mut()
+        && !cache.prepare(unit, &modules, &imports, rust_paths)
+    {
+        retained = None;
+    }
+    let typecheck = session.typecheck_unit(
+        &modules,
+        None,
+        &imports,
+        &mut |module, checker, _| {
+            bodies.observe(&roots, module, checker);
+            observe(module, checker);
+        },
+        crate::typecheck::TypecheckOutput::Diagnostics(retained.as_deref_mut()),
+    );
+    if let Some(cache) = retained {
+        cache.settle(typecheck.is_ok());
+    }
     let mut report = match typecheck {
         Ok(checked) => DiagnosticReport {
             schema_version: CHECK_REPORT_SCHEMA_VERSION,
@@ -212,6 +267,83 @@ pub fn check_report(
     };
     report.bodies = bodies;
     Ok(report)
+}
+
+/// Evaluate one ranked reader with the unit's real imported interfaces, Rust facts and source-level checker.
+/// The caller receives fresh local and final products only if every other top-level owner restored its prior work.
+pub fn ranked_reader(
+    unit: &UnitDescription,
+    rust: &RustFactsSetup,
+    records: GraphBodyRecords,
+    module: &str,
+    identity: &str,
+) -> CliResult<Option<incan_frontend::checker_records::CheckedOwnerRecordFields>> {
+    use incan_frontend::checker_records::{CheckedOwnerRecordOutput, checked_record_outputs};
+    let name = identity
+        .split_once('|')
+        .and_then(|(qualified, _)| qualified.strip_prefix("function:"))
+        .and_then(|qualified| qualified.rsplit_once("::"))
+        .map(|(_, name)| name)
+        .ok_or_else(|| CliError::failure("ranked demand has no project function identity"))?;
+    let source = unit.project_root.join(module);
+    let mut selected = None;
+    let mut statement_entries = 0;
+    let exact = records.for_ranked_owner(identity);
+    let report = check_report_observed(
+        unit,
+        rust,
+        exact.clone(),
+        &mut |current, checker| {
+            statement_entries += checker.check_work().body_local_checks;
+            if current.file_path == source {
+                selected = Some(checked_record_outputs(
+                    &current.ast,
+                    checker,
+                    &current.path_segments,
+                    Some(name),
+                ));
+            }
+        },
+        None,
+    )?;
+    let admission = exact.ranked_admission();
+    if matches!(admission, Some((0..=1, true, false))) {
+        return Ok(None);
+    }
+    if !report.ok {
+        return Err(CliError::failure(report.human_message.unwrap_or_else(|| {
+            format!("ranked checker refused: {:?}", report.diagnostics)
+        })));
+    }
+    if admission != Some((1, false, false)) || statement_entries != 1 {
+        return Err(CliError::failure(format!(
+            "ranked reader has invalid statement-entry evidence: {admission:?}, {statement_entries} physical body entries"
+        )));
+    }
+    let checked: Vec<_> = report
+        .bodies
+        .modules
+        .iter()
+        .flat_map(|entry| entry.checked.iter().map(move |name| (&entry.module, name)))
+        .collect();
+    if checked.len() != 1 || checked[0].0 != module || checked[0].1 != name {
+        return Err(CliError::failure(format!(
+            "ranked checker did not evaluate exactly its selected owner: {checked:?}"
+        )));
+    }
+    let outputs = selected
+        .ok_or_else(|| CliError::failure("ranked checker did not visit the certified module"))?
+        .map_err(CliError::failure)?;
+    match outputs.into_iter().next() {
+        Some(CheckedOwnerRecordOutput::Value(fields)) if fields.identity == identity => Ok(Some(fields)),
+        Some(CheckedOwnerRecordOutput::Fallback(refusal)) => Err(CliError::failure(format!(
+            "ranked owner is a full-source fallback: {}",
+            refusal.reason
+        ))),
+        _ => Err(CliError::failure(
+            "ranked checker did not produce the requested stable identity",
+        )),
+    }
 }
 
 /// Project collected CLI diagnostics into their stable machine-readable form, preserving input order.
