@@ -51,7 +51,7 @@ fn representable_type(ty: &crate::symbols::ResolvedType) -> bool {
 }
 
 /// Rehydrate only explicit checked facts; this does not authorize invoking the imported callable.
-pub(super) fn hydrate(contract: &OwnershipExport) -> Result<CheckedOwnershipContract, LibraryManifestError> {
+pub(crate) fn hydrate(contract: &OwnershipExport) -> Result<CheckedOwnershipContract, LibraryManifestError> {
     let OwnershipExport::Checked(contract) = contract else {
         return Err(invalid("unrepresentable ownership projection"));
     };
@@ -124,8 +124,7 @@ pub(crate) fn exported_contracts(
                         alias
                             .projected_function
                             .iter()
-                            .map(|function| &function.callable)
-                            .filter(|callable| callable.ownership.is_some()),
+                            .filter(|function| function.callable.ownership.is_some()),
                     );
                     continue;
                 }
@@ -148,13 +147,42 @@ pub(crate) fn exported_contracts(
             }
         }
     }
-    // A re-export resolves to its target's identity, so that exact declaration must publish the contract.
-    let published = |callable: &crate::api_metadata::ApiCallableMetadata| {
-        contracts.iter().any(|(identity, _)| {
-            identity.declaration_name == callable.name
-                && identity.declaration_span == callable.anchor.span
-                && matches!(&identity.origin, incan_semantics_core::SymbolOrigin::Package { library, .. } if *library == manifest.name)
-        })
+    let mut unique_contracts: Vec<(incan_semantics_core::CanonicalSymbolId, CheckedOwnershipContract)> =
+        Vec::with_capacity(contracts.len());
+    for (identity, contract) in contracts {
+        if let Some((_, published)) = unique_contracts
+            .iter()
+            .find(|(published_identity, _)| published_identity == &identity)
+        {
+            if published != &contract {
+                return Err(invalid("one published ownership identity has conflicting contracts"));
+            }
+        } else {
+            unique_contracts.push((identity, contract));
+        }
+    }
+    let contracts = unique_contracts;
+    // A projection rewrites the callable's public name and anchor to the alias declaration while retaining the
+    // terminal declaration path. Resolve that path through the authenticated identity graph, then require the exact
+    // target to publish the same checked contract. A missing, ambiguous or tampered projection therefore stays
+    // refused rather than borrowing another declaration's authority.
+    let published = |projected: &crate::api_metadata::ApiProjectedFunction| {
+        let Some(export) = &projected.callable.ownership else {
+            return true;
+        };
+        let Ok(projected_contract) = hydrate(export) else {
+            return false;
+        };
+        let identities = manifest
+            .contract_metadata
+            .identity_graph
+            .function_identities_for_source_path(&projected.source_path);
+        let [target] = identities.as_slice() else {
+            return false;
+        };
+        contracts
+            .iter()
+            .any(|(identity, contract)| identity == target && contract == &projected_contract)
     };
     if !reexported.into_iter().all(published) {
         return Err(invalid(
@@ -575,6 +603,211 @@ mod tests {
             public_namespaces: Vec::new(),
         });
         LibraryManifest::from_json_str(&manifest.to_json_string()?)?;
+        Ok(())
+    }
+
+    /// A root facade alias carries the target function's checked contract, but its public name and anchor belong to
+    /// the alias. Admission therefore follows the authenticated terminal source path and requires that exact target
+    /// to publish the same contract.
+    #[test]
+    fn callable_reexport_uses_its_terminal_ownership_declaration() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::api_metadata::{
+            ApiDeclaration, CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage,
+            collect_checked_api_metadata, materialize_api_alias_projections, materialize_checked_api_public_namespaces,
+        };
+
+        const TARGET: &str = "pub enum Notice:\n    Empty\n    One(int)\n    Three(int, int, int)\npub def view(value: Borrowed[str]) -> Borrowed[str] from value:\n    return value\n";
+        const FACADE: &str = "pub from crate.views import Notice, view as forwarded_view\n";
+
+        let target_tokens = lexer::lex(TARGET).map_err(|errors| format!("{errors:?}"))?;
+        let target_program = parser::parse(&target_tokens).map_err(|errors| format!("{errors:?}"))?;
+        let target_path = vec!["views".to_owned()];
+        let mut target_checker = TypeChecker::new();
+        target_checker.set_current_package_identity(Some("provider".into()));
+        target_checker.set_current_module_path(Some(target_path.clone()));
+        target_checker
+            .check_program(&target_program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let target_exports = collect_checked_public_exports(&target_program, &target_checker);
+
+        let facade_tokens = lexer::lex(FACADE).map_err(|errors| format!("{errors:?}"))?;
+        let facade_program = parser::parse(&facade_tokens).map_err(|errors| format!("{errors:?}"))?;
+        let facade_path = vec!["lib".to_owned()];
+        let mut facade_checker = TypeChecker::new();
+        facade_checker.set_current_package_identity(Some("provider".into()));
+        facade_checker.set_current_module_path(Some(facade_path.clone()));
+        facade_checker
+            .check_with_imports(&facade_program, &[("views", &target_program)])
+            .map_err(|errors| format!("{errors:?}"))?;
+        let facade_exports = collect_checked_public_exports(&facade_program, &facade_checker);
+
+        let mut api = CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: None,
+            modules: vec![
+                collect_checked_api_metadata(&target_program, &target_checker, target_path.clone()),
+                collect_checked_api_metadata(&facade_program, &facade_checker, facade_path.clone()),
+            ],
+            public_namespaces: Vec::new(),
+        };
+        materialize_api_alias_projections(&mut api.modules);
+        materialize_checked_api_public_namespaces(&mut api)?;
+
+        let mut manifest = LibraryManifest::from_checked_exports("provider", "1.0.0", &facade_exports);
+        manifest.contract_metadata.identity_graph.extend_checked_api_exports(
+            "provider",
+            &api,
+            &[(target_path, target_exports), (facade_path, facade_exports)],
+        )?;
+        manifest.contract_metadata.api = Some(api);
+
+        let contracts = exported_contracts(&manifest)?;
+        assert_eq!(
+            contracts.len(),
+            1,
+            "one terminal declaration owns the re-exported contract"
+        );
+        assert_eq!(contracts[0].0.declaration_name, "view");
+
+        let restored = LibraryManifest::from_json_str(&manifest.to_json_string()?)?;
+        assert_eq!(exported_contracts(&restored)?, contracts);
+        let directory = tempfile::tempdir()?;
+        std::fs::write(directory.path().join("provider.incnlib"), restored.to_json_string()?)?;
+        let entry = crate::loaf_index::LoafIndex::dependency("provider", "provider", directory.path())?;
+        let mut consumer = TypeChecker::new();
+        consumer.set_loaves(std::sync::Arc::new(crate::loaf_index::LoafIndex::new([entry])?));
+        let consumer_source = "from pub::provider import Notice, forwarded_view\ndef read(text: str) -> int:\n    borrowed = forwarded_view(text)\n    return len(borrowed)\ndef inspect(value: Notice) -> int:\n    return match value:\n        Notice.Empty => 0\n        Notice.One(number) => number\n        Notice.Three(first, second, third) => first + second + third\n";
+        let consumer_tokens = lexer::lex(consumer_source).map_err(|errors| format!("{errors:?}"))?;
+        let consumer_program = parser::parse(&consumer_tokens).map_err(|errors| format!("{errors:?}"))?;
+        consumer
+            .check_program(&consumer_program)
+            .map_err(|errors| format!("{errors:?}"))?;
+
+        let mut duplicate_contract = manifest.clone();
+        let target_function = duplicate_contract
+            .contract_metadata
+            .api
+            .as_ref()
+            .and_then(|api| api.modules.iter().find(|module| module.module_path == ["views"]))
+            .and_then(|module| {
+                module.declarations.iter().find_map(|declaration| match declaration {
+                    ApiDeclaration::Function(function) if function.name == "view" => Some(function.clone()),
+                    _ => None,
+                })
+            })
+            .ok_or("missing target declaration")?;
+        duplicate_contract
+            .exports
+            .functions
+            .push(crate::api_metadata::function_export_from_api(&target_function));
+        let mut root_identity = duplicate_contract
+            .contract_metadata
+            .identity_graph
+            .exports
+            .iter()
+            .find(|entry| entry.source_path == ["views", "view"])
+            .cloned()
+            .ok_or("missing target identity")?;
+        root_identity.public_name = "view".into();
+        root_identity.public_path = vec!["provider".into(), "view".into()];
+        duplicate_contract
+            .contract_metadata
+            .identity_graph
+            .exports
+            .push(root_identity);
+        assert_eq!(
+            exported_contracts(&duplicate_contract)?.len(),
+            1,
+            "one identity with the same contract is returned once"
+        );
+        let Some(OwnershipExport::Checked(contract)) = &mut duplicate_contract.exports.functions[0].ownership else {
+            return Err("missing duplicate root ownership contract".into());
+        };
+        contract.result_source = None;
+        assert!(exported_contracts(&duplicate_contract).is_err());
+
+        let mut missing_target = manifest.clone();
+        let projected = missing_target
+            .contract_metadata
+            .api
+            .as_mut()
+            .and_then(|api| api.modules.iter_mut().find(|module| module.module_path == ["lib"]))
+            .and_then(|module| {
+                module
+                    .declarations
+                    .iter_mut()
+                    .find_map(|declaration| match declaration {
+                        ApiDeclaration::Alias(alias) if alias.name == "forwarded_view" => {
+                            alias.projected_function.as_mut()
+                        }
+                        _ => None,
+                    })
+            })
+            .ok_or("missing facade projection")?;
+        projected.source_path = vec!["missing".into(), "view".into()];
+        assert!(exported_contracts(&missing_target).is_err());
+
+        let mut missing_contract = manifest.clone();
+        let target = missing_contract
+            .contract_metadata
+            .api
+            .as_mut()
+            .and_then(|api| api.modules.iter_mut().find(|module| module.module_path == ["views"]))
+            .and_then(|module| {
+                module
+                    .declarations
+                    .iter_mut()
+                    .find_map(|declaration| match declaration {
+                        ApiDeclaration::Function(function) if function.name == "view" => Some(function),
+                        _ => None,
+                    })
+            })
+            .ok_or("missing target declaration")?;
+        target.ownership = None;
+        assert!(exported_contracts(&missing_contract).is_err());
+
+        let mut ambiguous_target = manifest.clone();
+        let mut duplicate = ambiguous_target
+            .contract_metadata
+            .identity_graph
+            .exports
+            .iter()
+            .find(|entry| entry.source_path == ["views", "view"])
+            .cloned()
+            .ok_or("missing target identity")?;
+        let canonical = duplicate.canonical.as_mut().ok_or("missing target canonical")?;
+        canonical.declaration_span.start += 1;
+        canonical.declaration_span.end += 1;
+        ambiguous_target
+            .contract_metadata
+            .identity_graph
+            .exports
+            .push(duplicate);
+        assert!(exported_contracts(&ambiguous_target).is_err());
+
+        let mut mismatched_contract = manifest;
+        let projected = mismatched_contract
+            .contract_metadata
+            .api
+            .as_mut()
+            .and_then(|api| api.modules.iter_mut().find(|module| module.module_path == ["lib"]))
+            .and_then(|module| {
+                module
+                    .declarations
+                    .iter_mut()
+                    .find_map(|declaration| match declaration {
+                        ApiDeclaration::Alias(alias) if alias.name == "forwarded_view" => {
+                            alias.projected_function.as_mut()
+                        }
+                        _ => None,
+                    })
+            })
+            .ok_or("missing facade projection")?;
+        let Some(OwnershipExport::Checked(contract)) = &mut projected.callable.ownership else {
+            return Err("missing projected ownership contract".into());
+        };
+        contract.result_source = None;
+        assert!(exported_contracts(&mismatched_contract).is_err());
         Ok(())
     }
 

@@ -285,6 +285,14 @@ impl CheckedInputBody<'_> {
         expression: &Spanned<Expr>,
     ) -> Result<Option<(flow::Place, Option<flow::LoanId>)>, &'static str> {
         match &expression.node {
+            Expr::Ident(_) | Expr::Field(_, _)
+                if self
+                    .facts
+                    .resolved_identity(expression.span)
+                    .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Const) =>
+            {
+                Ok(None)
+            }
             Expr::Ident(_) | Expr::SelfExpr => {
                 let identity = self
                     .facts
@@ -314,16 +322,19 @@ impl CheckedInputBody<'_> {
             {
                 Ok(None)
             }
+            Expr::Field(_, _)
+                if self.graph.value_uses.get(&expression.span).is_some_and(|value_use| {
+                    value_use.kind == flow::ValueUseKind::CallResult
+                        && super::super::source::call_results::direct_call_field_projection(self.facts, expression)
+                            .is_some()
+                }) =>
+            {
+                Ok(None)
+            }
             Expr::Field(base, _) => {
                 let (mut place, through) = self.call_place(base)?.ok_or("input field has no stored owner")?;
-                let field = self
-                    .facts
-                    .resolved_identity(expression.span)
-                    .filter(|identity| identity.kind == SemanticSourceTargetKind::Field)
+                let field = super::super::source::call_results::stored_projection_identity(self.facts, expression)
                     .ok_or("input field has no canonical declaration")?;
-                if self.facts.computed_property_access(expression.span).is_some() {
-                    return Err("input field is a computed property");
-                }
                 place.projection.push(flow::Projection::Field(field.clone()));
                 Ok(Some((place, through)))
             }

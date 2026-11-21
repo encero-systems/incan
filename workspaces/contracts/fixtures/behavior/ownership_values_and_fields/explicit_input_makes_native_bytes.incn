@@ -1,0 +1,23 @@
+# behavior: Native bytes made from a shared text input read it and leave it with its owner (RFC 164).
+# pending: INCAN-T0126 refuses the shared read as an access the contract does not grant, and INCAN-T0123 refuses the caller: "call has no selected explicit input access facts".
+# expect-stdout:
+#   4
+
+from rust::std::string import String as RustString
+
+
+class Sink:
+    pub total: int
+
+    pub def append(self, text: Borrowed[str]) -> Result[int, str]:
+        """Owned bytes made from a shared input, passed to a method whose result is returned."""
+        payload = RustString.from(text).into_bytes()
+        return self.measure(payload)
+
+    def measure(self, payload: bytes) -> Result[int, str]:
+        return Ok(self.total + len(payload))
+
+
+def main() -> None:
+    sink = Sink(total=1)
+    println(sink.append("abc").unwrap())
