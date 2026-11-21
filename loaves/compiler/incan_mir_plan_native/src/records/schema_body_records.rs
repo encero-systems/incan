@@ -36,6 +36,14 @@ pub(crate) static SHAPE_BODY_RECORDS_STORED_CONSTANT: Shape = Shape {
             "TypeToken",
             &[field(b"_\xec\xebf\xff\xc8", "0", "list<enum@234b6c9b62c7>")],
         ),
+        variant(
+            b"\xd2\xe4u\xb0\x0b\xf0",
+            "RustItem",
+            &[
+                field(b"_\xec\xebf\xff\xc8", "0", "string"),
+                field(b"k\x86\xb2s\xff4", "1", "enum@234b6c9b62c7"),
+            ],
+        ),
     ]),
 };
 

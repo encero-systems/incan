@@ -67,6 +67,8 @@ pub struct NominalRemap {
     pub references: Vec<NominalReference>,
     pub preserve: bool,
     pub fold: i64,
+    /// The crates, other than Rust's own, that the binding identities restored through this remap name.
+    pub crates: Vec<String>,
 }
 
 impl NominalRemap {
@@ -136,6 +138,7 @@ pub fn capture_remap() -> NominalRemap {
         references: Vec::new(),
         preserve: false,
         fold: -1,
+        crates: Vec::new(),
     }
 }
 
@@ -146,6 +149,7 @@ pub fn binding_remap(references: Vec<NominalReference>) -> NominalRemap {
         references,
         preserve: false,
         fold: -1,
+        crates: Vec::new(),
     }
 }
 
@@ -156,6 +160,7 @@ pub fn preserving_remap() -> NominalRemap {
         references: Vec::new(),
         preserve: true,
         fold: -1,
+        crates: Vec::new(),
     }
 }
 
@@ -166,6 +171,7 @@ pub fn folding_remap(sources: i64) -> NominalRemap {
         references: Vec::new(),
         preserve: false,
         fold: sources,
+        crates: Vec::new(),
     }
 }
 

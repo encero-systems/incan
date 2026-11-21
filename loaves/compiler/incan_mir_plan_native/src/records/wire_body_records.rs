@@ -16,6 +16,7 @@ pub(crate) enum StoredConstant {
     Text(String),
     Numeric(String, StoredType),
     TypeToken(Vec<StoredType>),
+    RustItem(String, StoredType),
 }
 
 /// Project one `StoredConstant` alternative onto its identity and positional payload.
@@ -31,6 +32,10 @@ pub(crate) fn wire_stored_constant(value: &StoredConstant) -> Result<Wire, Strin
             vec![Wire::Text(field0.clone()), wire_stored_type(field1)?],
         ),
         StoredConstant::TypeToken(field0) => alternative(b"\xeb\x90\x0dwd\xd0", vec![list(field0, wire_stored_type)?]),
+        StoredConstant::RustItem(field0, field1) => alternative(
+            b"\xd2\xe4u\xb0\x0b\xf0",
+            vec![Wire::Text(field0.clone()), wire_stored_type(field1)?],
+        ),
     })
 }
 
@@ -57,6 +62,9 @@ fn read_stored_constant_alternative(
         }
         b"\xeb\x90\x0dwd\xd0" if fields.len() == 1 => {
             StoredConstant::TypeToken(read_list(&fields[0].value, |item0| read_stored_type(item0, positions))?)
+        }
+        b"\xd2\xe4u\xb0\x0b\xf0" if fields.len() == 2 => {
+            StoredConstant::RustItem(text(&fields[0].value)?, read_stored_type(&fields[1].value, positions)?)
         }
         _ => return Err("unknown or incomplete StoredConstant alternative".to_owned()),
     })

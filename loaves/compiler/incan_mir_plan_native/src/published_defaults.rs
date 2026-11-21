@@ -114,6 +114,7 @@ published_defaults!(NominalReference {
 published_defaults!(NominalRemap {
     __incan_default_preserve -> bool = false,
     __incan_default_fold -> i64 = -1,
+    __incan_default_crates -> Vec<String> = Vec::new(),
 });
 
 published_defaults!(UnitNominals {
