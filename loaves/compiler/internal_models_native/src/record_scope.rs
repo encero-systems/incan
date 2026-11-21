@@ -267,8 +267,9 @@ impl RecordReads {
         }
     }
 
-    /// Charge each source call and its returned bytes before accepting evidence. The first fault is sticky.
-    pub fn read<S: RecordSource>(&mut self, source: &S, request: &RecordRequest) -> RecordRead {
+    /// Charge each source call and its returned bytes before accepting evidence. The first fault is sticky. The source
+    /// is a borrowed trait object, the form in which an Incan class that adopts `RecordSource` crosses into Rust.
+    pub fn read(&mut self, source: &dyn RecordSource, request: &RecordRequest) -> RecordRead {
         let Some(active) = self.activation.as_mut() else {
             return RecordRead::Failed(ReadFault::ClosedScope);
         };
