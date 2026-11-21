@@ -52,11 +52,14 @@ pub fn range_field(projection: &PlaceElem) -> Result<FieldProjection, String> {
 pub fn builtin_range_bounds(arguments: Vec<Operand>, span: &SourceSpan) -> Result<Vec<Operand>, String> {
     let zero = || literal(Constant::Int(0), span);
     let one = || literal(Constant::Int(1), span);
-    let mut bounds = arguments.into_iter();
-    match (bounds.next(), bounds.next(), bounds.next(), bounds.next()) {
-        (Some(end), None, None, None) => Ok(vec![zero(), end, one()]),
-        (Some(start), Some(end), None, None) => Ok(vec![start, end, one()]),
-        (Some(start), Some(end), Some(step), None) => Ok(vec![start, end, step]),
+    let mut arguments = arguments;
+    match arguments.len() {
+        1 => Ok(vec![zero(), arguments.remove(0), one()]),
+        2 => {
+            let end = arguments.remove(1);
+            Ok(vec![arguments.remove(0), end, one()])
+        }
+        3 => Ok(arguments),
         _ => Err("unsupported Body IR builtin range arity".into()),
     }
 }

@@ -3,8 +3,8 @@
 
 use incan_mir_plan_native::{Callee, CalleeKind, ExternalFunction, PlanType, SourceSpan};
 use incan_semantics_core::body_ir::{
-    Body, BodyIrModule, CallableParam, CallableTarget, Callee as SourceCallee, LoafCallable, NamedCallableTarget,
-    Rvalue, StatementKind,
+    Body, BodyIrModule, CallableParam, CallableTarget, Callee as SourceCallee, DecoratedBinding,
+    DecoratedInitialization, LoafCallable, NamedCallableTarget, Rvalue, StatementKind,
 };
 use incan_semantics_core::{IncanInputAccess, IncanType};
 
@@ -16,7 +16,6 @@ use crate::closures::{packed_input, return_representation};
 use crate::frame::Builder;
 use crate::generators::{generator_type, is_generator_type};
 use crate::layout_types::native_source_type;
-use crate::pending::untranslated;
 use crate::type_parameters::{instantiate, instantiate_parameter, request_instance, substitute};
 
 /// A function item: its plan symbol, its `FunctionItem` carrier and its checked declaration name.
@@ -48,11 +47,19 @@ pub fn source_function_item(
             &builder.type_arguments,
         )?);
     }
-    if body.original_callable.is_some() {
+    if let Some(identity) = &body.original_callable {
         if !captured_operands.is_empty() || !body.capture_locals.is_empty() || !body.stmts.is_empty() {
             return Err("invalid Body IR original callable computation".into());
         }
-        return Err(untranslated("closures::original_function_item"));
+        let Some(binding) = module
+            .decorated_bindings
+            .iter()
+            .find(|binding| binding.original_body.canonical == body.original_callable)
+        else {
+            return Err("unsupported Body IR unretained original callable".into());
+        };
+        let (name, ty) = original_function_item(module, builder, &inputs, binding, span)?;
+        return Ok(Some((name, ty, identity.declaration_name.to_string())));
     }
     if !captured_operands.is_empty() || !body.capture_locals.is_empty() || body.stmts.len() != 1 {
         return Err("invalid Body IR function-item forwarding computation".into());
@@ -173,7 +180,7 @@ fn instantiated_item_signature(
     span: &SourceSpan,
 ) -> Result<(String, PlanType), String> {
     if target.type_args.is_empty() {
-        return item_signature(module, builder, parameters, body, span);
+        return item_signature(module, builder, parameters, body, span, None);
     }
     let mut arguments = Vec::with_capacity(target.type_args.len());
     for argument in &target.type_args {
@@ -181,7 +188,7 @@ fn instantiated_item_signature(
     }
     let closed = instantiate(body, &arguments, &[])?;
     request_instance(&mut builder.instances, body, arguments, Vec::new(), false);
-    item_signature(module, builder, parameters, &closed, span)
+    item_signature(module, builder, parameters, &closed, span, None)
 }
 
 /// Read a compiled function value's signature from its Loaf declaration, without requiring its implementation.
@@ -298,6 +305,7 @@ fn item_signature(
     parameters: &[CallableParam],
     body: &Body,
     span: &SourceSpan,
+    selected_name: Option<String>,
 ) -> Result<(String, PlanType), String> {
     if parameters.len() != body.params.len() {
         return Err("invalid Body IR function-item parameter count".into());
@@ -329,7 +337,7 @@ fn item_signature(
         signature.push(input);
     }
     let result = item_result(builder, &body.return_type)?;
-    let name = evaluator_name(module, body);
+    let name = selected_name.unwrap_or_else(|| evaluator_name(module, body));
     if body.is_async {
         let constructor = format!("{name}__incan_future");
         let future = boxed_future_constructor(
@@ -372,4 +380,47 @@ fn validate_item_receiver(body: &Body, index: usize, parameter: &CallableParam) 
         }
     }
     Ok(())
+}
+
+/// Select the original through its checked initializer policy, never through operand inference.
+fn original_function_item(
+    module: &BodyIrModule,
+    builder: &mut Builder,
+    parameters: &[CallableParam],
+    binding: &DecoratedBinding,
+    span: &SourceSpan,
+) -> Result<(String, PlanType), String> {
+    if binding.initialization == DecoratedInitialization::PerInstantiation {
+        return initialized_original_function_item(module, builder, parameters, binding, span);
+    }
+    if binding.initialization != DecoratedInitialization::ModuleStorage || binding.initializer.is_some() {
+        return Err("unsupported Body IR module decorator initialization policy".into());
+    }
+    let body = &binding.original_body;
+    if !body.type_parameters.is_empty() {
+        return Err("unsupported Body IR module decorator with type parameters".into());
+    }
+    let original_name = format!("{}__incan_original", evaluator_name(module, body));
+    item_signature(module, builder, parameters, body, span, Some(original_name))
+}
+
+/// Select a cached instantiation's original only inside its authenticated closed initializer frame.
+fn initialized_original_function_item(
+    module: &BodyIrModule,
+    builder: &mut Builder,
+    parameters: &[CallableParam],
+    binding: &DecoratedBinding,
+    span: &SourceSpan,
+) -> Result<(String, PlanType), String> {
+    let original = &binding.original_body;
+    if binding.initializer.is_none() || original.type_parameters.is_empty() {
+        return Err("unsupported Body IR cached decorator without a generic initializer".into());
+    }
+    if builder.initializing_decorator != original.canonical || builder.type_parameters != original.type_parameters {
+        return Err("unsupported Body IR original callable outside its closed decorator initializer".into());
+    }
+    let arguments = builder.type_arguments.clone();
+    let closed = instantiate(original, &arguments, &[])?;
+    let original_name = format!("{}__incan_original", evaluator_name(module, &closed));
+    item_signature(module, builder, parameters, &closed, span, Some(original_name))
 }

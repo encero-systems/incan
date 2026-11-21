@@ -1,4 +1,4 @@
-//! Keep source generic value slots distinct from explicit function-pointer slots when closing a callable frame.
+//! Owned callable storage at generic value parameters.
 
 use incan_mir_plan_native::PlanType;
 use incan_semantics_core::IncanType;
@@ -20,7 +20,7 @@ pub fn owned_callable_slots(
     match binding {
         ArgumentBinding::Resolved {
             arguments: bindings, ..
-        } => owned_slots_for_bindings(builder, original, closed, arguments, bindings, receiver_slots),
+        } => owned_slots_for_bindings(builder, (original, closed), arguments, bindings, receiver_slots),
         ArgumentBinding::ResolvedDeclarationOrder {
             arguments: bindings, ..
         } => {
@@ -30,7 +30,7 @@ pub fn owned_callable_slots(
                     return Err("unsupported Body IR binding outside declaration order".into());
                 }
             }
-            owned_slots_for_bindings(builder, original, closed, arguments, bindings, receiver_slots)
+            owned_slots_for_bindings(builder, (original, closed), arguments, bindings, receiver_slots)
         }
         _ => Err("unsupported Body IR generic callable without resolved slot binding".into()),
     }
@@ -39,8 +39,7 @@ pub fn owned_callable_slots(
 /// Collect the generic value slots whose bound argument is an owned closure, whatever order the call evaluated in.
 fn owned_slots_for_bindings(
     builder: &Builder,
-    original: &Body,
-    closed: &Body,
+    (original, closed): (&Body, &Body),
     arguments: &[ArgumentElement],
     bindings: &[BoundArgument],
     receiver_slots: usize,
@@ -48,7 +47,7 @@ fn owned_slots_for_bindings(
     if receiver_slots > 1 || bindings.len() + receiver_slots != arguments.len() {
         return Err("invalid Body IR generic callable slot binding".into());
     }
-    let mut owned: Vec<i64> = Vec::new();
+    let mut owned = Vec::new();
     for (slot, parameter) in original.params.iter().enumerate() {
         if !matches!(parameter.ty, IncanType::TypeVar(_)) {
             continue;
@@ -62,15 +61,12 @@ fn owned_slots_for_bindings(
                     if parameter.mutable {
                         return Err("unsupported Body IR mutable generic callable storage".into());
                     }
-                    let Some(closed_parameter) = closed.params.get(slot) else {
-                        return Err("invalid Body IR generic callable slot binding".into());
-                    };
                     let expected = native_source_type(
                         builder.constructors(),
                         builder.nominals(),
                         builder.enums(),
                         &builder.unions,
-                        &closed_parameter.ty,
+                        &closed.params[slot].ty,
                         &builder.intrinsics,
                         "",
                     )?;
@@ -92,6 +88,19 @@ fn owned_slots_for_bindings(
     Ok(owned)
 }
 
+/// Refuse one generic type variable used at incompatible callable ABIs or an unevaluated default.
+fn validate_uniform_storage(original: &Body, owned: &[i64]) -> Result<(), String> {
+    for owner in owned {
+        let owner_type = &original.params[*owner as usize].ty;
+        for (slot, parameter) in original.params.iter().enumerate() {
+            if parameter.ty == *owner_type && !owned.contains(&(slot as i64)) {
+                return Err("unsupported Body IR mixed generic callable storage or default".into());
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Inspect a proven frame local without reading it, executing an index, or manufacturing a projected field ABI.
 pub fn argument_storage(builder: &Builder, argument: &ArgumentElement) -> Option<PlanType> {
     let Some(Operand::Place(read)) = argument.as_one() else {
@@ -106,17 +115,4 @@ pub fn argument_storage(builder: &Builder, argument: &ArgumentElement) -> Option
             .ty
             .clone(),
     )
-}
-
-/// Refuse one generic type variable used at incompatible callable ABIs or an unevaluated default.
-fn validate_uniform_storage(original: &Body, owned: &[i64]) -> Result<(), String> {
-    for owner in owned {
-        let owner_type = &original.params[*owner as usize].ty;
-        for (slot, parameter) in original.params.iter().enumerate() {
-            if parameter.ty == *owner_type && !owned.contains(&(slot as i64)) {
-                return Err("unsupported Body IR mixed generic callable storage or default".into());
-            }
-        }
-    }
-    Ok(())
 }

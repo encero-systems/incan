@@ -8,8 +8,11 @@ use incan_mir_plan_native::{
 use incan_semantics_core::IncanType;
 use incan_semantics_core::body_ir::{Body, BodyIrModule, DecoratedInitialization};
 
+use crate::async_::evaluator_name;
+use crate::checked_values::location;
 use crate::classes::body_module_identity;
 use crate::decls::{library_enum_item, library_item};
+use crate::decorator_caches::{CachedBinding, cached_binding_frames, frame_signature};
 use crate::decorator_caches::{DecoratorFrame, validate_binding_policy};
 use crate::function_frames::lower_function;
 use crate::generators::append_generator_constructor;
@@ -20,7 +23,6 @@ use crate::native_type_identity::ConstructorIndex;
 use crate::nominal_instances::NominalInstance;
 use crate::nominal_instances::retain_frame_nominals;
 use crate::options::retain_body_carriers;
-use crate::pending::untranslated;
 use crate::program_context::ProgramContext;
 use crate::program_context::retain_nominal_tables;
 use crate::runtime_calls::{
@@ -28,6 +30,7 @@ use crate::runtime_calls::{
 };
 use crate::runtime_requirements::RuntimeRetention;
 use crate::signature_lifetimes::{generic_loans, signature_lifetimes};
+use crate::type_parameters::merge_instance_requests;
 use crate::type_parameters::{Instance, callable_storage_arguments, enqueue_instances, instance_queue, instantiate};
 use crate::unions::collect_unions;
 
@@ -96,7 +99,16 @@ pub fn lower_instances(
         retain_nominal_tables(program, context)?;
         let constructors = program.constructors.clone();
         retain_body_carriers(&constructors, context, intrinsics, &body, &files[source_index])?;
-        retain_generic_decorator_frames(context, &body)?;
+        let decorated = DecoratedInstance {
+            body: &body,
+            arguments: &request.arguments,
+            owned_callable_slots: &request.owned_callable_slots,
+            source: &sources[source_index],
+            file: &files[source_index],
+        };
+        let queues = (&mut names, &mut *instances, &mut *cells);
+        retain_generic_decorator_frames(context, program, &decorated, unions, intrinsics, inventories, queues)?;
+        enqueue_instances(&mut queue, instances);
         let frame = InstanceFrame {
             request: &request,
             body: &body,
@@ -135,7 +147,6 @@ pub fn lower_instances(
             enqueue_instances(&mut queue, instances);
         }
     }
-    let _ = cells;
     // Runtime declarations are preflighted before plan construction. Retain this check as a fail-closed assertion
     // against a future lowering operation bypassing that authenticated facade inventory.
     if !redirects.missing.is_empty() {
@@ -240,16 +251,99 @@ fn instance_frame_selection(
     }
 }
 
-/// A generic decorated wrapper closes its original and initializer per instantiation; those frames await translation.
-fn retain_generic_decorator_frames(module: &BodyIrModule, body: &Body) -> Result<(), String> {
+/// One closed instance a generic decorated wrapper may own, with the source frame it lowers in.
+struct DecoratedInstance<'a> {
+    body: &'a Body,
+    arguments: &'a [IncanType],
+    owned_callable_slots: &'a [i64],
+    source: &'a str,
+    file: &'a str,
+}
+
+/// Close a retained original and its sole initializer with the wrapper's authenticated ordered arguments.
+///
+/// The closed instance's storage cell takes the next slot after the unit's source statics and earlier instance cells.
+#[allow(clippy::too_many_arguments)]
+fn retain_generic_decorator_frames(
+    module: &BodyIrModule,
+    program: &ProgramContext,
+    instance: &DecoratedInstance<'_>,
+    unions: &[IncanType],
+    intrinsics: &mut Vec<EnumDeclaration>,
+    inventories: &mut Inventories,
+    (names, instances, cells): (&mut FunctionNames, &mut Vec<Instance>, &mut Vec<StaticCell>),
+) -> Result<(), String> {
+    let body = instance.body;
     for binding in &module.decorated_bindings {
         if binding.original_body.canonical != body.canonical {
             continue;
         }
         validate_binding_policy(binding)?;
-        if binding.initialization == DecoratedInitialization::PerInstantiation && binding.initializer.is_some() {
-            return Err(untranslated("frame_instances::retain_generic_decorator_frames"));
+        if binding.initialization != DecoratedInitialization::PerInstantiation {
+            continue;
         }
+        let Some(template) = &binding.initializer else {
+            continue;
+        };
+        if !instance.owned_callable_slots.is_empty() {
+            return Err("unsupported Body IR generic decorated wrapper with owned closure parameters".into());
+        }
+        let arguments = instance.arguments;
+        let original = instantiate(&binding.original_body, arguments, &[])?;
+        let (function, runtime, pending, synthesized) = lower_function(
+            module,
+            program,
+            &original,
+            unions,
+            instance.source,
+            instance.file,
+            intrinsics,
+            arguments,
+            DecoratorFrame::Original,
+        )?;
+        let signature = frame_signature(&function);
+        let original_name = function.name.clone();
+        retain_instance(&mut inventories.functions, names, function)?;
+        append_synthesized(&mut inventories.functions, names, synthesized)?;
+        merge_externals(&mut inventories.externals, runtime)?;
+        merge_instance_requests(instances, &pending);
+        let initializer = instantiate(template, arguments, &[])?;
+        let (init_function, init_runtime, init_pending, init_synthesized) = lower_function(
+            module,
+            program,
+            &initializer,
+            unions,
+            instance.source,
+            instance.file,
+            intrinsics,
+            arguments,
+            DecoratorFrame::Initializer,
+        )?;
+        // Decorators generic over the whole callable return the original's exact closed signature.
+        if init_function.return_type != PlanType::FunctionPointer(signature.clone()) {
+            return Err("unsupported Body IR generic decorator initializer outside its original's signature".into());
+        }
+        let initializer_name = init_function.name.clone();
+        retain_instance(&mut inventories.functions, names, init_function)?;
+        append_synthesized(&mut inventories.functions, names, init_synthesized)?;
+        merge_externals(&mut inventories.externals, init_runtime)?;
+        merge_instance_requests(instances, &init_pending);
+        let cached = CachedBinding {
+            base: evaluator_name(module, body),
+            original: original_name,
+            initializer: initializer_name,
+            signature,
+            slot: (program.statics.len() + cells.len()) as i64,
+            unions,
+            intrinsics,
+        };
+        let span = location(&body.span, instance.source, instance.file);
+        let (cell, frames, cache_runtime) = cached_binding_frames(program, binding, &cached, &span)?;
+        cells.push(cell);
+        for frame in frames {
+            retain_instance(&mut inventories.functions, names, frame)?;
+        }
+        merge_externals(&mut inventories.externals, cache_runtime)?;
     }
     Ok(())
 }

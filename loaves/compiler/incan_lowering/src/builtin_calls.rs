@@ -683,49 +683,6 @@ fn lower_file_builtin(
     Ok(())
 }
 
-/// Construct a checked builtin `range` value as legacy's lazy integer range, rejecting a zero step now.
-///
-/// The checker types the call as a list, but legacy never materializes one: the value is a native range that only
-/// iteration consumes. The call's fresh temporary therefore holds the runtime's integer generator, and a consumer
-/// that needs a list materializes that fresh owned range at the checked parameter boundary.
-fn lower_range_builtin(
-    builder: &mut Builder,
-    arguments: &[ArgumentElement],
-    destination: &Option<SourcePlace>,
-    span: &SourceSpan,
-) -> Result<(), String> {
-    let fixed = fixed_arguments(builder, arguments, span)?;
-    let bounds = builtin_range_bounds(fixed, span)?;
-    for bound in &bounds {
-        if value_type(builder, bound)? != PlanType::Int {
-            return Err("unsupported Body IR builtin range bound type".into());
-        }
-    }
-    let list = PlanType::List(ListLeaf::Int, 1);
-    let output = call_destination(builder, destination, list.clone(), span)?;
-    if output.projection != Projection::Whole || builder.owned.contains(&output.local) {
-        return Err("unsupported Body IR builtin range value outside a fresh temporary".into());
-    }
-    if place_type(&builder.locals, &output) != list {
-        return Err("unsupported Body IR builtin range destination type".into());
-    }
-    let result = PlanType::Generator(ListLeaf::Int, 0);
-    builder.locals[output.local as usize].ty = result.clone();
-    let local = output.local;
-    let parameters = vec![PlanType::Int, PlanType::Int, PlanType::Int];
-    external_call(
-        builder,
-        "incan_native_runtime::range_generator",
-        parameters,
-        result,
-        bounds,
-        output,
-        span,
-    );
-    builder.owned.push(local);
-    Ok(())
-}
-
 /// Construct lazy zip only from canonical identity and two checked primitive-list arguments.
 fn lower_zip_builtin(
     builder: &mut Builder,
@@ -874,4 +831,46 @@ fn enumerated_byte_argument(
     let source = argument_place(builder, arguments, 0, span)?;
     let snapshot = sequence_read_storage(builder, source, span)?;
     list_borrow(builder, snapshot, false, span)
+}
+
+/// Construct a checked builtin `range` value as legacy's lazy integer range, rejecting a zero step now.
+///
+/// The checker types the call as a list, but legacy never materializes one: the value is a native range that only
+/// iteration consumes. The call's fresh temporary therefore holds the runtime's integer generator, and a consumer that
+/// needs a list materializes that fresh owned range at the checked parameter boundary.
+fn lower_range_builtin(
+    builder: &mut Builder,
+    arguments: &[ArgumentElement],
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let operands = fixed_arguments(builder, arguments, span)?;
+    let bounds = builtin_range_bounds(operands, span)?;
+    for bound in &bounds {
+        if value_type(builder, bound)? != PlanType::Int {
+            return Err("unsupported Body IR builtin range bound type".into());
+        }
+    }
+    let list = PlanType::List(ListLeaf::Int, 1);
+    let output = call_destination(builder, destination, list.clone(), span)?;
+    if output.projection != Projection::Whole || builder.owned.contains(&output.local) {
+        return Err("unsupported Body IR builtin range value outside a fresh temporary".into());
+    }
+    if place_type(&builder.locals, &output) != list {
+        return Err("unsupported Body IR builtin range destination type".into());
+    }
+    let result = PlanType::Generator(ListLeaf::Int, 0);
+    builder.locals[output.local as usize].ty = result.clone();
+    let local = output.local;
+    external_call(
+        builder,
+        "incan_native_runtime::range_generator",
+        vec![PlanType::Int, PlanType::Int, PlanType::Int],
+        result,
+        bounds,
+        output,
+        span,
+    );
+    builder.owned.push(local);
+    Ok(())
 }

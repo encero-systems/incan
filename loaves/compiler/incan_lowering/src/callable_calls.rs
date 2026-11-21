@@ -1,8 +1,7 @@
 //! Calls through callable values, closures held by carriers, and callable objects.
 
 use incan_mir_plan_native::{
-    CalleeKind, Carrier, Operand, Place, PlanType, Projection, RvalueKind, SourceSpan, assign as plan_assign,
-    carrier_position,
+    CalleeKind, Carrier, Operand, Place, PlanType, RvalueKind, SourceSpan, assign as plan_assign, carrier_position,
 };
 use incan_semantics_core::body_ir::{
     ArgumentElement, Body, BodyIrModule, NamedCallableTarget, Place as SourcePlace, StringConversionContract,
@@ -318,13 +317,14 @@ pub fn lower_callable_result(
     result_type: PlanType,
     span: &SourceSpan,
 ) -> Result<(), String> {
-    let owned_closure = matches!(result_type, PlanType::Closure(_));
-    if owned_closure {
+    let mut owned_closure = false;
+    if let PlanType::Closure(_) = result_type {
         // The destination's function type takes the returned closure's own boxed representation.
-        if output.projection != Projection::Whole {
+        if output.projection != incan_mir_plan_native::Projection::Whole {
             return Err("unsupported Body IR projected closure result".into());
         }
         builder.locals[output.local as usize].ty = result_type.clone();
+        owned_closure = true;
     }
     if result_type == PlanType::String
         || is_nominal_type(&result_type)

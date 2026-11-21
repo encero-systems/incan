@@ -34,6 +34,7 @@ use crate::loop_exits::exits_to;
 use crate::matches::join_branch_owners;
 use crate::operand_borrows::lower_discarded_operand;
 use crate::pending::untranslated;
+use crate::races::lower_native_race;
 use crate::result_carriers::lower_try_propagation;
 use crate::tuples::tuple_has_owners;
 
@@ -196,7 +197,7 @@ pub fn lower_statement(
             let output = scalar_place(builder, place, &span)?;
             await_future(builder, future, output, &span)
         }
-        SourceStatementKind::Race { .. } => Err(untranslated("statements::lower_native_race")),
+        SourceStatementKind::Race { destination, arms } => lower_native_race(module, builder, destination, arms, &span),
         SourceStatementKind::Yield { value } => lower_yield(builder, value, &span),
         SourceStatementKind::Assert { kind, message, .. } => lower_assertion(builder, kind, message.as_ref(), &span),
         SourceStatementKind::TryPropagate {
@@ -491,7 +492,7 @@ fn lower_yield(builder: &mut Builder, value: &SourceOperand, span: &SourceSpan) 
 }
 
 /// Consume a frontend-owned source future; copying or borrowing one cannot realize its one-shot await.
-fn source_future_place(
+pub fn source_future_place(
     builder: &mut Builder,
     awaited: &SourceOperand,
     span: &SourceSpan,

@@ -91,26 +91,6 @@ pub fn checked_aggregate(
     }
 }
 
-/// Copy a source range's checked scalar fields, in Body IR's declared order, into its native layout.
-fn range_value(
-    builder: &mut Builder,
-    elements: &[ArgumentElement],
-    expected: &PlanType,
-    span: &SourceSpan,
-) -> Result<RvalueKind, String> {
-    let mut fields = Vec::with_capacity(elements.len());
-    let mut types = Vec::with_capacity(elements.len());
-    for element in elements {
-        let Some(value) = element.as_one() else {
-            return Err("unsupported Body IR spread range field".into());
-        };
-        let field = scalar_operand(builder, value, span)?;
-        types.push(value_type(builder, &field)?);
-        fields.push(field);
-    }
-    range_aggregate(expected, fields, &types)
-}
-
 /// Materialize a tuple's elements at the destination's checked element carriers.
 fn tuple_value(
     builder: &mut Builder,
@@ -310,4 +290,24 @@ pub fn lower_string_field_assignment(
         span,
     ));
     Ok(())
+}
+
+/// Copy a source range's checked scalar fields, in Body IR's declared order, into its native layout.
+fn range_value(
+    builder: &mut Builder,
+    elements: &[ArgumentElement],
+    expected: &PlanType,
+    span: &SourceSpan,
+) -> Result<RvalueKind, String> {
+    let mut fields = Vec::with_capacity(elements.len());
+    let mut types = Vec::with_capacity(elements.len());
+    for element in elements {
+        let Some(value) = element.as_one() else {
+            return Err("unsupported Body IR spread range field".into());
+        };
+        let field = scalar_operand(builder, value, span)?;
+        types.push(value_type(builder, &field)?);
+        fields.push(field);
+    }
+    range_aggregate(expected, fields, &types)
 }

@@ -811,14 +811,8 @@ pub fn method_ordinary_operands(
     for parameter in body.params.iter().skip(1) {
         types.push(call_parameter_type(builder, body, parameter)?);
     }
-    let partial = module.nominal_declarations.iter().any(|owner| {
-        owner
-            .method_partial_defaults
-            .iter()
-            .any(|preset| preset.name == target.name && Some(&preset.target) == target.canonical.as_ref())
-    });
-    if partial {
-        return Err(untranslated("defaults::method_default_arguments"));
+    if let Some(values) = method_partial_arguments(module, builder, target, arguments, body, &types, span)? {
+        return Ok(values);
     }
     if matches!(target.binding, ArgumentBinding::Resolved { .. }) && has_defaulted_slots(&target.binding) {
         let call = DefaultCall {
@@ -1199,4 +1193,53 @@ fn lower_global_method(
     }
     lower_static_method_body(module, builder, &call, span)?;
     Ok(true)
+}
+
+/// Fill a method partial's omitted slots from the frame its owner retains for that name and target, receiver excluded.
+///
+/// A method partial's call carries its target's identity under the partial's own name; its presets are defaults of the
+/// owner's retained frame for that name and target, whose parameters must be the target body's own. One generic owner
+/// contributes a frame per closed layout; the retained receiver selects this instance. `None` means no such frame.
+fn method_partial_arguments(
+    module: &BodyIrModule,
+    builder: &mut Builder,
+    target: &MethodTarget,
+    arguments: &[ArgumentElement],
+    body: &Body,
+    types: &[PlanType],
+    span: &SourceSpan,
+) -> Result<Option<Vec<Operand>>, String> {
+    for owner in &module.nominal_declarations {
+        for preset in &owner.method_partial_defaults {
+            if preset.name != target.name || Some(&preset.target) != target.canonical.as_ref() {
+                continue;
+            }
+            let frame: &Body = &preset.frame;
+            if frame.canonical != body.canonical
+                || frame.params.len() != body.params.len()
+                || frame.params.len() != types.len() + 1
+            {
+                return Err("invalid Body IR method-partial frame".into());
+            }
+            if frame.params[0].ty != body.params[0].ty {
+                continue;
+            }
+            for (declared, actual) in frame.params.iter().zip(&body.params) {
+                if declared.name != actual.name
+                    || declared.ty != actual.ty
+                    || declared.input_access != actual.input_access
+                {
+                    return Err("invalid Body IR method-partial parameter".into());
+                }
+            }
+            let call = DefaultCall {
+                body: frame,
+                parameter_offset: 1,
+                owned: false,
+            };
+            let values = default_arguments(module, builder, &target.binding, &arguments[1..], types, &call, span)?;
+            return Ok(Some(values));
+        }
+    }
+    Ok(None)
 }

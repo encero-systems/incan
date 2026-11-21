@@ -19,6 +19,7 @@ use crate::pending::untranslated;
 use crate::program_context::{ProgramContext, retain_nominal_tables};
 use crate::runtime_arguments::{RuntimeTypes, runtime_argument};
 use crate::runtime_frames::runtime_frame_adapter;
+use crate::runtime_futures::retain_runtime_future_instances;
 use crate::runtime_requirements::RuntimeRequirement;
 use crate::type_parameters::{Instance, instantiate, request_instance};
 use crate::unions::collect_unions;
@@ -343,15 +344,16 @@ pub fn retain_runtime_instances(
         return Ok(());
     }
     // 1. Retain coroutine instances before ordinary call frames.
-    for function in functions.iter() {
-        if let Some(callee) = &function.future_callee
-            && let CalleeKind::Instantiated(path, _) = &callee.kind
-            && path.starts_with("incan_native_runtime::")
-            && !redirects.deferred.contains_key(path)
-        {
-            return Err(untranslated("runtime_calls::retain_runtime_future_instances"));
-        }
-    }
+    let constructors = frames.program.constructors.clone();
+    retain_runtime_future_instances(
+        &constructors,
+        module,
+        functions,
+        frames.instances,
+        &intrinsics[..],
+        &unions[..],
+        redirects,
+    )?;
     // 2. Register each implementation; each exact signature settles once.
     let mut governed = GovernedRuntime {
         frames,
@@ -497,7 +499,7 @@ fn retain_governed_body(
 }
 
 /// Keep environment ownership for original generic value slots selected by the exact runtime call ABI.
-fn runtime_owned_slots(body: &Body, external: &ExternalFunction) -> Result<Vec<i64>, String> {
+pub fn runtime_owned_slots(body: &Body, external: &ExternalFunction) -> Result<Vec<i64>, String> {
     if body.params.len() != external.parameters.len() {
         return Err(format!(
             "invalid governed runtime parameter arity for {}",

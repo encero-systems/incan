@@ -240,7 +240,7 @@ fn library_default(
 ///
 /// With `owned`, a collection default is moved into the slot that stores it; otherwise the call borrows it and its
 /// owner stays in the caller frame until the call returns.
-fn evaluate_default(
+pub fn evaluate_default(
     module: &BodyIrModule,
     builder: &mut Builder,
     body: &Body,

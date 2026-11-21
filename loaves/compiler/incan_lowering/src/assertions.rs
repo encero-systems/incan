@@ -51,55 +51,6 @@ pub fn lower_assertion(
     Ok(())
 }
 
-/// Reify a checked zero-argument unit function and retain only effect-free literal messages.
-fn lower_raises_assertion(
-    builder: &mut Builder,
-    call: &SourceOperand,
-    expected: ErrorKind,
-    message: Option<&SourceOperand>,
-    span: &SourceSpan,
-) -> Result<(), String> {
-    let text = match message {
-        Some(SourceOperand::Constant(SourceConstant::Str(value))) => value.to_string(),
-        Some(_) => return Err("unsupported Body IR computed raises Assert message".into()),
-        None => String::new(),
-    };
-    let operand = scalar_operand(builder, call, span)?;
-    let unit_function = vec![PlanType::Unit];
-    let pointer_type = PlanType::FunctionPointer(unit_function.clone());
-    let source_type = value_type(builder, &operand)?;
-    match &source_type {
-        PlanType::FunctionItem(_, signature) | PlanType::FunctionPointer(signature) => {
-            if *signature != unit_function {
-                return Err("unsupported Body IR raises Assert callable outside zero-argument unit functions".into());
-            }
-        }
-        _ => return Err("unsupported Body IR raises Assert without a deferred function".into()),
-    }
-    let context = format!("raises Assert callable in {}", builder.name);
-    let (ty, operation) = function_assignment(&pointer_type, &source_type, operand, true, &context)?;
-    let pointer = temporary(builder, ty, span);
-    builder.emit(plan_assign(pointer.clone(), operation, span));
-    let error_name = owned_literal(builder, runtime_error_name(expected), span);
-    let failure_message = owned_literal(builder, &text, span);
-    let destination = temporary(builder, PlanType::Unit, span);
-    let arguments = vec![
-        read_place(pointer, false, span),
-        read_place(error_name, true, span),
-        read_place(failure_message, true, span),
-    ];
-    external_call(
-        builder,
-        "incan_native_runtime::assert_raises_deferred",
-        vec![pointer_type, PlanType::String, PlanType::String],
-        PlanType::Unit,
-        arguments,
-        destination,
-        span,
-    );
-    Ok(())
-}
-
 /// Transfer the failure payload to the unwinding runtime and close the unreachable normal continuation.
 fn lower_failure(builder: &mut Builder, message: Option<&SourceOperand>, span: &SourceSpan) -> Result<(), String> {
     // The text temporary is reserved before the message selects its own storage, as the reference lowering reserves it.
@@ -196,4 +147,51 @@ fn pattern_failure(carrier: &Carrier, slot: i64) -> &'static str {
         return if slot == 1 { "missing_some" } else { "unexpected_some" };
     }
     if slot == 0 { "missing_ok" } else { "missing_err" }
+}
+
+/// Reify a checked zero-argument unit function and retain only effect-free literal messages.
+fn lower_raises_assertion(
+    builder: &mut Builder,
+    call: &SourceOperand,
+    expected: ErrorKind,
+    message: Option<&SourceOperand>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let text = match message {
+        Some(SourceOperand::Constant(SourceConstant::Str(value))) => value.clone(),
+        Some(_) => return Err("unsupported Body IR computed raises Assert message".into()),
+        None => String::new(),
+    };
+    let operand = scalar_operand(builder, call, span)?;
+    let pointer_type = PlanType::FunctionPointer(vec![PlanType::Unit]);
+    let source_type = value_type(builder, &operand)?;
+    match &source_type {
+        PlanType::FunctionItem(_, signature) | PlanType::FunctionPointer(signature) => {
+            if *signature != [PlanType::Unit] {
+                return Err("unsupported Body IR raises Assert callable outside zero-argument unit functions".into());
+            }
+        }
+        _ => return Err("unsupported Body IR raises Assert without a deferred function".into()),
+    }
+    let context = format!("raises Assert callable in {}", builder.name);
+    let (ty, operation) = function_assignment(&pointer_type, &source_type, operand, true, &context)?;
+    let pointer = temporary(builder, ty, span);
+    builder.emit(plan_assign(pointer.clone(), operation, span));
+    let error_name = owned_literal(builder, runtime_error_name(expected), span);
+    let failure_message = owned_literal(builder, &text, span);
+    let destination = temporary(builder, PlanType::Unit, span);
+    external_call(
+        builder,
+        "incan_native_runtime::assert_raises_deferred",
+        vec![pointer_type, PlanType::String, PlanType::String],
+        PlanType::Unit,
+        vec![
+            read_place(pointer, false, span),
+            read_place(error_name, true, span),
+            read_place(failure_message, true, span),
+        ],
+        destination,
+        span,
+    );
+    Ok(())
 }

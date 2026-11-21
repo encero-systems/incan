@@ -254,19 +254,21 @@ pub fn tuple_parts(count: usize) -> Vec<String> {
     if count == 0 {
         return vec!["()".into()];
     }
-    let mut parts = vec!["(".to_owned()];
-    parts.extend((1..count).map(|_| ", ".to_owned()));
-    parts.push(if count == 1 { ",)" } else { ")" }.to_owned());
+    let mut parts = vec!["(".to_string()];
+    for _ in 0..count - 1 {
+        parts.push(", ".into());
+    }
+    parts.push(if count == 1 { ",)".into() } else { ")".into() });
     parts
 }
 
 /// Select the existing debug formatter and its exact scalar or borrowed-text signature.
-pub fn tuple_formatter(ty: &PlanType) -> Result<(&'static str, PlanType), String> {
+fn tuple_formatter(ty: &PlanType) -> Result<(&'static str, PlanType), String> {
     match ty {
-        PlanType::Int => Ok(("debug_int", PlanType::Int)),
-        PlanType::Float => Ok(("debug_float", PlanType::Float)),
-        PlanType::Bool => Ok(("debug_bool", PlanType::Bool)),
-        PlanType::Unit => Ok(("debug_unit", PlanType::Unit)),
+        PlanType::Int => Ok(("debug_int", ty.clone())),
+        PlanType::Float => Ok(("debug_float", ty.clone())),
+        PlanType::Bool => Ok(("debug_bool", ty.clone())),
+        PlanType::Unit => Ok(("debug_unit", ty.clone())),
         PlanType::String => Ok(("debug_text", PlanType::StringRef)),
         _ => Err("unsupported Body IR tuple display element".into()),
     }
@@ -278,19 +280,18 @@ pub fn display_tuple(builder: &mut Builder, value: Place, span: &SourceSpan) -> 
     let fields = tuple_fields(&value, &ty, span)?;
     let mut values = Vec::with_capacity(fields.len());
     for field in &fields {
-        let ty = place_type(&builder.locals, field);
-        let (name, parameter) = tuple_formatter(&ty)?;
+        let field_type = place_type(&builder.locals, field);
+        let (name, parameter) = tuple_formatter(&field_type)?;
         let mut argument = read_place(field.clone(), false, span);
-        if ty == PlanType::String {
+        if field_type == PlanType::String {
             let reference = temporary(builder, parameter.clone(), span);
             builder.emit(plan_assign(reference.clone(), RvalueKind::Borrow(field.clone()), span));
             argument = read_place(reference, false, span);
         }
         let text = temporary(builder, PlanType::String, span);
-        let path = format!("incan_native_runtime::{name}");
         external_call(
             builder,
-            &path,
+            &format!("incan_native_runtime::{name}"),
             vec![parameter],
             PlanType::String,
             vec![argument],
