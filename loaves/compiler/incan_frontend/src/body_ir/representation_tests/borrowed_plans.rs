@@ -124,6 +124,19 @@ fn writes_through_an_exclusive_borrow_replace_its_referent() -> Result<(), Box<d
     Ok(())
 }
 
+/// A borrowed result reached from its source (`from values`, slice 09B) plans exactly as the native result without a
+/// `from` clause, in both spellings: the callee returns the reference and its caller reads through it.
+#[test]
+fn borrowed_results_reached_from_their_source_plan_as_native_results() -> Result<(), Box<dyn std::error::Error>> {
+    let template = "def first(values: {borrow:list[int]}, position: int) -> {borrow:int}{source}:\n    item: {borrow:int} = values[position]\n    return item\n\ndef total(values: list[int]) -> int:\n    chosen = first(values, 0)\n    return chosen + 1\n";
+    let unsourced = planned(&spelled(template, NATIVE).replace("{source}", "            "))?;
+    for spelling in [NATIVE, EXPLICIT] {
+        let sourced = planned(&spelled(template, spelling).replace("{source}", " from values"))?;
+        assert_eq!(sourced, unsourced);
+    }
+    Ok(())
+}
+
 /// An owned `mut` local is lent to an exclusive parameter, and a local borrow takes a reference to its value.
 #[test]
 fn owned_values_are_lent_to_borrows() -> Result<(), Box<dyn std::error::Error>> {
