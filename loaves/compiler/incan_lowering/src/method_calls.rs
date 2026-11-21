@@ -1,7 +1,9 @@
 //! Method calls: checked receivers, selected implementations and their ordinary arguments.
 
 use incan_lang::lang::surface::iterator_methods::{IteratorMethodId, as_str as iterator_method_name};
-use incan_mir_plan_native::{CalleeKind, Operand, Place, PlanType, RvalueKind, SourceSpan, assign as plan_assign};
+use incan_mir_plan_native::{
+    CalleeKind, Operand, Place, PlanType, Projection, RvalueKind, SourceSpan, assign as plan_assign,
+};
 use incan_semantics_core::body_ir::{
     ArgumentBinding, ArgumentElement, Body, BodyIrModule, MethodTarget, Operand as SourceOperand, OwnershipFact,
     Place as SourcePlace, ReflectionOperation,
@@ -686,13 +688,7 @@ fn call_method_body(
 ) -> Result<(), String> {
     let typed = instantiated_method_body(module, builder, target, index, arguments, span)?;
     let body = &typed;
-    if target.loaf_trait.is_some()
-        && body.canonical == target.canonical
-        && target.has_valid_native_trait_selection()
-        && target.native_trait_delegation.is_some()
-    {
-        return Err(untranslated("method_calls::retain_sdk_factory_result"));
-    }
+    retain_sdk_factory_result(module, builder, target, body, destination, span)?;
     if source_equality_target(module, target, body) {
         return Err(untranslated("comparison_methods::source_equality_value"));
     }
@@ -708,6 +704,69 @@ fn call_method_body(
     }
     let callee = CalleeKind::Planned(function_name(module, body));
     emit_selected_body_call(module, builder, body, callee, operands, destination, span)
+}
+
+/// Keep a selected SDK default's concrete result where its checked interface still uses a tuple iterator frame.
+fn retain_sdk_factory_result(
+    module: &BodyIrModule,
+    builder: &mut Builder,
+    target: &MethodTarget,
+    body: &Body,
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    if target.loaf_trait.is_none() || body.canonical != target.canonical || !target.has_valid_native_trait_selection() {
+        return Ok(());
+    }
+    let Some(delegation) = &target.native_trait_delegation else {
+        return Ok(());
+    };
+    if target.canonical.as_ref() != Some(&delegation.canonical) {
+        return Ok(());
+    }
+    let Some(place) = destination else {
+        return Ok(());
+    };
+    let output = scalar_place(builder, place, span)?;
+    if output.projection != Projection::Whole {
+        return Ok(());
+    }
+    if !matches!(place_type(&builder.locals, &output), PlanType::ZipIterator(..)) {
+        return Ok(());
+    }
+    let result = native_source_type(
+        builder.constructors(),
+        builder.nominals(),
+        builder.enums(),
+        &builder.unions,
+        &body.return_type,
+        &builder.intrinsics,
+        "",
+    )?;
+    let PlanType::Model(owner, _) = &result else {
+        return Ok(());
+    };
+    if library_item(&module.nominal_declarations[*owner as usize]).is_empty() {
+        return Ok(());
+    }
+    let declared = checked_type_arguments(builder, std::slice::from_ref(&delegation.return_type))?;
+    let Some(declared) = declared.first() else {
+        return Err("the standard library factory result differs from its destination type".into());
+    };
+    let expected = native_source_type(
+        builder.constructors(),
+        builder.nominals(),
+        builder.enums(),
+        &builder.unions,
+        declared,
+        &builder.intrinsics,
+        "",
+    )?;
+    if expected != place_type(&builder.locals, &output) {
+        return Err("the standard library factory result differs from its destination type".into());
+    }
+    builder.locals[output.local as usize].ty = result;
+    Ok(())
 }
 
 /// Whether an explicit equality source member keeps its owned input, which a borrowing wrapper adapts.
