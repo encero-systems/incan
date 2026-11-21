@@ -26,7 +26,9 @@ use crate::numerics::{integer_carrier, numeric_carrier, numeric_zero, sized_nume
 use crate::operators::scalar_rvalue;
 use crate::options::replace_owned_destination;
 use crate::pending::untranslated;
-use crate::result_carriers::retained_reference_value;
+use crate::result_carriers::{
+    lower_none_assignment, lower_option_construction, lower_result_construction, retained_reference_value,
+};
 use crate::statements::{is_nominal_type, is_owned_callable};
 
 /// Assign a checked value to a local, routing strings, formatting and runtime-semantics operators first.
@@ -190,12 +192,12 @@ fn assign_stored_value(
         return Err(untranslated("frozen_plan::frozen_assignment"));
     }
     match value {
-        Rvalue::ResultVariant(_) => return Err(untranslated("result_carriers::lower_result_construction")),
-        Rvalue::Aggregate(AggregateKind::OptionSome, _) => {
-            return Err(untranslated("options::lower_option_construction"));
+        Rvalue::ResultVariant(variant) => return lower_result_construction(builder, target, variant, span),
+        Rvalue::Aggregate(AggregateKind::OptionSome, elements) => {
+            return lower_option_construction(builder, target, elements, span);
         }
         Rvalue::Use(SourceOperand::Constant(SourceConstant::None)) => {
-            return Err(untranslated("options::lower_none_assignment"));
+            return lower_none_assignment(builder, target, span);
         }
         Rvalue::Format(parts) => return lower_format(builder, target, parts, span),
         Rvalue::BinaryOp(operator, left, right) => match operator {

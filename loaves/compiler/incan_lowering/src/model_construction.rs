@@ -22,7 +22,7 @@ use crate::list_values::value_operand;
 use crate::models::constructor_index;
 use crate::pending::untranslated;
 use crate::result_carriers::frozen_operand;
-use crate::statements::borrowed_payload;
+use crate::statements::{borrowed_payload, carrier_payload};
 use crate::text_plan::owned_literal;
 use crate::tuples::carrier_element;
 
@@ -110,7 +110,8 @@ fn tuple_value(
             && borrowed_payload(value)
             && reference_contract(&tuple_element_type(field)).is_ok()
         {
-            return Err(untranslated("statements::carrier_payload"));
+            operands.push(carrier_payload(builder, value, &tuple_element_type(field), span)?);
+            continue;
         }
         // A list or carrier element takes the destination element's exact carrier, `None` included.
         if let Some(field) = declared
