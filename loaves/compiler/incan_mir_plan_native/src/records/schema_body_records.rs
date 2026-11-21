@@ -50,6 +50,31 @@ pub(crate) static SHAPE_BODY_RECORDS_STORED_FIELD_STEP: Shape = Shape {
     ]),
 };
 
+pub(crate) static SHAPE_BODY_RECORDS_STORED_FROZEN_VALUE: Shape = Shape {
+    selector: b"\xe3F!u\xe3\xf6\x00",
+    path: "incan.native-plan/5.body_records.StoredFrozenValue",
+    body: ShapeBody::Enum(&[
+        variant(
+            b"C\x81\x9c`\xb3\xbd",
+            "Scalar",
+            &[field(b"_\xec\xebf\xff\xc8", "0", "enum@bc85504365c3")],
+        ),
+        variant(
+            b"M\x80\x000\x1f\xcc",
+            "Bytes",
+            &[field(b"_\xec\xebf\xff\xc8", "0", "list<i64>")],
+        ),
+        variant(
+            b"{y\x07\x08\xff\x1b",
+            "Collection",
+            &[
+                field(b"_\xec\xebf\xff\xc8", "0", "enum@234b6c9b62c7"),
+                field(b"k\x86\xb2s\xff4", "1", "list<enum@e3462175e3f6>"),
+            ],
+        ),
+    ]),
+};
+
 pub(crate) static SHAPE_BODY_RECORDS_STORED_OPERAND: Shape = Shape {
     selector: b"Y\x93\xb8%\xe2#\x00",
     path: "incan.native-plan/5.body_records.StoredOperand",
@@ -301,6 +326,14 @@ pub(crate) static SHAPE_BODY_RECORDS_STORED_RVALUE: Shape = Shape {
             &[
                 field(b"_\xec\xebf\xff\xc8", "0", "string"),
                 field(b"k\x86\xb2s\xff4", "1", "record@533bfbed0457"),
+            ],
+        ),
+        variant(
+            b"`ar\x85\xa4\xcb",
+            "FrozenCollection",
+            &[
+                field(b"_\xec\xebf\xff\xc8", "0", "enum@234b6c9b62c7"),
+                field(b"k\x86\xb2s\xff4", "1", "list<enum@e3462175e3f6>"),
             ],
         ),
     ]),
