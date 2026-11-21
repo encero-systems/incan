@@ -240,10 +240,11 @@ fn shadowed_mode_is_not_an_ownership_contract() -> Result<(), Box<dyn std::error
     Ok(())
 }
 
-/// Every explicit form is refused before executable storage can be selected, also when nested.
+/// Every explicit form is refused before executable storage can be selected, also when nested. A nested borrow mode
+/// is the native reference instead (RFC 164: `Option[Borrowed[str]]` is `Option[&str]`).
 #[test]
 fn modes_are_refused_at_every_annotation_depth() -> Result<(), Box<dyn std::error::Error>> {
-    for mode in ["Borrowed", "BorrowedMut", "Owned", "Reference"] {
+    for mode in ["Owned", "Reference"] {
         let checker = checked(&format!("def read(value: Option[{mode}[str]]) -> None:\n    pass\n"))?;
         assert!(
             checker
@@ -253,6 +254,10 @@ fn modes_are_refused_at_every_annotation_depth() -> Result<(), Box<dyn std::erro
             "{mode}: {:?}",
             checker.errors
         );
+    }
+    for mode in ["Borrowed", "BorrowedMut"] {
+        let checker = checked(&format!("def read(value: Option[{mode}[str]]) -> None:\n    pass\n"))?;
+        assert!(checker.errors.is_empty(), "{mode}: {:?}", checker.errors);
     }
     Ok(())
 }
