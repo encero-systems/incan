@@ -115,28 +115,30 @@ impl ResidentPage {
     }
 }
 
-/// The page this worker read from the same bytes for the same module and placement, or the one `read` makes from
-/// them now; `None` when `read` refuses them, which is not kept.
+/// The page this worker read for the same content, module and placement, or the one `read` makes now with the number
+/// of bytes it read; `content` is the SHA-256 digest of the page's bytes. `None` when `read` refuses, which is not
+/// kept.
 pub fn resident_page(
-    encoded: &[u8],
+    content: &[u8; 32],
     module: &str,
     inspect: bool,
-    read: impl FnOnce() -> Option<AdmittedPage>,
+    read: impl FnOnce() -> Option<(AdmittedPage, u64)>,
 ) -> Option<Arc<ResidentPage>> {
     let mut hasher = Sha256::new();
     hasher.update((module.len() as u64).to_le_bytes());
     hasher.update(module.as_bytes());
     hasher.update([u8::from(inspect)]);
-    hasher.update(encoded);
+    hasher.update(content);
     let key: [u8; 32] = hasher.finalize().into();
     if let Ok(guard) = PAGES.lock()
         && let Some(kept) = guard.as_ref().and_then(|pages| pages.get(&key))
     {
         return Some(kept.clone());
     }
+    let (page, bytes) = read()?;
     let page = Arc::new(ResidentPage {
-        page: read()?,
-        bytes: encoded.len() as u64,
+        page,
+        bytes,
         restored: Mutex::new(HashMap::new()),
     });
     if let Ok(mut guard) = PAGES.lock() {

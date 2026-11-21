@@ -185,7 +185,9 @@ pub def select_plan_modules(
         if bound and record.key.identity not in changed_positions:
             suffix = POSITIONED_MODULE_PAGE
         # An earlier worker sees no qualified module page and keeps the ordinary keyed route.
-        selection.pages.append(SelectedBodyPage(key=hexlify(value.module.encode("utf-8")) + suffix, value=record.value))
+        selection.pages.append(
+            SelectedBodyPage(key=hexlify(value.module.encode("utf-8")) + suffix, value=record.value, digest=record.value_digest),
+        )
         mut witnessed: set[str] = set()
         if record.key.identity in complete_namespaces:
             for witness in record.receipt.witnesses:
