@@ -642,21 +642,28 @@ impl TypeChecker {
     /// Recover an admitted source declaration when Rust returns its native carrier. Published layouts are indexed
     /// by canonical identity even when the consumer imports only a function; no lexical type binding is introduced.
     pub(super) fn resolved_source_from_rust_carrier(&self, normalized: &str) -> Option<ResolvedType> {
-        if !normalized.starts_with(incan_semantics_core::body_ir::NOMINAL_CARRIER_KEY_PREFIX) {
-            return None;
-        }
+        let key = if normalized.starts_with(incan_semantics_core::body_ir::NOMINAL_CARRIER_KEY_PREFIX) {
+            normalized
+        } else {
+            compiled_layout_carrier_key(normalized)?
+        };
+        self.resolved_source_from_carrier_key(key)
+    }
+
+    /// The source declaration a nominal carrier key names, by its lexical binding or its admitted public layout.
+    pub(super) fn resolved_source_from_carrier_key(&self, key: &str) -> Option<ResolvedType> {
         if let Some((_, name, _)) = self.symbols.active_module_source_bindings().find(|(_, name, _)| {
             self.symbols
                 .module_type_identity(name)
                 .and_then(incan_semantics_core::body_ir::nominal_carrier_key)
                 .as_deref()
-                == Some(normalized)
+                == Some(key)
         }) {
             return Some(ResolvedType::Named(name.to_owned()));
         }
         self.transitive_pub_types
-            .contains_key(normalized)
-            .then(|| ResolvedType::Named(normalized.to_owned()))
+            .contains_key(key)
+            .then(|| ResolvedType::Named(key.to_owned()))
     }
 
     /// Resolve borrowed, structural and nominal Rust spellings after scalar and callable forms have been admitted.
@@ -903,6 +910,34 @@ impl TypeChecker {
         let display = self.rust_display_for_owner_path(rust_ty, owner_path);
         self.resolved_rust_boundary_target_from_param_display(display.as_str())
     }
+}
+
+/// The namespace in which a compiled Incan library declares one source-named concrete layout (the driver's
+/// `__incan_layout_<carrier key>` module).
+const COMPILED_LAYOUT_NAMESPACE_PREFIX: &str = "__incan_layout_";
+
+/// The nominal carrier key of a compiled Incan library's layout: an ordinary layout stays at the crate root under its
+/// key (`<crate>::<key>`), a source-named one lives in its own namespace (`<crate>::__incan_layout_<key>::<Name>`).
+/// Only a plain path names the layout itself: a reference, a generic application or any other display keeps its own
+/// structure, and its inner path reenters this rule.
+pub(super) fn compiled_layout_carrier_key(normalized: &str) -> Option<&str> {
+    let prefix = incan_semantics_core::body_ir::NOMINAL_CARRIER_KEY_PREFIX;
+    if !normalized
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == ':')
+    {
+        return None;
+    }
+    let mut segments = normalized.rsplit("::");
+    let name = segments.next()?;
+    let owner = segments.next()?;
+    if name.starts_with(prefix) {
+        // Only the crate root holds ordinary layouts; a deeper carrier-named path is no layout.
+        return segments.next().is_none().then_some(name);
+    }
+    let key = owner.strip_prefix(COMPILED_LAYOUT_NAMESPACE_PREFIX)?;
+    let identifier = !name.is_empty() && name.chars().all(|ch| ch == '_' || ch.is_ascii_alphanumeric());
+    (identifier && key.starts_with(prefix)).then_some(key)
 }
 
 /// Collect named lifetime and type-parameter identities from one portable Rust display. Static lifetimes deliberately

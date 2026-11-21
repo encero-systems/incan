@@ -9,7 +9,7 @@ impl TypeChecker {
     /// Rust field declared as `r#type` is accessed as `obj.type` and constructed with `TypeName(type=...)`; emission
     /// rawifies the keyword identifier back to `r#type`. An ordinary Rust field declared as `type_` remains available
     /// only as `obj.type_`.
-    pub(in crate::typechecker::check_expr) fn rust_field_for_source_name<'a>(
+    pub(in crate::typechecker) fn rust_field_for_source_name<'a>(
         info: &'a RustTypeInfo,
         source_name: &str,
     ) -> Option<&'a RustFieldInfo> {
@@ -52,8 +52,34 @@ impl TypeChecker {
             );
         }
         let (source_type, native) = self.resolved_rust_field_types(path, rust_field);
+        self.retain_rust_field_payload_layouts(&source_type);
         self.type_info.rust.field_values.insert(span, native);
         Some(source_type)
+    }
+
+    /// Retain the native layouts of the closed public records a field's type names inside it (an `Option` of a Rust
+    /// record, say), so lowering can carry that payload even where the source never reads the record's own fields.
+    fn retain_rust_field_payload_layouts(&mut self, ty: &ResolvedType) {
+        let mut paths = Vec::new();
+        rust_path_leaves(ty, &mut paths);
+        for path in paths {
+            let Some(metadata) = self.rust_item_metadata_for_complete_type(&path) else {
+                continue;
+            };
+            // Only a closed record whose fields are all public: a generic wrapper such as `Box<T>`, or a record with
+            // private storage, keeps its native representation.
+            if let RustItemKind::Type(info) = &metadata.kind
+                && info.variants.is_empty()
+                && info.type_params.is_empty()
+                && !info.fields.is_empty()
+                && info
+                    .fields
+                    .iter()
+                    .all(|field| info.metadata_completeness.field_is_public(&field.name))
+            {
+                self.retain_rust_layout(&path, info);
+            }
+        }
     }
 
     /// Resolve source and native field types together from metadata against the instantiated owner.
@@ -403,5 +429,19 @@ impl TypeChecker {
                 self.check_expr(expr)
             }
         }
+    }
+}
+
+/// The Rust paths a type names as payloads: inside collections, options, tuples and references.
+fn rust_path_leaves(ty: &ResolvedType, paths: &mut Vec<String>) {
+    match ty {
+        ResolvedType::RustPath(path) => paths.push(path.clone()),
+        ResolvedType::Generic(_, arguments) | ResolvedType::Tuple(arguments) => {
+            for argument in arguments {
+                rust_path_leaves(argument, paths);
+            }
+        }
+        ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => rust_path_leaves(inner, paths),
+        _ => {}
     }
 }
