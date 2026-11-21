@@ -27,7 +27,7 @@ def bind_members(mut prepared: Transaction, mut source: PreparedBodyRecordSource
     return Ok(None)
 
 
-def receiver_source(projection: &SourceProjection, receiver: str) -> Result[SourceProjectionRecord, str]:
+def receiver_source(projection: Borrowed[SourceProjection], receiver: str) -> Result[SourceProjectionRecord, str]:
     for owner in projection.owners:
         if owner.key.facet in ["model:" + receiver, "class:" + receiver, "enum:" + receiver, "newtype:" + receiver, "trait:" + receiver]:
             return Ok(owner)
@@ -36,7 +36,7 @@ def receiver_source(projection: &SourceProjection, receiver: str) -> Result[Sour
 
 pub def method_inputs(
     mut prepared: Transaction, mut source: PreparedBodyRecordSource, selected: Option[Snapshot],
-    methods: &MethodReads, local: RecordKey, value: bytes, mut projections: Dict[str, SourceProjection],
+    methods: Borrowed[MethodReads], local: RecordKey, value: bytes, mut projections: Dict[str, SourceProjection],
     unit: UnitDescription,
 ) -> Result[list[RecordRequest], str]:
     mut reads: list[RecordRequest] = []

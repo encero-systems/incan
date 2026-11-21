@@ -144,19 +144,19 @@ def show_receiver_methods() -> None:
             assert false
 
 
-def first_duration_seconds(values: &list[Duration]) -> u64:
+def first_duration_seconds(values: Borrowed[list[Duration]]) -> u64:
     """Resolve Index's Output from both its native list owner and its concrete usize trait argument."""
     slot: usize = 0
     return Index.index(values, slot).as_secs()
 
 
-def first_duration(values: &list[Duration]) -> &Duration:
+def first_duration(values: Borrowed[list[Duration]]) -> Borrowed[Duration] from values:
     """Return the shared element selected by Index without copying its storage."""
     slot: usize = 0
     return Index.index(values, slot)
 
 
-def first_number(values: &list[int]) -> &int:
+def first_number(values: Borrowed[list[int]]) -> Borrowed[int] from values:
     """Return the same shared Index contract for an exact scalar element."""
     slot: usize = 0
     return Index.index(values, slot)
@@ -267,7 +267,7 @@ def show_indexed_flags() -> None:
     inspect_flag_set(FlagSet(flags=flags))
 
 
-def inspect_flag_set(values: &FlagSet) -> None:
+def inspect_flag_set(values: Borrowed[FlagSet]) -> None:
     """Observe fields after a borrowed model and list-element prefix."""
     assert values.flags[1].enabled
     assert values.flags[1].address.to_bits() == 2130706433u32
@@ -278,12 +278,12 @@ def inspect_flag_set(values: &FlagSet) -> None:
     assert not values.flags[0].enabled
 
 
-def reverse_ordering(value: &Ordering) -> Ordering:
+def reverse_ordering(value: Borrowed[Ordering]) -> Ordering:
     """Copy a borrowed native enum into its by-value method receiver."""
     return value.reverse()
 
 
-def shared_borrow_value(value: &BorrowValue) -> int:
+def shared_borrow_value(value: Borrowed[BorrowValue]) -> int:
     """Read a shared source model selected by the native Borrow result."""
     return value.value
 

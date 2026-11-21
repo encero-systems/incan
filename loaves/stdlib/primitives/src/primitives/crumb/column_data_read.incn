@@ -89,7 +89,7 @@ pub def read_column(
 
 
 pub def column_at(
-    column: &ColumnData,
+    column: Borrowed[ColumnData],
     position: int,
     dictionary: Dictionary,
     mut budget: Budget,

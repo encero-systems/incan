@@ -114,8 +114,8 @@ from rust::incan_mir_plan_native import (
 
 
 pub def product_nominals(
-    function: &Function,
-    runtime: &list[ExternalFunction],
+    function: Borrowed[Function],
+    runtime: Borrowed[list[ExternalFunction]],
     frames: list[Function] = [],
 ) -> Result[list[NominalReference], str]:
     """Name the unit positions a product of this function would retain, in first-seen ordinal order."""
@@ -123,8 +123,8 @@ pub def product_nominals(
 
 
 pub def encode_product(
-    function: &Function,
-    runtime: &list[ExternalFunction],
+    function: Borrowed[Function],
+    runtime: Borrowed[list[ExternalFunction]],
     nominals: list[ProductNominal] = [],
     frames: list[Function] = [],
 ) -> Result[bytes, str]:
@@ -154,13 +154,13 @@ pub def transform_product_positions(
     return native_transform_product_positions(encoded, positions, frame_names)
 
 
-pub def encode_record_plan(plan: &Plan) -> Result[bytes, str]:
+pub def encode_record_plan(plan: Borrowed[Plan]) -> Result[bytes, str]:
     """Encode one complete plan or explicitly refuse a field the codec cannot preserve."""
     return native_encode_record_plan(plan)
 
 
 pub def encode_record_plan_products(
-    plan: &Plan,
+    plan: Borrowed[Plan],
     functions: list[bytes],
     references: list[list[NominalReference]] = [],
 ) -> Result[bytes, str]:

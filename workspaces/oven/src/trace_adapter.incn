@@ -280,7 +280,7 @@ def failure_message(error: TraceError) -> str:
         TraceError.InvalidSpan => return "invalid span"
 
 
-def compatibility_work(directory: str, span: &EngineSpan) -> Result[None, TraceError]:
+def compatibility_work(directory: str, span: Borrowed[EngineSpan]) -> Result[None, TraceError]:
     """
     Export the old JEC keys from the same completed span for existing measurement scripts. The wall-clock end lets a
     measurement partition nested spans against its own command timestamps without double counting.

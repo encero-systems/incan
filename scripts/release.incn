@@ -897,7 +897,7 @@ def installed_verification(run: ReleaseRun, candidate: Candidate) -> Result[Path
     return Ok(log)
 
 
-def compare_reference(run: ReleaseRun, reference: Path, candidate: &BaselineReport) -> Result[None, str]:
+def compare_reference(run: ReleaseRun, reference: Path, candidate: Borrowed[BaselineReport]) -> Result[None, str]:
     """Require candidate case keys to equal the seed census and every seed PASS key to remain passing."""
     reference_report = census_results(reference)?
     match require_candidate_census(reference_report, candidate):
@@ -1318,7 +1318,7 @@ def release_tree_bytes_json(measured: ReleaseTreeBytes) -> JsonValue:
     )
 
 
-def write_difference(path: Path, left: &BaselineReport, right: &BaselineReport) -> Result[None, str]:
+def write_difference(path: Path, left: Borrowed[BaselineReport], right: Borrowed[BaselineReport]) -> Result[None, str]:
     """Retain deterministic differing case outcomes without calling an external diff tool."""
     mut lines: list[str] = []
     keys = sorted(list(set(left.result_keys + right.result_keys)))

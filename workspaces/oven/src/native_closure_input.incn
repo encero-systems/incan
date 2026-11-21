@@ -57,7 +57,7 @@ pub def native_bindings(path: Path, readings: NativeClosureInput) -> Result[list
             return Ok(result)
 
 
-def reading(path: Path, mut store: &mut Readings) -> Result[JsonValue, str]:
+def reading(path: Path, mut store: BorrowedMut[Readings]) -> Result[JsonValue, str]:
     """Keep validation at each existing consumer while sharing the exact published input it validates."""
     # 1. Replacement and in-place edits both change the observed generation.
     observed = match frozen_observation(path):

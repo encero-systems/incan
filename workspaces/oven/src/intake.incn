@@ -88,7 +88,7 @@ pub def read_manifest_snapshot(
     return snapshot_in(root, held.deref_mut())
 
 
-def snapshot_in(root: Path, mut store: &mut ManifestStore) -> Result[ManifestSnapshot, IntakeError]:
+def snapshot_in(root: Path, mut store: BorrowedMut[ManifestStore]) -> Result[ManifestSnapshot, IntakeError]:
     """Read or recall a snapshot while holding the preparation's one mutable memo view."""
     manifest = root.joinpath("loaf.toml")
     observed = observe(manifest).map_err((error) => refusal(manifest.0, [], IntakeErrorKind.Missing, error))?
@@ -118,7 +118,7 @@ pub def remember_resolved_lock(reader: ManifestReader, path: str, text: str) -> 
     resolve_in(held.deref_mut(), path, text)
 
 
-def resolve_in(mut store: &mut ManifestStore, path: str, text: str) -> None:
+def resolve_in(mut store: BorrowedMut[ManifestStore], path: str, text: str) -> None:
     """Record one resolved lock in the preparation's memo."""
     store.resolved_locks[path] = text
 
@@ -129,7 +129,7 @@ pub def resolved_lock_text(reader: ManifestReader, path: str) -> Option[str]:
     return resolved_in(held.deref_mut(), path)
 
 
-def resolved_in(mut store: &mut ManifestStore, path: str) -> Option[str]:
+def resolved_in(mut store: BorrowedMut[ManifestStore], path: str) -> Option[str]:
     """Read one resolved lock from the preparation's memo."""
     if path in store.resolved_locks:
         return Some(store.resolved_locks[path])
@@ -142,7 +142,7 @@ pub def read_digests(reader: ManifestReader) -> Dict[str, str]:
     return digests_in(held.deref_mut())
 
 
-def digests_in(mut store: &mut ManifestStore) -> Dict[str, str]:
+def digests_in(mut store: BorrowedMut[ManifestStore]) -> Dict[str, str]:
     """The content digests a preparation's manifest memo recorded, by manifest path."""
     mut digests: Dict[str, str] = {}
     for path in store.manifests.keys():
@@ -160,7 +160,7 @@ pub def read_project(root: Path, reader: ManifestReader = ManifestReader()) -> R
 def project_in(
     root: Path,
     snapshot: ManifestSnapshot,
-    mut store: &mut ManifestStore,
+    mut store: BorrowedMut[ManifestStore],
 ) -> Result[LocalProject, IntakeError]:
     """Normalize an exact snapshot once within the caller-owned preparation context."""
     if root.0 in store.projects:

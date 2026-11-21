@@ -6,7 +6,7 @@
 from rust::std::io import Cursor, Read, Take
 
 
-def escaped() -> Take[&mut Cursor[bytes]]:
+def escaped() -> Take[BorrowedMut[Cursor[bytes]]]:
     """Refuse exposing a borrowed native adapter without an executable lifetime contract."""
     mut cursor = Cursor.new(b"ab")
     return Read.by_ref(cursor).take(1u64)

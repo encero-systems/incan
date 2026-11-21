@@ -89,7 +89,7 @@ def required(graph: Snapshot, key: str) -> Result[bytes, str]:
         None => return Err("ranked compiler preparation lost " + key)
 
 
-def changed_owner(graph: Snapshot, prior: RecordKey, captured: &Dict[str, bytes]) -> Result[Option[BuildOwner], str]:
+def changed_owner(graph: Snapshot, prior: RecordKey, captured: Borrowed[Dict[str, bytes]]) -> Result[Option[BuildOwner], str]:
     """Select only a changed complete source whose earlier checker discovered a closed local environment."""
     # The standalone ranked producer currently selects a free declaration. Concrete method records are
     # restored at their ordinary nominal preparation site, where the enclosing type is available.
@@ -164,7 +164,7 @@ def changed_owner(graph: Snapshot, prior: RecordKey, captured: &Dict[str, bytes]
     return Ok(Some(BuildOwner(prior=prior, name=name, namespace=order.rank, inputs=inputs, prior_declaration_root=prior_declaration_root, prior_declaration=prior_declaration, signature_input=signature_input)))
 
 
-pub def contextual_ranked_pages(inputs: &RankedBuildInputs, prior: RecordKey) -> Result[list[SelectedBodyPage], str]:
+pub def contextual_ranked_pages(inputs: Borrowed[RankedBuildInputs], prior: RecordKey) -> Result[list[SelectedBodyPage], str]:
     """Schedule one body edit in the native compiler's already prepared namespace and imported interfaces."""
     if len(inputs.invalid) != 1 or len(inputs.changes) == 0 or not prior.identity.startswith("function:"):
         return Ok([])
@@ -212,7 +212,7 @@ pub def contextual_ranked_pages(inputs: &RankedBuildInputs, prior: RecordKey) ->
     ])
 
 
-def submit(store: Path, view: str, toolchain: Toolchain, owner: &BuildOwner, family: str) -> Result[Submitted, str]:
+def submit(store: Path, view: str, toolchain: Toolchain, owner: Borrowed[BuildOwner], family: str) -> Result[Submitted, str]:
     """Publish only this owner's inputs in one pinned staging revision before asking the compiler to certify rank."""
     mut output = owner.prior
     output.family = family
@@ -261,7 +261,7 @@ def page(graph: Snapshot, kind: str, root: str) -> Result[bytes, str]:
     return Ok(value)
 
 
-def evaluate(store: Path, view: str, toolchain: Toolchain, pending: BuildOwner, job: &Submitted) -> Result[BuildOwner, str]:
+def evaluate(store: Path, view: str, toolchain: Toolchain, pending: BuildOwner, job: Borrowed[Submitted]) -> Result[BuildOwner, str]:
     """Settle one reserved contribution, retaining only the typed record and verified predecessor evidence."""
     mut owner = pending
     output = job.activation.ready.output
@@ -330,7 +330,7 @@ def evaluate(store: Path, view: str, toolchain: Toolchain, pending: BuildOwner, 
     return Ok(owner)
 
 
-pub def ranked_build_pages(store: Path, inputs: &RankedBuildInputs, toolchain: Toolchain, unit: UnitDescription, key: Key,
+pub def ranked_build_pages(store: Path, inputs: Borrowed[RankedBuildInputs], toolchain: Toolchain, unit: UnitDescription, key: Key,
     retained: list[SelectedBodyPage]) -> Result[Option[list[SelectedBodyPage]], str]:
     """Run only the source-changed certified frontier. Equal settled values retain the old Body IR frame."""
     if len(inputs.invalid) == 0:

@@ -12,7 +12,7 @@ class Node:
         return describe_link(self.next)
 
 
-def describe_link(link: &Option[Node]) -> str:
+def describe_link(link: Borrowed[Option[Node]]) -> str:
     match link:
         Some(_n) => return "linked"
         None => return "end"

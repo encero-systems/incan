@@ -252,17 +252,17 @@ def scope_name(facet: str) -> str:
     return parts[len(parts) - 1]
 
 
-pub def scope_key(census: &SourceProjectionRecord, name: str) -> RecordKey:
+pub def scope_key(census: Borrowed[SourceProjectionRecord], name: str) -> RecordKey:
     """Address one declared name, including all its same-name owners."""
     return source_key("scope-name", census.key.origin, census.key.identity, name)
 
 
-pub def signature_scope_key(signature: &RecordKey) -> RecordKey:
+pub def signature_scope_key(signature: Borrowed[RecordKey]) -> RecordKey:
     """Observe presence of the exact name whose signature a caller binds."""
     return source_key("scope-name", signature.origin, signature.identity, scope_name(signature.facet))
 
 
-pub def scope_member(census: &SourceProjectionRecord, members: &Dict[str, list[str]], name: str) -> SourceProjectionRecord:
+pub def scope_member(census: Borrowed[SourceProjectionRecord], members: Borrowed[Dict[str, list[str]]], name: str) -> SourceProjectionRecord:
     """An empty selection proves that no declaration of this name exists in the captured module."""
     key = scope_key(census, name)
     mut text = ""
@@ -271,7 +271,7 @@ pub def scope_member(census: &SourceProjectionRecord, members: &Dict[str, list[s
     return SourceProjectionRecord(key=key, text=text, start=0, end=0)
 
 
-def mark_placement(mut placements: Dict[str, SourceProjectionRecord], owner: &SourceProjectionRecord, offset: int, raw: str) -> None:
+def mark_placement(mut placements: Dict[str, SourceProjectionRecord], owner: Borrowed[SourceProjectionRecord], offset: int, raw: str) -> None:
     """Bind an owner's physical source bytes and absolute UTF-8 offset, including every same-named overload."""
     key = owner_placement_key(owner.key.origin, owner.key.identity, owner.key.facet)
     content = hexlify(sha256.digest(raw.encode("utf-8")))
@@ -310,7 +310,7 @@ pub def signature_key(origin: str, path: str, facet: str) -> RecordKey:
 
 
 pub def compiled_owner_source(
-    projection: &SourceProjection,
+    projection: Borrowed[SourceProjection],
     module: str,
     name: str,
     identity: str = "",
@@ -408,7 +408,7 @@ pub def owner_census_key(origin: str, path: str) -> RecordKey:
     return source_key("owner-census", origin, path, "module")
 
 
-pub def signature_record(owner: &SourceProjectionRecord) -> SourceProjectionRecord:
+pub def signature_record(owner: Borrowed[SourceProjectionRecord]) -> SourceProjectionRecord:
     """Project one declaration's header without its implementation, preserving its kind-qualified source owner."""
     mut key = owner.key
     key.family = "declaration-signature"

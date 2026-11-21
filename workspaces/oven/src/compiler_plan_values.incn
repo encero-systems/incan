@@ -76,7 +76,7 @@ pub def select_plan_inventory_except(
 
 pub def carried_lowering_demand(
     selected: Option[Snapshot],
-    retained: &RetainedPlanInputs,
+    retained: Borrowed[RetainedPlanInputs],
     plan: RecordKey,
     demand: RecordKey,
     product: bytes,
@@ -103,7 +103,7 @@ pub def carried_lowering_demand(
     return Ok((value, evidence[1]))
 
 
-def lowering_demand_digest(receipt: &ReadReceipt, key: RecordKey) -> Result[str, str]:
+def lowering_demand_digest(receipt: Borrowed[ReadReceipt], key: RecordKey) -> Result[str, str]:
     """Read exactly the complete payload identity selected by this plan's own preparation."""
     expected = prepared_product_request(key)
     for witness in receipt.witnesses:

@@ -133,7 +133,7 @@ pub model CoveredBodyOwners:
             self.module_owners[module].append(owner)
         return Ok(None)
 
-    pub def lowering_demands(self, events: &list[LoweringEvent], published: set[str], complete: set[str]) -> list[str]:
+    pub def lowering_demands(self, events: Borrowed[list[LoweringEvent]], published: set[str], complete: set[str]) -> list[str]:
         """A fresh plan or entry binding still needs its own checked witness when the module travels whole."""
         mut demanded: set[str] = set()
         for event in events:
@@ -298,7 +298,7 @@ pub def publish_body_values(
     return Ok(PublishedBodyValues(snapshot=final.snapshot, local=local, final=final))
 
 
-def owner_positions(records: &list[ReusableRecord]) -> Result[Dict[str, int], str]:
+def owner_positions(records: Borrowed[list[ReusableRecord]]) -> Result[Dict[str, int], str]:
     """Index the first selection for each complete owner key using the local checker family for comparison."""
     mut positions: Dict[str, int] = {}
     for index in range(len(records)):

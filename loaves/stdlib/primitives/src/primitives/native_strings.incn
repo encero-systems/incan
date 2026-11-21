@@ -4,7 +4,7 @@ from crate.primitives.text import encode_utf8
 from rust::std::vec import Vec as RustVec
 
 
-pub def nul_terminated_utf8(value: &str) -> Result[list[u8], str]:
+pub def nul_terminated_utf8(value: Borrowed[str]) -> Result[list[u8], str]:
     """
     Copy text into owned NUL-terminated UTF-8 storage.
 

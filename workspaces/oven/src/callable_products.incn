@@ -210,7 +210,7 @@ model LoafLocations:
         return resolved_once(path, held.deref_mut())
 
 
-def resolved_once(path: Path, mut state: &mut ResolvedPaths) -> Result[Path, str]:
+def resolved_once(path: Path, mut state: BorrowedMut[ResolvedPaths]) -> Result[Path, str]:
     """Resolve `path` unless this selection already did; a physical spelling also names itself."""
     if path.0 in state.paths:
         return Ok(Path(state.paths[path.0]))

@@ -100,26 +100,26 @@ def show_guard_reads() -> None:
     println(len(buffer.read(2u64)))
 
 
-def inspect_boxed_enum(value: &Bound[Box[Ordering]]) -> bool:
+def inspect_boxed_enum(value: Borrowed[Bound[Box[Ordering]]]) -> bool:
     """Pass a boxed native pattern loan to the enum referent's source parameter."""
     match value:
         Bound.Included(ordering) => return is_greater(ordering)
         _ => return false
 
 
-def is_greater(value: &Ordering) -> bool:
+def is_greater(value: Borrowed[Ordering]) -> bool:
     """Inspect the enum selected through the native box's shared dereference."""
     match value:
         Ordering.Greater => return true
         _ => return false
 
 
-def contains_bound(values: list[Bound[Box[Ordering]]], value: &Bound[Box[Ordering]]) -> bool:
+def contains_bound(values: list[Bound[Box[Ordering]]], value: Borrowed[Bound[Box[Ordering]]]) -> bool:
     """Compare a borrowed non-Copy native enum through the list's owned element boundary."""
     return value in values
 
 
-def write_borrowed(mut file: File, data: &Vec[u8]) -> None:
+def write_borrowed(mut file: File, data: Borrowed[Vec[u8]]) -> None:
     """Write a borrowed byte vector, which the trait method takes as its native slice."""
     _ = file.write_all(data)
 

@@ -296,7 +296,7 @@ def _decode_base32(text: str, alphabet: str, lower_alphabet: str, lenient: bool)
     return Ok(out.getvalue())
 
 
-def _clean_input(text: &str, lenient: bool) -> str:
+def _clean_input(text: Borrowed[str], lenient: bool) -> str:
     """Return text unchanged for strict mode or without ASCII whitespace in lenient mode."""
     mut out: list[u8] = []
     for code in _encode_utf8(text):

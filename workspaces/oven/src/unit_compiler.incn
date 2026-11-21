@@ -326,7 +326,7 @@ pub def run_compiler(toolchain: Toolchain, arguments: list[str]) -> Result[i32, 
     return status_of(command, toolchain.driver)
 
 
-def status_of(mut command: &mut Command, program: str) -> Result[i32, str]:
+def status_of(mut command: BorrowedMut[Command], program: str) -> Result[i32, str]:
     """Run with the caller's streams, mapping a signal termination to exit code one."""
     match command.status():
         Err(error) => return Err(f"cannot run {program}: {error}")

@@ -17,7 +17,7 @@ const MAX_COMPILED_BODY_ROWS: int = 4096
 const MAX_COMPILED_BODY_ROW_BYTES: int = 67108864
 
 
-pub def compiled_namespace_order(path: Path, origin: str, namespaces: &list[CompiledNamespaceValue]) -> Result[Dict[str, NamespaceOrder], str]:
+pub def compiled_namespace_order(path: Path, origin: str, namespaces: Borrowed[list[CompiledNamespaceValue]]) -> Result[Dict[str, NamespaceOrder], str]:
     """Bind fresh owners to verified import closures even when their entire namespace cannot be restored."""
     mut closures: Dict[str, list[str]] = {}
     order_path = path.joinpath(IMPORT_ORDER_FILE)

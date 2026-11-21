@@ -341,7 +341,7 @@ def _has_consistent_case(value: str) -> bool:
     return true
 
 
-def _lower_ascii(value: &str) -> str:
+def _lower_ascii(value: Borrowed[str]) -> str:
     """Lowercase ASCII letters while leaving all other characters unchanged."""
     mut out: list[u8] = []
     for code in _encode_utf8(value):

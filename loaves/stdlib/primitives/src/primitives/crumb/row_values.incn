@@ -8,7 +8,7 @@ from crate.primitives.crumb.types import AbsentPolicy, ContainerKind, NominalKin
 from crate.primitives.crumb.values import IntegerValue, MapEntry, Metadata, MetadataEntry, Value, ValueField
 
 
-pub def settle(read: &RowRead, mut budget: Budget) -> Result[None, BinaryError]:
+pub def settle(read: Borrowed[RowRead], mut budget: Budget) -> Result[None, BinaryError]:
     """Charge the caller exactly the allowance the native read used, then surface its positioned refusal."""
     budget.charge_bytes(read.bytes_charged).map_err((e) => primitive(e, read.offset))?
     budget.charge_elements(read.elements_charged).map_err((e) => primitive(e, read.offset))?

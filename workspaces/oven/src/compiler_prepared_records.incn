@@ -108,7 +108,7 @@ pub class PreparedBodyRecordSource with RecordSource:
                 _ => pass
         return reads.finish().map_err((_) => "compiled body publication produced an incomplete receipt")
 
-    def read(self, scope: &ReadScope, request: &RecordRequest) -> RecordRead:
+    def read(self, scope: Borrowed[ReadScope], request: Borrowed[RecordRequest]) -> RecordRead:
         """Return one staged selection with full-value evidence, or fail when publication left it unavailable."""
         if scope != self.scope:
             return RecordRead.Failed(ReadFault.SnapshotMismatch)
@@ -146,7 +146,7 @@ class AdmittedPlanDigests with RecordSource:
     pub def open(scope: ReadScope, digests: Dict[str, str]) -> AdmittedPlanDigests:
         return AdmittedPlanDigests(scope=scope, digests=digests)
 
-    def read(self, scope: &ReadScope, request: &RecordRequest) -> RecordRead:
+    def read(self, scope: Borrowed[ReadScope], request: Borrowed[RecordRequest]) -> RecordRead:
         if scope != self.scope or not plan_product(request.key) or request != prepared_product_request(request.key):
             return RecordRead.Failed(ReadFault.InvalidEvidence)
         key = match encode_record_key(request.key):

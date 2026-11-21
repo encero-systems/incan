@@ -416,7 +416,7 @@ def invocation(
     reservation: int,
     logs: Path,
     position: int,
-    source: &Path,
+    source: Borrowed[Path],
     alone: bool = false,
     workers: list[str] = [],
 ) -> Invocation:
@@ -439,7 +439,7 @@ def reservation_of(source: Path, compiler: str) -> int:
     return PROJECT_RESERVATION_BYTES
 
 
-pub def log_name(position: int, source: &Path) -> str:
+pub def log_name(position: int, source: Borrowed[Path]) -> str:
     """A log name that sorts in invocation order and names the test source."""
     mut number = str(position)
     while len(number) < 3:
@@ -654,7 +654,7 @@ def start_waiting(
     return Admission(active=running, waiting=remaining, errors=errors)
 
 
-def running_custody(item: &Running) -> ReleaseTermination:
+def running_custody(item: Borrowed[Running]) -> ReleaseTermination:
     """Merge one invocation's retained descendants with the operating system's current observation."""
     root = int(item.child.borrow().id())
     known = ReleaseTermination(root=root, members=item.members.clone(), census_error=item.census_error.clone())

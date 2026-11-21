@@ -42,7 +42,7 @@ model Envelope:
             None => return -1
 
 
-def borrowed_kind(value: &VarError) -> str:
+def borrowed_kind(value: Borrowed[VarError]) -> str:
     """Call a borrowed native payload while retaining the native enum owner's shared reference."""
     match value:
         VarError.NotPresent => return "missing"
