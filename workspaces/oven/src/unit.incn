@@ -12,8 +12,8 @@ from c_interop_target import CAbiTargetSelection, select_interop_target, selecte
 from features import ActiveGraph, FeatureRequest, resolve_features
 from home import StandardPackage, dependency_artifact_dir, standard_artifact_dir, standard_packages
 from intake import LocalIntake, LocalProject, ManifestReader, intake, source_root_of
-from loaf_local_graph import LocalFacet
-from rust_activation import ActivationPurpose, DependencyDomain
+from loaf_local_graph import LocalFacet, root_purpose
+from rust_activation import ActivationPurpose
 from toolchain import NativeCrate, Toolchain
 from toolchain_access import ToolchainAccess
 from pub::incan_platform.trace import Operation
@@ -119,8 +119,13 @@ pub model UnitDescription:
     # Source-independent semantic context and private independently validated callable products.
     pub checked_context: Option[str] = None
     pub checked_products: Option[str] = None
+    # Lowering also validates each body and its checked feature witnesses. External compiler inputs stay in this key.
+    pub lowering_context: Option[str] = None
     # Oven retains the selected graph in memory; it is not part of the compiler's unit description.
     pub facets: list[LocalFacet] = []
+    # The active features only `incan test --feature NAME` adds: testing features that `std.testing.feature(NAME)`
+    # observes during collection. They are no package feature, so a project's shared library is built without them.
+    pub testing_features: list[str] = []
     # Source readings belong to this preparation and are not part of the compiler's public description.
     pub manifests: ManifestReader = ManifestReader()
     # Preparation retains the selected compiler generation; it is never serialized as a compiler input field.
@@ -544,8 +549,9 @@ def rust_crates_of(project: LocalProject, facets: list[LocalFacet]) -> list[str]
         alias = dependency.alias.replace("-", "_")
         if dependency.rust_facet and alias not in names:
             names.append(alias)
+    purpose = root_purpose(facets, project.root)
     for facet in facets:
-        if facet.project != project.root or facet.domain != DependencyDomain.Target:
+        if not facet.is_root(project.root, purpose):
             continue
         for edge in facet.local:
             alias = edge.alias.replace("-", "_")

@@ -110,8 +110,15 @@ def intent_optional_aliases(intent: ProjectIntent) -> list[str]:
 
 
 def key(demand: LocalDemand) -> str:
-    """Keep host and target requests separate even when both triples are native."""
-    return f"{demand.project}@{demand.domain.value()}"
+    """A test harness and the production library its fixture links are distinct units."""
+    return facet_key(demand.project, demand.domain, demand.purpose)
+
+
+def facet_key(project: str, domain: DependencyDomain, purpose: ActivationPurpose) -> str:
+    base = f"{project}@{domain.value()}"
+    if purpose == ActivationPurpose.Test:
+        return base + "@test"
+    return base
 
 
 def add(demands: Dict[str, LocalDemand], demand: LocalDemand) -> Dict[str, LocalDemand]:
@@ -127,10 +134,8 @@ def add(demands: Dict[str, LocalDemand], demand: LocalDemand) -> Dict[str, Local
             features=unique(previous.features + demand.features),
             defaults=previous.defaults or demand.defaults,
             all_features=previous.all_features or demand.all_features,
-            purpose=previous.purpose,
+            purpose=demand.purpose,
         )
-        if selected.purpose == ActivationPurpose.Normal:
-            selected.purpose = demand.purpose
     result[identity] = selected
     return result
 
@@ -240,10 +245,22 @@ pub model LocalFacet:
     # The Loaf's declared name and version, which name its compiled unit the same way in every checkout.
     pub package: str = ""
     pub version: str = ""
+    pub purpose: ActivationPurpose = ActivationPurpose.Normal
 
     pub def key(self) -> str:
-        """What names the facet in a build: its project and compilation domain."""
-        return f"{self.project}@{self.domain.value()}"
+        """Identify the package, compilation domain, and environment that supplied its direct edges."""
+        return facet_key(self.project, self.domain, self.purpose)
+
+    pub def is_root(self, project: str, purpose: ActivationPurpose) -> bool:
+        return self.project == project and self.domain == DependencyDomain.Target and self.purpose == purpose
+
+
+pub def root_purpose(facets: &list[LocalFacet], project: str) -> ActivationPurpose:
+    """A dependency can reach the production copy of the requested test package."""
+    for facet in facets:
+        if facet.is_root(project, ActivationPurpose.Test):
+            return ActivationPurpose.Test
+    return ActivationPurpose.Normal
 
 
 model FacetSelection:
@@ -498,5 +515,6 @@ def facet_of(
         registry_aliases=aliases,
         package=intent.name,
         version=intent.version,
+        purpose=demand.purpose,
     )
     return Ok((facet, children))
