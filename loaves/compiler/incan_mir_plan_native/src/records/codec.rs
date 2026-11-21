@@ -188,6 +188,9 @@ pub fn record_plan_products(encoded: &[u8]) -> Result<Vec<Vec<u8>>, String> {
 fn interface_nominals(plan: &Plan, references: &[NominalReference]) -> Result<Vec<ProductNominal>, String> {
     let mut nominals = Vec::with_capacity(references.len());
     for reference in references {
+        if reference.kind == NominalKind::Static {
+            return Err("native-interface function names a static cell by its slot".to_owned());
+        }
         let position = usize::try_from(reference.index).ok();
         let name = if reference.kind == NominalKind::Model {
             position

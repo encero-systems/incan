@@ -371,6 +371,10 @@ pub(crate) enum StoredTarget {
     CloneClosure(Vec<StoredType>),
     Value(StoredOperand),
     FormatValue(StoredType, bool),
+    StaticLoad(i64),
+    StaticStore(i64),
+    StaticForce(i64),
+    StaticMethod(i64, String),
 }
 
 /// Project one `StoredTarget` alternative onto its identity and positional payload.
@@ -410,6 +414,13 @@ pub(crate) fn wire_stored_target(value: &StoredTarget) -> Result<Wire, String> {
         StoredTarget::FormatValue(field0, field1) => alternative(
             b"\xd6\x8a\xf6\x95\xfc\x92",
             vec![wire_stored_type(field0)?, Wire::Boolean(*field1)],
+        ),
+        StoredTarget::StaticLoad(field0) => alternative(b"\xaf\x06\x86\x04\xec\xdc", vec![Wire::integer(*field0)]),
+        StoredTarget::StaticStore(field0) => alternative(b"\xf1\xe5C\xa8m)", vec![Wire::integer(*field0)]),
+        StoredTarget::StaticForce(field0) => alternative(b";\xf1N\xb8uk", vec![Wire::integer(*field0)]),
+        StoredTarget::StaticMethod(field0, field1) => alternative(
+            b"N\xbc\x12Ac$",
+            vec![Wire::integer(*field0), Wire::Text(field1.clone())],
         ),
     })
 }
@@ -463,6 +474,12 @@ fn read_stored_target_alternative(
             read_stored_type(&fields[0].value, positions)?,
             boolean_value(&fields[1].value)?,
         ),
+        b"\xaf\x06\x86\x04\xec\xdc" if fields.len() == 1 => StoredTarget::StaticLoad(number(&fields[0].value)?),
+        b"\xf1\xe5C\xa8m)" if fields.len() == 1 => StoredTarget::StaticStore(number(&fields[0].value)?),
+        b";\xf1N\xb8uk" if fields.len() == 1 => StoredTarget::StaticForce(number(&fields[0].value)?),
+        b"N\xbc\x12Ac$" if fields.len() == 2 => {
+            StoredTarget::StaticMethod(number(&fields[0].value)?, text(&fields[1].value)?)
+        }
         _ => return Err("unknown or incomplete StoredTarget alternative".to_owned()),
     })
 }
