@@ -602,12 +602,12 @@ pub(super) fn library_argument_models(
             library_argument_models(plan, &checked_list_leaf_type(right)?, enums, models)?;
         }
         PlanType::ZipIterator(left, right) => {
-            library_argument_models(plan, &tuple_element_type(left.clone()), enums, models)?;
-            library_argument_models(plan, &tuple_element_type(right.clone()), enums, models)?;
+            library_argument_models(plan, &tuple_element_type(&left), enums, models)?;
+            library_argument_models(plan, &tuple_element_type(&right), enums, models)?;
         }
         PlanType::Tuple(elements) => {
             for element in elements {
-                library_argument_models(plan, &tuple_element_type(element.clone()), enums, models)?;
+                library_argument_models(plan, &tuple_element_type(&element), enums, models)?;
             }
         }
         PlanType::CallableArguments(signature)
@@ -781,7 +781,7 @@ fn borrowed_alias_dependencies(plan: &Plan, ty: &PlanType, dependencies: &mut BT
         }
         PlanType::Tuple(elements) | PlanType::TupleRef(elements) | PlanType::TupleMutRef(elements) => elements
             .iter()
-            .any(|element| borrowed_alias_dependencies(plan, &tuple_element_type(element.clone()), dependencies)),
+            .any(|element| borrowed_alias_dependencies(plan, &tuple_element_type(&element), dependencies)),
         PlanType::NativeSlice(elements)
         | PlanType::NativeArray(elements, _)
         | PlanType::NativeArrayRef(elements, _)
@@ -817,7 +817,7 @@ pub(super) fn library_argument_is_borrowed(ty: &PlanType) -> bool {
         PlanType::Tuple(elements) => {
             return elements
                 .iter()
-                .any(|element| library_argument_is_borrowed(&tuple_element_type(element.clone())));
+                .any(|element| library_argument_is_borrowed(&tuple_element_type(&element)));
         }
         PlanType::List(leaf, _) | PlanType::Set(leaf) => {
             return checked_list_leaf_type(leaf).map_or(true, |element| library_argument_is_borrowed(&element));
