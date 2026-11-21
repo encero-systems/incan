@@ -6,7 +6,7 @@ use std::sync::Arc;
 use incan_mir_plan_native::{Carrier, EnumDeclaration, ListLeaf, PlanType};
 use incan_semantics_core::body_ir::{
     BodyIrModule, NewtypeDeserialize, NewtypeStringConversion, NominalDeclaration, native_enum_declaration,
-    nominal_carrier_key,
+    native_opaque_nominal, nominal_carrier_key, rust_item_identity,
 };
 use incan_semantics_core::{
     CanonicalSymbolId, CompilerNodeId, HirSourceSpan, IncanType, SemanticSourceTargetKind, SymbolNamespace,
@@ -16,7 +16,8 @@ use incan_semantics_core::{
 use incan_semantics_core::semantic_digest::{enum_layout_witness, model_layout_witness};
 
 use crate::models::model_type;
-use crate::native_type_identity::constructor_index;
+use crate::native_type_identity::{argument_identities, constructor_index};
+use crate::nominal_instances::{NominalInstance, close_layout};
 use crate::options::retain_carrier;
 use crate::symbols::model_symbol;
 
@@ -216,6 +217,38 @@ fn stored_layout_identity_follows_nested_arguments_across_a_source_move() -> Res
         vec![IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Str)],
     )];
     assert!(witness(&after)?.0 != same.0);
+    Ok(())
+}
+
+/// A closed native layout over a source model, as `Rc[RefCell[Packet]]` lowers to, names its source arguments by
+/// declaration, so it has a layout witness and a product can name it; a different argument changes the witness.
+#[test]
+fn a_closed_native_layout_names_its_source_arguments_by_declaration() -> Result<(), String> {
+    let packet = imported_identity("Packet");
+    let header = imported_identity("Header");
+    let (packet_key, header_key) = (carrier_key(&packet)?, carrier_key(&header)?);
+    let declarations = vec![
+        nominal(packet.clone(), "Packet", &[(&packet_key, &packet)]),
+        nominal(header.clone(), "Header", &[(&header_key, &header)]),
+    ];
+    let shared = rust_item_identity("std::rc::Rc").ok_or("no Rc item identity")?;
+    let template = native_opaque_nominal(&shared, 1).ok_or("no Rc template")?;
+    let closed = |argument: &str| -> Result<NominalDeclaration, String> {
+        let arguments = vec![IncanType::Named(argument.to_owned())];
+        close_layout(&NominalInstance {
+            declaration: template.clone(),
+            argument_identities: argument_identities(&declarations, &arguments),
+            arguments,
+            ancestors: Vec::new(),
+        })
+    };
+    let witness = |model: &NominalDeclaration| model_layout_witness(model).map_err(|error| error.to_string());
+    let over_packet = witness(&closed(&packet_key)?)?;
+    assert!(witness(&closed(&packet_key)?)? == over_packet);
+    assert!(
+        witness(&closed(&header_key)?)?.0 != over_packet.0,
+        "a different argument kept the specialization"
+    );
     Ok(())
 }
 
