@@ -109,7 +109,7 @@ static PLACEMENT_SHAPE: Shape = Shape {
 static PLACEMENT_SCHEMA: Schema = Schema::new(&[&PLACEMENT_SHAPE]);
 
 /// A named ordinal's position in the current model or enum table.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct EventReference {
     pub kind: String,
     pub index: i64,
@@ -117,14 +117,14 @@ pub struct EventReference {
 }
 
 /// A Body IR node's current source coordinates.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct EventPosition {
     pub line: i64,
     pub column: i64,
 }
 
 /// The exact published product and its use in this request.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct LoweringEvent {
     pub identity: String,
     pub key: String,
@@ -141,7 +141,7 @@ pub struct LoweringEvent {
 }
 
 /// An explicit per-function reason lowering could not publish a reusable product.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct LoweringRefusal {
     pub identity: String,
     pub function: String,
@@ -149,14 +149,14 @@ pub struct LoweringRefusal {
 }
 
 /// The standalone entry key and its complete loss-checked native plan.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct NativeInterface {
     pub entry: String,
     pub plan: Vec<u8>,
 }
 
 /// A restored function's authenticated native definition inputs.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct AdmittedDefinition {
     pub function: String,
     pub identity: String,
@@ -165,14 +165,14 @@ pub struct AdmittedDefinition {
 }
 
 /// Current Body IR node coordinates for an admitted scalar in a physically edited file.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct AdmittedPlacement {
     pub key: String,
     pub positions: Vec<EventPosition>,
 }
 
 /// A restored function's identity and native declaration positions in this request.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct AdmittedFunction {
     pub function: String,
     pub identity: String,
@@ -181,12 +181,62 @@ pub struct AdmittedFunction {
 }
 
 /// Actual restored functions of a named module, including whether every ordinary body was restored.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct AdmittedModule {
     pub module: String,
     pub complete: bool,
     pub functions: Vec<AdmittedFunction>,
     pub inspected: bool,
+}
+
+// Oven prints these records in the reference models' `Name(field=value, ...)` text, and keys sets by them.
+crate::structural_debug!(EventReference, "EventReference", kind, index, name);
+crate::structural_debug!(EventPosition, "EventPosition", line, column);
+crate::structural_debug!(
+    LoweringEvent,
+    "LoweringEvent",
+    identity,
+    key,
+    function,
+    product,
+    reused,
+    admitted,
+    module,
+    role,
+    demand,
+    runtime_requirements,
+    references,
+    positions
+);
+crate::structural_debug!(LoweringRefusal, "LoweringRefusal", identity, function, refusal);
+crate::structural_debug!(NativeInterface, "NativeInterface", entry, plan);
+crate::structural_debug!(
+    AdmittedDefinition,
+    "AdmittedDefinition",
+    function,
+    identity,
+    key,
+    digest
+);
+crate::structural_debug!(AdmittedPlacement, "AdmittedPlacement", key, positions);
+crate::structural_debug!(
+    AdmittedFunction,
+    "AdmittedFunction",
+    function,
+    identity,
+    references,
+    placement
+);
+crate::structural_debug!(AdmittedModule, "AdmittedModule", module, complete, functions, inspected);
+
+/// The filename shared by the lowering publisher and native reader.
+pub fn native_interface_filename() -> String {
+    INTERFACE_REPORT.to_owned()
+}
+
+/// The filename for definitions already admitted by lowering.
+pub fn admitted_definitions_filename() -> String {
+    ADMITTED_DEFINITIONS.to_owned()
 }
 
 /// A reference as its Crumb tuple: kind, index, native name.

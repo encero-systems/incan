@@ -27,7 +27,6 @@ pub mod graph_crumb_fields;
 mod hex_text;
 mod incan_debug;
 mod input_fields;
-pub mod lowering_events;
 pub mod manifest_cache;
 pub mod namespace_order;
 pub mod namespace_proof;
@@ -35,7 +34,6 @@ pub mod namespace_references;
 pub mod namespace_rows;
 pub mod namespace_schema;
 pub mod overload_members;
-pub mod plan_module_records;
 pub mod plan_wire_rows;
 mod published_defaults;
 pub mod read_receipts;
@@ -120,14 +118,6 @@ pub use graph_crumb_fields::{
     text_value, tuple_items, tuple_items_value,
 };
 pub use internal_models_bindings::MappedView;
-pub use lowering_events::{
-    ADMITTED_DEFINITIONS, AdmittedDefinition, AdmittedFunction, AdmittedModule, AdmittedPlacement, EventPosition,
-    EventReference, INTERFACE_REPORT, LoweringEvent, LoweringRefusal, NativeInterface, admitted_definitions_filename,
-    decode_admitted_definitions, decode_lowering_event, decode_lowering_refusal, decode_module_note,
-    decode_native_interface, encode_admitted_definitions, encode_lowering_event, encode_lowering_refusal,
-    encode_module_note, encode_native_interface, native_interface_filename, placed_admission, read_module_admission,
-    write_module_placement,
-};
 pub use manifest_cache::{
     ManifestCacheValue, ManifestInventory, decode_manifest_cache, decode_manifest_inventory, encode_manifest_cache,
     encode_manifest_inventory,
@@ -156,10 +146,6 @@ pub use overload_members::{
     LOOKUP_FILE, MethodLookup, MethodReads, OVERLOAD_MEMBERS, contract_output_suffix, coordinate_output_suffix,
     encode_method_lookups, encode_method_members, method_lookup_suffix, method_member_request, read_method_lookups,
     read_method_members, scope_output_suffix,
-};
-pub use plan_module_records::{
-    ADMITTED_MODULE_NOTE, PARTIAL_MODULE_NOTE, PLAN_MODULE_FAMILY, PLAN_MODULE_PAGE, POSITIONED_MODULE_PAGE,
-    PlanModuleFunction, PlanModuleValue, REPOSITION_MODULE_PAGE, decode_plan_module, encode_plan_module,
 };
 pub use plan_wire_rows::{
     PreparedWireReader, admit_wire, enum_schema, read_wire, variant_schema, wire_field, write_wire,

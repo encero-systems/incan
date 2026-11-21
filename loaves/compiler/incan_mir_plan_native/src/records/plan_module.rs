@@ -46,7 +46,7 @@ static PLAN_MODULE_SCHEMA: Schema = Schema::new(&[&PLAN_MODULE]);
 
 /// One body of a module with a plan product: the owner its plan-function record is keyed by, the canonical identity of
 /// the body, its native function name, the key of its product, and the final lowering event with the product.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PlanModuleFunction {
     pub identity: String,
     pub symbol: String,
@@ -56,11 +56,23 @@ pub struct PlanModuleFunction {
 }
 
 /// A module, named as lowering names it, with the plan function of every one of its bodies.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PlanModuleValue {
     pub module: String,
     pub functions: Vec<PlanModuleFunction>,
 }
+
+// Oven prints these records in the reference models' `Name(field=value, ...)` text.
+crate::structural_debug!(
+    PlanModuleFunction,
+    "PlanModuleFunction",
+    identity,
+    symbol,
+    function,
+    key,
+    event
+);
+crate::structural_debug!(PlanModuleValue, "PlanModuleValue", module, functions);
 
 /// Refuse an empty field, an empty event or a function out of strictly ascending owner and name order.
 fn ordered(function: &PlanModuleFunction, previous: &str) -> Result<String, String> {

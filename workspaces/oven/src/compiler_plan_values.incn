@@ -7,7 +7,7 @@ from compiler_prepared_records import prepared_product_request
 from compiler_body_keys import IDENTITY_PROFILE, body_key
 from compiler_body_values import CoveredBodyOwners, SelectedBodyPage
 from compiler_graph_records import OutputSlots, reusable_evaluation, reusable_family_records, readers_of
-from pub::internal_models.plan_module_records import PLAN_MODULE_FAMILY, POSITIONED_MODULE_PAGE, REPOSITION_MODULE_PAGE, PlanModuleValue, decode_plan_module
+from pub::incan_mir_plan import PLAN_MODULE_FAMILY, POSITIONED_MODULE_PAGE, REPOSITION_MODULE_PAGE, PlanModuleValue, decode_plan_module
 from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
 

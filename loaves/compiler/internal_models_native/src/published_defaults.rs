@@ -18,9 +18,6 @@ use crate::checker_record_models::{
 use crate::compiler_contributors::CompilerContributors;
 use crate::compiler_records::HirSourceSpan;
 use crate::crumb_rows::ModelField;
-use crate::lowering_events::{
-    AdmittedFunction, AdmittedModule, AdmittedPlacement, EventPosition, EventReference, LoweringEvent,
-};
 use crate::namespace_order::NamespaceOrder;
 use crate::overload_members::{MethodLookup, MethodReads};
 use crate::record_scope::{DEFAULT_READ_BYTES, RecordKey, RecordRequest};
@@ -99,24 +96,6 @@ published_defaults!(HirSourceSpan {
 
 published_defaults!(ModelField {
     __incan_default_canonical -> bool = true,
-});
-
-published_defaults!(LoweringEvent {
-    __incan_default_admitted -> bool = false,
-    __incan_default_module -> String = String::new(),
-    __incan_default_role -> String = String::new(),
-    __incan_default_demand -> String = String::new(),
-    __incan_default_runtime_requirements -> i64 = 0,
-    __incan_default_references -> Vec<EventReference> = Vec::new(),
-    __incan_default_positions -> Vec<EventPosition> = Vec::new(),
-});
-
-published_defaults!(AdmittedFunction {
-    __incan_default_placement -> Option<AdmittedPlacement> = None,
-});
-
-published_defaults!(AdmittedModule {
-    __incan_default_inspected -> bool = false,
 });
 
 published_defaults!(NamespaceOrder {

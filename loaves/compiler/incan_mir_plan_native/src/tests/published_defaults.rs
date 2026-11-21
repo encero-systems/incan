@@ -51,3 +51,63 @@ fn published_defaults_match_the_constructors() {
     assert!(!StaticCell::__incan_default_module_completion());
     assert!(ForeignFunction::__incan_default_clove().is_empty() && !ForeignFunction::__incan_default_framework());
 }
+
+/// The lowering events and admitted modules publish the reference defaults Oven's constructions leave out, print in
+/// the reference models' `Name(field=value, ...)` text, and key sets by value.
+#[test]
+fn lowering_event_records_keep_the_reference_surface() {
+    use crate::records::lowering_events::{
+        AdmittedDefinition, AdmittedFunction, AdmittedModule, EventPosition, EventReference, LoweringEvent,
+        admitted_definitions_filename, native_interface_filename,
+    };
+    use crate::records::plan_module::{PlanModuleFunction, PlanModuleValue};
+    use std::collections::HashSet;
+
+    assert!(!LoweringEvent::__incan_default_admitted());
+    assert!(LoweringEvent::__incan_default_module().is_empty());
+    assert!(LoweringEvent::__incan_default_role().is_empty());
+    assert!(LoweringEvent::__incan_default_demand().is_empty());
+    assert_eq!(LoweringEvent::__incan_default_runtime_requirements(), 0);
+    assert!(LoweringEvent::__incan_default_references().is_empty());
+    assert!(LoweringEvent::__incan_default_positions().is_empty());
+    assert_eq!(AdmittedFunction::__incan_default_placement(), None);
+    assert!(!AdmittedModule::__incan_default_inspected());
+    assert_eq!(native_interface_filename(), "native-interface.crumb");
+    assert_eq!(admitted_definitions_filename(), "admitted-definitions.crumb");
+
+    let position = EventPosition { line: 1, column: 2 };
+    let copied = position;
+    assert_eq!(format!("{position:?}"), "EventPosition(line=1, column=2)");
+    assert_eq!(copied, position);
+    let reference = EventReference {
+        kind: "model".into(),
+        index: 0,
+        name: "M".into(),
+    };
+    assert_eq!(
+        format!("{reference:?}"),
+        "EventReference(kind=\"model\", index=0, name=\"M\")"
+    );
+    let definition = AdmittedDefinition {
+        function: "f".into(),
+        identity: "i".into(),
+        key: "k".into(),
+        digest: "d".into(),
+    };
+    let keyed: HashSet<_> = [definition.clone(), definition].into_iter().collect();
+    assert_eq!(keyed.len(), 1);
+    let plan = PlanModuleValue {
+        module: "m".into(),
+        functions: vec![PlanModuleFunction {
+            identity: "i".into(),
+            symbol: "s".into(),
+            function: "f".into(),
+            key: "k".into(),
+            event: vec![],
+        }],
+    };
+    assert_eq!(
+        format!("{plan:?}"),
+        "PlanModuleValue(module=\"m\", functions=[PlanModuleFunction(identity=\"i\", symbol=\"s\", function=\"f\", key=\"k\", event=[])])"
+    );
+}

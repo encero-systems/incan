@@ -1,6 +1,6 @@
-//! The Rust lowering-event, native-interface and admitted-definition codecs in `incan_mir_plan_native` write bytes
-//! the reference Incan decoders in `internal_models` accept with the same values, and every record the Rust codecs
-//! write reads back unchanged. Byte identity with reference-written records is proven on the captured records corpus.
+//! Every lowering event, native interface, admitted definition, refusal, note and plan-module page the codecs in
+//! `incan_mir_plan_native` write reads back unchanged. The plan Loaf is the one owner of these records; byte identity
+//! with reference-written records is proven on the captured records corpus.
 
 use incan_mir_plan_native as native;
 
@@ -37,7 +37,7 @@ fn product_event() -> native::LoweringEvent {
 }
 
 #[test]
-fn the_reference_reads_rust_lowering_events() {
+fn lowering_events_read_back_unchanged() {
     for event in [
         product_event(),
         native::LoweringEvent {
@@ -47,7 +47,7 @@ fn the_reference_reads_rust_lowering_events() {
         },
     ] {
         let encoded = native::encode_lowering_event(&event).expect("event");
-        let read = internal_models::decode_lowering_event(&encoded).expect("the reference reads the event");
+        let read = native::decode_lowering_event(&encoded).expect("the event reads back");
         assert_eq!(
             (
                 read.identity,
@@ -94,13 +94,13 @@ fn the_reference_reads_rust_lowering_events() {
 }
 
 #[test]
-fn the_reference_reads_rust_interfaces_and_definitions() {
+fn interfaces_and_definitions_read_back_unchanged() {
     let interface = native::NativeInterface {
         entry: "main".into(),
         plan: vec![9, 8, 7],
     };
     let encoded = native::encode_native_interface(&interface).expect("interface");
-    let read = internal_models::decode_native_interface(&encoded).expect("the reference reads the interface");
+    let read = native::decode_native_interface(&encoded).expect("the interface reads back");
     assert_eq!(
         (read.entry, read.plan),
         (interface.entry.clone(), interface.plan.clone())
@@ -119,7 +119,7 @@ fn the_reference_reads_rust_interfaces_and_definitions() {
         })
         .collect();
     let encoded = native::encode_admitted_definitions(&definitions).expect("definitions");
-    let read = internal_models::decode_admitted_definitions(&encoded).expect("the reference reads the definitions");
+    let read = native::decode_admitted_definitions(&encoded).expect("the definitions read back");
     let read: Vec<(String, String, String, String)> = read
         .into_iter()
         .map(|value| (value.function, value.identity, value.key, value.digest))

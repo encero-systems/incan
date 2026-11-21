@@ -3,7 +3,7 @@
 from pub::incan_platform.trace import enter_producer, finish_producer
 from std.fs import Path
 from std.environ import get_or
-from pub::internal_models.lowering_events import INTERFACE_REPORT, LoweringEvent, decode_lowering_event, decode_lowering_refusal, decode_native_interface
+from pub::incan_mir_plan import INTERFACE_REPORT, LoweringEvent, decode_lowering_event, decode_lowering_refusal, decode_native_interface
 from pub::incan_mir_plan import LoweringDemands, decode_plan_function_record
 from rust::std::fs import remove_dir_all
 from rust::incan_semantics_core import encode_incan_symbol_identity

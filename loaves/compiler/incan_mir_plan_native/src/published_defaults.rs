@@ -15,6 +15,9 @@ use crate::plan::{
 };
 use crate::positions::{PositionChange, WirePositions};
 use crate::record_types::CheckedType;
+use crate::records::lowering_events::{
+    AdmittedFunction, AdmittedModule, AdmittedPlacement, EventPosition, EventReference, LoweringEvent,
+};
 use crate::types::PlanType;
 
 /// Publish each `function -> Type = value` as the associated function an Incan construction calls for the field it
@@ -120,4 +123,22 @@ published_defaults!(UnitNominals {
 
 published_defaults!(WirePositions {
     __incan_default_change -> PositionChange = PositionChange::Preserve,
+});
+
+published_defaults!(LoweringEvent {
+    __incan_default_admitted -> bool = false,
+    __incan_default_module -> String = String::new(),
+    __incan_default_role -> String = String::new(),
+    __incan_default_demand -> String = String::new(),
+    __incan_default_runtime_requirements -> i64 = 0,
+    __incan_default_references -> Vec<EventReference> = Vec::new(),
+    __incan_default_positions -> Vec<EventPosition> = Vec::new(),
+});
+
+published_defaults!(AdmittedFunction {
+    __incan_default_placement -> Option<AdmittedPlacement> = None,
+});
+
+published_defaults!(AdmittedModule {
+    __incan_default_inspected -> bool = false,
 });

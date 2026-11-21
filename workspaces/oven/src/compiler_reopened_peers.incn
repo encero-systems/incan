@@ -9,7 +9,7 @@ from pub::incan_platform.store.disk import root as disk_root
 from pub::internal_models.checker_records import CHECKER_PROFILE
 from pub::internal_models.crumb_rows import ModelField, model_description, required_value
 from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, integer as signed, number, text
-from pub::internal_models.plan_module_records import PLAN_MODULE_FAMILY, PLAN_MODULE_PAGE, POSITIONED_MODULE_PAGE, REPOSITION_MODULE_PAGE, decode_plan_module
+from pub::incan_mir_plan import PLAN_MODULE_FAMILY, PLAN_MODULE_PAGE, POSITIONED_MODULE_PAGE, REPOSITION_MODULE_PAGE, decode_plan_module
 from pub::internal_models.records import ReadWitness, encode_record_key
 from compiler_body_keys import IDENTITY_PROFILE, body_key
 from compiler_body_values import SelectedBodyPage, encode_body_inventory, select_body_inventory_of
