@@ -476,10 +476,17 @@ impl TypeChecker {
 
     /// Check a module member that re-exports a Rust function (`pub from rust::... import f`, called `module.f(...)`)
     /// against the same Rust signature a call of the imported name selects, so its arguments are checked and its
-    /// result type and checked Rust call reach lowering. Any other Rust item keeps its unchecked `Unknown` result.
+    /// result type and checked Rust call reach lowering. A re-exported Rust record (`module.Record(field=...)`) is
+    /// built from its layout as the imported name builds it. Any other Rust item keeps its unchecked `Unknown` result.
     fn check_module_rust_function_call(&mut self, info: &RustItemInfo, call: &MethodCallSite<'_>) -> ResolvedType {
         let path = info.path.as_str();
         let metadata = info.metadata.clone().or_else(|| self.rust_item_metadata_for_path(path));
+        if compiler_owned_function_signature(path).is_none()
+            && let Some(RustItemKind::Type(layout)) = metadata.as_deref().map(|metadata| &metadata.kind)
+            && let Some(result) = self.check_rust_type_constructor_call(path, layout, call.args, call.span, None)
+        {
+            return result;
+        }
         let signature = match (compiler_owned_function_signature(path), metadata.as_deref()) {
             (Some(signature), _) => Some(signature),
             (None, Some(metadata)) => match &metadata.kind {

@@ -319,8 +319,12 @@ pub(super) fn project_nominals(
                     if implementation.implementation == implementation.method {
                         continue;
                     }
-                    requirements.insert(implementation.method.clone());
-                    requirements.insert(implementation.implementation.clone());
+                    // A native identity, such as a Rust trait's method, requires no Incan fragment.
+                    for required in [&implementation.method, &implementation.implementation] {
+                        if !matches!(required.origin, crate::SymbolOrigin::RustCrate(_)) {
+                            requirements.insert(required.clone());
+                        }
+                    }
                 }
                 let identity = nominal.canonical.clone();
                 // A layout without native default calls keeps its earlier form, so its fragment bytes are unchanged.

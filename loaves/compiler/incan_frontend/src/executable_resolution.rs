@@ -227,7 +227,8 @@ fn resolve_from_catalog(
     let mut modules: BTreeMap<String, BodyIrModule> = BTreeMap::new();
     let mut resolved = ResolvedExecutableModules::default();
     while let Some((identity, implementation_allowed, optional_root)) = pending.pop_first() {
-        if checked_local.contains(&identity) {
+        // A native identity, such as a Rust trait's method or provided default, has no Incan fragment to load.
+        if checked_local.contains(&identity) || matches!(identity.origin, SymbolOrigin::RustCrate(_)) {
             continue;
         }
         let SymbolOrigin::Package { library, .. } = &identity.origin else {
