@@ -17,6 +17,7 @@ use crate::element_places::{element_place_type, is_element_place};
 use crate::frame::{Builder, drop_owned, forget_owned, place_type, read_place, temporary, terminate_call, value_type};
 use crate::list_values::{element_read, value_operand};
 use crate::lists::{is_list, is_owned_list};
+use crate::model_values::{debug_model_operand, display_model_operand};
 use crate::numerics::{has_sized_numeric, numeric_carrier, numeric_name};
 use crate::options::format_carrier;
 use crate::pending::untranslated;
@@ -79,12 +80,12 @@ fn debug_operand(builder: &mut Builder, value: &SourceOperand, span: &SourceSpan
         if is_element_place(builder, &read.place)? {
             // An indexed model, including an opaque native one, materializes once for its retained Debug call.
             if let PlanType::Model(..) = element_place_type(builder, &read.place)? {
-                return Err(untranslated("model_values::debug_model_operand"));
+                return debug_model_operand(builder, value, span);
             }
         } else if read.place.global().is_none() {
             let place = scalar_place(builder, &read.place, span)?;
             match place_type(&builder.locals, &place) {
-                PlanType::Model(..) => return Err(untranslated("model_values::debug_model_operand")),
+                PlanType::Model(..) => return debug_model_operand(builder, value, span),
                 PlanType::Enum(..) => return Err(untranslated("formatting::debug_enum_operand")),
                 PlanType::ValidationError | PlanType::ValidationErrorRef => {
                     return Err(untranslated("validation_errors::validation_error_reference"));
@@ -151,7 +152,9 @@ fn display_value_operand(
     span: &SourceSpan,
     type_parameter: bool,
 ) -> Result<Place, String> {
-    display_model_operand(builder, value, span)?;
+    if let Some(text) = display_model_operand(builder, value, span)? {
+        return Ok(text);
+    }
     if let Some(text) = display_enum_operand(builder, value, span)? {
         return Ok(text);
     }
@@ -215,27 +218,6 @@ fn literal_text(value: &SourceConstant) -> Option<&str> {
         SourceConstant::Str(text) | SourceConstant::FrozenStr(text) => Some(text),
         _ => None,
     }
-}
-
-/// Prefer a source carrier's checked string method; any model display awaits the model value lowering.
-fn display_model_operand(builder: &mut Builder, value: &SourceOperand, span: &SourceSpan) -> Result<(), String> {
-    let SourceOperand::Place(read) = value else {
-        return Ok(());
-    };
-    if is_element_place(builder, &read.place)? {
-        if let PlanType::Model(..) = element_place_type(builder, &read.place)? {
-            return Err(untranslated("model_values::display_model_operand"));
-        }
-        return Ok(());
-    }
-    if read.place.local_id().is_none() {
-        return Ok(());
-    }
-    let place = scalar_place(builder, &read.place, span)?;
-    if let PlanType::Model(..) = place_type(&builder.locals, &place) {
-        return Err(untranslated("model_values::display_model_operand"));
-    }
-    Ok(())
 }
 
 /// Use native Display for foreign layouts and retained derived Display for whole source enums.

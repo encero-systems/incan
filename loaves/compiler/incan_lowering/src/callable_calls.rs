@@ -25,6 +25,7 @@ use crate::frame::{
 use crate::generic_callables::owned_callable_slots;
 use crate::layout_types::native_source_type;
 use crate::list_methods::call_destination;
+use crate::model_values::{is_json_deserialize_method, lower_model_from_json};
 use crate::models::model_type;
 use crate::pending::untranslated;
 use crate::statements::is_nominal_type;
@@ -111,6 +112,9 @@ pub fn lower_named_target(
     if let Some(step) = special_named_target(module, builder, target)? {
         return Err(untranslated(step));
     }
+    if is_json_deserialize_method(target) {
+        return lower_model_from_json(module, builder, target, arguments, destination, span);
+    }
     if let Some(owner) = value_enum_from_value_owner(module, target)? {
         return lower_value_enum_from_value(builder, owner, arguments, destination, span);
     }
@@ -182,9 +186,6 @@ fn special_named_target(
     }
     if method && identity.declaration_name == "default" && identity_in(identity, "std", "derives", "copying") {
         return Ok(Some("derived_defaults::lower_derived_default"));
-    }
-    if method && identity.declaration_name == "from_json" && identity_in(identity, "std", "serde", "json") {
-        return Ok(Some("model_values::lower_model_from_json"));
     }
     if let StringConversionContract::Selected(selection) = &module.string_conversion_contract
         && selection.method_identity == *identity

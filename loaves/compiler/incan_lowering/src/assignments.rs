@@ -18,7 +18,7 @@ use crate::closure_lifting::{
 };
 use crate::closures::callable_copy_type;
 use crate::collections::is_collection;
-use crate::element_places::{element_place_type, is_element_place};
+use crate::element_places::is_element_place;
 use crate::formatting::{lower_format, lower_string_assignment};
 use crate::frame::{Builder, cleanup_exit, literal, place_type, read_place, track_rvalue_moves, value_type};
 use crate::frozen_plan::frozen_bytes_literal;
@@ -32,6 +32,7 @@ use crate::list_values::{frozen_list_assignment, list_assignment, list_base_plac
 use crate::lists::is_list;
 use crate::matches::lower_enum_match;
 use crate::model_lists::{prefix_place, structural_prefix};
+use crate::model_values::compare_models;
 use crate::numerics::{integer_carrier, numeric_carrier, numeric_zero, sized_numeric};
 use crate::operators::scalar_rvalue;
 use crate::options::replace_owned_destination;
@@ -290,32 +291,14 @@ fn assign_stored_value(
             BinOp::FloorDiv => return lower_numeric_helper(builder, target, left, right, "py_floor_div", span),
             BinOp::Mod => return lower_numeric_helper(builder, target, left, right, "py_mod", span),
             _ => {
-                if compares_models(builder, left, span)? {
-                    return Err(untranslated("model_values::compare_models"));
+                if compare_models(builder, target.clone(), *operator, left, right, span)? {
+                    return Ok(());
                 }
             }
         },
         _ => {}
     }
     store_operation(module, builder, target, value, span)
-}
-
-/// Whether the left operand is a whole or projected model, which compares through its native or checked methods.
-fn compares_models(builder: &mut Builder, left: &SourceOperand, span: &SourceSpan) -> Result<bool, String> {
-    let SourceOperand::Place(read) = left else {
-        return Ok(false);
-    };
-    if is_element_place(builder, &read.place)? {
-        if let PlanType::Model(..) = element_place_type(builder, &read.place)? {
-            return Err(untranslated("model_values::compare_models"));
-        }
-        return Ok(false);
-    }
-    if read.place.local_id().is_none() {
-        return Ok(false);
-    }
-    let place = scalar_place(builder, &read.place, span)?;
-    Ok(matches!(place_type(&builder.locals, &place), PlanType::Model(..)))
 }
 
 /// Store a checked scalar, carrier or nominal operation at the destination's exact carrier.
