@@ -219,6 +219,14 @@ pub(crate) static SHAPE_FUNCTION_RECORDS_STORED_TARGET: Shape = Shape {
             "Value",
             &[field(b"_\xec\xebf\xff\xc8", "0", "record@5993b825e223")],
         ),
+        variant(
+            b"\xd6\x8a\xf6\x95\xfc\x92",
+            "FormatValue",
+            &[
+                field(b"_\xec\xebf\xff\xc8", "0", "enum@234b6c9b62c7"),
+                field(b"k\x86\xb2s\xff4", "1", "boolean"),
+            ],
+        ),
     ]),
 };
 
