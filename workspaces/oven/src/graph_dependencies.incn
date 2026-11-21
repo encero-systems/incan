@@ -17,7 +17,8 @@ from loaf_local_graph import LocalDemand, LocalFacet, local_facets
 from publication import publish
 from observation import trace
 from rust_activation import DependencyDomain
-from rust_units import build_dependencies, compile_rust_library, read_receipt, receipt_document, stored_library
+from rust_units import build_dependencies, compile_rust_library, stored_library
+from rust_unit_receipts import read_receipt, receipt_document
 from source_security import validate_native_sources
 from rust_build import BuiltUnit, RustBuild, facet_bindings, ordered, rust_output
 from rust_registry import project_registry, read_registry_units, registry_selection, selected_registry

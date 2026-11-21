@@ -1,0 +1,61 @@
+"""
+A Rust edge to a hybrid Loaf (Incan sources and a Rust facet) binds the Loaf's Rust facet when the edge names it by that
+facet's crate name, and the Loaf's Incan facade under any other alias.
+
+A standard package's Rust facet names `incan_std_primitives`, primitives' own Rust crate, and reads its modules
+(`incan_std_primitives::errors`); a Rust consumer that names a hybrid provider by another alias calls the provider's
+Incan functions through its facade (the `transitive_dependency` contract).
+"""
+
+from loaf_local_graph import LocalEdge, LocalFacet
+from registry_units import RegistryUnits
+from rust_activation import DependencyDomain
+from rust_build import BuiltUnit, facet_bindings
+
+
+def consumer(alias: str) -> LocalFacet:
+    """A consumer facet with one path edge, written as `alias`, to the hybrid provider `/work/primitives`."""
+    return LocalFacet(
+        project="/work/testing",
+        domain=DependencyDomain.Target,
+        features=[],
+        local=[LocalEdge(alias=alias, project="/work/primitives", domain=DependencyDomain.Target)],
+        registry=[],
+        registry_aliases=[],
+    )
+
+
+def hybrid_provider() -> Dict[str, BuiltUnit]:
+    """The provider built as its Incan facade, which compiled its Rust facet `incan_std_primitives` first."""
+    return {
+        "/work/primitives@target": BuiltUnit(
+            crate_name="incan_stdlib_primitives",
+            artifact="/store/facade/libincan_stdlib_primitives.rlib",
+            directory="/store/facade",
+            loaf="incan_stdlib_primitives",
+            native_crate="incan_std_primitives",
+            native_artifact="/store/native/libincan_std_primitives-0123.rlib",
+        ),
+    }
+
+
+def bound_path(alias: str) -> Result[str, str]:
+    """The artifact the consumer's edge binds."""
+    bindings = facet_bindings(consumer(alias), hybrid_provider(), RegistryUnits(units=[], search=[]))?
+    assert len(bindings) == 1, f"{len(bindings)} bindings"
+    assert bindings[0].name == alias, bindings[0].name
+    return Ok(bindings[0].path)
+
+
+pub def test_an_edge_named_by_a_hybrid_loafs_rust_crate_binds_its_rust_facet() -> Result[None, str]:
+    """`incan_std_primitives = { loaf = "incan_stdlib_primitives", path = "../primitives" }` links the Rust facet."""
+    path = bound_path("incan_std_primitives")?
+    assert path == "/store/native/libincan_std_primitives-0123.rlib", path
+    return Ok(None)
+
+
+pub def test_an_edge_under_another_alias_binds_a_hybrid_loafs_incan_facade() -> Result[None, str]:
+    """`native_cost = { loaf = "pricing", path = "deps/pricing" }` links the Incan facade Rust code calls."""
+    path = bound_path("native_cost")?
+    assert path == "/store/facade/libincan_stdlib_primitives.rlib", path
+    return Ok(None)

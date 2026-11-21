@@ -21,9 +21,9 @@ from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue
 from codegen import remap_arguments, rust_incremental_arguments, rust_metadata
-from files import json_text, parse_json, read
+from files import json_text, read
 from home import dependency_artifact_dir, standard_artifact_dir, standard_packages
-from json_fields import field, required_items, required_text, strings
+from json_fields import field, strings
 from intake import library_source, ManifestReader
 from native_closure_input import NativeClosureInput
 from native_references import closure_reference, native_anchors, rust_native_document
@@ -77,9 +77,8 @@ from rust_build import (
 )
 from rust_binaries import compile_binary
 from rust_scheduler import RustUnitSchedule, unit_reservation
+from rust_unit_receipts import read_receipt, receipt_document
 
-# The schema of the receipt a build leaves of the libraries it built.
-const RECEIPT_SCHEMA: str = "incan.rust-units/1"
 # Installed native support is produced once in release mode and is link-compatible with every consumer profile.
 const INSTALLED_SUPPORT_PROFILE: str = "release"
 
@@ -420,13 +419,25 @@ def require_coherent_installed_generation(facets: list[LocalFacet], request: Rus
         if provider:
             selected = None
             if facet.project in standard_roots:
-                selected = installed_incan_provider(declared, request)?
+                selected = with_own_native(installed_incan_provider(declared, request)?, native)
         match selected:
             None => unavailable[facet.key()] = declared.package
             Some(unit) =>
                 verified[facet.key()] = unit
                 search = search + [unit.directory] + unit.search
     return Ok(None)
+
+
+def with_own_native(facade: Option[BuiltUnit], native: Option[BuiltUnit]) -> Option[BuiltUnit]:
+    """A hybrid provider's facade, carrying the provider's own Rust facet for the edges that name that crate."""
+    match facade:
+        None => return None
+        Some(unit) =>
+            mut carried = unit
+            if let Some(own) = native:
+                carried.native_crate = own.crate_name
+                carried.native_artifact = own.artifact
+            return Some(carried)
 
 
 def installed_incan_provider(declared: RustFacet, request: RustBuild) -> Result[Option[BuiltUnit], str]:
@@ -446,64 +457,6 @@ def installed_incan_provider(declared: RustFacet, request: RustBuild) -> Result[
             BuiltUnit(crate_name=name, artifact=artifact.0, directory=directory.0, search=search, loaf=declared.package),
         ),
     )
-
-
-pub def receipt_document(built: Dict[str, BuiltUnit], keyed: bool) -> JsonValue:
-    """The receipt of built libraries: each one's crate, artifact and directory, and with `keyed` its unit key."""
-    mut units: list[JsonValue] = []
-    for key in sorted([key for key in built.keys()]):
-        mut fields: Dict[str, JsonValue] = {}
-        if keyed:
-            fields["key"] = JsonValue.string(key)
-        fields["crate"] = JsonValue.string(built[key].crate_name)
-        fields["artifact"] = JsonValue.string(built[key].artifact)
-        fields["directory"] = JsonValue.string(built[key].directory)
-        fields["search"] = JsonValue.array([JsonValue.string(path) for path in built[key].search])
-        fields["loaf"] = JsonValue.string(built[key].loaf)
-        fields["covered_by"] = JsonValue.string(built[key].covered_by)
-        units.append(JsonValue.object(fields))
-    return JsonValue.object({"schema": JsonValue.string(RECEIPT_SCHEMA), "units": JsonValue.array(units)})
-
-
-pub def read_receipt(path: Path, keyed: bool = false) -> Result[Dict[str, BuiltUnit], str]:
-    """
-    The exact native libraries a build recorded in its receipt, by crate name or, with `keyed`, by unit key.
-
-    A library is never selected by scanning directories, and one whose artifact is gone is left out.
-    """
-    if not path.is_file():
-        return Ok({})
-    receipt = parse_json(read(path)?)?
-    if required_text(receipt, "schema")? != RECEIPT_SCHEMA:
-        return Err(f"{path.0}: unsupported native unit receipt")
-    mut result: Dict[str, BuiltUnit] = {}
-    for item in required_items(receipt, "units")?:
-        name = required_text(item, "crate")?
-        artifact = required_text(item, "artifact")?
-        directory = required_text(item, "directory")?
-        mut key = name
-        if keyed:
-            key = required_text(item, "key")?
-        if key in result:
-            return Err(f"{path.0}: ambiguous native library {name}")
-        if Path(artifact).is_file():
-            listed = field(item, "search", []).map_err((_) => f"{path.0}: missing search")?
-            search = strings(listed, ["search"]).map_err((_) => f"{path.0}: search is not a list of directories")?
-            mut loaf = ""
-            if item.contains_key("loaf"):
-                loaf = required_text(item, "loaf")?
-            mut covered_by = ""
-            if item.contains_key("covered_by"):
-                covered_by = required_text(item, "covered_by")?
-            result[key] = BuiltUnit(
-                crate_name=name,
-                artifact=artifact,
-                directory=directory,
-                search=search,
-                loaf=loaf,
-                covered_by=covered_by,
-            )
-    return Ok(result)
 
 
 pub def build_dependencies(
@@ -1208,9 +1161,11 @@ def compile_incan_library(
     providers = provider_dependencies(facet, request, built)?
     mut bindings = facet_bindings(facet, providers, request.registry)?
     mut dependency_search = facet_search(facet, providers)?
+    mut own_native = NativeCrate(name="", path="")
     if declared.kind != "incan":
         native = compile_rust_library(facet, declared, output, request, providers, search)?
-        bindings.append(NativeCrate(name=native.crate_name, path=native.artifact))
+        own_native = NativeCrate(name=native.crate_name, path=native.artifact)
+        bindings.append(own_native)
         dependency_search = dependency_search + [native.directory] + native.search
     loaves = incan_artifacts(providers)
     # 2. The graph already prepared every dependency; the source compiler only binds these selected artifacts.
@@ -1238,7 +1193,8 @@ def compile_incan_library(
         None => return Err(f"no Incan unit compiler was supplied for {declared.package}")
     if code != 0:
         return Err(f"Incan library {declared.package} failed with exit code {code}")
-    # 3. Rust's extern edge names the same public facade an Incan consumer receives.
+    # 3. Rust's extern edge names the same public facade an Incan consumer receives, or the provider's own Rust facet
+    #    when the edge names it by that facet's crate name.
     stored = library_directory(bakery()?, directory)?
     return Ok(
         BuiltUnit(
@@ -1247,6 +1203,8 @@ def compile_incan_library(
             directory=stored.0,
             search=native_search(stored.joinpath(f"{artifact_stem(declared.package)}.native.json"), readings)? + dependency_search,
             loaf=declared.package,
+            native_crate=own_native.name,
+            native_artifact=own_native.path,
         ),
     )
 

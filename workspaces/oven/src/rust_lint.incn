@@ -19,7 +19,8 @@ from rust_activation import DependencyDomain
 from rust_build import BuiltUnit, RustBuild, ordered, prepared_build, rust_output
 from rust_manifest import RustFacet, package_environment, rust_facet
 from rust_target import decoded, target_configuration
-from rust_units import build_rust, library_compile_arguments, read_receipt
+from rust_units import build_rust, library_compile_arguments
+from rust_unit_receipts import read_receipt
 
 # How to install the clippy the pinned toolchain needs, named when it is missing.
 const CLIPPY_INSTALL: str = "rustup component add --toolchain 1.98.0 clippy"
