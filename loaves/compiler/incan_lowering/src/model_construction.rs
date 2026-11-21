@@ -10,13 +10,13 @@ use incan_semantics_core::body_ir::{
 };
 
 use crate::builtin_calls::coerce_numeric_operand;
-use crate::carrier_operands::boundary_operand;
+use crate::carrier_operands::{boundary_operand, boundary_plan_operand};
 use crate::checked_values::{scalar_operand, scalar_place};
 use crate::defaults::model_default_arguments;
 use crate::element_places::is_element_place;
 use crate::enums::variant_index;
 use crate::explicit_arguments::reference_contract;
-use crate::formatting::{display_operand, display_plan_operand, lower_format};
+use crate::formatting::{display_operand, lower_format};
 use crate::frame::{
     Builder, cleanup_exit, forget_owned, place_type, read_place, temporary, terminate_call, value_type,
 };
@@ -155,11 +155,16 @@ fn tuple_value(
     Ok(RvalueKind::Tuple(operands))
 }
 
-/// Turn frozen text into owned text for a tuple element the checker typed `str`: a `str` constant reads as frozen
-/// text, and the tuple owns its text as a list element does. Any other operand is returned unchanged.
+/// Turn text the tuple does not own into owned text for a tuple element the checker typed `str`: a `str` constant
+/// reads as frozen text and a Rust text constant as borrowed text, and the tuple owns its text as a list element does,
+/// through the same value boundary. Any other operand is returned unchanged.
 fn owned_text(builder: &mut Builder, operand: Operand, owns_text: bool, span: &SourceSpan) -> Result<Operand, String> {
-    if owns_text && value_type(builder, &operand)? == PlanType::FrozenStr {
-        return Ok(read_place(display_plan_operand(builder, operand, span)?, true, span));
+    let borrowed = matches!(
+        value_type(builder, &operand)?,
+        PlanType::FrozenStr | PlanType::StrRef | PlanType::StringRef
+    );
+    if owns_text && borrowed {
+        return boundary_plan_operand(builder, operand, &PlanType::String, span);
     }
     Ok(operand)
 }

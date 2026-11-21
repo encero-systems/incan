@@ -3,7 +3,8 @@
 use incan_lang::lang::types::collections::{CollectionTypeId, from_str as collection_type};
 use incan_mir_plan_native::{
     Carrier, Constant, FieldProjection, ListLeaf, Operand, OperandKind, Place, PlanType, Projection, RvalueKind,
-    SourceSpan, TerminatorKind, assign as plan_assign, carrier_position, place as plan_place,
+    SourceSpan, TerminatorKind, TupleElement, assign as plan_assign, carrier_position, place as plan_place,
+    tuple_element_type,
 };
 use incan_semantics_core::body_ir::{Operand as SourceOperand, OwnershipFact, Pattern};
 use incan_semantics_core::{IncanType, SemanticSourceTargetKind};
@@ -33,11 +34,12 @@ use crate::matches::{bind_enum_payload, bind_structural_pattern, enum_payload_re
 use crate::numerics::numeric_carrier;
 use crate::operators::enum_comparison_tag;
 use crate::option_tests::{is_option_carrier, option_isinstance};
-use crate::options::{assign_carrier, variant_condition};
+use crate::options::{assign_carrier, clone_tuple_operand, variant_condition};
 use crate::patterns::{carrier_pattern_slot, carrier_payload_types, pattern_binds};
 use crate::result_carriers::{frozen_operand, typed_carrier_operand};
 use crate::static_storage::snapshot_owns;
 use crate::text_plan::{clone_text_reference, owned_slice_text};
+use crate::tuples::{tuple_fields, tuple_has_owners};
 use crate::unions::{carrier_injection, test_union_tag, union_test_slots};
 
 /// Preserve checked static literals and materialize carrier construction at a typed value boundary.
@@ -121,9 +123,9 @@ pub fn boundary_plan_operand(
     }
     // A borrowed source model that reaches a destination owning one was admitted by the checker there, so it is cloned.
     match (&source, target) {
-        (PlanType::Tuple(_), PlanType::Tuple(_)) => {
+        (PlanType::Tuple(from), PlanType::Tuple(to)) => {
             if source != *target {
-                return Err("unsupported Body IR tuple value with differing checked field carriers".into());
+                return converted_tuple_operand(builder, value, from, to, span);
             }
         }
         (PlanType::ModelRef(owner, name), PlanType::Model(target_owner, _)) if owner == target_owner => {
@@ -330,6 +332,60 @@ fn converted_carrier_operand(
     builder.select(joined);
     builder.owned = owners;
     builder.owned.push(output.local);
+    Ok(read_place(output, true, span))
+}
+
+/// Convert a tuple to the destination's checked tuple carrier field by field, as each field converts at any other
+/// value boundary: a `str` constant's frozen text and a Rust constant's borrowed text become owned text, a narrower
+/// number widens, and a nested tuple converts the same way. The fields move into the converted tuple; a tuple that is
+/// only read is converted from its snapshot. Tuples of different arity stay refused.
+fn converted_tuple_operand(
+    builder: &mut Builder,
+    value: Operand,
+    from: &[TupleElement],
+    to: &[TupleElement],
+    span: &SourceSpan,
+) -> Result<Operand, String> {
+    if from.len() != to.len() {
+        return Err("unsupported Body IR tuple value with differing checked field carriers".into());
+    }
+    let source = PlanType::Tuple(from.to_vec());
+    let target = PlanType::Tuple(to.to_vec());
+    let (tuple, moved) = match value.kind {
+        OperandKind::Move(place) => (place, true),
+        OperandKind::Copy(place) if tuple_has_owners(&source) => {
+            let snapshot = clone_tuple_operand(builder, place, span)?;
+            let OperandKind::Move(place) = snapshot.kind else {
+                return Err("invalid Body IR tuple snapshot".into());
+            };
+            (place, true)
+        }
+        OperandKind::Copy(place) => (place, false),
+        _ => {
+            let held = temporary(builder, source.clone(), span);
+            builder.emit(plan_assign(held.clone(), RvalueKind::Use(value), span));
+            if tuple_has_owners(&source) {
+                builder.owned.push(held.local);
+            }
+            (held, true)
+        }
+    };
+    let mut fields = Vec::with_capacity(to.len());
+    for (field, element) in tuple_fields(&tuple, &source, span)?.into_iter().zip(to) {
+        let read = read_place(field, moved, span);
+        fields.push(element_plan_operand(builder, read, &tuple_element_type(element), span)?);
+    }
+    let output = temporary(builder, target.clone(), span);
+    let operation = RvalueKind::Tuple(fields);
+    track_rvalue_moves(builder, &operation);
+    builder.emit(plan_assign(output.clone(), operation, span));
+    // Every field has moved into the converted tuple or been read into its converted field, so nothing remains.
+    if moved && tuple.projection == Projection::Whole {
+        forget_owned(builder, tuple.local);
+    }
+    if tuple_has_owners(&target) {
+        builder.owned.push(output.local);
+    }
     Ok(read_place(output, true, span))
 }
 
