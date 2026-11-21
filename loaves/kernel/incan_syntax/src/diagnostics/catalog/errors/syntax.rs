@@ -460,3 +460,12 @@ pub fn inconsistent_indentation(expected: usize, found: usize, span: Span) -> Co
         span,
     )
 }
+
+/// A binding declared with a type and no value: `mut cell: Cell` on its own line (#2949).
+pub fn declaration_without_value(name: &str, span: Span) -> CompileError {
+    CompileError::syntax(format!("`{name}` is declared without a value"), span)
+        .with_hint(format!(
+            "Give `{name}` its first value where it is declared: `{name}: T = ...`"
+        ))
+        .with_note("A binding needs a value where it is declared; there is no declaration without one")
+}

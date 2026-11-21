@@ -1,0 +1,25 @@
+# behavior: a callable stored in a field is called as `self.callback(value)`, when the type has no method of that name, and as `(self.callback)(value)`; each call reads the field and calls the value it holds (#2948)
+# expect-stdout:
+#   4
+#   8
+#   5
+
+class Renderer:
+    pub callback: Callable[str, int]
+
+    pub def render(self, value: str) -> int:
+        return self.callback(value)
+
+    pub def render_twice(self, value: str) -> int:
+        return (self.callback)(value) + self.callback(value)
+
+
+def count(value: str) -> int:
+    return len(value)
+
+
+def main() -> None:
+    renderer = Renderer(callback=count)
+    println(renderer.render("kept"))
+    println(renderer.render_twice("kept"))
+    println(renderer.render("again"))

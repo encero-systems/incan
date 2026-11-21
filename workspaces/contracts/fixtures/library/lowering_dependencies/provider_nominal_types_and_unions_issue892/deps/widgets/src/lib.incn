@@ -22,3 +22,10 @@ pub def make(name: str) -> Shape:
 
 pub def wrap(name: str) -> Envelope[Widget]:
     return Envelope[Widget](inner=Widget(name=name), tag="wrapped")
+
+
+pub class Shelf:
+    pub base: int
+
+    pub def place(self, index: int, widget: Widget) -> int:
+        return self.base + index + len(widget.name)

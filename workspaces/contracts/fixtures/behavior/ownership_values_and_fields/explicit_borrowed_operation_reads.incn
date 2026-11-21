@@ -1,7 +1,8 @@
-# behavior: borrowed operands remain live until consumption while completed formatted values are independent (#2500).
+# behavior: borrowed operands remain live until consumption while completed formatted values are independent (#2500), and a borrowed text operand of `+` gives owned text (#2435).
 # expect-stdout:
 #   left 7
 #   before 7
+#   prefix:x
 #   operation reads passed
 
 def observe(value: Borrowed[str]) -> int:
@@ -34,6 +35,11 @@ def disjoint(mut left: BorrowedMut[str], mut right: BorrowedMut[str]) -> None:
     assert right == "changed"
 
 
+def prefixed(value: Borrowed[str]) -> str:
+    """Concatenate a literal and a borrowed text operand into owned text."""
+    return "prefix:" + value
+
+
 def completed_value(mut value: BorrowedMut[str]) -> None:
     """Formatting completes an owned result before the later operand replaces its source."""
     println(f"{value}", replace(value))
@@ -54,4 +60,5 @@ def main() -> None:
     mut completed = "before"
     completed_value(completed)
     assert completed == "changed"
+    println(prefixed("x"))
     println("operation reads passed")

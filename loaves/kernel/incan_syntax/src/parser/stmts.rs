@@ -20,11 +20,23 @@ impl<'a> Parser<'a> {
     // ========================================================================
 
     /// Parse a statement block.
+    ///
+    /// A statement that fails to parse keeps its error and the block resumes at its next statement, so one bad
+    /// statement does not end the enclosing function or class and turn its later members into top-level errors
+    /// (#2949).
     fn block(&mut self) -> Result<Vec<Spanned<Statement>>, CompileError> {
         let mut stmts = Vec::new();
         let mut next_leading = self.consume_inter_statement_blank_prefix();
         while !self.check(&TokenKind::Dedent) && !self.is_at_end() {
-            let mut stmt = self.statement()?;
+            let mut stmt = match self.statement() {
+                Ok(stmt) => stmt,
+                Err(error) => {
+                    self.errors.push(error);
+                    self.skip_failed_statement();
+                    next_leading = self.consume_inter_statement_blank_prefix();
+                    continue;
+                }
+            };
             stmt.leading_blank_lines = next_leading;
             stmts.push(stmt);
             next_leading = self.consume_inter_statement_blank_prefix();
@@ -34,6 +46,32 @@ impl<'a> Parser<'a> {
             }
         }
         Ok(stmts)
+    }
+
+    /// Skip the rest of a statement that failed to parse: its own line and any block nested under it, stopping before
+    /// the `Dedent` that ends the enclosing block. Always consumes at least one token unless it stands on that
+    /// `Dedent` or at the end.
+    fn skip_failed_statement(&mut self) {
+        let mut depth = 0usize;
+        while !self.is_at_end() {
+            let dedent = self.check(&TokenKind::Dedent);
+            let indent = self.check(&TokenKind::Indent);
+            let newline = self.check(&TokenKind::Newline);
+            if dedent && depth == 0 {
+                return;
+            }
+            self.advance();
+            if dedent {
+                depth -= 1;
+                if depth == 0 {
+                    return;
+                }
+            } else if indent {
+                depth += 1;
+            } else if newline && depth == 0 && !self.check(&TokenKind::Indent) {
+                return;
+            }
+        }
     }
 
     /// Return whether the current `Dedent` leads back to an outer statement, not a declaration/member boundary.

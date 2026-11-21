@@ -1,0 +1,14 @@
+# behavior: scalars and text follow the same rule: `mut index = start` from a read-only parameter is refused, and the working copy is spelled `start.clone()` (RFC 129 writable alias rules 1 and 2, #1846).
+# pending: a `mut` local declared from a place is still an independent copy, so the check accepts the program.
+# expect-diagnostic: INCAN-T0126
+
+def count_from(start: int, label: str) -> int:
+    mut index = start
+    mut text = label
+    index += 1
+    text = f"{text}!"
+    return index + len(text)
+
+
+def main() -> None:
+    println(count_from(1, "a"))

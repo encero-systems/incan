@@ -1,4 +1,4 @@
-# behavior: a consumer constructs a provider's nominal and generic types, narrows each of two providers' unions by that provider's own members, and the providers' same-spelled Widget models are distinct members of distinct unions (#892)
+# behavior: a consumer constructs a provider's nominal and generic types, narrows each of two providers' unions by that provider's own members, and the providers' same-spelled Widget models are distinct members of distinct unions (#892); a provider method takes a provider model argument passed plainly, a fresh value or a local, across the Loaf boundary (#2994)
 # expect-stdout:
 #   widget gear
 #   fallback empty name
@@ -8,8 +8,10 @@
 #   right r
 #   widget local
 #   other widget 7
+#   shelf 7
+#   shelf 4
 
-from pub::widgets import Envelope, Fallback, Shape, Widget, make, wrap
+from pub::widgets import Envelope, Fallback, Shape, Shelf, Widget, make, wrap
 from pub::other import Choice, Right, Widget as OtherWidget, choose
 
 
@@ -40,3 +42,7 @@ def main() -> None:
     println(pick(choose(false)))
     println(describe(Widget(name="local")))
     println(pick(OtherWidget(value=7)))
+    shelf = Shelf(base=1)
+    println(f"shelf {shelf.place(2, Widget(name="gear"))}")
+    held = Widget(name="cog")
+    println(f"shelf {shelf.place(0, held)}")

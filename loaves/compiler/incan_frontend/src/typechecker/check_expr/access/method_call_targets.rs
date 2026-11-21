@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::typechecker::ResolvedNamespaceMemberKind;
+use incan_lang::interop::{compiler_owned_function_signature, metadata_free_function_signature};
 
 impl TypeChecker {
     /// Check compiler-known receiver forms before the general receiver and argument passes.
@@ -468,8 +469,36 @@ impl TypeChecker {
                     call.span,
                 )
             }
+            (SymbolKind::RustItem(info), _) => self.check_module_rust_function_call(&info, call),
             _ => ResolvedType::Unknown,
         }
+    }
+
+    /// Check a module member that re-exports a Rust function (`pub from rust::... import f`, called `module.f(...)`)
+    /// against the same Rust signature a call of the imported name selects, so its arguments are checked and its
+    /// result type and checked Rust call reach lowering. Any other Rust item keeps its unchecked `Unknown` result.
+    fn check_module_rust_function_call(&mut self, info: &RustItemInfo, call: &MethodCallSite<'_>) -> ResolvedType {
+        let path = info.path.as_str();
+        let metadata = info.metadata.clone().or_else(|| self.rust_item_metadata_for_path(path));
+        let signature = match (compiler_owned_function_signature(path), metadata.as_deref()) {
+            (Some(signature), _) => Some(signature),
+            (None, Some(metadata)) => match &metadata.kind {
+                RustItemKind::Function(signature) => Some(signature.clone()),
+                _ => None,
+            },
+            (None, None) => metadata_free_function_signature(path),
+        };
+        let Some(signature) = signature else {
+            return ResolvedType::Unknown;
+        };
+        self.validate_rust_function_call_with_type_arguments(
+            path,
+            &signature,
+            call.type_args,
+            call.args,
+            call.span,
+            call.expected_return_ty,
+        )
     }
 
     /// Resolve a native array/slice method or an already selected Rust receiver without repeating source dispatch.
@@ -566,7 +595,9 @@ impl TypeChecker {
     /// Check a trait default's open `Self` receiver against its declared slot rather than a concrete implementation.
     ///
     /// Standard-library source keeps the checked result open while retaining the slot, signature and declared result
-    /// for Body IR. Other source uses the existing generic-method validation (#1561).
+    /// for Body IR, unless the declared result names neither `Self` nor a type parameter: such a result is the same
+    /// type in every adopter, so it is the call's type, and `?` or an operator can use it (#3153). Other source uses
+    /// the existing generic-method validation (#1561).
     pub(super) fn check_trait_self_method_call(
         &mut self,
         call: &MethodCallSite<'_>,
@@ -594,6 +625,9 @@ impl TypeChecker {
                     .traits
                     .self_method_params
                     .insert(call.span, info.params.clone());
+                if is_closed_trait_result(&info.return_type) {
+                    return Some(info.return_type.clone());
+                }
                 return Some(ResolvedType::Unknown);
             }
             return Some(self.check_generic_method_call(
@@ -736,5 +770,28 @@ impl TypeChecker {
             (Some(carrier), ResolvedType::Generic(_, arguments)) => ResolvedType::Generic(carrier, arguments),
             (_, result) => result,
         })
+    }
+}
+
+/// Whether a trait method's declared result names neither `Self`, a type parameter nor an unknown part, so it is the
+/// same type in every adopter of the trait (#3153).
+fn is_closed_trait_result(ty: &ResolvedType) -> bool {
+    match ty {
+        ResolvedType::SelfType | ResolvedType::TypeVar(_) | ResolvedType::Unknown | ResolvedType::CallSiteInfer => {
+            false
+        }
+        ResolvedType::FrozenList(inner)
+        | ResolvedType::FrozenSet(inner)
+        | ResolvedType::TypeToken(inner)
+        | ResolvedType::Ref(inner)
+        | ResolvedType::RefMut(inner) => is_closed_trait_result(inner),
+        ResolvedType::FrozenDict(key, value) => is_closed_trait_result(key) && is_closed_trait_result(value),
+        ResolvedType::Generic(_, arguments) | ResolvedType::Tuple(arguments) => {
+            arguments.iter().all(is_closed_trait_result)
+        }
+        ResolvedType::Function(params, result) => {
+            params.iter().all(|param| is_closed_trait_result(&param.ty)) && is_closed_trait_result(result)
+        }
+        _ => true,
     }
 }

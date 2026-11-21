@@ -305,12 +305,17 @@ impl TypeChecker {
         self.symbols.exit_scope();
 
         // An open expected result (a `map` callback's) is the body's type, as a result type left to inference is.
-        let resolved_return =
-            if Self::closure_output_needs_inference(expected_ret) || matches!(expected_ret, ResolvedType::Unknown) {
-                return_ty
-            } else {
-                expected_ret.clone()
-            };
+        let resolved_return = if Self::closure_output_needs_inference(expected_ret)
+            || matches!(expected_ret, ResolvedType::Unknown)
+        {
+            return_ty
+        } else {
+            // An expected result with an open side, such as the success side of an `and_then` callback when the call
+            // has no expected type, takes that side from the body: the callback returns what its body does.
+            let mut resolved = expected_ret.clone();
+            super::fill_open_result_parts(&mut resolved, &return_ty, false);
+            resolved
+        };
         // A side the body's `Ok(...)` or `Err(...)` leaves open and the expected type does not fix, such as the error
         // side of an `or_else` callback's `Ok(...)`, is built with a type all the same (#1561).
         let resolved_return = self.settle_open_closure_result_side(body, resolved_return, Some(expected_ret));

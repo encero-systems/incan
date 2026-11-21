@@ -1,0 +1,20 @@
+# behavior: an initializer that clones, constructs or calls gives an owned local; changing it never reaches the place it was made from (RFC 129 writable alias rule 5, #1846).
+# expect-stdout:
+#   ["apple"] ["apple", "plum"] ["kiwi", "fig"] ["apple", "lime"]
+
+class Cart:
+    pub items: list[str]
+
+    pub def copy_items(self) -> list[str]:
+        return self.items.clone()
+
+
+def main() -> None:
+    mut cart = Cart(items=["apple"])
+    mut cloned = cart.items.clone()
+    cloned.append("plum")
+    mut built = ["kiwi"]
+    built.append("fig")
+    mut called = cart.copy_items()
+    called.append("lime")
+    println(f"{cart.items} {cloned} {built} {called}")
