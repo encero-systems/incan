@@ -1,26 +1,32 @@
 //! Builtin function calls and their scalar boundary checks.
 
 use incan_mir_plan_native::{
-    CalleeKind, Constant, ExternalFunction, Operand, Place, PlanType, RvalueKind, SourceSpan, assign as plan_assign,
+    CalleeKind, Constant, ExternalFunction, Operand, Place, PlanType, RvalueKind, SourceSpan, TerminatorKind,
+    assign as plan_assign,
 };
-use incan_semantics_core::body_ir::{ArgumentElement, BuiltinFnId, Constant as SourceConstant, Place as SourcePlace};
+use incan_semantics_core::body_ir::{
+    ArgumentElement, BuiltinFnId, Constant as SourceConstant, HelperOp, Place as SourcePlace,
+};
 
 use crate::builtins::emit_boolean_operator;
 use crate::checked_values::scalar_operand;
 use crate::checked_values::scalar_place;
 use crate::decls::library_enum_item;
-use crate::element_places::is_element_place;
+use crate::element_places::{element_place_type, is_element_place};
 use crate::formatting::display_operand;
 use crate::frame::{
     Builder, drop_owned, external_call, forget_owned, literal, place_type, read_place, temporary, terminate_call,
     value_type,
 };
-use crate::list_methods::call_destination;
+use crate::hashed_collections::collection_contains;
+use crate::list_methods::{call_destination, lower_list_builtin, lower_list_helper};
 use crate::list_values::value_operand;
 use crate::numerics::{float_conversion, integer_conversion};
 use crate::numerics::{has_sized_numeric, numeric_carrier, numeric_name};
+use crate::operand_borrows::{borrow_str_operand, lower_text_helper};
 use crate::operators::scalar_operator_operand;
 use crate::pending::untranslated;
+use crate::strings::text_helper;
 use crate::text_plan::{format_parts, owned_literal};
 use incan_semantics_core::body_ir::Operand as SourceOperand;
 
@@ -166,7 +172,7 @@ pub fn lower_builtin(
         BuiltinFnId::ReadFile | BuiltinFnId::WriteFile => Err(untranslated("builtin_calls::lower_file_builtin")),
         BuiltinFnId::Zip => Err(untranslated("builtin_calls::lower_zip_builtin")),
         BuiltinFnId::Enumerate => Err(untranslated("builtin_calls::lower_enumerate_builtin")),
-        BuiltinFnId::Len => Err(untranslated("list_methods::lower_list_builtin")),
+        BuiltinFnId::Len => lower_list_builtin(builder, arguments, destination, span),
         BuiltinFnId::JsonStringify => Err(untranslated("builtin_calls::lower_model_json_builtin")),
         BuiltinFnId::Range => Err(untranslated("builtin_calls::lower_range_builtin")),
         _ => Err(format!("unsupported Body IR builtin {builtin:?}")),
@@ -208,7 +214,7 @@ fn source_operand_type(builder: &mut Builder, value: &SourceOperand, span: &Sour
                 return Err(untranslated("static_storage::computed_static_type"));
             }
             if is_element_place(builder, &read.place)? {
-                return Err(untranslated("element_places::element_place_type"));
+                return element_place_type(builder, &read.place);
             }
             let place = scalar_place(builder, &read.place, span)?;
             Ok(place_type(&builder.locals, &place))
@@ -489,4 +495,129 @@ pub fn clone_enum_reference(
     terminate_call(builder, callee, vec![reference], result.clone(), span);
     builder.owned.push(result.local);
     read_place(result, true, span)
+}
+
+/// Dispatch retained runtime helper identities and name unsupported variants without taking their value.
+pub fn lower_runtime_helper(
+    builder: &mut Builder,
+    helper: HelperOp,
+    arguments: &[ArgumentElement],
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    match helper {
+        HelperOp::InstallPanicHook => return Err(untranslated("builtin_calls::install_panic_hook")),
+        HelperOp::RaiseValueError => return lower_raise_value_error(builder, arguments, destination, span),
+        HelperOp::CallableName => return Err(untranslated("callable_calls::lower_callable_name")),
+        HelperOp::SetContains | HelperOp::DictContainsKey => {
+            return collection_contains(builder, false, arguments, destination, span);
+        }
+        HelperOp::SetNotContains | HelperOp::DictNotContainsKey => {
+            return collection_contains(builder, true, arguments, destination, span);
+        }
+        HelperOp::StrSplit | HelperOp::StrJoin => {
+            return Err(untranslated("sequence_builtins::split and join helpers"));
+        }
+        HelperOp::ListConcat | HelperOp::ListRepeat | HelperOp::RangeListFill => {
+            return Err(untranslated("sequence_builtins::list concat and repeat helpers"));
+        }
+        HelperOp::ListContains => return lower_list_helper(builder, false, arguments, destination, span),
+        HelperOp::ListNotContains => return lower_list_helper(builder, true, arguments, destination, span),
+        _ => {}
+    }
+    if let Some((name, result)) = text_helper(helper) {
+        return lower_text_helper(builder, name, result, arguments, destination, span);
+    }
+    match helper {
+        HelperOp::RangeValidate => {
+            if arguments.len() != 3 {
+                return Err("invalid Body IR RangeValidate arity".into());
+            }
+            let output = temporary(builder, PlanType::Unit, span);
+            let operands = fixed_arguments(builder, arguments, span)?;
+            let int_triple = vec![PlanType::Int, PlanType::Int, PlanType::Int];
+            external_call(
+                builder,
+                "incan_native_runtime::validate_range",
+                int_triple,
+                PlanType::Unit,
+                operands,
+                output,
+                span,
+            );
+            Ok(())
+        }
+        HelperOp::NewtypeConstraintValidate => {
+            if arguments.len() != 3 {
+                return Err("invalid Body IR NewtypeConstraintValidate arity".into());
+            }
+            let output = call_destination(builder, destination, PlanType::Unit, span)?;
+            let operands = fixed_arguments(builder, arguments, span)?;
+            external_call(
+                builder,
+                "incan_native_runtime::validate_newtype_constraint",
+                vec![PlanType::Bool, PlanType::String, PlanType::String],
+                PlanType::Unit,
+                operands,
+                output,
+                span,
+            );
+            Ok(())
+        }
+        HelperOp::NewtypeHookExtract | HelperOp::NewtypeFieldHookExtract => {
+            Err(untranslated("newtype_hooks::lower_newtype_hook_result"))
+        }
+        HelperOp::NewtypeSumAdd | HelperOp::NewtypeSumExtract => Err(untranslated("newtype_sums::newtype sums")),
+        HelperOp::ValidationErrorNew | HelperOp::ValidationErrorWithCode => {
+            Err(untranslated("validation_errors::lower_validation_error"))
+        }
+        _ => Err(format!("unsupported Body IR Helper {helper:?}")),
+    }
+}
+
+/// Raise the checked value error with its borrowed message; the call never returns.
+fn lower_raise_value_error(
+    builder: &mut Builder,
+    arguments: &[ArgumentElement],
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    if arguments.len() != 1 {
+        return Err("invalid Body IR RaiseValueError arity".into());
+    }
+    if destination.is_some() {
+        return Err("invalid Body IR diverging helper destination".into());
+    }
+    let Some(message) = arguments[0].as_one() else {
+        return Err("invalid Body IR RaiseValueError message spread".into());
+    };
+    let operands = vec![borrow_str_operand(builder, message, span)?];
+    let output = temporary(builder, PlanType::Never, span);
+    external_call(
+        builder,
+        "incan_std_primitives::errors::raise_value_error",
+        vec![PlanType::StrRef],
+        PlanType::Never,
+        operands,
+        output,
+        span,
+    );
+    builder.finish(TerminatorKind::Unreachable, span);
+    Ok(())
+}
+
+/// Read already ordered positional elements, refusing spreading by name.
+fn fixed_arguments(
+    builder: &mut Builder,
+    elements: &[ArgumentElement],
+    span: &SourceSpan,
+) -> Result<Vec<Operand>, String> {
+    let mut result = Vec::with_capacity(elements.len());
+    for element in elements {
+        match element.as_one() {
+            Some(value) => result.push(value_operand(builder, value, span)?),
+            None => return Err("unsupported Body IR spread ArgumentElement".into()),
+        }
+    }
+    Ok(result)
 }

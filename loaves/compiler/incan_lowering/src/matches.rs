@@ -16,6 +16,7 @@ use crate::frame::{
     Builder, bind_read_value, dereferenced_place, drop_owned, finish_fallthrough, place_type, read_place, temporary,
     track_rvalue_moves,
 };
+use crate::hashed_collections::cloned_collection;
 use crate::list_values::value_operand;
 use crate::lists::is_list;
 use crate::numerics::numeric_carrier;
@@ -861,7 +862,7 @@ pub fn enum_payload_read(
         return carrier_payload_value(builder, place, span);
     }
     if is_collection(&payload_type) {
-        return Err(untranslated("hashed_collections::cloned_collection"));
+        return cloned_collection(builder, place, span);
     }
     // Legacy matches a cloned enum by value. Cloning just the selected payload preserves that owned-binding contract
     // while the canonical match scrutinee stays borrowed; unselected payloads remain owned by their original enum.

@@ -7,6 +7,7 @@ use incan_semantics_core::body_ir::{
 };
 use incan_semantics_core::{IncanType, SemanticSourceTargetKind, SymbolOrigin};
 
+use crate::builtin_calls::lower_runtime_helper;
 use crate::call_arguments::{SlotPolicy, call_parameter_type, has_defaulted_slots, ordered_slot_operands};
 use crate::callable_calls::{checked_type_arguments, has_adapter_slot, lower_callable_result, lower_named_target};
 use crate::closures::return_representation;
@@ -50,7 +51,7 @@ pub fn lower_call(
             }
             lower_method_call(module, builder, target, args, destination, span)
         }
-        Callee::Helper(_) => Err(untranslated("builtin_calls::lower_runtime_helper")),
+        Callee::Helper(helper) => lower_runtime_helper(builder, *helper, args, destination, span),
         Callee::ProviderOperation(_) => Err("unsupported Body IR ProviderOperation".into()),
         Callee::TypeMetadata(_) => {
             if !args.is_empty() {
