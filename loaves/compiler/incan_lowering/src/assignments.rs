@@ -13,6 +13,9 @@ use crate::async_::is_future;
 use crate::builtin_calls::{lower_boolean_operator, lower_numeric_helper, validate_exact_float};
 use crate::carrier_operands::boundary_plan_operand;
 use crate::checked_values::{scalar_operand, scalar_place};
+use crate::closure_lifting::{
+    ClosureExpression, assign_callable, lower_closure, lower_generator_expression, move_closure, stored_callable,
+};
 use crate::closures::callable_copy_type;
 use crate::collections::is_collection;
 use crate::element_places::{element_place_type, is_element_place};
@@ -132,17 +135,52 @@ pub fn lower_local_assignment(
         return Ok(());
     }
     match value {
-        Rvalue::Closure { body, .. } => {
+        Rvalue::Closure {
+            params,
+            captured_operands,
+            body,
+        } => {
             if body.function_item || body.original_callable.is_some() {
                 return Err(untranslated("closures::source_function_item"));
             }
-            return Err(untranslated("closure_lifting::lower_closure"));
+            let closure = ClosureExpression {
+                parameters: params,
+                captures: captured_operands,
+                capture_locals: &body.capture_locals,
+                statements: &body.stmts,
+                result: &body.result,
+                consumes_environment: body.consumes_environment,
+                native_storage: &body.native_storage,
+            };
+            return lower_closure(module, builder, target, &closure, span);
         }
-        Rvalue::Generator { .. } => return Err(untranslated("closure_lifting::lower_generator_expression")),
-        Rvalue::Use(_) => {
+        Rvalue::Generator {
+            source,
+            captured_operands,
+            body,
+        } => return lower_generator_expression(module, builder, target, source, captured_operands, body, span),
+        Rvalue::Use(operand) => {
             let ty = place_type(&builder.locals, &target);
             if callable_copy_type(&ty) || is_owned_callable(&ty) {
-                return Err(untranslated("closure_lifting::stored_callable"));
+                let callable = stored_callable(builder, operand, span)?;
+                return match value_type(builder, &callable)? {
+                    PlanType::NativeClosure(signature, send, sync) => {
+                        let local = target.local;
+                        move_closure(builder, target, callable, signature.clone(), false, span, false)?;
+                        builder.locals[local as usize].ty = PlanType::NativeClosure(signature, send, sync);
+                        Ok(())
+                    }
+                    PlanType::Closure(signature) => {
+                        move_closure(builder, target, callable, signature, false, span, false)
+                    }
+                    PlanType::ClosureOnce(signature) => {
+                        move_closure(builder, target, callable, signature, true, span, false)
+                    }
+                    _ => {
+                        let pointer_storage = builder.function_pointer_locals.contains(&target.local);
+                        assign_callable(builder, target, callable, pointer_storage, span)
+                    }
+                };
             }
         }
         _ => {}

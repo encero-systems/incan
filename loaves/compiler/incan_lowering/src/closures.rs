@@ -1,6 +1,9 @@
 //! Callable signature admission from checked frontend representation facts.
 
-use incan_mir_plan_native::{ListLeaf, PlanType};
+use incan_mir_plan_native::{
+    Callee, CalleeKind, Function, ListLeaf, Local, Operand, OperandKind, Parameter, PlanType, RvalueKind, SourceSpan,
+    TerminatorKind, Unwind, block as plan_block, place as plan_place,
+};
 use incan_semantics_core::body_ir::Body;
 use incan_semantics_core::{IncanCallableParam, IncanCallableParamKind, IncanInputAccess, IncanType};
 
@@ -386,4 +389,134 @@ pub fn owned_capture(ty: &PlanType) -> bool {
 /// Function items and function pointers have no environment owner and are native Copy values.
 pub fn callable_copy_type(ty: &PlanType) -> bool {
     matches!(ty, PlanType::FunctionPointer(_) | PlanType::FunctionItem(..))
+}
+
+/// Declare the constructor whose native body boxes one environment holding the captures in order.
+///
+/// Its plan body is the validated reusable or consuming call contract returning the corresponding boxed object; an
+/// environment holding a shared reference returns the borrowing object, which lives no longer than that borrow. The
+/// driver supplies the native closure, whose body forwards the captures and then its own inputs to `lifted`.
+#[allow(clippy::too_many_arguments)] // The Incan constructor's names, captures, signature and four object choices.
+pub fn closure_constructor(
+    name: &str,
+    lifted: &str,
+    captures: &[PlanType],
+    signature: &[PlanType],
+    consumes_environment: bool,
+    span: &SourceSpan,
+    native_send: bool,
+    native_sync: bool,
+    borrowing: bool,
+) -> Function {
+    let signature = signature.to_vec();
+    let count = captures.len() as i64;
+    let mut object_type = PlanType::Closure(signature.clone());
+    let mut body_call = CalleeKind::ClosureBody(lifted.to_owned(), count);
+    if native_send || native_sync {
+        object_type = PlanType::NativeClosure(signature.clone(), native_send, native_sync);
+    }
+    if borrowing {
+        object_type = PlanType::BorrowingClosure(signature.clone());
+    }
+    if consumes_environment {
+        object_type = PlanType::ClosureOnce(signature);
+        body_call = CalleeKind::ClosureBodyOnce(lifted.to_owned(), count);
+    }
+    let mut locals = vec![Local {
+        ty: object_type.clone(),
+        span: span.clone(),
+    }];
+    let mut parameters = Vec::with_capacity(captures.len());
+    let mut operands = Vec::with_capacity(captures.len());
+    for (index, capture) in captures.iter().enumerate() {
+        locals.push(Local {
+            ty: capture.clone(),
+            span: span.clone(),
+        });
+        parameters.push(Parameter {
+            name: format!("__incan_capture_{index}"),
+            ty: capture.clone(),
+            span: span.clone(),
+        });
+        // Owned captures move into the environment; Copy scalars are copied.
+        let place = plan_place(index as i64 + 1, span);
+        let kind = if consumes_environment || owned_capture(capture) {
+            OperandKind::Move(place)
+        } else {
+            OperandKind::Copy(place)
+        };
+        operands.push(Operand {
+            kind,
+            span: span.clone(),
+        });
+    }
+    let callee = Callee {
+        kind: body_call,
+        span: span.clone(),
+    };
+    let call = TerminatorKind::Call(callee, operands, plan_place(0, span), 1, Unwind::Continue);
+    let blocks = vec![
+        plan_block(Vec::new(), call, span),
+        plan_block(Vec::new(), TerminatorKind::Return, span),
+    ];
+    Function::new(name.to_owned(), parameters, object_type, locals, blocks, span.clone())
+}
+
+/// Read a retained function or callable-object signature; inputs come first and the result is last.
+pub fn callable_signature(ty: &PlanType) -> Result<Vec<PlanType>, String> {
+    match ty {
+        PlanType::FunctionPointer(signature)
+        | PlanType::FunctionItem(_, signature)
+        | PlanType::Closure(signature)
+        | PlanType::NativeClosure(signature, ..)
+        | PlanType::ClosureOnce(signature)
+        | PlanType::ClosureRef(signature)
+        | PlanType::BorrowingClosure(signature)
+        | PlanType::BorrowingClosureRef(signature) => Ok(signature.clone()),
+        _ => Err("unsupported Body IR local callable representation".into()),
+    }
+}
+
+/// Preserve exact item, pointer, or shared closure signatures; reify only a proven function-pointer destination.
+pub fn function_assignment(
+    destination: &PlanType,
+    source: &PlanType,
+    value: Operand,
+    pointer_storage: bool,
+    context: &str,
+) -> Result<(PlanType, RvalueKind), String> {
+    match source {
+        PlanType::FunctionItem(_, signature) => {
+            if pointer_storage {
+                if *destination != PlanType::FunctionPointer(signature.clone()) {
+                    return Err("invalid Body IR function-pointer assignment signature".into());
+                }
+                return Ok((destination.clone(), RvalueKind::ReifyFunction(value)));
+            }
+            if let PlanType::FunctionItem(..) = destination
+                && destination != source
+            {
+                return Err("unsupported Body IR function-item reassignment".into());
+            }
+            Ok((source.clone(), RvalueKind::Use(value)))
+        }
+        PlanType::FunctionPointer(_) => {
+            if destination != source {
+                return Err("invalid Body IR callable assignment signature".into());
+            }
+            Ok((destination.clone(), RvalueKind::Use(value)))
+        }
+        PlanType::ClosureRef(signature) => {
+            if pointer_storage {
+                return Err("unsupported Body IR shared closure stored as a function pointer".into());
+            }
+            if callable_signature(destination)? != *signature {
+                return Err("invalid Body IR shared closure assignment signature".into());
+            }
+            Ok((source.clone(), RvalueKind::Use(value)))
+        }
+        _ => Err(format!(
+            "unsupported Body IR noncallable assignment to function value from {source:?} into {destination:?} at {context}"
+        )),
+    }
 }

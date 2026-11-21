@@ -10,7 +10,7 @@ use incan_semantics_core::body_ir::{
 use crate::builtin_calls::coerce_numeric_operand;
 use crate::carrier_operands::boundary_operand;
 use crate::checked_values::{scalar_constant, scalar_place};
-use crate::closures::{packed_input, parameter_representation};
+use crate::closures::{function_assignment, packed_input, parameter_representation};
 use crate::collections::is_collection;
 use crate::element_borrows::shared_element_place;
 use crate::element_places::element_place_type;
@@ -306,10 +306,28 @@ pub fn call_argument_operand(
     }
     let operand = boundary_operand(builder, value, ty, span)?;
     let coerced = coerce_numeric_operand(builder, operand, ty, span)?;
-    if let PlanType::FunctionPointer(_) = ty {
-        return Err(untranslated("closures::function_assignment"));
+    function_argument(builder, ty, coerced, span)
+}
+
+/// Reify an item passed into a function-pointer signature without changing its inferred binding type.
+pub fn function_argument(
+    builder: &mut Builder,
+    ty: &PlanType,
+    value: Operand,
+    span: &SourceSpan,
+) -> Result<Operand, String> {
+    let PlanType::FunctionPointer(_) = ty else {
+        return Ok(value);
+    };
+    let source = value_type(builder, &value)?;
+    let context = format!("call argument in {}", builder.name);
+    let (_, operation) = function_assignment(ty, &source, value.clone(), true, &context)?;
+    if let RvalueKind::ReifyFunction(_) = operation {
+        let result = temporary(builder, ty.clone(), span);
+        builder.emit(plan_assign(result.clone(), operation, span));
+        return Ok(read_place(result, false, span));
     }
-    Ok(coerced)
+    Ok(value)
 }
 
 /// Borrow a checked nominal or enum, preserving shared list element loans and existing frame references.

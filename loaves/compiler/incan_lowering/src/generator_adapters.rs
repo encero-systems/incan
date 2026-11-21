@@ -7,9 +7,10 @@ use incan_mir_plan_native::{
     place as plan_place,
 };
 
+use crate::closure_lifting::{step_callable, synthesize};
 use crate::frame::{Builder, external_call, read_place, temporary, terminate_call, value_type};
+use crate::generator_expressions::construct_chain;
 use crate::generators::{generator_element, generator_runtime_call, generator_shape};
-use crate::pending::untranslated;
 
 /// Report whether a checker-selected iterator operation chains a lazy adapter.
 pub fn is_generator_adapter(method: IteratorMethodId) -> bool {
@@ -166,9 +167,6 @@ fn predicate_adapter(
 }
 
 /// Transform each item with a function value when it is polled.
-///
-/// A model item's mapper is synthesized and called through `closure_lifting::synthesize` and
-/// `closure_lifting::step_callable`, which refuse by name until they are in Rust.
 fn map_adapter(
     builder: &mut Builder,
     source: Operand,
@@ -183,7 +181,7 @@ fn map_adapter(
     let signature = vec![element.clone(), mapped.clone()];
     let pointer = adapter_callable(builder, transform, signature.clone(), span)?;
     if let PlanType::Model(..) = element {
-        return Err(untranslated("closure_lifting::synthesize"));
+        return map_model_adapter(builder, source, pointer, &element, &mapped, result, output, span);
     }
     if element == PlanType::String {
         let name = "map_text_callable_generator";
@@ -211,6 +209,40 @@ fn map_adapter(
         span,
     );
     Ok(())
+}
+
+/// Keep a model mapper lazy by forwarding each polled owned element through the existing generic step chain.
+#[allow(clippy::too_many_arguments)] // The source, mapper, both element types, result, output and span.
+fn map_model_adapter(
+    builder: &mut Builder,
+    source: Operand,
+    transform: Operand,
+    element: &PlanType,
+    mapped: &PlanType,
+    result: PlanType,
+    output: Place,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let name = format!("__incan_map_step_{}_{}", builder.name, builder.synthesized.len());
+    let pointer = PlanType::FunctionPointer(vec![element.clone(), mapped.clone()]);
+    synthesize(builder, mapping_step(&name, element, mapped, &result, span));
+    builder.externals.push(ExternalFunction {
+        path: "incan_native_runtime::once_generator".into(),
+        type_arguments: vec![mapped.clone()],
+        parameters: vec![mapped.clone()],
+        return_type: result.clone(),
+        span: span.clone(),
+    });
+    let step = step_callable(
+        builder,
+        &name,
+        element.clone(),
+        result,
+        &[pointer],
+        vec![transform],
+        span,
+    );
+    construct_chain(builder, source, step, output, span)
 }
 
 /// Call the retained mapper once for an owned item, then yield its owned result through a single-item generator.

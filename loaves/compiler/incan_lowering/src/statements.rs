@@ -16,6 +16,7 @@ use crate::builtin_calls::{coerce_numeric_operand, validate_exact_float};
 use crate::calls::lower_call;
 use crate::carrier_operands::boundary_operand;
 use crate::checked_values::{builder_location, scalar_place};
+use crate::closure_lifting::{assign_callable, later_clause_index, lower_later_clause};
 use crate::closures::callable_copy_type;
 use crate::explicit_arguments::{explicit_place_argument, reference_contract};
 use crate::formatting::display_operand;
@@ -23,6 +24,9 @@ use crate::frame::{
     Builder, drop_all_owned, drop_owned, finish_fallthrough, forget_owned, literal, place_type, read_place,
     track_rvalue_moves,
 };
+use crate::generator_clauses::{clause_iterator, whole_local};
+use crate::generator_expressions::step_result;
+use crate::generators::{generator_element, generator_yield};
 use crate::list_iteration::list_next;
 use crate::list_values::value_operand;
 use crate::loop_exits::exits_to;
@@ -126,26 +130,6 @@ pub fn lower_block(module: &BodyIrModule, builder: &mut Builder, block: &Block) 
     Ok(())
 }
 
-/// Find the step's later clause that polls this iterator local, or -1 outside a step or for any other local.
-fn later_clause_index(builder: &Builder, iterator: i64) -> i64 {
-    if iterator < 0 {
-        return -1;
-    }
-    builder
-        .step_clauses
-        .iter()
-        .position(|clause| clause.0 == iterator)
-        .map_or(-1, |index| index as i64)
-}
-
-/// Read a whole Body IR local's index, or -1 for a projection or a global.
-fn whole_local(place: &incan_semantics_core::body_ir::Place) -> i64 {
-    if !place.projection.is_empty() {
-        return -1;
-    }
-    place.local_id().map_or(-1, |local| local.index() as i64)
-}
-
 /// Preserve statement order and refuse constructs outside the supported slice.
 pub fn lower_statement(
     module: &BodyIrModule,
@@ -176,8 +160,9 @@ pub fn lower_statement(
             else_block,
         } => lower_if(module, builder, cond, then_block, else_block.as_ref(), &span),
         SourceStatementKind::Loop { body } => {
-            if !builder.step_clauses.is_empty() {
-                return Err(untranslated("closure_lifting::lower_later_clause"));
+            let clause = later_clause_index(builder, clause_iterator(body));
+            if clause >= 0 {
+                return lower_later_clause(module, builder, clause as usize, body, &span);
             }
             lower_loop(module, builder, body, &span)
         }
@@ -204,7 +189,7 @@ pub fn lower_statement(
         SourceStatementKind::Call { .. } => lower_call(module, builder, statement, &span),
         SourceStatementKind::Await { .. } => Err(untranslated("async_::await_future")),
         SourceStatementKind::Race { .. } => Err(untranslated("statements::lower_native_race")),
-        SourceStatementKind::Yield { .. } => Err(untranslated("statements::lower_yield")),
+        SourceStatementKind::Yield { value } => lower_yield(builder, value, &span),
         SourceStatementKind::Assert { kind, message, .. } => lower_assertion(builder, kind, message.as_ref(), &span),
         SourceStatementKind::TryPropagate {
             destination,
@@ -270,9 +255,10 @@ pub fn finish_return(builder: &mut Builder, value: Operand, span: &SourceSpan) -
     let return_type = builder.locals[0].ty.clone();
     let result = coerce_numeric_operand(builder, value, &return_type, span)?;
     if callable_copy_type(&return_type) {
-        return Err(untranslated("closure_lifting::assign_callable"));
+        assign_callable(builder, plan_place(0, span), result, true, span)?;
+    } else {
+        builder.emit(plan_assign(plan_place(0, span), RvalueKind::Use(result), span));
     }
-    builder.emit(plan_assign(plan_place(0, span), RvalueKind::Use(result), span));
     validate_exact_float(builder, &plan_place(0, span), span);
     drop_all_owned(builder, span);
     builder.finish(TerminatorKind::Return, span);
@@ -470,4 +456,28 @@ pub fn carrier_payload(
         return view_operand(builder, payload, field, access, span);
     }
     boundary_operand(builder, payload, field, span)
+}
+
+/// Apply the checked generator's element boundary conversion before transferring an owned yield.
+fn lower_yield(builder: &mut Builder, value: &SourceOperand, span: &SourceSpan) -> Result<(), String> {
+    // A generator-expression step hands its one accepted element back to the chain instead of suspending.
+    if let Some(element) = builder.step_element.clone() {
+        // A later `for` clause would yield many elements per item; one step returns exactly one.
+        if !builder.loops.is_empty() {
+            return Err("unsupported Body IR generator expression with a later for clause".into());
+        }
+        let operand = value_operand(builder, value, span)?;
+        let accepted = coerce_numeric_operand(builder, operand, &element, span)?;
+        let result = step_result(builder, Some(accepted), span)?;
+        return finish_return(builder, result, span);
+    }
+    if builder.generator_handle < 0 {
+        return Err("unsupported Body IR Yield outside generator producer".into());
+    }
+    let PlanType::GeneratorYield(leaf, depth) = builder.locals[builder.generator_handle as usize].ty.clone() else {
+        return Err("invalid native generator yield handle".into());
+    };
+    let operand = value_operand(builder, value, span)?;
+    let converted = coerce_numeric_operand(builder, operand, &generator_element(&leaf, depth), span)?;
+    generator_yield(builder, converted, span)
 }
