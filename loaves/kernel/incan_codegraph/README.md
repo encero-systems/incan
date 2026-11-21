@@ -23,7 +23,7 @@ This crate deliberately has no dependency on compiler internals, graph databases
 
 ## Portable Loaf artifacts
 
-`artifact::encode_graph` projects compiler records into `.incngraph` version 1. The header is a little-endian `u32` version followed by a little-endian `u64` index length. A postcard index holds the shared field-name dictionary and each record's kind, ID, payload offset and length. Independently encoded postcard records follow the index. Declaration IDs derive from compiler-proven span-free identities; physical source roots become Loaf-relative anchors. Readers validate the version and index before decoding selected record groups. JSON remains an output representation, never the persisted graph.
+`artifact::encode_graph` projects compiler records into `.incngraph` version 2. The header is a little-endian `u32` version followed by a little-endian `u64` index length. A postcard index holds the shared field-name dictionary and each record's kind, ID, payload offset and length. Each of the 16 record kinds has its own Crumb model identity, and every indexed payload is an independently decodable row carrying its kind, ID and compact wire value; no record depends on a preceding row. Declaration IDs derive from compiler-proven span-free identities; physical source roots become Loaf-relative anchors. Readers validate the version, index and Crumb row before decoding selected record groups. JSON remains an output representation, never the persisted graph.
 
 The wire schema and binary layout versions are separate. A reader rejects incompatible versions and malformed payloads; consumers must not silently replace a corrupt published graph with a new source export.
 

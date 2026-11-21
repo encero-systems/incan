@@ -86,6 +86,7 @@ pub fn semantic_digest<T: Serialize>(value: &T) -> Result<String, DigestError> {
         hasher: &mut hasher,
         mode: DigestMode::Meaning,
         body: None,
+        layout: false,
     })?;
     Ok(format!("sha256:{}", hex::encode(hasher.finalize())))
 }
@@ -99,6 +100,7 @@ pub struct DigestSerializer<'hasher, 'body> {
     hasher: &'hasher mut Sha256,
     mode: DigestMode,
     body: Option<&'body SourceSignatureContext<'body>>,
+    layout: bool,
 }
 
 /// A span contributes expansion identity but never its diagnostic byte coordinates.
@@ -198,7 +200,11 @@ impl<'hasher, 'body> ser::Serializer for DigestSerializer<'hasher, 'body> {
                     hasher: self.hasher,
                     mode: DigestMode::Meaning,
                     body: None,
+                    layout: false,
                 });
+            }
+            if self.layout && value.starts_with("__incan_carrier_") {
+                return Err(DigestError("checked layout uses an unbound nominal carrier".into()));
             }
             self.mode = DigestMode::Meaning;
         }
@@ -232,6 +238,7 @@ impl<'hasher, 'body> ser::Serializer for DigestSerializer<'hasher, 'body> {
             hasher: self.hasher,
             mode: self.mode,
             body: self.body,
+            layout: self.layout,
         })
     }
 
@@ -285,6 +292,7 @@ impl<'hasher, 'body> ser::Serializer for DigestSerializer<'hasher, 'body> {
                 self.mode
             },
             body: self.body,
+            layout: self.layout,
         })
     }
 
@@ -343,8 +351,9 @@ impl<'hasher, 'body> ser::Serializer for DigestSerializer<'hasher, 'body> {
             hasher: self.hasher,
             mode: self.mode,
             body: self.body,
+            layout: self.layout,
             generic_type: false,
-            body_type: name == "Body",
+            structure: name,
         })
     }
 
@@ -362,8 +371,9 @@ impl<'hasher, 'body> ser::Serializer for DigestSerializer<'hasher, 'body> {
             hasher: self.hasher,
             mode: self.mode,
             body: self.body,
+            layout: self.layout,
             generic_type: name == "IncanType" && variant == "Generic",
-            body_type: false,
+            structure: "",
         })
     }
 }
@@ -379,6 +389,7 @@ macro_rules! digest_sequence {
                     hasher: self.hasher,
                     mode: self.mode,
                     body: self.body,
+                    layout: self.layout,
                 })
             }
 
@@ -403,6 +414,7 @@ impl ser::SerializeMap for DigestSerializer<'_, '_> {
             hasher: self.hasher,
             mode: self.mode,
             body: self.body,
+            layout: self.layout,
         })
     }
 
@@ -411,6 +423,7 @@ impl ser::SerializeMap for DigestSerializer<'_, '_> {
             hasher: self.hasher,
             mode: self.mode,
             body: self.body,
+            layout: self.layout,
         })
     }
 
@@ -427,8 +440,9 @@ pub struct StructDigest<'hasher, 'body> {
     hasher: &'hasher mut Sha256,
     mode: DigestMode,
     body: Option<&'body SourceSignatureContext<'body>>,
+    layout: bool,
     generic_type: bool,
-    body_type: bool,
+    structure: &'static str,
 }
 
 impl ser::SerializeStruct for StructDigest<'_, '_> {
@@ -442,6 +456,7 @@ impl ser::SerializeStruct for StructDigest<'_, '_> {
                     hasher: self.hasher,
                     mode: DigestMode::Expansion(field),
                     body: self.body,
+                    layout: self.layout,
                 })
             } else {
                 Ok(())
@@ -452,13 +467,28 @@ impl ser::SerializeStruct for StructDigest<'_, '_> {
                 hasher: self.hasher,
                 mode: DigestMode::Span(key),
                 body: self.body,
+                layout: self.layout,
             });
         }
         if is_positional_field(key) {
             return Ok(());
         }
+        if self.layout
+            && (key == "direct_declaration_id"
+                || matches!(
+                    (self.structure, key),
+                    ("NominalDeclaration" | "EnumDeclaration", "name")
+                        | ("NominalDeclaration", "field_default_body")
+                        | ("MethodPartialDefaults", "frame")
+                ))
+        {
+            // The source owner and concrete arguments identify the layout. Each deferred body is witnessed in its own
+            // binding context by model_layout_witness, including its position in the partial-default list.
+            return Ok(());
+        }
         update_delimited(self.hasher, key.as_bytes());
-        if self.body_type
+        if (self.structure == "Body"
+            || self.layout && matches!(self.structure, "NominalDeclaration" | "EnumDeclaration"))
             && key == "named_type_identities"
             && let Some(context) = self.body
         {
@@ -476,6 +506,7 @@ impl ser::SerializeStruct for StructDigest<'_, '_> {
                 hasher: self.hasher,
                 mode: DigestMode::Meaning,
                 body: None,
+                layout: false,
             });
         }
         value.serialize(DigestSerializer {
@@ -486,6 +517,7 @@ impl ser::SerializeStruct for StructDigest<'_, '_> {
                 self.mode
             },
             body: self.body,
+            layout: self.layout,
         })
     }
 
@@ -540,14 +572,86 @@ fn projected_body_digest(body: &crate::body_ir::Body) -> Result<String, DigestEr
         nominals: &body.named_type_identities,
         binders: &body.type_parameters,
     };
+    scoped_digest(body, &context, b"incan.checked-body/2", false)
+}
+
+fn scoped_digest<T: ?Sized + Serialize>(
+    value: &T,
+    context: &SourceSignatureContext<'_>,
+    profile: &[u8],
+    layout: bool,
+) -> Result<String, DigestError> {
     let mut hasher = Sha256::new();
-    update_delimited(&mut hasher, b"incan.checked-body/2");
-    body.serialize(DigestSerializer {
+    update_delimited(&mut hasher, profile);
+    value.serialize(DigestSerializer {
         hasher: &mut hasher,
         mode: DigestMode::Meaning,
-        body: Some(&context),
+        body: Some(context),
+        layout,
     })?;
     Ok(format!("sha256:{}", hex::encode(hasher.finalize())))
+}
+
+fn layout_body_digest(body: &crate::body_ir::Body) -> Result<String, DigestError> {
+    let context = SourceSignatureContext {
+        nominals: &body.named_type_identities,
+        binders: &body.type_parameters,
+    };
+    scoped_digest(body, &context, b"incan.layout-body/1", true)
+}
+
+/// The specialization and complete checked version of a model, class or newtype, under its typed nominal bindings.
+///
+/// RFC 124 ignores physical source coordinates. The layout's generated symbol can contain such coordinates, while
+/// the canonical source declaration, type arguments and all actual layout fields determine its meaning.
+/// Each default frame owns an independent map of checked bindings.
+///
+/// # Errors
+///
+/// Returns an error when a referenced declaration lacks a stable identity or its checked fields cannot be serialized.
+pub fn model_layout_witness(model: &crate::body_ir::NominalDeclaration) -> Result<(String, String), DigestError> {
+    let context = SourceSignatureContext {
+        nominals: &model.named_type_identities,
+        binders: &model.type_parameters,
+    };
+    let specialization = scoped_digest(
+        &model.native_type_arguments,
+        &context,
+        b"incan.layout-arguments/1",
+        true,
+    )?;
+    let declaration = scoped_digest(model, &context, b"incan.model-layout/1", true)?;
+    let default = model
+        .field_default_body
+        .as_deref()
+        .map(layout_body_digest)
+        .transpose()?;
+    let partials = model
+        .method_partial_defaults
+        .iter()
+        .map(|partial| layout_body_digest(&partial.frame))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((specialization, semantic_digest(&(declaration, default, partials))?))
+}
+
+/// The specialization and complete checked version of an enum under its actual source binding map.
+///
+/// # Errors
+///
+/// Returns an error when a referenced declaration lacks a stable identity or its checked fields cannot be serialized.
+pub fn enum_layout_witness(declaration: &crate::body_ir::EnumDeclaration) -> Result<(String, String), DigestError> {
+    let context = SourceSignatureContext {
+        nominals: &declaration.named_type_identities,
+        binders: &declaration.type_parameters,
+    };
+    let specialization = scoped_digest(
+        &declaration.native_type_arguments,
+        &context,
+        b"incan.layout-arguments/1",
+        true,
+    )?;
+    let version = scoped_digest(declaration, &context, b"incan.enum-layout/1", true)?;
+    Ok((specialization, version))
 }
 
 /// Extract a body's docstring, if it has one.

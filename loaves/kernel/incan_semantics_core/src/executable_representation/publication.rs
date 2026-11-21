@@ -432,7 +432,7 @@ pub(super) fn project_nominal(
         }
         audit.used_nominal_types.insert(carrier, nominal.canonical.clone());
     }
-    nominal.named_type_identities = audit.used_nominal_types;
+    nominal.named_type_identities = audit.used_nominal_types.into();
     // A selection the inventory cannot supply leaves the layout as it was: a consumer that omits such a field still
     // refuses at its own lowering, naming the callee, while every consumer that supplies it keeps the layout.
     let callables = selected_native_calls(&native_calls, native_callables).unwrap_or_default();
@@ -462,7 +462,7 @@ pub(super) fn project_enum(
             audit.ty(ty)?;
         }
     }
-    value.named_type_identities = audit.used_nominal_types;
+    value.named_type_identities = audit.used_nominal_types.into();
     Ok((value, audit.requirements))
 }
 
@@ -510,7 +510,7 @@ pub(super) fn project_type_alias(
     let mut audit = PublicationAudit::new(module, library, eligible, &source.named_type_identities);
     audit.identity(&mut value.canonical, false)?;
     audit.ty(&value.ty)?;
-    value.named_type_identities = audit.used_nominal_types;
+    value.named_type_identities = audit.used_nominal_types.into();
     Ok((value, audit.requirements))
 }
 

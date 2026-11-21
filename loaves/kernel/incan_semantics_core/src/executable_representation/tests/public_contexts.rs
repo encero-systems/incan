@@ -20,7 +20,7 @@ fn public_union_alias_context_round_trips() -> Result<(), Box<dyn std::error::Er
         .push(crate::body_ir::TypeAliasDeclaration {
             canonical: identity.clone(),
             ty: ty.clone(),
-            named_type_identities: BTreeMap::new(),
+            named_type_identities: Default::default(),
         });
     let bytes = publish(&module, &BTreeSet::from([identity.clone()]))?;
     let reader = SurfaceReader::open(&bytes)?;
@@ -135,7 +135,7 @@ fn public_normal_enum_payload_context_round_trips() -> Result<(), Box<dyn std::e
             fields: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
         }],
         derives: Vec::new(),
-        named_type_identities: BTreeMap::new(),
+        named_type_identities: Default::default(),
     };
     let mut module = module(Vec::new());
     module.enum_declarations.push(value);
@@ -364,9 +364,7 @@ fn public_type_context_retains_private_fields_and_requires_checked_layouts() -> 
     nominal.field_types[0] = IncanType::Named("private_layout_secret".into());
     let mut private_type = identity("private_layout_secret", 4);
     private_type.kind = SemanticSourceTargetKind::Model;
-    nominal
-        .named_type_identities
-        .insert("private_layout_secret".into(), private_type);
+    std::sync::Arc::make_mut(&mut nominal.named_type_identities).insert("private_layout_secret".into(), private_type);
     let bytes = publish(&module, &complete_public)?;
     assert!(!SurfaceReader::open(&bytes)?.covers(&type_id));
     assert!(

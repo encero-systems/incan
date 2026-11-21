@@ -2,7 +2,7 @@
 //!
 //! Body IR v0 is the backend-facing, target-agnostic representation of one function/method body. It sits between
 //! typechecked source (AST + [`crate::SemanticFactStore`] / declaration-level [`crate::HirModule`]) and the
-//! target-specific native lowering in `loaves/compiler/incan_mir_lowering` — it must be consumable by a backend
+//! target-specific native lowering in `loaves/compiler/incan_lowering` — it must be consumable by a backend
 //! without that backend needing to read private compiler internals.
 //!
 //! Body IR v0 deliberately models a **normalized** statement/control-flow vocabulary rather than a flattened
@@ -89,6 +89,9 @@ pub struct BodyIrModule {
     /// canonical declarations independently of private same-named dependencies; publication never serializes them.
     #[serde(skip)]
     pub runtime_callable_bindings: Vec<RuntimeCallableBinding>,
+    /// Per-package facade lookup scope and the exact external paths already proven to have native linkage.
+    #[serde(skip)]
+    pub runtime_binding_scopes: Vec<(String, Vec<String>)>,
     /// RFC 036 originals retained separately from the initialized, module-visible callable bindings.
     #[serde(default)]
     pub decorated_bindings: Vec<DecoratedBinding>,
@@ -174,6 +177,7 @@ impl BodyIrModule {
     pub fn declarations_only(owner: String) -> Self {
         Self {
             runtime_callable_bindings: Vec::new(),
+            runtime_binding_scopes: Vec::new(),
             string_conversion_contract: StringConversionContract::Unselected,
             decorated_bindings: Vec::new(),
             entrypoint_effects: Vec::new(),
@@ -285,7 +289,7 @@ impl BodyIrModule {
 #[cfg(test)]
 mod tests;
 
-/// A body's checked nominal bindings, shared between clones of the body.
+/// Checked nominal bindings shared by executable bodies and declaration layouts.
 pub type SharedIdentities = std::sync::Arc<std::collections::BTreeMap<String, CanonicalSymbolId>>;
 
 /// Point bodies whose identity maps are equal at one shared map. A module's bodies are built from the same

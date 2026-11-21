@@ -63,7 +63,8 @@ pub struct TypeAliasDeclaration {
     /// Alias-expanded semantic type, without a consumer-side name lookup.
     pub ty: IncanType,
     /// Checker-retained named type identities; publication removes unused entries and audits the required closure.
-    pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
+    #[serde(with = "shared_identities")]
+    pub named_type_identities: SharedIdentities,
 }
 
 /// Canonical persistent storage with a checker-typed initializer.
