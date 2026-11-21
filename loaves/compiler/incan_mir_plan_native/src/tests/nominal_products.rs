@@ -155,6 +155,87 @@ fn formatting_function(model_position: i64, point_name: &str, span: &SourceSpan)
     )
 }
 
+/// A product that reads, writes, forces or calls a method on module storage names each cell by its declaration: a cell
+/// another module's new static moves restores at its new slot, and a changed or removed cell makes the product a miss.
+#[test]
+fn product_names_static_cells_by_declaration() -> Result<(), String> {
+    let span = source_span("nominal_products.incn", 3, 1);
+    let before =
+        unit(Vec::new(), Vec::new(), &[], &[]).with_statics(vec![cell("app::first", "v1"), cell("app::counter", "v1")]);
+    let captured = static_function(1, &span);
+    let references = product_nominals(&captured, &[], &[])?;
+    let product = encode_product(&captured, &[], &describe_nominals(&references, &before)?, &[])?;
+    let identities = product_identities(&product)?;
+    let moved = unit(Vec::new(), Vec::new(), &[], &[]).with_statics(vec![
+        cell("lib::moved", "v1"),
+        cell("app::first", "v1"),
+        cell("app::counter", "v1"),
+    ]);
+    let resolved =
+        resolve_nominals(&identities, &moved).ok_or("a static moved by another declaration made the product miss")?;
+    let (restored, _) = decode_product(&product, &resolved)?;
+    assert!(
+        restored == static_function(2, &span),
+        "a static cell did not restore at its current slot"
+    );
+    let changed =
+        unit(Vec::new(), Vec::new(), &[], &[]).with_statics(vec![cell("app::first", "v1"), cell("app::counter", "v2")]);
+    assert!(
+        resolve_nominals(&identities, &changed).is_none(),
+        "a changed static cell was reused"
+    );
+    let removed = unit(Vec::new(), Vec::new(), &[], &[]).with_statics(vec![cell("app::first", "v1")]);
+    assert!(
+        resolve_nominals(&identities, &removed).is_none(),
+        "a removed static cell was reused"
+    );
+    Ok(())
+}
+
+/// One static cell declaration at one checked meaning.
+fn cell(identity: &str, version: &str) -> ProductNominal {
+    ProductNominal {
+        kind: NominalKind::Static,
+        identity: format!("static:{identity}"),
+        digest: format!("{identity}-{version}"),
+    }
+}
+
+/// A function that loads, stores, forces and pushes to static slot `slot`.
+fn static_function(slot: i64, span: &SourceSpan) -> Function {
+    let call = |kind: CalleeKind, target: i64| Terminator {
+        kind: TerminatorKind::Call(
+            Callee {
+                kind,
+                span: span.clone(),
+            },
+            Vec::new(),
+            place_at(0, Projection::Whole, span),
+            target,
+            Unwind::Continue,
+        ),
+        span: span.clone(),
+    };
+    Function::new(
+        "count".to_owned(),
+        Vec::new(),
+        PlanType::Unit,
+        vec![local(PlanType::Int, span)],
+        vec![
+            block(Vec::new(), call(CalleeKind::StaticLoad(slot), 1), span),
+            block(Vec::new(), call(CalleeKind::StaticStore(slot), 2), span),
+            block(Vec::new(), call(CalleeKind::StaticForce(slot), 3), span),
+            block(
+                Vec::new(),
+                call(CalleeKind::StaticMethod(slot, "push".to_owned()), 4),
+                span,
+            ),
+            block(Vec::new(), returning(span), span),
+        ],
+        span.clone(),
+    )
+}
+
 /// Capture a product the way lowering does: name every referenced position, then encode.
 fn keyed_product(function: &Function, runtime: &[ExternalFunction], unit: &UnitNominals) -> Result<Vec<u8>, String> {
     let references = product_nominals(function, runtime, &[])?;
