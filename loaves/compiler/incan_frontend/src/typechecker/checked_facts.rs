@@ -170,6 +170,18 @@ impl TypeChecker {
         value_ty: &ResolvedType,
         destination: &ResolvedType,
     ) {
+        let expanded = self.expand_type_aliases(destination.clone());
+        if self.types_compatible(value_ty, &expanded)
+            && self.refuse_borrowed_value_without_clone(value_ty, &expanded, value_span)
+        {
+            return;
+        }
+        self.record_value_destination(value_span, value_ty, destination);
+    }
+
+    /// Record the destination of an admitted value when lowering adapts it: an `Option` destination, a numeric
+    /// widening, or a borrowed value an owned destination clones.
+    fn record_value_destination(&mut self, value_span: Span, value_ty: &ResolvedType, destination: &ResolvedType) {
         let destination = self.expand_type_aliases(destination.clone());
         let materializes = !matches!(destination, ResolvedType::Ref(_) | ResolvedType::RefMut(_))
             && self.borrowed_source_value_materializes(value_ty);
@@ -185,24 +197,60 @@ impl TypeChecker {
             .insert(value_span, destination);
     }
 
-    /// Whether `borrowed` is a shared reference to a source model, or to a class that derives `Clone`: the language
-    /// copies such values on demand, so a write site or call slot that needs an owned value takes a clone of it. A
-    /// type imported from Rust keeps its own copy and clone semantics and is never materialized here.
+    /// Record `destination` for a value read where `destination` is expected (a membership probe or a lookup key),
+    /// as [`Self::record_value_destination_if_compatible`] does, except that a borrowed value is never refused here: a
+    /// read needs no owned value, so a type without a clone stays a borrow.
+    pub(in crate::typechecker) fn record_read_destination_if_compatible(
+        &mut self,
+        value_span: Span,
+        value_ty: &ResolvedType,
+        destination: &ResolvedType,
+    ) {
+        if let ResolvedType::Ref(inner) = value_ty
+            && !self.is_clone_type(inner)
+        {
+            return;
+        }
+        self.record_value_destination(value_span, value_ty, destination);
+    }
+
+    /// RFC 164: whether `borrowed` is a `Borrowed[T]` value, which is used as a read-only `T` by one rule for every
+    /// `T` (models, classes, `str`, collections and imported Rust types). Reads go through the borrow; a use that
+    /// needs an owned `T` takes a clone of it, and is refused there when `T` has no clone
+    /// ([`Self::refuse_borrowed_value_without_clone`]).
     pub(in crate::typechecker) fn borrowed_source_value_materializes(&self, borrowed: &ResolvedType) -> bool {
         let ResolvedType::Ref(inner) = borrowed else {
             return false;
         };
-        let (ResolvedType::Named(name) | ResolvedType::Generic(name, _)) = inner.as_ref() else {
+        !matches!(
+            inner.as_ref(),
+            ResolvedType::Unknown | ResolvedType::Ref(_) | ResolvedType::RefMut(_)
+        )
+    }
+
+    /// Refuse an owned use of a `Borrowed[T]` value when `T` has no clone: the use needs its own `T`, and the borrow
+    /// cannot give one. Returns whether the use was refused.
+    pub(in crate::typechecker) fn refuse_borrowed_value_without_clone(
+        &mut self,
+        value_ty: &ResolvedType,
+        destination: &ResolvedType,
+        span: Span,
+    ) -> bool {
+        let ResolvedType::Ref(inner) = value_ty else {
             return false;
         };
-        if self.rust_canonical_path_for_nominal_receiver(name, None).is_some() {
+        if matches!(destination, ResolvedType::Ref(_) | ResolvedType::RefMut(_))
+            || !self.borrowed_source_value_materializes(value_ty)
+            || self.is_clone_type(inner)
+        {
             return false;
         }
-        match self.lookup_semantic_type_info(name) {
-            Some(TypeInfo::Model(_)) => true,
-            Some(TypeInfo::Class(_)) => self.type_implements_trait(name, builtin_traits::as_str(TraitId::Clone)),
-            _ => false,
-        }
+        self.errors.push(errors::borrowed_value_without_clone(
+            &value_ty.to_string(),
+            &inner.to_string(),
+            span,
+        ));
+        true
     }
 
     /// Record the final checked type selected for one assignment binding.

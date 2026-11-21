@@ -119,12 +119,8 @@ impl TypeChecker {
             }
             self.note_local_reassignment(&assign.name);
             if !self.types_compatible(&value_ty, &var_ty) {
-                self.errors.push(errors::assignment_type_mismatch(
-                    &assign.name,
-                    &var_ty.to_string(),
-                    &value_ty.to_string(),
-                    assign.value.span,
-                ));
+                let error = self.reassignment_mismatch(&assign.name, &var_ty, &value_ty, assign.value.span);
+                self.errors.push(error);
             }
             self.consumed_iterator_bindings.remove(&assign.name);
             self.transferred_c_resource_bindings.remove(&assign.name);
@@ -315,6 +311,18 @@ impl TypeChecker {
             } else {
                 self.refuse_trait_type_nested_in_annotation(&ann_ty, ty_ann.span);
             }
+            // RFC 164: a `mut` binding never receives an implicit clone of a borrowed value.
+            if assign.binding == BindingKind::Mutable
+                && !matches!(ann_ty, ResolvedType::Ref(_) | ResolvedType::RefMut(_))
+                && self.borrowed_source_value_materializes(&value_ty)
+                && self.types_compatible(&value_ty, &ann_ty)
+            {
+                self.errors.push(errors::borrowed_value_needs_explicit_clone(
+                    &value_ty.to_string(),
+                    &format!("The mut binding '{}'", assign.name),
+                    assign.value.span,
+                ));
+            }
             // Check value matches annotation
             if !self.types_compatible(&value_ty, &ann_ty)
                 && !self.record_validated_newtype_coercion_if_possible(&value_ty, &ann_ty, assign.value.span)
@@ -480,12 +488,8 @@ impl TypeChecker {
                 }
                 self.note_local_reassignment(name);
                 if !self.types_compatible(&value_ty, &declared_ty) {
-                    self.errors.push(errors::assignment_type_mismatch(
-                        name,
-                        &declared_ty.to_string(),
-                        &value_ty.to_string(),
-                        value_span,
-                    ));
+                    let error = self.reassignment_mismatch(name, &declared_ty, &value_ty, value_span);
+                    self.errors.push(error);
                 }
                 self.consumed_iterator_bindings.remove(name);
                 self.transferred_c_resource_bindings.remove(name);
@@ -534,6 +538,27 @@ impl TypeChecker {
         }
         self.consumed_iterator_bindings.remove(name);
         self.transferred_c_resource_bindings.remove(name);
+    }
+
+    /// The refusal of a reassignment whose value does not fit the binding. RFC 164: a `mut` binding of a borrowed
+    /// value stays a borrow, so owning a new value needs an explicit clone where it is first bound.
+    fn reassignment_mismatch(
+        &self,
+        name: &str,
+        declared: &ResolvedType,
+        value: &ResolvedType,
+        span: Span,
+    ) -> crate::diagnostics::CompileError {
+        match declared {
+            ResolvedType::Ref(inner) if self.types_compatible(value, inner) => {
+                errors::borrowed_value_needs_explicit_clone(
+                    &declared.to_string(),
+                    &format!("The mut binding '{name}'"),
+                    span,
+                )
+            }
+            _ => errors::assignment_type_mismatch(name, &declared.to_string(), &value.to_string(), span),
+        }
     }
 
     /// Preserve the binding selected for a write at its exact authored target span.
