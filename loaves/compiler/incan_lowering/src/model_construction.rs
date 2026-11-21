@@ -11,6 +11,7 @@ use incan_semantics_core::body_ir::{
 use crate::builtin_calls::coerce_numeric_operand;
 use crate::carrier_operands::boundary_operand;
 use crate::checked_values::{scalar_operand, scalar_place};
+use crate::defaults::model_default_arguments;
 use crate::element_places::is_element_place;
 use crate::enums::variant_index;
 use crate::explicit_arguments::reference_contract;
@@ -21,7 +22,7 @@ use crate::list_values::value_operand;
 use crate::models::constructor_index;
 use crate::pending::untranslated;
 use crate::result_carriers::frozen_operand;
-use crate::statements::borrowed_payload;
+use crate::statements::{borrowed_payload, carrier_payload};
 use crate::text_plan::owned_literal;
 use crate::tuples::carrier_element;
 
@@ -78,8 +79,8 @@ pub fn checked_aggregate(
                 }
                 _ => return Err("unsupported Body IR unresolved model constructor".into()),
             }
-            let _ = module;
-            Err(untranslated("model_construction::model_default_arguments"))
+            let operands = model_default_arguments(module, builder, index, &target.binding, elements, span)?;
+            Ok(RvalueKind::Model(index as i64, operands))
         }
         AggregateKind::Range => Err(untranslated("ranges::range_aggregate")),
         _ => Err("unsupported Body IR Aggregate outside plain models".into()),
@@ -109,7 +110,8 @@ fn tuple_value(
             && borrowed_payload(value)
             && reference_contract(&tuple_element_type(field)).is_ok()
         {
-            return Err(untranslated("statements::carrier_payload"));
+            operands.push(carrier_payload(builder, value, &tuple_element_type(field), span)?);
+            continue;
         }
         // A list or carrier element takes the destination element's exact carrier, `None` included.
         if let Some(field) = declared

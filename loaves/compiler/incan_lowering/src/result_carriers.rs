@@ -1,23 +1,29 @@
 //! Typed carrier operands at call, return and collection boundaries, and retained reference values.
 
 use incan_mir_plan_native::{
-    Operand, Place, PlanType, RvalueKind, SourceSpan, assign as plan_assign, place as plan_place,
+    Carrier, Operand, Place, PlanType, RvalueKind, SourceSpan, assign as plan_assign, carrier_position,
+    place as plan_place,
 };
 use incan_semantics_core::body_ir::{
-    Constant as SourceConstant, Operand as SourceOperand, OwnershipFact, Place as SourcePlace,
+    ArgumentElement, Constant as SourceConstant, Operand as SourceOperand, OwnershipFact, Place as SourcePlace,
+    ResultVariant, ResultVariantKind, TryErrorRouting,
 };
 
+use crate::assignments::assignment_place;
 use crate::checked_values::{scalar_place, target_read};
 use crate::element_places::is_element_place;
+use crate::enums::enum_owner;
 use crate::explicit_arguments::reference_contract;
 use crate::formatting::display_plan_operand;
-use crate::frame::{Builder, dereferenced_place, place_type, read_place, temporary, value_type};
+use crate::frame::{Builder, dereferenced_place, place_type, read_place, temporary, track_rvalue_moves, value_type};
 use crate::frozen_plan::frozen_literal;
 use crate::layout_types::shared_receiver_type;
 use crate::list_values::value_operand;
 use crate::lists::is_exclusive_borrow;
 use crate::model_lists::structural_prefix;
+use crate::options::{none_operand, propagate_result, replace_owned_destination};
 use crate::pending::untranslated;
+use crate::statements::{carrier_payload, is_nominal_type};
 
 /// Materialize checked carrier and text conversions at a concrete call, return, or collection boundary.
 ///
@@ -37,7 +43,7 @@ pub fn typed_carrier_operand(
         return Ok(reference);
     }
     if let SourceOperand::Constant(SourceConstant::None) = operand {
-        return Err(untranslated("options::none_operand"));
+        return none_operand(builder, ty, span);
     }
     if let SourceOperand::Place(read) = operand
         && read.fact == OwnershipFact::Copy
@@ -189,4 +195,92 @@ fn native_copy_type(builder: &Builder, ty: &PlanType) -> bool {
         },
         _ => false,
     }
+}
+
+/// Materialize the checked Result read before consuming its selected payload on either propagation edge. The only
+/// error conversion the propagation performs is the owned text a `const` str error becomes; it decides that from the
+/// concrete carriers.
+pub fn lower_try_propagation(
+    builder: &mut Builder,
+    destination: &SourcePlace,
+    operand: &SourceOperand,
+    routing: &TryErrorRouting,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    if !matches!(
+        routing,
+        TryErrorRouting::SameType { .. } | TryErrorRouting::ConversionRequired { .. }
+    ) {
+        return Err("unsupported Body IR unresolved TryPropagate error routing".into());
+    }
+    let value = value_operand(builder, operand, span)?;
+    let ty = value_type(builder, &value)?;
+    let source = temporary(builder, ty, span);
+    track_rvalue_moves(builder, &RvalueKind::Use(value.clone()));
+    builder.emit(plan_assign(source.clone(), RvalueKind::Use(value), span));
+    builder.owned.push(source.local);
+    let target = assignment_place(builder, destination, span)?;
+    propagate_result(builder, source, target, span)
+}
+
+/// Construct the checker-selected Result variant in its concrete standard carrier.
+pub fn lower_result_construction(
+    builder: &mut Builder,
+    target: Place,
+    variant: &ResultVariant,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let owner = enum_owner(&place_type(&builder.locals, &target))?;
+    if owner < builder.enums().len() as i64 {
+        return Err("invalid Body IR Result destination".into());
+    }
+    let declaration = builder.intrinsics[carrier_position(owner) as usize].clone();
+    if declaration.carrier != Carrier::Result || !variant.has_complete_canonical_types() {
+        return Err("invalid Body IR Result payload identity".into());
+    }
+    let slot = if variant.kind == ResultVariantKind::Err { 1 } else { 0 };
+    let operand = carrier_payload(builder, &variant.payload, &declaration.variants[slot].fields[0], span)?;
+    replace_owned_destination(
+        builder,
+        target,
+        RvalueKind::Enum(owner, slot as i64, vec![operand]),
+        span,
+    );
+    Ok(())
+}
+
+/// Build only an explicitly retained intrinsic Some node in the checked Option destination.
+pub fn lower_option_construction(
+    builder: &mut Builder,
+    target: Place,
+    elements: &[ArgumentElement],
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let owner = enum_owner(&place_type(&builder.locals, &target))?;
+    if owner < builder.enums().len() as i64
+        || builder.intrinsics[carrier_position(owner) as usize].carrier != Carrier::Option
+        || elements.len() != 1
+    {
+        return Err("invalid Body IR Some destination or payload".into());
+    }
+    let Some(payload) = elements[0].as_one() else {
+        return Err("unsupported Body IR Some spread payload".into());
+    };
+    let ty = builder.intrinsics[carrier_position(owner) as usize].variants[1].fields[0].clone();
+    let value = carrier_payload(builder, payload, &ty, span)?;
+    replace_owned_destination(builder, target, RvalueKind::Enum(owner, 1, vec![value]), span);
+    Ok(())
+}
+
+/// Assign the typed None value through the standard carrier ownership path.
+pub fn lower_none_assignment(builder: &mut Builder, target: Place, span: &SourceSpan) -> Result<(), String> {
+    let ty = place_type(&builder.locals, &target);
+    let value = none_operand(builder, &ty, span)?;
+    if is_nominal_type(&ty) {
+        replace_owned_destination(builder, target, RvalueKind::Use(value), span);
+    } else {
+        track_rvalue_moves(builder, &RvalueKind::Use(value.clone()));
+        builder.emit(plan_assign(target, RvalueKind::Use(value), span));
+    }
+    Ok(())
 }

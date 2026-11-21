@@ -12,7 +12,7 @@ pub fn drop_borrowed_text_temporaries(builder: &mut Builder, incoming: &[i64], r
         .copied()
         .filter(|owner| !incoming.contains(owner) && *owner != result)
         .collect();
-    for owner in created.into_iter().rev() {
-        drop_owned(builder, owner, span);
+    for owner in created.iter().rev() {
+        drop_owned(builder, *owner, span);
     }
 }

@@ -16,7 +16,7 @@ use crate::calls::lower_call;
 use crate::carrier_operands::boundary_operand;
 use crate::checked_values::{builder_location, scalar_place};
 use crate::closures::callable_copy_type;
-use crate::explicit_arguments::explicit_place_argument;
+use crate::explicit_arguments::{explicit_place_argument, reference_contract};
 use crate::formatting::display_operand;
 use crate::frame::{
     Builder, drop_all_owned, drop_owned, finish_fallthrough, forget_owned, literal, place_type, read_place,
@@ -28,6 +28,7 @@ use crate::loop_exits::exits_to;
 use crate::matches::join_branch_owners;
 use crate::operand_borrows::lower_discarded_operand;
 use crate::pending::untranslated;
+use crate::result_carriers::lower_try_propagation;
 use crate::tuples::tuple_has_owners;
 
 /// Identify nominal, generator, zip, and tuple values whose owned payloads require transfer or destruction.
@@ -204,7 +205,11 @@ pub fn lower_statement(
         SourceStatementKind::Race { .. } => Err(untranslated("statements::lower_native_race")),
         SourceStatementKind::Yield { .. } => Err(untranslated("statements::lower_yield")),
         SourceStatementKind::Assert { .. } => Err(untranslated("assertions::lower_assertion")),
-        SourceStatementKind::TryPropagate { .. } => Err(untranslated("result_carriers::lower_try_propagation")),
+        SourceStatementKind::TryPropagate {
+            destination,
+            operand,
+            error_routing,
+        } => lower_try_propagation(builder, destination, operand, error_routing, &span),
         SourceStatementKind::IterNext {
             destination,
             iterator,
@@ -442,4 +447,26 @@ pub fn borrowed_payload(payload: &SourceOperand) -> bool {
         SourceOperand::Place(read) => read.fact == OwnershipFact::Borrow || read.fact == OwnershipFact::MutBorrow,
         _ => false,
     }
+}
+
+/// In a body that carries a view, a reference payload Body IR borrows from a source place is that view's loan; any
+/// other payload, such as an already borrowed parameter wrapped for a call, crosses the ordinary value boundary.
+pub fn carrier_payload(
+    builder: &mut Builder,
+    payload: &SourceOperand,
+    field: &PlanType,
+    span: &SourceSpan,
+) -> Result<Operand, String> {
+    if builder.carries_view
+        && borrowed_payload(payload)
+        && let Ok((_, writable)) = reference_contract(field)
+    {
+        let access = if writable {
+            IncanInputAccess::Exclusive
+        } else {
+            IncanInputAccess::Shared
+        };
+        return view_operand(builder, payload, field, access, span);
+    }
+    boundary_operand(builder, payload, field, span)
 }

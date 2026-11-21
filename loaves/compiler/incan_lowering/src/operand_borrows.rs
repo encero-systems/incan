@@ -1,14 +1,19 @@
 //! Operands lowered for their effects or as borrows: discarded values, text views and shared slices.
 
 use incan_mir_plan_native::{Operand, PlanType, RvalueKind, SourceSpan, assign as plan_assign};
-use incan_semantics_core::body_ir::{Constant as SourceConstant, Operand as SourceOperand, OwnershipFact};
+use incan_semantics_core::body_ir::{
+    ArgumentElement, Constant as SourceConstant, Operand as SourceOperand, OwnershipFact, Place as SourcePlace,
+};
 
 use crate::checked_values::scalar_place;
 use crate::element_places::is_element_place;
 use crate::formatting::{display_operand, display_plan_operand};
-use crate::frame::{Builder, drop_owned, external_call, place_type, read_place, temporary, text_literal};
+use crate::frame::{Builder, drop_owned, external_call, forget_owned, place_type, read_place, temporary, text_literal};
 use crate::list_values::value_operand;
+use crate::lists::is_list;
 use crate::pending::untranslated;
+use crate::strings::{emit_text_helper, text_helper_arity};
+use crate::text_ownership::drop_borrowed_text_temporaries;
 use crate::text_plan::{owned_literal, owned_slice_text};
 
 /// Evaluate discarded text through retained ownership facts and drop its materialized owner.
@@ -110,4 +115,50 @@ fn borrow_string(builder: &mut Builder, owner: incan_mir_plan_native::Place, spa
     let reference = temporary(builder, PlanType::StringRef, span);
     builder.emit(plan_assign(reference.clone(), RvalueKind::Borrow(owner), span));
     read_place(reference, false, span)
+}
+
+/// Bind the retained string-helper identity to shared operands and transfer its owned text or list result.
+pub fn lower_text_helper(
+    builder: &mut Builder,
+    name: &str,
+    result: PlanType,
+    arguments: &[ArgumentElement],
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    if arguments.len() as i64 != text_helper_arity(name) {
+        return Err("invalid Body IR string helper arity".into());
+    }
+    let incoming = builder.owned.clone();
+    let mut parameters = Vec::with_capacity(arguments.len());
+    let mut operands = Vec::with_capacity(arguments.len());
+    for argument in arguments {
+        parameters.push(PlanType::StringRef);
+        match argument.as_one() {
+            Some(value) => operands.push(borrow_text_operand(builder, value, span)?),
+            None => return Err("unsupported Body IR spread string helper argument".into()),
+        }
+    }
+    let text = emit_text_helper(builder, name, result.clone(), parameters, operands, span);
+    // Literal arguments belong to this call, including when its source branch is skipped elsewhere.
+    drop_borrowed_text_temporaries(builder, &incoming, text.local, span);
+    match destination {
+        Some(place) => {
+            let output = scalar_place(builder, place, span)?;
+            forget_owned(builder, text.local);
+            drop_owned(builder, output.local, span);
+            let owns_result = result == PlanType::String || is_list(&result);
+            let local = output.local;
+            builder.emit(plan_assign(
+                output,
+                RvalueKind::Use(read_place(text, owns_result, span)),
+                span,
+            ));
+            if owns_result {
+                builder.owned.push(local);
+            }
+        }
+        None => drop_owned(builder, text.local, span),
+    }
+    Ok(())
 }

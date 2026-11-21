@@ -14,7 +14,8 @@ use crate::call_arguments::{SlotPolicy, call_parameter_type, has_defaulted_slots
 use crate::callable_calls::{checked_type_arguments, emit_selected_body_call};
 use crate::classes::{frame_type, function_name, receiver_mode};
 use crate::decls::{library_enum_item, library_item};
-use crate::element_places::is_element_place;
+use crate::defaults::{DefaultCall, default_arguments};
+use crate::element_places::{element_place_type, is_element_place};
 use crate::explicit_arguments::parameter_accesses;
 use crate::frame::{Builder, dereferenced_place, place_type, read_place, temporary};
 use crate::library_methods::lower_library_method;
@@ -63,23 +64,7 @@ fn lower_checked_method_call(
         ));
     };
     if identity.origin == SymbolOrigin::Builtin {
-        if target.builtin_iterator() == Some(IteratorMethodId::Collect)
-            && let PlanType::Model(..) = argument_type(builder, arguments, 0, span)?
-        {
-            return Err(untranslated("method_calls::concrete_iterator_collect"));
-        }
-        if let Some(
-            ResultMethodId::Map
-            | ResultMethodId::MapErr
-            | ResultMethodId::AndThen
-            | ResultMethodId::OrElse
-            | ResultMethodId::Inspect
-            | ResultMethodId::InspectErr,
-        ) = target.builtin_result()
-        {
-            return Err(untranslated("result_combinators::lower_result_combinator"));
-        }
-        return lower_builtin_method(builder, target, arguments, destination, span);
+        return lower_builtin_origin_method(module, builder, target, arguments, destination, span);
     }
     let Some(receiver) = arguments.first() else {
         return Err("invalid Body IR Method missing receiver".into());
@@ -304,7 +289,7 @@ fn receiver_owner(
                 return Err(untranslated("static_storage::computed_static_type"));
             }
             if is_element_place(builder, &read.place)? {
-                return Err(untranslated("element_places::element_place_type"));
+                return Ok(nominal_owner(module, &element_place_type(builder, &read.place)?));
             }
             let mut path = model_place(
                 builder.tables(),
@@ -721,8 +706,16 @@ fn method_ordinary_operands(
             .iter()
             .any(|preset| preset.name == target.name && Some(&preset.target) == target.canonical.as_ref())
     });
-    if partial || (matches!(target.binding, ArgumentBinding::Resolved { .. }) && has_defaulted_slots(&target.binding)) {
+    if partial {
         return Err(untranslated("defaults::method_default_arguments"));
+    }
+    if matches!(target.binding, ArgumentBinding::Resolved { .. }) && has_defaulted_slots(&target.binding) {
+        let call = DefaultCall {
+            body,
+            parameter_offset: 1,
+            owned: false,
+        };
+        return default_arguments(module, builder, &target.binding, &arguments[1..], &types, &call, span);
     }
     let policy = SlotPolicy {
         offset: 1,
@@ -730,4 +723,36 @@ fn method_ordinary_operands(
         ..SlotPolicy::default()
     };
     ordered_slot_operands(builder, &target.binding, arguments, &types, span, &policy)
+}
+
+/// A builtin registry member: a model-collecting iterator calls its retained default, a Result combinator lowers its
+/// callable, and every other member takes its builtin lowering.
+fn lower_builtin_origin_method(
+    module: &BodyIrModule,
+    builder: &mut Builder,
+    target: &MethodTarget,
+    arguments: &[ArgumentElement],
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let _ = module;
+    if target.builtin_iterator() == Some(IteratorMethodId::Collect)
+        && let PlanType::Model(..) = argument_type(builder, arguments, 0, span)?
+    {
+        return Err(untranslated("method_calls::concrete_iterator_collect"));
+    }
+    if let Some(method) = target.builtin_result()
+        && matches!(
+            method,
+            ResultMethodId::Map
+                | ResultMethodId::MapErr
+                | ResultMethodId::AndThen
+                | ResultMethodId::OrElse
+                | ResultMethodId::Inspect
+                | ResultMethodId::InspectErr
+        )
+    {
+        return Err(untranslated("result_combinators::lower_result_combinator"));
+    }
+    lower_builtin_method(builder, target, arguments, destination, span)
 }

@@ -18,6 +18,7 @@ use crate::frame::{Builder, drop_owned, forget_owned, place_type, read_place, te
 use crate::list_values::{element_read, value_operand};
 use crate::lists::{is_list, is_owned_list};
 use crate::numerics::{has_sized_numeric, numeric_carrier, numeric_name};
+use crate::options::format_carrier;
 use crate::pending::untranslated;
 use crate::text_plan::{
     clone_text, clone_text_reference, format_parts, owned_borrowed_text, owned_literal, owned_slice_text,
@@ -182,7 +183,11 @@ fn display_value_operand(
                 if *owner >= builder.enums().len() as i64
                     && builder.intrinsics[carrier_position(*owner) as usize].carrier != Carrier::Declared
                 {
-                    return Err(untranslated("options::format_carrier"));
+                    let result = format_carrier(builder, place.clone(), span)?;
+                    if read.fact == OwnershipFact::Move {
+                        drop_owned(builder, place.local, span);
+                    }
+                    return Ok(result);
                 }
                 if value_enum_owner(builder, *owner) >= 0 {
                     return Err(untranslated("formatting::display_value_enum"));
@@ -218,7 +223,10 @@ fn display_model_operand(builder: &mut Builder, value: &SourceOperand, span: &So
         return Ok(());
     };
     if is_element_place(builder, &read.place)? {
-        return Err(untranslated("element_places::element_place_type"));
+        if let PlanType::Model(..) = element_place_type(builder, &read.place)? {
+            return Err(untranslated("model_values::display_model_operand"));
+        }
+        return Ok(());
     }
     if read.place.local_id().is_none() {
         return Ok(());

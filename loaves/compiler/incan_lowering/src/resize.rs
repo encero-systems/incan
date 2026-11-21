@@ -2,17 +2,14 @@
 
 use incan_lang::lang::types::numerics::NumericResizeMethodId;
 use incan_mir_plan_native::{
-    CalleeKind, ExternalFunction, Operand, Place, PlanType, RvalueKind, SourceSpan, assign as plan_assign,
+    CalleeKind, Carrier, ExternalFunction, Operand, Place, PlanType, RvalueKind, SourceSpan, assign as plan_assign,
 };
 
 use crate::frame::{Builder, place_type, terminate_call};
 use crate::numerics::numeric_carrier;
-use crate::pending::untranslated;
+use crate::options::carrier_layout;
 
 /// Use the checked output carrier, including the retained Some payload for checked resizing.
-///
-/// A checked resize reads its Option carrier through `options::carrier_layout`, which refuses by name until it is in
-/// Rust.
 pub fn emit_resize(
     builder: &mut Builder,
     policy: NumericResizeMethodId,
@@ -22,10 +19,19 @@ pub fn emit_resize(
     span: &SourceSpan,
 ) -> Result<(), String> {
     let result = place_type(&builder.locals, &output);
+    let mut target = result.clone();
     if policy == NumericResizeMethodId::Try {
-        return Err(untranslated("options::carrier_layout"));
+        let (_, declaration) = carrier_layout(builder, &result)?;
+        if declaration.carrier != Carrier::Option || declaration.variants.len() != 2 {
+            return Err("invalid Body IR checked resize carrier".into());
+        }
+        // An Option carrier lays out None then Some, so the payload is the second variant's.
+        let payloads = &declaration.variants[1].fields;
+        if payloads.len() != 1 {
+            return Err("invalid Body IR checked resize payload".into());
+        }
+        target = payloads[0].clone();
     }
-    let target = result.clone();
     if !numeric_carrier(&target) {
         return Err("unsupported Body IR resize destination outside numeric carriers".into());
     }
@@ -41,21 +47,21 @@ pub fn emit_resize(
         return Ok(());
     }
     let policy_name = match policy {
+        NumericResizeMethodId::Try => "try_resize",
         NumericResizeMethodId::Saturating => "saturating_resize",
         _ => return Err("unsupported Body IR numeric resize policy".into()),
     };
     let path = format!("incan_std_primitives::num::{policy_name}");
-    let types = vec![source.clone(), target];
     builder.externals.push(ExternalFunction {
         path: path.clone(),
-        type_arguments: types.clone(),
-        parameters: vec![source],
+        type_arguments: vec![source.clone(), target.clone()],
+        parameters: vec![source.clone()],
         return_type: result,
         span: span.clone(),
     });
     terminate_call(
         builder,
-        CalleeKind::Instantiated(path, types),
+        CalleeKind::Instantiated(path, vec![source, target]),
         vec![operand],
         output,
         span,

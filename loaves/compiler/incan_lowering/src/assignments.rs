@@ -15,7 +15,7 @@ use crate::carrier_operands::boundary_plan_operand;
 use crate::checked_values::{scalar_operand, scalar_place};
 use crate::closures::callable_copy_type;
 use crate::collections::is_collection;
-use crate::element_places::is_element_place;
+use crate::element_places::{element_place_type, is_element_place};
 use crate::formatting::{lower_format, lower_string_assignment};
 use crate::frame::{Builder, cleanup_exit, literal, place_type, read_place, track_rvalue_moves, value_type};
 use crate::frozen_plan::frozen_bytes_literal;
@@ -34,7 +34,10 @@ use crate::operators::scalar_rvalue;
 use crate::options::replace_owned_destination;
 use crate::owned_lists::initialize_owned_list_iterator;
 use crate::pending::untranslated;
-use crate::result_carriers::{frozen_operand, retained_reference_value};
+use crate::result_carriers::{
+    frozen_operand, lower_none_assignment, lower_option_construction, lower_result_construction,
+    retained_reference_value,
+};
 use crate::sequence_builtins::lower_power_operator;
 use crate::statements::{is_nominal_type, is_owned_callable};
 use crate::tuple_iterators::initialize_zip_iterator;
@@ -234,12 +237,12 @@ fn assign_stored_value(
         return Ok(());
     }
     match value {
-        Rvalue::ResultVariant(_) => return Err(untranslated("result_carriers::lower_result_construction")),
-        Rvalue::Aggregate(AggregateKind::OptionSome, _) => {
-            return Err(untranslated("options::lower_option_construction"));
+        Rvalue::ResultVariant(variant) => return lower_result_construction(builder, target, variant, span),
+        Rvalue::Aggregate(AggregateKind::OptionSome, elements) => {
+            return lower_option_construction(builder, target, elements, span);
         }
         Rvalue::Use(SourceOperand::Constant(SourceConstant::None)) => {
-            return Err(untranslated("options::lower_none_assignment"));
+            return lower_none_assignment(builder, target, span);
         }
         Rvalue::Format(parts) => return lower_format(builder, target, parts, span),
         Rvalue::BinaryOp(operator, left, right) => match operator {
@@ -265,7 +268,10 @@ fn compares_models(builder: &mut Builder, left: &SourceOperand, span: &SourceSpa
         return Ok(false);
     };
     if is_element_place(builder, &read.place)? {
-        return Err(untranslated("element_places::element_place_type"));
+        if let PlanType::Model(..) = element_place_type(builder, &read.place)? {
+            return Err(untranslated("model_values::compare_models"));
+        }
+        return Ok(false);
     }
     if read.place.local_id().is_none() {
         return Ok(false);

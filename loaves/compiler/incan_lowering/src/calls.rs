@@ -7,9 +7,11 @@ use incan_semantics_core::body_ir::{
 };
 use incan_semantics_core::{IncanType, SemanticSourceTargetKind, SymbolOrigin};
 
+use crate::builtin_calls::lower_runtime_helper;
 use crate::call_arguments::{SlotPolicy, call_parameter_type, has_defaulted_slots, ordered_slot_operands};
 use crate::callable_calls::{checked_type_arguments, has_adapter_slot, lower_callable_result, lower_named_target};
 use crate::closures::return_representation;
+use crate::defaults::{DefaultCall, default_arguments, library_default_arguments};
 use crate::explicit_arguments::{parameter_accesses, validate_source_input_call};
 use crate::frame::Builder;
 use crate::layout_types::native_source_type;
@@ -49,7 +51,7 @@ pub fn lower_call(
             }
             lower_method_call(module, builder, target, args, destination, span)
         }
-        Callee::Helper(_) => Err(untranslated("builtin_calls::lower_runtime_helper")),
+        Callee::Helper(helper) => lower_runtime_helper(builder, *helper, args, destination, span),
         Callee::ProviderOperation(_) => Err("unsupported Body IR ProviderOperation".into()),
         Callee::TypeMetadata(_) => {
             if !args.is_empty() {
@@ -328,9 +330,9 @@ pub fn library_call_operands(
     offset: usize,
     positional: bool,
 ) -> Result<Vec<Operand>, String> {
-    let _ = module;
     if has_defaulted_slots(binding) {
-        return Err(untranslated("defaults::library_default_arguments"));
+        let written = &arguments[offset.min(arguments.len())..];
+        return library_default_arguments(module, builder, delegation, binding, written, types, span, offset);
     }
     if let Some(frame) = delegation.declaration_frame() {
         if frame.canonical.as_ref() != Some(&delegation.canonical) {
@@ -406,7 +408,12 @@ pub fn ordered_arguments(
         types.push(call_parameter_type(builder, body, parameter)?);
     }
     if has_defaulted_slots(binding) {
-        return Err(untranslated("defaults::default_arguments"));
+        let call = DefaultCall {
+            body,
+            parameter_offset: 0,
+            owned: false,
+        };
+        return default_arguments(module, builder, binding, elements, &types, &call, span);
     }
     let policy = SlotPolicy {
         accesses: parameter_accesses(&body.params, 0)?,

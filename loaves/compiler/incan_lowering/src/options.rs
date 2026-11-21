@@ -3,8 +3,9 @@
 use incan_lang::lang::surface::constructors::{ConstructorId, from_str as builtin_constructor};
 use incan_lang::lang::types::collections::{CollectionTypeId, from_str as collection_type};
 use incan_mir_plan_native::{
-    CalleeKind, Carrier, EnumDeclaration, EnumVariant, ExternalFunction, Operand as PlanOperand, Place, PlanType,
-    Projection, RvalueKind, SourceSpan, TerminatorKind, Unwind, assign as plan_assign, source_span,
+    CalleeKind, Carrier, Constant, EnumDeclaration, EnumVariant, ExternalFunction, Operand as PlanOperand, OperandKind,
+    Place, PlanType, Projection, RvalueKind, SourceSpan, TerminatorKind, Unwind, assign as plan_assign,
+    carrier_position, place as plan_place, source_span,
 };
 use incan_semantics_core::body_ir::{
     Block, Body, BodyIrModule, CallableTarget, Callee, MatchArm, NamedCallableTarget, Operand, Rvalue, StatementKind,
@@ -15,8 +16,9 @@ use incan_semantics_core::{IncanType, SemanticSourceTargetKind, SymbolOrigin, ge
 
 use crate::compiler_record_adapters::{authored_plan_checked_type, semantic_key_matches_native};
 use crate::enums::validate_payload_patterns;
+use crate::formatting::display_plan_value;
 use crate::frame::{
-    Builder, cleanup_exit, drop_owned, forget_owned, place_type, read_place, temporary, terminate_call,
+    Builder, cleanup_exit, drop_all_owned, drop_owned, forget_owned, place_type, read_place, temporary, terminate_call,
     track_rvalue_moves,
 };
 use crate::layout_types::native_source_type;
@@ -571,4 +573,126 @@ pub fn variant_condition(builder: &mut Builder, source: &Place, slot: i64, span:
         span,
     ));
     read_place(condition, false, span)
+}
+
+/// Require a retained concrete Result carrier before reading its variant payload layout.
+fn result_layout(builder: &Builder, ty: &PlanType) -> Result<(i64, EnumDeclaration), String> {
+    if let PlanType::Enum(owner, _) = ty
+        && *owner >= builder.enums().len() as i64
+    {
+        let declaration = &builder.intrinsics[carrier_position(*owner) as usize];
+        if declaration.carrier == Carrier::Result {
+            return Ok((*owner, declaration.clone()));
+        }
+    }
+    Err("unsupported Body IR TryPropagate outside Result".into())
+}
+
+/// Move the selected payload once; error returns drop every other initialized owner before returning. A `const` str
+/// error becomes the owned text the enclosing `Result[T, str]` carries, as at any other owned text boundary; any other
+/// differing error type is refused.
+pub fn propagate_result(
+    builder: &mut Builder,
+    source: Place,
+    destination: Place,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let (_, input) = result_layout(builder, &place_type(&builder.locals, &source))?;
+    let output_type = builder.locals[0].ty.clone();
+    let (output_owner, output) = result_layout(builder, &output_type)?;
+    let owns_text = input.variants[1].fields.as_slice() == [PlanType::FrozenStr]
+        && output.variants[1].fields.as_slice() == [PlanType::String];
+    if input.variants[1].fields != output.variants[1].fields && !owns_text {
+        return Err("unsupported Body IR TryPropagate error conversion without retained conversion target".into());
+    }
+    let failure = builder.new_block(span);
+    let success = builder.new_block(span);
+    let condition = variant_condition(builder, &source, 0, span);
+    builder.finish(TerminatorKind::SwitchBool(condition, failure, success), span);
+    // The carrier has one active payload. Both edges move it, so neither drops the emptied carrier.
+    forget_owned(builder, source.local);
+    let owners = builder.owned.clone();
+    builder.select(failure);
+    let error_type = input.variants[1].fields[0].clone();
+    let error = Place {
+        local: source.local,
+        projection: Projection::VariantField(1, 0, error_type),
+        span: span.clone(),
+    };
+    let mut propagated = read_place(error.clone(), true, span);
+    if owns_text {
+        let text = display_plan_value(builder, read_place(error, false, span), span, false)?;
+        propagated = read_place(text, true, span);
+    }
+    builder.emit(plan_assign(
+        plan_place(0, span),
+        RvalueKind::Enum(output_owner, 1, vec![propagated]),
+        span,
+    ));
+    drop_all_owned(builder, span);
+    builder.finish(TerminatorKind::Return, span);
+    builder.select(success);
+    builder.owned = owners;
+    let value_type = input.variants[0].fields[0].clone();
+    let value = Place {
+        local: source.local,
+        projection: Projection::VariantField(0, 0, value_type),
+        span: span.clone(),
+    };
+    let local = destination.local;
+    let destination_type = place_type(&builder.locals, &destination);
+    builder.emit(plan_assign(
+        destination,
+        RvalueKind::Use(read_place(value, true, span)),
+        span,
+    ));
+    if matches!(
+        destination_type,
+        PlanType::ValidationError | PlanType::String | PlanType::Enum(..) | PlanType::Model(..) | PlanType::List(..)
+    ) {
+        builder.owned.push(local);
+    }
+    Ok(())
+}
+
+/// Resolve only a retained standard carrier, keeping source enums on their existing canonical path.
+pub fn carrier_layout(builder: &Builder, ty: &PlanType) -> Result<(i64, EnumDeclaration), String> {
+    if let PlanType::Enum(owner, _) = ty
+        && *owner >= builder.enums().len() as i64
+    {
+        return Ok((*owner, builder.intrinsics[carrier_position(*owner) as usize].clone()));
+    }
+    Err("unsupported Body IR intrinsic carrier receiver".into())
+}
+
+/// Materialize None using the checked unit or concrete Option destination contract.
+pub fn none_operand(builder: &mut Builder, ty: &PlanType, span: &SourceSpan) -> Result<PlanOperand, String> {
+    if *ty == PlanType::Unit {
+        return Ok(PlanOperand {
+            kind: OperandKind::Literal(Constant::Unit),
+            span: span.clone(),
+        });
+    }
+    let (owner, declaration) = carrier_layout(builder, ty)?;
+    if declaration.carrier != Carrier::Option {
+        return Err("unsupported Body IR None outside Option".into());
+    }
+    let output = temporary(builder, ty.clone(), span);
+    replace_owned_destination(builder, output.clone(), RvalueKind::Enum(owner, 0, Vec::new()), span);
+    Ok(read_place(output, true, span))
+}
+
+/// Render a retained standard carrier through legacy Debug formatting, without moving the source.
+pub fn format_carrier(builder: &mut Builder, source: Place, span: &SourceSpan) -> Result<Place, String> {
+    let (owner, declaration) = carrier_layout(builder, &place_type(&builder.locals, &source))?;
+    let ty = PlanType::Enum(owner, declaration.name.clone());
+    Ok(borrowed_native_value(
+        builder,
+        "incan_native_runtime::format_carrier",
+        source,
+        ty,
+        PlanType::EnumRef(owner, declaration.name),
+        PlanType::String,
+        span,
+    ))
 }

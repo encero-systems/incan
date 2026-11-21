@@ -19,6 +19,7 @@ use incan_semantics_core::body_ir::{
 
 use crate::builtin_calls::{assign_text_result, coerce_numeric_operand};
 use crate::checked_values::{scalar_operand, scalar_place};
+use crate::derived_methods::lower_derived_clone;
 use crate::element_places::is_element_place;
 use crate::frame::{Builder, drop_owned, external_call, place_type, read_place, temporary, value_type};
 use crate::generator_adapters::generator_adapter;
@@ -61,9 +62,6 @@ pub fn lower_builtin_method(
 }
 
 /// Dispatch one checker-selected builtin operation without reclassifying its canonical name.
-///
-/// Option and clone members clone through `derived_methods::lower_derived_clone`, which refuses by name until it is in
-/// Rust.
 fn lower_typed_builtin_method(
     builder: &mut Builder,
     target: &MethodTarget,
@@ -99,7 +97,7 @@ fn lower_typed_builtin_method(
     }
     if let Some(method) = target.builtin_option() {
         if method == OptionMethodId::Clone {
-            return Err(untranslated("derived_methods::lower_derived_clone"));
+            return lower_derived_clone(builder, arguments, destination, span);
         }
         return refuse_remaining_builtin_method(target);
     }
@@ -107,7 +105,7 @@ fn lower_typed_builtin_method(
         return refuse_remaining_builtin_method(target);
     }
     if target.builtin_clone().is_some() {
-        return Err(untranslated("derived_methods::lower_derived_clone"));
+        return lower_derived_clone(builder, arguments, destination, span);
     }
     if let Some(method) = target.builtin_float() {
         return lower_selected_float(builder, target, method, arguments, destination, span);

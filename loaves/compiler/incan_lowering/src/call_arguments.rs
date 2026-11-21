@@ -12,6 +12,8 @@ use crate::carrier_operands::boundary_operand;
 use crate::checked_values::{scalar_constant, scalar_place};
 use crate::closures::{packed_input, parameter_representation};
 use crate::collections::is_collection;
+use crate::element_borrows::shared_element_place;
+use crate::element_places::element_place_type;
 use crate::element_places::is_element_place;
 use crate::explicit_arguments::{argument_access, explicit_place_argument, reference_contract};
 use crate::formatting::display_operand;
@@ -23,9 +25,12 @@ use crate::generators::is_generator_type;
 use crate::generators::{generator_reference, is_generator_reference};
 use crate::layout_types::native_source_type;
 use crate::list_iteration::list_root_place;
+use crate::list_methods::materialized_receiver;
 use crate::list_values::value_operand;
+use crate::list_values::{checked_list_argument, cloned_list, list_borrow};
 use crate::lists::exclusive_reference;
-use crate::lists::is_list;
+use crate::lists::{is_list, is_mutable_list_reference};
+use crate::mutable_parameters::mutable_argument;
 use crate::numerics::numeric_carrier;
 use crate::operand_borrows::{borrow_str_operand, borrow_text_operand};
 use crate::pending::untranslated;
@@ -254,7 +259,15 @@ pub fn call_argument_operand(
         return value_operand(builder, value, span);
     }
     if is_list(ty) || is_collection(ty) {
-        return Err(untranslated("list_values::checked_list_argument"));
+        if let Some(lent) = stored_element_list(builder, value, ty, span)? {
+            return Ok(lent);
+        }
+        if is_mutable_list_reference(ty)
+            && let Some(copy) = loop_variable_copy(builder, value, span)?
+        {
+            return list_borrow(builder, copy, true, span);
+        }
+        return checked_list_argument(builder, value, is_mutable_list_reference(ty), span);
     }
     if is_generator_reference(ty) {
         let SourceOperand::Place(read) = value else {
@@ -275,7 +288,7 @@ pub fn call_argument_operand(
             return shared_nominal_argument(builder, value, ty, span);
         }
         PlanType::StringMutRef | PlanType::ModelMutRef(..) | PlanType::EnumMutRef(..) | PlanType::TupleMutRef(_) => {
-            return Err(untranslated("call_arguments::mutable_argument"));
+            return mutable_argument(builder, value, ty, span);
         }
         _ => {}
     }
@@ -297,10 +310,19 @@ pub fn shared_nominal_argument(
     let SourceOperand::Place(read) = value else {
         return Err("unsupported Body IR shared receiver without a place".into());
     };
-    if is_element_place(builder, &read.place)? {
-        return Err(untranslated("model_values::materialized_receiver"));
-    }
-    let receiver = scalar_place(builder, &read.place, span)?;
+    let receiver = if is_element_place(builder, &read.place)? {
+        let shared = if read.fact == OwnershipFact::Borrow {
+            shared_element_place(builder, &read.place, span)?
+        } else {
+            None
+        };
+        match shared {
+            Some(place) => place,
+            None => materialized_receiver(builder, &read.place, span)?,
+        }
+    } else {
+        scalar_place(builder, &read.place, span)?
+    };
     let source = place_type(&builder.locals, &receiver);
     if source == *ty {
         return Ok(read_place(receiver, false, span));
@@ -410,7 +432,12 @@ fn exact_shared_storage(
         return Ok(None);
     }
     if is_element_place(builder, &read.place)? {
-        return Err(untranslated("element_places::element_place_type"));
+        if let Ok(element) = element_place_type(builder, &read.place)
+            && element == *referent
+        {
+            return shared_element_place(builder, &read.place, span);
+        }
+        return Ok(None);
     }
     let source = scalar_place(builder, &read.place, span)?;
     let actual = place_type(&builder.locals, &source);
@@ -517,4 +544,67 @@ fn frozen_reference_argument(
         }
         None => Err("unsupported Body IR native frozen argument without exact storage".into()),
     }
+}
+
+/// Lend a list stored inside a list element, such as `stored.variants[position].labels`, to a shared list parameter
+/// through the element's own loan, so the call copies nothing.
+///
+/// Only a shared parameter of exactly the stored list's type qualifies. A slice, a moved projection, a mutable
+/// parameter and a list of another shape keep the copy `checked_list_argument` makes for them.
+fn stored_element_list(
+    builder: &mut Builder,
+    value: &SourceOperand,
+    ty: &PlanType,
+    span: &SourceSpan,
+) -> Result<Option<Operand>, String> {
+    let SourceOperand::Place(read) = value else {
+        return Ok(None);
+    };
+    if read.fact != OwnershipFact::Borrow || !is_element_place(builder, &read.place)? {
+        return Ok(None);
+    }
+    let Ok((referent, writable)) = reference_contract(ty) else {
+        return Ok(None);
+    };
+    if writable || !is_list(&referent) {
+        return Ok(None);
+    }
+    match element_place_type(builder, &read.place) {
+        Ok(element) if element == referent => {}
+        _ => return Ok(None),
+    }
+    match shared_element_place(builder, &read.place, span)? {
+        Some(stored) => Ok(Some(list_borrow(builder, stored, false, span)?)),
+        None => Ok(None),
+    }
+}
+
+/// Copy a list loop variable, or a list field of one, that a function's `mut` parameter receives.
+///
+/// Legacy passes such a parameter `&mut item.clone()`, whether the loop copies its items or iterates them in place, so
+/// the callee's changes never reach the iterated list. A method receiver is not an argument and changes the item.
+fn loop_variable_copy(
+    builder: &mut Builder,
+    value: &SourceOperand,
+    span: &SourceSpan,
+) -> Result<Option<Place>, String> {
+    let SourceOperand::Place(read) = value else {
+        return Ok(None);
+    };
+    if read.place.global().is_some() {
+        return Ok(None);
+    }
+    // A slice or indexed projection is an argument value, not the binding of a copied loop item. Its ordinary
+    // projected-argument path materializes the fresh owner or reaches the checked element storage.
+    if is_element_place(builder, &read.place)? {
+        return Ok(None);
+    }
+    let root = list_root_place(builder, &read.place, span)?;
+    if !is_list(&place_type(&builder.locals, &root)) {
+        return Ok(None);
+    }
+    if builder.borrowed_items.contains(&root.local) || builder.in_place_items.contains(&root.local) {
+        return Ok(Some(cloned_list(builder, root, span)?));
+    }
+    Ok(None)
 }
