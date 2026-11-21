@@ -176,7 +176,7 @@ impl Builder<'_> {
             .explicit_input_calls
             .get(&expression.span)
             .is_some_and(|call| call.kind == InputCallKind::Native);
-        if !is_native {
+        if !is_native && !self.checker.ordinary_borrowed_result(expression.span) {
             return Ok(None);
         }
         self.checker

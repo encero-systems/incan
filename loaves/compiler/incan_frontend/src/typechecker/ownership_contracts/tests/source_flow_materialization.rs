@@ -19,7 +19,7 @@ fn ordinary_argument_accepts_only_fresh_closed_selected_call_results() -> Result
             .any(|(owner, flow)| { owner.declaration_name == "inspect" && matches!(flow, InputFlow::Checked { .. }) })
     );
 
-    let refused_source = "def view(value: Borrowed[bytes]) -> Borrowed[bytes] from value:\n    return value\ndef observe(value: bytes) -> int:\n    return len(value)\ndef inspect(value: Borrowed[bytes], proof: Owned[int] = 0) -> int:\n    return observe(view(value))\n";
+    let refused_source = "def view(value: Borrowed[bytes], marker: Owned[int] = 0) -> Borrowed[bytes] from value:\n    return value\ndef observe(value: bytes) -> int:\n    return len(value)\ndef inspect(value: Borrowed[bytes], proof: Owned[int] = 0) -> int:\n    return observe(view(value))\n";
     let refused = checked(refused_source)?;
     let state = refused
         .type_info
@@ -93,7 +93,7 @@ fn list_element_accepts_only_fresh_closed_selected_model_results() -> Result<(),
         ),
         (
             "dependent call result",
-            "def view(value: Borrowed[bytes]) -> Borrowed[bytes] from value:\n    return value\ndef collect(value: Borrowed[bytes]) -> list[bytes]:\n    return [view(value)]\n",
+            "def view(value: Borrowed[bytes], marker: Owned[int] = 0) -> Borrowed[bytes] from value:\n    return value\ndef collect(value: Borrowed[bytes]) -> list[bytes]:\n    return [view(value)]\n",
             "a returned view needs a local binding, a receiver or a returned view position",
             "view(value)",
         ),
