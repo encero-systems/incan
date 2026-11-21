@@ -24,6 +24,7 @@ use incan_semantics_core::executable_representation::{
 };
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin, canonical_module_identity};
 
+use crate::library_manifest::executable_ranges::{RangeHead, RangeRecord};
 use crate::library_manifest::executable_surface::ExecutableSurface;
 use crate::loaf_index::{LoafIndex, LoafIndexError};
 
@@ -109,6 +110,8 @@ pub struct ResolvedExecutableModules {
 
 /// One indexed Loaf's executable surface and governed-body file.
 struct PackageArtifact {
+    key: String,
+    range_head: Option<RangeHead>,
     surface: Arc<ExecutableSurface>,
     /// The Loaf's `.incnbody`.
     bodies: PathBuf,
@@ -158,19 +161,20 @@ pub fn resolve_loaf_declarations(
 /// One artifact per package name across the index; two instances of one package refuse rather than replacing each
 /// other.
 fn catalog(loaves: &LoafIndex) -> Result<BTreeMap<String, String>, ExecutableResolutionError> {
-    let mut catalog = BTreeMap::new();
-    let mut identities = BTreeMap::new();
-    for (key, identity) in loaves.identities() {
-        let stable = identity.stable_key();
-        if let Some(previous) = identities.insert(&identity.name, stable.clone())
-            && previous != stable
-        {
-            return Err(ExecutableResolutionError::AmbiguousPackage {
-                library: identity.name.clone(),
-                versions: format!("{previous}, {stable}"),
-            });
+    let mut catalog = BTreeMap::<String, String>::new();
+    for (key, name) in loaves.package_names() {
+        if let Some(previous_key) = catalog.get(name) {
+            let previous = loaves.package_identity(previous_key)?.map(|id| id.stable_key());
+            let current = loaves.package_identity(key)?.map(|id| id.stable_key());
+            if previous != current {
+                return Err(ExecutableResolutionError::AmbiguousPackage {
+                    library: name.to_owned(),
+                    versions: format!("{previous:?}, {current:?}"),
+                });
+            }
+        } else {
+            catalog.insert(name.to_owned(), key.to_owned());
         }
-        catalog.entry(identity.name.clone()).or_insert_with(|| key.to_owned());
     }
     Ok(catalog)
 }
@@ -194,8 +198,13 @@ fn demand_package<'a>(
         chain: dependency_chain(declaration, parents),
     };
     let key = catalog.get(library).ok_or_else(unknown)?;
-    let (surface, bodies) = loaves.executable_surface_artifact(key)?.ok_or_else(unknown)?;
-    Ok(slot.insert(PackageArtifact { surface, bodies }))
+    let (surface, bodies, range_head) = loaves.executable_surface_artifact(key)?.ok_or_else(unknown)?;
+    Ok(slot.insert(PackageArtifact {
+        key: key.clone(),
+        surface,
+        bodies,
+        range_head,
+    }))
 }
 
 /// Load every required declaration and its published closure from one package catalog.
@@ -245,6 +254,7 @@ fn resolve_from_catalog(
             .ok_or_else(|| package.unusable(malformed("opened surface missing")))?;
         // Every incoming edge is authorized before deduplication. An explicit private root must refuse even if
         // another public root already loaded that implementation through a same-package dependency.
+        surface.admit_range(loaves, package, &identity)?;
         let coverage = if implementation_allowed {
             surface.index.execution_coverage(&identity)
         } else {
@@ -282,6 +292,9 @@ fn resolve_from_catalog(
         }));
         let (offset, length) = (*offset, *length);
         let declaration = surface.read(package, &identity, offset, length)?;
+        if package.range_head.is_some() {
+            resolved.content_bytes_verified += length;
+        }
         if let ExecutableDeclaration::NominalWithTraits(_, implementations)
         | ExecutableDeclaration::NominalWithCallables { implementations, .. } = &declaration
         {
@@ -457,6 +470,7 @@ struct OpenSurface {
     path: PathBuf,
     payload_offset: u64,
     index: SurfaceIndex,
+    fragment_digests: BTreeMap<CanonicalSymbolId, String>,
     content_bytes_verified: u64,
 }
 
@@ -472,6 +486,35 @@ impl OpenSurface {
             });
         }
         let mut file = File::open(&path).map_err(|error| package.unreadable(path.clone(), error))?;
+        if let Some(head) = &package.range_head {
+            let file_length = file
+                .metadata()
+                .map_err(|error| package.unreadable(path.clone(), error))?
+                .len();
+            if file_length != head.file_bytes {
+                return Err(package.unusable(malformed(
+                    "installed executable file length differs from its range head",
+                )));
+            }
+            tracing::trace!(
+                target: "incan::invocation", phase = "body_surface_open", path = %path.display(),
+                loaf = %package.surface.name, digest = %head.descriptor.content_digest,
+                proof = "sealed-range", header_digest = %head.header_digest, header_bytes = 0u64, verified_bytes = 0u64, payload_offset = head.payload_offset,
+            );
+            return Ok(Self {
+                file,
+                path,
+                payload_offset: head.payload_offset,
+                index: SurfaceIndex {
+                    library: head.package.clone(),
+                    package_version: head.version.clone(),
+                    declarations: BTreeMap::new(),
+                    implementation: BTreeMap::new(),
+                },
+                fragment_digests: BTreeMap::new(),
+                content_bytes_verified: 0,
+            });
+        }
         // The frame is written by `encode_surface` as a postcard-encoded `u32` version, then an 8-byte
         // little-endian index length, then the index, then the payload. `SurfaceReader` parses that same frame
         // from a slice with `postcard::take_from_bytes`; this reader cannot, because it streams from a file and
@@ -552,11 +595,17 @@ impl OpenSurface {
         }
         let content_bytes_verified =
             Self::verify_content_digest(&mut file, &path, package, &descriptor.content_digest)?;
+        tracing::trace!(
+            target: "incan::invocation", phase = "body_surface_open", path = %path.display(),
+            loaf = %package.surface.name, digest = %descriptor.content_digest,
+            header_bytes = payload_offset, verified_bytes = content_bytes_verified,
+        );
         Ok(Self {
             file,
             path,
             payload_offset,
             index,
+            fragment_digests: BTreeMap::new(),
             content_bytes_verified,
         })
     }
@@ -595,6 +644,36 @@ impl OpenSurface {
         Ok(content_bytes_verified)
     }
 
+    /// Import only this declaration's independently authenticated coverage into the in-memory index. Public
+    /// authorization is still evaluated for every incoming edge before visited-node deduplication.
+    fn admit_range(
+        &mut self,
+        loaves: &LoafIndex,
+        package: &PackageArtifact,
+        identity: &CanonicalSymbolId,
+    ) -> Result<(), ExecutableResolutionError> {
+        let Some(head) = &package.range_head else { return Ok(()) };
+        if self.index.declarations.contains_key(identity) || self.index.implementation.contains_key(identity) {
+            return Ok(());
+        }
+        let record = loaves.executable_range(&package.key, identity)?.ok_or_else(|| {
+            package.unusable(ExecutableRepresentationError::DeclarationNotCovered {
+                declaration: identity.declaration_name.clone(),
+            })
+        })?;
+        validate_range(head, identity, &record).map_err(|error| package.unusable(error))?;
+        if let Some(digest) = record.fragment_digest {
+            self.fragment_digests.insert(identity.clone(), digest);
+        }
+        let members = if record.public {
+            &mut self.index.declarations
+        } else {
+            &mut self.index.implementation
+        };
+        members.insert(identity.clone(), record.coverage);
+        Ok(())
+    }
+
     /// Range-read one selected fragment and validate its payload identity against its checked index key.
     fn read(
         &mut self,
@@ -618,10 +697,59 @@ impl OpenSurface {
         self.file
             .read_exact(&mut bytes)
             .map_err(|error| package.unreadable(self.path.clone(), error))?;
+        if package.range_head.is_some() {
+            let digest = self
+                .fragment_digests
+                .get(identity)
+                .ok_or_else(|| package.unusable(malformed("sealed fragment has no digest")))?;
+            verify_fragment(&bytes, digest).map_err(|error| package.unusable(error))?;
+        }
+        tracing::trace!(
+            target: "incan::invocation", phase = "body_fragment_read", path = %self.path.display(),
+            loaf = %package.surface.name, identity = %incan_semantics_core::encode_incan_symbol_identity(identity),
+            offset, absolute_offset = absolute, bytes = length, range_authenticated = package.range_head.is_some(),
+            fragment_digest = self.fragment_digests.get(identity).map(String::as_str).unwrap_or(""),
+        );
         self.index
             .decode_declaration(identity, &bytes)
             .map_err(|error| package.unusable(error))
     }
+}
+
+/// A sealed membership must describe this package's exact immutable surface and the selected canonical identity.
+fn validate_range(
+    head: &RangeHead,
+    identity: &CanonicalSymbolId,
+    record: &RangeRecord,
+) -> Result<(), ExecutableRepresentationError> {
+    if record.identity != *identity || record.surface_digest != head.descriptor.content_digest {
+        return Err(malformed(
+            "selected range names another declaration or executable surface",
+        ));
+    }
+    match (&record.coverage, &record.fragment_digest) {
+        (DeclarationCoverage::Covered { offset, length, .. }, Some(digest))
+            if digest.len() == 64
+                && digest.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+                && head
+                    .payload_offset
+                    .checked_add(*offset)
+                    .and_then(|start| start.checked_add(*length))
+                    .is_some_and(|end| end <= head.file_bytes) =>
+        {
+            Ok(())
+        }
+        (DeclarationCoverage::TypeContext { .. } | DeclarationCoverage::Uncovered(_), None) => Ok(()),
+        _ => Err(malformed("sealed coverage has an invalid address or digest")),
+    }
+}
+
+/// Hash the same selected buffer the decoder consumes, including when the sidecar was replaced after packing.
+fn verify_fragment(bytes: &[u8], expected: &str) -> Result<(), ExecutableRepresentationError> {
+    if hex::encode(Sha256::digest(bytes)) != expected {
+        return Err(malformed("selected fragment differs from its sealed digest"));
+    }
+    Ok(())
 }
 
 /// Preserve structural artifact failure without exposing a backend's unsupported-source diagnostic category.
