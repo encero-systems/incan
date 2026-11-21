@@ -113,6 +113,25 @@ pub(super) const CONFUSABLE_IDENTIFIER: DiagnosticCatalogEntry = DiagnosticCatal
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/source_security/"),
 };
 
+pub(super) const RUST_BORROW_SPELLING: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0137",
+    title: "Borrow written the Rust way",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A type annotation in Incan source writes a borrow as `&T` or `&mut T`.",
+    explanation: "Incan source spells a shared borrow `Borrowed[T]` and an exclusive borrow `BorrowedMut[T]`, in every annotation: parameters, results, local bindings, fields, aliases, generic arguments and callable types. `&T` and `&mut T` are the Rust spelling of the same types; they appear only in the signatures of imported Rust items, which keep them. The refusal names the Incan spelling to write; the program is otherwise checked as if it were written.",
+    examples: &[
+        "def read(value: &int) -> int:\n    return value",
+        "def grow(mut items: &mut list[int]) -> None:\n    items.append(1)",
+    ],
+    common_causes: &[
+        "Code written before Incan 0.6, when the Rust spelling was accepted.",
+        "A Rust signature copied into an Incan declaration.",
+    ],
+    fixes: &["Write `Borrowed[T]` for `&T` and `BorrowedMut[T]` for `&mut T`; nothing else changes."],
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/explicit_ownership/"),
+};
+
 pub(super) const CALLABLE_MARKER_NOT_SUPPORTED: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-T0106",
     title: "Callable marker cannot be spelled here",
@@ -922,6 +941,7 @@ pub(super) const CATALOG: &[DiagnosticCatalogEntry] = &[
     TYPECHECK,
     UNREACHABLE_CODE,
     CONFUSABLE_IDENTIFIER,
+    RUST_BORROW_SPELLING,
     SELF_MUTATION_REQUIRES_MUT_SELF,
     VALUE_WITHOUT_PRINTED_FORM,
     COLLECTION_ANNOTATION_REQUIRES_TYPE_ARGUMENTS,

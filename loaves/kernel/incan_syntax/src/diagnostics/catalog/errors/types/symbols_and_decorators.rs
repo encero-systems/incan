@@ -397,6 +397,25 @@ pub fn decorator_result_not_callable(path: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("decorator '{path}' must return a callable"), span)
 }
 
+/// Report a borrow written the Rust way, `&T` or `&mut T`, in an Incan type annotation (RFC 164). Incan source spells a
+/// borrow `Borrowed[T]` or `BorrowedMut[T]`; native references exist only in imported Rust signatures. `referent` is
+/// the written `T` and `exclusive` selects `&mut`. `INCAN-T0137` is its stable code.
+pub fn rust_borrow_spelling(referent: &str, exclusive: bool, span: Span) -> CompileError {
+    let (kind, mode, rust) = if exclusive {
+        ("An exclusive borrow", "BorrowedMut", "&mut ")
+    } else {
+        ("A borrow", "Borrowed", "&")
+    };
+    let fix = format!("{mode}[{referent}]");
+    CompileError::type_error(
+        format!("{kind} is spelled `{fix}` in Incan, not `{rust}{referent}`"),
+        span,
+    )
+    .with_stable_code("INCAN-T0137")
+    .with_primary_label("Rust reference spelling")
+    .with_hint(format!("Write `{fix}`"))
+}
+
 /// Report a method decorator, or a function it returns in the method's place, that spells the decorated method's
 /// receiver as `&Owner` or `&mut Owner` (#1790).
 ///

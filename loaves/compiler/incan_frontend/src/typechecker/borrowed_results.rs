@@ -285,20 +285,11 @@ impl TypeChecker {
     fn refuse_rust_borrow_spelling_nodes(&mut self, annotation: &Spanned<Type>) {
         match &annotation.node {
             Type::Ref(inner) | Type::RefMut(inner) => {
-                let (kind, mode, rust) = if matches!(annotation.node, Type::RefMut(_)) {
-                    ("An exclusive borrow", "BorrowedMut", "&mut ")
-                } else {
-                    ("A borrow", "Borrowed", "&")
-                };
-                let fix = format!("{mode}[{}]", inner.node);
-                self.errors.push(
-                    CompileError::type_error(
-                        format!("{kind} is spelled `{fix}` in Incan, not `{rust}{}`", inner.node),
-                        annotation.span,
-                    )
-                    .with_primary_label("Rust reference spelling")
-                    .with_hint(format!("Write `{fix}`")),
-                );
+                self.errors.push(errors::rust_borrow_spelling(
+                    &inner.node.to_string(),
+                    matches!(annotation.node, Type::RefMut(_)),
+                    annotation.span,
+                ));
                 self.refuse_rust_borrow_spelling_nodes(inner);
             }
             Type::Generic(_, arguments) | Type::DottedGeneric(_, arguments) | Type::Tuple(arguments) => {
