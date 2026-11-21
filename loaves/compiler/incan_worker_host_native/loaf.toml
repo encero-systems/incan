@@ -12,4 +12,5 @@ edition = "2024"
 [dependencies]
 internal_models_native = { path = "../internal_models_native" }
 internal_models_bindings = { path = "../internal_models_bindings" }
+incan_worker_host_bindings = { path = "../incan_worker_host_bindings" }
 serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
