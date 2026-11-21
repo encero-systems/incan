@@ -6,6 +6,7 @@ from rust::std::os::unix::process import CommandExt
 from rust::std::ops import DerefMut
 from rust::std::process import Child, Command, ExitStatus, Stdio, id
 from rust::std::rc import Rc
+from rust::std::string import String as RustString
 from rust::std::thread import sleep
 from rust::std::time import Duration, Instant, SystemTime, UNIX_EPOCH
 from std.encoding.hex import hexlify
@@ -67,11 +68,39 @@ pub model ReleaseOptions:
     pub signed_bundle: str = ""
 
 
-pub model ReleaseTermination:
-    """The captured release process identities plus any degraded process-census evidence."""
+pub model ProcessIdentity:
+    """A live process's group and the kernel's record of when it started, which a later process reusing its pid lacks."""
 
-    pub members: list[int]
+    pub group: int
+    pub started: str
+
+
+@derive(Clone, Eq)
+pub model ReleaseMember:
+    """One observed release process: its pid and the start time that tells it apart from a later process with that pid."""
+
+    pub pid: int
+    pub started: str
+
+
+pub model ReleaseTermination:
+    """
+    The release root, the confirmable identities of the processes observed under it, and any degraded census evidence.
+
+    The root is an unreaped child, so its pid and the group it leads stay the release's until it is reaped. Every other
+    member is signaled only while the kernel still reports its recorded start time for its pid.
+    """
+
+    pub root: int
+    pub members: list[ReleaseMember]
     pub census_error: Option[str]
+
+
+model ReleaseSignal:
+    """One confirmed signal target and whether it also leads a process group to signal."""
+
+    pid: int
+    group: bool
 
 
 pub model VerificationOptions:
@@ -787,7 +816,7 @@ pub def finish_background_step(step: BackgroundStep, timeout_seconds: int) -> Re
 pub def cancel_background_step(step: BackgroundStep) -> Result[None, str]:
     """Stop and reap a background step and its complete observed descendant tree after an earlier refusal."""
     root = int(step.child.borrow().id())
-    observed = release_process_census(process_table(), root)
+    observed = observe_release_processes(root)
     stop_child_process_tree(step.child, observed, step.name)?
     finish_step_trace(step.trace, step.span)?
     return Ok(None)
@@ -909,42 +938,112 @@ pub def release_process_tree(rows: list[ProcessResource], root: int) -> list[int
     return sorted([pid for pid in members])
 
 
-pub def release_process_census(census: Result[list[ProcessResource], str], root: int) -> ReleaseTermination:
-    """Keep root and process-group custody even when the broader descendant census is unavailable."""
+def decimal(text: str) -> bool:
+    """Whether a `ps` column is a nonempty run of decimal digits."""
+    if text == "":
+        return false
+    for character in text:
+        if character not in "0123456789":
+            return false
+    return true
+
+
+pub def parse_process_identities(text: str) -> Dict[int, ProcessIdentity]:
+    """Parse `ps -o pid=,pgid=,lstart=` rows into each pid's group and start time, skipping any incomplete row."""
+    mut identities: Dict[int, ProcessIdentity] = {}
+    for line in text.split("\n"):
+        fields = [part for part in line.strip().split(" ") if part != ""]
+        if len(fields) < 3 or not decimal(fields[0]) or not decimal(fields[1]):
+            continue
+        identities[int(fields[0])] = ProcessIdentity(group=int(fields[1]), started=" ".join(fields[2:]))
+    return identities
+
+
+pub def process_identities() -> Result[Dict[int, ProcessIdentity], str]:
+    """Every live process's group and start time, as the kernel's process table reports them through `ps`."""
+    mut command = Command.new("/bin/ps")
+    command.arg("-A").arg("-o").arg("pid=,pgid=,lstart=").env("LC_ALL", "C").stdin(Stdio.null())
+    output = command.output().map_err((error) => f"cannot run /bin/ps: {error}")?
+    if not output.status.success():
+        return Err("/bin/ps could not read the process table")
+    return Ok(parse_process_identities(RustString.from_utf8_lossy(output.stdout).into_owned()))
+
+
+pub def release_process_census(
+    census: Result[list[ProcessResource], str],
+    identities: Result[Dict[int, ProcessIdentity], str],
+    root: int,
+) -> ReleaseTermination:
+    """
+    Record the root's observed tree with each member's start time. A descendant whose identity could not be read is not
+    recorded, and a failed probe keeps only the unreaped root's custody.
+    """
     match census:
-        Ok(rows) => return ReleaseTermination(members=release_process_tree(rows, root), census_error=None)
-        Err(message) => return ReleaseTermination(members=[root], census_error=Some(message))
+        Err(message) => return ReleaseTermination(root=root, members=[], census_error=Some(message))
+        Ok(rows) =>
+            match identities:
+                Err(message) => return ReleaseTermination(root=root, members=[], census_error=Some(message))
+                Ok(known) =>
+                    mut members: list[ReleaseMember] = []
+                    for pid in release_process_tree(rows, root):
+                        if pid in known:
+                            members.append(ReleaseMember(pid=pid, started=known[pid].started))
+                    return ReleaseTermination(root=root, members=members, census_error=None)
+
+
+pub def observe_release_processes(root: int) -> ReleaseTermination:
+    """Read both process probes now and record the root's observed tree."""
+    return release_process_census(process_table(), process_identities(), root)
 
 
 pub def merge_release_terminations(known: ReleaseTermination, observed: ReleaseTermination) -> ReleaseTermination:
-    """Union observed process custody and retain every degraded-census diagnostic."""
+    """Union observed custody by identity, so a reused pid is another member, and retain every degraded-census diagnostic."""
     mut members = known.members.clone()
-    for pid in observed.members:
-        if pid not in members:
-            members.append(pid)
+    for member in observed.members:
+        if member not in members:
+            members.append(member)
     mut census_error = known.census_error.clone()
     if let Some(message) = observed.census_error:
         match census_error:
             Some(prior) => census_error = Some(prior + "; " + message)
             None => census_error = Some(message)
-    return ReleaseTermination(members=sorted(members), census_error=census_error)
+    return ReleaseTermination(root=known.root, members=members, census_error=census_error)
 
 
 def terminate_release_process_tree(root: int) -> ReleaseTermination:
-    """Signal every observed owned process and process group, even when descendant census is degraded."""
-    termination = release_process_census(process_table(), root)
+    """Signal the unreaped root, its group and every observed member the kernel still confirms."""
+    termination = observe_release_processes(root)
     signal_release_termination(termination)
     return termination
 
 
-def signal_release_termination(termination: &ReleaseTermination) -> None:
-    """Signal every captured process and process group, escalating members that remain alive."""
-    for pid in termination.members:
-        signal_release_process(pid, "TERM")
+def confirmed_signals(
+    termination: &ReleaseTermination,
+    identities: Result[Dict[int, ProcessIdentity], str],
+) -> list[ReleaseSignal]:
+    """
+    The root always, by pid and group: it is unreaped, so neither can name another process yet. Every other member only
+    while its pid still names the recorded process, and its group only when that confirmed member leads it.
+    """
+    mut signals = [ReleaseSignal(pid=termination.root, group=true)]
+    match identities:
+        Err(_) => return signals
+        Ok(known) =>
+            for member in termination.members:
+                if member.pid == termination.root or member.pid not in known:
+                    continue
+                if known[member.pid].started == member.started:
+                    signals.append(ReleaseSignal(pid=member.pid, group=known[member.pid].group == member.pid))
+    return signals
+
+
+pub def signal_release_termination(termination: &ReleaseTermination) -> None:
+    """Signal the root and every confirmed member, then escalate those the kernel still confirms."""
+    for target in confirmed_signals(termination, process_identities()):
+        signal_release_process(target, "TERM")
     sleep(Duration.from_millis(100))
-    for pid in termination.members:
-        if release_process_alive(pid):
-            signal_release_process(pid, "KILL")
+    for target in confirmed_signals(termination, process_identities()):
+        signal_release_process(target, "KILL")
 
 
 pub def stop_child_process_tree(
@@ -954,8 +1053,7 @@ pub def stop_child_process_tree(
 ) -> Result[None, str]:
     """Stop and reap one child plus every descendant captured while it ran or still visible at cancellation."""
     root = int(child.borrow().id())
-    current = release_process_census(process_table(), root)
-    termination = merge_release_terminations(observed, current)
+    termination = merge_release_terminations(observed, observe_release_processes(root))
     signal_release_termination(termination)
     reap_error = match child.borrow_mut().wait():
         Ok(_) => None
@@ -965,40 +1063,41 @@ pub def stop_child_process_tree(
     return Ok(None)
 
 
-def signal_release_process(pid: int, signal: str) -> None:
-    """Signal both a process-group spelling and the individual process; absent groups and exited members are harmless."""
-    mut group = Command.new("/bin/kill")
-    group.arg(f"-{signal}").arg("--").arg(f"-{pid}")
-    _ = group.status()
+def signal_release_process(target: ReleaseSignal, signal: str) -> None:
+    """Signal one confirmed process, and the group it leads; a process that exited since is harmless."""
+    if target.group:
+        mut group = Command.new("/bin/kill")
+        group.arg(f"-{signal}").arg("--").arg(f"-{target.pid}")
+        _ = group.status()
     mut process = Command.new("/bin/kill")
-    process.arg(f"-{signal}").arg("--").arg(str(pid))
+    process.arg(f"-{signal}").arg("--").arg(str(target.pid))
     _ = process.status()
 
 
-def release_process_alive(pid: int) -> bool:
-    """Return whether the kernel still recognizes one captured process identity."""
-    mut probe = Command.new("/bin/kill")
-    probe.arg("-0").arg("--").arg(str(pid))
-    match probe.status():
-        Ok(status) => return status.success()
-        Err(_) => return false
+def surviving_members(termination: &ReleaseTermination, known: Dict[int, ProcessIdentity]) -> list[int]:
+    """Members other than the reaped root whose pid still names the recorded process."""
+    mut remaining: list[int] = []
+    for member in termination.members:
+        if member.pid != termination.root and member.pid in known and known[member.pid].started == member.started:
+            remaining.append(member.pid)
+    return remaining
 
 
-def require_release_processes_stopped(members: list[int]) -> Result[None, str]:
-    """Refuse completion while any captured release descendant remains after its root was reaped."""
+def require_release_processes_stopped(termination: &ReleaseTermination) -> Result[None, str]:
+    """Refuse completion while any confirmed release descendant remains after its root was reaped."""
     for _attempt in range(50):
-        remaining = [pid for pid in members if release_process_alive(pid)]
+        remaining = surviving_members(termination, process_identities()?)
         if len(remaining) == 0:
             return Ok(None)
         sleep(Duration.from_millis(20))
-    remaining = [pid for pid in members if release_process_alive(pid)]
+    remaining = surviving_members(termination, process_identities()?)
     return Err(f"release cancellation left processes alive: {remaining}")
 
 
 def require_release_termination(termination: ReleaseTermination, reap_error: Option[str]) -> Result[None, str]:
     """Report every custody-proof failure only after signaling, reaping, and survivor checks have all run."""
     mut failures: list[str] = []
-    match require_release_processes_stopped(termination.members):
+    match require_release_processes_stopped(termination):
         Ok(_) => None
         Err(message) => failures.append(message)
     if let Some(message) = reap_error:
