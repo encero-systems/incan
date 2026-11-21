@@ -34,7 +34,6 @@ use crate::numerics::{integer_carrier, is_float_constant};
 use crate::operand_borrows::borrow_text_operand;
 use crate::optional_text_equality::optional_text_equality;
 use crate::options::carrier_layout;
-use crate::pending::untranslated;
 use crate::result_carriers::retained_reference_value;
 use crate::sequence_builtins::source_operand_type;
 use crate::statements::is_text_or_nominal;

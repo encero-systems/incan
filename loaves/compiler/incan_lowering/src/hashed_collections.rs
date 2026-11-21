@@ -10,7 +10,7 @@ use incan_semantics_core::body_ir::{
 };
 
 use crate::builtins::list_call;
-use crate::carrier_operands::element_operand;
+use crate::carrier_operands::{element_operand, element_plan_operand};
 use crate::collections::{
     begin_collection, borrow_collection, collection_arguments, collection_call, collection_owned, collection_reference,
     dictionary_method_signature, extend_collection, finish_collection, insert_collection, is_collection,
@@ -391,8 +391,8 @@ pub fn dictionary_method(
 ///
 /// A static receiver's snapshot is read only after the arguments and committed after the insertion, as a static list
 /// method's is. A call retained as an expression initializes its checked Unit destination after the mutation; an
-/// argument that propagated an error has already returned before this call is lowered. Each argument converts through
-/// `carrier_operands::element_plan_operand`, which refuses by name until it is in Rust.
+/// argument that propagated an error has already returned before this call is lowered. A static
+/// receiver's commit is `static_storage::persist_static_value`, which refuses by name until it is in Rust.
 fn collection_insert_method(
     builder: &mut Builder,
     member: &str,
@@ -406,11 +406,11 @@ fn collection_insert_method(
     }
     // Use the shared argument check before creating the short mutable runtime borrow.
     require_mutable_receiver(arguments)?;
-    if !types.is_empty() {
-        argument_value(builder, arguments, 1, span)?;
-        return Err(untranslated("carrier_operands::element_plan_operand"));
+    let mut operands = Vec::with_capacity(types.len());
+    for (slot, ty) in types.iter().enumerate() {
+        let argument = argument_value(builder, arguments, slot + 1, span)?;
+        operands.push(element_plan_operand(builder, argument, ty, span)?);
     }
-    let operands = Vec::new();
     let output = call_destination(builder, destination, PlanType::Unit, span)?;
     match static_collection_receiver(builder, arguments, true, span)? {
         Some((_, receiver)) => {

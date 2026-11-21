@@ -11,8 +11,8 @@ use crate::element_borrows::shared_list_element;
 use crate::frame::{Builder, literal, place_type, read_place, temporary};
 use crate::list_values::list_borrow;
 use crate::lists::{list_element, list_shape, require_list_shape};
+use crate::operand_borrows::list_slice_view;
 use crate::optional_text_equality::text_argument;
-use crate::pending::untranslated;
 
 /// Recognize equal-depth lists whose terminal values are the same text or byte family.
 pub fn supports_frozen_list_equality(left: &PlanType, right: &PlanType) -> bool {
@@ -184,8 +184,6 @@ fn compare_elements(builder: &mut Builder, left: Place, right: Place, span: &Sou
 }
 
 /// Lend either a static frozen byte payload or owned byte vector as the same unsigned byte slice.
-///
-/// An owned byte vector's slice view is `operand_borrows::list_slice_view`, which refuses by name until it is in Rust.
 fn bytes_view(builder: &mut Builder, value: Place, ty: &PlanType, span: &SourceSpan) -> Result<Operand, String> {
     if *ty == PlanType::FrozenBytes {
         let reference_type = PlanType::ScalarRef(vec![ty.clone()]);
@@ -207,6 +205,6 @@ fn bytes_view(builder: &mut Builder, value: Place, ty: &PlanType, span: &SourceS
     if list_shape(ty) != Some((ListLeaf::U8, 1)) {
         return Err("invalid frozen list equality byte payload".into());
     }
-    list_borrow(builder, value, false, span)?;
-    Err(untranslated("operand_borrows::list_slice_view"))
+    let reference = list_borrow(builder, value, false, span)?;
+    list_slice_view(builder, reference, &[PlanType::U8], false, span)
 }

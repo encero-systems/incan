@@ -4,11 +4,12 @@
 //! union payload is never inspected through an absent Option.
 
 use incan_mir_plan_native::{
-    Carrier, Constant, Place, PlanType, RvalueKind, SourceSpan, assign as plan_assign, carrier_position,
+    BinaryOp, Carrier, Constant, FieldProjection, Place, PlanType, RvalueKind, SourceSpan, TerminatorKind,
+    assign as plan_assign, carrier_position,
 };
 
-use crate::frame::{Builder, literal, read_place, temporary};
-use crate::pending::untranslated;
+use crate::frame::{Builder, appended_field, literal, read_place, temporary};
+use crate::unions::{test_union_tag, union_test_slots};
 
 /// Whether a retained enum owner is the intrinsic Option carrier rather than a source enum or a union.
 pub fn is_option_carrier(builder: &Builder, owner: i64) -> bool {
@@ -33,9 +34,6 @@ fn intrinsic_carrier(builder: &Builder, owner: i64) -> Option<Carrier> {
 }
 
 /// Test a present Option payload against the checked target type without consuming the Option.
-///
-/// The member tag tests are `unions::union_test_slots` and `unions::test_union_tag`, which refuse by name until they
-/// are in Rust.
 pub fn option_isinstance(
     builder: &mut Builder,
     source: Place,
@@ -47,13 +45,59 @@ pub fn option_isinstance(
     if let PlanType::Enum(inner, _) = &payload
         && is_union_carrier(builder, *inner)
     {
-        return Err(untranslated("unions::union_test_slots"));
+        return union_payload_test(builder, source, &payload, *inner, member, span);
     }
     if !same_isinstance_type(&payload, member) {
         return Ok(RvalueKind::Use(literal(Constant::Bool(false), span)));
     }
-    enum_tag(builder, source, span);
-    Err(untranslated("unions::test_union_tag"))
+    let tag = enum_tag(builder, source, span);
+    // Option's Some is variant 1, so a present payload of the target type is exactly tag 1.
+    Ok(test_union_tag(builder, &tag, &[1], span))
+}
+
+/// Test the union member tag only on the branch where the Option's tag proved its payload present.
+fn union_payload_test(
+    builder: &mut Builder,
+    source: Place,
+    payload: &PlanType,
+    inner: i64,
+    member: &PlanType,
+    span: &SourceSpan,
+) -> Result<RvalueKind, String> {
+    let slots = union_test_slots(&builder.unions, inner, member, &builder.intrinsics)?;
+    if slots.is_empty() {
+        return Ok(RvalueKind::Use(literal(Constant::Bool(false), span)));
+    }
+    let output = temporary(builder, PlanType::Bool, span);
+    builder.emit(plan_assign(
+        output.clone(),
+        RvalueKind::Use(literal(Constant::Bool(false), span)),
+        span,
+    ));
+    let tag = enum_tag(builder, source.clone(), span);
+    let present = temporary(builder, PlanType::Bool, span);
+    let compared = RvalueKind::Binary(
+        BinaryOp::Equal,
+        read_place(tag, false, span),
+        literal(Constant::Int(1), span),
+    );
+    builder.emit(plan_assign(present.clone(), compared, span));
+    let inspected = builder.new_block(span);
+    let joined = builder.new_block(span);
+    builder.finish(
+        TerminatorKind::SwitchBool(read_place(present, false, span), joined, inspected),
+        span,
+    );
+    builder.select(inspected);
+    let mut projection = FieldProjection::new(0, payload.clone());
+    projection.variant = 1;
+    let member_place = appended_field(&source, projection, span)?;
+    let member_tag = enum_tag(builder, member_place, span);
+    let matched = test_union_tag(builder, &member_tag, &slots, span);
+    builder.emit(plan_assign(output.clone(), matched, span));
+    builder.finish(TerminatorKind::Goto(joined), span);
+    builder.select(joined);
+    Ok(RvalueKind::Use(read_place(output, false, span)))
 }
 
 /// Read an enum's variant index as an int without moving or copying its payload.

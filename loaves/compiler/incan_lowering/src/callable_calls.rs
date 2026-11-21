@@ -6,9 +6,7 @@ use incan_mir_plan_native::{
 use incan_semantics_core::body_ir::{
     ArgumentElement, Body, BodyIrModule, NamedCallableTarget, Place as SourcePlace, StringConversionContract,
 };
-use incan_semantics_core::{
-    CanonicalSymbolId, IncanType, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin, canonical_module_identity,
-};
+use incan_semantics_core::{CanonicalSymbolId, IncanType, SymbolOrigin, canonical_module_identity};
 
 use crate::async_::is_future;
 use crate::builtin_calls::lower_builtin;
@@ -178,7 +176,6 @@ fn special_named_target(
     if has_adapter_slot(module, identity) {
         return Ok(Some("primitive_traits::normalized_primitive_static"));
     }
-    let method = identity.kind == SemanticSourceTargetKind::Method;
     if builder.constructors().validated_constructors.contains(identity) {
         return Ok(Some("callable_calls::lower_validated_constructor"));
     }

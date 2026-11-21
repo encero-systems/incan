@@ -3,7 +3,8 @@
 use incan_lang::lang::surface::iterator_methods::IteratorMethodId;
 use incan_lang::lang::surface::list_methods::ListMethodId;
 use incan_mir_plan_native::{
-    Constant, ListLeaf, Operand, OperandKind, Place, PlanType, RvalueKind, SourceSpan, assign as plan_assign,
+    CalleeKind, Constant, ExternalFunction, ListLeaf, Operand, OperandKind, Place, PlanType, RvalueKind, SourceSpan,
+    UnaryOp, assign as plan_assign,
 };
 use incan_semantics_core::IncanInputAccess;
 use incan_semantics_core::body_ir::{
@@ -15,13 +16,15 @@ use crate::builtin_methods::lower_generator_member;
 use crate::builtins::list_call;
 use crate::call_arguments::call_argument_operand;
 use crate::calls::instantiated_external_call;
-use crate::carrier_operands::boundary_operand;
+use crate::carrier_operands::{boundary_operand, element_plan_operand};
 use crate::checked_values::{scalar_operand, scalar_place};
 use crate::collections::is_collection;
 use crate::decls::library_item;
 use crate::element_borrows::{borrow_element_mut, shared_element_place};
 use crate::element_places::is_element_place;
-use crate::frame::{Builder, drop_owned, external_call, literal, place_type, read_place, temporary, value_type};
+use crate::frame::{
+    Builder, drop_owned, external_call, literal, place_type, read_place, temporary, terminate_call, value_type,
+};
 use crate::frozen_equality::{borrow_frozen_argument, frozen_reference_type};
 use crate::generator_adapters::is_generator_adapter;
 use crate::generator_consumers::is_generator_consumer;
@@ -34,10 +37,11 @@ use crate::list_values::{
 };
 use crate::lists::{list_element, list_shape, require_list_shape};
 use crate::model_lists::prefix_place;
-use crate::operand_borrows::lower_text_helper;
+use crate::operand_borrows::{borrow_slice_operand, list_slice_view, lower_text_helper};
 use crate::options::none_operand;
 use crate::pending::untranslated;
 use crate::sequence_builtins::argument_type;
+use crate::static_storage::read_static;
 
 /// A static receiver's identity and the snapshot a method reads or changes before it is committed.
 type StaticReceiver = Option<(GlobalPlace, Place)>;
@@ -209,8 +213,6 @@ pub fn lower_list_iter(
 }
 
 /// Convert one checked vector loan to its native slice and construct a lazy cursor without copying the list.
-///
-/// The slice view comes from `operand_borrows::list_slice_view`, which refuses by name until it is in Rust.
 pub fn borrowed_list_generator_call(
     builder: &mut Builder,
     reference: Operand,
@@ -219,8 +221,26 @@ pub fn borrowed_list_generator_call(
     output: &Place,
     span: &SourceSpan,
 ) -> Result<(), String> {
-    let _ = (builder, reference, leaf, depth, output, span);
-    Err(untranslated("operand_borrows::list_slice_view"))
+    let element = list_element(leaf, depth);
+    let slice_type = PlanType::SliceRef(vec![element.clone()]);
+    let slice_reference = list_slice_view(builder, reference, std::slice::from_ref(&element), false, span)?;
+    let result = PlanType::Generator(leaf.clone(), depth - 1);
+    let path = "incan_std_primitives::iter::borrowed_list";
+    builder.externals.push(ExternalFunction {
+        path: path.into(),
+        type_arguments: vec![element.clone()],
+        parameters: vec![slice_type],
+        return_type: result,
+        span: span.clone(),
+    });
+    terminate_call(
+        builder,
+        CalleeKind::Instantiated(path.into(), vec![element]),
+        vec![slice_reference],
+        output.clone(),
+        span,
+    );
+    Ok(())
 }
 
 /// Lower a checker-selected iterator or generator adapter, consumer, or collection terminal.
@@ -253,8 +273,6 @@ pub fn lower_iterator_method(
 }
 
 /// Borrow the checker-selected runtime bytes receiver as an immutable native byte slice.
-///
-/// The slice borrow is `operand_borrows::borrow_slice_operand`, which refuses by name until it is in Rust.
 pub fn lower_bytes_as_slice(
     builder: &mut Builder,
     arguments: &[ArgumentElement],
@@ -270,11 +288,13 @@ pub fn lower_bytes_as_slice(
     if arguments.len() != 1 || !bytes.contains(&receiver_type) {
         return Err("invalid Body IR bytes.as_slice receiver or arity".into());
     }
-    if arguments[0].as_one().is_none() {
+    let Some(value) = arguments[0].as_one() else {
         return Err("invalid Body IR bytes.as_slice spread".into());
-    }
-    let _ = destination;
-    Err(untranslated("operand_borrows::borrow_slice_operand"))
+    };
+    let reference = borrow_slice_operand(builder, value, &[PlanType::U8], false, span)?;
+    let output = call_destination(builder, destination, PlanType::SliceRef(vec![PlanType::U8]), span)?;
+    builder.emit(plan_assign(output, RvalueKind::Use(reference), span));
+    Ok(())
 }
 
 /// The runtime helper, receiver exclusivity, result and parameters of one checked list method.
@@ -445,8 +465,6 @@ pub fn static_collection_receiver(
 }
 
 /// Materialize a checked global receiver while retaining its identity for the mutation's commit.
-///
-/// The static read is `static_storage::read_static`, which refuses by name until it is in Rust.
 fn static_place_receiver(
     builder: &mut Builder,
     read: &PlaceOperand,
@@ -462,8 +480,14 @@ fn static_place_receiver(
     if mutable && read.fact != OwnershipFact::MutBorrow {
         return Err("unsupported Body IR static collection method without mutable borrow fact".into());
     }
-    let _ = (builder, span);
-    Err(untranslated("static_storage::read_static"))
+    let Some(global) = read.place.global() else {
+        return Ok(None);
+    };
+    let operand = read_static(builder, &read.place, global, read.fact, span)?;
+    match operand.kind {
+        OperandKind::Move(place) => Ok(Some((global.clone(), place))),
+        _ => Err("unsupported Body IR noncollection static method receiver".into()),
+    }
 }
 
 /// Ask the runtime for one frozen collection's length through a shared reference to it.
@@ -620,8 +644,7 @@ fn list_length(
 
 /// Borrow both operands for native PartialEq, retaining haystack-first order and explicit negation.
 ///
-/// `x in xs`, `x not in xs` and `xs.contains(x)` all lower here, so one admission policy serves every spelling. The
-/// haystack's slice view comes from `operand_borrows::list_slice_view`, which refuses by name until it is in Rust.
+/// `x in xs`, `x not in xs` and `xs.contains(x)` all lower here, so one admission policy serves every spelling.
 pub fn lower_list_helper(
     builder: &mut Builder,
     negated: bool,
@@ -642,7 +665,7 @@ pub fn lower_list_helper(
     )?;
     admit_membership_equality(builder, &leaf)?;
     let element = list_element(&leaf, depth);
-    let needle_type = match shared_receiver_type(element) {
+    let needle_type = match shared_receiver_type(element.clone()) {
         Ok(reference_type) => reference_type,
         Err(reason) => {
             return Err(format!(
@@ -654,9 +677,26 @@ pub fn lower_list_helper(
     let Some(value) = arguments[1].as_one() else {
         return Err("unsupported Body IR list membership needle spread".into());
     };
-    call_argument_operand(builder, value, &needle_type, span, false, IncanInputAccess::Inferred)?;
-    list_borrow(builder, receiver, false, span)?;
-    Err(untranslated("operand_borrows::list_slice_view"))
+    let argument = call_argument_operand(builder, value, &needle_type, span, false, IncanInputAccess::Inferred)?;
+    let reference = list_borrow(builder, receiver, false, span)?;
+    let slice_type = PlanType::SliceRef(vec![element.clone()]);
+    let slice_reference = list_slice_view(builder, reference, std::slice::from_ref(&element), false, span)?;
+    let output = call_destination(builder, destination, PlanType::Bool, span)?;
+    instantiated_external_call(
+        builder,
+        "incan_std_primitives::collections::list_contains",
+        vec![element],
+        vec![slice_type, needle_type],
+        PlanType::Bool,
+        vec![slice_reference, argument],
+        output.clone(),
+        span,
+    )?;
+    if negated {
+        let value = read_place(output.clone(), false, span);
+        builder.emit(plan_assign(output, RvalueKind::Unary(UnaryOp::Not, value), span));
+    }
+    Ok(())
 }
 
 /// Admit elements whose native PartialEq is Incan's structural equality: scalars, text, enums, tuples, lists,
@@ -687,9 +727,6 @@ pub fn indexed_assignment(
 }
 
 /// Write one checked list element whose list is reached after `start` structural steps (zero for a bare list).
-///
-/// Every element other than `None` converts through `carrier_operands::element_plan_operand`, which refuses by name
-/// until it is in Rust.
 pub fn indexed_assignment_at(
     builder: &mut Builder,
     destination: &SourcePlace,
@@ -701,7 +738,7 @@ pub fn indexed_assignment_at(
         return Err("unsupported Body IR list assignment without index".into());
     }
     // Materialize the replacement before borrowing storage that its value might itself read.
-    assignment_value(builder, value, span)?;
+    let assigned = assignment_value(builder, value, span)?;
     let mut receiver = list_base_place(builder, destination, span)?;
     if start > 0 {
         receiver = prefix_place(builder, destination, start, span)?;
@@ -717,7 +754,7 @@ pub fn indexed_assignment_at(
     let element = list_element(&leaf, depth);
     let argument = match value {
         Rvalue::Use(SourceOperand::Constant(SourceConstant::None)) => none_operand(builder, &element, span)?,
-        _ => return Err(untranslated("carrier_operands::element_plan_operand")),
+        _ => element_plan_operand(builder, assigned, &element, span)?,
     };
     let subscript = list_index_operand(builder, destination, destination.projection.len() - 1, span)?;
     let reference = list_borrow(builder, receiver, true, span)?;

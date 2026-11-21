@@ -14,7 +14,9 @@ use crate::builtins::list_call;
 use crate::bytes_plan::bytes_literal;
 use crate::calls::instantiated_external_call;
 use crate::carrier_operands::{boundary_operand, element_operand};
-use crate::checked_values::{reference_value_read, scalar_operand, scalar_place, validate_callback_place};
+use crate::checked_values::{
+    clone_nominal_operand, reference_value_read, scalar_operand, scalar_place, validate_callback_place,
+};
 use crate::closures::callable_copy_type;
 use crate::collections::{borrow_collection, is_collection, is_owned_collection};
 use crate::element_borrows::{mutable_element_place, shared_element_place};
@@ -39,8 +41,8 @@ use crate::model_lists::model_list_read;
 use crate::models::field_steps;
 use crate::numerics::numeric_carrier;
 use crate::options::replace_owned_destination;
-use crate::pending::untranslated;
 use crate::statements::is_nominal_type;
+use crate::static_storage::read_static;
 use crate::strings::emit_text_helper;
 use crate::text_plan::{clone_text, clone_text_reference, owned_literal};
 use crate::tuple_iterators::{clone_zip, zip_shape};
@@ -181,8 +183,8 @@ pub fn value_operand(builder: &mut Builder, value: &SourceOperand, span: &Source
     if let Some(reference) = reference_value_read(builder, &read.place, read.fact, span)? {
         return Ok(reference);
     }
-    if read.place.global().is_some() {
-        return Err(untranslated("static_storage::read_static"));
+    if let Some(global) = read.place.global() {
+        return read_static(builder, &read.place, global, read.fact, span);
     }
     if let Some(item) = element_read(builder, &read.place, span)? {
         return Ok(item);
@@ -589,7 +591,10 @@ fn materialize_element_field(builder: &mut Builder, field: Place, span: &SourceS
         return clone_text(builder, field, span);
     }
     if is_nominal_type(&ty) {
-        return Err(untranslated("model_construction::clone_nominal_operand"));
+        return match clone_nominal_operand(builder, field, span)?.kind {
+            OperandKind::Move(cloned) => Ok(cloned),
+            _ => Err("invalid Body IR cloned list element field".into()),
+        };
     }
     if is_owned_list(&ty) {
         let (leaf, depth) = require_list_shape(&ty, "invalid Body IR list element field")?;
@@ -651,8 +656,13 @@ fn absent_slice_bound(span: &SourceSpan) -> Vec<Operand> {
 
 /// Map one collection root, materializing immutable frozen wrappers into the owned list used by every read path.
 pub fn list_base_place(builder: &mut Builder, source: &SourcePlace, span: &SourceSpan) -> Result<Place, String> {
-    if source.global().is_some() {
-        return Err(untranslated("static_storage::read_static"));
+    if let Some(global) = source.global() {
+        let root = SourcePlace::from_global(global.clone());
+        let operand = read_static(builder, &root, global, OwnershipFact::Borrow, span)?;
+        return match operand.kind {
+            OperandKind::Move(place) => collection_read_storage(builder, place, span),
+            _ => Err("unsupported Body IR non-list global receiver".into()),
+        };
     }
     match source.local_id() {
         Some(local) => {
