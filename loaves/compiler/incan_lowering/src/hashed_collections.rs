@@ -26,9 +26,9 @@ use crate::list_values::{list_base_place, projected_element_read, value_operand}
 use crate::lists::{is_owned_list, list_element, require_list_shape};
 use crate::options::carrier_layout;
 use crate::options::replace_owned_destination;
-use crate::pending::untranslated;
 use crate::sequence_builtins::argument_type;
 use crate::statements::is_nominal_type;
+use crate::static_storage::persist_static_value;
 
 /// Materialize a checked collection read while preserving caller-owned bindings.
 ///
@@ -391,8 +391,7 @@ pub fn dictionary_method(
 ///
 /// A static receiver's snapshot is read only after the arguments and committed after the insertion, as a static list
 /// method's is. A call retained as an expression initializes its checked Unit destination after the mutation; an
-/// argument that propagated an error has already returned before this call is lowered. A static
-/// receiver's commit is `static_storage::persist_static_value`, which refuses by name until it is in Rust.
+/// argument that propagated an error has already returned before this call is lowered.
 fn collection_insert_method(
     builder: &mut Builder,
     member: &str,
@@ -413,9 +412,9 @@ fn collection_insert_method(
     }
     let output = call_destination(builder, destination, PlanType::Unit, span)?;
     match static_collection_receiver(builder, arguments, true, span)? {
-        Some((_, receiver)) => {
+        Some((global, receiver)) => {
             insert_collection(builder, &receiver, operands, span)?;
-            return Err(untranslated("static_storage::persist_static_value"));
+            persist_static_value(builder, &global, receiver, span)?;
         }
         None => {
             let receiver = argument_place(builder, arguments, 0, span)?;

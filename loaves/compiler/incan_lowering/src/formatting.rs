@@ -9,8 +9,7 @@ use incan_semantics_core::body_ir::{
     Rvalue,
 };
 
-use crate::checked_values::clone_nominal_operand;
-use crate::checked_values::scalar_place;
+use crate::checked_values::{clone_nominal_operand, scalar_place};
 use crate::collections::{is_collection, is_owned_collection};
 use crate::element_places::{element_place_type, is_element_place};
 use crate::enum_display::{borrowed_enum_debug, display_enum_operand, native_enum_owner, native_enum_text};
@@ -22,12 +21,12 @@ use crate::model_values::{debug_model_operand, display_model_operand};
 use crate::numerics::{has_sized_numeric, numeric_carrier, numeric_name};
 use crate::option_tests::is_union_carrier;
 use crate::options::{clone_tuple_operand, format_carrier};
-use crate::pending::untranslated;
 use crate::text_plan::{
     clone_text, clone_text_reference, format_parts, owned_borrowed_text, owned_literal, owned_slice_text,
 };
 use crate::tuples::{display_tuple, is_tuple_type, tuple_debug_formatted};
 use crate::validation_errors::{display_validation_error, validation_error_reference};
+use crate::value_enum_methods::{select_value_enum_raw, value_enum_raw_type};
 
 /// Lower an f-string, retaining literal boundaries and the checked display or nominal Debug style.
 pub fn lower_format(
@@ -202,8 +201,9 @@ fn display_value_operand(
                     }
                     return Ok(result);
                 }
-                if value_enum_owner(builder, *owner) >= 0 {
-                    return Err(untranslated("formatting::display_value_enum"));
+                let value_enum = value_enum_owner(builder, *owner);
+                if value_enum >= 0 {
+                    return display_value_enum(builder, value_enum as usize, place, span);
                 }
             }
             _ => {}
@@ -240,6 +240,17 @@ fn value_enum_owner(builder: &Builder, index: i64) -> i64 {
         .iter()
         .position(|value_enum| declaration.canonical == value_enum.canonical)
         .map_or(-1, |owner| owner as i64)
+}
+
+/// Display a value enum as its raw value, as legacy's Display does: the text itself, or the integer's digits.
+fn display_value_enum(builder: &mut Builder, owner: usize, source: Place, span: &SourceSpan) -> Result<Place, String> {
+    let ty = value_enum_raw_type(builder, owner);
+    let raw = temporary(builder, ty.clone(), span);
+    select_value_enum_raw(builder, owner, source, raw.clone(), span)?;
+    if ty == PlanType::String {
+        return Ok(raw);
+    }
+    display_plan_operand(builder, read_place(raw, false, span), span)
 }
 
 /// Format a materialized scalar without re-reading its source ownership fact.

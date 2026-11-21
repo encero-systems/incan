@@ -35,7 +35,6 @@ use crate::operators::enum_comparison_tag;
 use crate::option_tests::option_isinstance;
 use crate::options::{assign_carrier, variant_condition};
 use crate::patterns::{carrier_pattern_slot, carrier_payload_types, pattern_binds};
-use crate::pending::untranslated;
 use crate::result_carriers::{frozen_operand, typed_carrier_operand};
 use crate::static_storage::snapshot_owns;
 use crate::text_plan::{clone_text_reference, owned_slice_text};

@@ -45,7 +45,6 @@ use crate::numerics::{integer_carrier, numeric_carrier, numeric_zero, sized_nume
 use crate::operators::scalar_rvalue;
 use crate::options::replace_owned_destination;
 use crate::owned_lists::initialize_owned_list_iterator;
-use crate::pending::untranslated;
 use crate::result_carriers::{
     frozen_operand, lower_none_assignment, lower_option_construction, lower_result_construction,
     retained_reference_value,

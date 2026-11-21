@@ -18,6 +18,8 @@ use crate::frame::{
     Builder, drop_owned, external_call, forget_owned, place_type, read_place, temporary, terminate_call,
     track_rvalue_moves, value_type,
 };
+use crate::list_methods::call_destination;
+use crate::list_values::value_operand;
 use crate::method_calls::is_std_primitives_method;
 use crate::partial_callables::partial_call_operands;
 use crate::text_plan::owned_literal;
@@ -233,6 +235,40 @@ pub fn register_callable_item(
         vec![PlanType::String, PlanType::USize, PlanType::String],
         PlanType::Unit,
         vec![read_place(module, true, span), address, read_place(label, true, span)],
+        output,
+        span,
+    );
+    Ok(())
+}
+
+/// Resolve a registered declaration name independently of the pointer's argument and result signature.
+pub fn lower_callable_name(
+    builder: &mut Builder,
+    arguments: &[ArgumentElement],
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    if !builder.callable_name_dynamic_profile {
+        return Err("unsupported Body IR callable-name lookup across registration modules".into());
+    }
+    let [argument] = arguments else {
+        return Err("invalid Body IR callable-name operand count".into());
+    };
+    let Some(value) = argument.as_one() else {
+        return Err("unsupported Body IR callable-name spread operand".into());
+    };
+    let callback = value_operand(builder, value, span)?;
+    let address = callable_address(builder, callback, span)?;
+    let module_identity = builder.module_identity.clone();
+    let module = owned_literal(builder, &module_identity, span);
+    forget_owned(builder, module.local);
+    let output = call_destination(builder, destination, PlanType::String, span)?;
+    external_call(
+        builder,
+        "incan_native_runtime::callable_name",
+        vec![PlanType::String, PlanType::USize],
+        PlanType::String,
+        vec![read_place(module, true, span), address],
         output,
         span,
     );

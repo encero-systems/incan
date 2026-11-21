@@ -1,16 +1,19 @@
 //! Builtin function calls and their scalar boundary checks.
 
 use incan_mir_plan_native::{
-    CalleeKind, Constant, ExternalFunction, ListLeaf, Operand, Place, PlanType, Projection, RvalueKind, SourceSpan,
-    TerminatorKind, TupleElement, assign as plan_assign, tuple_element_type,
+    CalleeKind, Carrier, Constant, ExternalFunction, ListLeaf, Operand, Place, PlanType, Projection, RvalueKind,
+    SourceSpan, TerminatorKind, TupleElement, assign as plan_assign, tuple_element_type,
 };
 use incan_semantics_core::body_ir::{
     ArgumentElement, BuiltinFnId, Constant as SourceConstant, HelperOp, Place as SourcePlace,
 };
 
 use crate::builtins::{emit_boolean_operator, list_call, scalar_builtin};
+use crate::call_arguments::function_argument;
+use crate::callable_values::lower_callable_name;
 use crate::checked_values::scalar_operand;
 use crate::checked_values::scalar_place;
+use crate::closures::callable_signature;
 use crate::decls::library_enum_item;
 use crate::formatting::display_operand;
 use crate::frame::{
@@ -27,17 +30,20 @@ use crate::list_methods::{
 };
 use crate::list_values::{list_borrow, sequence_read_storage, value_operand};
 use crate::lists::{list_element, list_shape, require_list_shape};
+use crate::newtype_hooks::lower_newtype_hook_result;
+use crate::newtype_sums::{lower_newtype_sum_add, lower_newtype_sum_extract};
 use crate::numerics::{float_conversion, integer_conversion};
 use crate::numerics::{has_sized_numeric, numeric_carrier, numeric_name};
-use crate::operand_borrows::{borrow_str_operand, lower_text_helper};
+use crate::operand_borrows::{borrow_str_operand, borrow_text_operand, lower_text_helper};
 use crate::operators::{operand_type, scalar_operator_operand};
-use crate::pending::untranslated;
+use crate::options::carrier_layout;
 use crate::ranges::builtin_range_bounds;
 use crate::sequence_builtins::{
     argument_type, lower_join_helper, lower_list_concat, lower_list_repeat, lower_sequence_builtin, lower_split_helper,
     lower_truth_builtin, source_operand_type, text_argument,
 };
 use crate::strings::text_helper;
+use crate::text_ownership::drop_borrowed_text_temporaries;
 use crate::text_plan::{format_parts, owned_literal};
 use crate::tuple_iterators::{enumerated_element, zip_call, zip_shape};
 use crate::validation_errors::lower_validation_error;
@@ -184,7 +190,9 @@ pub fn lower_builtin(
             lower_sequence_builtin(builder, builtin, arguments, destination, span)
         }
         BuiltinFnId::Min | BuiltinFnId::Max => lower_extrema_builtin(builder, builtin, arguments, destination, span),
-        BuiltinFnId::ReadFile | BuiltinFnId::WriteFile => Err(untranslated("builtin_calls::lower_file_builtin")),
+        BuiltinFnId::ReadFile | BuiltinFnId::WriteFile => {
+            lower_file_builtin(builder, builtin, arguments, destination, span)
+        }
         BuiltinFnId::Zip => lower_zip_builtin(builder, arguments, destination, span),
         BuiltinFnId::Enumerate => lower_enumerate_builtin(builder, arguments, destination, span),
         BuiltinFnId::Len => lower_list_builtin(builder, arguments, destination, span),
@@ -440,9 +448,9 @@ pub fn lower_runtime_helper(
     span: &SourceSpan,
 ) -> Result<(), String> {
     match helper {
-        HelperOp::InstallPanicHook => return Err(untranslated("builtin_calls::install_panic_hook")),
+        HelperOp::InstallPanicHook => return install_panic_hook(builder, arguments, destination, span),
         HelperOp::RaiseValueError => return lower_raise_value_error(builder, arguments, destination, span),
-        HelperOp::CallableName => return Err(untranslated("callable_calls::lower_callable_name")),
+        HelperOp::CallableName => return lower_callable_name(builder, arguments, destination, span),
         HelperOp::SetContains | HelperOp::DictContainsKey => {
             return collection_contains(builder, false, arguments, destination, span);
         }
@@ -498,10 +506,10 @@ pub fn lower_runtime_helper(
             );
             Ok(())
         }
-        HelperOp::NewtypeHookExtract | HelperOp::NewtypeFieldHookExtract => {
-            Err(untranslated("newtype_hooks::lower_newtype_hook_result"))
-        }
-        HelperOp::NewtypeSumAdd | HelperOp::NewtypeSumExtract => Err(untranslated("newtype_sums::newtype sums")),
+        HelperOp::NewtypeHookExtract => lower_newtype_hook_result(builder, arguments, destination, false, span),
+        HelperOp::NewtypeFieldHookExtract => lower_newtype_hook_result(builder, arguments, destination, true, span),
+        HelperOp::NewtypeSumAdd => lower_newtype_sum_add(builder, arguments, destination, span),
+        HelperOp::NewtypeSumExtract => lower_newtype_sum_extract(builder, arguments, destination, span),
         HelperOp::ValidationErrorNew => lower_validation_error(builder, arguments, destination, false, span),
         HelperOp::ValidationErrorWithCode => lower_validation_error(builder, arguments, destination, true, span),
         _ => Err(format!("unsupported Body IR Helper {helper:?}")),
@@ -598,6 +606,80 @@ fn lower_extrema_builtin(
     if result == PlanType::String {
         builder.owned.push(local);
     }
+    Ok(())
+}
+
+/// Register a native panic callback, a function item or pointer without a captured environment.
+fn install_panic_hook(
+    builder: &mut Builder,
+    arguments: &[ArgumentElement],
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    if arguments.len() != 1 {
+        return Err("invalid Body IR panic-hook registration arity".into());
+    }
+    let callback = argument_value(builder, arguments, 0, span)?;
+    let callback_type = value_type(builder, &callback)?;
+    if !matches!(callback_type, PlanType::FunctionItem(..) | PlanType::FunctionPointer(_)) {
+        return Err("unsupported native panic callback with a captured environment".into());
+    }
+    let signature = callable_signature(&callback_type)?;
+    let pointer = function_argument(builder, &PlanType::FunctionPointer(signature.clone()), callback, span)?;
+    let output = call_destination(builder, destination, PlanType::Unit, span)?;
+    terminate_call(
+        builder,
+        CalleeKind::InstallPanicHook(signature),
+        vec![pointer],
+        output,
+        span,
+    );
+    Ok(())
+}
+
+/// Use checked Result storage for file IO, borrowing text inputs and preserving the string error payload.
+fn lower_file_builtin(
+    builder: &mut Builder,
+    builtin: BuiltinFnId,
+    arguments: &[ArgumentElement],
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let (count, name, success_type) = if builtin == BuiltinFnId::WriteFile {
+        (2, "write_file_text", PlanType::Unit)
+    } else {
+        (1, "read_file_text", PlanType::String)
+    };
+    if arguments.len() != count {
+        return Err("unsupported Body IR file builtin arity".into());
+    }
+    let Some(place) = destination else {
+        return Err("unsupported Body IR file builtin without result storage".into());
+    };
+    let output = scalar_place(builder, place, span)?;
+    let result = place_type(&builder.locals, &output);
+    let (_, declaration) = carrier_layout(builder, &result)?;
+    if declaration.carrier != Carrier::Result || declaration.variants.len() != 2 {
+        return Err("unsupported Body IR file builtin result carrier".into());
+    }
+    if declaration.variants[0].fields != [success_type] || declaration.variants[1].fields != [PlanType::String] {
+        return Err("unsupported Body IR file builtin result payloads".into());
+    }
+    let incoming = builder.owned.clone();
+    let mut operands = Vec::with_capacity(count);
+    let mut parameters = Vec::with_capacity(count);
+    for argument in arguments {
+        let Some(value) = argument.as_one() else {
+            return Err("unsupported Body IR spread file builtin argument".into());
+        };
+        operands.push(borrow_text_operand(builder, value, span)?);
+        parameters.push(PlanType::StringRef);
+    }
+    let local = output.local;
+    let path = format!("incan_native_runtime::{name}");
+    external_call(builder, &path, parameters, result, operands, output, span);
+    drop_borrowed_text_temporaries(builder, &incoming, local, span);
+    builder.owned.push(local);
     Ok(())
 }
 

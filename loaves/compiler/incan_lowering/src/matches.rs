@@ -9,6 +9,7 @@ use incan_semantics_core::body_ir::{
     PlaceElem,
 };
 
+use crate::builtins::list_call;
 use crate::carrier_operands::{bind_enum_fields, bind_payload_in_place, boundary_operand};
 use crate::checked_values::{clone_nominal_operand, scalar_operand, scalar_place};
 use crate::closures::callable_copy_type;
@@ -20,15 +21,15 @@ use crate::frame::{
     terminate_call, track_rvalue_moves,
 };
 use crate::hashed_collections::cloned_collection;
-use crate::list_values::value_operand;
-use crate::lists::is_list;
+use crate::list_values::{list_base_place, list_borrow, list_index_operand, value_operand};
+use crate::lists::{is_list, list_element, require_list_shape};
+use crate::model_lists::{prefix_place, structural_prefix};
 use crate::numerics::numeric_carrier;
 use crate::options::{carrier_payload_value, clone_tuple_operand, variant_condition};
 use crate::patterns::{
     binds_in_place, carrier_pattern_slot, enum_pattern_place, has_refutable_payload, nominal_field, pattern_binds,
     pattern_tests,
 };
-use crate::pending::untranslated;
 use crate::statements::{is_nominal_type, lower_statement};
 use crate::text_plan::clone_text;
 use crate::tuples::{is_tuple_type, owned_carrier, tuple_fields, tuple_has_owners};
@@ -451,7 +452,7 @@ fn match_scrutinee_place(
         .iter()
         .any(|projection| matches!(projection, PlaceElem::Index(_)));
     if indexed && in_place {
-        return Err(untranslated("matches::exclusive_element"));
+        return exclusive_element(builder, &read.place, span);
     }
     if indexed {
         // Collection reads clone one element before inspecting its tag. Evaluate the checked index once and keep the
@@ -946,4 +947,56 @@ pub fn read_generic_decorator(
         span,
     );
     Ok(Some(read_place(output, false, span)))
+}
+
+/// Reborrow the list element an in-place match names through the runtime's checked `borrow_list_mut`.
+///
+/// The list is the scrutinee's local or a structural field path of it; the index is evaluated before the list is
+/// borrowed. An enum carrier or list element is matched this way; nested and sliced element paths stay refused.
+fn exclusive_element(builder: &mut Builder, source: &SourcePlace, span: &SourceSpan) -> Result<Place, String> {
+    let Some(last) = source.projection.len().checked_sub(1) else {
+        return Err("unsupported Body IR in-place match on a list slice".into());
+    };
+    if !matches!(source.projection[last], PlaceElem::Index(_)) {
+        return Err("unsupported Body IR in-place match on a list slice".into());
+    }
+    let container = if last == 0 {
+        list_base_place(builder, source, span)?
+    } else {
+        match structural_prefix(builder, source)? {
+            Some((count, _)) if count == last => {}
+            _ => return Err("unsupported Body IR in-place match on a nested list element".into()),
+        }
+        prefix_place(builder, source, last, span)?
+    };
+    let (leaf, depth) = require_list_shape(
+        &place_type(&builder.locals, &container),
+        "unsupported Body IR in-place match off a list",
+    )?;
+    let element = list_element(&leaf, depth);
+    let reference_type = match &element {
+        PlanType::Enum(owner, name) => PlanType::EnumMutRef(*owner, name.clone()),
+        PlanType::List(inner_leaf, inner_depth) => PlanType::ListMutRef(inner_leaf.clone(), *inner_depth),
+        _ => return Err("unsupported Body IR in-place match on a non-carrier element".into()),
+    };
+    let index = list_index_operand(builder, source, last, span)?;
+    let exclusive_list = list_borrow(builder, container, true, span)?;
+    let reference = temporary(builder, reference_type.clone(), span);
+    let parameters = vec![PlanType::ListMutRef(leaf, depth), PlanType::Int];
+    let arguments = vec![exclusive_list, index];
+    list_call(
+        builder,
+        "borrow_list_mut",
+        element.clone(),
+        parameters,
+        reference_type,
+        arguments,
+        reference.clone(),
+        span,
+    );
+    Ok(Place {
+        local: reference.local,
+        projection: Projection::Deref(element),
+        span: span.clone(),
+    })
 }

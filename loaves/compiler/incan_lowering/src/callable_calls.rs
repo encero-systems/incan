@@ -43,7 +43,6 @@ pub fn carrier_callable_operand(
     target: &PlanType,
     span: &SourceSpan,
 ) -> Result<Operand, String> {
-    let _ = span;
     let PlanType::Enum(owner, _) = target else {
         return Ok(value);
     };
@@ -195,9 +194,6 @@ fn special_named_target(
     let Some(identity) = &target.canonical else {
         return Ok(None);
     };
-    if has_adapter_slot(module, identity) {
-        return Ok(Some("primitive_traits::normalized_primitive_static"));
-    }
     if builder.constructors().validated_constructors.contains(identity) {
         return Ok(Some("callable_calls::lower_validated_constructor"));
     }

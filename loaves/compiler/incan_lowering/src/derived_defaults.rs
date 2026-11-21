@@ -19,7 +19,6 @@ use crate::layout_types::native_source_type;
 use crate::lists::list_element;
 use crate::numerics::{numeric_carrier, numeric_zero};
 use crate::options::none_operand;
-use crate::pending::untranslated;
 use crate::text_plan::owned_literal;
 use crate::type_parameters::substitute;
 
