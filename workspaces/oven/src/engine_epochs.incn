@@ -46,6 +46,8 @@ pub model CapturedRequest:
     pub transaction: Option[Transaction] = None
     # The recorded source-graph reach this request was captured with, which its later capture checks again.
     pub reach: Option[SourceGraph] = None
+    # Build and run select the shared provider's inputs during initial capture and publication recheck.
+    pub project_library: bool = false
 
 
 pub def capture_submit(store: Path, submit: Submit) -> Result[CapturedRequest, str]:
@@ -86,15 +88,18 @@ pub def prepare_submit(
         return Err("unit records require one Incan program file and a project view")
     selected = selected_home()?
     admitted = selected.admitted
-    # Previous heads could certify a file while its coarse status timestamp still admitted another write.
-    inputs = ["settled-source-observation/1", submit.view, source.0, submit.input_selection, admitted.pin]
+    # Check and executable requests preserve their own reach. A directory listing now serves both source facets.
+    project_library = submit.command != "check"
+    inputs = [
+        "settled-source-observation/2", str(project_library), submit.view, source.0, submit.input_selection, admitted.pin,
+    ]
     head = f"incan.engine.capture-head\t{fingerprint(inputs)?}"
     before = snapshot(store, submit.view).map_err((error) => error.message())?
     prior_revision, prior_identity, previous = previous_epoch(before, head)?
     # 2. Every engine request starts at its selected source, and build and run select the same program inputs: the verb
     #    is an execution action, not a compiled identity. The unit's recorded source graphs bound its reach once they
     #    exist.
-    mut reach = recorded_reach(source, submit.input_selection)
+    mut reach = recorded_reach(source, submit.input_selection, project_library)
     if reach is None and discover_standalone:
         match first_standalone_reach(source, submit.input_selection, selected):
             Ok(found) => reach = found
@@ -104,6 +109,7 @@ pub def prepare_submit(
         selection=InputSelection(command="run", profile=submit.input_selection, features=diagnostic_features()),
         whole_unit=true,
         reach=reach,
+        project_library=project_library,
     )
     checking = begin_work()
     captured = capture(request, previous, admitted, 0)?
@@ -121,6 +127,7 @@ pub def prepare_submit(
                         counters=captured.counters,
                         selected=selected,
                         reach=request.reach,
+                        project_library=project_library,
                         encodings=0,
                         commits=0,
                         identity_encodings=0,
@@ -148,6 +155,7 @@ pub def prepare_submit(
                     counters=captured.counters,
                     selected=selected,
                     reach=request.reach,
+                    project_library=project_library,
                 ),
             )
 
@@ -209,7 +217,7 @@ pub def after_projection(captured: CapturedRequest) -> Result[CapturedRequest, s
 
 def graph_published(captured: CapturedRequest) -> Result[Option[CapturedRequest], str]:
     """The request refreshed with its unit's newly recorded graph reach, when that reach captures the same identity."""
-    reach = recorded_reach(Path(captured.epoch.roots[0]), captured.epoch.selection.profile)
+    reach = recorded_reach(Path(captured.epoch.roots[0]), captured.epoch.selection.profile, captured.project_library)
     if reach is None:
         return Ok(None)
     graphed = capture(recaptured(captured, reach), Some(captured.epoch), captured.selected.admitted, 0)?
@@ -223,7 +231,13 @@ def graph_published(captured: CapturedRequest) -> Result[Option[CapturedRequest]
 
 def recaptured(captured: CapturedRequest, reach: Option[SourceGraph]) -> CaptureRequest:
     """The whole-unit request `captured` was taken for, over `reach`."""
-    return CaptureRequest(roots=captured.epoch.roots, selection=captured.epoch.selection, whole_unit=true, reach=reach)
+    return CaptureRequest(
+        roots=captured.epoch.roots,
+        selection=captured.epoch.selection,
+        whole_unit=true,
+        reach=reach,
+        project_library=captured.project_library,
+    )
 
 
 def refreshed_request(

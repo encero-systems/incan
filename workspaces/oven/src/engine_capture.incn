@@ -142,7 +142,7 @@ pub model CapturedInput:
 
 @derive(Eq)
 pub model CapturedListing:
-    """One directory of a package's membership: its metadata when listed, and the members and subdirectories it held."""
+    """One directory of a package's membership, retaining both source facets and the subdirectories it held."""
 
     pub path: str
     pub metadata: FileMetadata
@@ -218,6 +218,32 @@ pub model BuildEpoch:
                 return Some(item)
         return None
 
+    pub def source_files(self, root: str) -> list[str]:
+        """
+        The Incan files in the captured tree of `root`.
+
+        1. Index the listings by directory.
+        2. Follow the tree from `root` so a nested project captured as a dependency does not become a member.
+        """
+        # 1. Index rows without copying their lists of children.
+        positions = {self.listings[index].path: index for index in range(len(self.listings))}
+        # 2. Only children admitted by the containing directory belong to this tree.
+        mut pending = [root]
+        mut files: list[str] = []
+        mut next = 0
+        while next < len(pending):
+            directory = pending[next]
+            next += 1
+            if directory not in positions:
+                continue
+            index = positions[directory]
+            for name in self.listings[index].files:
+                if name.endswith(".incn"):
+                    files.append(Path(directory).joinpath(name).0)
+            for name in self.listings[index].directories:
+                pending.append(Path(directory).joinpath(name).0)
+        return files
+
 
 pub model ClassCounters:
     """The work capture did for one class of input."""
@@ -261,6 +287,8 @@ pub model CaptureRequest:
     # What the whole unit's recorded source graphs read and probed. Capture checks exactly these paths; without them it
     # lists the authored inventory. A request's later captures pass the same reach, so they compare the same paths.
     pub reach: Option[SourceGraph] = None
+    # A project build or run also reaches the authored inputs of its possible shared library.
+    pub project_library: bool = false
 
 
 pub model AdmittedHome:
@@ -360,7 +388,7 @@ pub def capture_with(
     1. Take the frozen roots: from the previous epoch while the toolchain pin is unchanged, else from the pin's bytes.
     2. Capture the roots with their project configuration: the manifest lookup, the lock, the files it declares.
     3. A `build` or `bake` captures the package's membership. A whole unit captures the paths its recorded source
-       graphs name, and lists its membership only before it has one.
+       graphs name. Project programs also capture their shared library's membership.
     4. Check every recorded lookup, resolved or absent, unless it lies under a frozen root.
     5. Compare with the previous epoch.
     """
@@ -373,7 +401,10 @@ pub def capture_with(
     # 2. The roots and their configuration are always in reach.
     mut membership: list[SourceMembership] = []
     for root in request.roots:
-        membership.extend(state.root(absolute(root), request.selection.command, request.whole_unit, request.reach)?)
+        members = state.root(
+            absolute(root), request.selection.command, request.whole_unit, request.reach, request.project_library,
+        )?
+        membership.extend(members)
     # 3. A package's membership is listed with the compiler's collection rules; a graph's paths were checked by name.
     for source in membership:
         state.members(source.root, source.extension)?
@@ -430,12 +461,14 @@ model Capture:
         command: str,
         whole_unit: bool,
         reach: Option[SourceGraph],
+        project_library: bool,
     ) -> Result[list[SourceMembership], str]:
         """
         Capture one request root and its project configuration; the membership directories of a `build` or `bake`.
 
         1. `run` captures its file and looks up its manifest from the file's directory upward. A whole unit captures
-           what its recorded graphs name, or, without them, returns its membership directories.
+           what its recorded graphs name, or, without them, returns its membership directories. A project build or
+           run also lists the shared provider's membership for an entry with a recorded graph.
         2. `build` and `bake` capture the Loaf root's manifest and list its source root.
         """
         if self.is_frozen(path):
@@ -446,11 +479,15 @@ model Capture:
             match self.editable(path, InputRole.Root)?:
                 Admission.Missing => return Err(f"{path}: no such source file")
                 _ => pass
-            _ = self.manifest_lookup(Path(path))?
+            project = self.manifest_lookup(Path(path))?
             if whole_unit:
                 match reach:
-                    Some(graph) => return self.graph_members(graph)
-                    None => return self.unit_membership(Path(path))
+                    Some(graph) =>
+                        self.graph_members(graph)?
+                        if project_library:
+                            if let Some(root) = project:
+                                return self.source_memberships(root)
+                    None => return self.unit_membership(Path(path), project)
             return Ok([])
         # 2. A Loaf: its own manifest is required, and its source root holds its members.
         manifest = Path(path).joinpath("loaf.toml").0
@@ -458,7 +495,7 @@ model Capture:
             return Err(f"{manifest}: no such manifest")
         return self.source_memberships(path)
 
-    def graph_members(mut self, graph: SourceGraph) -> Result[list[SourceMembership], str]:
+    def graph_members(mut self, graph: SourceGraph) -> Result[None, str]:
         """
         Capture each file a whole unit's recorded graphs read and each absent path they probed, by name, listing no
         directory. A file created at a probed path is found here; one nothing imported or probed is never met.
@@ -468,26 +505,25 @@ model Capture:
                 self.counters.frozen.inputs += 1
                 continue
             _ = self.editable(path, InputRole.Member)?
-        return Ok([])
+        return Ok(None)
 
-    def unit_membership(mut self, source: Path) -> Result[list[SourceMembership], str]:
+    def unit_membership(mut self, source: Path, project: Option[str]) -> Result[list[SourceMembership], str]:
         """Capture the whole-unit producer's authored inventory, including an entry outside its source root."""
-        for candidate in manifest_candidates(source):
-            if candidate.0 in self.declared:
-                mut selected = self.source_memberships(candidate.parent().0)?
-                for membership in selected:
-                    if membership.extension == ".incn" and source.0.startswith(membership.root + "/"):
-                        return Ok(selected)
-                selected.append(SourceMembership(root=source.parent().0, extension=".incn"))
-                return Ok(selected)
+        if let Some(root) = project:
+            mut selected = self.source_memberships(root)?
+            for membership in selected:
+                if membership.extension == ".incn" and source.0.startswith(membership.root + "/"):
+                    return Ok(selected)
+            selected.append(SourceMembership(root=source.parent().0, extension=".incn"))
+            return Ok(selected)
         return Ok([SourceMembership(root=source.parent().0, extension=".incn")])
 
-    def manifest_lookup(mut self, source: Path) -> Result[bool, str]:
-        """Look up the manifest of `source` where the unit description does; each miss is an absent lookup."""
+    def manifest_lookup(mut self, source: Path) -> Result[Option[str], str]:
+        """Find the project root where the unit description does; retain absent manifest lookups on that path."""
         for candidate in manifest_candidates(source):
             if not self.is_frozen(candidate.0) and self.manifest(candidate.0)?:
-                return Ok(true)
-        return Ok(false)
+                return Ok(Some(candidate.parent().0))
+        return Ok(None)
 
     def manifest(mut self, path: str) -> Result[bool, str]:
         """
@@ -561,17 +597,20 @@ model Capture:
             if self.is_frozen(directory):
                 self.counters.frozen.inputs += 1
                 continue
-            match self.listing(directory, extension)?:
+            match self.listing(directory)?:
                 None => pass
                 Some(entry) =>
                     for name in entry.files:
-                        _ = self.editable(Path(directory).joinpath(name).0, InputRole.Member)?
+                        if name.endswith(extension):
+                            _ = self.editable(Path(directory).joinpath(name).0, InputRole.Member)?
                     for name in entry.directories:
                         pending.append(Path(directory).joinpath(name).0)
         return Ok(None)
 
-    def listing(mut self, directory: str, extension: str) -> Result[Option[CapturedListing], str]:
-        """A membership directory's members: the recorded listing while its metadata is unchanged, else listed now."""
+    def listing(mut self, directory: str) -> Result[Option[CapturedListing], str]:
+        """Reuse the directory for both source facets. A settled listing also survives unchanged metadata."""
+        if directory in self.listed:
+            return Ok(Some(self.listed[directory]))
         self.counters.in_reach.stats += 1
         match file_metadata(Path(directory))?:
             None => return Ok(None)
@@ -583,14 +622,14 @@ model Capture:
                     if recorded.settled and recorded.metadata == observed:
                         self.listed[directory] = recorded
                         return Ok(Some(recorded))
-                entry = children(Path(directory), extension)?
+                entry = children(Path(directory), "")?
                 self.counters.in_reach.listings += 1
                 self.counters.in_reach.stats += entry.checked
                 listing = CapturedListing(
                     path=directory,
                     metadata=observed,
                     settled=observed.settled_for_capture(self.settle),
-                    files=entry.files,
+                    files=[name for name in entry.files if name.endswith(".incn") or name.endswith(".rs")],
                     directories=entry.directories,
                 )
                 self.listed[directory] = listing

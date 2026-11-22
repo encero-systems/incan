@@ -86,7 +86,7 @@ pub def source_graph(
     # 1. Only a plain program or test unit is collected from its entry alone.
     if not graph_keyed(unit):
         return Ok(None)
-    location = graph_location(unit.project_root, unit.profile, unit.kind, unit.source)
+    location = unit_graph_location(unit)
     # 2. Unchanged reads and still-absent lookups collect the same graph, and so do edits that keep each surface.
     for entry in recorded_entries(location):
         if required_text(entry, "scope").unwrap_or("") != scope:
@@ -120,26 +120,43 @@ pub def graph_location(project_root: str, profile: str, kind: str, entry: str) -
     return Path(project_root).joinpath("target/incan/units/source-graphs").joinpath(f"{name}.crumb")
 
 
-pub def recorded_reach(source: Path, profile: str) -> Option[SourceGraph]:
+def unit_graph_location(unit: UnitDescription) -> Path:
+    """Project source-only and library-linked program graphs authorize different request reach."""
+    mut kind = unit.kind
+    if kind == "program" and unit.package != "":
+        if unit.project_library is None:
+            kind = "source-program"
+        else:
+            kind = "linked-program"
+    return graph_location(unit.project_root, unit.profile, kind, unit.source)
+
+
+pub def recorded_reach(source: Path, profile: str, include_linked: bool = false) -> Option[SourceGraph]:
     """
     Every file the recorded graphs of the program at `source` read and every absent path they probed, under each
-    scope; `None` without a readable record, which leaves a request capture listing the source root.
+    scope; `None` without a readable record, which leaves a request capture listing the source root. Build and run may
+    also read a library-linked graph; checks rely on a graph collected from the program's own sources.
 
     The program's project is the directory of the nearest `loaf.toml`, else the file's own, as its description
     finds it. A capture checks these paths itself, so their recorded digests are not consulted here.
     """
     mut project = source.parent()
+    mut kinds = ["program"]
     for candidate in manifest_candidates(source):
         if candidate.is_file():
             project = candidate.parent()
+            kinds = ["source-program"]
+            if include_linked:
+                kinds.append("linked-program")
             break
     mut read: list[str] = []
     mut absent: list[str] = []
-    for entry in recorded_entries(graph_location(project.0, profile, "program", source.0), false):
-        for item in required_items(entry, "read").unwrap_or([]):
-            read.append(required_text(item, "path").unwrap_or(""))
-        for item in required_items(entry, "absent").unwrap_or([]):
-            absent.append(item.as_str().unwrap_or(""))
+    for kind in kinds:
+        for entry in recorded_entries(graph_location(project.0, profile, kind, source.0), false):
+            for item in required_items(entry, "read").unwrap_or([]):
+                read.append(required_text(item, "path").unwrap_or(""))
+            for item in required_items(entry, "absent").unwrap_or([]):
+                absent.append(item.as_str().unwrap_or(""))
     if len(read) == 0 or "" in read or "" in absent:
         return None
     return Some(SourceGraph(read=unique(read), absent=unique(absent)))
@@ -156,7 +173,7 @@ pub def recorded_imports(
     """
     if not graph_keyed(unit):
         return Ok(None)
-    match recorded_graph(graph_location(unit.project_root, unit.profile, unit.kind, unit.source), scope, project)?:
+    match recorded_graph(unit_graph_location(unit), scope, project)?:
         Some(graph) => return Ok(graph.imports)
         None => return Ok(None)
 

@@ -5,9 +5,10 @@ unit's project-local imports of those modules as imports of the library, so the 
 """
 
 from std.fs import Path
-from files import make_directory, read, write
+from files import make_directory, read
 from home import dependency_artifact_dir, standard_packages
-from observation import entered
+from observation import entered, skipped_directory
+from publication import publish
 from unit import UnitDescription, UnitLoaf
 
 # The suffix that names a project's shared library, as package and dependency key, after the project's package.
@@ -18,7 +19,7 @@ const ROOT_TEXT: str = "\"\"\"A project's shared library: its source-root module
 const ROOT_ENTRIES: FrozenList[str] = ["main.incn", "lib.incn"]
 
 
-pub def with_project_library(unit: UnitDescription) -> Result[UnitDescription, str]:
+pub def with_project_library(unit: UnitDescription, captured: Option[list[str]] = None) -> Result[UnitDescription, str]:
     """
     A test or program unit of a project, set to link its project's shared library, and every other unit as it was.
 
@@ -41,7 +42,7 @@ pub def with_project_library(unit: UnitDescription) -> Result[UnitDescription, s
     for package in standard_packages(unit.manifests)?:
         if package.name == unit.package:
             return Ok(unit)
-    tests, provided = source_modules(Path(unit.source_root))?
+    tests, provided = source_modules(Path(unit.source_root), captured)?
     if len([path for path in provided if path != unit.source]) == 0:
         return Ok(unit)
     mut linked = unit
@@ -50,14 +51,17 @@ pub def with_project_library(unit: UnitDescription) -> Result[UnitDescription, s
     return Ok(linked)
 
 
-pub def planned_program(unit: UnitDescription, direct: bool) -> Result[UnitDescription, str]:
+pub def planned_program(
+    unit: UnitDescription, direct: bool, captured: Option[list[str]] = None,
+) -> Result[UnitDescription, str]:
     """
     A program unit as `build` and `run` both compile it: a project's program links the project's shared library, so it
-    compiles only its own modules, and a direct source, which is no project's unit, never does.
+    compiles only its own modules, and a direct source, which is no project's unit, never does. A request with an
+    admitted source inventory supplies it here so the planner uses the same membership without listing it again.
     """
     if direct:
         return Ok(unit)
-    return with_project_library(unit)
+    return with_project_library(unit, captured)
 
 
 pub def library_key(package: str) -> str:
@@ -113,7 +117,10 @@ def library_root(unit: UnitDescription, key: str) -> Result[Path, str]:
     if root.is_file() and read(root)? == ROOT_TEXT:
         return Ok(root)
     make_directory(directory)?
-    write(root, ROOT_TEXT)?
+    # Concurrent cold programs can share this directory in the same engine process.
+    generation = directory.joinpath("generate").lock_exclusive().map_err((error) => error.message())?
+    if not root.is_file() or read(root)? != ROOT_TEXT:
+        publish(root, ROOT_TEXT)?
     return Ok(root)
 
 
@@ -124,21 +131,23 @@ pub def is_test_module(name: str) -> bool:
     return name.startswith("test_") or name.endswith("_test.incn") or name == "conftest.incn"
 
 
-pub def source_modules(source_root: Path) -> Result[tuple[list[str], list[str]], str]:
+pub def source_modules(
+    source_root: Path, captured: Option[list[str]] = None,
+) -> Result[tuple[list[str], list[str]], str]:
     """
     The test modules under a source root and the modules its shared library provides, each in byte order. Root
     `main.incn` and `lib.incn` are entry files of neither; the walk enters what every source walk enters (see
     `entered`): no hidden directory, build output or vendored packages, and no nested project.
     """
-    mut tests: list[str] = []
-    mut provided: list[str] = []
+    if let Some(files) = captured:
+        return Ok(partition_sources(source_root, files))
     if not source_root.is_dir():
-        return Ok((tests, provided))
+        return Ok(([], []))
+    mut files: list[str] = []
     mut pending = [source_root]
     mut index = 0
     while index < len(pending):
         directory = pending[index]
-        at_root = index == 0
         index += 1
         for entry in directory.iterdir().map_err((error) => f"cannot list {directory.0}: {error.message()}")?:
             name = entry.name()
@@ -147,8 +156,31 @@ pub def source_modules(source_root: Path) -> Result[tuple[list[str], list[str]],
             if entry.is_dir():
                 if entered(entry):
                     pending.append(entry)
-            elif is_test_module(name):
-                tests.append(entry.0)
-            elif name.endswith(".incn") and not (at_root and name in ROOT_ENTRIES):
-                provided.append(entry.0)
-    return Ok((sorted(tests), sorted(provided)))
+            elif name.endswith(".incn"):
+                files.append(entry.0)
+    return Ok(partition_sources(source_root, files))
+
+
+def partition_sources(root: Path, files: list[str]) -> tuple[list[str], list[str]]:
+    """Classify source files admitted by either planner, retaining canonical order."""
+    mut tests: list[str] = []
+    mut provided: list[str] = []
+    for file in files:
+        name = Path(file).name()
+        if name.startswith("."):
+            continue
+        if is_test_module(name):
+            tests.append(file)
+        elif provides_source(file[len(root.0) + 1:]):
+            provided.append(file)
+    return (sorted(tests), sorted(provided))
+
+
+pub def provides_source(relative: str) -> bool:
+    """Whether a source-root relative module is eligible for ownership by the project's shared library."""
+    if relative in ROOT_ENTRIES or not relative.endswith(".incn") or is_test_module(Path(relative).name()):
+        return false
+    for part in relative.split("/"):
+        if skipped_directory(part):
+            return false
+    return true

@@ -17,6 +17,7 @@ from compiler_source_projection import (
 from core_process import executable
 from observation import observe
 from engine_capture import CapturedInput, InputRole
+from project_library import provides_source
 from unit import UnitDescription, dependency_source_roots
 
 
@@ -205,13 +206,16 @@ def stage_changed_projection(selected: Snapshot, mut transaction: Transaction, k
 
 
 def captured_source_identity(unit: UnitDescription, path: str) -> Result[Option[Tuple[str, str]], str]:
-    """Compare physical input and root paths so symlinked checkouts cannot omit changed source witnesses."""
+    """Compare physical paths and keep a linked program's own entry and excluded files under its own authority."""
     normalized = match Path(path).resolve():
         Err(_) => return Ok(None)
         Ok(resolved) => resolved.0
 
     for dependency in dependency_source_roots(unit):
         if let Some(relative) = captured_relative_path(normalized, dependency[1])?:
+            if unit.project_library == Some(dependency[0]):
+                if normalized == unit.source or not provides_source(relative):
+                    continue
             return Ok(Some((dependency[0], logical_module(relative))))
     if let Some(relative) = captured_relative_path(normalized, unit.project_root)?:
         return Ok(Some((source_origin(unit), relative)))

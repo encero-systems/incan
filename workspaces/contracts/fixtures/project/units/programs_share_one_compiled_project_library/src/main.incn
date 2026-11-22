@@ -1,5 +1,6 @@
 # behavior: a project's program built and run, and its second program, compile its modules once, in its shared library
 # environment:
+#   INCAN_ENGINE=legacy
 #   INCAN_BAKERY=target/case-bakery
 # cli-commands:
 #   oven build src/main.incn

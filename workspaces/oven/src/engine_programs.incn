@@ -36,7 +36,10 @@ pub from engine_program_records import NativeUnit
 from engine_program_records import SELECTION_KEY, decode_program, decode_selection, encode_selection, program_view
 from features import FeatureRequest
 from home import StandardPackage, dependency_artifact_dir
-from incan_units import check_prepared, obtain_executable, program_binary, executable_view, view_executable
+from incan_units import (
+    check_prepared, obtain_executable, prepare_project_library, program_binary, executable_view, view_executable,
+)
+from project_library import planned_program
 from pub::incan_platform.store import EXPECT_REPAIR, HOME_VIEW, Snapshot, Transaction, begin, commit, get, put
 from engine_overlay import is_editor_view
 from store_path_conversion import snapshot
@@ -289,7 +292,7 @@ pub def obtain(
     Ask for a unit record, using the existing RFC 124 producer on a miss.
 
     1. Read a previously finalized native descriptor without preparing frozen inputs again.
-    2. Otherwise read the captured epoch, describe the program and finalize its RFC 124 identity.
+    2. Otherwise read the captured epoch, bind the program's shared provider and finalize its RFC 124 identity.
     3. Obtain its executable through the bakery's claim, recheck, worker compilation and publication path.
     4. Return the descriptor after checking capture; caller selection publishes it in the caller's view.
     5. A unit baked here is returned unviewed: the caller commits the request and then calls `view_sealed`.
@@ -328,10 +331,18 @@ pub def obtain(
     mut toolchain = home.toolchain
 
     toolchain.console = console
-    asked = requested_unit(Path(epoch.roots[0]), epoch.selection.profile, unit_options, toolchain, home.standard)?
+    request_view = program_view(handle)?
+    mut asked = requested_unit(Path(epoch.roots[0]), epoch.selection.profile, unit_options, toolchain, home.standard)?
     verify_scheduled_origin(asked, scheduled_origin)?
-    ready = prepared_for(program_view(handle)?, asked, toolchain)?
-    whole = whole_unit_reason(ready, unit_options)?
+    asked.unattended = is_editor_view(request_view)
+    files = epoch.source_files(asked.source_root)
+    planned = planned_program(asked, false, Some(files))?
+    shared = planned.project_library is not None
+    described, _ = prepare_project_library(planned, toolchain)?
+    ready = prepared_for(request_view, described, toolchain)?
+    mut whole = whole_unit_reason(ready, unit_options)?
+    if whole == "" and shared and ready.project_library is None:
+        whole = "shared library refused"
     if whole != "":
         record_work(Operation.EnginePrepare, epoch.roots[0], preparing)
         return whole_unit_program(store, selector, ready, toolchain, console, whole, epoch_reads)
@@ -350,7 +361,6 @@ pub def obtain(
     record_work(Operation.EnginePrepare, epoch.roots[0], preparing)
     # 3. Exactly one existing producer owns claiming and publishing a native unit. An editor's overlay reads and
     # writes its source and checked-body records in its own view, so it never changes what a build reads.
-    request_view = program_view(handle)?
     editor = is_editor_view(request_view)
     selection = select_bodies(store, request_view, ready, epoch.inputs, listing_refusals, record_writer)?
     graph = selection.graph
@@ -885,7 +895,9 @@ def standalone_selector(epoch: BuildEpoch, producer: str) -> Result[Option[str],
         if not (listing.path == source.parent().0 or listing.path.startswith(prefix)):
             return Ok(None)
         names = [listing.path[len(source.parent().0):]]
-        contents = names + [f"file:{name}" for name in listing.files] + [f"directory:{name}" for name in listing.directories]
+        contents = names + [f"file:{name}" for name in listing.files if name.endswith(".incn")] + [
+            f"directory:{name}" for name in listing.directories
+        ]
         bindings.append(f"listing:{fingerprint(contents)?}")
     return Ok(Some(f"incan.engine.standalone-program\t{fingerprint(inputs + sorted(bindings))?}"))
 
