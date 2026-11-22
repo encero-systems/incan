@@ -28,6 +28,11 @@ pub class Process:
             None => return Ok(None)
             Some(status) => return Ok(Some(status.success()))
 
+    pub def wait(mut self) -> Result[None, str]:
+        """Reap a child after its owner has closed the command stream and asked it to exit."""
+        _ = self.child.borrow_mut().wait().map_err((error) => str(error))?
+        return Ok(None)
+
     pub def terminate(mut self) -> Result[None, str]:
         """Kill and reap only this caller's child after a failed startup deadline."""
         self.child.borrow_mut().kill().map_err((error) => str(error))?
