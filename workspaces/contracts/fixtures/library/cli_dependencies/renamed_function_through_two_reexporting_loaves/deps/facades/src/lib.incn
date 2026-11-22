@@ -1,0 +1,4 @@
+"""Publish one function under a new name and another under its own."""
+
+pub from calculations import calculate as facade_calculate
+pub from calculations import increment
