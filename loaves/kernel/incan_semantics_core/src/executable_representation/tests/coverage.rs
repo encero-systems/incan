@@ -116,6 +116,7 @@ fn only_reached_statics_expose_native_accessors() -> Result<(), Box<dyn std::err
         &public,
         &BTreeSet::new(),
         true,
+        None,
     )?;
     let old_reader = SurfaceReader::open(&legacy)?;
     let new_reader = SurfaceReader::open(&prepared.bytes)?;

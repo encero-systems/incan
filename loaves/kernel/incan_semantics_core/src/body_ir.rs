@@ -82,6 +82,9 @@ pub use values::*;
 // Module / body containers
 // ============================================================================
 
+/// Producer-authored specialization and layout digests taken from an authenticated linked declaration fragment.
+pub type LinkedLayoutWitness = std::sync::Arc<(String, String)>;
+
 /// One module's lowered function/method bodies and direct-execution declaration facts.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BodyIrModule {

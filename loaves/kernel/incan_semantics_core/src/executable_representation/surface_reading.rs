@@ -116,6 +116,7 @@ impl SurfaceIndex {
         }
         let (mut declaration, remainder): (ExecutableDeclaration, _) =
             postcard::take_from_bytes(bytes).map_err(|error| malformed(error.to_string()))?;
+        let remainder = linked_layout_codec::restore(&mut declaration, remainder)?;
         match declaration.nominal_mut() {
             Some(nominal) => restore_trait_fields(std::slice::from_mut(nominal), remainder)?,
             None if !remainder.is_empty() => return Err(malformed("unexpected declaration trailer")),

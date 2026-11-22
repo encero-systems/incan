@@ -120,6 +120,7 @@ fn public_normal_enum_payload_context_round_trips() -> Result<(), Box<dyn std::e
     variant.kind = SemanticSourceTargetKind::Variant;
     variant.namespace = SymbolNamespace::Member;
     let value = crate::body_ir::EnumDeclaration {
+        linked_layout_witness: None,
         record_package_identity: None,
         native_item: String::new(),
         native_type_arguments: Vec::new(),
@@ -386,6 +387,7 @@ fn public_type_context_retains_private_fields_and_requires_checked_layouts() -> 
     exported.return_type = IncanType::Named("Record".into());
     let mut module = module(vec![exported]);
     module.nominal_declarations.push(crate::body_ir::NominalDeclaration {
+        linked_layout_witness: None,
         record_package_identity: None,
         trait_adoptions: Vec::new(),
         native_item: String::new(),
@@ -531,6 +533,7 @@ fn result_type_identities_are_rebased_and_private_identity_payloads_are_not_publ
     });
     let mut input = module(vec![exported]);
     input.nominal_declarations.push(crate::body_ir::NominalDeclaration {
+        linked_layout_witness: None,
         record_package_identity: None,
         trait_adoptions: Vec::new(),
         native_item: String::new(),

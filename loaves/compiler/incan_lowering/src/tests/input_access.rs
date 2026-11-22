@@ -116,6 +116,7 @@ fn source_enum(name: &str, fields: Vec<IncanType>) -> EnumDeclaration {
     let mut identities = BTreeMap::new();
     identities.insert(name.to_owned(), canonical.clone());
     EnumDeclaration {
+        linked_layout_witness: None,
         record_package_identity: None,
         native_item: String::new(),
         direct_declaration_id: CompilerNodeId::declaration_span("std::result_requirements", 0, 10),

@@ -146,6 +146,9 @@ pub struct ValidatedConstructor {
 /// [`ConstructorTarget::binding`], rather than treating constructor argument spelling as layout evidence.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NominalDeclaration {
+    /// The producer's witness for the linked declaration. Source declarations and closed instances use their own.
+    #[serde(skip)]
+    pub linked_layout_witness: Option<super::LinkedLayoutWitness>,
     /// Declared persistent namespace of the source producer; absent for runtime or unscoped declarations.
     #[serde(default)]
     pub record_package_identity: Option<crate::record_identity::RecordPackageIdentity>,
@@ -300,6 +303,7 @@ pub fn native_carrier_nominal(identity: &CanonicalSymbolId) -> Option<NominalDec
     let module = native_nominal_module(identity)?;
     let derives = ["Debug", "Clone", "PartialEq", "Eq"].map(str::to_owned).to_vec();
     Some(NominalDeclaration {
+        linked_layout_witness: None,
         record_package_identity: None,
         trait_adoptions: Vec::new(),
         native_item,
@@ -352,6 +356,7 @@ pub fn native_opaque_nominal(identity: &CanonicalSymbolId, arity: usize) -> Opti
     let module = native_nominal_module(identity)?;
     let type_parameters = (0..arity).map(|index| format!("T{index}")).collect::<Vec<_>>();
     Some(NominalDeclaration {
+        linked_layout_witness: None,
         record_package_identity: None,
         trait_adoptions: Vec::new(),
         native_item,

@@ -20,7 +20,8 @@ use sha2::{Digest, Sha256};
 
 use incan_semantics_core::body_ir::{BodyIrModule, LoafCallable, StaticInitializer};
 use incan_semantics_core::executable_representation::{
-    DeclarationCoverage, ExecutableDeclaration, ExecutableRepresentationError, SurfaceIndex, require_supported_version,
+    DeclarationCoverage, ExecutableDeclaration, ExecutableRepresentationError, LINKED_LAYOUT_WITNESS_BYTES,
+    SurfaceIndex, require_supported_version,
 };
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin, canonical_module_identity};
 
@@ -754,9 +755,17 @@ impl OpenSurface {
             offset, absolute_offset = absolute, bytes = length, range_authenticated = package.range_head.is_some(),
             fragment_digest = self.fragment_digests.get(identity).map(String::as_str).unwrap_or(""),
         );
-        self.index
+        let declaration = self
+            .index
             .decode_declaration(identity, &bytes)
-            .map_err(|error| package.unusable(error))
+            .map_err(|error| package.unusable(error))?;
+        if let Some(witness) = declaration.linked_layout_witness() {
+            tracing::trace!(
+                target: "incan::invocation", phase = "linked_layout_read", declaration = %identity.render_compact(),
+                version = %witness.1, bytes = LINKED_LAYOUT_WITNESS_BYTES,
+            );
+        }
+        Ok(declaration)
     }
 }
 

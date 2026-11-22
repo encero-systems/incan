@@ -51,6 +51,7 @@ fn identity(name: &str, kind: SemanticSourceTargetKind, start: usize) -> Canonic
 /// A source model `name` with the given fields, declared at byte `start`.
 fn model(name: &str, start: usize, fields: &[(&str, IncanType)]) -> NominalDeclaration {
     NominalDeclaration {
+        linked_layout_witness: None,
         record_package_identity: None,
         trait_adoptions: Vec::new(),
         native_item: String::new(),
