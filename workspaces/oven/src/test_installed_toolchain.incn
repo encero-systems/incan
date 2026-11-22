@@ -11,6 +11,7 @@ from freshness_fixtures import make_executable, write
 from home_paths import TOOLCHAIN
 from rust_target import decoded
 from scratch import scratch_directory
+from toolchain_archive import archive
 from toolchain import load_toolchain_at, prepare_installation
 from unit_publication import record_path, record_payload
 
@@ -92,3 +93,41 @@ def staged_installation(stage: Path) -> Result[Path, str]:
         "{\"schema\":\"incan.toolchain/1\",\"driver\":\"driver\",\"sysroot\":\"sysroot\"," + "\"rust_abi\":[\"std.rustabi\"],\"externs\":[]," + "\"search\":[],\"registry_units\":\"registry/closure.json\",\"codegraph_on_request\":true}",
     )?
     return Ok(stage)
+
+
+pub def test_a_pack_publishes_its_archive_whole_or_not_at_all() -> Result[None, str]:
+    """
+    A pack writes its archive under a pending name and renames it into place only once complete. One that fails midway
+    leaves no archive at the final name, and no pending file beside it.
+    """
+    scratch = scratch_directory()?
+    stage = scratch.path().joinpath("stage")
+    make_directory(stage)?
+    write_file(stage.joinpath("member.txt"), "alpha\n")?
+    output = scratch.path().joinpath("archives/toolchain.tar.zst")
+    archive(stage, output)?
+    assert output.is_file()
+    assert [entry.name() for entry in output.parent().iterdir().map_err((error) => error.message())?] == ["toolchain.tar.zst"]
+    broken = scratch.path().joinpath("broken")
+    make_directory(broken)?
+    write_file(broken.joinpath("member.txt"), "alpha\n")?
+    unreadable = broken.joinpath("unreadable.txt")
+    write_file(unreadable, "beta\n")?
+    mode(unreadable, "000")?
+    failed = scratch.path().joinpath("failed/toolchain.tar.zst")
+    outcome = archive(broken, failed)
+    mode(unreadable, "644")?
+    match outcome:
+        Ok(_) => return Err("a pack of an unreadable member published an archive")
+        Err(_) => pass
+    assert not failed.exists()
+    assert [entry.name() for entry in failed.parent().iterdir().map_err((error) => error.message())?] == []
+    return Ok(None)
+
+
+def mode(path: Path, bits: str) -> Result[None, str]:
+    """Set a file's permission bits."""
+    status = Command.new("/bin/chmod").arg(bits).arg(path.0).status().map_err((error) => str(error))?
+    if not status.success():
+        return Err(f"chmod {bits} {path.0} failed")
+    return Ok(None)
