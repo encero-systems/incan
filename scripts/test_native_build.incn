@@ -6,6 +6,8 @@ from native_build import (
     PROJECT_RESERVATION_BYTES,
     STANDARD_RESERVATION_BYTES,
     ShippedToolOverlap,
+    seed_reusable,
+    seed_reuse_row,
     shipped_tool_overlap,
 )
 
