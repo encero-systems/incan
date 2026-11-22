@@ -40,12 +40,9 @@ from release_support import (
     digest,
     log_tail,
     parse_release_options,
-    reference_cache_identity,
-    reference_cache_root,
     reference_worker_arguments,
     reclaim_paths,
     record_tree_sample,
-    reuse_reference_log,
     seed_toolchain_directory,
     require_candidate_census,
     release_receipt,
@@ -53,11 +50,11 @@ from release_support import (
     run_step,
     start_background_step,
     finish_background_step,
-    store_reference_log,
     tree_bytes,
     verification_program,
     write_json,
 )
+from reference_cache import CensusInputs, CensusOrigin, census_inputs, reference_cache_root, store_census, stored_census
 from relocated_sysroot import shared_relocated_sysroot
 from registry_checksums import REGISTRY_CHECKSUMS, write_checksummed_registry
 from release_helpers import (
@@ -101,6 +98,8 @@ const SEED_ROW_BLOBS_WITH_ENTRY_VERIFICATION: FrozenList[str] = [
     "4db20dca287cb21e8b5eae59606db5e7dc8d6bf3", "eea255210422c60d32935990c55cd20456efc44c",
 ]
 const SEED_BRIDGE_SOURCE: str = "seed-bridge-source"
+# The origin of a reused reference census, kept beside the release evidence and named in the receipt.
+const REFERENCE_ORIGIN: str = "reference-origin.json"
 const SEED_TOOL_SOURCE: str = "seed-tool-source"
 
 
@@ -212,8 +211,9 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
     mut counts: Option[Counts] = None
     if not run.options.stamp_signer:
         phase(run, "installed-verification")?
-        installed = installed_verification(run, candidate)?
+        installed, installed_inputs = installed_verification(run, candidate)?
         candidate_report = candidate_census(run, installed)?
+        store_installed_census(run, installed_inputs, installed)?
         compare_reference(run, reference_log, candidate_report)?
         counts = Some(candidate_report.counts)
 
@@ -281,12 +281,20 @@ def start_reference_census(run: ReleaseRun) -> Result[BackgroundStep, str]:
             run.seed_lsp,
             run.options.jobs,
             run.options.timeout_seconds,
+            reference_cache(run),
         ),
         run.paths.source,
         build_environment(run, run.seed_home, run.seed_oven),
         20,
     )
     return start_background_step(worker)
+
+
+def reference_cache(run: ReleaseRun) -> Path:
+    """The directory of reusable censuses: the one `--reference-cache` names, else the seed home's own cache."""
+    if run.options.reference_cache != "":
+        return Path(run.options.reference_cache)
+    return reference_cache_root(run.seed_home)
 
 
 def finish_reference_census(run: ReleaseRun, worker: BackgroundStep) -> Result[Path, str]:
@@ -306,8 +314,8 @@ def finish_reference_census(run: ReleaseRun, worker: BackgroundStep) -> Result[P
 
 def run_reference_worker(arguments: list[str]) -> Result[None, str]:
     """Reconstruct the immutable seed census context in a child that can overlap candidate production."""
-    if len(arguments) != 6:
-        return Err("internal reference census needs SOURCE OUTPUT SEED_HOME SEED_LSP JOBS TIMEOUT")
+    if len(arguments) != 7:
+        return Err("internal reference census needs SOURCE OUTPUT SEED_HOME SEED_LSP JOBS TIMEOUT CACHE")
     source = Path(arguments[0]).resolve().map_err((error) => error.message())?
     output = Path(arguments[1]).resolve().map_err((error) => error.message())?
     seed_home = Path(arguments[2]).resolve().map_err((error) => error.message())?
@@ -330,6 +338,7 @@ def run_reference_worker(arguments: list[str]) -> Result[None, str]:
             prove_fixed_point=false,
             jobs=jobs,
             timeout_seconds=timeout_seconds,
+            reference_cache=arguments[6],
         ),
         paths=paths,
         seed_home=seed_home,
@@ -714,27 +723,25 @@ def build_bundle(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str
 
 
 def reference_census(run: ReleaseRun, timings: Path) -> Result[Path, str]:
-    """Reuse or measure the released seed against the same content-identified committed contract tree."""
+    """
+    Reuse or measure the released seed over the committed fixtures, runner and standard sources.
+
+    1. A finished census of this seed with the same outcome inputs, from this release's reference run or the installed
+       census of the release that built the seed, is read back, and its origin is named in the timings and the receipt.
+    2. Otherwise the seed census runs, and once it has finished it is stored for the releases after this one.
+    """
     project = run.paths.source.joinpath("workspaces/contracts")
     log = run.paths.output.joinpath("reference-contracts.log")
-    contracts_tree = command_text("git", ["-C", run.paths.source.0, "rev-parse", "HEAD:workspaces/contracts"])?.strip()
-    stdlib_tree = command_text("git", ["-C", run.paths.source.0, "rev-parse", "HEAD:loaves/stdlib"])?.strip()
-    identity = reference_cache_identity(
-        run.seed_oven,
-        run.seed_lsp,
-        run.seed_home.joinpath(seed_toolchain_directory(run.seed_home)?).joinpath("toolchain.json"),
-        contracts_tree,
-        stdlib_tree,
-    )?
-    cached = reference_cache_root(run.seed_home).joinpath(identity).joinpath("contracts.log")
-    if cached.is_file():
-        cache_started = Instant.now()
-        match census_results(cached):
-            Ok(_) =>
-                reuse_reference_log(cached, log)?
-                append_timing(timings, "reference-cache-hit", cache_started.elapsed().as_secs_f64())?
-                return Ok(log)
-            Err(_) => pass
+    seed_manifest = run.seed_home.joinpath(seed_toolchain_directory(run.seed_home)?).joinpath("toolchain.json")
+    inputs = census_inputs(run.seed_oven, run.seed_lsp, seed_manifest, run.paths.source, run.options.timeout_seconds)?
+    # 1. A stored census of the same inputs is the same measurement.
+    cache_started = Instant.now()
+    if let Some((cached, origin)) = stored_census(reference_cache(run), inputs)?:
+        _ = cached.copy(log, true, true).map_err((error) => error.message())?
+        retain_reference_origin(run, origin)?
+        append_timing(timings, origin.hit_row(), cache_started.elapsed().as_secs_f64())?
+        return Ok(log)
+    # 2. Measure, then store the finished census.
     require_release_step_at(
         run,
         timings,
@@ -758,10 +765,31 @@ def reference_census(run: ReleaseRun, timings: Path) -> Result[Path, str]:
     if code > 1:
         return Err(f"reference runner exited {code}")
     _ = census_results(log)?
-    cache_started = Instant.now()
-    store_reference_log(log, cached)?
-    append_timing(timings, "reference-cache-store", cache_started.elapsed().as_secs_f64())?
+    store_started = Instant.now()
+    source_sha = command_text("git", ["-C", run.paths.source.0, "rev-parse", "HEAD"])?.strip()
+    origin = CensusOrigin(release=run.paths.output.name(), source_sha=source_sha, census="reference")
+    _ = store_census(reference_cache(run), inputs, log, origin)?
+    append_timing(timings, "reference-cache-store", store_started.elapsed().as_secs_f64())?
     return Ok(log)
+
+
+def retain_reference_origin(run: ReleaseRun, origin: CensusOrigin) -> Result[None, str]:
+    """Keep the origin of a reused reference census beside the release's evidence, where the receipt reads it."""
+    return run.paths.output
+        .joinpath(REFERENCE_ORIGIN)
+        .write_text(origin.json().to_pretty_json().map_err((error) => error.message())? + "\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())
+
+
+def store_installed_census(run: ReleaseRun, inputs: CensusInputs, log: Path) -> Result[None, str]:
+    """
+    Store the installed candidate's finished census under the candidate toolchain's inputs. The next integration
+    release takes this bundle as its seed, and reads this census back as its reference instead of running it again.
+    """
+    started = Instant.now()
+    origin = CensusOrigin(release=run.paths.output.name(), source_sha=run.options.source_sha, census="installed")
+    _ = store_census(reference_cache(run), inputs, log, origin)?
+    return append_timing(run.paths.output.joinpath("timings.tsv"), "installed-census-store", started.elapsed().as_secs_f64())
 
 
 def candidate_census(run: ReleaseRun, log: Path) -> Result[BaselineReport, str]:
@@ -787,8 +815,11 @@ def release_baseline(run: ReleaseRun) -> Result[Path, str]:
     return Err(f"release PASS baseline is absent: {qualified.0}")
 
 
-def installed_verification(run: ReleaseRun, candidate: Candidate) -> Result[Path, str]:
-    """Install the packed candidate into a second home and run the Incan installed-verification program."""
+def installed_verification(run: ReleaseRun, candidate: Candidate) -> Result[tuple[Path, CensusInputs], str]:
+    """
+    Install the packed candidate into a second home and run the Incan installed-verification program; return its
+    census and the inputs that decided it, read before the installation is reclaimed.
+    """
     verification = run.paths.output.joinpath("verification-source")
     require_release_step(
         run,
@@ -834,6 +865,14 @@ def installed_verification(run: ReleaseRun, candidate: Candidate) -> Result[Path
             environment,
         ),
     )?
+    installed_manifest = home.joinpath(TOOLCHAIN_DIRECTORY).joinpath("toolchain.json")
+    inputs = census_inputs(
+        home.joinpath("bin/incan"),
+        home.joinpath("bin/incan-lsp"),
+        installed_manifest,
+        verification,
+        run.options.timeout_seconds,
+    )?
     environment["INCAN_RELEASE_ARCHIVE"] = run.paths.bundle.joinpath("toolchain.tar.zst").0
     environment["INCAN_BUILDER_HOME"] = run.paths.home.0
     # The installed Loaf and Rust-facet tests reuse the release units from the bakery the builds above compiled into.
@@ -874,7 +913,7 @@ def installed_verification(run: ReleaseRun, candidate: Candidate) -> Result[Path
         "installed-verification-scratch",
         [verification, home, runs[0].joinpath("runner"), runs[0].joinpath("scratch")],
     )?
-    return Ok(log)
+    return Ok((log, inputs))
 
 
 def compare_reference(run: ReleaseRun, reference: Path, candidate: Borrowed[BaselineReport]) -> Result[None, str]:
@@ -1229,6 +1268,10 @@ def write_receipt(
     mut parity = JsonValue.null()
     if outcome == "passed":
         parity = JsonValue.bool(true)
+    mut reference = JsonValue.null()
+    origin = run.paths.output.joinpath(REFERENCE_ORIGIN)
+    if origin.is_file():
+        reference = JsonValue.object({"reused_from": read_json(origin)?})
     value = release_receipt(
         run.options.source_sha,
         run.target,
@@ -1242,6 +1285,7 @@ def write_receipt(
         contracts,
         oven_tests,
         parity,
+        reference,
     )
     return write_json(run.paths.output.joinpath("receipt.json"), value)
 

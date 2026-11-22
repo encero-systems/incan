@@ -94,7 +94,7 @@ def test_the_key_ignores_contract_files_that_decide_no_outcome() -> Result[None,
 
 
 def test_only_a_finished_census_is_stored_once_and_read_back_with_its_origin() -> Result[None, str]:
-    """A unfinished census is refused; the first finished one is kept, whole, and names the release that measured it."""
+    """An unfinished census is refused; the first finished one is kept, whole, and names the release that measured it."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     root = reference_cache_root(temporary.path())
     assert root.0 == temporary.path().joinpath("cache/release-reference").0
