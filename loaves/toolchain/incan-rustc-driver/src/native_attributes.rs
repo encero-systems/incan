@@ -80,6 +80,48 @@ pub(crate) fn attribute_item(
     )
 }
 
+/// One `#[doc = "text"]` attribute with the tokens a procedural macro invocation reads. An attribute macro on the same
+/// item collects the tokens of each of the item's attributes to pass them through, so an attribute without them would
+/// stop its expansion.
+pub(crate) fn doc_attribute(generator: &ast::attr::AttrIdGenerator, text: &str, span: Span) -> ast::Attribute {
+    let value = Lit::new(
+        LitKind::Str,
+        ast::util::literal::escape_string_symbol(Symbol::intern(text)),
+        None,
+    );
+    let tokens = LazyAttrTokenStream::new_direct(AttrTokenStream::new(vec![
+        AttrTokenTree::Token(Token::new(TokenKind::Pound, span), Spacing::JointHidden),
+        group_tokens(
+            Delimiter::Bracket,
+            AttrTokenStream::new(vec![
+                name_token("doc", span),
+                punctuation(TokenKind::Eq, span),
+                AttrTokenTree::Token(Token::new(TokenKind::Literal(value), span), Spacing::Alone),
+            ]),
+            span,
+        ),
+    ]));
+    let expr = Box::new(ast::Expr {
+        id: ast::DUMMY_NODE_ID,
+        kind: ast::ExprKind::Lit(value),
+        span,
+        attrs: ast::AttrVec::new(),
+        tokens: None,
+    });
+    ast::attr::mk_attr_from_item(
+        generator,
+        ast::AttrItem {
+            unsafety: ast::Safety::Default,
+            path: ast::Path::from_ident(ident("doc", span)),
+            args: ast::AttrItemKind::Unparsed(ast::AttrArgs::Eq { eq_span: span, expr }),
+            tokens: None,
+        },
+        Some(tokens),
+        ast::AttrStyle::Outer,
+        span,
+    )
+}
+
 /// The comma-separated arguments of one attribute, keyword arguments written `name = value`.
 fn argument_tokens(arguments: &[AttributeArgument], span: Span) -> Vec<AttrTokenTree> {
     let mut tokens = Vec::new();
