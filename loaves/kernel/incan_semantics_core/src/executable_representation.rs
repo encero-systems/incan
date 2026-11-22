@@ -23,7 +23,9 @@ mod surface_reading;
 
 pub use linked_layout_codec::{LINKED_LAYOUT_DIGEST_BYTES, LINKED_LAYOUT_WITNESS_BYTES};
 pub use module_codec::*;
-pub use namespace_codec::{decode_namespace_module, encode_namespace_module};
+pub use namespace_codec::{
+    decode_namespace_module, encode_namespace_module, executable_owner_scopes, executable_scope_directory,
+};
 pub use surface_build::*;
 
 use crate::CanonicalSymbolId;

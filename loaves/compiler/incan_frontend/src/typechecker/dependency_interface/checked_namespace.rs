@@ -6,6 +6,7 @@ use super::*;
 use crate::loaf_index::LoafIdentity;
 
 mod wire;
+pub use wire::executable_frames;
 pub use wire::{
     NamespaceCell, NamespaceCrumb, executable_body_value, executable_module_value, executable_scope_value,
     restore_executable_body_value, restore_executable_module_value, restore_executable_scope_value, to_atom, to_cell,

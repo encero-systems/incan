@@ -228,4 +228,14 @@ pub from rust::internal_models_native import (
     method_lookup_suffix,
 )
 
-pub from executable_body_wire import decode_executable_body, decode_executable_module, encode_executable_body, encode_executable_module
+pub from executable_body_wire import (
+    decode_executable_body, decode_executable_module, decode_executable_namespace_frame, decode_executable_namespace_view,
+    decode_executable_owner_frame,
+    encode_executable_body, encode_executable_module, encode_executable_namespace_frame, encode_executable_owner_frame,
+    prepare_executable_namespace_reader, prepare_executable_owner_reader, read_executable_owner_header,
+)
+pub from executable_scope import (
+    EXECUTABLE_SCOPE_DIRECTORY, EXECUTABLE_SCOPE_FAMILY, decode_executable_scope, encode_executable_scope,
+    executable_scope_key,
+)
+pub from executable_snapshot import ExecutableSnapshot, reopen_executable_snapshot, selected_executable_scope

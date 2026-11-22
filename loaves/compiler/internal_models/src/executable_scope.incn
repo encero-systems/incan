@@ -7,10 +7,32 @@ from rust::internal_models_native import (
 from std.primitives.crumb.descriptions import Description
 from std.primitives.text import copy_frozen_bytes
 from crumb_rows import ModelField, model_description
+from records import RecordKey
 
 const ROOT: bytes = b"\x53\x4f\x0d\x67\xa3\xdd\x00"
 const MODULE: bytes = b"\x12\x09\x70\xd8\x12\x83"
 const BINDINGS: bytes = b"\x1f\x73\x78\xb5\xc1\x9e"
+
+pub const EXECUTABLE_SCOPE_FAMILY: str = "executable-scope"
+pub const EXECUTABLE_SCOPE_DIRECTORY: str = "executable-scopes"
+
+
+pub def complete_scope_digest(digest: Borrowed[str]) -> bool:
+    """Check the canonical complete SHA-256 spelling shared by scope and snapshot addresses."""
+    if len(digest) != 64:
+        return false
+    for index in range(len(digest)):
+        if digest[index] not in "0123456789abcdef":
+            return false
+    return true
+
+
+pub def executable_scope_key(origin: Borrowed[str], module: Borrowed[str], digest: Borrowed[str]) -> Result[RecordKey, str]:
+    """Name a scope by owning origin, source module and complete typed value digest."""
+    if origin == "" or module == "" or not complete_scope_digest(digest):
+        return Err("invalid executable scope authority")
+    return Ok(RecordKey(family=EXECUTABLE_SCOPE_FAMILY, identity_profile="incan.executable-scope/1",
+        origin=origin.clone(), identity=module.clone(), facet=digest.clone(), context=""))
 
 
 def scope_descriptions() -> list[Description]:
@@ -23,18 +45,18 @@ def scope_descriptions() -> list[Description]:
     return descriptions
 
 
-pub def encode_executable_scope(module: str, bindings: list[NamespaceEntry]) -> Result[bytes, str]:
+pub def encode_executable_scope(module: Borrowed[str], bindings: list[NamespaceEntry]) -> Result[bytes, str]:
     """Encode one complete nominal map with its owning source module."""
     if module == "":
         return Err("executable scope requires its source module")
     root = NamespaceAtom.Fields([
-        NamespaceField(identity=field_number(copy_frozen_bytes(MODULE)), value=NamespaceAtom.Text(module)),
+        NamespaceField(identity=field_number(copy_frozen_bytes(MODULE)), value=NamespaceAtom.Text(module.clone())),
         NamespaceField(identity=field_number(copy_frozen_bytes(BINDINGS)), value=NamespaceAtom.Mapping(bindings)),
     ])
     return encode_checked_projection(copy_frozen_bytes(ROOT), scope_descriptions(), root)
 
 
-pub def decode_executable_scope(encoded: bytes, module: str) -> Result[list[NamespaceEntry], str]:
+pub def decode_executable_scope(encoded: Borrowed[bytes], module: Borrowed[str]) -> Result[list[NamespaceEntry], str]:
     """Restore a scope after its graph key and content digest have been authenticated."""
     root = decode_checked_projection(copy_frozen_bytes(ROOT), scope_descriptions(), encoded)?
     match root:
@@ -42,7 +64,7 @@ pub def decode_executable_scope(encoded: bytes, module: str) -> Result[list[Name
         _ => return Err("executable scope requires a record root")
 
 
-def scope_bindings(fields: list[NamespaceField], module: str) -> Result[list[NamespaceEntry], str]:
+def scope_bindings(fields: list[NamespaceField], module: Borrowed[str]) -> Result[list[NamespaceEntry], str]:
     """Read the verified module and bindings using their stable identities."""
     mut source = ""
     mut bindings: list[NamespaceEntry] = []

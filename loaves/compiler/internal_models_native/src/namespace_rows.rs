@@ -388,6 +388,27 @@ pub fn decode_checked_projection(
     atom(&read_wire(encoded, root, descriptions)?)
 }
 
+/// Authenticate a mapped compiler root and materialize only the requested named fields.
+pub fn checked_projection_fields(
+    reader: &PreparedWireReader,
+    view: &MappedView,
+    identities: &[Vec<u8>],
+) -> Result<Vec<NamespaceAtom>, String> {
+    let mut budget = graph_read_budget()?;
+    let row = reader.admit_view(view, &mut budget)?;
+    identities
+        .iter()
+        .map(|identity| atom(&wire_field(&row, identity, &mut budget)?))
+        .collect()
+}
+
+/// Open a fully needed executable value in its authenticated mapped backing.
+pub fn decode_checked_projection_view(reader: &PreparedWireReader, view: &MappedView) -> Result<NamespaceAtom, String> {
+    let mut budget = graph_read_budget()?;
+    let row = reader.admit_view(view, &mut budget)?;
+    decode_admitted(&row, &mut budget)
+}
+
 /// The module name and path a checked namespace advertises.
 #[derive(Clone, PartialEq, Eq)]
 pub struct NamespaceIdentity {

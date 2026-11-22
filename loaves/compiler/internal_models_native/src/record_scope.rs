@@ -341,7 +341,10 @@ pub fn valid_key(key: &RecordKey) -> bool {
 
 /// The ranked worker's prior-declaration is a snapshot copy of the same typed declaration row.
 pub fn checked_row_family(family: &str) -> bool {
-    matches!(family, "declaration" | "prior-declaration" | "local" | "final")
+    matches!(
+        family,
+        "declaration" | "prior-declaration" | "local" | "final" | "executable-scope"
+    )
 }
 
 /// Read one typed checker owner's complete authenticated row. An oversized reply needs its known encoded extent.
