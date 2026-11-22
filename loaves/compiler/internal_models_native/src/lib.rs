@@ -143,13 +143,14 @@ pub use namespace_references::{
 };
 pub use namespace_rows::{
     NamespaceAtom, NamespaceEntry, NamespaceField, NamespaceIdentity, NamespacePublication, PreparedNamespaceReader,
-    decode_callable_inventory, decode_namespace_interface, decode_prepared_namespace, decode_prepared_namespace_view,
-    encode_callable_inventory, encode_namespace_interface, identify_prepared_namespace,
-    identify_prepared_namespace_view, namespace_identity, prepare_namespace_reader, publish_namespace_interface,
+    decode_callable_inventory, decode_checked_projection, decode_namespace_interface, decode_prepared_namespace,
+    decode_prepared_namespace_view, encode_callable_inventory, encode_checked_projection, encode_namespace_interface,
+    identify_prepared_namespace, identify_prepared_namespace_view, namespace_identity, prepare_namespace_reader,
+    publish_namespace_interface,
 };
 pub use namespace_schema::{
-    NAMESPACE_MODULE_NAME, NAMESPACE_MODULE_PATH, NAMESPACE_SCHEMA, namespace_descriptions,
-    namespace_field_is_canonical, namespace_root,
+    NAMESPACE_MODULE_NAME, NAMESPACE_MODULE_PATH, NAMESPACE_SCHEMA, canonical_symbol_descriptions,
+    namespace_descriptions, namespace_field_is_canonical, namespace_root,
 };
 pub use overload_members::{
     LOOKUP_FILE, MethodLookup, MethodReads, OVERLOAD_MEMBERS, contract_output_suffix, coordinate_output_suffix,

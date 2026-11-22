@@ -1,0 +1,70 @@
+"""Typed nominal bindings shared by graph executable owners in one source module."""
+
+from rust::internal_models_native import (
+    NamespaceAtom, NamespaceEntry, NamespaceField, canonical_symbol_descriptions, decode_checked_projection,
+    encode_checked_projection,
+)
+from std.primitives.crumb.descriptions import Description
+from std.primitives.text import copy_frozen_bytes
+from crumb_rows import ModelField, model_description
+
+const ROOT: bytes = b"\x53\x4f\x0d\x67\xa3\xdd\x00"
+const MODULE: bytes = b"\x12\x09\x70\xd8\x12\x83"
+const BINDINGS: bytes = b"\x1f\x73\x78\xb5\xc1\x9e"
+
+
+def scope_descriptions() -> list[Description]:
+    """Add the scoped map root to the existing canonical symbol and provenance descriptions."""
+    mut descriptions = canonical_symbol_descriptions()
+    descriptions.append(model_description(copy_frozen_bytes(ROOT), "incan.graph.nominal-scope/1", [
+        ModelField(identity=copy_frozen_bytes(MODULE), name="module", storage="string", canonical=true),
+        ModelField(identity=copy_frozen_bytes(BINDINGS), name="bindings", storage="map<string,record@28cdd429f7ec>", canonical=true),
+    ]))
+    return descriptions
+
+
+pub def encode_executable_scope(module: str, bindings: list[NamespaceEntry]) -> Result[bytes, str]:
+    """Encode one complete nominal map with its owning source module."""
+    if module == "":
+        return Err("executable scope requires its source module")
+    root = NamespaceAtom.Fields([
+        NamespaceField(identity=field_number(copy_frozen_bytes(MODULE)), value=NamespaceAtom.Text(module)),
+        NamespaceField(identity=field_number(copy_frozen_bytes(BINDINGS)), value=NamespaceAtom.Mapping(bindings)),
+    ])
+    return encode_checked_projection(copy_frozen_bytes(ROOT), scope_descriptions(), root)
+
+
+pub def decode_executable_scope(encoded: bytes, module: str) -> Result[list[NamespaceEntry], str]:
+    """Restore a scope after its graph key and content digest have been authenticated."""
+    root = decode_checked_projection(copy_frozen_bytes(ROOT), scope_descriptions(), encoded)?
+    match root:
+        NamespaceAtom.Fields(fields) => return scope_bindings(fields, module)
+        _ => return Err("executable scope requires a record root")
+
+
+def scope_bindings(fields: list[NamespaceField], module: str) -> Result[list[NamespaceEntry], str]:
+    """Read the verified module and bindings using their stable identities."""
+    mut source = ""
+    mut bindings: list[NamespaceEntry] = []
+    module_field = field_number(copy_frozen_bytes(MODULE))
+    bindings_field = field_number(copy_frozen_bytes(BINDINGS))
+    for member in fields:
+        if member.identity == module_field:
+            match member.value:
+                NamespaceAtom.Text(name) => source = name
+                _ => return Err("executable scope has an invalid source module")
+        elif member.identity == bindings_field:
+            match member.value:
+                NamespaceAtom.Mapping(entries) => bindings = entries
+                _ => return Err("executable scope has invalid nominal bindings")
+    if source == "" or source != module:
+        return Err("executable scope belongs to another source module")
+    return Ok(bindings)
+
+
+def field_number(key: bytes) -> u64:
+    """Represent a Crumb member identity in the native logical cell ABI."""
+    mut number = 0u64
+    for index in range(len(key)):
+        number = (number << 8) | key[index].saturating_resize[u64]()
+    return number

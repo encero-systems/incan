@@ -356,6 +356,24 @@ pub fn decode_namespace_interface(encoded: &[u8]) -> Result<NamespaceAtom, Strin
     atom(&read_wire(encoded, &namespace_root(), &namespace_descriptions())?)
 }
 
+/// Encode compiler logical cells using the caller's exact Crumb root and reference closure.
+pub fn encode_checked_projection(
+    root: &[u8],
+    descriptions: &Vec<internal_models_bindings::Description>,
+    value: &NamespaceAtom,
+) -> Result<Vec<u8>, String> {
+    write_wire(root, descriptions, logical(value)?)
+}
+
+/// Admit the exact authored root and reference closure before restoring the compiler's logical cells.
+pub fn decode_checked_projection(
+    root: &[u8],
+    descriptions: &Vec<internal_models_bindings::Description>,
+    encoded: &[u8],
+) -> Result<NamespaceAtom, String> {
+    atom(&read_wire(encoded, root, descriptions)?)
+}
+
 /// The module name and path a checked namespace advertises.
 #[derive(Clone, PartialEq, Eq)]
 pub struct NamespaceIdentity {
