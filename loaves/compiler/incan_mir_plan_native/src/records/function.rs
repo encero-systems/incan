@@ -668,12 +668,19 @@ pub fn native_crate(path: &str) -> Option<&str> {
     (valid && !item.is_empty()).then_some(name)
 }
 
-/// The crate a stored binding identity names when it is a crate the unit links, rather than Rust's own crates, the
-/// runtime, the standard library or an emitted package; `None` for every other identity.
+/// Rust's primitive types, whose inherent methods a native path names by the type alone (`f64::powf`, `i64::pow`).
+const PRIMITIVE_TYPES: [&str; 19] = [
+    "bool", "char", "str", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
+    "f16", "f32", "f64", "f128",
+];
+
+/// The crate a stored binding identity names when it is a crate the unit links, rather than Rust's own crates and
+/// primitive types, the runtime, the standard library or an emitted package; `None` for every other identity.
 fn linked_crate(identity: &str) -> Option<&str> {
     let path = identity.strip_prefix(RUST_BINDING)?;
     let name = native_crate(path)?;
-    (path != JSON_HOST_FUNCTION && !["std", "core", "alloc"].contains(&name)).then_some(name)
+    let own = ["std", "core", "alloc"].contains(&name) || PRIMITIVE_TYPES.contains(&name);
+    (path != JSON_HOST_FUNCTION && !own).then_some(name)
 }
 
 /// Recover the package's native item from the compiler's complete canonical symbol projection.
