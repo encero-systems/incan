@@ -13,9 +13,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use value::GraphValue;
 
-/// Layout version of `.incngraph`: little-endian u32 version, u64 index length, postcard index, then Crumb rows.
-/// Version 3 added the index of the package origins the graph names.
-pub const GRAPH_ARTIFACT_VERSION: u32 = 3;
+/// Layout version of `.incngraph`: a little-endian u32 version; the origins section (a little-endian u64 length, then
+/// postcard `Origins`); the record index (a u64 length, then postcard `Index`); then the Crumb rows. Version 3 added
+/// the package origins to the index; version 4 moved them into their own section ahead of it, which a reader takes from
+/// the first bytes of the file without the index or any record.
+pub const GRAPH_ARTIFACT_VERSION: u32 = 4;
 
 /// A malformed or unsupported graph never supplies partial semantic facts to an inspection consumer.
 #[derive(Debug, thiserror::Error)]
@@ -48,8 +50,14 @@ struct Entry {
 struct Index {
     fields: Vec<String>,
     entries: Vec<Entry>,
-    /// Every package origin a reference, call or import record names on its own or its bindings' identities, once,
-    /// as its JSON text in text order: what dependency selection reads, so no reader decodes the records for it.
+}
+
+/// Every package origin a reference, call or import record names on its own or its bindings' identities, once, as its
+/// JSON text in text order, under the wire schema that spells them: what dependency selection reads, so no reader
+/// decodes the index or a record for it.
+#[derive(Serialize, Deserialize)]
+struct Origins {
+    schema_version: u32,
     origins: Vec<String>,
 }
 
@@ -92,18 +100,80 @@ pub fn encode_graph(records: &[CodegraphRecord], root: &Path) -> Result<Vec<u8>,
     let index = Index {
         fields: names.into_iter().map(|(name, _)| name).collect(),
         entries,
+    };
+    let origins = Origins {
+        schema_version: crate::CODEGRAPH_SCHEMA_VERSION,
         origins: origins.into_iter().collect(),
     };
-    let index = postcard::to_allocvec(&index).map_err(|error| GraphArtifactError::Malformed(error.to_string()))?;
     let mut bytes = GRAPH_ARTIFACT_VERSION.to_le_bytes().to_vec();
-    bytes.extend_from_slice(
-        &u64::try_from(index.len())
-            .map_err(|error| GraphArtifactError::Malformed(error.to_string()))?
-            .to_le_bytes(),
-    );
-    bytes.extend_from_slice(&index);
+    for section in [
+        postcard::to_allocvec(&origins).map_err(|error| GraphArtifactError::Malformed(error.to_string()))?,
+        postcard::to_allocvec(&index).map_err(|error| GraphArtifactError::Malformed(error.to_string()))?,
+    ] {
+        bytes.extend_from_slice(
+            &u64::try_from(section.len())
+                .map_err(|error| GraphArtifactError::Malformed(error.to_string()))?
+                .to_le_bytes(),
+        );
+        bytes.extend_from_slice(&section);
+    }
     bytes.extend_from_slice(&payload);
     Ok(bytes)
+}
+
+/// Read a graph file's package origins from the bytes ahead of its record index: the version, then the origins section.
+/// Neither the index nor any record is read. This is a storage projection for selecting dependency Loaves; package
+/// selection and closure traversal remain with the consumer.
+pub fn read_origins(path: &Path) -> Result<Vec<Value>, GraphArtifactError> {
+    use std::io::Read;
+    let unreadable =
+        |error: std::io::Error| GraphArtifactError::Malformed(format!("cannot read {}: {error}", path.display()));
+    let mut file = std::fs::File::open(path).map_err(unreadable)?;
+    let mut prefix = [0u8; 12];
+    file.read_exact(&mut prefix).map_err(unreadable)?;
+    let (version, length) = prefix.split_at(4);
+    let version = u32::from_le_bytes(
+        version
+            .try_into()
+            .map_err(|_| GraphArtifactError::Malformed("invalid header".into()))?,
+    );
+    if version != GRAPH_ARTIFACT_VERSION {
+        return Err(GraphArtifactError::Version(version));
+    }
+    let length = usize::try_from(u64::from_le_bytes(
+        length
+            .try_into()
+            .map_err(|_| GraphArtifactError::Malformed("invalid header".into()))?,
+    ))
+    .map_err(|error| GraphArtifactError::Malformed(error.to_string()))?;
+    let mut section = Vec::new();
+    file.take(u64::try_from(length).map_err(|error| GraphArtifactError::Malformed(error.to_string()))?)
+        .read_to_end(&mut section)
+        .map_err(unreadable)?;
+    if section.len() != length {
+        return Err(GraphArtifactError::Malformed("truncated origins section".into()));
+    }
+    let origins: Origins =
+        postcard::from_bytes(&section).map_err(|error| GraphArtifactError::Malformed(error.to_string()))?;
+    origin_values(&origins)
+}
+
+/// Parse a graph's origins section under the wire schema this reader implements.
+fn origin_values(section: &Origins) -> Result<Vec<Value>, GraphArtifactError> {
+    if section.schema_version != crate::CODEGRAPH_SCHEMA_VERSION {
+        return Err(GraphArtifactError::Malformed("unsupported graph wire schema".into()));
+    }
+    let mut origins = Vec::with_capacity(section.origins.len());
+    for text in &section.origins {
+        let origin: Value = serde_json::from_str(text)?;
+        if origin.get("kind").and_then(Value::as_str) != Some("package") {
+            return Err(GraphArtifactError::Malformed(
+                "the origins section names a non-package origin".into(),
+            ));
+        }
+        origins.push(origin);
+    }
+    Ok(origins)
 }
 
 /// Add the package origins one portable reference, call or import record names, on its own identities and its
@@ -125,14 +195,15 @@ fn package_origins(record: &Value, origins: &mut BTreeSet<String>) -> Result<(),
 /// A validated artifact index and its uninterpreted payload. Readers can request record groups without decoding
 /// unrelated facts.
 pub struct GraphArtifact {
+    origins: Origins,
     index: Index,
     payload: Vec<u8>,
 }
 
 impl GraphArtifact {
-    /// The compiler-owned package origins the graph's reference, call and import records name, read from the index the
-    /// producer wrote, so no record is decoded. This is a storage projection for selecting dependency Loaves; package
-    /// selection and closure traversal remain with the consumer.
+    /// The compiler-owned package origins the graph's reference, call and import records name, read from the origins
+    /// section the producer wrote, so no record is decoded. This is a storage projection for selecting dependency
+    /// Loaves; package selection and closure traversal remain with the consumer.
     pub fn origins(&self) -> Result<Vec<Value>, GraphArtifactError> {
         self.value(
             self.index
@@ -140,17 +211,7 @@ impl GraphArtifact {
                 .first()
                 .ok_or_else(|| GraphArtifactError::Malformed("missing header".into()))?,
         )?;
-        let mut origins = Vec::with_capacity(self.index.origins.len());
-        for text in &self.index.origins {
-            let origin: Value = serde_json::from_str(text)?;
-            if origin.get("kind").and_then(Value::as_str) != Some("package") {
-                return Err(GraphArtifactError::Malformed(
-                    "the origins index names a non-package origin".into(),
-                ));
-            }
-            origins.push(origin);
-        }
-        Ok(origins)
+        origin_values(&self.origins)
     }
 
     /// Decode and validate the complete directory of record ranges before exposing any graph values.
@@ -166,18 +227,12 @@ impl GraphArtifact {
         if version != GRAPH_ARTIFACT_VERSION {
             return Err(GraphArtifactError::Version(version));
         }
-        let length = u64::from_le_bytes(
-            bytes
-                .get(4..12)
-                .ok_or_else(malformed)?
-                .try_into()
-                .map_err(|_| malformed())?,
-        );
-        let end = 12usize
-            .checked_add(usize::try_from(length).map_err(|_| malformed())?)
-            .ok_or_else(malformed)?;
-        let index: Index = postcard::from_bytes(bytes.get(12..end).ok_or_else(malformed)?)
-            .map_err(|error| GraphArtifactError::Malformed(error.to_string()))?;
+        let (origins, end) = section(bytes, 4)?;
+        let origins: Origins =
+            postcard::from_bytes(origins).map_err(|error| GraphArtifactError::Malformed(error.to_string()))?;
+        let (index, end) = section(bytes, end)?;
+        let index: Index =
+            postcard::from_bytes(index).map_err(|error| GraphArtifactError::Malformed(error.to_string()))?;
         let payload = bytes.get(end..).ok_or_else(malformed)?.to_vec();
         if index.entries.first().is_none_or(|entry| entry.kind != "header")
             || index.entries.iter().filter(|entry| entry.kind == "header").count() != 1
@@ -199,7 +254,11 @@ impl GraphArtifact {
         if next != payload.len() {
             return Err(malformed());
         }
-        Ok(Self { index, payload })
+        Ok(Self {
+            origins,
+            index,
+            payload,
+        })
     }
 
     /// Decode selected wire records for JSON query output. An empty group exports everything; `nodes` keeps module
@@ -264,6 +323,23 @@ impl GraphArtifact {
         }
         Ok(value)
     }
+}
+
+/// One length-prefixed section starting at `at`, and the offset after it.
+fn section(bytes: &[u8], at: usize) -> Result<(&[u8], usize), GraphArtifactError> {
+    let malformed = || GraphArtifactError::Malformed("invalid header or record range".into());
+    let start = at.checked_add(8).ok_or_else(malformed)?;
+    let length = u64::from_le_bytes(
+        bytes
+            .get(at..start)
+            .ok_or_else(malformed)?
+            .try_into()
+            .map_err(|_| malformed())?,
+    );
+    let end = start
+        .checked_add(usize::try_from(length).map_err(|_| malformed())?)
+        .ok_or_else(malformed)?;
+    Ok((bytes.get(start..end).ok_or_else(malformed)?, end))
 }
 
 fn crumb_model(kind: &str) -> Option<(&'static [u8], &'static str)> {
