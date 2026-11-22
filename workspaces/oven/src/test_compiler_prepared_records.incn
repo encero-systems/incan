@@ -3,7 +3,7 @@ opaque products reach later producers through bounded selections, and checked in
 extent."""
 
 from compiler_graph_record_fixtures import family_key, key, request
-from pub::incan_platform.store import begin, commit, lookup_binding, put, read_counts, BindingLookup
+from pub::incan_platform.store import begin, commit, fork, get, lookup_binding, put, read_counts, BindingLookup
 from pub::incan_platform.store import snapshot as store_snapshot
 from pub::incan_platform.store.memory import root as memory_root
 from pub::internal_models.records import (
@@ -19,11 +19,16 @@ from pub::internal_models.records import (
     encode_record_key,
 )
 from pub::internal_models.checker_records import CHECKER_PROFILE
+from pub::internal_models.executable_scope import executable_scope_key
+from pub::internal_models import ProducerRank, ProducerStage
 from compiler_prepared_records import PreparedBodyRecordSource
-from compiler_body_keys import body_key
+from compiler_body_keys import body_key, namespace_key
+from compiler_graph_records import prepare_evaluation, retire_output, reusable_evaluation, supersede_outputs
 from compiler_plan_values import LOWERING_PROFILE
 from compiler_body_publication import prepared_product_request
+from std.encoding.hex import hexlify
 from std.io import BytesIO
+from std.primitives.hash import sha256
 
 
 pub def test_store_receipt_binds_payload_without_copying_it() -> Result[None, str]:
@@ -53,6 +58,44 @@ pub def test_store_receipt_binds_payload_without_copying_it() -> Result[None, st
     assert after.records - before.records == 1
     copied = after.decoded - before.decoded
     assert copied == 0, f"zero-byte selection copied {copied} payload bytes"
+    # A shared executable scope is prepared once and validated through its digest in the pinned graph.
+    digest = hexlify(sha256.digest(value))
+    binding = executable_scope_key("app", "src/entry.incn", digest)?
+    binding_key = encode_record_key(binding)?
+    with_scope = commit(put(begin(graph), binding_key, value)).map_err((error) => error.message())?
+    checking = ReadScope(snapshot=with_scope.digest, profile=CHECKER_PROFILE)
+    mut prepared = PreparedBodyRecordSource.open(checking)
+    owner = body_key("body-ir", "app", "function:entry::main", "checked", "current")
+    demand = prepared_product_request(binding)
+    assert prepared.receipt(checking, owner, [demand]).is_err()
+    prepared.add_verified_executable_scope(binding_key, digest)
+    receipt = prepared.receipt(checking, owner, [demand])?
+    assert receipt.response_bytes == 0 and len(receipt.witnesses) == 1
+    namespace = namespace_key("app", "src/entry.incn")
+    mut publication = begin(with_scope)
+    owner_rank = ProducerRank(namespace=0, stage=ProducerStage.BodyIr, dependency=0)
+    namespace_rank = ProducerRank(namespace=0, stage=ProducerStage.Signature, dependency=0)
+    _ = prepare_evaluation(publication, "scope-owner", owner_rank, b"owner", receipt)?
+    _ = prepare_evaluation(publication, "scope-namespace", namespace_rank, b"namespace", prepared.receipt(checking, namespace, [demand])?)?
+    selected = commit(publication).map_err((error) => error.message())?
+    assert reusable_evaluation(selected, owner, CHECKER_PROFILE)? is not None, "owner lost its scope receipt"
+    assert reusable_evaluation(selected, namespace, CHECKER_PROFILE)? is not None, "namespace lost its scope receipt"
+    damaged_view = fork(selected, "damaged-scope").map_err((error) => error.message())?
+    damaged = commit(put(begin(damaged_view), binding_key, b"wrong digest")).map_err((error) => error.message())?
+    assert reusable_evaluation(damaged, owner, CHECKER_PROFILE)? is None, "owner admitted a changed scope"
+    assert reusable_evaluation(damaged, namespace, CHECKER_PROFILE)? is None, "namespace admitted a changed scope"
+    mut owner_retirement = begin(selected)
+    retire_output(owner_retirement, CHECKER_PROFILE, owner)?
+    supersede_outputs(selected, owner_retirement)?
+    after_owner = commit(owner_retirement).map_err((error) => error.message())?
+    assert get(after_owner, binding_key).map_err((error) => error.message())? == Some(value), "retiring the owner withdrew the namespace scope"
+    assert reusable_evaluation(after_owner, namespace, CHECKER_PROFILE)? is not None, "namespace lost its scope after owner retirement"
+    mut namespace_retirement = begin(after_owner)
+    retire_output(namespace_retirement, CHECKER_PROFILE, namespace)?
+    supersede_outputs(after_owner, namespace_retirement)?
+    retired = commit(namespace_retirement).map_err((error) => error.message())?
+    assert get(retired, binding_key).map_err((error) => error.message())? is None, "scope remained after the final reader retired"
+    assert get(selected, binding_key).map_err((error) => error.message())? == Some(value), "retirement changed the leased snapshot"
     return Ok(None)
 
 
