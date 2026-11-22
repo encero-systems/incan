@@ -1038,7 +1038,7 @@ def rust_source_probe_build(binary: str, app: Path, store: Path) -> Result[JsonV
 
 
 def verify_rust_closure_debug_reproducibility(binary: str, root: Path) -> Result[None, str]:
-    """A debug edit linked through an Incan library and local Rust library must reproduce its cold executable."""
+    """A debug edit and fresh build reproduce the Rust archive and executable with incremental compilation enabled."""
     provider = root.joinpath("provider")
     app = root.joinpath("app")
     provider.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
@@ -1067,16 +1067,35 @@ def verify_rust_closure_debug_reproducibility(binary: str, root: Path) -> Result
     assert proof_count(warm_report, "native_bakes")? == 1, diagnostic
     executable = app.joinpath("target/incan/debug/bin/debug_repro_app")
     warm = executable.read_bytes().map_err((error) => error.message())?
+    warm_archive = debug_probe_archive(app)?
     stop_example_engine(binary, warm_store)?
     app.joinpath("target").remove_tree().map_err((error) => error.message())?
+    provider.joinpath("target").remove_tree().map_err((error) => error.message())?
     # The cold build starts from an empty bakery at the same path. A development executable names its carriers'
     # bakery (debug map and run-time search paths), so a bakery at another path is a relocation, not a cold build.
     warm_store.remove_tree().map_err((error) => error.message())?
     _ = debug_probe_build(binary, app, warm_store)?
     cold = executable.read_bytes().map_err((error) => error.message())?
+    cold_archive = debug_probe_archive(app)?
     stop_example_engine(binary, warm_store)?
+    assert warm_archive == cold_archive, "warm and cold incremental Rust archives differ"
     assert warm == cold, "warm and cold debug executables with a Rust library differ"
     return Ok(None)
+
+
+def debug_probe_archive(app: Path) -> Result[bytes, str]:
+    """Read the unique native Rust artifact reached by the debug reproducibility fixture."""
+    output = app.joinpath("target/incan/rust/debug")
+    mut archives: list[Path] = []
+    for facet in output.iterdir().map_err((error) => error.message())?:
+        if not facet.is_dir() or not facet.name().starts_with("debug_repro_native-"):
+            continue
+        for file in facet.iterdir().map_err((error) => error.message())?:
+            if file.name().starts_with("libdebug_repro_native-") and file.name().ends_with(".rlib"):
+                archives.append(file)
+    if len(archives) != 1:
+        return Err("debug reproducibility probe requires one native Rust archive")
+    return archives[0].read_bytes().map_err((error) => error.message())
 
 
 def debug_probe_build(binary: str, app: Path, store: Path) -> Result[JsonValue, str]:
@@ -1088,6 +1107,7 @@ def debug_probe_build(binary: str, app: Path, store: Path) -> Result[JsonValue, 
         .args(["--profile", "debug", "--engine-report"])
         .env("INCAN_ENGINE", "records")
         .env("INCAN_BAKERY", store.0)
+        .env_remove("INCAN_RUST_INCREMENTAL")
         .output()
         .map_err((error) => str(error))?
     output = from_utf8(outcome.stdout).map_err((error) => str(error))?
