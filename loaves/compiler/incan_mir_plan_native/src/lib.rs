@@ -40,6 +40,7 @@ pub use plan::{
 pub use positions::{PositionChange, WirePositions};
 pub use records::codec::{
     decode_record_plan, encode_entry_binding, encode_record_plan, encode_record_plan_products, record_plan_products,
+    restore_record_plan,
 };
 pub use records::function::{
     NamedProduct, PlacedProduct, PlacedRecord, ProductParts, decode_frames, decode_product, decode_product_parts,
