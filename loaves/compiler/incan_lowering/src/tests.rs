@@ -26,3 +26,4 @@ mod record_plan_outputs;
 mod record_positions;
 mod rust_runtime_calls;
 mod scalar_reads;
+mod static_field_reads;
