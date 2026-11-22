@@ -43,6 +43,7 @@ from store_path_conversion import snapshot
 from toolchain import Toolchain, load_toolchain, toolchain_directory
 from unit import UnitDescription, describe, with_c_abi_target
 from engine_unit_options import decode_unit_options
+from clove_units import serve_c_compiler
 from unit_compiler import (
     CheckerRecordCounts,
     PlanRecordCounts,
@@ -289,7 +290,9 @@ pub def obtain(
     listing_refusals = get_or("OVEN_BODY_REFUSALS", "default") == "list"
     # 1. A hit uses the same whole-unit record as the legacy producer, without another compiler activation.
     # Refusal diagnosis must reach the checker: an earlier successful descriptor contains no refusal evidence.
-    if not listing_refusals:
+    # A unit with options is described and keyed afresh on every request: its inputs reach beyond the captured
+    # sources, as a Clove's C sources do, and its bakery key, not the capture, proves it unchanged.
+    if not listing_refusals and unit_options == "":
         match read_program(store, handle)?:
             Some(unit) =>
                 if restore_program(store, unit)?:
@@ -533,6 +536,8 @@ def requested_unit(
     entries and interop target its caller parsed (`unit_options`), and a `lib.incn` root as a library.
     """
     options = decode_unit_options(unit_options)?
+    # A Clove is compiled the way the caller's environment says, never the engine's own.
+    serve_c_compiler(options.c_compiler)
     mut described = describe(
         root,
         profile,
@@ -566,7 +571,8 @@ def whole_unit_reason(ready: UnitDescription, unit_options: str) -> Result[str, 
         return Ok("program entries")
     if ready.c_abi_target is not None:
         return Ok("interop target")
-    if unit_options != "":
+    selected = decode_unit_options(unit_options)?.request
+    if len(selected.features) > 0 or not selected.default_features or selected.all_features:
         return Ok("feature selection")
     if ready.checked_context is None:
         return Ok("no checked-source context")
