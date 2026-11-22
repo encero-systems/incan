@@ -240,17 +240,7 @@ pub(super) fn restore_trait_fields(
             .iter_mut()
             .find(|nominal| nominal.canonical == binding.owner)
             .ok_or_else(|| malformed("required-field witness has no nominal owner"))?;
-        let mut requirements = BTreeSet::new();
-        for field in &binding.fields {
-            if field.requirement.namespace != crate::SymbolNamespace::Member
-                || field.requirement.kind != crate::SemanticSourceTargetKind::Field
-                || field.requirement.declaration_name != field.implementation.declaration_name
-                || !nominal.field_identities.contains(&field.implementation)
-                || !requirements.insert(&field.requirement)
-            {
-                return Err(malformed("required-field witness differs from the checked layout"));
-            }
-        }
+        validate_required_trait_fields(nominal, &binding.fields)?;
         let adoption = nominal
             .trait_adoptions
             .iter_mut()
@@ -260,6 +250,25 @@ pub(super) fn restore_trait_fields(
             return Err(malformed("empty or duplicate required-field witness"));
         }
         adoption.fields = binding.fields;
+    }
+    Ok(())
+}
+
+/// Check that each persisted trait requirement selects one distinct field of its checked adopter layout.
+pub fn validate_required_trait_fields(
+    nominal: &NominalDeclaration,
+    fields: &[crate::body_ir::TraitFieldImplementation],
+) -> Result<(), ExecutableRepresentationError> {
+    let mut requirements = BTreeSet::new();
+    for field in fields {
+        if field.requirement.namespace != crate::SymbolNamespace::Member
+            || field.requirement.kind != crate::SemanticSourceTargetKind::Field
+            || field.requirement.declaration_name != field.implementation.declaration_name
+            || !nominal.field_identities.contains(&field.implementation)
+            || !requirements.insert(&field.requirement)
+        {
+            return Err(malformed("required-field witness differs from the checked layout"));
+        }
     }
     Ok(())
 }

@@ -8,8 +8,13 @@ use super::*;
 mod checked_namespace;
 mod stable_encoding;
 
+pub use checked_namespace::executable_frames;
 pub(crate) use checked_namespace::{CheckedCellProjection, callable_projection};
-pub use checked_namespace::{CheckedNamespaceInterface, NamespaceCell, NamespaceCrumb};
+pub use checked_namespace::{
+    CheckedNamespaceInterface, NamespaceCell, NamespaceCrumb, executable_body_value, executable_module_value,
+    executable_scope_value, restore_executable_body_value, restore_executable_module_value,
+    restore_executable_scope_value, to_atom, to_cell,
+};
 use serde::Serialize;
 use stable_encoding::stable_encode;
 

@@ -6,7 +6,11 @@ use super::*;
 use crate::loaf_index::LoafIdentity;
 
 mod wire;
-pub use wire::{NamespaceCell, NamespaceCrumb};
+pub use wire::executable_frames;
+pub use wire::{
+    NamespaceCell, NamespaceCrumb, executable_body_value, executable_module_value, executable_scope_value,
+    restore_executable_body_value, restore_executable_module_value, restore_executable_scope_value, to_atom, to_cell,
+};
 pub(crate) use wire::{Project as CheckedCellProjection, callable_fields as callable_projection};
 
 /// Durable checked surface of one editable source namespace.
@@ -1000,7 +1004,7 @@ mod tests {
     /// A retained editable interface must install the same nominal ownership tables used by ordinary dependencies.
     #[test]
     fn installable_retains_nominal_scopes_carriers_and_layouts() -> Result<(), String> {
-        let source = "pub model Order:\n    pub quantity: int\n    pub unit_price: float\n\npub def total(order: Order) -> float:\n    return float(order.quantity) * order.unit_price\n";
+        let source = "@requires(quantity: int)\npub trait Counted:\n    def count(self) -> int:\n        return self.quantity\n\npub model Order with Counted:\n    pub quantity: int\n    pub unit_price: float\n\npub def total(order: Order) -> float:\n    return float(order.quantity) * order.unit_price\n";
         let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
         let module_path = vec!["domain".to_string()];
@@ -1015,9 +1019,25 @@ mod tests {
             vec!["dependency".into()],
             "PrivateState",
             SemanticSourceTargetKind::Model,
-            Default::default(),
+            incan_semantics_core::HirSourceSpan::new(1, 9).with_expansion(Some([11; 32])),
         );
         Arc::make_mut(&mut retained.nominal_scope).insert("PrivateState".into(), external.clone());
+        let reopened_scope = restore_executable_scope_value(executable_scope_value(&retained.nominal_scope))?;
+        assert_eq!(reopened_scope, retained.nominal_scope);
+        let providers = crate::body_ir::ProviderOperationCatalog::new();
+        let expected = crate::body_ir::build_body_ir_module(
+            &program,
+            &module_path,
+            checker.type_info(),
+            &crate::body_ir::BodyIrContext {
+                modules: crate::body_ir::ContextModules::default(),
+                provider_operations: &providers,
+                registry_package: None,
+                library_package: None,
+                include_inline_tests: false,
+            },
+        );
+        wire::verify_executable_codec(expected)?;
         let installed = retained.installable()?;
         let order = retained.identities.get("Order").ok_or("missing Order identity")?;
         let scope = installed

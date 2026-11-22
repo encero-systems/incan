@@ -21,11 +21,11 @@ type EncodedScopes = (Vec<Bindings>, Vec<usize>);
 pub fn encode_namespace_module(module: &mut BodyIrModule) -> Result<Vec<u8>, ExecutableRepresentationError> {
     let mut scopes = ScopeDirectory::default();
     let empty = SharedIdentities::default();
-    let slots: Vec<_> = owner_scopes(module)
+    let slots: Vec<_> = executable_owner_scopes(module)
         .map(|scope| scopes.add(std::mem::replace(scope, Arc::clone(&empty))))
         .collect();
     let encoded = encode_module(module);
-    for (scope, &slot) in owner_scopes(module).zip(&slots) {
+    for (scope, &slot) in executable_owner_scopes(module).zip(&slots) {
         *scope = Arc::clone(&scopes.maps[slot]);
     }
     let encoded = encoded?;
@@ -63,7 +63,7 @@ pub fn decode_namespace_module(bytes: &[u8]) -> Result<BodyIrModule, ExecutableR
     }
     let maps: Vec<_> = maps.into_iter().map(Arc::new).collect();
     let mut used = 0;
-    for (scope, slot) in owner_scopes(&mut module).zip(slots) {
+    for (scope, slot) in executable_owner_scopes(&mut module).zip(slots) {
         let Some(map) = maps.get(slot) else {
             return Err(malformed("namespace owner names an unknown nominal scope"));
         };
@@ -81,8 +81,9 @@ pub fn decode_namespace_module(bytes: &[u8]) -> Result<BodyIrModule, ExecutableR
     Ok(module)
 }
 
-/// Visit exactly the directory's ordered owners. Older directories ended after the final body.
-fn owner_scopes(module: &mut BodyIrModule) -> impl Iterator<Item = &mut SharedIdentities> {
+/// Visit the outer bodies, models, enums and aliases in the namespace's scope-directory order.
+/// Nested executable bodies keep their own inline scope facts.
+pub fn executable_owner_scopes(module: &mut BodyIrModule) -> impl Iterator<Item = &mut SharedIdentities> {
     module
         .bodies
         .iter_mut()
@@ -105,6 +106,15 @@ fn owner_scopes(module: &mut BodyIrModule) -> impl Iterator<Item = &mut SharedId
                 .iter_mut()
                 .map(|alias| &mut alias.named_type_identities),
         )
+}
+
+/// Collect exact shared scope handles and their first-use slots without changing the checked module.
+pub fn executable_scope_directory(module: &mut BodyIrModule) -> (Vec<SharedIdentities>, Vec<usize>) {
+    let mut directory = ScopeDirectory::default();
+    let slots = executable_owner_scopes(module)
+        .map(|scope| directory.add(Arc::clone(scope)))
+        .collect();
+    (directory.maps, slots)
 }
 
 /// First-use order defines the wire slots. An address match needs no content hash or map comparison.

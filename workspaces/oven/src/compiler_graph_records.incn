@@ -1,6 +1,8 @@
 """Atomic ranked-graph publication for compiler values, completed receipts and their forward and reverse edges."""
 
 from cfg_predicate import identifier
+from compiler_body_keys import EXECUTABLE_BODY_PROFILE
+from pub::internal_models.executable_scope import EXECUTABLE_SCOPE_FAMILY
 from graph_read_demands import note_graph_demand
 from pub::internal_models.namespace_order import decode_namespace_order
 from pub::internal_models.record_scope import checked_row_family, checked_row_request
@@ -589,7 +591,12 @@ pub def reusable_checker_records(
     finals = select_family_records(selected, "final", profile, slots, verified, false, cutoff)?
     mut bodies: list[ReusableRecord] = []
     if executable:
-        bodies = select_family_records(selected, "body-ir", profile, slots, verified, false, cutoff)?
+        mut body_slots: Option[OutputSlots] = None
+        if let Some(selected_slots) = slots:
+            mut current = selected_slots.clone()
+            current.identity_profile = EXECUTABLE_BODY_PROFILE
+            body_slots = Some(current)
+        bodies = select_family_records(selected, "body-ir", profile, body_slots, verified, false, cutoff)?
     return Ok((locals, finals, bodies))
 
 
@@ -608,6 +615,8 @@ def select_family_records(
         if output in excluded:
             continue
         key = decode_record_key(output)?
+        if family == "body-ir" and key.identity_profile != EXECUTABLE_BODY_PROFILE:
+            continue
         match select_evaluation(selected, key, profile, verified, defer_payload, cutoff, reach)?:
             Some(reused) =>
                 records.append(ReusableRecord(key=key, value=reused.value, value_digest=reused.value_digest,
@@ -907,6 +916,18 @@ pub def retire_compiler_versions(selected: Snapshot, mut transaction: Transactio
     return Ok(None)
 
 
+pub def retire_executable_predecessors(selected: Snapshot, mut transaction: Transaction, origin: str, checker: str) -> Result[None, str]:
+    """Withdraw the old executable owner and namespace pointers only for the publishing project."""
+    body_slots = OutputSlots(origin=origin, identity_profile="incan.stable-declaration/1")
+    for prior in family_outputs(selected, "body-ir", checker, Some(body_slots))?:
+        retire_output(transaction, checker, decode_record_key(prior)?)?
+    namespace_slots = OutputSlots(origin=origin, identity_profile="incan.editable-namespace-crumb/7")
+    for family in ["namespace", "namespace-header", "namespace-layout"]:
+        for prior in family_outputs(selected, family, checker, Some(namespace_slots))?:
+            retire_output(transaction, checker, decode_record_key(prior)?)?
+    return Ok(None)
+
+
 pub def supersede_outputs(selected: Snapshot, mut transaction: Transaction) -> Result[None, str]:
     """
     Retire the outputs and edges that a transaction's new evaluations replace, so each slot indexes one output and each
@@ -935,7 +956,7 @@ pub def supersede_outputs(selected: Snapshot, mut transaction: Transaction) -> R
             slots.add(key)
         if write.kind != KIND_TOMBSTONE:
             writing[key] = position
-            if key.startswith("incan.engine.edge-in/3\tscope-name\t"):
+            if is_demanded_scope_edge(key):
                 renewed_scopes.add("\t".join(key.split("\t")[1:6]))
     for slot in sorted([key for key in slots]):
         # An earlier Oven keyed a slot's outputs by their context as well; the slot's own entry replaces them.
@@ -943,7 +964,7 @@ pub def supersede_outputs(selected: Snapshot, mut transaction: Transaction) -> R
             stage_delete(transaction, old)
         fields = slot.split("\t")
         retire_edges(selected, transaction, outgoing_prefix(fields[1], "\t".join(fields[2:7])), writing, removed_scope_edges)?
-    # Scope-name values are materialized on demand. Only losing the last current reader withdraws the value.
+    # Both source-binding and executable scope facts stay while the active graph has a reader.
     candidates = set(["\t".join(key.split("\t")[1:6]) for key in removed_scope_edges])
     for slot in sorted([item for item in candidates if item not in renewed_scopes]):
         readers = keys_with_prefix(selected, "incan.engine.edge-in/3\t" + slot + "\t").map_err((error) => error.message())?
@@ -955,6 +976,13 @@ pub def supersede_outputs(selected: Snapshot, mut transaction: Transaction) -> R
         if not retained:
             stage_delete(transaction, slot + "\t")
     return Ok(None)
+
+
+def is_demanded_scope_edge(key: str) -> bool:
+    """Identify reverse witnesses of independent scope values whose last consumer controls retirement."""
+    return key.startswith("incan.engine.edge-in/3\tscope-name\t") or key.startswith(
+        "incan.engine.edge-in/3\t" + EXECUTABLE_SCOPE_FAMILY + "\t",
+    )
 
 
 def retire_edges(
@@ -984,7 +1012,7 @@ def retire_edges(
         if incoming not in writing and incoming not in retired:
             stage_delete(transaction, incoming)
             retired.add(incoming)
-            if incoming.startswith("incan.engine.edge-in/3\tscope-name\t"):
+            if is_demanded_scope_edge(incoming):
                 removed_scope_edges.add(incoming)
     return Ok(None)
 

@@ -412,8 +412,7 @@ pub def test_selected_checker_products_supply_later_witnesses_once() -> Result[N
     local.identity_profile = "incan.stable-declaration/1"
     mut final = local
     final.family = "final"
-    mut body = local
-    body.family = "body-ir"
+    body = body_key("body-ir", local.origin, local.identity, local.facet, local.context)
     first_rank = ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=0)
     final_rank = ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=1)
     body_rank = ProducerRank(namespace=0, stage=ProducerStage.BodyIr, dependency=0)
@@ -555,8 +554,10 @@ pub def test_persisted_evaluations_reuse_only_while_every_witness_validates() ->
             b"final input",
         ),
     ).map_err((error) => error.message())?
-    local_receipt = fixture_receipt(body_inputs, family_key("local", "run44-body"), local_request)?
-    final_receipt = fixture_receipt(body_inputs, family_key("final", "run44-body"), final_request)?
+    local_key = body_key("local", "package", "run44-body", "checked", "")
+    final_key = body_key("final", "package", "run44-body", "checked", "")
+    local_receipt = fixture_receipt(body_inputs, local_key, local_request)?
+    final_receipt = fixture_receipt(body_inputs, final_key, final_request)?
     body = publish_body_values(
         body_inputs,
         "run44-local-claim",
@@ -568,19 +569,29 @@ pub def test_persisted_evaluations_reuse_only_while_every_witness_validates() ->
         b"final value",
         final_receipt,
     )?
-    body_ir_key = family_key("body-ir", "run44-body")
-    body_ir_receipt = fixture_receipt(body.snapshot, body_ir_key, record_request(family_key("final", "run44-body")))?
+    # The old executable profile still has a valid selected artifact when the current owner is first demanded.
+    mut old_key = body_key("body-ir", "package", "run44-body", "checked", "")
+    old_key.identity_profile = local_key.identity_profile
+    old_receipt = fixture_receipt(body.snapshot, old_key, record_request(final_key))?
+    rank = ProducerRank(namespace=2, stage=ProducerStage.BodyIr, dependency=0)
+    old = publish_evaluation(body.snapshot, "run44-predecessor-body", rank,
+        encode_body_frame(old_key, "profile", b"old owner")?, old_receipt)?
+    assert len(select_body_inventory(old.snapshot, "profile")?) == 0
+    body_ir_key = body_key("body-ir", "package", "run44-body", "checked", "")
+    body_ir_receipt = fixture_receipt(old.snapshot, body_ir_key, record_request(final_key))?
+    malformed = publish_evaluation(old.snapshot, "run44-malformed-current-body", rank, b"old unframed bytes", body_ir_receipt)?
+    assert select_body_inventory(malformed.snapshot, "profile").is_err()
     body_ir = publish_evaluation(
-        body.snapshot,
+        old.snapshot,
         "run44-body-ir-claim",
-        ProducerRank(namespace=2, stage=ProducerStage.BodyIr, dependency=0),
+        rank,
         encode_body_frame(body_ir_key, "profile", b"owner-frame")?,
         body_ir_receipt,
     )?
     selected_body = select_body_values(
         body_ir.snapshot,
-        family_key("local", "run44-body"),
-        family_key("final", "run44-body"),
+        local_key,
+        final_key,
         "profile",
     )?
     match selected_body:
@@ -599,8 +610,8 @@ pub def test_persisted_evaluations_reuse_only_while_every_witness_validates() ->
     )?
     assert select_body_values(
         changed_body,
-        family_key("local", "run44-body"),
-        family_key("final", "run44-body"),
+        local_key,
+        final_key,
         "profile",
     )? is None
     return Ok(None)

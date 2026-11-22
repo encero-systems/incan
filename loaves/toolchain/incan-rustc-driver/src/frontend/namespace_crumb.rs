@@ -7,7 +7,8 @@ use incan_frontend::checker_records::GraphNamespaceInterface;
 use incan_frontend::typechecker::{
     CheckedNamespaceInterface, ModuleDependencyInterface, NamespaceCell as Cell, NamespaceCrumb,
 };
-use internal_models_native::{MappedView, NamespaceAtom as Atom, NamespaceEntry, NamespaceField};
+pub(super) use incan_frontend::typechecker::{to_atom, to_cell};
+use internal_models_native::MappedView;
 use sha2::{Digest, Sha256};
 
 pub(super) struct CheckedNamespaceCrumb;
@@ -296,74 +297,6 @@ impl NamespaceCrumb for CheckedNamespaceCrumb {
             &encoded.to_vec(),
         )?)
     }
-}
-
-fn atom_fields(fields: Vec<(u64, Cell)>) -> Vec<NamespaceField> {
-    fields
-        .into_iter()
-        .map(|(id, value)| NamespaceField {
-            identity: id,
-            value: to_atom(value),
-        })
-        .collect()
-}
-fn cell_fields(fields: Vec<NamespaceField>) -> Result<Vec<(u64, Cell)>, String> {
-    fields
-        .into_iter()
-        .map(|field| Ok((field.identity, to_cell(field.value)?)))
-        .collect()
-}
-pub(super) fn to_atom(value: Cell) -> Atom {
-    match value {
-        Cell::Text(s) => Atom::Text(s),
-        Cell::Binary(v) => Atom::Binary(v),
-        Cell::Boolean(v) => Atom::Flag(v),
-        Cell::Signed(v) => Atom::Signed(v),
-        Cell::Unsigned(v) => Atom::Unsigned(v),
-        Cell::Float(v) => Atom::Real(v),
-        Cell::None => Atom::Missing,
-        Cell::Some(item) => Atom::Present(vec![to_atom(*item)]),
-        Cell::List(items) => Atom::Items(items.into_iter().map(to_atom).collect()),
-        Cell::Tuple(items) => Atom::TupleItems(items.into_iter().map(to_atom).collect()),
-        Cell::Map(items) => Atom::Mapping(
-            items
-                .into_iter()
-                .map(|(key, value)| NamespaceEntry {
-                    key: to_atom(key),
-                    value: to_atom(value),
-                })
-                .collect(),
-        ),
-        Cell::Record(fields) => Atom::Fields(atom_fields(fields)),
-        Cell::Variant(id, fields) => Atom::Alternative(id, atom_fields(fields)),
-    }
-}
-pub(super) fn to_cell(value: Atom) -> Result<Cell, String> {
-    Ok(match value {
-        Atom::Text(s) => Cell::Text(s),
-        Atom::Binary(v) => Cell::Binary(v),
-        Atom::Flag(v) => Cell::Boolean(v),
-        Atom::Signed(v) => Cell::Signed(v),
-        Atom::Unsigned(v) => Cell::Unsigned(v),
-        Atom::Real(v) => Cell::Float(v),
-        Atom::Missing => Cell::None,
-        Atom::Present(items) => {
-            let [item] = items
-                .try_into()
-                .map_err(|_| "checked namespace option requires one value")?;
-            Cell::Some(Box::new(to_cell(item)?))
-        }
-        Atom::Items(items) => Cell::List(items.into_iter().map(to_cell).collect::<Result<_, _>>()?),
-        Atom::TupleItems(items) => Cell::Tuple(items.into_iter().map(to_cell).collect::<Result<_, _>>()?),
-        Atom::Mapping(items) => Cell::Map(
-            items
-                .into_iter()
-                .map(|entry| Ok((to_cell(entry.key)?, to_cell(entry.value)?)))
-                .collect::<Result<_, String>>()?,
-        ),
-        Atom::Fields(fields) => Cell::Record(cell_fields(fields)?),
-        Atom::Alternative(id, fields) => Cell::Variant(id, cell_fields(fields)?),
-    })
 }
 
 #[cfg(test)]
