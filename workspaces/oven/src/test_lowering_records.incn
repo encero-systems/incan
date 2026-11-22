@@ -891,9 +891,7 @@ def shared_unit_runs(binary: str, source: Path, store: Path, trace: Path) -> Res
     spans = unit_spans(trace)?
     assert len(spans) == 4, f"expected four shared-unit spans, found {len(spans)}"
     for index in range(1, len(spans)):
-        _, previous_end = spans[index - 1]
-        started, _ = spans[index]
-        assert previous_end <= started, "requests for one unit overlapped"
+        assert spans[index - 1].end <= spans[index].start, "requests for one unit overlapped"
     return Ok(None)
 
 
@@ -909,9 +907,7 @@ def distinct_unit_runs(binary: str, root: Path, store: Path, trace: Path) -> Res
     _ = finished_run(second_output.status.success(), second_output.stdout, second_output.stderr)?
     spans = unit_spans(trace)?
     assert len(spans) == 6, f"expected two additional unit spans, found {len(spans) - 4}"
-    _, earlier_end = spans[4]
-    later_start, _ = spans[5]
-    assert later_start < earlier_end, "requests for different units did not overlap"
+    assert spans[5].start < spans[4].end, "requests for different units did not overlap"
     return Ok(None)
 
 
@@ -927,7 +923,14 @@ def concurrent_fixture(root: Path, name: str, argument: str) -> Result[Path, str
     return Ok(source)
 
 
-def unit_spans(trace: Path) -> Result[list[tuple[int, int]], str]:
+model SettlementSpan:
+    """One measured settlement interval on the host clock."""
+
+    start: int
+    end: int
+
+
+def unit_spans(trace: Path) -> Result[list[SettlementSpan], str]:
     """Read Oven settlement intervals in raw host-clock order, across all trace writers."""
     mut spans: dict[int, int] = {}
     for entry in trace.iterdir().map_err((error) => error.message())?:
@@ -939,7 +942,7 @@ def unit_spans(trace: Path) -> Result[list[tuple[int, int]], str]:
             row = parse(line).map_err((error) => error.message())?
             if json_text_is(row, "operation", "engine_unit"):
                 spans[proof_count(row, "start_ns")?] = proof_count(row, "end_ns")?
-    return Ok([(start, spans[start]) for start in sorted([start for start in spans.keys()])])
+    return Ok([SettlementSpan(start=start, end=spans[start]) for start in sorted([start for start in spans.keys()])])
 
 
 def started_run(binary: str, source: Path, store: Path, trace: Path) -> Result[Child, str]:
