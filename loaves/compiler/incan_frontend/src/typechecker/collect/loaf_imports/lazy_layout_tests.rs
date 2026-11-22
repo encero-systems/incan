@@ -638,9 +638,14 @@ fn a_loaf_install_record_replays_the_dependency_interface_without_opening_manife
 fn root_export_layouts_match_their_declaration_facets() -> TestResult {
     let root = tempfile::tempdir()?;
     let loaves = shapes(root.path())?;
+    let mut differences = Vec::new();
     let mut roots = 0;
     for entry in loaves.entries() {
-        roots += compare_root_layouts(&entry.artifact.manifest, &entry.artifact.identity.digest)?;
+        roots += compare_root_layouts(
+            &entry.artifact.manifest,
+            &entry.artifact.identity.digest,
+            &mut differences,
+        )?;
     }
     assert_eq!(roots, 8, "the fixtures must exercise every root layout kind");
 
@@ -659,18 +664,25 @@ fn root_export_layouts_match_their_declaration_facets() -> TestResult {
             let text = std::fs::read_to_string(&path)?;
             let manifest = crate::library_manifest::LibraryManifest::from_json_str(&text)?;
             let digest = format!("sha256:{:x}", Sha256::digest(text.as_bytes()));
-            layouts +=
-                compare_root_layouts(&manifest, &digest).map_err(|error| format!("{}: {error}", path.display()))?;
+            match compare_root_layouts(&manifest, &digest, &mut differences) {
+                Ok(checked) => layouts += checked,
+                Err(error) => differences.push(format!("{}: {error}", path.display())),
+            }
             manifests += 1;
         }
         assert!(manifests > 0 && layouts > 0, "the corpus contains no root layouts");
         println!("{manifests} census Loaves and {layouts} root layouts");
     }
+    assert!(differences.is_empty(), "{}", differences.join("\n"));
     Ok(())
 }
 
 /// Compare the exact symbol kinds the root manifest exports with the layouts of their restored declarations.
-fn compare_root_layouts(manifest: &crate::library_manifest::LibraryManifest, digest: &str) -> TestResult<usize> {
+fn compare_root_layouts(
+    manifest: &crate::library_manifest::LibraryManifest,
+    digest: &str,
+    differences: &mut Vec<String>,
+) -> TestResult<usize> {
     use crate::library_manifest::LibraryManifest;
     use crate::library_manifest::compiler_records::RecordFamily;
     use crate::library_manifest::declaration_records::{qualified_name, restored_nominal_declaration};
@@ -745,13 +757,50 @@ fn compare_root_layouts(manifest: &crate::library_manifest::LibraryManifest, dig
             .ok_or_else(|| format!("{}::{name} restores no layout", manifest.name))?;
         TypeChecker::mark_compiled_class_field_provider(&mut expected, &manifest.name);
         TypeChecker::mark_compiled_class_field_provider(&mut actual, &manifest.name);
-        assert_eq!(
-            serde_json::to_value(actual)?,
-            serde_json::to_value(expected)?,
-            "{}::{name} using declaration {key}",
-            manifest.name,
+        let mut fields = Vec::new();
+        layout_difference_paths(
+            &serde_json::to_value(actual)?,
+            &serde_json::to_value(expected)?,
+            "",
+            &mut fields,
         );
+        if !fields.is_empty() {
+            differences.push(format!(
+                "{}::{name} ({digest}) using declaration {key}: {}",
+                manifest.name,
+                fields.join(", "),
+            ));
+        }
         count += 1;
     }
     Ok(count)
+}
+
+/// Identify the checker layout fields that differ without dumping the full symbol tables.
+fn layout_difference_paths(
+    actual: &serde_json::Value,
+    expected: &serde_json::Value,
+    path: &str,
+    fields: &mut Vec<String>,
+) {
+    use std::collections::BTreeSet;
+
+    if actual == expected {
+        return;
+    }
+    let (Some(actual), Some(expected)) = (actual.as_object(), expected.as_object()) else {
+        fields.push(path.to_owned());
+        return;
+    };
+    for name in actual.keys().chain(expected.keys()).collect::<BTreeSet<_>>() {
+        let field = if path.is_empty() {
+            name.clone()
+        } else {
+            format!("{path}.{name}")
+        };
+        match (actual.get(name), expected.get(name)) {
+            (Some(left), Some(right)) => layout_difference_paths(left, right, &field, fields),
+            _ => fields.push(field),
+        }
+    }
 }
