@@ -2,6 +2,7 @@
 
 from std.fs import Path
 from std.tempfile import TemporaryDirectory
+from check_support import read, repository_root
 from check_test_support import write
 from pub::incan_platform.probes import process_table
 from oven_tests import (
@@ -19,7 +20,6 @@ from oven_tests import (
     free_worker,
     invocations,
     join_logs,
-    library_prebuild_arguments,
     planned_outcome,
     log_name,
     parse_options,
@@ -185,16 +185,23 @@ def test_every_release_test_asks_the_builder_bakery_which_admits_units_by_identi
     return Ok(None)
 
 
-def test_the_release_prebuilds_exactly_the_compile_the_oven_step_starts_with() -> Result[None, str]:
-    """The project library a release builds ahead comes from the same compile-only invocation the step starts first."""
+def test_only_the_installed_oven_step_prepares_the_settled_protocol() -> Result[None, str]:
+    """The installed scope lists the protocol source once, then keeps its standalone execution."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     root = temporary.path()
     fixture(root)?
     evidence = root.joinpath("evidence")
-    planned = invocations(root, evidence, evidence.joinpath("oven-tests"), 2)?
-    assert library_prebuild_arguments() == compile_ahead(planned)[0].arguments
-    assert library_prebuild_arguments() == ["test", "src/test_engine_protocol.incn", "--list"]
+    planned = invocations(root, evidence, evidence.joinpath("oven-tests"), 2, "/selected/bakery")?
+    ahead = compile_ahead(planned)
+    assert [item.arguments for item in ahead] == [["test", "src/test_engine_protocol.incn", "--list"]]
+    assert [item.environment["INCAN_BAKERY"] for item in ahead] == ["/selected/bakery"]
+    assert [item.arguments for item in planned if item.alone] == [["test", "src/test_engine_protocol.incn"]]
     remove_worker_projects(planned)?
+
+    # The native package build leaves this invocation to installed verification.
+    scripts = repository_root()?.joinpath("scripts")
+    assert "oven_test_library_step" not in read(scripts.joinpath("release.incn"))?
+    assert "oven-test-library" not in read(scripts.joinpath("native_build.incn"))?
     return Ok(None)
 
 
