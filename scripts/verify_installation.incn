@@ -240,7 +240,10 @@ pub def verification_phase_plans(jobs: int) -> list[VerificationPhasePlan]:
     workers = verification_workers(jobs)
     return [
         VerificationPhasePlan(phase=VerificationPhase.Relocation, reservation=SMALL_PROJECT_RESERVATION_BYTES),
-        VerificationPhasePlan(phase=VerificationPhase.Oven, reservation=workers * OVEN_PROJECT_RESERVATION_BYTES),
+        VerificationPhasePlan(
+            phase=VerificationPhase.Oven,
+            reservation=oven_jobs(jobs) * OVEN_PROJECT_RESERVATION_BYTES,
+        ),
         VerificationPhasePlan(phase=VerificationPhase.RustFacets, reservation=workers * FACET_RESERVATION_BYTES),
         VerificationPhasePlan(phase=VerificationPhase.DriverIntegration, reservation=LOWERING_RESERVATION_BYTES),
         VerificationPhasePlan(
@@ -259,8 +262,32 @@ pub def census_jobs(jobs: int) -> int:
     return 2 * verification_workers(jobs)
 
 
+pub def oven_jobs(jobs: int) -> int:
+    """
+    The Oven step's invocations: twice the release's jobs. It outlasts every other gate, the census included, and
+    runs on alone after them, so it takes the processors they leave; its own pool still reserves each invocation's
+    memory.
+    """
+    return 2 * verification_workers(jobs)
+
+
+pub def oven_test_arguments(oven: Path, checkout: Path, run: Path, jobs: int) -> list[str]:
+    """The installed Oven step's command: the whole stable inventory at `oven_jobs`, naming every failing test."""
+    return [
+        "run",
+        checkout.joinpath("scripts/oven_tests.incn").0,
+        "--",
+        oven.0,
+        run.0,
+        "--jobs",
+        str(oven_jobs(jobs)),
+        # A release names every failing test in one run, so no later failure hides behind the first.
+        "--keep-going",
+    ]
+
+
 pub def verification_gate_width(jobs: int) -> int:
-    """How many gates run at once: every planned gate, since each bounds its own children by `jobs`."""
+    """How many gates run at once: every planned gate, since each bounds its own children by what `jobs` gives it."""
     return len(verification_phase_plans(jobs))
 
 
@@ -512,17 +539,7 @@ def run_oven_tests(installation: Installation) -> Result[None, str]:
         installation,
         "oven-tests",
         installation.oven.0,
-        [
-            "run",
-            installation.root.joinpath("scripts/oven_tests.incn").0,
-            "--",
-            installation.oven.0,
-            installation.run.0,
-            "--jobs",
-            str(installation.jobs),
-            # A release names every failing test in one run, so no later failure hides behind the first.
-            "--keep-going",
-        ],
+        oven_test_arguments(installation.oven, installation.root, installation.run, installation.jobs),
         installation.root,
         installation.run.joinpath("oven-tests-command.log"),
     )
