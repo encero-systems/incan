@@ -222,6 +222,7 @@ impl TypeChecker {
         let partial_projection = declarations.iter().find_map(|declaration| {
             Self::public_member_partial_projection(manifest, source_module_path, member, declaration, &remapping)
         });
+        self.open_package_internal_defaults(manifest, canonical.as_ref(), &mut kind);
         Self::mark_compiled_class_field_provider(&mut kind, library);
         Ok(Some(PublicModuleMember {
             kind,

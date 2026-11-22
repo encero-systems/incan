@@ -521,6 +521,8 @@ struct CheckingNominalScope {
 pub struct TypeChecker {
     /// The active source package's declared persistent-record namespace; compiler ownership remains separate.
     record_package_identity: Option<incan_semantics_core::record_identity::RecordPackageIdentity>,
+    /// The project library this unit links, when it is a unit of that library's own package (DD-0007).
+    project_library: Option<String>,
     /// Test-only cold baseline bypasses local table extraction while retaining the original semantic operations.
     #[cfg(test)]
     legacy_body_checking: bool,
