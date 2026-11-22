@@ -36,6 +36,7 @@ impl TypeChecker {
                 traits: exports.traits.iter().map(|item| item.name.clone()).collect(),
             },
             type_origins: self.loaf_type_origins(library, manifest).values().cloned().collect(),
+            modules: Vec::new(),
         }
     }
 }
