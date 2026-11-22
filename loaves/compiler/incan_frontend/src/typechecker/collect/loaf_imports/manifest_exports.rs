@@ -268,7 +268,7 @@ impl TypeChecker {
             })?;
         let declaration = Self::api_declaration_for_target_path(&manifest, &identity.source_path)?;
         let mut kind = self.symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration)?;
-        let root_remapping = self.public_library_canonical_type_remapping(&library, &manifest);
+        let root_remapping = self.public_library_canonical_type_remapping(&library);
         self.remap_symbol_kind_through_declaring_module(&library, &manifest, Some(canonical), &mut kind);
         self.remap_symbol_kind_with_import_aliases(&mut kind, &root_remapping);
         Some(kind)

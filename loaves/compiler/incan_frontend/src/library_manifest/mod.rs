@@ -11,6 +11,7 @@ pub mod compiler_records;
 pub mod declaration_records;
 pub mod executable_ranges;
 pub mod executable_surface;
+pub mod install_record;
 mod model;
 pub(crate) mod ownership;
 pub mod package_internal;

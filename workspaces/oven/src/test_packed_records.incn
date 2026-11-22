@@ -13,16 +13,22 @@ pub def test_a_pack_exports_records_for_the_manifests_it_ships_only() -> Result[
 
     1. A home holds a standard Loaf and two runtimes; the stage links in the standard Loaf and one runtime, as
        packing does.
-    2. The manifests the records are exported from are the two the stage ships, each a plain file with the shipped
-       bytes at its shipped place, because the compiler's export follows no link.
+    2. The export reads the two shipped manifests and their sidecars as plain files at their shipped paths.
+       The new standard Loaf carries facts, and the legacy runtime has no facts sidecar.
     """
     scratch = scratch_directory()?
     home = scratch.path().joinpath("home")
     stage = scratch.path().joinpath("stage")
     view = scratch.path().joinpath("view")
     # 1. Only the standard Loaf and the runtime the toolchain names are staged.
-    shipped = ["loaves/std/debug/std.incnlib", "loaves/std/debug/std.incnbody", "native/kept/libruntime.incnlib", "native/kept/libruntime.incnbody"]
-    for relative in shipped + ["native/left/libruntime.incnlib", "native/left/libruntime.incnbody"]:
+    shipped = [
+        "loaves/std/debug/std.incnlib",
+        "loaves/std/debug/std.incnbody",
+        "loaves/std/debug/std.incnfacts",
+        "native/kept/libruntime.incnlib",
+        "native/kept/libruntime.incnbody",
+    ]
+    for relative in shipped + ["native/left/libruntime.incnlib", "native/left/libruntime.incnbody", "native/left/libruntime.incnfacts"]:
         make_directory(home.joinpath(relative).parent())?
         write(home.joinpath(relative), f"artifact {relative}")?
     for relative in shipped:
@@ -31,7 +37,7 @@ pub def test_a_pack_exports_records_for_the_manifests_it_ships_only() -> Result[
     write(stage.joinpath("toolchain.json"), "{}")?
     # 2. The export reads exactly what ships.
     shipped_manifests(stage, view)?
-    assert manifests(view, view)? == sorted(shipped), "the export's manifests are not the shipped ones"
+    assert manifests(view, view)? == sorted(shipped), "the export did not keep exactly the shipped compiler inputs"
     for relative in shipped:
         assert not view.joinpath(relative).is_symlink(), "the compiler's export skips a linked manifest"
         assert read(view.joinpath(relative))? == f"artifact {relative}"

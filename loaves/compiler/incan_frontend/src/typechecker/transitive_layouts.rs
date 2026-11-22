@@ -9,35 +9,48 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
 use super::{TraitInfo, TypeChecker, TypeInfo};
-use crate::library_manifest::LibraryManifest;
+use crate::library_manifest::compiler_records::RecordFamily;
+use crate::library_manifest::install_record::InstallExportKind;
 use crate::symbols::SymbolKind;
 
 /// The compiled declaration a deferred layout is built from.
 #[derive(Debug)]
 pub(in crate::typechecker) enum LayoutDeclaration {
-    /// The model at this position of the manifest's root exports.
-    Model(usize),
-    /// The class at this position of the manifest's root exports.
-    Class(usize),
-    /// The enum at this position of the manifest's root exports.
-    Enum(usize),
-    /// The newtype at this position of the manifest's root exports.
-    Newtype(usize),
-    /// The trait at this position of the manifest's root exports.
-    Trait(usize),
-    /// The model, class, enum or newtype the manifest's root exports under this public name.
-    Export(String),
-    /// The checked API declaration at this position of this checked API module.
-    Api { module: usize, declaration: usize },
+    /// An admitted nominal or trait root projection, addressed by its public spelling and record family.
+    Root { family: RecordFamily, name: String },
+    /// An authored declaration's record name and its position for legacy manifest reads.
+    Api {
+        qualified: String,
+        module: usize,
+        declaration: usize,
+    },
     /// The checked API declaration at this target path.
     ApiPath(Vec<String>),
+}
+
+impl LayoutDeclaration {
+    /// Select the root projection for a nominal export, including when its canonical declaration has another name.
+    pub(in crate::typechecker) fn root_nominal(name: &str, kind: Option<InstallExportKind>) -> Option<Self> {
+        let family = match kind? {
+            InstallExportKind::Model => RecordFamily::Model,
+            InstallExportKind::Class => RecordFamily::Class,
+            InstallExportKind::Enum => RecordFamily::Enum,
+            InstallExportKind::Newtype => RecordFamily::Newtype,
+            _ => return None,
+        };
+        Some(Self::Root {
+            family,
+            name: name.to_owned(),
+        })
+    }
 }
 
 /// How to build one compiled declaration's layout as its install would: the declaration, then each remapping in
 /// order, then the compiled class field provider.
 #[derive(Debug)]
 pub(in crate::typechecker) struct LayoutRecipe {
-    pub(in crate::typechecker) manifest: Arc<LibraryManifest>,
+    /// The admitted Loaf whose layout this recipe will read.
+    pub(in crate::typechecker) library: String,
     pub(in crate::typechecker) declaration: LayoutDeclaration,
     pub(in crate::typechecker) remappings: Vec<Arc<HashMap<String, String>>>,
     /// The Loaf a compiled class's fields are marked as provided by, when the install marks them.
@@ -109,7 +122,7 @@ impl<T: LayoutValue> TransitiveLayout<T> {
     }
 
     /// The layout, built by `checker` the first time it is read. `None` only for a recipe whose declaration is not of
-    /// this table's kind, which no install defers.
+    /// this table's kind or whose admitted layout input could not be read.
     pub fn get(&self, checker: &TypeChecker) -> Option<&T> {
         self.0
             .value

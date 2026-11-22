@@ -1,13 +1,16 @@
 //! The two digests of a Loaf's installed compiler records (RFC 179).
 
-use super::{FactDigests, RecordFamily};
+use super::{FactDigests, RecordFamily, sha256_hex};
 use crate::api_metadata::{
     CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
     materialize_checked_api_public_namespaces,
 };
 use crate::library_exports::collect_checked_public_exports;
 use crate::library_manifest::LibraryManifest;
+use crate::library_manifest::install_record::read_published_install_record;
+use crate::loaf_index::LoafIndex;
 use crate::{lexer, parser, typechecker};
+use std::{fs, sync::Arc};
 
 /// The manifest a library publishing `source` as version `version` would carry, with its checked API.
 fn manifest(source: &str, version: &str) -> Result<LibraryManifest, String> {
@@ -46,6 +49,71 @@ const PRICE_REDOCUMENTED: &str = "pub def price() -> int:\n    \"\"\"The sale pr
 const PRICE_AS_TEXT: &str = "pub def price() -> str:\n    \"\"\"The list price.\"\"\"\n    return \"1999\"\n";
 const FIRST_FILE: &str = "1111111111111111111111111111111111111111111111111111111111111111";
 const SECOND_FILE: &str = "2222222222222222222222222222222222222222222222222222222222222222";
+
+/// A compiled path Loaf and its converter use the same named bytes. Old manifests keep the legacy path, while a
+/// declared record that fails authentication refuses the consumer's demand.
+#[test]
+fn path_install_record_publication_and_compatibility() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let path = root.path().join("prices.incnlib");
+    let sidecar = path.with_extension("incnfacts");
+    let open = || LoafIndex::deferred([("pricing".into(), "prices".into(), root.path().to_owned(), false)]);
+    let mut manifest = namespaced("pub model Price:\n    pub cents: int\n")?;
+    fs::write(&path, manifest.to_json_string()?)?;
+    assert!(
+        open()?.install_record("pricing")?.is_none(),
+        "legacy artifact without a sidecar"
+    );
+
+    let checked = typechecker::TypeChecker::new().loaf_install_record("prices", &manifest);
+    assert!(checked.modules.iter().any(|module| {
+        module
+            .declarations
+            .iter()
+            .any(|declaration| declaration.name == "Price")
+    }));
+    let record = manifest.prepare_install_record(&checked)?;
+    let value = record.value.clone();
+    let key = record.key();
+    let revision = sha256_hex(&value);
+    let encoded = manifest.to_json_string()?;
+    fs::write(&path, &encoded)?;
+    let facts = manifest.encode_loaf_facts(&encoded, Some(record))?;
+    fs::write(&sidecar, &facts)?;
+
+    let manifest_digest = sha256_hex(encoded.as_bytes());
+    let record = read_published_install_record(&path, "prices", &manifest_digest, &revision)?;
+    let converted = manifest.compiler_records_with_install(&manifest_digest, Some(record))?;
+    let selected = converted
+        .records
+        .iter()
+        .find(|record| record.family == RecordFamily::InstallRecord)
+        .ok_or("converter omitted the install family")?;
+    assert_eq!(selected.key(), key);
+    assert_eq!(selected.value, value);
+    let index = open()?;
+    let read = index
+        .install_record("pricing")?
+        .ok_or("indexed path lost its named row")?;
+    assert_eq!(*read, checked);
+    let repeated = index
+        .install_record("pricing")?
+        .ok_or("indexed path lost its admitted row")?;
+    assert!(Arc::ptr_eq(&read, &repeated));
+
+    let mut corrupted: serde_json::Value = serde_json::from_slice(&facts)?;
+    corrupted["install_record"]["value"] = serde_json::Value::String("00".into());
+    fs::write(&sidecar, serde_json::to_vec(&corrupted)?)?;
+    let fresh = open()?;
+    assert!(fresh.install_record("pricing").is_err(), "corrupt value was admitted");
+    assert!(fresh.validate_demands().is_err(), "the refusal was not retained");
+    fs::remove_file(sidecar)?;
+    assert!(
+        open()?.install_record("pricing").is_err(),
+        "declared but missing sidecar was admitted"
+    );
+    Ok(())
+}
 
 #[test]
 fn a_documentation_only_change_keeps_the_semantic_facts_digest() -> Result<(), String> {

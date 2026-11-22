@@ -18,6 +18,9 @@ use crate::library_manifest::capabilities::Contributions;
 use crate::library_manifest::compiler_records::RecordFamily;
 use crate::library_manifest::declaration_records::{DeclarationFacet, declaration_facts};
 use crate::library_manifest::executable_surface::{ExecutableSurface, runtime_bindings};
+use crate::library_manifest::install_record::{
+    INSTALL_RECORD_SCHEMA, LoafInstallRecord, read_published_install_record,
+};
 use crate::library_manifest::type_scope::ModuleTypeScope;
 use crate::rust_abi_cache::RustAbiCache;
 use incan_semantics_core::body_ir::RuntimeCallableBinding;
@@ -42,6 +45,8 @@ pub(super) struct Summary {
     /// manifest. A summary recorded before it carried the digest has none; the manifest then names the cache.
     #[serde(default)]
     pub rust_abi_cache_digest: Option<String>,
+    /// The named install value authenticated by an ordinary artifact's manifest.
+    pub install_record_digest: Option<String>,
 }
 
 impl Summary {
@@ -73,6 +78,7 @@ impl Summary {
                 .is_some(),
             rust_abi_cache: artifact.rust_abi_cache.is_some(),
             rust_abi_cache_digest: manifest.rust_abi.as_ref().and_then(|abi| abi.cache_digest.clone()),
+            install_record_digest: manifest.contract_metadata.install_record_digest.clone(),
         }
     }
 }
@@ -86,6 +92,8 @@ pub(super) struct IndexedLoaf {
     pub name: String,
     pub globals: Contributions,
     initial_summary: Option<Summary>,
+    /// File generation that authorized an inventory-only path selection.
+    path_generation: Option<Observation>,
     selected_summary: Arc<OnceLock<Result<Summary, LoafIndexError>>>,
     entry: Arc<OnceLock<Result<LoafEntry, LoafIndexError>>>,
     execution: Arc<OnceLock<Result<Arc<crate::library_manifest::LibraryManifest>, LoafIndexError>>>,
@@ -97,6 +105,8 @@ pub(super) struct IndexedLoaf {
     /// The records read by family and name, kept for the rest of the compilation so each is read once; `None` where
     /// the installed set holds no such record.
     named: Arc<Mutex<NamedRecords>>,
+    /// The one admitted install record, including any authentication failure, for this indexed owner.
+    install: Arc<OnceLock<Result<Option<Arc<LoafInstallRecord>>, LoafIndexError>>>,
 }
 
 /// Records read by name, keyed by family and name.
@@ -112,8 +122,10 @@ impl IndexedLoaf {
         isolate_pending(&mut self.vocabulary);
         isolate_pending(&mut self.bindings);
         isolate_pending(&mut self.rust_abi);
+        isolate_pending(&mut self.install);
     }
 
+    /// Start with the admitted owner and keep each later demand local to that exact indexed artifact.
     fn new(
         key: String,
         namespace: LoafNamespace,
@@ -129,6 +141,7 @@ impl IndexedLoaf {
             name,
             globals,
             initial_summary,
+            path_generation: None,
             selected_summary: Arc::default(),
             entry: Arc::default(),
             execution: Arc::default(),
@@ -137,6 +150,7 @@ impl IndexedLoaf {
             vocabulary: Arc::default(),
             rust_abi: Arc::default(),
             named: Arc::default(),
+            install: Arc::default(),
         }
     }
 
@@ -205,6 +219,7 @@ impl IndexedLoaf {
         indexed
     }
 
+    /// Construct an identity-only fixture without a path artifact or install record.
     #[cfg(test)]
     pub(super) fn summary_only(key: String, namespace: LoafNamespace, identity: LoafIdentity) -> Self {
         Self::known(
@@ -220,6 +235,7 @@ impl IndexedLoaf {
                 rust_abi_cache_declared: false,
                 rust_abi_cache: false,
                 rust_abi_cache_digest: None,
+                install_record_digest: None,
             },
         )
     }
@@ -240,10 +256,12 @@ impl IndexedLoaf {
             return Ok(Self::known(key, namespace, dir, summary));
         }
         if (!records || matches!(namespace, LoafNamespace::Dependency { .. }))
-            && let Some(summary) = retained(&path)
+            && let Some((summary, observed)) = retained(&path)
             && summary.identity.name == name
         {
-            return Ok(Self::known(key, namespace, dir, summary));
+            let mut selected = Self::known(key, namespace, dir, summary);
+            selected.path_generation = Some(observed);
+            return Ok(selected);
         }
         let before = observation(&path);
         let artifact = LoafArtifact::read(&dir, name)?;
@@ -447,7 +465,7 @@ impl IndexedLoaf {
 
     /// The `family` records named `name`, read from the installed set the first time they are asked for and kept for
     /// the rest of the compilation; `None` when the set holds no such record.
-    fn named_records(
+    pub(super) fn named_records(
         &self,
         family: &'static str,
         name: &str,
@@ -466,6 +484,68 @@ impl IndexedLoaf {
         };
         kept.insert((family, name.to_owned()), values.clone());
         Ok(values)
+    }
+
+    /// Admit just this Loaf's install value. Only an absent descriptor on a legacy dependency enables recomputation.
+    pub(super) fn install_record(&self) -> Result<Option<Arc<LoafInstallRecord>>, LoafIndexError> {
+        self.install
+            .get_or_init(|| {
+                let record: LoafInstallRecord = if matches!(self.namespace, LoafNamespace::Dependency { .. }) {
+                    let Some(record) = self.path_install_record()? else {
+                        return Ok(None);
+                    };
+                    record
+                } else {
+                    let Some(values) = self.named_records(RecordFamily::InstallRecord.as_str(), &self.name)? else {
+                        return Ok(None);
+                    };
+                    let [value] = values.as_slice() else {
+                        return Err(self.inventory_mismatch("ambiguous named install record"));
+                    };
+                    serde::Deserialize::deserialize(value)
+                        .map_err(|error| self.inventory_mismatch(&error.to_string()))?
+                };
+                if record.schema != INSTALL_RECORD_SCHEMA {
+                    return Err(self.inventory_mismatch("unsupported install record schema"));
+                }
+                Ok(Some(Arc::new(record)))
+            })
+            .clone()
+    }
+
+    /// Reuse the install descriptor in the guarded inventory without materializing its manifest's other facts.
+    fn path_install_record(&self) -> Result<Option<LoafInstallRecord>, LoafIndexError> {
+        let path = self.dir.join(format!("{}.incnlib", artifact_stem(&self.name)));
+        let guard = || {
+            if let Some(expected) = self.path_generation.as_ref()
+                && observation(&path).as_ref() != Some(expected)
+            {
+                return Err(self.inventory_mismatch("the manifest changed after its inventory was admitted"));
+            }
+            Ok(())
+        };
+        let (manifest_digest, install_digest) = if self.path_generation.is_some() {
+            guard()?;
+            let summary = self.summary()?;
+            (&summary.identity.digest, summary.install_record_digest.as_deref())
+        } else {
+            let artifact = &self.demand()?.artifact;
+            (
+                &artifact.identity.digest,
+                artifact.manifest.contract_metadata.install_record_digest.as_deref(),
+            )
+        };
+        let Some(expected) = install_digest else {
+            return Ok(None);
+        };
+        let value = read_published_install_record(&path, &self.name, manifest_digest, expected)
+            .map_err(|error| self.inventory_mismatch(&error.to_string()))?;
+        let record = super::LibraryManifest::decode_compiler_record_value(&value.value)
+            .map_err(|error| self.inventory_mismatch(&error.to_string()))?;
+        guard()?;
+        tracing::trace!(target: "incan::invocation", phase = "path_install_record",
+            loaf = %self.name, key = %value.key(), revision = expected, bytes = value.value.len());
+        Ok(Some(record))
     }
 
     /// Validate every record selected under this path, including aliases, before exposing its canonical identity.
@@ -551,6 +631,7 @@ impl IndexedLoaf {
             .and_then(|result| result.as_ref().err())
             .or_else(|| self.selected_summary.get().and_then(|result| result.as_ref().err()))
             .or_else(|| self.vocabulary.get().and_then(|result| result.as_ref().err()))
+            .or_else(|| self.install.get().and_then(|result| result.as_ref().err()))
     }
 
     /// Resolve namespace ownership from the index's declared binding, before reading manifest contents.
@@ -567,7 +648,7 @@ fn isolate_pending<T>(value: &mut Arc<OnceLock<T>>) {
 }
 
 /// Exact source and compiler generations bound to an optional private summary.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct Observation {
     path: PathBuf,
     source: Generation,
@@ -592,7 +673,7 @@ fn record_path(path: &Path) -> Option<PathBuf> {
 }
 
 /// Refuse stale, malformed, oversized or corrupted records and fall back to full public admission.
-fn retained(path: &Path) -> Option<Summary> {
+fn retained(path: &Path) -> Option<(Summary, Observation)> {
     let observed = observation(path)?;
     let cache = record_path(path)?;
     let guard = manifest_input::checked_guard(&observed.path, observed.source, &observed.compiler);
@@ -601,21 +682,25 @@ fn retained(path: &Path) -> Option<Summary> {
     if observation(path).as_ref() != Some(&observed) {
         return None;
     }
-    Some(Summary {
-        identity: LoafIdentity {
-            name: row.name,
-            version: row.version,
-            digest,
-            feature_projection: row.features.into_iter().collect(),
+    Some((
+        Summary {
+            identity: LoafIdentity {
+                name: row.name,
+                version: row.version,
+                digest,
+                feature_projection: row.features.into_iter().collect(),
+            },
+            vocabulary: row.vocabulary,
+            provider_operations: row.operations,
+            native_unions: row.native_unions,
+            rust_paths: row.rust_paths.into_iter().collect(),
+            rust_abi_cache_declared: row.declares_abi_cache,
+            rust_abi_cache: row.has_abi_cache,
+            rust_abi_cache_digest: row.abi_digest,
+            install_record_digest: row.install_digest,
         },
-        vocabulary: row.vocabulary,
-        provider_operations: row.operations,
-        native_unions: row.native_unions,
-        rust_paths: row.rust_paths.into_iter().collect(),
-        rust_abi_cache_declared: row.declares_abi_cache,
-        rust_abi_cache: row.has_abi_cache,
-        rust_abi_cache_digest: row.abi_digest,
-    })
+        observed,
+    ))
 }
 
 /// Atomically publish an optional inventory only after ordinary manifest admission has succeeded.
@@ -633,6 +718,7 @@ fn retain(path: &Path, observation: Observation, summary: &Summary) -> std::io::
         declares_abi_cache: summary.rust_abi_cache_declared,
         has_abi_cache: summary.rust_abi_cache,
         abi_digest: summary.rust_abi_cache_digest.clone(),
+        install_digest: summary.install_record_digest.clone(),
     };
     let payload = internal_models::encode_manifest_inventory(&row).map_err(std::io::Error::other)?;
     manifest_input::write_cache(&cache, "inventory", guard, &summary.identity.digest, payload)
