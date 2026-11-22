@@ -166,18 +166,26 @@ pub model Key:
 
 pub def unit_key(unit: UnitDescription, toolchain: Toolchain, compiler: str = "") -> Result[Key, str]:
     """Reconcile every input of `unit` against the retained observations; the key its outputs are valid for."""
+    key, _reach = unit_key_and_reach(unit, toolchain, compiler)?
+    return Ok(key)
+
+
+pub def unit_key_and_reach(
+    unit: UnitDescription, toolchain: Toolchain, compiler: str = "",
+) -> Result[tuple[Key, Option[SourceGraph]], str]:
+    """Return the native key and the exact scoped graph used to derive it from the same source ledger."""
     match identified_unit(unit, toolchain, compiler):
-        Ok(key) => return Ok(key)
+        Ok(resolved) => return Ok(resolved)
         Err(reason) =>
             if "unit identity refused:" in reason:
                 return Ok(
-                    Key(
+                    (Key(
                         digest="",
                         parts=[],
                         provenance=[unit.project_root, unit.source],
                         refusal=reason,
                         descriptor=fingerprint([json_text(unit.to_json())?])?,
-                    ),
+                    ), None),
                 )
             return Err(reason)
 
@@ -189,7 +197,9 @@ def source_ledger(unit: UnitDescription) -> Ledger:
     return project
 
 
-def identified_unit(unit: UnitDescription, toolchain: Toolchain, compiler: str) -> Result[Key, str]:
+def identified_unit(
+    unit: UnitDescription, toolchain: Toolchain, compiler: str,
+) -> Result[tuple[Key, Option[SourceGraph]], str]:
     """Finish identity only when the compiler and every linked unit have admitted identities."""
     mut project = source_ledger(unit)
     mut base_compiler = compiler
@@ -204,7 +214,7 @@ def identified_unit(unit: UnitDescription, toolchain: Toolchain, compiler: str) 
     # Revalidation receives the reusable base and derives the unit-specific SDK dimension once again.
     key.compiler = base_compiler
     key.source_modules = collected_project_modules(unit, graph)
-    return Ok(key)
+    return Ok((key, graph))
 
 
 def collected_project_modules(unit: UnitDescription, graph: Option[SourceGraph]) -> Option[list[str]]:
