@@ -1,0 +1,14 @@
+# behavior: a test of the project calls functions of a module beside its entry and omits parameters whose defaults are no value, here expressions reading that module's static, as any module of one package may; the test links the project's shared library, and the defaults still run
+# cli-commands:
+#   test tests
+# expect-stdout-contains:
+#   test_defaults.incn::test_a_default_reading_its_module_static_is_omitted PASSED
+#   test_defaults.incn::test_a_default_reading_the_static_through_a_call_is_omitted PASSED
+# expect-exit: 0
+
+from helpers import has, size
+
+
+def main() -> None:
+    println(has())
+    println(size())
