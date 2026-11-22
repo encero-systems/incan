@@ -39,7 +39,9 @@ use crate::models::{field_path, field_step_type, model_type};
 use crate::numerics::numeric_carrier;
 use crate::program_context::ProgramContext;
 use crate::statements::is_nominal_type;
-use crate::static_guards::{FieldCopy, field_copier, field_copy, uncloned_enum};
+use crate::static_guards::{
+    FieldCopy, field_copier, field_copy, guarded_dictionary_static, guarded_insert, uncloned_enum,
+};
 use crate::string_input::{SyntheticFrame, synthetic_builder};
 use crate::type_parameters::merge_instance_requests;
 
@@ -936,10 +938,11 @@ fn static_field_writer(
     )
 }
 
-/// Write one static dictionary entry: evaluate the value and then the key, insert them into the current snapshot, and
-/// commit that snapshot.
+/// Write one static dictionary entry: evaluate the value and then the key, then insert them. A dictionary static's
+/// native cell takes the entry in place under its exclusive guard; any other storage inserts into its current snapshot
+/// and commits that snapshot.
 ///
-/// The snapshot is read only after both are evaluated, so a value that itself changes the static is not overwritten by
+/// The storage is read only after both are evaluated, so a value that itself changes the static is not overwritten by
 /// a stale copy.
 fn write_static_entry(
     builder: &mut Builder,
@@ -963,6 +966,10 @@ fn write_static_entry(
         return Err("unsupported Body IR static dictionary mutation projection".into());
     };
     let key = element_operand(builder, index, &types[0], span)?;
+    // A dictionary static's own cell takes the one entry under its exclusive guard, so nothing else is copied.
+    if let Some((slot, ty)) = guarded_dictionary_static(builder, global)? {
+        return guarded_insert(builder, slot, &ty, key, argument, span);
+    }
     let receiver = list_base_place(builder, destination, span)?;
     insert_collection(builder, &receiver, vec![key, argument], span)?;
     persist_static_value(builder, global, receiver, span)
