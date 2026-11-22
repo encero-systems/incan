@@ -22,7 +22,7 @@ use crate::collections::{
 };
 use crate::computed_statics::{
     has_native_static_cell, initialize_module_statics, is_computed_static, module_initialization_externals,
-    module_initializer, module_static_key, static_initializer_name, static_owner,
+    module_initializer, module_static_key, static_initializer_name, static_owner, unit_operand,
 };
 use crate::decls::{static_accessors, static_slot};
 use crate::decorator_caches::DecoratorFrame;
@@ -323,9 +323,9 @@ pub fn read_static(
     external_call(
         builder,
         read_cell,
-        vec![PlanType::Int, ty.clone()],
+        vec![PlanType::U64, PlanType::Int, ty.clone()],
         ty.clone(),
-        vec![literal(Constant::Int(slot as i64), span), initial],
+        vec![unit_operand(span), literal(Constant::Int(slot as i64), span), initial],
         target.clone(),
         span,
     );
@@ -998,9 +998,10 @@ pub fn persist_static_value(
     external_call(
         builder,
         write_cell,
-        vec![PlanType::Int, ty],
+        vec![PlanType::U64, PlanType::Int, ty],
         PlanType::Unit,
         vec![
+            unit_operand(span),
             literal(Constant::Int(slot as i64), span),
             read_place(target, moved, span),
         ],

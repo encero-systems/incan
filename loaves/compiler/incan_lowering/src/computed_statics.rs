@@ -41,6 +41,49 @@ pub fn module_initializer_name(owner: &str) -> String {
     format!("__incan_init_module_statics_{}", hex::encode(owner.as_bytes()))
 }
 
+/// The unit operand of a runtime call that keys a process-wide cell by unit and slot.
+///
+/// Every unit (a Loaf, or the program) numbers its statics from 0, and the runtime keeps one cell table per carrier
+/// for the whole process, so each cell is keyed by its unit and its slot in that unit. The unit is the compiled crate's
+/// stable id, which only the native adapter knows: the plan carries 0 here, and the adapter supplies the crate's id as
+/// the first argument of every call [`is_unit_keyed_runtime_call`] names.
+pub fn unit_operand(span: &SourceSpan) -> Operand {
+    literal(Constant::Numeric("0".into(), PlanType::U64), span)
+}
+
+/// Whether a runtime call keys a process-wide cell by its first argument, the unit, and its second, a unit-local
+/// static slot or module key.
+pub fn is_unit_keyed_runtime_call(path: &str) -> bool {
+    let Some(name) = path.strip_prefix("incan_native_runtime::") else {
+        return false;
+    };
+    name.starts_with("read_static_")
+        || name.starts_with("write_static_")
+        || name == "begin_module_initialization"
+        || name == "end_module_initialization"
+}
+
+#[cfg(test)]
+mod unit_key_tests {
+    use super::is_unit_keyed_runtime_call;
+
+    #[test]
+    fn only_slot_keyed_runtime_calls_take_the_unit() {
+        assert!(is_unit_keyed_runtime_call("incan_native_runtime::read_static_int"));
+        assert!(is_unit_keyed_runtime_call(
+            "incan_native_runtime::write_static_text_int_dict"
+        ));
+        assert!(is_unit_keyed_runtime_call(
+            "incan_native_runtime::begin_module_initialization"
+        ));
+        assert!(is_unit_keyed_runtime_call(
+            "incan_native_runtime::end_module_initialization"
+        ));
+        assert!(!is_unit_keyed_runtime_call("incan_native_runtime::read_line"));
+        assert!(!is_unit_keyed_runtime_call("caselib::read_static_int"));
+    }
+}
+
 /// Call module `owner`'s static initializer, as legacy calls `__incan_init_module_statics` at a function entry.
 pub fn initialize_module_statics(builder: &mut Builder, owner: &str, span: &SourceSpan) {
     let key = module_static_key(&builder.program.statics, owner);
@@ -88,14 +131,14 @@ pub fn module_initialization_externals(span: &SourceSpan) -> Vec<ExternalFunctio
         ExternalFunction {
             path: "incan_native_runtime::begin_module_initialization".into(),
             type_arguments: Vec::new(),
-            parameters: vec![PlanType::Int],
+            parameters: vec![PlanType::U64, PlanType::Int],
             return_type: PlanType::Bool,
             span: span.clone(),
         },
         ExternalFunction {
             path: "incan_native_runtime::end_module_initialization".into(),
             type_arguments: Vec::new(),
-            parameters: vec![PlanType::Int],
+            parameters: vec![PlanType::U64, PlanType::Int],
             return_type: PlanType::Unit,
             span: span.clone(),
         },
@@ -140,7 +183,7 @@ pub fn module_initializer(statics: &[StaticDeclaration], key: i64, span: &Source
     let probe = initializer_call(CalleeKind::ModuleInitialized(key), Vec::new(), 1, 1, span);
     let claim = initializer_call(
         CalleeKind::External("incan_native_runtime::begin_module_initialization".into()),
-        vec![literal(Constant::Int(key), span)],
+        vec![unit_operand(span), literal(Constant::Int(key), span)],
         1,
         3,
         span,
@@ -162,7 +205,7 @@ pub fn module_initializer(statics: &[StaticDeclaration], key: i64, span: &Source
     }
     let complete = initializer_call(
         CalleeKind::External("incan_native_runtime::end_module_initialization".into()),
-        vec![literal(Constant::Int(key), span)],
+        vec![unit_operand(span), literal(Constant::Int(key), span)],
         2,
         done - 1,
         span,
