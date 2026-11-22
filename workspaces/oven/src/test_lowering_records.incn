@@ -13,6 +13,7 @@ from compiler_plan_values import LOWERING_PROFILE
 from pub::internal_models.checker_records import CHECKER_PROFILE
 from pub::internal_models.records import ReadWitness, encode_record_key
 from files import write
+from engine_protocol_fixtures import json_text_is
 from lowering_record_fixtures import command_proof, proof_count, report_fixture_build, stop_example_engine
 from scratch import scratch_directory
 from rust_target import decoded
@@ -846,20 +847,30 @@ def generic_source(index: str) -> str:
 
 
 pub def test_concurrent_identical_requests_bake_once() -> Result[None, str]:
-    """Four concurrent requests for one new program share one unit evaluation and one native bake."""
+    """
+    Requests for one unit settle in order and share its evaluation and bake.
+    Requests for different units can settle at the same time on the same engine.
+    """
     scratch = scratch_directory()?
     root = scratch.path()
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
-    source = root.joinpath("shared.incn")
+    source = concurrent_fixture(root, "shared", "21")?
     store = root.joinpath("store")
-    write(
-        source,
-        "def twice(value: int) -> int:\n    return value * 2\n\n\ndef main() -> None:\n    println(twice(21))\n",
-    )?
-    first = started_run(binary, source, store)?
-    second = started_run(binary, source, store)?
-    third = started_run(binary, source, store)?
-    fourth = started_run(binary, source, store)?
+    trace = root.joinpath("trace")
+    trace.mkdir(true, true).map_err((error) => error.message())?
+    shared = shared_unit_runs(binary, source, store, trace)
+    distinct = distinct_unit_runs(binary, root, store, trace)
+    stop_example_engine(binary, store)?
+    shared?
+    return distinct
+
+
+def shared_unit_runs(binary: str, source: Path, store: Path, trace: Path) -> Result[None, str]:
+    """Prove the four callers share one bake and never settle the same unit simultaneously."""
+    first = started_run(binary, source, store, trace)?
+    second = started_run(binary, source, store, trace)?
+    third = started_run(binary, source, store, trace)?
+    fourth = started_run(binary, source, store, trace)?
     first_output = first.wait_with_output().map_err((error) => str(error))?
     second_output = second.wait_with_output().map_err((error) => str(error))?
     third_output = third.wait_with_output().map_err((error) => str(error))?
@@ -875,17 +886,61 @@ pub def test_concurrent_identical_requests_bake_once() -> Result[None, str]:
     for report in reports:
         evaluations += proof_count(report, "unit_evaluations")?
         bakes += proof_count(report, "native_bakes")?
-    stop_example_engine(binary, store)?
     assert evaluations == 1, f"four concurrent requests evaluated the unit {evaluations} times"
     assert bakes == 1, f"four concurrent requests baked the unit {bakes} times"
+    spans = unit_spans(trace)?
+    assert len(spans) == 4, f"expected four shared-unit spans, found {len(spans)}"
+    for index in range(1, len(spans)):
+        assert spans[index - 1].1 <= spans[index].0, "requests for one unit overlapped"
     return Ok(None)
 
 
-def started_run(binary: str, source: Path, store: Path) -> Result[Child, str]:
+def distinct_unit_runs(binary: str, root: Path, store: Path, trace: Path) -> Result[None, str]:
+    """Prove different units share the engine's store while their settlements overlap."""
+    first_source = concurrent_fixture(root, "first", "20 + 1")?
+    second_source = concurrent_fixture(root, "second", "23 - 2")?
+    first = started_run(binary, first_source, store, trace)?
+    second = started_run(binary, second_source, store, trace)?
+    first_output = first.wait_with_output().map_err((error) => str(error))?
+    second_output = second.wait_with_output().map_err((error) => str(error))?
+    _ = finished_run(first_output.status.success(), first_output.stdout, first_output.stderr)?
+    _ = finished_run(second_output.status.success(), second_output.stdout, second_output.stderr)?
+    spans = unit_spans(trace)?
+    assert len(spans) == 6, f"expected two additional unit spans, found {len(spans) - 4}"
+    assert spans[5].0 < spans[4].1, "requests for different units did not overlap"
+    return Ok(None)
+
+
+def concurrent_fixture(root: Path, name: str, argument: str) -> Result[Path, str]:
+    """Write a standalone unit whose capture cannot pick up any of the other test units."""
+    directory = root.joinpath(name)
+    directory.mkdir(true, true).map_err((error) => error.message())?
+    source = directory.joinpath("main.incn")
+    write(source, f"def twice(value: int) -> int:\n    return value * 2\n\n\ndef main() -> None:\n    println(twice({argument}))\n")?
+    return Ok(source)
+
+
+def unit_spans(trace: Path) -> Result[list[tuple[int, int]], str]:
+    """Read Oven settlement intervals in raw host-clock order, across all trace writers."""
+    mut spans: dict[int, int] = {}
+    for entry in trace.iterdir().map_err((error) => error.message())?:
+        if not entry.name().startswith("engine-oven-"):
+            continue
+        for line in entry.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
+            if line == "":
+                continue
+            row = parse(line).map_err((error) => error.message())?
+            if json_text_is(row, "operation", "engine_unit"):
+                spans[proof_count(row, "start_ns")?] = proof_count(row, "end_ns")?
+    return Ok([(start, spans[start]) for start in sorted([start for start in spans.keys()])])
+
+
+def started_run(binary: str, source: Path, store: Path, trace: Path) -> Result[Child, str]:
     """Start one records-engine run of `source` against `store`, collecting its report and output."""
     mut command = Command.new(binary)
     command.arg("run").arg(source.0).args(["--profile", "release", "--engine-report"])
     command.env("INCAN_ENGINE", "records").env("INCAN_BAKERY", store.0)
+    command.env("INCAN_ENGINE_TRACE", trace.0).env("INCAN_JOBS", "2")
     command.stdin(Stdio.null()).stdout(Stdio.piped()).stderr(Stdio.piped())
     return command.spawn().map_err((error) => f"cannot start {binary}: {error}")
 
