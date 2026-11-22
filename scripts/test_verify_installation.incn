@@ -5,11 +5,14 @@ from oven_tests import selected_builder_bakery
 from release_support import builder_bakery, check_baseline
 from std.fs import Path
 from verify_installation import (
+    CENSUS_WORKER_RESERVATION_BYTES,
     LSP_CONTRACT_CASE,
+    census_jobs,
     require_lsp_contract,
     verification_gate_width,
     verification_phase_arguments,
     verification_phase_names,
+    verification_phase_plans,
 )
 
 const BASELINE: str = "behavior/a/a\n"
@@ -85,4 +88,19 @@ def test_every_installed_gate_starts_at_once_and_keeps_the_release_jobs_for_its_
     for jobs in [1, 2, 6]:
         assert verification_gate_width(jobs) == len(verification_phase_names(jobs))
     assert verification_phase_arguments("census", Path("/run"), Path("/runner"), 2, 900)[4] == "2"
+    return Ok(None)
+
+
+def test_the_census_runs_twice_the_release_jobs_and_reserves_its_measured_share() -> Result[None, str]:
+    """
+    The census outlasts every other gate, so it runs twice the release's jobs; each of its workers reserves 2 GiB, more
+    than twice the 0.87 GB a worker took at the measured 1.73 GB peak of a whole census at two jobs.
+    """
+    gib = 1073741824
+    assert census_jobs(1) == 2
+    assert census_jobs(2) == 4
+    assert CENSUS_WORKER_RESERVATION_BYTES == 2 * gib
+    reservations = [plan.reservation for plan in verification_phase_plans(2)]
+    assert verification_phase_names(2)[4] == "census"
+    assert reservations[4] == 4 * CENSUS_WORKER_RESERVATION_BYTES
     return Ok(None)
