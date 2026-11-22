@@ -196,9 +196,9 @@ pub def linker_compiler_identity(compiler: str, sdk: str) -> Result[str, str]:
 
 
 pub def rust_library_compiler_identity(kind: str, compiler: str, sdk: str) -> Result[str, str]:
-    """Keep rlibs SDK-independent while retaining SDK identity for Rust library kinds that perform a native link."""
+    """Bind rlibs to the driver's archive normalization format and native links to the selected SDK."""
     if kind in ["lib", "rlib"]:
-        return Ok(compiler)
+        return fingerprint(["incan.rust-archive/2", compiler])
     return linker_compiler_identity(compiler, sdk)
 
 
@@ -212,7 +212,7 @@ pub def native_linker_fingerprint(rustc: str) -> Result[str, str]:
 pub def native_library_compiler_fingerprint(kind: str, rustc: str, compiler: str) -> Result[str, str]:
     """Read SDK identity only when a Rust library unit emits a linked dynamic library."""
     if kind in ["lib", "rlib"]:
-        return Ok(compiler)
+        return rust_library_compiler_identity(kind, compiler, "")
     selected = Path(rustc).resolve().map_err((error) => f"cannot {error.message()}")?
     return rust_library_compiler_identity(kind, compiler, sdk_content_identity(selected.parent().parent().0)?)
 
