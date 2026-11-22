@@ -247,27 +247,33 @@ pub def build_tool(context: NativeContext, name: str, rebuild: bool, phase: str)
 
 
 pub enum ShippedToolOverlap(str):
-    """How the shipped Oven, the language server and the debug standard providers share the release's capacity."""
+    """How the shipped Oven and the language server share the release's capacity after the debug providers."""
 
-    # One child at a time: the debug waves, then Oven, then the language server.
+    # One child at a time: Oven, then the language server.
     Serial = "serial"
-    # Oven beside the debug waves and then the language server, which take turns in the other child.
-    OvenBeside = "oven-beside"
-    # Oven, the language server and the debug waves side by side.
-    AllBeside = "all-beside"
+    # Oven and the language server side by side.
+    Beside = "beside"
 
 
 pub def shipped_tool_overlap(jobs: int, memory: int) -> ShippedToolOverlap:
     """
-    How the shipped tools overlap within `jobs` children and `memory` bytes. Oven, the longest of the three and a reader
-    of the release providers only, never waits for the debug waves when a second project child fits beside them.
+    How the shipped tools overlap within `jobs` children and `memory` bytes: side by side when a second project child
+    fits beside Oven, the longest of the two, and in turn otherwise.
     """
-    match overlapping_project_capacity(jobs, memory):
-        None => return ShippedToolOverlap.Serial
-        Some((remaining_jobs, remaining_memory)) =>
-            if overlapping_project_capacity(remaining_jobs, remaining_memory) is None:
-                return ShippedToolOverlap.OvenBeside
-            return ShippedToolOverlap.AllBeside
+    if overlapping_project_capacity(jobs, memory) is None:
+        return ShippedToolOverlap.Serial
+    return ShippedToolOverlap.Beside
+
+
+pub def shipped_tool_waves(overlap: ShippedToolOverlap) -> list[list[str]]:
+    """
+    The children of each wave of the shipped tools, in order. Every tool build reads the build home's standard Loaves,
+    which a debug wave rewrites while it publishes them, so the debug providers come first, alone, and then Oven and the
+    language server, side by side or in turn.
+    """
+    if overlap == ShippedToolOverlap.Serial:
+        return [["debug-providers"], ["oven"], ["lsp"]]
+    return [["debug-providers"], ["oven", "lsp"]]
 
 
 pub model ShippedTools:
@@ -285,30 +291,37 @@ pub def build_shipped_tools(
     after_debug: Option[Step] = None,
 ) -> Result[ShippedTools, str]:
     """
-    Build the shipped Oven and language server and publish the debug standard providers, after the release providers.
+    Build the shipped Oven and language server after publishing the debug standard providers, in the waves
+    `shipped_tool_waves` names.
 
-    1. Oven starts first whenever a second child fits, because it is the longest of the three.
-    2. The language server and the debug waves take the capacity Oven leaves: side by side, or in turn. The step that
-       reads the debug providers, when one is given, starts as soon as they are published and is returned running.
+    1. The debug providers are published first, in the whole capacity, since every tool build reads the build home's
+       standard Loaves; the step that reads them, when one is given, starts then and is returned running.
+    2. Oven and the language server follow, side by side when a second child fits, or in turn.
     3. A refusal stops every child still running.
     """
     oven = tool_build_plan(context, "oven", true, "oven-build")?
     lsp = tool_build_plan(context, "lsp", false, "lsp-build")?
-    overlap = shipped_tool_overlap(context.jobs, context.memory)
-    if overlap == ShippedToolOverlap.Serial:
-        started = publish_debug_providers(context, helper, phase_prefix, after_debug)?
-        match serial_tools(context, oven, lsp):
-            Ok((built_oven, built_lsp)) => return Ok(ShippedTools(oven=built_oven, lsp=built_lsp, after_debug=started))
-            Err(message) => return Err(refused_after(started, message))
-    # 1. Oven holds one child and one project allowance from here until it is joined.
+    waves = shipped_tool_waves(shipped_tool_overlap(context.jobs, context.memory))
+    # 1. The first wave is the debug providers alone.
+    started = publish_debug_providers(context, helper, phase_prefix, after_debug)?
+    match shipped_tools_after_debug(context, oven, lsp, waves[1:]):
+        Ok((built_oven, built_lsp)) => return Ok(ShippedTools(oven=built_oven, lsp=built_lsp, after_debug=started))
+        Err(message) => return Err(refused_after(started, message))
+
+
+def shipped_tools_after_debug(
+    context: NativeContext,
+    oven: NativeBuildPlan,
+    lsp: NativeBuildPlan,
+    waves: list[list[str]],
+) -> Result[tuple[Path, Path], str]:
+    """2. Build Oven and the language server in `waves`, those after the debug providers; 3. a refusal stops Oven."""
+    if len(waves) > 1:
+        return serial_tools(context, oven, lsp)
+    # Oven holds one child and one project allowance until it is joined; the language server takes what it leaves.
     pending = PendingToolBuild(plan=oven, worker=start_background_step(oven.child)?)
-    side_by_side = overlap == ShippedToolOverlap.AllBeside
-    # 2. The rest share what Oven leaves, and 3. a refusal there stops Oven too.
-    match build_beside_oven(beside_project(context), helper, phase_prefix, lsp, side_by_side, after_debug):
-        Ok((built_lsp, started)) =>
-            match finish_tool_build(context, pending):
-                Ok(built_oven) => return Ok(ShippedTools(oven=built_oven, lsp=built_lsp, after_debug=started))
-                Err(message) => return Err(refused_after(started, message))
+    match lsp_alone(beside_project(context), lsp):
+        Ok(built_lsp) => return Ok((finish_tool_build(context, pending)?, built_lsp))
         Err(message) =>
             _ = cancel_tool_build(pending)
             return Err(message)
@@ -318,31 +331,6 @@ def serial_tools(context: NativeContext, oven: NativeBuildPlan, lsp: NativeBuild
     """Build Oven and the language server within the context's own capacity."""
     run_build_plans(context, [oven, lsp])?
     return Ok((complete_build_plan(oven)?, complete_build_plan(lsp)?))
-
-
-def build_beside_oven(
-    context: NativeContext,
-    helper: Path,
-    phase_prefix: str,
-    lsp: NativeBuildPlan,
-    side_by_side: bool,
-    after_debug: Option[Step],
-) -> Result[tuple[Path, Option[BackgroundStep]], str]:
-    """Publish the debug providers and build the language server in the capacity a running Oven build leaves."""
-    if not side_by_side:
-        started = publish_debug_providers(context, helper, phase_prefix, after_debug)?
-        match lsp_alone(context, lsp):
-            Ok(built) => return Ok((built, started))
-            Err(message) => return Err(refused_after(started, message))
-    pending = PendingToolBuild(plan=lsp, worker=start_background_step(lsp.child)?)
-    match publish_debug_providers(beside_project(context), helper, phase_prefix, after_debug):
-        Ok(started) =>
-            match finish_tool_build(context, pending):
-                Ok(built) => return Ok((built, started))
-                Err(message) => return Err(refused_after(started, message))
-        Err(message) =>
-            _ = cancel_tool_build(pending)
-            return Err(message)
 
 
 def lsp_alone(context: NativeContext, lsp: NativeBuildPlan) -> Result[Path, str]:
