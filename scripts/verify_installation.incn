@@ -42,6 +42,9 @@ from release_support import (
 const GIB: int = 1073741824
 const FACET_RESERVATION_BYTES: int = 2 * GIB
 const SMALL_PROJECT_RESERVATION_BYTES: int = 2 * GIB
+# The census case that drives the installed language server live: initialization, navigation, call hierarchy and the
+# stale-buffer contract. The census runs it with `INCAN_LSP` naming the installed server, so no gate repeats it.
+pub const LSP_CONTRACT_CASE: str = "graph/incan/relationships"
 
 
 pub enum VerificationPhase(str):
@@ -51,7 +54,6 @@ pub enum VerificationPhase(str):
     Oven = "oven"
     RustFacets = "rust-facets"
     DriverIntegration = "driver-integration"
-    Lsp = "lsp"
     Census = "census"
     Memory = "memory"
 
@@ -101,8 +103,9 @@ pub def verify(output: Path, jobs: int, timeout_seconds: int) -> Result[Path, st
     Verify an installed toolchain in three steps.
 
     1. Select only shipped standard packages and build this checkout's contract runner.
-    2. Concurrently audit relocation and run Oven, every Rust facet, direct-driver integration, LSP, census, and memory.
-    3. Preserve every committed PASS key and all per-phase evidence.
+    2. Concurrently audit relocation and run Oven, every Rust facet, direct-driver integration, the census (whose
+       language-server case drives the installed server live), and memory.
+    3. Preserve every committed PASS key, require the language-server case, and keep all per-phase evidence.
     """
     installation = prepare(output, jobs, timeout_seconds)?
     trace = verification_release_trace()?
@@ -197,6 +200,7 @@ def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tup
         seconds = float(timing.read_text("utf-8", "strict").map_err((error) => error.message())?.strip())
         append_timing(installation.run.joinpath("phase-timings.tsv"), name, seconds)?
     report = installed_contract_report(installation)?
+    require_lsp_contract(report)?
     suites = int(
         installation.run
             .joinpath("rust-facet-count.txt")
@@ -235,10 +239,14 @@ pub def verification_phase_plans(jobs: int) -> list[VerificationPhasePlan]:
         VerificationPhasePlan(phase=VerificationPhase.Oven, reservation=workers * OVEN_PROJECT_RESERVATION_BYTES),
         VerificationPhasePlan(phase=VerificationPhase.RustFacets, reservation=workers * FACET_RESERVATION_BYTES),
         VerificationPhasePlan(phase=VerificationPhase.DriverIntegration, reservation=LOWERING_RESERVATION_BYTES),
-        VerificationPhasePlan(phase=VerificationPhase.Lsp, reservation=SMALL_PROJECT_RESERVATION_BYTES),
         VerificationPhasePlan(phase=VerificationPhase.Census, reservation=workers * LOWERING_RESERVATION_BYTES),
         VerificationPhasePlan(phase=VerificationPhase.Memory, reservation=LOWERING_RESERVATION_BYTES),
     ]
+
+
+pub def verification_phase_names(jobs: int) -> list[str]:
+    """The child-process spelling of every planned phase, in plan order."""
+    return [verification_phase_name(plan.phase) for plan in verification_phase_plans(jobs)]
 
 
 def verification_workers(jobs: int) -> int:
@@ -255,7 +263,6 @@ def verification_phase_name(phase: VerificationPhase) -> str:
         VerificationPhase.Oven => return "oven"
         VerificationPhase.RustFacets => return "rust-facets"
         VerificationPhase.DriverIntegration => return "driver-integration"
-        VerificationPhase.Lsp => return "lsp"
         VerificationPhase.Census => return "census"
         VerificationPhase.Memory => return "memory"
 
@@ -297,20 +304,18 @@ def run_selected_phase(installation: Installation, runner: Path, phase: Verifica
                 .write_text(str(suites) + "\n", "utf-8", "strict", None)
                 .map_err((error) => error.message())?
         VerificationPhase.DriverIntegration => run_driver_integration(installation)?
-        VerificationPhase.Lsp => verify_lsp(installation, runner)?
         VerificationPhase.Census => _ = run_contracts(installation, runner)?
         VerificationPhase.Memory => measure_memory(installation)?
     return Ok(None)
 
 
 def parse_verification_phase(text: str) -> Result[VerificationPhase, str]:
-    """Parse only the seven internal verification phase spellings."""
+    """Parse only the six internal verification phase spellings."""
     match text:
         "relocation" => return Ok(VerificationPhase.Relocation)
         "oven" => return Ok(VerificationPhase.Oven)
         "rust-facets" => return Ok(VerificationPhase.RustFacets)
         "driver-integration" => return Ok(VerificationPhase.DriverIntegration)
-        "lsp" => return Ok(VerificationPhase.Lsp)
         "census" => return Ok(VerificationPhase.Census)
         "memory" => return Ok(VerificationPhase.Memory)
         _ => return Err(f"unknown verification phase `{text}`")
@@ -695,32 +700,19 @@ def json_text(value: JsonValue, key: str) -> Result[str, str]:
     return value.require(key).and_then((entry) => entry.expect_str()).map_err((error) => error.message())
 
 
-def verify_lsp(installation: Installation, runner: Path) -> Result[None, str]:
-    """Require the installed server's live initialization, navigation, call hierarchy, and stale-buffer contract."""
-    mut environment = command_environment(installation)
-    environment["INCAN_LSP"] = installation.lsp.0
-    return require_step(
-        Step(
-            name="lsp-contract",
-            executable=runner.0,
-            arguments=[
-                installation.oven.0,
-                installation.root.joinpath("workspaces/contracts/fixtures").0,
-                "--scratch",
-                installation.run.joinpath("lsp-scratch").0,
-                "--jobs",
-                "1",
-                "--timeout",
-                str(installation.timeout_seconds),
-                "graph/incan/relationships",
-            ],
-            environment=environment,
-            remove_environment=["RUSTC_BOOTSTRAP"],
-            directory=Some(installation.root),
-            log=installation.run.joinpath("lsp-contract.log"),
-            timeout_seconds=installation.timeout_seconds * 2,
-        ),
-    )
+pub def require_lsp_contract(report: Borrowed[BaselineReport]) -> Result[None, str]:
+    """Require the census to have passed its live language-server case, whatever the committed baseline lists."""
+    for key in report.result_keys:
+        if key == LSP_CONTRACT_CASE:
+            return require_lsp_pass(report.result_statuses[key])
+    return Err(f"the installed census did not run the language-server case {LSP_CONTRACT_CASE}")
+
+
+def require_lsp_pass(status: str) -> Result[None, str]:
+    """Accept only a passing verdict for the language-server case."""
+    if status != "PASS":
+        return Err(f"the installed census reports {status} for the language-server case {LSP_CONTRACT_CASE}")
+    return Ok(None)
 
 
 def run_contracts(installation: Installation, runner: Path) -> Result[BaselineReport, str]:

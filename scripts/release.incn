@@ -889,7 +889,7 @@ def installed_verification(run: ReleaseRun, candidate: Candidate) -> Result[Path
     reclaim(
         run,
         "installed-verification-scratch",
-        [verification, home, runs[0].joinpath("runner"), runs[0].joinpath("scratch"), runs[0].joinpath("lsp-scratch")],
+        [verification, home, runs[0].joinpath("runner"), runs[0].joinpath("scratch")],
     )?
     return Ok(log)
 

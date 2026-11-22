@@ -4,7 +4,7 @@ Release qualification starts from the immutable host bundle in `build-toolchain.
 
 ## Installed verification
 
-`scripts/verify_installation.incn` verifies an already installed toolchain. It builds this checkout's contract runner, runs the committed Oven test inventory and every production Loaf's Rust-facet suite, requires the live language-server contract, and runs all eight contract families. The census is complete only when it contains one final total, unique result keys, and every family. Every key in `pass-baseline.txt` must remain `PASS`; existing failures remain visible without weakening that lower bound.
+`scripts/verify_installation.incn` verifies an already installed toolchain. It builds this checkout's contract runner, runs the committed Oven test inventory and every production Loaf's Rust-facet suite, and runs all eight contract families once. The census runs with the installed language server, and its `graph/incan/relationships` case, which drives that server live, must pass. The census is complete only when it contains one final total, unique result keys, and every family. Every key in `pass-baseline.txt` must remain `PASS`; existing failures remain visible without weakening that lower bound.
 
 ```sh
 incan run scripts/verify_installation.incn -- target/release-verification --jobs 2 --timeout 120
