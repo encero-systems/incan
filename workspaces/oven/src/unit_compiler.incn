@@ -45,8 +45,9 @@ pub model PlanRecordCounts:
 const CHECKED_BODIES_SCHEMA: str = "incan.checked-bodies/1"
 # The companion naming a staged page by the digest of its bytes, beside the page the compiler reads.
 pub const DIGEST_COMPANION: str = ".digest"
-# The companion naming the store frame range a page offered by reference is read from: segment, offset, length.
-pub const FRAME_COMPANION: str = ".frame"
+# The file naming every page offered by its store frame instead of a copy, one line per page: its name, the segment,
+# the value's offset and length, and its digest, separated by tabs. A request stages it once.
+pub const FRAME_LIST: str = "frames.list"
 
 
 pub def compile_prepared_unit(
@@ -133,20 +134,23 @@ pub def write_selected_records(
         None => return Err("records lowering requires the complete compiler context")
 
     publish_binary(directory.joinpath("producer-profile"), unit.lowering_context.unwrap_or(generation).encode("utf-8"))?
+    mut listed: list[str] = []
     for page in records:
         clock = work_clock()
-        # A page offered by its store frame is named by that range and its digest; its bytes are not copied.
+        # A page offered by its store frame is a line of the request's frame list; its bytes are not copied.
         if page.segment != "" and page.digest != "":
-            frame = f"{page.segment}\n{page.offset}\n{page.length}\n"
-            publish_binary(directory.joinpath(page.key + FRAME_COMPANION), frame.encode("utf-8"))?
-            publish_binary(directory.joinpath(page.key + DIGEST_COMPANION), page.digest.encode("utf-8"))?
-            work(Operation.EngineGraphStaging, "compiler-input\t" + page.key, clock, 0)
+            listed.append(f"{page.key}\t{page.segment}\t{page.offset}\t{page.length}\t{page.digest}\n")
             continue
         size = len(page.value)
         publish_binary(directory.joinpath(page.key), page.value)?
         if page.digest != "":
             publish_binary(directory.joinpath(page.key + DIGEST_COMPANION), page.digest.encode("utf-8"))?
         work(Operation.EngineGraphStaging, "compiler-input\t" + page.key, clock, size)
+    if len(listed) > 0:
+        clock = work_clock()
+        text = "".join(listed)
+        publish_binary(directory.joinpath(FRAME_LIST), text.encode("utf-8"))?
+        work(Operation.EngineGraphStaging, "compiler-input\t" + FRAME_LIST, clock, len(text))
     return Ok(None)
 
 
