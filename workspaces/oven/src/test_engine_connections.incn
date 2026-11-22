@@ -65,10 +65,9 @@ def run_client_project(binary: str, source: Path, store: Path, trace: Option[Pat
     """Require the same real native stdout before counting the normal client's work."""
     mut command = Command.new(binary)
     command.arg("run").arg(source.0).env("INCAN_ENGINE", "records").env("INCAN_BAKERY", store.0)
+    command.env_remove("INCAN_ENGINE_TRACE")
     if let Some(observation) = trace:
         command.env("INCAN_ENGINE_TRACE", observation.0)
-    else:
-        command.env_remove("INCAN_ENGINE_TRACE")
     outcome = command.output().map_err((error) => str(error))?
     if not outcome.status.success():
         return Err(str(from_utf8(outcome.stderr).map_err((error) => str(error))?))
