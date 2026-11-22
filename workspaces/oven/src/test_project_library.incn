@@ -104,16 +104,21 @@ pub def test_two_test_sources_share_one_shared_library() -> Result[None, str]:
 
 pub def test_a_program_unit_links_the_shared_library_its_projects_tests_link() -> Result[None, str]:
     """
-    A project's program, from its root entry or from one of its modules, links the shared library the project's
-    tests link: the same test modules left out, the same library unit, as `build` and `run` both plan it. A direct
-    source never links it, and a program with further program entries keeps compiling its whole source graph, since
-    each entry must stay a module of the program.
+    Two distinct declared executable sources and the project's tests share the same provider. Duplicate script names
+    for one executable and library aliases leave a single executable on its source graph. A direct source, an
+    undeclared executable, or a program with further program entries also keeps its source graph.
     """
     scratch = scratch_directory()?
     root = scratch.path()
     demo_project(root)?
     key = "demo_app" + LIBRARY_SUFFIX
     tested = with_project_library(project_unit(root, "test_reader.incn"))?
+    project = "[project]\nname = \"demo-app\"\nversion = \"1\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
+    manifest = root.joinpath("loaf.toml")
+    write(root.joinpath("src/lib.incn"), "\"\"\"The library entry.\"\"\"\n")?
+    write(manifest, project + "alias = \"./src/main.incn\"\nlibrary = \"src/lib.incn\"\n")?
+    assert planned_program(project_unit(root, "main.incn", "program"), false)?.project_library == None
+    write(manifest, project + "reader = \"src/reader.incn\"\n")?
     for entry in ["main.incn", "reader.incn"]:
         program = planned_program(project_unit(root, entry, "program"), false)?
         assert program.project_library == Some(key), entry
@@ -123,6 +128,7 @@ pub def test_a_program_unit_links_the_shared_library_its_projects_tests_link() -
     mut entries = project_unit(root, "main.incn", "program")
     entries.program_entries = [root.joinpath("src/reader.incn").0]
     assert with_project_library(entries)?.project_library == None
+    assert planned_program(project_unit(root, "nested/shape.incn", "program"), false)?.project_library == None
     assert with_project_library(project_unit(root, "reader.incn", "library"))?.project_library == None
     return Ok(None)
 
