@@ -7,6 +7,7 @@ from rust::std::rc import Rc
 from rust::std::mem import drop, take
 from std.encoding.hex import hexlify
 from engine_channel import Channel
+from compiler_graph_records import ReceiptProjectionCache
 from engine_messages import BindingOutcome, Captured, Complete, CompletionStatus, Message
 from engine_overlay import is_editor_view
 from engine_replies import send
@@ -73,6 +74,7 @@ pub model Ready:
 
 pub def finish_request(
     store: Path, mut admission: SnapshotAdmission, pending: Pending, mut channel: BorrowedMut[Channel],
+    mut receipts: BorrowedMut[ReceiptProjectionCache],
 ) -> Result[Ready, str]:
     """
     Capture installed facts once for this activation and resume reconciliation before the next request. The unit
@@ -82,7 +84,7 @@ pub def finish_request(
     serve_from(pending.directory)
     collect_reasons()
     mut action = pending
-    settled = settled_request(store, admission, action, channel)
+    settled = settled_request(store, admission, action, channel, receipts)
     notes = "\n".join(collected_reasons())
     served()
     end_command()
@@ -93,6 +95,7 @@ pub def finish_request(
 
 def settled_request(
     store: Path, mut admission: SnapshotAdmission, mut pending: Pending, mut channel: BorrowedMut[Channel],
+    mut receipts: BorrowedMut[ReceiptProjectionCache],
 ) -> Result[Ready, str]:
     """
     Settle one request without executing user code in the engine.
@@ -115,7 +118,7 @@ def settled_request(
     reading = read_counts()
     begin_graph_demands(pending.proofs)
     measure_frame_reads(pending.proofs)
-    produced_result = produce_program(store, admission, pending, directory.joinpath(run).0, channel)
+    produced_result = produce_program(store, admission, pending, directory.joinpath(run).0, channel, receipts)
     frame_reads = finish_frame_reads()
     graph_demands = finish_graph_demands()
     frozen = finish_frozen_counting()
@@ -219,9 +222,9 @@ def settled_request(
 
 def produce_program(
     store: Path, mut admission: SnapshotAdmission, mut pending: BorrowedMut[Pending], console: str,
-    mut channel: BorrowedMut[Channel],
+    mut channel: BorrowedMut[Channel], mut receipts: BorrowedMut[ReceiptProjectionCache],
 ) -> Result[ProgramOutcome, str]:
-    """Announce one selected epoch, then use its exact handle and any already prepared native unit."""
+    """Announce the selected epoch before using its exact handle, prepared unit and deferred receipt metadata."""
     prepared = prepare_initial_program(pending, console)?
     pending.handle = program_handle(pending.capture.identity, pending.producer, pending.view)?
     announce_capture(pending, channel)?
@@ -230,7 +233,7 @@ def produce_program(
     return obtain(
         store, admission, pending.capture.revision, pending.handle, console, Some(pending.capture.epoch),
         pending.producer, Some(pending.capture.selected), pending.unit_options, pending.records, pending.origin,
-        pending.capture.readings, prepared,
+        pending.capture.readings, prepared, receipts,
     )
 
 
