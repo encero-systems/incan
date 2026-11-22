@@ -117,7 +117,7 @@ pub fn lower_ordinary_bodies(
     let mut names = function_names();
     let mut signatures = external_index();
     for (index, owner) in owners.iter().enumerate() {
-        let positions = module_bodies.get(owner).cloned().unwrap_or_default();
+        let positions = module_bodies.get(owner).map(Vec::as_slice).unwrap_or_default();
         // The module's admitted plan record and the functions restored from it; without a page every body takes the
         // keyed route.
         let page = admitted_page(keyed.directory, owner, keyed.generation.as_deref());
@@ -133,13 +133,12 @@ pub fn lower_ordinary_bodies(
             frames: Vec::new(),
         };
         let mut ordinary = 0;
-        for position in positions {
+        for &position in positions {
             let body = &context.bodies[position];
             if !ordinary_body(context, body, emitted_frames, kind) {
                 continue;
             }
             ordinary += 1;
-            let diagnostic_owner = format!(" in {} at {}", body.name, files[index]);
             let frame = FrameSource {
                 source: &sources[index],
                 file: &files[index],
@@ -155,7 +154,7 @@ pub fn lower_ordinary_bodies(
                 &mut keyed,
                 &mut admission,
             )
-            .map_err(|reason| reason + &diagnostic_owner)?;
+            .map_err(|reason| format!("{reason} in {} at {}", body.name, files[index]))?;
             // Only a body that took the keyed route was lowered or looked up; a restored body is not traced.
             if trace && admission.restored.len() == restored_before {
                 emit(
@@ -168,29 +167,33 @@ pub fn lower_ordinary_bodies(
             if !named_functions(&mut names, &inventories.functions, &function.name).is_empty() {
                 return Err(format!("unsupported Body IR overloaded function {}", body.name));
             }
-            let parameters: Vec<PlanType> = function
-                .parameters
-                .iter()
-                .map(|parameter| parameter.ty.clone())
-                .collect();
-            let (planned, return_type, span) = (
-                function.name.clone(),
-                function.return_type.clone(),
-                function.span.clone(),
-            );
-            inventories.functions.push(function.clone());
+            let function_position = inventories.functions.len();
+            inventories.functions.push(function);
             if kind == "library" && body.is_async {
+                let function = &inventories.functions[function_position];
                 inventories.functions.push(boxed_future_constructor(
                     function_name(context, body),
-                    incan_mir_plan_native::CalleeKind::Planned(planned),
-                    parameters,
-                    return_type,
-                    span,
+                    incan_mir_plan_native::CalleeKind::Planned(function.name.clone()),
+                    function
+                        .parameters
+                        .iter()
+                        .map(|parameter| parameter.ty.clone())
+                        .collect(),
+                    function.return_type.clone(),
+                    function.span.clone(),
                 )?);
             }
             emitted_frames.record(body, position);
             append_synthesized(&mut inventories.functions, &mut names, synthesized)?;
-            append_async_entry(context, body, &function, index == entry, tests, intrinsics, inventories)?;
+            append_async_entry(
+                context,
+                body,
+                function_position,
+                index == entry,
+                tests,
+                intrinsics,
+                inventories,
+            )?;
             append_generator_constructor(
                 &program.constructors,
                 &mut inventories.functions,
@@ -680,13 +683,14 @@ fn async_entry_name(context: &BodyIrModule, body: &Body, in_entry: bool, tests: 
 fn append_async_entry(
     context: &BodyIrModule,
     body: &Body,
-    function: &Function,
+    function_position: usize,
     in_entry: bool,
     tests: &[String],
     intrinsics: &mut Vec<EnumDeclaration>,
     inventories: &mut Inventories,
 ) -> Result<(), String> {
     if let Some(entry_name) = async_entry_name(context, body, in_entry, tests) {
+        let function = &inventories.functions[function_position];
         let (entry_function, entry_constructor, entry_runtime) =
             async_entry(context, function, intrinsics, &entry_name)?;
         inventories.functions.push(entry_function);
