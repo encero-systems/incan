@@ -125,6 +125,13 @@ def changed_owner(graph: Snapshot, prior: RecordKey, captured: Borrowed[Dict[str
             ReadWitness.Found(previous, _) =>
                 mut key = previous.request.key
                 family = key.family
+                if family == "compiler-generation":
+                    # The owner was checked under the unit's compiler generation; it is ranked only while that holds.
+                    generation = encode_record_key(key)?
+                    if not captured.contains_key(generation) or digest(source_value(key, captured[generation])?) != previous.semantic_digest:
+                        return Ok(None)
+                    inputs[generation] = captured[generation]
+                    continue
                 if family == "scope-name":
                     if key.facet == "" or key.facet in scope_names:
                         return Ok(None)
