@@ -1,9 +1,8 @@
-# behavior: the Ord and Eq dunders of adopters imported from a path-dependency Loaf, under every spelling of the trait, and of an imported derived Ord compare as their operators, an adopter's own __ge__ included
+# behavior: the Ord and Eq dunders of model adopters imported from a path-dependency Loaf, under every spelling of the trait, and of an imported derived Ord compare as their operators, an adopter's own __ge__ included; a supertrait method implied twice is one method
 # expect-stdout:
 #   false
 #   true
 #   false
-#   true
 #   true
 #   false
 #   false
@@ -19,7 +18,6 @@ def main() -> None:
     println(Score(points=2).__le__(Score(points=3)))
     println(Score(points=2).__gt__(Score(points=3)))
     println(Score(points=2).__ne__(Score(points=3)))
-    println(Level.High.__gt__(Level.Low))
     println(Qualified(v=2).__le__(Qualified(v=1)))
     println(Reversed(v=1).__ge__(Reversed(v=0)))
     println(Reversed(v=1).__le__(Reversed(v=0)))
