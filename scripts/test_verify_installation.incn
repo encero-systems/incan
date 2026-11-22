@@ -2,11 +2,12 @@
 
 from std.tempfile import TemporaryDirectory
 from oven_tests import selected_builder_bakery
-from release_support import builder_bakery, check_baseline
+from release_support import TOOLCHAIN_DIRECTORY, builder_bakery, check_baseline
 from std.fs import Path
 from verify_installation import (
     CENSUS_WORKER_RESERVATION_BYTES,
     LSP_CONTRACT_CASE,
+    audit_relocation,
     census_jobs,
     require_lsp_contract,
     verification_gate_width,
@@ -103,4 +104,28 @@ def test_the_census_runs_twice_the_release_jobs_and_reserves_its_measured_share(
     reservations = [plan.reservation for plan in verification_phase_plans(2)]
     assert verification_phase_names(2)[4] == "census"
     assert reservations[4] == 4 * CENSUS_WORKER_RESERVATION_BYTES
+    return Ok(None)
+
+
+def test_the_relocation_audit_refuses_text_naming_any_builder_path() -> Result[None, str]:
+    """
+    Installed text naming the build home or the build source below it is refused, by whichever path it names; content
+    that is not UTF-8 text is not read as records, so it is not refused.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    home = temporary.path().joinpath("home")
+    toolchain = home.joinpath(TOOLCHAIN_DIRECTORY)
+    notes = toolchain.joinpath("share")
+    notes.mkdir(true, true).map_err((error) => error.message())?
+    toolchain.joinpath("toolchain.json").write_text("{}\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    builders = ["/build/home", "/build/source"]
+    audit_relocation(home, builders)?
+    note = notes.joinpath("note.txt")
+    for builder in builders:
+        note.write_text(f"made in {builder}/loaves/x\n", "utf-8", "strict", None).map_err((error) => error.message())?
+        match audit_relocation(home, builders):
+            Ok(_) => return Err(f"installed text naming {builder} passed the relocation audit")
+            Err(message) => assert message == f"installed records name the builder: {builder}", message
+    note.write_bytes(b"\xff\xfe/build/home/x").map_err((error) => error.message())?
+    audit_relocation(home, builders)?
     return Ok(None)
