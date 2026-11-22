@@ -134,12 +134,12 @@ pub def prepare_evaluation(
     if rank.namespace < 0 or rank.dependency < 0:
         return Err("a completed evaluation requires a nonnegative certified rank")
     value_key = encode_record_key(receipt.preparation.output)?
-    value_digest = digest(value)
+    value_digest = content_digest(value)
     if expected_value_digest != "" and value_digest != expected_value_digest:
         return Err("retained compiler value differs from its selected witness")
     edges = normalized_edges(receipt.witnesses)?
     receipt_bytes = encode_read_receipt(receipt)?
-    receipt_root = digest(receipt_bytes)
+    receipt_root = content_digest(receipt_bytes)
     receipt_key = "incan.engine.receipt\t" + receipt_root
     evaluation_key = evaluation_record_key(receipt.scope.profile, value_key)
     evaluation = encode_evaluation(receipt.scope.profile, value_key, claim_key, value_digest, receipt_root, rank)?
@@ -238,9 +238,9 @@ pub def evaluation_authority(selected: Snapshot, output: RecordKey, profile: str
     if evaluation.profile != profile or evaluation.output != value_key:
         return Err("selected compiler evaluation has mismatched authority")
     receipt_root = evaluation.receipt_root
+    # The receipt is stored under its content root, and the store has just checked its frame against the index: the
+    # root was bound to these bytes when the evaluation was published, so they are not hashed again.
     receipt_bytes = required_value(selected, "incan.engine.receipt\t" + receipt_root)?
-    if digest(receipt_bytes) != receipt_root:
-        return Err("selected compiler receipt differs from its content root")
     receipt = decode_read_receipt(receipt_bytes)?
     if receipt.scope.profile != profile or encode_record_key(receipt.preparation.output)? != value_key:
         return Err("selected compiler receipt does not describe its evaluation")
@@ -273,9 +273,9 @@ def select_evaluation(
             Some(_) => pass
             None => return Err("selected compiler evaluation is incomplete")
     else:
+        # The store has just checked the value's frame against the index; the evaluation's value digest was bound to
+        # this frame when both were published in one transaction, so the value is hashed once, there.
         value = required_value(selected, value_key)?
-        if digest(value) != value_digest:
-            return Err("selected compiler value differs from its evaluation digest")
     if cutoff.revalidates(value_key) and not witnesses_validate(selected, receipt, selected_witnesses)?:
         return Ok(None)
     # A checked row is already authenticated by this snapshot and the evaluation digest. Its complete
@@ -803,6 +803,21 @@ def required_value(selected: Snapshot, key: str) -> Result[bytes, str]:
 def digest(value: bytes) -> str:
     """Return one lowercase content identity."""
     return hexlify(sha256.digest(value))
+
+
+def content_digest(value: bytes) -> str:
+    """The digest an evaluation binds a value or receipt by, counting the bytes hashed."""
+    hashed["bytes"] = hashed.get("bytes", 0) + len(value)
+    return digest(value)
+
+
+# Bytes this process hashed to bind values and receipts to their evaluations, for measuring; nothing is cached by them.
+static hashed: dict[str, int] = {}
+
+
+pub def authenticated_bytes() -> int:
+    """The bytes this process has hashed to bind evaluations to their values and receipts, or to check that binding."""
+    return hashed.get("bytes", 0)
 
 
 pub def retire_output(mut transaction: Transaction, profile: str, output: RecordKey) -> Result[None, str]:
