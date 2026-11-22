@@ -13,9 +13,10 @@ const REQUESTS: str = "list<tuple<string,option<string>,list<string>,string>>"
 
 
 def graph_description() -> Description:
-    return model_description(SOURCES, "incan.oven.source-graph/3", [
+    return model_description(SOURCES, "incan.oven.source-graph/4", [
         ModelField(identity=b"import", name="imports_by_scope", storage=f"list<option<{REQUESTS}>>"),
         ModelField(identity=b"reach_", name="reach_by_scope", storage="list<tuple<string,list<tuple<string,string>>,list<string>>>"),
+        ModelField(identity=b"surfac", name="surfaces_by_scope", storage="list<list<tuple<string,string>>>"),
     ])
 
 
@@ -87,6 +88,7 @@ pub def decode_imports(encoded: bytes, identity: str) -> Result[Option[list[Json
 pub def encode_scopes(graphs: list[JsonValue]) -> Result[bytes, str]:
     mut reach: list[Value] = []
     mut imports: list[Value] = []
+    mut surfaces: list[Value] = []
     for graph in graphs:
         mut reads: list[Value] = []
         for item in required_items(graph, "read")?:
@@ -95,20 +97,28 @@ pub def encode_scopes(graphs: list[JsonValue]) -> Result[bytes, str]:
         match graph.get("imports"):
             Some(rows) => imports.append(Value.Some([requests(rows.expect_array().map_err((error) => error.message())?)?]))
             None => imports.append(Value.NoneValue)
+        mut surfaced: list[Value] = []
+        if graph.get("surfaces") is not None:
+            for item in required_items(graph, "surfaces")?:
+                surfaced.append(Value.Tuple([Value.Text(required_text(item, "path")?), Value.Text(required_text(item, "surface")?)]))
+        surfaces.append(Value.List(surfaced))
     return encode_graph_row(SOURCES, graph_description(), [
         required_value(b"import", Value.List(imports)), required_value(b"reach_", Value.List(reach)),
+        required_value(b"surfac", Value.List(surfaces)),
     ])
 
 
 pub def decode_scopes(encoded: bytes, include_imports: bool) -> Result[list[JsonValue], str]:
     mut reach: list[Value] = []
     mut imports: list[Value] = []
+    mut surfaces: list[Value] = []
     if include_imports:
-        fields = decode_graph_row(encoded, SOURCES, graph_description(), 2)?
+        fields = decode_graph_row(encoded, SOURCES, graph_description(), 3)?
         imports = items(fields[0].value)?
         reach = items(fields[1].value)?
-        if len(imports) != len(reach):
-            return Err("source graph scope count differs from its import inventory")
+        surfaces = items(fields[2].value)?
+        if len(imports) != len(reach) or len(surfaces) != len(reach):
+            return Err("source graph scope count differs from its import or surface inventory")
     else:
         reach = items(decode_graph_field(encoded, graph_description(), b"reach_")?)?
     mut result: list[JsonValue] = []
@@ -127,5 +137,11 @@ pub def decode_scopes(encoded: bytes, include_imports: bool) -> Result[list[Json
                         return Err("invalid source graph imports")
                     graph["imports"] = JsonValue.array(read_requests(values[0])?)
                 _ => return Err("invalid source graph imports")
+            mut surfaced: list[JsonValue] = []
+            for item in items(surfaces[index])?:
+                pair = tuple_items(item, 2)?
+                surfaced.append(JsonValue.object({"path": JsonValue.string(text(pair[0])?), "surface": JsonValue.string(text(pair[1])?)}))
+            if len(surfaced) > 0:
+                graph["surfaces"] = JsonValue.array(surfaced)
         result.append(JsonValue.object(graph))
     return Ok(result)
