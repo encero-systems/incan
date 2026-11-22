@@ -40,6 +40,7 @@ use incan_semantics_core::{
 
 mod deferred_layouts;
 mod import_aliases;
+mod install_record;
 mod manifest_callables;
 mod manifest_exports;
 mod manifest_types;
