@@ -20,8 +20,8 @@ use incan_frontend::parsed_module::ParsedModule;
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_loaf_names::native_crate_name;
 use incan_lowering::{
-    RecordedLayouts, RefusalPlanning, RuntimeRequirement, SourceInputs, UnitPlanning, layout_runtime_requirements,
-    program_refusals, resume_unit_plan, unit_plan,
+    RecordedLayouts, RecordedRuntimeInputs, RefusalPlanning, RuntimeRequirement, SourceInputs, UnitPlanning,
+    complete_recorded_runtime_plan, layout_runtime_requirements, program_refusals, resume_unit_plan, unit_plan,
 };
 use incan_semantics_core::body_ir::{BodyIrModule, LoafCallable, NativeUnionDeclaration, NominalDeclaration};
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
@@ -36,9 +36,11 @@ mod namespace_admission;
 mod namespace_crumb;
 mod namespace_layout_pages;
 pub(crate) mod namespace_pages;
+mod runtime_plan_records;
 
 use checked_program::*;
 use declaration_validation::*;
+use runtime_plan_records::{RuntimePlanRecords, same_requirements};
 
 /// Environment variable naming the file where the census receives every refusal of one compilation, one per line.
 ///
@@ -786,6 +788,7 @@ fn compile_unit(
     incan_platform::release_free_heap();
     timing.mark("checked_heap_released");
     let mut published_unions = Vec::new();
+    let mut runtime_records = RuntimePlanRecords::read(dependencies.plan_record_products.as_deref());
     let plan = lower_compilation_plan(
         &mut program,
         kind,
@@ -799,6 +802,7 @@ fn compile_unit(
             .plan_record_report
             .as_ref()
             .map(|path| path.to_string_lossy().into_owned()),
+        &mut runtime_records,
     )?;
     timing.mark("plan_lowered");
     let tests = crate::test_unit::report(&program.tests, &plan.tests)?;
@@ -808,6 +812,7 @@ fn compile_unit(
             products.to_string_lossy().into_owned(),
             report.to_string_lossy().into_owned(),
         )?;
+        runtime_records.publish(products)?;
     }
 
     // ---- Exact native dependencies, including checked Loaf implementation layouts ----
@@ -931,6 +936,7 @@ fn lower_compilation_plan(
     native_products: Option<String>,
     recorded_layouts: Arc<RecordedLayouts>,
     plan_record_report: Option<String>,
+    runtime_records: &mut RuntimePlanRecords,
 ) -> Result<crate::plan::Plan, Box<dyn std::error::Error>> {
     tracing::debug!(target: "incan::invocation", modules = program.modules.len(),
         module_body_entries = program.modules.iter().map(|module| module.bodies.len()).sum::<usize>(),
@@ -946,11 +952,21 @@ fn lower_compilation_plan(
     let mut timing = crate::native_timing::Timing::requested();
     let mut continuation = None;
     let mut retry_indices: Option<Vec<usize>> = None;
+    let tests: Vec<_> = program.tests.iter().map(|test| test.entry.clone()).collect();
     loop {
+        let prepared = runtime_records.next().and_then(|requirements| {
+            let _prefetch =
+                tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::prepare_recorded_runtime")
+                    .entered();
+            let loaves = Arc::new(program.dependencies.loaves.runtime_prefetch());
+            let batch = prepare_runtime_requirements(program, &loaves, requirements).ok()?;
+            loaves.validate_demands().ok()?;
+            Some((loaves, batch))
+        });
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::lower_program", modules = program.modules.len()).entered();
         tracing::debug!(target: "incan::invocation", held = %held_modules(&program.modules), "lowering Body IR modules");
         let mut attempt_unions = Vec::new();
-        let planning = match continuation.take() {
+        let mut planning = match continuation.take() {
             Some(preserved) => {
                 let selected = retry_indices
                     .take()
@@ -999,13 +1015,39 @@ fn lower_compilation_plan(
             }
         }
         .inspect_err(|_| receipt.deterministic())?;
+        // Resolve a recorded batch before lowering, but install it only after these ordinary frames demand it.
+        // The checked delta can finish directly with borrowed modules in the very same frame order as a retry.
+        if let (Some((loaves, prepared)), UnitPlanning::NeedsRuntime(_, requirements)) = (prepared, &planning)
+            && runtime_records
+                .next()
+                .is_some_and(|saved| same_requirements(saved, requirements))
+            && let UnitPlanning::NeedsRuntime(preserved, requirements) = planning
+        {
+            program.dependencies.loaves = loaves;
+            let selected = apply_runtime_requirements(program, &requirements, prepared)?;
+            runtime_records.record(requirements);
+            let inputs = RecordedRuntimeInputs {
+                modules: &program.modules,
+                sources: &program.sources,
+                files: &program.files,
+                selected: &selected,
+                entry: program.entry,
+                kind: &kind_name,
+                tests: &tests,
+                package_versions: &program.dependencies.package_versions,
+            };
+            planning = complete_recorded_runtime_plan(preserved, &inputs, &mut attempt_unions)
+                .inspect_err(|_| receipt.deterministic())?;
+        }
         match planning {
             UnitPlanning::NeedsRuntime(preserved, requirements) => {
                 // The attempt's worker contexts and temporaries are freed; return their pages before runtime
                 // resolution and the resumed attempt allocate.
                 incan_platform::release_free_heap();
                 timing.mark("lowering_attempt_heap_released");
-                retry_indices = Some(satisfy_runtime_requirements(program, requirements)?);
+                let prepared = prepare_runtime_requirements(program, &program.dependencies.loaves, &requirements)?;
+                retry_indices = Some(apply_runtime_requirements(program, &requirements, prepared)?);
+                runtime_records.record(requirements);
                 continuation = Some(preserved);
             }
             UnitPlanning::Complete(Some(plan)) => {
