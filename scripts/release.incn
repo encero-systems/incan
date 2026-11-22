@@ -82,7 +82,7 @@ from release_run import (
     ReleaseRun,
     release_paths,
     release_step,
-    require_linked_release_step,
+    require_installed_verifier,
     require_release_step,
     require_release_step_at,
     timed_release_step_at,
@@ -932,7 +932,7 @@ def installed_verification(run: ReleaseRun, installation: PreparedInstallation) 
     verification = installation.verification
     home = installation.home
     environment = installation.environment
-    require_linked_release_step(
+    require_installed_verifier(
         run,
         release_step(
             run,

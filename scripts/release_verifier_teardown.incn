@@ -1,0 +1,114 @@
+"""Join detached records workers belonging to a release's private installed verifier."""
+
+from rust::std::process import Command, Stdio
+from rust::std::string import String as RustString
+from rust::std::thread import sleep
+from rust::std::time import Duration
+from std.fs import Path
+from release_support import ReleaseMember, release_descendant_pids
+
+const POLL_LIMIT: int = 50
+
+
+model ProcessRow:
+    """One live process identity, its parent, and whether it belongs to the private Oven directly."""
+
+    member: ReleaseMember
+    parent: int
+    verifier: bool
+
+
+pub def finish_installed_verifier[T](oven: str, outcome: Result[T, str]) -> Result[T, str]:
+    """Require the private Oven's records processes and their children to exit before returning its step outcome."""
+    stopped = stop_verifier_workers(Path(oven))
+    match stopped:
+        Ok(_) => return outcome
+        Err(message) =>
+            match outcome:
+                Ok(_) => return Err(message)
+                Err(reason) => return Err(reason + "\n" + message)
+
+
+def stop_verifier_workers(oven: Path) -> Result[None, str]:
+    """
+    1. Observe the exact private executable, including workers using a different Bakery or already reparented.
+    2. Send TERM, then give confirmed survivors a bounded KILL and wait.
+    3. Return only after the OS reports that the private workers are gone.
+    """
+    # 1. The child invocation has exited, but both resident roles can outlive its process tree.
+    executable = oven.resolve().map_err((error) => error.message())?.0
+    initial = verifier_workers(executable, [])?
+    if len(initial) == 0:
+        return Ok(None)
+
+    # 2. Recheck each captured PID's start time and command before signaling only its own process.
+    signal_verifier_workers(executable, initial, "TERM")?
+    mut remaining = wait_verifier_workers(executable, initial)?
+    if len(remaining) > 0:
+        signal_verifier_workers(executable, remaining, "KILL")?
+        remaining = wait_verifier_workers(executable, remaining)?
+
+    # 3. A failed census or a surviving worker refuses cleanup of the installation.
+    if len(remaining) > 0:
+        return Err(f"installed verifier left private engine processes alive: {[worker.pid for worker in remaining]}")
+    return Ok(None)
+
+
+def signal_verifier_workers(executable: str, targets: list[ReleaseMember], signal: str) -> Result[None, str]:
+    """Signal a specific worker only while its recorded identity remains in the private Oven's process census."""
+    for target in targets:
+        if target in verifier_workers(executable, targets)?:
+            _ = Command.new("/bin/kill").args([f"-{signal}", "--", str(target.pid)]).status()
+    return Ok(None)
+
+
+def wait_verifier_workers(executable: str, retained: list[ReleaseMember]) -> Result[list[ReleaseMember], str]:
+    """Poll for exit while retaining custody of confirmed descendants that become reparented."""
+    mut live = retained
+    for _attempt in range(POLL_LIMIT):
+        live = verifier_workers(executable, live)?
+        if len(live) == 0:
+            return Ok(live)
+        sleep(Duration.from_millis(20))
+    return verifier_workers(executable, live)
+
+
+def verifier_workers(executable: str, retained: list[ReleaseMember]) -> Result[list[ReleaseMember], str]:
+    """Observe each live process's exact command and start time in the same process-table sample."""
+    mut command = Command.new("/bin/ps")
+    command.args(["-Aww", "-o", "pid=,ppid=,stat=,lstart=,command="]).env("LC_ALL", "C").stdin(Stdio.null())
+    report = command.output().map_err((error) => f"cannot observe installed verifier processes: {error}")?
+    if not report.status.success():
+        return Err("/bin/ps could not observe installed verifier processes")
+    rows = RustString.from_utf8_lossy(report.stdout).into_owned()
+    mut processes: dict[int, ProcessRow] = {}
+    for line in rows.split("\n"):
+        if let Some(member) = verifier_worker(line, executable):
+            processes[member.member.pid] = member
+    roots = [row.member.pid for row in processes.values() if row.verifier or row.member in retained]
+    relations = [(row.member.pid, row.parent) for row in processes.values()]
+    return Ok([processes[pid].member for pid in release_descendant_pids(relations, roots)])
+
+
+def verifier_worker(line: str, executable: str) -> Option[ProcessRow]:
+    """Read the fixed ps header while preserving any spaces in the executable's path and arguments."""
+    row = line.strip()
+    mut header: list[str] = []
+    mut command_offset = 0
+    for field in row.split(" "):
+        if len(header) == 8:
+            break
+        command_offset += len(field) + 1
+        if field != "":
+            header.append(field)
+    if len(header) != 8 or command_offset >= len(row) or header[2].startswith("Z"):
+        return None
+    invocation = row[command_offset:].strip()
+    direct = invocation.startswith(executable + " --internal-engine ") or invocation.startswith(
+        executable + " --internal-engine-settlement ",
+    )
+    return Some(ProcessRow(
+        member=ReleaseMember(pid=int(header[0]), started=" ".join(header[3:])),
+        parent=int(header[1]),
+        verifier=direct,
+    ))
