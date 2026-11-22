@@ -52,7 +52,9 @@ def test_a_seed_standard_loaf_is_reused_only_when_every_shipped_payload_names_th
     identity = "sha256:aaaa"
     stamp(shipped, "libincan_stdlib_testing.rlib", identity)?
     stamp(shipped, "incan_stdlib_testing.incnlib", identity)?
-    assert seed_reusable(loaves, "incan_stdlib_testing", "release", identity)? == Some(shipped)
+    match seed_reusable(loaves, "incan_stdlib_testing", "release", identity)?:
+        Some(found) => assert found.0 == shipped.0
+        None => return Err("a seed build carrying the computed identity was not reused")
     assert seed_reusable(loaves, "incan_stdlib_testing", "release", "sha256:bbbb")? is None
     assert seed_reusable(loaves, "incan_stdlib_testing", "debug", identity)? is None
     assert seed_reusable(loaves, "incan_stdlib_web", "release", identity)? is None
