@@ -64,6 +64,8 @@ pub fn lower_compilation_modules(
     lower_with_namespaces(modules, analysis, session, bodies, namespaces)
 }
 
+/// Lower dependency-ready modules against one shared Loaf context. Place admitted and newly built bodies
+/// in collected-module order for the downstream planner.
 fn lower_with_namespaces(
     modules: &[ParsedModule],
     analysis: &CompilationAnalysis,
