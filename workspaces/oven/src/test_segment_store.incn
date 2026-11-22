@@ -600,11 +600,26 @@ def prove_view_admission(root: Path, views: int) -> Result[int, str]:
 
 def publish_peer_replacements(root: Path) -> Result[None, str]:
     """Replace both views in one publication and collect while the parent holds the old leases."""
-    _ = commit_group([
-        put(begin(snapshot(root).map_err((error) => error.message())?), "key", b"home-new"),
-        put(begin(snapshot(root, "peer").map_err((error) => error.message())?), "key", b"peer-new"),
-    ]).map_err((error) => error.message())?
+    home = snapshot(root).map_err((error) => error.message())?
+    peer = snapshot(root, "peer").map_err((error) => error.message())?
+    previous = Path(manifest_path(home.root, home.generation, home.digest).value)
+    old_bytes = previous.stat().map_err((error) => error.message())?.size().map_err((error) => error.message())?
+    group = [put(begin(home), "key", b"home-new"), put(begin(peer), "key", b"peer-new")]
+    observe_work(WorkObserver(start=Some(observed_start), finish=Some(observed_finish)))
+    before = observed_work.get("store_manifest_read", 0)
+    published = commit_pinned(group, home.view).map_err((error) => error.message())?
+    reads = observed_work.get("store_manifest_read", 0) - before
+    observe_work(WorkObserver())
+    selected = published.snapshot
+    following = Path(manifest_path(selected.root, selected.generation, selected.digest).value)
+    new_bytes = following.stat().map_err((error) => error.message())?.size().map_err((error) => error.message())?
+    assert published.pin is not None
+    assert selected.generation > home.generation and text(lookup(selected, "key")) == "home-new"
+    # The new manifest is opened once to audit the execution pin before CURRENT is switched.
+    manifest_bytes = old_bytes * (reads - 1) + new_bytes
+    println(f"publication: {reads} manifest opens, {manifest_bytes} manifest bytes")
     _ = collect_layouts(root).map_err((error) => error.message())?
+    assert reads == 2, f"publication opened {reads} manifests for one prior and one new generation"
     return Ok(None)
 
 
