@@ -5,7 +5,7 @@ from rust::std::str import from_utf8
 from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue, parse
-from pub::incan_platform.store import keys
+from pub::incan_platform.store import begin, commit, keys, put
 from files import make_directory, read, write
 from lowering_record_fixtures import stop_example_engine
 from scratch import scratch_directory
@@ -68,6 +68,8 @@ def check_warning_publication(binary: str, root: Path) -> Result[None, str]:
         "model Page:\n    title: str\n\ndef main() -> None:\n"
         + "    page = Page(title=\"old\")\n    mut title = page.title\n    title = \"hello\"\n    println(title)\n",
     )?
+    empty = snapshot(store).map_err((error) => error.message())?
+    previous = commit(put(begin(empty), "warning-test-anchor", b"anchor")).map_err((error) => error.message())?
     mut interrupted = source_command(binary, project, store, trace)
     interrupted.env("INCAN_STORE_CRASH_AFTER", "pin-acquired")
     refused = interrupted.output().map_err((error) => str(error))?
@@ -76,6 +78,7 @@ def check_warning_publication(binary: str, root: Path) -> Result[None, str]:
     selected = snapshot(store).map_err((error) => error.message())?
     for key in keys(selected).map_err((error) => error.message())?:
         assert not key.endswith("\tchecked warnings"), "a refused native publication left a warning receipt"
+    assert selected.digest == previous.digest, "the refused publication changed the selected generation"
     cold = source_command(binary, project, store, trace).output().map_err((error) => str(error))?
     first = snapshot(store).map_err((error) => error.message())?
     warm = source_command(binary, project, store, trace).output().map_err((error) => str(error))?
