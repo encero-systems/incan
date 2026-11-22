@@ -214,6 +214,7 @@ impl rustc_driver::Callbacks for Callbacks {
     /// Verify external signatures and synthesized clone bounds against native metadata before building planned MIR.
     fn after_expansion(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'_>) -> rustc_driver::Compilation {
         self.timing.mark("rustc_expansion");
+        crate::native_crates::bind_extern_crates(tcx);
         if let Err(error) = verify_library_argument_profiles(tcx, &self.plan) {
             refuse(tcx, error);
         }
