@@ -644,26 +644,35 @@ def test_completed_slot_is_settled_before_queued_admission() -> Result[None, str
     # A later test of the same Loaf still needs the target. Unrelated work can start after its last consumer.
     target = root.joinpath("target")
     producer = Invocation(
-        arguments=["-c", "mkdir target && touch target/product"],
+        arguments=[
+            "-c",
+            "mkdir -p target/incan/rust/release target/incan/release/tests target/incan/observations target/incan/loaves"
+            + " && touch target/incan/rust/release/product target/incan/release/tests/test"
+            + " target/incan/observations/shared target/incan/loaves/shared",
+        ],
         directory=root.0,
         reservation=GIB,
         log=logs.joinpath("003-producer.log"),
         scratch_target=target.0,
     )
     consumer = Invocation(
-        arguments=["-c", "test -f target/product"],
+        arguments=["-c", "test -f target/incan/rust/release/product && test -f target/incan/release/tests/test"],
         directory=root.0,
         reservation=GIB,
         log=logs.joinpath("004-consumer.log"),
         scratch_target=target.0,
     )
     unrelated = Invocation(
-        arguments=["-c", "test ! -e target"],
+        arguments=[
+            "-c",
+            "test ! -e target/incan/rust/release && test ! -e target/incan/release/tests"
+            + " && test -f target/incan/observations/shared && test -f target/incan/loaves/shared",
+        ],
         directory=root.0,
         reservation=GIB,
         log=logs.joinpath("005-unrelated.log"),
     )
-    assert run_all("/bin/sh", [producer, consumer, unrelated], 1, 0)?, "the finished Loaf target survived its last consumer"
+    assert run_all("/bin/sh", [producer, consumer, unrelated], 1, 0)?, "reclaim removed a shared Loaf input or left test output"
     return Ok(None)
 
 
