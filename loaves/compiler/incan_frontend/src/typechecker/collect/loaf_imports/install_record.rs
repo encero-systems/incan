@@ -38,6 +38,9 @@ impl TypeChecker {
             },
             type_origins: self.loaf_type_origins(library, manifest).values().cloned().collect(),
             modules: install_modules(manifest),
+            identity_exports: Vec::new(),
+            export_kinds: Vec::new(),
+            aliases: Vec::new(),
         }
     }
 }

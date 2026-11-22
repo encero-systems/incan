@@ -297,3 +297,54 @@ fn a_loafs_install_record_lists_each_modules_nominal_declarations() -> TestResul
     assert_eq!(recorded, expected);
     Ok(())
 }
+
+/// A compiled Loaf's install record carries its identity graph exports and its root alias exports as the manifest
+/// publishes them, and, for each public name the graph publishes, the kind of root export the name finds first.
+#[test]
+fn a_loafs_install_record_carries_its_identity_exports_and_the_kind_each_name_finds() -> TestResult {
+    use super::ManifestExportRef;
+    use crate::library_manifest::install_record::InstallExportKind;
+    use crate::typechecker::TypeChecker;
+    let root = tempfile::tempdir()?;
+    let loaves = shapes(root.path())?;
+    for library in ["base", "shapes"] {
+        let manifest = loaves.manifest(library).ok_or("missing manifest")?;
+        let mut checker = TypeChecker::new();
+        checker.set_loaves(Arc::clone(&loaves));
+        let record = checker.loaf_install_record(library, manifest);
+        let graph = &manifest.contract_metadata.identity_graph;
+        assert!(!graph.exports.is_empty(), "{library} publishes no identity");
+        assert_eq!(record.identity_exports, graph.exports, "{library}'s identity exports");
+        assert_eq!(record.aliases, manifest.exports.aliases, "{library}'s alias exports");
+        let mut seen = std::collections::HashSet::new();
+        let expected = graph
+            .exports
+            .iter()
+            .filter(|export| seen.insert(export.public_name.clone()))
+            .map(|export| {
+                let kind = TypeChecker::find_manifest_export(manifest, &export.public_name).map(|found| match found {
+                    ManifestExportRef::Alias(_) => InstallExportKind::Alias,
+                    ManifestExportRef::Model(_) => InstallExportKind::Model,
+                    ManifestExportRef::Class(_) => InstallExportKind::Class,
+                    ManifestExportRef::Function(_) => InstallExportKind::Function,
+                    ManifestExportRef::Partial(_) => InstallExportKind::Partial,
+                    ManifestExportRef::Trait(_) => InstallExportKind::Trait,
+                    ManifestExportRef::Enum(_) => InstallExportKind::Enum,
+                    ManifestExportRef::EnumVariant { .. } => InstallExportKind::EnumVariant,
+                    ManifestExportRef::TypeAlias(_) => InstallExportKind::TypeAlias,
+                    ManifestExportRef::Newtype(_) => InstallExportKind::Newtype,
+                    ManifestExportRef::Const(_) => InstallExportKind::Const,
+                    ManifestExportRef::Static(_) => InstallExportKind::Static,
+                });
+                (export.public_name.clone(), kind)
+            })
+            .collect::<Vec<_>>();
+        let recorded = record
+            .export_kinds
+            .iter()
+            .map(|named| (named.public_name.clone(), named.kind))
+            .collect::<Vec<_>>();
+        assert_eq!(recorded, expected, "{library}'s export kinds");
+    }
+    Ok(())
+}

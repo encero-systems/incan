@@ -8,7 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{CanonicalIdentityExport, NominalTypeOriginExport, TypeParamExport, TypeRef};
+use super::{AliasExport, CanonicalIdentityExport, ExportIdentity, NominalTypeOriginExport, TypeParamExport, TypeRef};
 
 /// Schema of the install record.
 pub const INSTALL_RECORD_SCHEMA: u32 = 1;
@@ -29,6 +29,39 @@ pub struct LoafInstallRecord {
     /// and declaration order. A consumer registers them under its declaration keys; the modules' type scopes are the
     /// Loaf's type-scope records.
     pub modules: Vec<InstallModule>,
+    /// The Loaf's identity graph exports, as its manifest publishes them. Install lays out each nominal one under its
+    /// canonical spelling, and the foreign preparation of a Loaf that reaches this one reads them.
+    pub identity_exports: Vec<ExportIdentity>,
+    /// For each public name the identity graph publishes, in first-occurrence order, the kind of root export the
+    /// manifest gives that name first, in the order install searches the root exports.
+    pub export_kinds: Vec<InstallNamedExport>,
+    /// The Loaf's root alias exports, which install resolves when it lays them out.
+    pub aliases: Vec<AliasExport>,
+}
+
+/// The kind of root export a public name finds first.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InstallNamedExport {
+    pub public_name: String,
+    /// `None` when no root export has the name.
+    pub kind: Option<InstallExportKind>,
+}
+
+/// The kinds of a manifest's root exports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InstallExportKind {
+    Alias,
+    Model,
+    Class,
+    Function,
+    Partial,
+    Trait,
+    Enum,
+    EnumVariant,
+    TypeAlias,
+    Newtype,
+    Const,
+    Static,
 }
 
 /// One checked API module of a compiled Loaf and the nominal declarations install registers from it.
