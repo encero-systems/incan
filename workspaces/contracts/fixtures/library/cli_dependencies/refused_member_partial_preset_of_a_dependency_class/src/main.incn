@@ -1,0 +1,8 @@
+# behavior: another package's call of a member partial of a dependency's class must supply each preset that is no value, here one reading the dependency's static, as any parameter whose default it cannot carry; only a unit of the class's own package may omit it
+# expect-diagnostic: INCAN-T0001
+
+from pub::shapes import Box
+
+
+def main() -> None:
+    println(Box(v=1).capped())
