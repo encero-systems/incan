@@ -122,9 +122,129 @@ pub enum StaticInitializer {
     Dict(Vec<(Constant, Constant)>),
     /// Primitive member literals of a set, including the empty `Set()` constructor; duplicates collapse on insert.
     Set(Vec<Constant>),
-    /// Any other checked initializer, as a body with no parameters that returns the storage carrier. A consumer runs
-    /// it at most once per program, at the point legacy's static initialization would.
+    /// Any other checked initializer, as a body with no parameters that returns the storage carrier.
     Computed(Box<Body>),
+    /// A published static that must use the declaring Loaf's native storage.
+    Linked(Box<LinkedStaticAccessors>),
+}
+
+/// Producer-selected crate-relative native names for one Loaf static.
+///
+/// These bindings do not grant Incan visibility. The consumer resolves them in the crate that the declaration's
+/// canonical identity names and cannot initialize its own storage from this record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkedStaticAccessors {
+    /// Read a value from the declaring Loaf's storage.
+    pub load: String,
+    /// Replace a value in the declaring Loaf's storage. Constants publish no store path.
+    pub store: Option<String>,
+    /// Run the producer's module initializer in declaration order when this static has computed initialization.
+    pub initialize_module: Option<String>,
+    /// Operate under the declaring Loaf's guard for native cell carriers.
+    pub guarded: Option<LinkedStaticGuardAccessors>,
+}
+
+/// Native operations that keep a storage guard in the declaring Loaf.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkedStaticGuardAccessors {
+    /// Force lazy initialization without copying the value.
+    pub force: String,
+    /// Run a callback while the producer holds a shared guard.
+    pub with_ref: String,
+    /// Run a callback while the producer holds an exclusive guard. Constants publish no mutable path.
+    pub with_mut: Option<String>,
+}
+
+/// A namespace reserved for the hidden native exports of Loaf static bindings.
+pub const LINKED_STATIC_ACCESSOR_PREFIX: &str = "__incan_linked_static_";
+
+impl LinkedStaticAccessors {
+    /// Choose native names in the declaring Loaf using its unique module and declaration name. Byte offsets and
+    /// the position of storage in a particular unit cannot affect the exported ABI.
+    pub fn for_declaration(declaration: &StaticDeclaration) -> Option<Self> {
+        let identity = &declaration.canonical;
+        if !matches!(identity.origin, crate::SymbolOrigin::Package { .. })
+            || identity.namespace != crate::SymbolNamespace::OrdinaryLexical
+            || identity.scope_discriminant.is_some()
+            || !matches!(
+                identity.kind,
+                crate::SemanticSourceTargetKind::Static | crate::SemanticSourceTargetKind::Const
+            )
+            || matches!(declaration.initial, StaticInitializer::Linked(_))
+        {
+            return None;
+        }
+        let writable = identity.kind == crate::SemanticSourceTargetKind::Static;
+        let mut stable = identity.clone();
+        stable.declaration_span = crate::HirSourceSpan::new(0, 0);
+        let name = crate::encode_incan_symbol_identity(&stable);
+        let path = |operation: &str| format!("{LINKED_STATIC_ACCESSOR_PREFIX}{operation}_{name}");
+
+        let computed = matches!(declaration.initial, StaticInitializer::Computed(_));
+        let initialize_module = computed.then(|| {
+            stable.declaration_name.clear();
+            stable.kind = crate::SemanticSourceTargetKind::Static;
+            let module = crate::encode_incan_symbol_identity(&stable);
+            format!("{LINKED_STATIC_ACCESSOR_PREFIX}initialize_{module}")
+        });
+        let guarded = (computed
+            || matches!(
+                declaration.initial,
+                StaticInitializer::List(_) | StaticInitializer::Dict(_)
+            ))
+        .then(|| LinkedStaticGuardAccessors {
+            force: path("force"),
+            with_ref: path("with_ref"),
+            with_mut: writable.then(|| path("with_mut")),
+        });
+        Some(Self {
+            load: path("load"),
+            store: writable.then(|| path("store")),
+            initialize_module,
+            guarded,
+        })
+    }
+
+    /// Check that every claimed operation is a hidden native identifier in the declaring crate. A read-only static
+    /// cannot carry a write operation, and module initialization must have a native guard to force.
+    pub(crate) fn valid_for(&self, identity: &CanonicalSymbolId) -> bool {
+        let writable = match identity.kind {
+            crate::SemanticSourceTargetKind::Static => true,
+            crate::SemanticSourceTargetKind::Const => false,
+            _ => return false,
+        };
+        matches!(identity.origin, crate::SymbolOrigin::Package { .. })
+            && identity.namespace == crate::SymbolNamespace::OrdinaryLexical
+            && identity.scope_discriminant.is_none()
+            && self.store.is_some() == writable
+            && self
+                .initialize_module
+                .as_deref()
+                .is_none_or(|path| self.guarded.is_some() && linked_static_identifier(path, "initialize_"))
+            && linked_static_identifier(&self.load, "load_")
+            && self
+                .store
+                .as_deref()
+                .is_none_or(|path| linked_static_identifier(path, "store_"))
+            && self.guarded.as_ref().is_none_or(|guarded| {
+                linked_static_identifier(&guarded.force, "force_")
+                    && linked_static_identifier(&guarded.with_ref, "with_ref_")
+                    && guarded.with_mut.is_some() == writable
+                    && guarded
+                        .with_mut
+                        .as_deref()
+                        .is_none_or(|path| linked_static_identifier(path, "with_mut_"))
+            })
+    }
+}
+
+/// Validate an operation path as one crate-relative identifier in the compiler-owned namespace.
+fn linked_static_identifier(path: &str, operation: &str) -> bool {
+    path.strip_prefix(LINKED_STATIC_ACCESSOR_PREFIX)
+        .and_then(|identifier| identifier.strip_prefix(operation))
+        .is_some_and(|suffix| {
+            !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        })
 }
 
 /// One anonymous union whose payload order and callable ownership were retained before native lowering.

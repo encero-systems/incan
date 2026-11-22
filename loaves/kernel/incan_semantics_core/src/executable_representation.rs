@@ -360,7 +360,14 @@ impl ExecutableDeclaration {
             }
             Self::Constant(value) => Some(&value.canonical),
             Self::TypeAlias(value) => Some(&value.canonical),
-            Self::Static(value) => Some(&value.canonical),
+            Self::Static(value) => {
+                if let crate::body_ir::StaticInitializer::Linked(accessors) = &value.initial
+                    && !accessors.valid_for(&value.canonical)
+                {
+                    return None;
+                }
+                Some(&value.canonical)
+            }
         }
     }
 }
