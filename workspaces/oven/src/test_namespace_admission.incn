@@ -24,9 +24,9 @@ pub def test_an_unchanged_namespace_is_admitted_by_its_header_and_a_changed_cont
     project = root.joinpath("project")
     project.mkdir(true, true).map_err((error) => error.message())?
     main = project.joinpath("main.incn")
-    write(main, "from scale import first\n\ndef main() -> None:\n    items = [3, 4]\n    println(str(first(items)))\n")?
+    write(main, "from scale import Box, first\n\ndef main() -> None:\n    box = Box(value=3)\n    println(str(first(box)))\n")?
     callee = project.joinpath("scale.incn")
-    write(callee, "pub def first(values: list[int]) -> int:\n    return values[0]\n")?
+    write(callee, callee_source("return item.value"))?
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     store = root.joinpath("store")
     exercised = exercise_admission(binary, root, store, main, callee)
@@ -40,32 +40,67 @@ pub def test_an_unchanged_namespace_is_admitted_by_its_header_and_a_changed_cont
     return exercised
 
 
+def callee_source(first: str) -> str:
+    """The callee module: a model, a function that keeps its argument, and `first` with the body line `first`. The
+    declarations and owners stay the same in every edit, so only the body, and with it `first`'s settled call
+    contract, can change."""
+    return f"pub model Box:\n    pub value: int\n\ndef take(item: Box) -> Box:\n    return item\n\npub def first(item: Box) -> int:\n    {first}\n"
+
+
 def exercise_admission(binary: str, root: Path, store: Path, main: Path, callee: Path) -> Result[None, str]:
-    """Build, edit the callee's body twice, and count what each edit's checking opened while the caller owns cleanup."""
-    _ = run(binary, root, store, main, "cold")?
-    write(callee, "pub def first(values: list[int]) -> int:\n    return values[0] * 1\n")?
-    body = run(binary, root, store, main, "body-edit")?
-    if checked_modules(body, "main.incn") != 0:
+    """Build, edit the callee's body twice, and count what each edit's checking opened while the caller owns cleanup.
+
+    A resident engine and compiler keep tracing into the directory of the run that started them, so every run shares
+    one directory and each edit is measured by what it added."""
+    observations = root.joinpath("observations")
+    observations.mkdir(true, true).map_err((error) => error.message())?
+    run(binary, store, main, observations, "cold")?
+    before = counts_of(observations)
+    write(callee, callee_source("return item.value * 1"))?
+    run(binary, store, main, observations, "body-edit")?
+    after_body = counts_of(observations)
+    body = after_body.since(before)
+    if body.checked_callers != 0:
         return Err("a body edit of the callee checked its unchanged caller")
-    if invocations(body, "incan_rustc_driver::admit_namespace_header") == 0:
+    if body.header_admissions == 0:
         return Err("the unchanged caller was not admitted by its namespace header")
-    if invocations(body, "incan_rustc_driver::open_installed_namespace_interface") != 0:
+    if body.installed_frames != 0:
         return Err("checking opened the frame of a namespace no checked module imports")
-    # Passing the parameter on to a function that keeps it changes how `first` reads it, not its signature.
-    write(
-        callee,
-        "def keep(values: list[int]) -> list[int]:\n    return values\n\npub def first(values: list[int]) -> int:\n    return keep(values)[0]\n",
-    )?
-    contract = run(binary, root, store, main, "contract-edit")?
-    if checked_modules(contract, "main.incn") == 0:
+    # Passing the parameter on to a function that keeps it consumes it: `first` no longer only reads its argument.
+    write(callee, callee_source("return take(item).value"))?
+    run(binary, store, main, observations, "contract-edit")?
+    contract = counts_of(observations).since(after_body)
+    if contract.checked_callers == 0:
         return Err("a changed callee contract did not re-check its caller")
     return Ok(None)
 
 
-def run(binary: str, root: Path, store: Path, main: Path, name: str) -> Result[Path, str]:
-    """Run the program through the records engine with its compiler records traced into their own directory."""
-    observations = root.joinpath(f"observations-{name}")
-    observations.mkdir(true, true).map_err((error) => error.message())?
+pub model Counts:
+    """What the traced compiler did: caller checks, header admissions and frames opened for installed interfaces."""
+
+    pub checked_callers: int = 0
+    pub header_admissions: int = 0
+    pub installed_frames: int = 0
+
+    pub def since(self, earlier: Counts) -> Counts:
+        return Counts(
+            checked_callers=self.checked_callers - earlier.checked_callers,
+            header_admissions=self.header_admissions - earlier.header_admissions,
+            installed_frames=self.installed_frames - earlier.installed_frames,
+        )
+
+
+def counts_of(directory: Path) -> Counts:
+    """Everything the compiler traced into `directory` so far."""
+    return Counts(
+        checked_callers=checked_modules(directory, "main.incn"),
+        header_admissions=invocations(directory, "incan_rustc_driver::admit_namespace_header"),
+        installed_frames=invocations(directory, "incan_rustc_driver::open_installed_namespace_interface"),
+    )
+
+
+def run(binary: str, store: Path, main: Path, observations: Path, name: str) -> Result[None, str]:
+    """Run the program through the records engine with its compiler records traced into `observations`."""
     outcome = Command
         .new(binary)
         .arg("run")
@@ -79,7 +114,7 @@ def run(binary: str, root: Path, store: Path, main: Path, name: str) -> Result[P
     if not outcome.status.success() or outcome.stdout != b"3\x0a":
         error = RustString.from_utf8(outcome.stderr).map_err((decode_error) => str(decode_error))?
         return Err(f"{name} records run: status={outcome.status.code()} stderr={error}")
-    return Ok(observations)
+    return Ok(None)
 
 
 def records(directory: Path) -> list[JsonValue]:
