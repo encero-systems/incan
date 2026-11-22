@@ -1092,4 +1092,80 @@ mod tests {
         assert_eq!(fallback_identity(None), None);
         assert_eq!(fallback_identity(Some("owner".to_owned())), Some("owner".to_owned()));
     }
+
+    /// A checked body the module's Body IR gives no row of its own, a trait's abstract method or a top-level partial's
+    /// generated function, is published as a fallback owner with its reason instead of refusing the whole output.
+    #[test]
+    fn bodies_without_their_own_body_ir_row_are_fallback_owners() -> Result<(), Box<dyn std::error::Error>> {
+        let source = concat!(
+            "trait Named:\n    def label(self) -> str:\n        ...\n\n",
+            "model One with Named:\n    number: int\n\n    def label(self) -> str:\n        return str(self.number)\n\n",
+            "def route(method: str, path: str) -> str:\n    return method + path\n\n",
+            "pub get = partial route(method=\"GET\")\n\n",
+            "def main() -> None:\n    println(get(path=\"/\"))\n",
+        );
+        let scratch = std::env::temp_dir().join(format!("incan-graph-fallbacks-{}", std::process::id()));
+        std::fs::create_dir_all(scratch.join("src"))?;
+        let root = scratch.canonicalize()?;
+        let tokens = incan_frontend::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let ast = incan_frontend::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = incan_frontend::typechecker::TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["main".into()]));
+        checker.check_program(&ast).map_err(|errors| format!("{errors:?}"))?;
+        let providers = incan_frontend::body_ir::ProviderOperationCatalog::new();
+        let mut lowered = incan_frontend::body_ir::build_body_ir_module(
+            &ast,
+            &["main".into()],
+            checker.type_info(),
+            &incan_frontend::body_ir::BodyIrContext {
+                modules: incan_frontend::body_ir::ContextModules::default(),
+                provider_operations: &providers,
+                registry_package: None,
+                library_package: None,
+                include_inline_tests: false,
+            },
+        );
+        let module = incan_frontend::parsed_module::ParsedModule {
+            name: "main".into(),
+            path_segments: vec!["main".into()],
+            file_path: root.join("src/main.incn"),
+            source_positions: incan_frontend::diagnostics::SourcePositionIndex::new(source),
+            source: source.to_owned(),
+            ast,
+            gated_exports: Vec::new(),
+        };
+        let mut output = GraphBodyOutput::prepare(Some(root.join("bodies")), root.clone())?;
+        output.observe(&module, &checker, None, &[], "app");
+        if let Some(error) = output.error.take() {
+            return Err(error.into());
+        }
+        output.attach_body_ir(
+            std::slice::from_ref(&module),
+            std::slice::from_mut(&mut lowered),
+            &[],
+            &std::collections::BTreeMap::new(),
+            None,
+        )?;
+        let fallbacks: Vec<(&str, &str)> = output
+            .fallbacks
+            .iter()
+            .map(|fallback| (fallback.name.as_str(), fallback.reason.as_str()))
+            .collect();
+        assert!(
+            fallbacks
+                .iter()
+                .any(|(name, reason)| *name == "label" && reason.contains("no Body IR row")),
+            "{fallbacks:?}"
+        );
+        assert!(
+            fallbacks
+                .iter()
+                .any(|(name, reason)| *name == "get" && reason.contains("partial")),
+            "{fallbacks:?}"
+        );
+        assert!(output.values.iter().all(|value| !value.body_ir.is_empty()));
+        assert!(output.values.iter().any(|value| value.name == "route"));
+        std::fs::remove_dir_all(&scratch)?;
+        Ok(())
+    }
 }
