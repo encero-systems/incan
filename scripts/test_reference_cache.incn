@@ -94,16 +94,16 @@ def test_the_key_ignores_contract_files_that_decide_no_outcome() -> Result[None,
 
 
 def test_only_a_finished_census_is_stored_once_and_read_back_with_its_origin() -> Result[None, str]:
-    """A partial census is refused; the first finished one is kept, whole, and names the release that measured it."""
+    """A unfinished census is refused; the first finished one is kept, whole, and names the release that measured it."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     root = reference_cache_root(temporary.path())
     assert root.0 == temporary.path().joinpath("cache/release-reference").0
     origin = CensusOrigin(release="release-C13", source_sha=SHA, census="installed")
-    partial = temporary.path().joinpath("partial.log")
-    partial.write_text(COMPLETE_LOG.replace("total: 7 passed, 1 failed, 0 pending\n", ""), "utf-8", "strict", None).map_err(
+    unfinished = temporary.path().joinpath("unfinished.log")
+    unfinished.write_text(COMPLETE_LOG.replace("total: 7 passed, 1 failed, 0 pending\n", ""), "utf-8", "strict", None).map_err(
         (error) => error.message(),
     )?
-    match store_census(root, inputs(), partial, origin):
+    match store_census(root, inputs(), unfinished, origin):
         Ok(_) => return Err("a census without its final total was stored")
         Err(_) => pass
     assert stored_census(root, inputs())? is None
