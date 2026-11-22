@@ -292,3 +292,25 @@ pub fn barrier_sync(path: &str) -> io::Result<()> {
 pub fn barrier_sync(path: &str) -> io::Result<()> {
     std::fs::File::open(path)?.sync_all()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{reap_retained_children, retain_child, retained_children};
+
+    /// A child this process retains instead of waiting on is reaped once it exits, so no zombie outlives it.
+    #[test]
+    fn a_retained_child_is_reaped_once_it_exits() -> Result<(), Box<dyn std::error::Error>> {
+        let before = retained_children()?;
+        retain_child(std::process::Command::new("/bin/sh").args(["-c", "exit 0"]).spawn()?)?;
+        retain_child(std::process::Command::new("/bin/sleep").arg("0.2").spawn()?)?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut reaped = 0;
+        while reaped < 2 && std::time::Instant::now() < deadline {
+            reaped += reap_retained_children()?;
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert_eq!(reaped, 2, "an exited retained child was not reaped");
+        assert_eq!(retained_children()?, before);
+        Ok(())
+    }
+}
