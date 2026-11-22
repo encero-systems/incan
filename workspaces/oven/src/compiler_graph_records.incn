@@ -28,7 +28,7 @@ from pub::internal_models import (
     ProducerRank,
     ProducerStage,
     StoreRecordSource,
-    decode_read_receipt,
+    decode_read_receipt_view,
     encode_read_receipt,
 )
 from pub::internal_models.records import (
@@ -288,7 +288,7 @@ pub def evaluation_authority(selected: Snapshot, output: RecordKey, profile: str
     # Publication binds this content root. The store checks the selected frame in place and the decoder borrows its
     # value directly, preserving the receipt checks without first copying the value out of the store.
     receipt = match lookup(selected, receipt_key).map_err((error) => error.message())?:
-        Lookup.Found(mapped) => decode_read_receipt(mapped.0.as_bytes())?
+        Lookup.Found(mapped) => decode_read_receipt_view(mapped)?
         Lookup.Deleted | Lookup.Absent => return Err("selected compiler evaluation is incomplete")
     if receipt.scope.profile != profile or encode_record_key(receipt.preparation.output)? != value_key:
         return Err("selected compiler receipt does not describe its evaluation")
