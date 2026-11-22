@@ -2,15 +2,15 @@
 
 use crate::crumb_rows::{ModelField, model_description, required_value};
 use crate::graph_crumb_fields::{
-    KEY_TYPE, REQUEST_TYPE, decode_graph_row, encode_graph_row, integer, items, key_value, number, read_key,
-    read_request, request_value, text, tuple_items,
+    GraphRowInput, KEY_TYPE, REQUEST_TYPE, decode_graph_input, encode_graph_row, integer, items, key_value, number,
+    read_key, read_request, request_value, text, tuple_items,
 };
 use crate::record_scope::{
     AbsentFact, DeletedFact, PreparationEvidence, READ_SCHEMA, ReadReceipt, ReadScope, ReadWitness, RecordRequest,
     RevisionEvidence, valid_request,
 };
 use crate::store_record_source::encode_record_key;
-use internal_models_bindings::{Description, Value};
+use internal_models_bindings::{Description, MappedView, Value};
 
 pub const RECEIPT_SCHEMA: &str = "incan.engine.read-receipt/3";
 const SELECTOR: &[u8] = b"readrc\x00";
@@ -62,7 +62,19 @@ pub fn encode_read_receipt(receipt: &ReadReceipt) -> Result<Vec<u8>, String> {
 
 /// Decode exactly one receipt and verify the domain constraints on its scope, counters and read requests.
 pub fn decode_read_receipt(encoded: &[u8]) -> Result<ReadReceipt, String> {
-    let fields = decode_graph_row(encoded, SELECTOR, &description(), 9)?;
+    decode_receipt(GraphRowInput::Bytes(encoded))
+}
+
+/// Decode a receipt using its existing mapped backing, under the same limits and validation as byte input.
+///
+/// The caller supplies an immutable bounded mapping. The returned receipt owns its decoded witnesses.
+pub fn decode_read_receipt_view(view: &MappedView) -> Result<ReadReceipt, String> {
+    decode_receipt(GraphRowInput::Mapped(view))
+}
+
+/// Validate the completed receipt's scope, producer and typed witnesses independently of its storage placement.
+fn decode_receipt(input: GraphRowInput<'_>) -> Result<ReadReceipt, String> {
+    let fields = decode_graph_input(input, SELECTOR, &description(), 9)?;
     if text(&fields[5].value)? != READ_SCHEMA {
         return Err("unsupported compiler read receipt schema".into());
     }
@@ -174,12 +186,13 @@ fn read_witness(value: &Value, scope: &ReadScope) -> Result<ReadWitness, String>
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_read_receipt, encode_read_receipt};
+    use super::{decode_read_receipt, decode_read_receipt_view, encode_read_receipt};
     use crate::crumb_rows::take_owned_input_copies;
     use crate::record_scope::{
         AbsentFact, DEFAULT_READ_BYTES, DeletedFact, MemberSelection, PreparationEvidence, READ_SCHEMA, ReadReceipt,
         ReadScope, ReadWitness, RecordKey, RecordRequest, RecordSelection, RevisionEvidence,
     };
+    use internal_models_bindings::{MappedView, complete_view, mapped_bytes};
 
     /// A completed receipt containing every witness kind, with a bounded membership continuation.
     fn complete_receipt() -> ReadReceipt {
@@ -247,6 +260,12 @@ mod tests {
         }
     }
 
+    /// Anchor a saved receipt as a mapped test input before observing the decoder.
+    fn fixture_view(encoded: &[u8]) -> Result<MappedView, String> {
+        let backing = mapped_bytes(&encoded.to_vec())?;
+        complete_view(&backing).ok_or_else(|| "receipt fixture has no complete mapped view".into())
+    }
+
     /// Store-backed receipt decoding should preserve every typed witness without creating owned input backing.
     #[test]
     fn mapped_receipt_preserves_all_witnesses_without_copying_input() -> Result<(), String> {
@@ -256,11 +275,26 @@ mod tests {
         assert_eq!(decode_read_receipt(&encoded)?, expected);
         assert_eq!(take_owned_input_copies(), (1, encoded.len()));
 
-        assert_eq!(decode_read_receipt(&encoded)?, expected);
+        let view = fixture_view(&encoded)?;
+        assert_eq!(decode_read_receipt_view(&view)?, expected);
         assert_eq!(
             take_owned_input_copies(),
             (0, 0),
             "mapped receipt copied its encoded row into owned input backing"
+        );
+        let truncated = &encoded[..encoded.len() - 1];
+        let legacy_truncated = decode_read_receipt(truncated);
+        assert!(legacy_truncated.is_err());
+        assert_eq!(decode_read_receipt_view(&fixture_view(truncated)?), legacy_truncated);
+
+        let mut unsupported = expected;
+        unsupported.schema = "unknown-read-receipt".into();
+        let unknown_schema = encode_read_receipt(&unsupported)?;
+        let legacy_unknown = decode_read_receipt(&unknown_schema);
+        assert_eq!(legacy_unknown, Err("unsupported compiler read receipt schema".into()));
+        assert_eq!(
+            decode_read_receipt_view(&fixture_view(&unknown_schema)?),
+            legacy_unknown
         );
         Ok(())
     }
