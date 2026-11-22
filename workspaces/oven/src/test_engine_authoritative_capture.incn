@@ -77,15 +77,15 @@ def check_requests(mut channel: Channel, store: Path, trace: Path, source: Path)
     cold_requests = compiler_requests(trace)?
     assert cold_requests == (1, 1), f"expected one graph collection and one native request, found {cold_requests}"
     # 2. The same request must select the existing program.
-    _, repeated = completed_request(channel, store, source, 2, b"cold\n")?
+    repeated = completed_request(channel, store, source, 2, b"cold\n")?.1
     assert repeated.digest == first.digest, "second identical request published a capture"
     assert compiler_requests(trace)? == cold_requests, "second identical request activated the compiler"
     # 3. Changing bytes with their mtime restored must still change the reachable graph.
     edit_with_restored_mtime(helper, "pub def helper() -> int:\n    return 42\n")?
     edit_with_restored_mtime(source, "from nested.helper import helper\n\ndef main() -> None:\n    println(helper())\n")?
-    _, edited = completed_request(channel, store, source, 3, b"42\n")?
+    edited = completed_request(channel, store, source, 3, b"42\n")?.1
     assert edited.digest != first.digest
-    _, native = compiler_requests(trace)?
+    native = compiler_requests(trace)?.1
     assert native == 2, "the changed import did not activate the native compiler once"
     return Ok(None)
 
@@ -187,7 +187,8 @@ def edit_with_restored_mtime(path: Path, source: str) -> Result[None, str]:
     modified = before.modified().map_err((error) => str(error))?
     available = len(read(path)?) - len(source)
     assert available >= 2
-    write(path, source + "#" + " " * (available - 2) + "\n")?
+    padding = "".join([" " for _index in range(available - 2)])
+    write(path, source + "#" + padding + "\n")?
     file.set_times(FileTimes.new().set_modified(modified)).map_err((error) => str(error))?
     after = file.metadata().map_err((error) => str(error))?
     assert after.modified().map_err((error) => str(error))? == modified and after.len() == before.len()
