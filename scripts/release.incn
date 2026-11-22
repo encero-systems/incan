@@ -571,6 +571,7 @@ def seed_tool_context(run: ReleaseRun) -> Result[NativeContext, str]:
             memory=context.memory,
             timeout_seconds=context.timeout_seconds,
             trace=context.trace,
+            runner=context.runner,
         ),
     )
 
@@ -1054,7 +1055,7 @@ def census_step(
 
 
 def native_context(run: ReleaseRun, builder: Path, home: Path) -> NativeContext:
-    """Create the explicit native-production context for one selected Oven and home."""
+    """Create the explicit native-production context for one selected Oven and home, run by the seed's Oven."""
     return NativeContext(
         repo=run.paths.source,
         lane=run.paths.lane,
@@ -1067,6 +1068,7 @@ def native_context(run: ReleaseRun, builder: Path, home: Path) -> NativeContext:
         memory=shared_memory(host_memory()),
         timeout_seconds=run.options.timeout_seconds,
         trace=Some(run.trace),
+        runner=run.seed_oven.0,
     )
 
 
