@@ -309,6 +309,23 @@ pub def reusable_family_records(
     return select_family_records(selected, family, profile, slots, verified, defer_payload, cutoff)
 
 
+pub model NamespaceRecordSelection:
+    """The selected namespace frames and the headers beside them, verified under one shared set of witness reads."""
+
+    pub frames: list[ReusableRecord] = []
+    pub headers: list[ReusableRecord] = []
+
+
+pub def reusable_namespace_records(
+    selected: Snapshot, profile: str, slots: OutputSlots, defer_payload: bool, cutoff: EditCutoff = EditCutoff(),
+) -> Result[NamespaceRecordSelection, str]:
+    """Select every namespace frame and namespace header; a header reads the same witnesses as its frame."""
+    mut verified: Dict[str, tuple[RecordRequest, str]] = {}
+    frames = select_family_records(selected, "namespace", profile, Some(slots), verified, defer_payload, cutoff)?
+    headers = select_family_records(selected, "namespace-header", profile, Some(slots), verified, defer_payload, cutoff)?
+    return Ok(NamespaceRecordSelection(frames=frames, headers=headers))
+
+
 pub def reusable_checker_records(
     selected: Snapshot, profile: str, slots: Option[OutputSlots], executable: bool = true, cutoff: EditCutoff = EditCutoff(),
 ) -> Result[tuple[list[ReusableRecord], list[ReusableRecord], list[ReusableRecord]], str]:
