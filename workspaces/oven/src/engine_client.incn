@@ -281,15 +281,24 @@ def diagnostic_json(found: OverlayDiagnostic) -> JsonValue:
     )
 
 
-pub def project_view_name(scope: str, source: str, profile: str, refusals: Option[str]) -> Result[str, str]:
+pub def project_view_name(
+    scope: str,
+    source: str,
+    profile: str,
+    refusals: Option[str],
+    unit_options: str = "",
+) -> Result[str, str]:
     """
     The records engine's project view of one program in one home: named from the home's view key (`scope`), so it
     survives moving the home and two homes over one bakery never share it, then from the source and the profile. A
-    selected body-refusal diagnosis is a view of its own.
+    selected body-refusal diagnosis is a view of its own, and so is each canonical spelling of unit options
+    (`engine_unit_options`): a unit with other features, entries or interop target is another unit.
     """
     mut identity = [scope, source, profile]
     if let Some(mode) = refusals:
         identity.append("body-refusals:" + mode)
+    if unit_options != "":
+        identity.append("unit-options:" + unit_options)
     return Ok(f"project-{fingerprint(identity)?}")
 
 
@@ -301,13 +310,16 @@ pub def execute(
     argv0: Option[str],
     format: str,
     proofs: bool,
+    unit_options: str = "",
+    output: str = "",
 ) -> Result[i32, str]:
     """
     Build or run one file through the selected engine, without a legacy fallback.
 
-    1. Discover the physical store's compatible engine and submit the program root.
+    1. Discover the physical store's compatible engine and submit the program root with its unit options.
     2. Wait for accepted capture and caller-specific completion, relaying diagnostic bytes separately.
-    3. Hold the selected execution pin until the program exits, then release it.
+    3. Hold the selected execution pin until the program exits, then release it. A build with an OUTPUT_DIR copies
+       its program there.
     """
     absolute = source.absolute().map_err((error) => f"cannot {error.message()}")?
     # A check is a view of its own, apart from the program's builds.
@@ -315,8 +327,8 @@ pub def execute(
     if command == "check":
         view_profile = profile + "+check"
     bound = selected_home_view()?
-    view = project_view_name(view_scope(bound)?, absolute.0, view_profile, get_optional("OVEN_BODY_REFUSALS"))?
-    return execute_in(command, absolute, profile, arguments, argv0, format, proofs, view, bound)
+    view = project_view_name(view_scope(bound)?, absolute.0, view_profile, get_optional("OVEN_BODY_REFUSALS"), unit_options)?
+    return execute_in(command, absolute, profile, arguments, argv0, format, proofs, view, bound, unit_options, output)
 
 
 def view_scope(bound: Option[str]) -> Result[str, str]:
@@ -339,6 +351,8 @@ def execute_in(
     proofs: bool,
     view: str,
     bound: Option[str],
+    unit_options: str = "",
+    output: str = "",
 ) -> Result[i32, str]:
     """Run one records request in `view`, forking it from the home view `bound` names when it does not exist yet."""
     source = absolute
@@ -355,7 +369,7 @@ def execute_in(
         # A program's first build in a home starts its project view as a copy-on-write fork of the home's view.
         if let Some(found) = bound:
             fork_project_view(store, found, view)?
-    elif not proofs and command != "check":
+    elif not proofs and command != "check" and output == "":
         if let Some(code) = execute_local(store, selected, compiler, command, absolute, profile, arguments, argv0)?:
             return Ok(code)
     request = session_id()?
@@ -377,6 +391,7 @@ def execute_in(
                 options=format,
                 observation_policy=policy,
                 directory=working_directory().unwrap_or(""),
+                unit_options=unit_options,
             ),
         ),
     )?
@@ -387,7 +402,8 @@ def execute_in(
         println(report(store, complete.observation_handle)?)
     if complete.status != CompletionStatus.Success:
         return Ok(1)
-    if command == "check":
+    # A check, and a library build, selects no program.
+    if command == "check" or (command == "build" and absolute.name() == "lib.incn"):
         _ = channel.transport.close()
         return Ok(0)
     mut binary = ""
@@ -405,11 +421,29 @@ def execute_in(
     mut code: Result[i32, str] = Ok(0)
     if command == "run":
         code = run_program(Path(binary), arguments, argv0, true, program)
+    elif output != "":
+        match deliver_program(output, Path(binary)):
+            Ok(_) => pass
+            Err(reason) => code = Err(reason)
     record_work(Operation.EngineChild, source.0, executing)
     # Execution has ended. Cleanup cannot replace its outcome, and disconnect releases the lease if delivery fails.
     _ = send(channel, request, Message.Release(Release(lease_id=interest)))
     _ = channel.transport.close()
     return code
+
+
+pub def deliver_program(output: str, binary: Path) -> Result[None, str]:
+    """
+    Place a fresh copy of a built program in OUTPUT_DIR, as 0.5.1's build did: a new file rather than one rewritten in
+    place, so a program that ran from it is never replaced under itself.
+    """
+    directory = Path(output)
+    directory.mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
+    destination = directory.joinpath(binary.name())
+    if destination.exists():
+        destination.unlink().map_err((error) => f"cannot {error.message()}")?
+    _ = binary.copy(destination, true, true).map_err((error) => f"cannot {error.message()}")?
+    return Ok(None)
 
 
 def fork_project_view(store: Path, home_view: str, view: str) -> Result[None, str]:
