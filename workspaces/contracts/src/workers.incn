@@ -182,6 +182,47 @@ pub def invoke_many(requests: list[Invocation], jobs: int) -> list[Result[Outcom
     return close_pool(pool)
 
 
+pub model Background:
+    """One child started beside the runner's pools rather than in one, collected once its owner's own work is done."""
+
+    pub child: Rc[RefCell[Child]]
+    pub project: Path
+    pub clock: Instant
+
+
+pub def start_background(request: Invocation) -> Result[Background, str]:
+    """
+    Start `request` outside any pool, so the runner may enter its pools meanwhile. No pool deadline applies: a family
+    worker, the one such child, enforces each of its commands' deadlines itself.
+    """
+    clock = Instant.now()
+    child = launch(
+        request.program,
+        request.arguments,
+        request.project,
+        request.selector,
+        request.environment,
+        request.stdout_file,
+        request.capture,
+        request.arg0,
+    )?
+    return Ok(Background(child=Rc.new(RefCell.new(child)), project=request.project, clock=clock))
+
+
+pub def finish_background(background: Background) -> Result[Outcome, str]:
+    """Wait for the child, then collect its streams, keeping an exit code apart from a signal."""
+    waited = background.child.borrow_mut().wait()
+    mut code: Option[int] = None
+    match waited:
+        Err(error) => return Err(str(error))
+        Ok(status) =>
+            match status.code():
+                Some(value) => code = Some(int(value))
+                None => pass
+    report_time(f"invocation {background.project.0}", background.clock)
+    return finish(background.project, code, false)
+
+
 def retain_followup(parent: int, index: int) -> None:
     """Append through a local owner and publish the complete child list back into the prerequisite table."""
     mut children: list[int] = []

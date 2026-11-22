@@ -1,0 +1,9 @@
+[project]
+name = "reexported_partial_and_static_across_a_loaf"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+caselib = { path = "deps/caselib" }

@@ -401,7 +401,7 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
     """
     A provider ships a portable binary graph only when requested; consumers read it despite unbuilt source edits.
 
-    1. An ordinary build omits the graph; an explicit request publishes a version-two portable graph.
+    1. An ordinary build omits the graph; an explicit request publishes a version-four portable graph.
     2. A consumer reads the published graph, though the provider's source has since become invalid.
     3. A corrupt view is restored; stored damage refuses lookup until exact bytes are explicitly re-admitted.
     4. A provider with no published graph is exported once, and the export is stable.
@@ -543,9 +543,12 @@ def helper_digest(document: str) -> Result[str, str]:
 
 
 def check_binary_graph(data: bytes, project: Path) -> Result[None, str]:
-    """A published graph starts with the version-two header and never contains the physical project root."""
-    if data[:4] != b"\x02\x00\x00\x00":
-        return Err("compiled Loaf has no version-two binary graph")
+    """
+    A published graph starts with the version-four header, the layout whose origins section, ahead of its record
+    index, names the package origins of its records, and never contains the physical project root.
+    """
+    if data[:4] != b"\x04\x00\x00\x00":
+        return Err("compiled Loaf has no version-four binary graph")
     needle = project.0.encode("utf-8")
     for offset in range(len(data) - len(needle) + 1):
         if data[offset:offset + len(needle)] == needle:

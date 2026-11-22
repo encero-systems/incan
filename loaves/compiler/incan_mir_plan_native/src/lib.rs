@@ -40,6 +40,7 @@ pub use plan::{
 pub use positions::{PositionChange, WirePositions};
 pub use records::codec::{
     decode_record_plan, encode_entry_binding, encode_record_plan, encode_record_plan_products, record_plan_products,
+    restore_record_plan,
 };
 pub use records::function::{
     NamedProduct, PlacedProduct, PlacedRecord, ProductParts, decode_frames, decode_product, decode_product_parts,
@@ -53,11 +54,11 @@ pub use records::layout::{
 };
 pub use records::lowering_events::{
     ADMITTED_DEFINITIONS, AdmittedDefinition, AdmittedFunction, AdmittedModule, AdmittedPlacement, EventPosition,
-    EventReference, INTERFACE_REPORT, LoweringEvent, LoweringRefusal, NativeInterface, admitted_definitions_filename,
-    decode_admitted_definitions, decode_lowering_event, decode_lowering_refusal, decode_module_note,
-    decode_native_interface, encode_admitted_definitions, encode_lowering_event, encode_lowering_refusal,
-    encode_module_note, encode_native_interface, native_interface_filename, placed_admission, read_module_admission,
-    write_module_placement,
+    EventReference, INTERFACE_REPORT, LoweringEvent, LoweringRefusal, NATIVE_DEFINITIONS, NativeInterface,
+    admitted_definitions_filename, decode_admitted_definitions, decode_lowering_event, decode_lowering_refusal,
+    decode_module_note, decode_native_interface, encode_admitted_definitions, encode_lowering_event,
+    encode_lowering_refusal, encode_module_note, encode_native_interface, native_interface_filename, placed_admission,
+    read_module_admission, write_module_placement,
 };
 pub use records::plan_function::{
     LoweringDemands, PlanFunctionRecord, decode_plan_function_record, encode_entry_record, encode_lowering_demand,

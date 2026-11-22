@@ -4,7 +4,7 @@ from rust::std::env::consts import OS
 from rust::std::fs import metadata
 from rust::std::os::unix::fs import MetadataExt
 from rust::std::thread import sleep
-from rust::std::time import Duration
+from rust::std::time import Duration, Instant
 from std.fs import Path
 from pub::incan_platform.ipc import dial
 from core_process import executable as current_executable, spawn_detached, running, terminate
@@ -23,25 +23,34 @@ pub const HANDSHAKE_SECONDS: u64 = 5
 
 
 pub model ServiceEndpoint:
-    """Disposable endpoint plus store-level scheduling and startup locks."""
+    """Disposable endpoint plus its generation's scheduling and startup locks and the record of its socket."""
 
     pub socket: str
     pub lock: str
     pub startup_lock: str
+    pub record: str
 
 
 pub def endpoint(root: Path, identity: Identity) -> Result[ServiceEndpoint, Refusal]:
-    """Keep discovery short and private; the full identity is checked by the handshake."""
+    """
+    Keep discovery short and private; the full identity is checked by the handshake. Every name is keyed by the
+    service and compiler generations, so engines of different generations over one store coexist, each with its own
+    socket, locks and record: a release alternates its seed's and its candidate's toolchains over one home.
+    """
     directory = root.joinpath("engine")
     prepare_directory(directory.0).map_err(transport)?
-    name = fingerprint([identity.store_id, identity.profile, identity.service_generation]).map_err(transport)?
-    path = f"{socket_prefix(directory.0).map_err(transport)?}e-{name[:20]}.sock"
+    name = fingerprint(
+        [identity.store_id, identity.profile, identity.service_generation, identity.compiler_generation],
+    ).map_err(transport)?
+    short = name[:20]
+    path = f"{socket_prefix(directory.0).map_err(transport)?}e-{short}.sock"
     bindable(path).map_err(transport)?
     return Ok(
         ServiceEndpoint(
             socket=path,
-            lock=directory.joinpath("service.lock").0,
-            startup_lock=directory.joinpath("startup.lock").0,
+            lock=directory.joinpath(f"service-{short}.lock").0,
+            startup_lock=directory.joinpath(f"startup-{short}.lock").0,
+            record=directory.joinpath(f"endpoint-{short}").0,
         ),
     )
 
@@ -58,23 +67,42 @@ pub def connect(root: Path, identity: Identity, idle: int = 600) -> Result[Chann
 
 
 pub def connect_with(root: Path, identity: Identity, executable: str, idle: int = 600) -> Result[Channel, Refusal]:
-    """Connect using an explicit Oven executable, allowing process-level tests of the installed service entry."""
+    """
+    Connect using an explicit Oven executable, allowing process-level tests of the installed service entry. An engine
+    that exits idle just as this caller connects closes the connection before Welcome. The caller has sent no request,
+    so once that engine no longer holds its lifetime lock it connects once more, which starts a fresh engine.
+    """
+    match connect_once(root, identity, executable, idle):
+        Ok(channel) => return Ok(channel)
+        Err(refusal) =>
+            mut closed = false
+            match refusal.kind:
+                RefusalKind.Transport => closed = true
+                RefusalKind.ShortRead => closed = true
+                _ => pass
+            if closed and service_available(endpoint(root, identity)?.lock)?:
+                return connect_once(root, identity, executable, idle)
+            return Err(refusal)
+
+
+def connect_once(root: Path, identity: Identity, executable: str, idle: int) -> Result[Channel, Refusal]:
+    """Serialize startup, reach or launch the store's engine and require its Welcome."""
     selected = endpoint(root, identity)?
     held = Path(selected.startup_lock).lock_exclusive().map_err((error) => transport(error.message()))?
     match dial(selected.socket):
-        Ok(transport) => return handshake(Channel(transport=transport), identity)
+        Ok(transport) => return handshake(Channel(transport=transport), identity, selected.lock)
         Err(_) => pass
     # The service holds this lock for its entire lifetime, including its final drain.
     if not service_available(selected.lock)?:
         # A service started under another runtime directory listens elsewhere; the store records where. The handshake
         # still requires this caller's full identity there.
-        if let Some(recorded) = recorded_endpoint(root):
+        if let Some(recorded) = recorded_endpoint(selected.record):
             if recorded != selected.socket:
                 match dial(recorded):
-                    Ok(transport) => return handshake(Channel(transport=transport), identity)
+                    Ok(transport) => return handshake(Channel(transport=transport), identity, selected.lock)
                     Err(_) => pass
         return Err(
-            Refusal(kind=RefusalKind.Identity, detail="another engine generation owns this store; drain it first"),
+            Refusal(kind=RefusalKind.Identity, detail="this generation's engine holds its lock but answers no socket; drain it first"),
         )
     arguments = [
         "--internal-engine",
@@ -88,7 +116,7 @@ pub def connect_with(root: Path, identity: Identity, executable: str, idle: int 
     mut child = spawn_detached(executable, arguments, idle_memory_environment()).map_err(transport)?
     for _poll in range(STARTUP_POLLS):
         match dial(selected.socket):
-            Ok(transport) => return handshake(Channel(transport=transport), identity)
+            Ok(transport) => return handshake(Channel(transport=transport), identity, selected.lock)
             Err(_) => pass
         if not running(child).map_err(transport)?:
             return Err(transport("engine exited before Welcome"))
@@ -104,8 +132,14 @@ def idle_memory_environment() -> dict[str, str]:
     return {}
 
 
-pub def handshake(initial: Channel, identity: Identity) -> Result[Channel, Refusal]:
-    """Require OS user, exact negotiated identities and limits; startup errors never select legacy compilation."""
+pub def handshake(initial: Channel, identity: Identity, lifetime: str = "") -> Result[Channel, Refusal]:
+    """
+    Require OS user, exact negotiated identities and limits; startup errors never select legacy compilation.
+
+    `lifetime` names the engine's lifetime lock. An engine answers Hello between requests, so a caller that connects
+    while another caller's build runs is greeted when that build ends: it waits for its Welcome as long as the engine
+    holds that lock. A peer that holds none, or a caller that names no lock, is refused once the handshake bound passes.
+    """
     mut channel = initial
     if channel.transport.peer().map_err(transport)?.uid != identity.uid:
         return Err(Refusal(kind=RefusalKind.Identity, detail="engine service peer user mismatch"))
@@ -115,6 +149,7 @@ pub def handshake(initial: Channel, identity: Identity) -> Result[Channel, Refus
     match sent:
         SendOutcome.Blocked => return Err(transport("initial Hello has no data credit"))
         SendOutcome.Sent(_) => pass
+    await_welcome(channel, lifetime)?
     reply = channel.receive()?
     match reply.message:
         Message.Welcome(welcome) =>
@@ -137,6 +172,22 @@ pub def handshake(initial: Channel, identity: Identity) -> Result[Channel, Refus
     return Ok(channel)
 
 
+def await_welcome(channel: Borrowed[Channel], lifetime: str) -> Result[None, Refusal]:
+    """
+    Wait until the engine's answer to Hello is readable: within the handshake bound, or for as long as the engine
+    holding `lifetime` lives. Its whole Welcome is then read within the bound.
+    """
+    started = Instant.now()
+    while not channel.transport.readable().map_err(transport)?:
+        if int(started.elapsed().as_secs()) < int(HANDSHAKE_SECONDS):
+            sleep(Duration.from_millis(2))
+            continue
+        if lifetime == "" or service_available(lifetime)?:
+            return Err(transport("the engine did not answer Hello and holds no lifetime lock"))
+        sleep(Duration.from_millis(20))
+    return Ok(None)
+
+
 pub def transport(detail: str) -> Refusal:
     """Keep discovery and process failures typed at the engine boundary."""
     return Refusal(kind=RefusalKind.Transport, detail=detail)
@@ -148,26 +199,26 @@ def service_available(path: str) -> Result[bool, Refusal]:
     return Ok(available is not None)
 
 
-pub def record_endpoint(root: Path, socket: str) -> Result[None, Refusal]:
+pub def record_endpoint(record: str, socket: str) -> Result[None, Refusal]:
     """
-    Record where the store's service listens, for callers whose runtime directory names another socket path. The
-    socket path depends on the caller's environment; this record depends only on the store.
+    Record where this generation's service listens, for callers whose runtime directory names another socket path.
+    The socket path depends on the caller's environment; this record depends only on the store and the generation.
     """
-    return publish(root.joinpath("engine/endpoint"), socket + "\n").map_err(transport)
+    return publish(Path(record), socket + "\n").map_err(transport)
 
 
-pub def withdraw_endpoint(root: Path, socket: str) -> None:
+pub def withdraw_endpoint(record: str, socket: str) -> None:
     """Withdraw the record when it still names this service's socket."""
-    match recorded_endpoint(root):
+    match recorded_endpoint(record):
         Some(recorded) =>
             if recorded == socket:
-                discard_file(root.joinpath("engine/endpoint"))
+                discard_file(Path(record))
         None => pass
 
 
-def recorded_endpoint(root: Path) -> Option[str]:
-    """The socket the store's service recorded, or `None` without a readable record."""
-    match root.joinpath("engine/endpoint").read_text("utf-8", "strict"):
+pub def recorded_endpoint(record: str) -> Option[str]:
+    """The socket this generation's service recorded, or `None` without a readable record."""
+    match Path(record).read_text("utf-8", "strict"):
         Ok(text) =>
             recorded = text.strip()
             if recorded.startswith("/"):

@@ -212,6 +212,7 @@ def encode_submit(value: Submit) -> Result[bytes, Refusal]:
                 text(value.options)?,
                 text(value.observation_policy)?,
                 text(value.directory)?,
+                text(value.unit_options)?,
             ],
         ),
     )
@@ -226,6 +227,7 @@ def decode_submit(mut reader: Decoder) -> Result[Submit, Refusal]:
     options = reader.text()?
     observation_policy = reader.text()?
     directory = reader.text()?
+    unit_options = reader.text()?
     return Ok(
         Submit(
             command=command,
@@ -235,6 +237,7 @@ def decode_submit(mut reader: Decoder) -> Result[Submit, Refusal]:
             options=options,
             observation_policy=observation_policy,
             directory=directory,
+            unit_options=unit_options,
         ),
     )
 
@@ -330,6 +333,7 @@ def encode_complete(value: Complete) -> Result[bytes, Refusal]:
                 scalar(encode_bindingoutcome(value.binding_outcome), 2),
                 scalar(encode_completionstatus(value.status), 2),
                 text(value.observation_handle)?,
+                text(value.notes)?,
             ],
         ),
     )
@@ -343,6 +347,7 @@ def decode_complete(mut reader: Decoder) -> Result[Complete, Refusal]:
     binding_outcome = decode_bindingoutcome(int(reader.number(2)?))?
     status = decode_completionstatus(int(reader.number(2)?))?
     observation_handle = reader.text()?
+    notes = reader.text()?
     return Ok(
         Complete(
             snapshot=snapshot,
@@ -351,6 +356,7 @@ def decode_complete(mut reader: Decoder) -> Result[Complete, Refusal]:
             binding_outcome=binding_outcome,
             status=status,
             observation_handle=observation_handle,
+            notes=notes,
         ),
     )
 

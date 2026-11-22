@@ -42,6 +42,7 @@ impl TypeChecker {
             }
             ImportKind::From { module, items } => {
                 self.collect_from_imports(module, items, &refused, span);
+                self.refuse_republished_import_loops(import.visibility, module, items, span);
             }
             ImportKind::PubLibrary { library, path } => {
                 let target = LoafImport {

@@ -3,10 +3,11 @@
 use std::path::{Path, PathBuf};
 
 use incan_mir_plan_native::{
-    AdmittedFunction, AdmittedPlacement, EventPosition, Function, INTERFACE_REPORT, Local, LoweringRefusal,
-    ModelDeclaration, NominalKind, Parameter, Plan, PlanType, ProductNominal, SourceSpan, TerminatorKind, block,
-    decode_lowering_event, decode_lowering_refusal, decode_native_interface, decode_plan_function_record,
-    decode_record_plan, encode_lowering_refusal, product_nominals, read_module_admission, source_span,
+    AdmittedFunction, AdmittedPlacement, EventPosition, ExternalFunction, Function, INTERFACE_REPORT, Local,
+    LoweringRefusal, ModelDeclaration, NATIVE_DEFINITIONS, NominalKind, Parameter, Plan, PlanType, ProductNominal,
+    SourceSpan, TerminatorKind, block, decode_admitted_definitions, decode_lowering_event, decode_lowering_refusal,
+    decode_native_interface, decode_plan_function_record, decode_record_plan, encode_lowering_refusal,
+    product_nominals, read_module_admission, source_span,
 };
 
 use crate::plan_modules::report_admitted;
@@ -286,6 +287,61 @@ fn keyed_plan_with_a_generated_runtime_frame_refuses_the_interface() -> Result<(
     Ok(())
 }
 
+/// A unit whose main returns a value, as a `Result` main does, still compiles: it publishes no interface, and says why.
+///
+/// An async main never gets this far: its product refuses coroutine state, so its unit publishes no interface anyway.
+#[test]
+fn keyed_plan_with_a_returning_main_refuses_the_interface() -> Result<(), String> {
+    let request = Request::new("returning-main")?;
+    let mut main = unit_function("main", 1);
+    main.return_type = PlanType::Int;
+    let unit = plan(vec![main.clone()], &[]);
+    retain_product(&request, &main, false)?;
+    publish_plan_records(&unit, &request.products, &request.report)?;
+    assert!(
+        !request.report(INTERFACE_REPORT).is_file(),
+        "a main the entry record cannot bind published an interface"
+    );
+    assert!(
+        request
+            .refusals()?
+            .iter()
+            .any(|refusal| refusal.function == "main" && refusal.refusal.contains("synchronous unit main")),
+        "an omitted interface did not say why the entry was refused"
+    );
+    Ok(())
+}
+
+/// A unit that calls a function of a crate it links, as a Loaf's own Rust facet, publishes its interface: the
+/// interface keeps the linked-crate external, and only a unit that links the crate restores it.
+#[test]
+fn keyed_plan_calling_a_linked_crate_publishes_the_interface() -> Result<(), String> {
+    let request = Request::new("linked-crate")?;
+    let main = unit_function("main", 1);
+    let mut unit = plan(vec![main.clone()], &[]);
+    unit.externals = vec![ExternalFunction {
+        path: "rustself_native::native_len".into(),
+        type_arguments: Vec::new(),
+        parameters: vec![PlanType::Int],
+        return_type: PlanType::Int,
+        span: keyed_span(),
+    }];
+    retain_product(&request, &main, false)?;
+    publish_plan_records(&unit, &request.products, &request.report)?;
+    assert!(
+        request.report(INTERFACE_REPORT).is_file(),
+        "a unit inventory naming a linked crate published no interface"
+    );
+    assert!(
+        !request
+            .refusals()?
+            .iter()
+            .any(|refusal| refusal.refusal.contains("Incan binding identity")),
+        "a linked-crate external was refused instead of kept"
+    );
+    Ok(())
+}
+
 /// Two overlapping requests have the same visible description, scalar, symbol and number of nodes.
 #[test]
 fn admitted_positions_are_private_to_the_compiler_request() -> Result<(), String> {
@@ -322,5 +378,77 @@ fn admitted_positions_are_private_to_the_compiler_request() -> Result<(), String
     }
     // An old reader sees the usual note. Its shared path carries no authoritative placement.
     assert!(!root.join("6d.admitted.placement").is_file());
+    Ok(())
+}
+
+/// The native inputs a plan report names, by function.
+fn native_inputs(request: &Request) -> Result<std::collections::BTreeMap<String, (String, String)>, String> {
+    let definitions = decode_admitted_definitions(&read(&request.report(NATIVE_DEFINITIONS))?)?;
+    Ok(definitions
+        .into_iter()
+        .map(|definition| (definition.function, (definition.key, definition.digest)))
+        .collect())
+}
+
+/// A unit that publishes no native interface still names a native input for every function no event names: a helper
+/// frame by the product that carries it, an unwitnessed generated function by its own content. Native incremental
+/// reuse can then track every definition, and an input changes exactly when what it names changes.
+#[test]
+fn every_function_without_an_event_has_a_native_input() -> Result<(), String> {
+    let caller = unit_function("main", 1);
+    let frame = unit_function("__incan_closure_main_0", 2);
+    let runtime = "__incan_module_runtime_assert__runtime_frame";
+    let publish = |test: &str, caller: &Function, adapter: &Function| -> Result<_, String> {
+        let request = Request::new(test)?;
+        let inputs = inputs(caller);
+        retain_scalar(
+            &request.products,
+            &inputs,
+            caller,
+            &[],
+            &[],
+            &[],
+            std::slice::from_ref(&frame),
+            &[],
+        )?;
+        report_scalar(
+            Some(&request.report),
+            &event(&request, &inputs, &caller.name, false, &[]),
+        )?;
+        let unit = plan(vec![caller.clone(), frame.clone(), adapter.clone()], &[]);
+        publish_plan_records(&unit, &request.products, &request.report)?;
+        assert!(!request.report(INTERFACE_REPORT).is_file());
+        let named = native_inputs(&request)?;
+        let key = std::fs::read_dir(&request.report)
+            .map_err(|error| error.to_string())?
+            .filter_map(|entry| entry.ok())
+            .find_map(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .strip_suffix(".event")
+                    .map(str::to_owned)
+            })
+            .ok_or("no event")?;
+        Ok((named, key))
+    };
+    let (first, key) = publish("inputs", &caller, &unit_function(runtime, 2))?;
+    assert_eq!(
+        first.keys().cloned().collect::<Vec<_>>(),
+        vec![frame.name.clone(), runtime.to_owned()]
+    );
+    assert_eq!(
+        first[&frame.name].0, key,
+        "a helper frame's input names the product that carries it"
+    );
+    // The same content names the same inputs; a changed generated function changes only its own.
+    let (again, _) = publish("inputs-again", &caller, &unit_function(runtime, 2))?;
+    assert_eq!(again, first);
+    let (changed, _) = publish("inputs-changed", &caller, &unit_function(runtime, 3))?;
+    assert_eq!(changed[&frame.name], first[&frame.name]);
+    assert_ne!(changed[runtime], first[runtime]);
+    // A changed carrier changes its frame's input.
+    let (carried, _) = publish("inputs-carrier", &unit_function("main", 3), &unit_function(runtime, 2))?;
+    assert_ne!(carried[&frame.name], first[&frame.name]);
     Ok(())
 }

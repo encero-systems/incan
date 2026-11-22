@@ -89,6 +89,23 @@ fn unchecked_note(records: &[CodegraphRecord], project_root: &Path) -> Option<St
     Some(note)
 }
 
+/// Read the origins section of each graph given, in one process: one JSON line per graph, naming it and listing its
+/// origin records, so a request that follows many graphs' origins starts one reader instead of one per graph.
+pub fn read_origins(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    if arguments.is_empty() {
+        return Err("usage: --read-codegraph-origins GRAPH...".into());
+    }
+    use std::io::Write;
+    let mut output = std::io::BufWriter::new(std::io::stdout().lock());
+    for path in arguments {
+        let origins = incan_codegraph::artifact::read_origins(Path::new(path)).map_err(|error| error.to_string())?;
+        serde_json::to_writer(&mut output, &serde_json::json!({ "graph": path, "origins": origins }))?;
+        writeln!(output)?;
+    }
+    output.flush()?;
+    Ok(())
+}
+
 /// Decode a portable Loaf graph for a requested JSON projection. An optional per-kind field map trims transport after
 /// wire validation; query semantics and the field selection remain in Oven.
 pub fn read(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
@@ -102,16 +119,17 @@ pub fn read(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         Some(document) => serde_json::from_str::<BTreeMap<String, Vec<String>>>(document)?,
         None => BTreeMap::new(),
     };
-    let bytes = std::fs::read(path).map_err(|error| format!("cannot read codegraph {path}: {error}"))?;
-    let graph = incan_codegraph::artifact::GraphArtifact::decode(&bytes).map_err(|error| error.to_string())?;
-    use std::io::Write;
-    let mut output = std::io::BufWriter::new(std::io::stdout().lock());
+    // The origins come from the bytes ahead of the record index; every other group decodes the graph.
     let records = if group == "origins" {
-        graph.origins()
+        incan_codegraph::artifact::read_origins(Path::new(path))
     } else {
-        graph.projected_records(Path::new(root), group, &fields)
+        let bytes = std::fs::read(path).map_err(|error| format!("cannot read codegraph {path}: {error}"))?;
+        incan_codegraph::artifact::GraphArtifact::decode(&bytes)
+            .and_then(|graph| graph.projected_records(Path::new(root), group, &fields))
     }
     .map_err(|error| error.to_string())?;
+    use std::io::Write;
+    let mut output = std::io::BufWriter::new(std::io::stdout().lock());
     for record in records {
         serde_json::to_writer(&mut output, &record)?;
         writeln!(output)?;

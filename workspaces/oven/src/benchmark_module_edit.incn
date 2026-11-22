@@ -10,7 +10,7 @@ from std.json import JsonValue, parse
 from pub::incan_platform.ipc import dial
 from engine_channel import Channel
 from engine_client import service_generation, service_identity
-from engine_endpoint import handshake
+from engine_endpoint import endpoint, handshake, recorded_endpoint
 from engine_messages import Message, Stop
 from engine_wire import zero_id
 from toolchain import located
@@ -185,12 +185,11 @@ def build(bench: Bench, root: Path, target: Path, trace: Path, store: Path, labe
 
 def stop_store(oven: Path, store: Path) -> Result[None, str]:
     """Stop an existing service that authenticates to this benchmark store, without starting another."""
-    endpoint = store.joinpath("engine/endpoint")
-    if not endpoint.is_file():
-        return Ok(None)
-    socket = endpoint.read_text("utf-8", "strict").map_err((error) => error.message())?.strip()
     mut identity = service_identity(store)?
     identity.service_generation = service_generation(oven.0)?
+    socket = match recorded_endpoint(endpoint(store, identity).map_err((refusal) => refusal.detail)?.record):
+        Some(recorded) => recorded
+        None => return Ok(None)
     transport = dial(socket).map_err((error) => str(error))?
     mut channel = handshake(Channel(transport=transport), identity).map_err((error) => error.detail)?
     _ = channel.send(zero_id(), Message.Stop(Stop(reason="module edit benchmark completed"))).map_err((error) => error.detail)?

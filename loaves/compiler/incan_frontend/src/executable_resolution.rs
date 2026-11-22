@@ -297,6 +297,7 @@ fn resolve_from_catalog(
             resolved.content_bytes_verified += length;
         }
         if let ExecutableDeclaration::NominalWithTraits(_, implementations)
+        | ExecutableDeclaration::EnumWithTraits(_, implementations)
         | ExecutableDeclaration::NominalWithCallables { implementations, .. } = &declaration
         {
             // Lazy defaults are declaration requirements, even when the consumer never spells their trait. An
@@ -437,6 +438,10 @@ fn retain_declaration(module: &mut BodyIrModule, declaration: ExecutableDeclarat
             module.enum_declarations.push(layout);
         }
         ExecutableDeclaration::Enum(value) => module.enum_declarations.push(value),
+        ExecutableDeclaration::EnumWithTraits(value, implementations) => {
+            module.enum_declarations.push(value);
+            module.trait_implementations.extend(implementations);
+        }
         ExecutableDeclaration::Trait(value) => module.trait_declarations.push(value),
         ExecutableDeclaration::Constant(value) => module.constant_declarations.push(value),
         ExecutableDeclaration::TypeAlias(value) => module.type_alias_declarations.push(value),

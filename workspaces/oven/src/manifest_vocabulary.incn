@@ -1,25 +1,36 @@
 """
 What a published Loaf manifest declares about vocabulary, read once per manifest generation (see `retained_readings`).
 
-Unit keys, artifact sets and vocabulary admission read two facts from a manifest (`<package>.incnlib`): the
-`vocab.desugarer_artifact` object and the digest of the manifest's bytes.
+Unit keys, artifact sets, vocabulary admission and the engine's choice of a unit's records read three facts from a
+manifest (`<package>.incnlib`): whether it publishes vocabulary, the `vocab.desugarer_artifact` object and the digest of
+the manifest's bytes.
 """
 
 from std.fs import Path
 from std.json import JsonValue
 from graph_queries import nested
-from retained_reading_records import DESUGARER
+from retained_reading_records import DESUGARER, VOCABULARY
 from retained_readings import retained_reading
 
 
 pub model ManifestVocabulary:
-    """The desugarer artifact a manifest declares (null when it declares none) and the SHA-256 of its bytes."""
+    """
+    Whether a manifest publishes vocabulary, the desugarer artifact it declares (null when it declares none) and the
+    SHA-256 of its bytes.
+    """
 
+    pub published: bool
     pub desugarer: JsonValue
     pub digest: str
 
 
 pub def manifest_vocabulary(manifest: Path) -> Result[ManifestVocabulary, str]:
     """The vocabulary facts of one published manifest, read from the manifest only when its identity changed."""
-    reading = retained_reading(manifest, [DESUGARER])?
-    return Ok(ManifestVocabulary(desugarer=nested(reading.fields, DESUGARER), digest=reading.digest))
+    reading = retained_reading(manifest, [DESUGARER, VOCABULARY])?
+    return Ok(
+        ManifestVocabulary(
+            published=not nested(reading.fields, VOCABULARY).is_null(),
+            desugarer=nested(reading.fields, DESUGARER),
+            digest=reading.digest,
+        ),
+    )

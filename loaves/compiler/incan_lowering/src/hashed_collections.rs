@@ -28,6 +28,10 @@ use crate::options::carrier_layout;
 use crate::options::replace_owned_destination;
 use crate::sequence_builtins::argument_type;
 use crate::statements::is_nominal_type;
+use crate::static_guards::{
+    GuardedCollection, GuardedOperation, guarded_collection, guarded_collection_call, guarded_dictionary_receiver,
+    guarded_insert,
+};
 use crate::static_storage::persist_static_value;
 
 /// Materialize a checked collection read while preserving caller-owned bindings.
@@ -199,6 +203,9 @@ pub fn collection_contains(
         }
         return lower_list_helper(builder, negated, arguments, destination, span);
     }
+    if let Some(guarded) = guarded_collection(builder, arguments)? {
+        return guarded_contains(builder, &guarded, negated, arguments, destination, span);
+    }
     let receiver = shared_receiver_place(builder, arguments, 0, span)?;
     let ty = place_type(&builder.locals, &receiver);
     let types = collection_arguments(&ty);
@@ -219,10 +226,43 @@ pub fn collection_contains(
         span,
     )?;
     if negated {
-        let value = read_place(output.clone(), false, span);
-        builder.emit(plan_assign(output, RvalueKind::Unary(UnaryOp::Not, value), span));
+        negate(builder, output, span);
     }
     Ok(())
+}
+
+/// Answer membership in a static's set or dictionary under its guard, after evaluating the needle.
+fn guarded_contains(
+    builder: &mut Builder,
+    guarded: &GuardedCollection,
+    negated: bool,
+    arguments: &[ArgumentElement],
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let types = collection_arguments(&guarded.collection);
+    if types.is_empty() {
+        return Err("unsupported Body IR collection membership on noncollection".into());
+    }
+    let argument = argument_value(builder, arguments, 1, span)?;
+    let output = call_destination(builder, destination, PlanType::Bool, span)?;
+    let request = GuardedOperation {
+        operation: "contains",
+        parameters: vec![types[0].clone()],
+        result: PlanType::Bool,
+        operands: vec![argument],
+    };
+    guarded_collection_call(builder, guarded, request, output.clone(), span)?;
+    if negated {
+        negate(builder, output, span);
+    }
+    Ok(())
+}
+
+/// Replace a boolean answer with its negation.
+fn negate(builder: &mut Builder, output: Place, span: &SourceSpan) {
+    let value = read_place(output.clone(), false, span);
+    builder.emit(plan_assign(output, RvalueKind::Unary(UnaryOp::Not, value), span));
 }
 
 /// Clone a checked dictionary element through legacy indexing and error behavior, then read what follows from it.
@@ -359,6 +399,10 @@ pub fn dictionary_method(
     if method == DictMethodId::Insert {
         return collection_insert_method(builder, "Dict.insert", arguments, destination, span);
     }
+    // A static's dictionary is read under its guard, so the call copies neither the static nor the dictionary.
+    if let Some(guarded) = guarded_collection(builder, arguments)? {
+        return guarded_dictionary_method(builder, &guarded, method, arguments, destination, span);
+    }
     let receiver = shared_receiver_place(builder, arguments, 0, span)?;
     let ty = place_type(&builder.locals, &receiver);
     if method == DictMethodId::Get && arguments.len() == 2 {
@@ -387,6 +431,50 @@ pub fn dictionary_method(
     )
 }
 
+/// Lower one read-only dictionary operation on a static's dictionary under its guard, after evaluating the operands.
+fn guarded_dictionary_method(
+    builder: &mut Builder,
+    guarded: &GuardedCollection,
+    method: DictMethodId,
+    arguments: &[ArgumentElement],
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let types = collection_arguments(&guarded.collection);
+    if method == DictMethodId::Get && arguments.len() == 2 {
+        let Some(place) = destination else {
+            return Err("unsupported Body IR discarded optional dictionary get".into());
+        };
+        let output = list_root_place(builder, place, span)?;
+        let result = optional_get_result(builder, &types, &output)?;
+        let key = argument_value(builder, arguments, 1, span)?;
+        let found = temporary(builder, result.clone(), span);
+        let request = GuardedOperation {
+            operation: "optional",
+            parameters: vec![types[0].clone()],
+            result,
+            operands: vec![key],
+        };
+        guarded_collection_call(builder, guarded, request, found.clone(), span)?;
+        replace_optional(builder, output, found, span);
+        return Ok(());
+    }
+    let (operation, parameters, result) =
+        dictionary_method_signature(&guarded.collection, method, arguments.len() as i64)?;
+    let mut operands = Vec::with_capacity(parameters.len());
+    for slot in 0..parameters.len() {
+        operands.push(argument_value(builder, arguments, slot + 1, span)?);
+    }
+    let output = call_destination(builder, destination, result.clone(), span)?;
+    let request = GuardedOperation {
+        operation: &operation,
+        parameters,
+        result,
+        operands,
+    };
+    guarded_collection_call(builder, guarded, request, output, span)
+}
+
 /// Insert the evaluated arguments into a set or dictionary receiver.
 ///
 /// A static receiver's snapshot is read only after the arguments and committed after the insertion, as a static list
@@ -411,6 +499,20 @@ fn collection_insert_method(
         operands.push(element_plan_operand(builder, argument, ty, span)?);
     }
     let output = call_destination(builder, destination, PlanType::Unit, span)?;
+    // A dictionary static's own cell takes the entry under its exclusive guard, so nothing else is copied.
+    if let Some((slot, ty)) = guarded_dictionary_receiver(builder, arguments)? {
+        let mut entry = operands.into_iter();
+        let (Some(key), Some(value), None) = (entry.next(), entry.next(), entry.next()) else {
+            return Err(format!("unsupported Body IR collection method arity {member}"));
+        };
+        guarded_insert(builder, slot, &ty, key, value, span)?;
+        builder.emit(plan_assign(
+            output,
+            RvalueKind::Use(literal(Constant::Unit, span)),
+            span,
+        ));
+        return Ok(());
+    }
     match static_collection_receiver(builder, arguments, true, span)? {
         Some((global, receiver)) => {
             insert_collection(builder, &receiver, operands, span)?;
@@ -477,15 +579,7 @@ fn optional_dictionary_get(
     let output = list_root_place(builder, place, span)?;
     let ty = place_type(&builder.locals, &receiver);
     let types = collection_arguments(&ty);
-    let result = builder.locals[output.local as usize].ty.clone();
-    let (_, declaration) = carrier_layout(builder, &result)?;
-    let carrier = "unsupported Body IR optional dictionary get carrier";
-    let Some(value_type) = types.get(1) else {
-        return Err(carrier.into());
-    };
-    if declaration.carrier != Carrier::Option || declaration.variants[1].fields != [value_type.clone()] {
-        return Err(carrier.into());
-    }
+    let result = optional_get_result(builder, &types, &output)?;
     let key = argument_value(builder, arguments, 1, span)?;
     let reference = borrow_collection(builder, &receiver, false, span)?;
     let found = temporary(builder, result.clone(), span);
@@ -499,6 +593,26 @@ fn optional_dictionary_get(
         found.clone(),
         span,
     )?;
+    replace_optional(builder, output, found, span);
+    Ok(())
+}
+
+/// The checked Option destination's carrier, required to hold exactly the dictionary's value type.
+fn optional_get_result(builder: &Builder, types: &[PlanType], output: &Place) -> Result<PlanType, String> {
+    let result = builder.locals[output.local as usize].ty.clone();
+    let (_, declaration) = carrier_layout(builder, &result)?;
+    let carrier = "unsupported Body IR optional dictionary get carrier";
+    let Some(value_type) = types.get(1) else {
+        return Err(carrier.into());
+    };
+    if declaration.carrier != Carrier::Option || declaration.variants[1].fields != [value_type.clone()] {
+        return Err(carrier.into());
+    }
+    Ok(result)
+}
+
+/// Move the found Option into its destination, dropping the destination's earlier value first.
+fn replace_optional(builder: &mut Builder, output: Place, found: Place, span: &SourceSpan) {
     drop_owned(builder, output.local, span);
     let local = output.local;
     builder.emit(plan_assign(
@@ -507,5 +621,4 @@ fn optional_dictionary_get(
         span,
     ));
     builder.owned.push(local);
-    Ok(())
 }

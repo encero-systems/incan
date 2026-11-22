@@ -32,6 +32,32 @@ from observation import trace
 pub const C_COMPILER_OVERRIDE: str = "INCAN_C_COMPILER"
 const CLOVE_DOMAIN: str = "incan.clove-unit/1"
 const STAMP: str = ".oven-clove-inputs"
+# The override of the request an engine serves, which is its caller's, never the engine's own environment.
+static REQUESTED: RequestedCompiler = RequestedCompiler()
+
+
+model RequestedCompiler:
+    """The C compiler override a served request carries, once an engine serves one."""
+
+    serving: bool = false
+    value: str = ""
+
+    def serve(mut self, value: str) -> None:
+        """Select the override of the request being served."""
+        self.serving = true
+        self.value = value
+
+
+pub def serve_c_compiler(value: str) -> None:
+    """Serve one engine request under its caller's `INCAN_C_COMPILER` value, empty when the caller set none."""
+    REQUESTED.serve(value)
+
+
+def c_compiler_override() -> str:
+    """The override in force: the served request's, or else this process's own environment."""
+    if REQUESTED.serving:
+        return REQUESTED.value
+    return get_or(str(C_COMPILER_OVERRIDE), "")
 
 
 pub model HostCompiler:
@@ -126,7 +152,7 @@ def run(program: str, arguments: list[str], directory: str) -> Result[str, str]:
 
 pub def host_compiler(clove: str) -> Result[HostCompiler, str]:
     """The host compiler, only when the explicit local override selects it; otherwise the missing-release refusal."""
-    selected = get_or(str(C_COMPILER_OVERRIDE), "")
+    selected = c_compiler_override()
     if selected == "":
         return Err(
             f"Clove `{clove}`: no C toolchain release is installed with this Incan toolchain; set {C_COMPILER_OVERRIDE}=host to compile it with the host compiler for local development (non-portable: such a unit is never publishable)",

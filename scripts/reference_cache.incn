@@ -1,0 +1,163 @@
+"""
+The reusable seed census: keyed by everything that decides its outcomes, stored only once a census has finished.
+
+A release reads its reference census from here when an earlier release measured the same toolchain over the same
+fixtures, runner and standard sources with the same outcome-changing flags. Two measurements store: a release's own
+reference run of its seed, and a release's installed census of its candidate, whose bundle the next integration
+release takes as its seed. The installed census differs from a reference run in three ways that decide no outcome when
+the key matches: it reads the shipped standard sources (`INCAN_STDLIB` empty) where the reference run names the source
+tree's, which are the same bytes when the stdlib tree in the key is unchanged; it runs at the release's jobs where the
+reference run takes half of them; and its runner is built debug where the reference runner is built release.
+"""
+
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import sha256
+from std.json import JsonValue
+from std.tempfile import TemporaryDirectory
+from release_helpers import command_text, read_json
+from release_support import FAMILIES, check_baseline, digest
+
+const LOG: str = "contracts.log"
+const ORIGIN: str = "origin.json"
+
+
+pub model CensusInputs:
+    """Everything that decides a census's outcomes: the toolchain it runs, the committed trees it reads, its flags."""
+
+    # SHA-256 of the incan command, the language server and the installed toolchain description.
+    pub oven: str
+    pub lsp: str
+    pub manifest: str
+    # Git object names of the fixtures tree, the runner's source tree, the runner's manifest and the stdlib tree.
+    pub fixtures: str
+    pub runner: str
+    pub runner_manifest: str
+    pub stdlib: str
+    # The per-command deadline, which can turn a slow pass into a failure, and the families the census runs.
+    pub timeout_seconds: int
+    pub families: list[str]
+
+    pub def identity(self) -> str:
+        """One digest over every input, each length-prefixed so no two input lists collide."""
+        mut values = [self.oven, self.lsp, self.manifest, self.fixtures, self.runner, self.runner_manifest, self.stdlib]
+        values.append(str(self.timeout_seconds))
+        values.append(",".join(self.families))
+        mut hasher = sha256.new()
+        for value in values:
+            encoded = value.encode("utf-8")
+            hasher.update(f"{len(encoded)}:".encode("utf-8"))
+            hasher.update(encoded)
+        return hexlify(hasher.finalize_bytes())
+
+
+pub model CensusOrigin:
+    """Which release measured a stored census, from which source commit, and whether as its reference or installed run."""
+
+    pub release: str
+    pub source_sha: str
+    # `reference` for a release's run of its seed, `installed` for its census of the installed candidate.
+    pub census: str
+
+    pub def json(self) -> JsonValue:
+        """The origin as the stored document and the receipt name it."""
+        return JsonValue.object(
+            {"release": JsonValue.string(self.release), "source_sha": JsonValue.string(self.source_sha), "census": JsonValue.string(
+                self.census,
+            )},
+        )
+
+    pub def hit_row(self) -> str:
+        """The timing row of a reuse, naming the release and commit the census came from."""
+        return f"reference-cache-hit/{self.release}/{self.source_sha}"
+
+
+pub def reference_cache_root(seed_home: Path) -> Path:
+    """The default cache, inside the caller-owned seed home; integration releases share one through `--reference-cache`."""
+    return seed_home.joinpath("cache/release-reference")
+
+
+pub def census_inputs(oven: Path, lsp: Path, manifest: Path, source: Path, timeout_seconds: int) -> Result[CensusInputs, str]:
+    """Read the toolchain's digests and the source commit's census trees for a census of every family."""
+    return Ok(
+        CensusInputs(
+            oven=digest(oven)?,
+            lsp=digest(lsp)?,
+            manifest=digest(manifest)?,
+            fixtures=committed(source, "workspaces/contracts/fixtures")?,
+            runner=committed(source, "workspaces/contracts/src")?,
+            runner_manifest=committed(source, "workspaces/contracts/loaf.toml")?,
+            stdlib=committed(source, "loaves/stdlib")?,
+            timeout_seconds=timeout_seconds,
+            families=[family for family in FAMILIES],
+        ),
+    )
+
+
+def committed(source: Path, relative: str) -> Result[str, str]:
+    """The Git object name of one committed path at the source checkout's HEAD."""
+    return Ok(command_text("git", ["-C", source.0, "rev-parse", f"HEAD:{relative}"])?.strip())
+
+
+pub def stored_census(root: Path, inputs: CensusInputs) -> Result[Option[tuple[Path, CensusOrigin]], str]:
+    """The finished census stored under these inputs and the release that measured it, or none."""
+    entry = root.joinpath(inputs.identity())
+    log = entry.joinpath(LOG)
+    origin = entry.joinpath(ORIGIN)
+    if not log.is_file() or not origin.is_file():
+        return Ok(None)
+    finished(log)?
+    document = read_json(origin)?
+    found = CensusOrigin(
+        release=text(document, "release")?,
+        source_sha=text(document, "source_sha")?,
+        census=text(document, "census")?,
+    )
+    return Ok(Some((log, found)))
+
+
+pub def store_census(root: Path, inputs: CensusInputs, log: Path, origin: CensusOrigin) -> Result[bool, str]:
+    """
+    Store one finished census under its inputs, with its origin, in a single rename; `false` when one is stored already.
+
+    1. Refuse a census without one final total, unique results and every family.
+    2. Stage the log and its origin in a private directory beside the entry.
+    3. Rename the staged directory into place; an entry another release stored first stays.
+    """
+    finished(log)?
+    entry = root.joinpath(inputs.identity())
+    if entry.exists():
+        return Ok(false)
+    root.mkdir(true, true).map_err((error) => error.message())?
+    temporary = TemporaryDirectory.try_new_with(".census.", "", Some(root)).map_err((error) => error.message())?
+    staged = temporary.path()
+    _ = log.copy(staged.joinpath(LOG), true, true).map_err((error) => error.message())?
+    staged
+        .joinpath(ORIGIN)
+        .write_text(origin.json().to_pretty_json().map_err((error) => error.message())? + "\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    persisted = temporary.persist().map_err((error) => error.message())?
+    match persisted.move(entry):
+        Ok(_) => return Ok(true)
+        Err(error) =>
+            if entry.is_dir():
+                persisted.remove_tree().map_err((cleanup) => cleanup.message())?
+                return Ok(false)
+            return Err(f"cannot store the census at {entry.0}: {error.message()}")
+
+
+def finished(log: Path) -> Result[None, str]:
+    """Require a complete census: one final total that its results match, unique keys and every family."""
+    content = log.read_text("utf-8", "strict").map_err((error) => error.message())?
+    mut passed: list[str] = []
+    for line in content.split("\n"):
+        fields = line.split(" ")
+        if len(fields) >= 2 and fields[0] == "PASS":
+            passed.append(fields[1])
+    _ = check_baseline("\n".join(passed) + "\n", content).map_err((reason) => f"unfinished census {log.0}: {reason}")?
+    return Ok(None)
+
+
+def text(document: JsonValue, key: str) -> Result[str, str]:
+    """One required string field of a stored origin."""
+    return document.require(key).and_then((value) => value.expect_str()).map_err((error) => error.message())

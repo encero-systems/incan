@@ -3,12 +3,14 @@
 from rust::std::cell import RefCell
 from rust::std::ops import DerefMut
 from rust::std::rc import Rc
+from rust::incan_loaf_names import artifact_stem
 from std.fs import Path
 from std.json import JsonValue
 from files import json_text, read_json
 from home import loaf_build_dir, unit_ledger
 from json_fields import array_value, required_items, string_value
 from loaf_local_graph import unique
+from manifest_vocabulary import manifest_vocabulary
 from observation import Ledger, SETTLE_SECONDS, load_ledger, trace
 from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription, UnitLoaf
@@ -77,22 +79,18 @@ pub def retain_callable_products(unit: UnitDescription, toolchain: Toolchain) ->
     return Ok(selected)
 
 
-def reusable_vocabulary(unit: UnitDescription) -> Result[bool, str]:
-    """Require inert source and providers; dynamic desugaring needs an environment observation contract first."""
-    if (
-        unit.vocab is not None
-        or unit.vocabulary
-        or unit.vocab_desugarer
-        or len(unit.c_headers) != 0
-        or len(unit.cloves) != 0
-    ):
-        return Ok(false)
+pub def desugared_by_a_dependency(unit: UnitDescription) -> Result[bool, str]:
+    """
+    Whether a Loaf the unit links, other than a standard package, publishes vocabulary: its desugaring writes
+    declarations into the unit's modules that no source line owns, so no declaration record can name them. Each
+    manifest is read once per generation, in the reading vocabulary admission shares: an edit decodes none of them.
+    """
     for loaf in unit.loaves:
-        manifest = read_json(Path(loaf.dir).joinpath(f"{loaf.name}.incnlib"))?
-        if let Some(vocab) = manifest.get("vocab"):
-            if not vocab.is_null():
-                return Ok(false)
-    return Ok(true)
+        if loaf.standard:
+            continue
+        if manifest_vocabulary(Path(loaf.dir).joinpath(f"{artifact_stem(loaf.name)}.incnlib"))?.published:
+            return Ok(true)
+    return Ok(false)
 
 
 def semantic_description(

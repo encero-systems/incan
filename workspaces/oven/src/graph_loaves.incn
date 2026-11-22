@@ -4,7 +4,7 @@ from rust::incan_loaf_names import artifact_stem
 from std.fs import Path
 from std.toml import TomlValue
 from files import parse_json
-from graph_cache import GraphUnit, read_graph
+from graph_cache import GraphUnit, read_graph, read_origins_of
 from graph_dependencies import unit_natives
 from graph_incan import inspect_incan
 from graph_queries import text
@@ -32,21 +32,24 @@ pub def standard_graphs(
     Follow compiler-proven package origins into standard Loaves, without treating ambient availability as a dependency.
 
     1. Every standard package of the toolchain is available, except the one `exclude` names.
-    2. Read the origins each unit's graph records, starting from the selected units.
+    2. Read the origins of the selected units and of every published standard graph in one driver reading.
     3. A package origin that names an available standard package not seen yet adds that package's graph, whose own
-       origins are followed in turn.
+       origins are followed in turn; a graph the one reading did not cover, such as a legacy export, is read alone.
     """
     # 1. Every standard package of the toolchain is available to follow; ambient availability makes none a dependency.
     mut available: Dict[str, str] = {}
     for package in standard_packages(reader)?:
         available[package.name] = package.root
-    # 2. The origins to follow are the ones each unit's graph records, starting from the units selected.
+    # 2. One reading covers the selected units and every published standard graph, each read once.
+    mut origins = read_origins_of(units + published_standard_graphs(available, profile, exclude), toolchain)?
     mut graphs: list[GraphUnit] = []
     mut seen = [exclude] + [unit.package for unit in units if unit.package in available]
     mut queue = units
     while len(queue) > 0:
         current = queue.pop()
-        for line in read_graph(current, toolchain, "origins")?.split("\n"):
+        if current.path.0 not in origins:
+            origins[current.path.0] = read_graph(current, toolchain, "origins")?.split("\n")
+        for line in origins[current.path.0]:
             if line == "":
                 continue
             # 3. A package met for the first time contributes its graph, and its own origins are followed in turn.
@@ -58,6 +61,21 @@ pub def standard_graphs(
                     graphs.append(unit)
                     queue.append(unit)
     return Ok(graphs)
+
+
+def published_standard_graphs(available: Dict[str, str], profile: str, exclude: str) -> list[GraphUnit]:
+    """The graph each available standard package published for `profile`, but the excluded one's."""
+    mut published: list[GraphUnit] = []
+    for package in sorted([name for name in available.keys()]):
+        if package == exclude:
+            continue
+        match standard_artifact_dir(package, profile):
+            Ok(directory) =>
+                graph = directory.joinpath(f"{artifact_stem(package)}.incngraph")
+                if graph.is_file():
+                    published.append(GraphUnit(path=graph, root=Path(f"@std/{package}"), package=package))
+            Err(_) => pass
+    return published
 
 
 def origin_package(line: str, available: Dict[str, str], seen: list[str]) -> Result[Option[str], str]:

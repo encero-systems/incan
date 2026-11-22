@@ -1,0 +1,64 @@
+from std.derives import comparison
+from std.derives.comparison import Eq, Ord
+from std.derives.comparison import Ord as Ordered
+
+
+pub model Score with Ord:
+    pub points: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.points == other.points
+
+    def __lt__(self, other: Self) -> bool:
+        return self.points < other.points
+
+
+pub enum Level with Ordered:
+    Low
+    High
+
+    def rank(self) -> int:
+        match self:
+            Level.Low => return 0
+            Level.High => return 1
+
+    def __eq__(self, other: Self) -> bool:
+        return self.rank() == other.rank()
+
+    def __lt__(self, other: Self) -> bool:
+        return self.rank() < other.rank()
+
+
+pub model Qualified with comparison.Ord:
+    pub v: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.v == other.v
+
+    def __lt__(self, other: Self) -> bool:
+        return self.v < other.v
+
+
+pub model Reversed with Ord:
+    pub v: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.v == other.v
+
+    def __lt__(self, other: Self) -> bool:
+        return self.v > other.v
+
+    def __ge__(self, other: Self) -> bool:
+        return false
+
+
+pub model Key with Eq:
+    pub id: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.id == other.id
+
+
+@derive(Eq, Ord)
+pub model Derived:
+    pub n: int

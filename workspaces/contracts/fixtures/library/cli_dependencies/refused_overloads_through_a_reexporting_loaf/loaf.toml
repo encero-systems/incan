@@ -1,0 +1,9 @@
+[project]
+name = "refused_overloads_through_a_reexporting_loaf"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+bridge = { path = "deps/bridge" }

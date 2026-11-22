@@ -101,6 +101,14 @@ impl TypeChecker {
                         entry.implementation_type_params.clone(),
                         entry.info.receiver == Some(Receiver::Mutable),
                     );
+                    // A supertrait's method reached through two adoptions, such as `Eq` adopted and implied by
+                    // `Ord`, is one method, not two overloads.
+                    if candidates
+                        .iter()
+                        .any(|candidate: &MethodCandidate| candidate.dispatch.as_ref() == Some(&dispatch))
+                    {
+                        continue;
+                    }
                     candidates.push(MethodCandidate {
                         info: entry.info,
                         dispatch: Some(dispatch),

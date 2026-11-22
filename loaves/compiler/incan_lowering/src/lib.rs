@@ -156,6 +156,7 @@ mod sequence_builtins;
 mod shared_callables;
 mod signature_lifetimes;
 mod statements;
+mod static_guards;
 mod static_methods;
 mod static_storage;
 mod stored_types;
@@ -286,6 +287,11 @@ pub fn publish_plan_records(plan: &Plan, products: String, report: String) -> Re
 /// Whether a plan type is an ordinary or sized numeric carrier, shared with native owned-result validation.
 pub fn numeric_carrier(ty: &PlanType) -> bool {
     numerics::numeric_carrier(ty)
+}
+
+/// Whether a runtime call keys a process-wide cell by unit and slot, so the native adapter supplies its unit operand.
+pub fn is_unit_keyed_runtime_call(path: &str) -> bool {
+    computed_statics::is_unit_keyed_runtime_call(path)
 }
 
 #[cfg(test)]

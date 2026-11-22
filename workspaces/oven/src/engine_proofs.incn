@@ -28,8 +28,12 @@ pub def prepare_report(
     """Prepare an explicitly requested report for the same request publication boundary."""
     editable = capture.in_reach
     frozen = capture.frozen
+    mut whole_units = 0
+    if produced.whole_unit != "":
+        whole_units = 1
     counts: Dict[str, int] = {
         "unit_evaluations": produced.evaluations,
+        "whole_unit_compiles": whole_units,
         "body_evaluations": produced.body_evaluations,
         "body_reuses": produced.body_reuses,
         "body_page_writes": produced.body_page_writes,

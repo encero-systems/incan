@@ -477,7 +477,7 @@ pub def note_directory(path: Path) -> Result[None, str]:
     return Ok(None)
 
 
-def described(info: Metadata) -> FileMetadata:
+pub def described(info: Metadata) -> FileMetadata:
     """The fields of the operating system's status record that detect a change."""
     return FileMetadata(
         device=int(info.dev()),

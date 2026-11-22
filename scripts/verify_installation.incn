@@ -42,6 +42,12 @@ from release_support import (
 const GIB: int = 1073741824
 const FACET_RESERVATION_BYTES: int = 2 * GIB
 const SMALL_PROJECT_RESERVATION_BYTES: int = 2 * GIB
+# What one census worker reserves: a whole census at two jobs peaked at 1.73 GB (fast-census-base-1 and
+# fast-census-after-1), about 0.87 GB a worker, so 2 GiB keeps more than twice that.
+pub const CENSUS_WORKER_RESERVATION_BYTES: int = 2 * GIB
+# The census case that drives the installed language server live: initialization, navigation, call hierarchy and the
+# stale-buffer contract. The census runs it with `INCAN_LSP` naming the installed server, so no gate repeats it.
+pub const LSP_CONTRACT_CASE: str = "graph/incan/relationships"
 
 
 pub enum VerificationPhase(str):
@@ -51,7 +57,6 @@ pub enum VerificationPhase(str):
     Oven = "oven"
     RustFacets = "rust-facets"
     DriverIntegration = "driver-integration"
-    Lsp = "lsp"
     Census = "census"
     Memory = "memory"
 
@@ -101,8 +106,9 @@ pub def verify(output: Path, jobs: int, timeout_seconds: int) -> Result[Path, st
     Verify an installed toolchain in three steps.
 
     1. Select only shipped standard packages and build this checkout's contract runner.
-    2. Concurrently audit relocation and run Oven, every Rust facet, direct-driver integration, LSP, census, and memory.
-    3. Preserve every committed PASS key and all per-phase evidence.
+    2. Concurrently audit relocation and run Oven, every Rust facet, direct-driver integration, the census (whose
+       language-server case drives the installed server live), and memory.
+    3. Preserve every committed PASS key, require the language-server case, and keep all per-phase evidence.
     """
     installation = prepare(output, jobs, timeout_seconds)?
     trace = verification_release_trace()?
@@ -176,12 +182,13 @@ def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tup
             ),
         )
     memory = shared_memory(host_memory())
-    # Independent gates can each start compiler processes. Honor the requested concurrency at this boundary too.
-    # A failing gate stops none of the others, so one run reports every failing gate.
+    # The gates are independent: all of them start at once, bounded by their memory reservations, and each honors the
+    # requested jobs for its own children. A failing gate stops none of the others, so one run reports every failing
+    # gate.
     failed = run_all_failures(
         verifier.0,
         invocations,
-        verification_workers(installation.jobs),
+        verification_gate_width(installation.jobs),
         memory,
         len(invocations),
     )?
@@ -197,6 +204,7 @@ def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tup
         seconds = float(timing.read_text("utf-8", "strict").map_err((error) => error.message())?.strip())
         append_timing(installation.run.joinpath("phase-timings.tsv"), name, seconds)?
     report = installed_contract_report(installation)?
+    require_lsp_contract(report)?
     suites = int(
         installation.run
             .joinpath("rust-facet-count.txt")
@@ -232,13 +240,60 @@ pub def verification_phase_plans(jobs: int) -> list[VerificationPhasePlan]:
     workers = verification_workers(jobs)
     return [
         VerificationPhasePlan(phase=VerificationPhase.Relocation, reservation=SMALL_PROJECT_RESERVATION_BYTES),
-        VerificationPhasePlan(phase=VerificationPhase.Oven, reservation=workers * OVEN_PROJECT_RESERVATION_BYTES),
+        VerificationPhasePlan(
+            phase=VerificationPhase.Oven,
+            reservation=oven_jobs(jobs) * OVEN_PROJECT_RESERVATION_BYTES,
+        ),
         VerificationPhasePlan(phase=VerificationPhase.RustFacets, reservation=workers * FACET_RESERVATION_BYTES),
         VerificationPhasePlan(phase=VerificationPhase.DriverIntegration, reservation=LOWERING_RESERVATION_BYTES),
-        VerificationPhasePlan(phase=VerificationPhase.Lsp, reservation=SMALL_PROJECT_RESERVATION_BYTES),
-        VerificationPhasePlan(phase=VerificationPhase.Census, reservation=workers * LOWERING_RESERVATION_BYTES),
+        VerificationPhasePlan(
+            phase=VerificationPhase.Census,
+            reservation=census_jobs(jobs) * CENSUS_WORKER_RESERVATION_BYTES,
+        ),
         VerificationPhasePlan(phase=VerificationPhase.Memory, reservation=LOWERING_RESERVATION_BYTES),
     ]
+
+
+pub def census_jobs(jobs: int) -> int:
+    """
+    The census's workers: twice the release's jobs for its families in turn, which share compilation, and one for its
+    graph family beside them, which compiles nothing they build; the runner gives the graph worker one of its jobs.
+    """
+    return 2 * verification_workers(jobs) + 1
+
+
+pub def oven_jobs(jobs: int) -> int:
+    """
+    The Oven step's invocations: twice the release's jobs. It outlasts every other gate, the census included, and
+    runs on alone after them, so it takes the processors they leave; its own pool still reserves each invocation's
+    memory.
+    """
+    return 2 * verification_workers(jobs)
+
+
+pub def oven_test_arguments(oven: Path, checkout: Path, run: Path, jobs: int) -> list[str]:
+    """The installed Oven step's command: the whole stable inventory at `oven_jobs`, naming every failing test."""
+    return [
+        "run",
+        checkout.joinpath("scripts/oven_tests.incn").0,
+        "--",
+        oven.0,
+        run.0,
+        "--jobs",
+        str(oven_jobs(jobs)),
+        # A release names every failing test in one run, so no later failure hides behind the first.
+        "--keep-going",
+    ]
+
+
+pub def verification_gate_width(jobs: int) -> int:
+    """How many gates run at once: every planned gate, since each bounds its own children by what `jobs` gives it."""
+    return len(verification_phase_plans(jobs))
+
+
+pub def verification_phase_names(jobs: int) -> list[str]:
+    """The child-process spelling of every planned phase, in plan order."""
+    return [verification_phase_name(plan.phase) for plan in verification_phase_plans(jobs)]
 
 
 def verification_workers(jobs: int) -> int:
@@ -255,7 +310,6 @@ def verification_phase_name(phase: VerificationPhase) -> str:
         VerificationPhase.Oven => return "oven"
         VerificationPhase.RustFacets => return "rust-facets"
         VerificationPhase.DriverIntegration => return "driver-integration"
-        VerificationPhase.Lsp => return "lsp"
         VerificationPhase.Census => return "census"
         VerificationPhase.Memory => return "memory"
 
@@ -297,20 +351,18 @@ def run_selected_phase(installation: Installation, runner: Path, phase: Verifica
                 .write_text(str(suites) + "\n", "utf-8", "strict", None)
                 .map_err((error) => error.message())?
         VerificationPhase.DriverIntegration => run_driver_integration(installation)?
-        VerificationPhase.Lsp => verify_lsp(installation, runner)?
         VerificationPhase.Census => _ = run_contracts(installation, runner)?
         VerificationPhase.Memory => measure_memory(installation)?
     return Ok(None)
 
 
 def parse_verification_phase(text: str) -> Result[VerificationPhase, str]:
-    """Parse only the seven internal verification phase spellings."""
+    """Parse only the six internal verification phase spellings."""
     match text:
         "relocation" => return Ok(VerificationPhase.Relocation)
         "oven" => return Ok(VerificationPhase.Oven)
         "rust-facets" => return Ok(VerificationPhase.RustFacets)
         "driver-integration" => return Ok(VerificationPhase.DriverIntegration)
-        "lsp" => return Ok(VerificationPhase.Lsp)
         "census" => return Ok(VerificationPhase.Census)
         "memory" => return Ok(VerificationPhase.Memory)
         _ => return Err(f"unknown verification phase `{text}`")
@@ -372,16 +424,18 @@ pub def audit_relocation(home: Path, builder_paths: list[str]) -> Result[None, s
             path = audited_path(observed)
             if path.startswith("/") and path != installation.0 and not path.startswith(installation.0 + "/"):
                 return Err(f"nonportable toolchain JSON {document.0}: {observed}")
-    for builder in builder_paths:
-        if builder == "":
-            continue
-        for document in toolchain.rglob("*").map_err((error) => error.message())?:
-            if document.is_file() and not is_relocation_observation_cache(document):
-                match document.read_text("utf-8", "strict"):
-                    Ok(text) =>
+    # One walk and one read of each installed file serve every builder path.
+    builders = [builder for builder in builder_paths if builder != ""]
+    if len(builders) == 0:
+        return Ok(None)
+    for document in toolchain.rglob("*").map_err((error) => error.message())?:
+        if document.is_file() and not is_relocation_observation_cache(document):
+            match document.read_text("utf-8", "strict"):
+                Ok(text) =>
+                    for builder in builders:
                         if f"{builder}/" in text:
                             return Err(f"installed records name the builder: {builder}")
-                    Err(_) => pass
+                Err(_) => pass
     return Ok(None)
 
 
@@ -485,17 +539,7 @@ def run_oven_tests(installation: Installation) -> Result[None, str]:
         installation,
         "oven-tests",
         installation.oven.0,
-        [
-            "run",
-            installation.root.joinpath("scripts/oven_tests.incn").0,
-            "--",
-            installation.oven.0,
-            installation.run.0,
-            "--jobs",
-            str(installation.jobs),
-            # A release names every failing test in one run, so no later failure hides behind the first.
-            "--keep-going",
-        ],
+        oven_test_arguments(installation.oven, installation.root, installation.run, installation.jobs),
         installation.root,
         installation.run.joinpath("oven-tests-command.log"),
     )
@@ -515,10 +559,7 @@ def run_rust_facets(installation: Installation) -> Result[int, str]:
     output.mkdir(true, true).map_err((error) => error.message())?
     mut planned: list[ReservedStep] = []
     mut projects: list[str] = []
-    mut environment = command_environment(installation)
-    bakery = selected_builder_bakery(get_or("INCAN_BUILDER_HOME", ""))
-    if bakery != "":
-        environment["INCAN_BAKERY"] = bakery
+    environment = builder_environment(installation, release_builder_bakery())
     manifests = sorted(
         [path.0 for path in installation.root.joinpath("loaves").rglob("loaf.toml").map_err((error) => error.message())?],
     )
@@ -574,16 +615,17 @@ def run_driver_integration(installation: Installation) -> Result[None, str]:
     sysroot = installed_path(toolchain, json_text(manifest, "sysroot")?)
 
     helper_source = installation.root.joinpath("workspaces/oven/src/toolchain_native.incn")
-    require_step(
-        command_step(
-            installation,
-            "driver-helper-build",
-            installation.oven.0,
-            ["build", helper_source.0, "--profile", "release"],
-            installation.root.joinpath("workspaces/oven"),
-            evidence.joinpath("helper-build.log"),
-        ),
-    )?
+    # The helper's dependencies are release units the shipped Oven build compiled; the builder's bakery holds them.
+    mut helper_build = command_step(
+        installation,
+        "driver-helper-build",
+        installation.oven.0,
+        ["build", helper_source.0, "--profile", "release"],
+        installation.root.joinpath("workspaces/oven"),
+        evidence.joinpath("helper-build.log"),
+    )
+    helper_build.environment = builder_environment(installation, release_builder_bakery())
+    require_step(helper_build)?
     helper = installation.root.joinpath("workspaces/oven/target/incan/release/bin/oven")
     if not helper.is_file():
         return Err(f"native description helper was not built: {helper.0}")
@@ -695,32 +737,19 @@ def json_text(value: JsonValue, key: str) -> Result[str, str]:
     return value.require(key).and_then((entry) => entry.expect_str()).map_err((error) => error.message())
 
 
-def verify_lsp(installation: Installation, runner: Path) -> Result[None, str]:
-    """Require the installed server's live initialization, navigation, call hierarchy, and stale-buffer contract."""
-    mut environment = command_environment(installation)
-    environment["INCAN_LSP"] = installation.lsp.0
-    return require_step(
-        Step(
-            name="lsp-contract",
-            executable=runner.0,
-            arguments=[
-                installation.oven.0,
-                installation.root.joinpath("workspaces/contracts/fixtures").0,
-                "--scratch",
-                installation.run.joinpath("lsp-scratch").0,
-                "--jobs",
-                "1",
-                "--timeout",
-                str(installation.timeout_seconds),
-                "graph/incan/relationships",
-            ],
-            environment=environment,
-            remove_environment=["RUSTC_BOOTSTRAP"],
-            directory=Some(installation.root),
-            log=installation.run.joinpath("lsp-contract.log"),
-            timeout_seconds=installation.timeout_seconds * 2,
-        ),
-    )
+pub def require_lsp_contract(report: Borrowed[BaselineReport]) -> Result[None, str]:
+    """Require the census to have passed its live language-server case, whatever the committed baseline lists."""
+    for key in report.result_keys:
+        if key == LSP_CONTRACT_CASE:
+            return require_lsp_pass(report.result_statuses[key])
+    return Err(f"the installed census did not run the language-server case {LSP_CONTRACT_CASE}")
+
+
+def require_lsp_pass(status: str) -> Result[None, str]:
+    """Accept only a passing verdict for the language-server case."""
+    if status != "PASS":
+        return Err(f"the installed census reports {status} for the language-server case {LSP_CONTRACT_CASE}")
+    return Ok(None)
 
 
 def run_contracts(installation: Installation, runner: Path) -> Result[BaselineReport, str]:
@@ -736,7 +765,7 @@ def run_contracts(installation: Installation, runner: Path) -> Result[BaselineRe
                 installation.oven,
                 installation.root.joinpath("workspaces/contracts/fixtures"),
                 installation.run.joinpath("scratch"),
-                installation.jobs,
+                census_jobs(installation.jobs),
                 installation.timeout_seconds,
             ),
             environment=environment,
@@ -830,6 +859,22 @@ def command_step(
         log=log,
         timeout_seconds=installation.timeout_seconds,
     )
+
+
+pub def builder_environment(installation: Installation, bakery: str) -> Dict[str, str]:
+    """
+    The installed environment for builds of release units the release already compiled: the builder's bakery, which
+    admits a unit only by its full identity, when the release names one.
+    """
+    mut environment = command_environment(installation)
+    if bakery != "":
+        environment["INCAN_BAKERY"] = bakery
+    return environment
+
+
+def release_builder_bakery() -> str:
+    """The bakery the release names for its installed tests, or none outside a release."""
+    return selected_builder_bakery(get_or("INCAN_BUILDER_BAKERY", ""), get_or("INCAN_BUILDER_HOME", ""))
 
 
 def command_environment(installation: Installation) -> Dict[str, str]:

@@ -36,6 +36,8 @@ pub model Submit:
     pub observation_policy: str
     # The directory the client's command ran in, which its compilations are for; never the engine's own.
     pub directory: str = ""
+    # The canonical unit options the client parsed (`engine_unit_options`); empty for an ordinary unit.
+    pub unit_options: str = ""
 
 
 pub model Accepted:
@@ -86,6 +88,8 @@ pub model Complete:
     pub binding_outcome: BindingOutcome
     pub status: CompletionStatus
     pub observation_handle: str
+    # The unit reasons the engine recorded for this request, one per line, for the caller's own trace channel.
+    pub notes: str = ""
 
 
 pub model Cancel:

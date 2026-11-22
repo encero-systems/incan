@@ -11,6 +11,7 @@ use internal_models_bindings::{Description, Value};
 use std::collections::HashSet;
 
 const NAMESPACE_REFERENCE_PAGE: &str = "namespace-references.crumb";
+const NAMESPACE_HEADER_REFERENCE_PAGE: &str = "namespace-header-references.crumb";
 pub const NAMESPACE_IDENTITY_PROFILE: &str = "incan.editable-namespace-crumb/7";
 const ROW: &[u8] = b"nsrefs\x00";
 
@@ -38,6 +39,23 @@ pub fn namespace_reference_filename() -> String {
     NAMESPACE_REFERENCE_PAGE.to_owned()
 }
 
+/// Name the inventory of namespace header frames in the compiler request directory.
+pub fn namespace_header_reference_filename() -> String {
+    NAMESPACE_HEADER_REFERENCE_PAGE.to_owned()
+}
+
+/// Name one namespace header beside its composite namespace, under the same logical source projection.
+pub fn namespace_header_key(origin: &str, module: &str) -> RecordKey {
+    RecordKey {
+        family: "namespace-header".into(),
+        identity_profile: NAMESPACE_IDENTITY_PROFILE.into(),
+        origin: origin.to_owned(),
+        identity: module.to_owned(),
+        facet: "checked".into(),
+        context: "admission-header".into(),
+    }
+}
+
 /// Name one composite editable namespace under its logical source projection.
 pub fn namespace_key(origin: &str, module: &str) -> RecordKey {
     RecordKey {
@@ -60,11 +78,11 @@ fn description() -> Description {
     )
 }
 
-/// Admit only the canonical namespace key and a bounded frame in a content-named segment.
+/// Admit only the canonical namespace or namespace header key and a bounded frame in a content-named segment.
 fn validate(reference: &NamespaceReference) -> Result<(), String> {
-    let expected = namespace_key(&reference.key.origin, &reference.key.identity);
+    let (origin, module) = (&reference.key.origin, &reference.key.identity);
     let key = encode_record_key(&reference.key)?;
-    if reference.key != expected
+    if (reference.key != namespace_key(origin, module) && reference.key != namespace_header_key(origin, module))
         || !full_digest(&format!("sha256:{}", reference.segment))
         || !full_digest(&format!("sha256:{}", reference.value_digest))
     {

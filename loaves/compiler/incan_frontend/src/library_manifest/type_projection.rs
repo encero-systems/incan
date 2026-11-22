@@ -94,8 +94,33 @@ macro_rules! type_fields {
     )* };
 }
 
+impl VisitTypeRefs for LibraryManifest {
+    /// Apply the shared semantic type visitor to the manifest's typed parts.
+    fn visit_type_refs(&mut self, visit: &mut impl FnMut(&mut TypeRef)) {
+        visit_manifest_type_parts(&mut self.exports, &mut self.contract_metadata, visit);
+    }
+}
+
+/// Visit every semantic type position of a copy of `manifest`'s typed parts, in the order
+/// [`VisitTypeRefs::visit_type_refs`] visits the manifest, without copying the parts that hold no type position, such
+/// as its Rust ABI.
+pub fn visit_copied_type_refs(manifest: &LibraryManifest, visit: &mut impl FnMut(&mut TypeRef)) {
+    let mut exports = manifest.exports.clone();
+    let mut contract_metadata = manifest.contract_metadata.clone();
+    visit_manifest_type_parts(&mut exports, &mut contract_metadata, visit);
+}
+
+/// The typed parts of a manifest, in visiting order.
+fn visit_manifest_type_parts(
+    exports: &mut LibraryExports,
+    contract_metadata: &mut LibraryContractMetadata,
+    visit: &mut impl FnMut(&mut TypeRef),
+) {
+    exports.visit_type_refs(visit);
+    contract_metadata.visit_type_refs(visit);
+}
+
 type_fields! {
-    LibraryManifest => [exports, contract_metadata];
     LibraryContractMetadata => [api];
     LibraryExports => [aliases, partials, models, classes, functions, traits, enums, type_aliases, newtypes, consts, statics];
     TypeParamExport => [bounds];

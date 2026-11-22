@@ -16,8 +16,9 @@ At most N invocations run at once: `--jobs N`, else the core count. Each invocat
 only while the reservations fit the memory they share: `--memory GIB`, else physical memory less a headroom. Oven
 sources share a pool of private worker projects under `.agents/state`, one per job. Each Oven source starts in whichever
 worker project is free, so a long source never holds back the sources planned after it, and a worker project runs one
-source at a time, so concurrent generations never share mutable output. The worker projects are removed once every
-invocation has exited.
+source at a time, so concurrent generations never share mutable output. The Oven sources link one project library,
+which the first of them to start builds, so the Loaf tests run while it builds and the other Oven sources follow; the
+logs still join in the order above. The worker projects are removed once every invocation has exited.
 
 A source that needs a settled installation runs alone after every other invocation has exited. Its compile-only
 listing (`--list`, logged as `NNN-<source>-compile.log` and never joined) starts first among the others, so the run
@@ -59,6 +60,8 @@ const FAILED: str = "^test_[A-Za-z0-9_]+[.]incn::test_[A-Za-z0-9_]+ (FAILED|XPAS
 # These read the installed toolchain and require it unchanged, which another invocation's first use of a native crate can
 # break, so they run after the others have finished; only their compilation runs beside the others.
 const NEEDS_SETTLED_INSTALLATION: FrozenList[str] = ["test_engine_protocol.incn"]
+# How long a running invocation's observed process tree stands before it is probed again: each probe starts `ps`.
+pub const CUSTODY_INTERVAL_MS: int = 1000
 const USAGE: str = "usage: oven_tests.incn OVEN EVIDENCE [--jobs N] [--memory GIB] [--keep-going]"
 # The step reports failures under the installed-verification program's name.
 const REPORTER: str = "verify-installation"
@@ -133,6 +136,8 @@ model Running:
     census_error: Option[str]
     # The worker project it runs in; empty when it has none.
     worker: str
+    # When its process tree was last probed, in milliseconds after it started; none before the first probe.
+    probed_ms: Option[int] = None
 
 
 model ActiveSettlement:
@@ -236,7 +241,7 @@ def run(options: Options) -> Result[str, str]:
     root = repository_root()?
     logs = options.evidence.joinpath("oven-tests")
     logs.mkdir(true, true).map_err((error) => error.message())?
-    bakery = selected_builder_bakery(get_or("INCAN_BUILDER_HOME", ""))
+    bakery = selected_builder_bakery(get_or("INCAN_BUILDER_BAKERY", ""), get_or("INCAN_BUILDER_HOME", ""))
     planned = invocations(root, options.evidence, logs, options.jobs, bakery)?
     outcome = planned_outcome(options.oven, planned, options.jobs, options.memory, options.keep_going)?
     remove_worker_projects(planned)?
@@ -259,7 +264,9 @@ pub def invocations(
 
     A nonempty `builder_bakery` is the release builder's bakery: the release-profile Loaf tests ask it, so they reuse
     the release units the release already built under the same identities, as the Rust facet tests do. The Oven
-    sources keep the installation's bakery, because their nested commands inherit the environment.
+    sources ask it too: the release builds their shared project library ahead (`library_prebuild_arguments`), and the
+    bakery admits a unit only by its full identity, so anything that differs is built again. Their nested commands
+    inherit that bakery.
     """
     mut planned: list[Invocation] = []
     oven = root.joinpath("workspaces/oven")
@@ -269,16 +276,18 @@ pub def invocations(
     mut workers: list[str] = []
     for position in range(min([jobs, len(sources)])):
         workers.append(isolated_oven_project(root, evidence, position)?.0)
+    mut shared: Dict[str, str] = {}
+    if builder_bakery != "":
+        shared["INCAN_BAKERY"] = builder_bakery
     for source in sources:
         if not source.is_file():
             return Err("Oven test sources are absent")
         unit = ["test", f"src/{source.name()}"]
         alone = source.name() in NEEDS_SETTLED_INSTALLATION
-        planned.append(invocation(unit, "", PROJECT_RESERVATION_BYTES, logs, len(planned), source, alone, workers))
+        mut planned_source = invocation(unit, "", PROJECT_RESERVATION_BYTES, logs, len(planned), source, alone, workers)
+        planned_source.environment = shared
+        planned.append(planned_source)
     compiler = root.joinpath("loaves/compiler").0 + "/"
-    mut shared: Dict[str, str] = {}
-    if builder_bakery != "":
-        shared["INCAN_BAKERY"] = builder_bakery
     for source in loaf_tests(root.joinpath("loaves"))?:
         # Compiler Loaves link native support, which an installed bundle ships for the release profile only.
         loaf = source.parent().parent()
@@ -289,11 +298,17 @@ pub def invocations(
     return Ok(planned)
 
 
-pub def selected_builder_bakery(builder_home: str) -> str:
-    """Select the release builder's existing bakery for exact-identity reuse, or no override outside a release."""
-    if builder_home == "":
-        return ""
-    bakery = Path(builder_home).joinpath("bakery")
+pub def selected_builder_bakery(selected: str, builder_home: str) -> str:
+    """
+    Select the release builder's existing bakery for exact-identity reuse, or no override outside a release: the bakery
+    the release names (`INCAN_BUILDER_BAKERY`, which `INCAN_BAKERY` may have selected for its builds), else the build
+    home's own.
+    """
+    mut bakery = Path(selected)
+    if selected == "":
+        if builder_home == "":
+            return ""
+        bakery = Path(builder_home).joinpath("bakery")
     if not bakery.is_dir():
         return ""
     return bakery.0
@@ -325,7 +340,7 @@ pub def planned_outcome(
     mut pooled_ignored = len(early)
     if keep_going:
         pooled_ignored = len(pooled)
-    first = run_pool(oven, pooled, jobs, memory, pooled_ignored)?
+    first = run_pool(oven, pooled, jobs, memory, pooled_ignored, admission_order(pooled))?
     mut logs = [pooled[index].log.0 for index in first.started if index >= len(early)]
     mut succeeded = len([index for index in first.failed if index >= len(early)]) == 0
     if succeeded or keep_going:
@@ -338,6 +353,34 @@ pub def planned_outcome(
             logs.append(settled[index].log.0)
         succeeded = succeeded and len(second.failed) == 0
     return Ok(PlannedOutcome(started=[item for item in planned if item.log.0 in logs], succeeded=succeeded))
+
+
+pub def library_prebuild_arguments() -> list[str]:
+    """
+    The compile-only invocation the step starts with, in a worker project: the settled source's listing, which builds
+    the Oven sources' shared project library. A release runs it ahead in a project laid out the same way.
+    """
+    return ["test", f"src/{NEEDS_SETTLED_INSTALLATION[0]}", "--list"]
+
+
+pub def admission_order(pooled: list[Invocation]) -> list[int]:
+    """
+    The order the pool admits its invocations in. Invocations in worker projects link the project library that the
+    first of them to start builds, and the others wait for it; invocations without one, the Loaf tests, never do. So
+    the first worker invocation (the compile-ahead, when there is one) starts the library first, every invocation
+    without a worker project runs while it builds, and the other worker invocations follow.
+    """
+    mut leading: list[int] = []
+    mut beside: list[int] = []
+    mut after: list[int] = []
+    for index in range(len(pooled)):
+        if len(pooled[index].workers) == 0:
+            beside.append(index)
+        elif len(leading) == 0:
+            leading.append(index)
+        else:
+            after.append(index)
+    return leading + beside + after
 
 
 pub def compile_ahead(planned: list[Invocation]) -> list[Invocation]:
@@ -382,6 +425,14 @@ def isolated_oven_project(root: Path, evidence: Path, position: int) -> Result[P
     checkout = oven_test_state_root(root, get_or("OVEN_TEST_STATE_ROOT", ""))
         .joinpath(evidence.name())
         .joinpath(str(position))
+    return oven_worker_project(root, checkout)
+
+
+pub def oven_worker_project(root: Path, checkout: Path) -> Result[Path, str]:
+    """
+    Lay out an Oven project at `checkout` as a worker project is: its own copy of the Oven sources and tests and of the
+    workbench, beside links to the checkout's Loaves and examples. Return the Oven project.
+    """
     project = checkout.joinpath("workspaces/oven")
     project.mkdir(true, true).map_err((error) => error.message())?
     _ = root
@@ -500,10 +551,22 @@ pub def run_all_failures(
     return Ok(run_pool(oven, planned, jobs, memory, ignored_prefix)?.failed)
 
 
-def run_pool(oven: str, planned: list[Invocation], jobs: int, memory: int, ignored_prefix: int) -> Result[PoolOutcome, str]:
-    """Keep the positions this run admitted so earlier logs cannot stand in for unscheduled work."""
+def run_pool(
+    oven: str,
+    planned: list[Invocation],
+    jobs: int,
+    memory: int,
+    ignored_prefix: int,
+    order: list[int] = [],
+) -> Result[PoolOutcome, str]:
+    """
+    Keep the positions this run admitted so earlier logs cannot stand in for unscheduled work. `order` is the order
+    positions are admitted in; empty admits them in position order.
+    """
     reservations = [item.reservation for item in planned]
-    mut waiting = [index for index in range(len(planned))]
+    mut waiting = order
+    if len(waiting) == 0:
+        waiting = [index for index in range(len(planned))]
     mut active: list[Running] = []
     mut failed: list[int] = []
     while len(waiting) > 0 or len(active) > 0:
@@ -555,8 +618,8 @@ def poll_active_once(active: list[Running], ignored_prefix: int) -> ActiveSettle
     mut stopped = false
     mut completed = false
     for item in active:
-        custody = running_custody(item)
         if stopped:
+            custody = running_custody(item, true)
             if let Some(message) = stop_owned_child(item.child, custody, item.position):
                 errors.append(message)
             completed = true
@@ -564,11 +627,14 @@ def poll_active_once(active: list[Running], ignored_prefix: int) -> ActiveSettle
         match item.child.borrow_mut().try_wait():
             Err(error) =>
                 errors.append(f"cannot poll Oven test invocation {item.position}: {error}")
+                custody = running_custody(item, true)
                 if let Some(message) = stop_owned_child(item.child, custody, item.position):
                     errors.append(message)
                 stopped = true
                 completed = true
             Ok(Some(status)) =>
+                # The root has exited, so a probe now reaches nothing through it: the members observed stand.
+                custody = running_custody(item, false)
                 if let Some(message) = stop_owned_child(item.child, custody, item.position):
                     errors.append(message)
                     stopped = true
@@ -579,6 +645,7 @@ def poll_active_once(active: list[Running], ignored_prefix: int) -> ActiveSettle
                 completed = true
             Ok(None) =>
                 if item.timeout_seconds > 0 and item.started.elapsed().as_secs() >= item.timeout_seconds:
+                    custody = running_custody(item, true)
                     if let Some(message) = stop_owned_child(item.child, custody, item.position):
                         errors.append(message)
                         stopped = true
@@ -587,6 +654,12 @@ def poll_active_once(active: list[Running], ignored_prefix: int) -> ActiveSettle
                         stopped = true
                     completed = true
                 else:
+                    elapsed_ms = int(item.started.elapsed().as_millis())
+                    probe = custody_due(item.probed_ms, elapsed_ms)
+                    custody = running_custody(item, probe)
+                    mut probed_ms = item.probed_ms
+                    if probe:
+                        probed_ms = Some(elapsed_ms)
                     running.append(
                         Running(
                             position=item.position,
@@ -597,6 +670,7 @@ def poll_active_once(active: list[Running], ignored_prefix: int) -> ActiveSettle
                             members=custody.members,
                             census_error=custody.census_error,
                             worker=item.worker,
+                            probed_ms=probed_ms,
                         ),
                     )
     if stopped or len(errors) > 0:
@@ -654,10 +728,19 @@ def start_waiting(
     return Admission(active=running, waiting=remaining, errors=errors)
 
 
-def running_custody(item: Borrowed[Running]) -> ReleaseTermination:
-    """Merge one invocation's retained descendants with the operating system's current observation."""
+pub def custody_due(probed_ms: Option[int], elapsed_ms: int) -> bool:
+    """Whether a running invocation's tree is probed now: never probed yet, or last probed an interval ago."""
+    match probed_ms:
+        None => return true
+        Some(last) => return elapsed_ms - last >= CUSTODY_INTERVAL_MS
+
+
+def running_custody(item: Borrowed[Running], probe: bool) -> ReleaseTermination:
+    """One invocation's retained descendants, merged with the operating system's current observation when `probe`."""
     root = int(item.child.borrow().id())
     known = ReleaseTermination(root=root, members=item.members.clone(), census_error=item.census_error.clone())
+    if not probe:
+        return known
     observed = observe_release_processes(root)
     return merge_release_terminations(known, observed)
 
@@ -666,7 +749,7 @@ def stop_owned_children(active: list[Running]) -> list[str]:
     """Attempt to stop every owned invocation, retaining all cleanup failures instead of abandoning later children."""
     mut errors: list[str] = []
     for item in active:
-        custody = running_custody(item)
+        custody = running_custody(item, true)
         if let Some(message) = stop_owned_child(item.child, custody, item.position):
             errors.append(message)
     return errors

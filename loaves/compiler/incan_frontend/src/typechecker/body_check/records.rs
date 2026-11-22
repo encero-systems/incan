@@ -140,6 +140,9 @@ struct Positions {
     rust_reads: BTreeMap<String, Option<CanonicalSymbolId>>,
     caller: Option<super::super::type_info::CBindingRawCallOwner>,
     type_identities: BTreeMap<String, CanonicalSymbolId>,
+    /// The origin of the body's own module: a member of its own nominals that these positions do not bind is
+    /// compiler generated, while a sibling module's may be a declared member they cannot see.
+    origin: incan_semantics_core::SymbolOrigin,
 }
 
 impl Positions {
@@ -284,6 +287,7 @@ impl Positions {
             rust_reads,
             caller,
             type_identities,
+            origin,
         })
     }
 
@@ -1033,8 +1037,13 @@ fn restore_identity_context(
     let name = next(values)?;
     let canonical = match positions.canonical(&identity) {
         Ok(member) => member,
-        Err(error) if matches!(owner.origin, incan_semantics_core::SymbolOrigin::Package { .. }) => {
-            // A package declaration uses its own anchor. Only a checked generated member belongs at the owner.
+        Err(error)
+            if matches!(owner.origin, incan_semantics_core::SymbolOrigin::Package { .. })
+                || (matches!(owner.origin, incan_semantics_core::SymbolOrigin::Module(_))
+                    && owner.origin != positions.origin) =>
+        {
+            // A package or sibling-module declaration uses its own anchor. Only a checked generated member belongs at
+            // the owner; any other member this restore cannot bind is checked afresh, never minted at the owner's span.
             let generated = owner.generated_member(name, kind.clone());
             if local.calls.compiler_generated_member_identities.get(&generated) != Some(&owner) {
                 return Err(error);
@@ -1149,61 +1158,4 @@ struct FinalTypes {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn physical_inputs_ignore_duplicate_nominal_and_member_bindings() -> Result<(), Box<dyn std::error::Error>> {
-        let (program, checker, owner) = fixture(
-            "model Record:\n    value: int\n\ndef take(item: Record) -> int:\n    return item.value\n",
-            "take",
-        )?;
-        let local = &checker.checked_body(owner).ok_or("missing checked body")?.local;
-        let records = [
-            checker
-                .available_declaration_record(owner)
-                .ok_or("missing declaration record")?,
-            checker.available_local_record(owner).ok_or("missing local record")?,
-            checker.available_final_record(owner).ok_or("missing final record")?,
-        ];
-        let mut positions = Positions::for_local(&checker, &program, owner, local)?;
-        let (&here, context) = local
-            .references
-            .stable_declaration_contexts
-            .iter()
-            .next()
-            .ok_or("missing checked member context")?;
-        let member = local
-            .references
-            .resolved_identities
-            .get(&here)
-            .ok_or("missing checked member")?;
-        let member_key = positions.contextual_identity(member, context)?;
-        let nominal_key = StableDeclarationId::from_canonical(&context.owner, None, None)
-            .ok_or("missing nominal identity")?
-            .render_compact();
-        assert_eq!(positions.type_identities.get(&nominal_key), Some(&context.owner));
-
-        positions.identities.remove(&nominal_key);
-        positions.identities.remove(&member_key);
-        let before = positions
-            .physical_inputs_in(checker.type_info(), local, records, None)
-            .ok_or("missing witness")?;
-        for (key, identity) in [(nominal_key, &context.owner), (member_key, member)] {
-            positions.identities.insert(key.clone(), identity.clone());
-            let duplicate = positions.physical_inputs_in(checker.type_info(), local, records, None);
-            assert_eq!(duplicate, Some(before), "{key}");
-            positions
-                .identities
-                .get_mut(&key)
-                .ok_or("missing duplicate")?
-                .declaration_span
-                .start += 1;
-            let conflict = positions.physical_inputs_in(checker.type_info(), local, records, None);
-            assert!(conflict.is_some());
-            assert_ne!(conflict, Some(before), "{key}");
-            positions.identities.remove(&key);
-        }
-        Ok(())
-    }
-}
+mod tests;

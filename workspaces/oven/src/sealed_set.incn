@@ -25,7 +25,7 @@ from pub::incan_platform.store import (
 from pub::incan_platform.store.files import StoreError
 from pub::incan_platform.store.codec import Write, encode_segment
 from pub::incan_platform.store.repair import quarantine_record
-from store_path_conversion import payload_path, pin_payload, put_payload, readmit_payload, snapshot
+from store_path_conversion import payload_path, pin_payload, put_payloads, readmit_payload, snapshot
 
 pub from sealed_set_types import ExternalReference, Profile, Record, SetSpec
 from sealed_set_types import Entry, Object, VerifiedSet
@@ -348,10 +348,13 @@ def install_objects(
         copy_file(source, target)?
         if checked_length(target, object.digest)? != object.length:
             return Err(problem("integrity", target.0, "transport object changed during staging"))
-    for object in missing:
-        source = private.path().joinpath(object.digest)
-        if put_payload(root, source)?.digest != object.digest:
-            return Err(problem("integrity", source.0, "private staged object changed"))
+    # Every object is synced and renamed into place, and its directories ordered, before one drive flush covers them
+    # all; the commit that names them follows.
+    sources = [private.path().joinpath(object.digest) for object in missing]
+    installed = put_payloads(root, sources)?
+    for index in range(len(missing)):
+        if installed[index].digest != missing[index].digest:
+            return Err(problem("integrity", sources[index].0, "private staged object changed"))
     return Ok(prepared)
 
 

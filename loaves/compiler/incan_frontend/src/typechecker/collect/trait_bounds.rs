@@ -159,14 +159,15 @@ impl TypeChecker {
                 && let Some(traits) = self.lookup_derivable_traits(&module_path)
             {
                 for trait_name in traits {
-                    let Some(info) = self.lookup_imported_module_trait(&module_path, &trait_name) else {
+                    let (trait_module, declared_name) = self.derivable_trait_target(&module_path, &trait_name);
+                    let Some(info) = self.lookup_imported_module_trait(&trait_module, &declared_name) else {
                         continue;
                     };
-                    let identity = self.derivable_trait_identity(&module_path, &trait_name);
+                    let identity = self.derivable_trait_identity(&trait_module, &declared_name);
                     let (owner, source_name) = identity
                         .as_ref()
                         .and_then(|identity| self.canonical_trait_source_target(identity))
-                        .unwrap_or_else(|| (module_path.clone(), trait_name.clone()));
+                        .unwrap_or((trait_module, declared_name));
                     let canonical = format!("{}.{}", derive_name, trait_name);
                     self.define_hidden_trait_symbol_with_identity(&canonical, info, identity, Span::default());
                     if !out.iter().any(|existing: &TypeBoundInfo| {

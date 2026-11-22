@@ -4,7 +4,12 @@ from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
 from pub::incan_platform.store import Snapshot, get
 from pub::internal_models import GraphBodyValue, ProducerRank, encode_graph_body_values, encode_graph_checking_pair
-from pub::internal_models.namespace_references import NamespaceReference, encode_namespace_references, namespace_reference_filename
+from pub::internal_models.namespace_references import (
+    NamespaceReference,
+    encode_namespace_references,
+    namespace_header_reference_filename,
+    namespace_reference_filename,
+)
 from pub::internal_models.records import ReadReceipt, RecordKey, encode_record_key
 from pub::incan_mir_plan import LoweringEvent
 from pub::internal_models.namespace_order import NamespaceOrder, decode_namespace_order
@@ -12,6 +17,7 @@ from compiler_body_keys import IDENTITY_PROFILE, NAMESPACE_IDENTITY_PROFILE
 from compiler_owner_records import read_body_frame
 from compiler_graph_records import (
     EditCutoff,
+    NamespaceRecordSelection,
     OutputSlots,
     PublishedEvaluation,
     ReusableRecord,
@@ -20,6 +26,7 @@ from compiler_graph_records import (
     reusable_checker_records,
     reusable_evaluation,
     reusable_family_records,
+    reusable_namespace_records,
     reusable_owner_records,
 )
 
@@ -56,6 +63,11 @@ pub model SelectedBodyPage:
     # The SHA-256 digest of `value` the store verified it by, when known; staging names the page by it, so a
     # resident compiler that read this content before need not read or hash the page again.
     pub digest: str = ""
+    # The immutable store segment file holding `value`, and the value's offset and length in it, when the page is
+    # offered by its frame: staging names that range beside the digest instead of copying the bytes.
+    pub segment: str = ""
+    pub offset: int = 0
+    pub length: int = 0
 
 
 pub model NamespaceInventory:
@@ -79,7 +91,12 @@ pub def select_namespace_inventory_except(
     mut orders: Dict[str, NamespaceOrder] = {}
     mut modules: Dict[str, str] = {}
     mut references: list[NamespaceReference] = []
-    for record in reusable_family_records(selected, "namespace", profile, Some(slots), use_references, cutoff)?:
+    mut selection = NamespaceRecordSelection()
+    if use_references:
+        selection = reusable_namespace_records(selected, profile, slots, true, cutoff)?
+    else:
+        selection.frames = reusable_family_records(selected, "namespace", profile, Some(slots), false, cutoff)?
+    for record in selection.frames:
         module = record.key.identity
         match record.location:
             Some(location) =>
@@ -107,6 +124,20 @@ pub def select_namespace_inventory_except(
         modules[module] = certificate
     if len(references) > 0:
         inventory.pages.append(SelectedBodyPage(key=namespace_reference_filename(), value=encode_namespace_references(references)?))
+    # Each offered frame's header travels on a page of its own: the compiler admits an unchanged namespace by it.
+    offered = set([reference.key.identity for reference in references])
+    mut headers: list[NamespaceReference] = []
+    for record in selection.headers:
+        match record.location:
+            Some(location) =>
+                if record.key.identity in offered:
+                    headers.append(NamespaceReference(
+                        key=record.key, segment=location.segment, offset=location.offset, length=location.length,
+                        frame_digest=location.digest, value_digest=record.value_digest,
+                    ))
+            None => pass
+    if len(headers) > 0:
+        inventory.pages.append(SelectedBodyPage(key=namespace_header_reference_filename(), value=encode_namespace_references(headers)?))
     for module in modules.keys():
         certificate = modules[module]
         mut complete = true
@@ -282,7 +313,8 @@ pub def body_owners_reading(selected: Snapshot, changed: list[RecordKey], profil
     """Select body owners whose prior evaluations read keys with changed values staged by the current request."""
     mut owners: set[str] = set()
     # A position edit can restamp a selected executable frame against today's syntax.
-    # Only changed semantic inputs withdraw an owner's checked pair from the compiler.
+    # Only changed semantic inputs withdraw an owner's checked pair from the compiler. A path dependency's changed
+    # declaration span is one: a checked body names that declaration by it, and no restamp of its own frame moves it.
     semantic = [key for key in changed if key.family != "owner-placement"]
     for reader in readers_of(selected, semantic, profile)?:
         if reader.family in ["local", "final", "body-ir"]:

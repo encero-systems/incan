@@ -676,6 +676,10 @@ impl TypeChecker {
                 traits.iter().map(|name| format!("{module}.{name}")).collect::<Vec<_>>()
             } else if self.dependency_trait_rust_derive_paths.contains_key(&module) {
                 vec![module]
+            } else if expanded.contains(derive) && self.is_loaf_derive_module(derive) {
+                // A Loaf module whose listed traits declare no Rust derive stays named in the native selection; its
+                // traits are pure Incan, and checking recorded their adoptions and derived methods.
+                Vec::new()
             } else {
                 continue;
             };

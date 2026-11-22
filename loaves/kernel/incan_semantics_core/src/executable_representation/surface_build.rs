@@ -285,6 +285,36 @@ pub(super) fn publishes_compiled_frame(module: &BodyIrModule, body: &Body) -> bo
         })
 }
 
+/// The checked trait dispatch slots `owner` fills, each concrete implementation and the slot it fills added to
+/// `requirements`.
+///
+/// A checked lazy default records dispatch eligibility, not a call: its body is required only when a consumer selects
+/// that exact slot, so unrelated defaults cannot invalidate the owner's layout. A native identity, such as a Rust
+/// trait's method, requires no Incan fragment.
+fn owned_trait_implementations(
+    module: &BodyIrModule,
+    owner: &CanonicalSymbolId,
+    requirements: &mut BTreeSet<CanonicalSymbolId>,
+) -> Vec<crate::body_ir::TraitImplementation> {
+    let implementations = module
+        .trait_implementations
+        .iter()
+        .filter(|implementation| implementation.owner == *owner)
+        .cloned()
+        .collect::<Vec<_>>();
+    for implementation in &implementations {
+        if implementation.implementation == implementation.method {
+            continue;
+        }
+        for required in [&implementation.method, &implementation.implementation] {
+            if !matches!(required.origin, crate::SymbolOrigin::RustCrate(_)) {
+                requirements.insert(required.clone());
+            }
+        }
+    }
+    implementations
+}
+
 /// Project public nominal layouts and retain checked trait slots without synthesizing consumer dispatch. Default
 /// frames select their native callees from the whole package's inventory, as callable bodies do: the driver joins
 /// every module's checked native calls into one inventory before publication.
@@ -307,25 +337,7 @@ pub(super) fn project_nominals(
                 mut requirements,
                 callables,
             }) => {
-                let implementations = module
-                    .trait_implementations
-                    .iter()
-                    .filter(|implementation| implementation.owner == nominal.canonical)
-                    .cloned()
-                    .collect::<Vec<_>>();
-                for implementation in &implementations {
-                    // A checked lazy default records dispatch eligibility, not a call. Its body is required only
-                    // when a consumer selects that exact slot; unrelated defaults cannot invalidate this layout.
-                    if implementation.implementation == implementation.method {
-                        continue;
-                    }
-                    // A native identity, such as a Rust trait's method, requires no Incan fragment.
-                    for required in [&implementation.method, &implementation.implementation] {
-                        if !matches!(required.origin, crate::SymbolOrigin::RustCrate(_)) {
-                            requirements.insert(required.clone());
-                        }
-                    }
-                }
+                let implementations = owned_trait_implementations(module, &nominal.canonical, &mut requirements);
                 let identity = nominal.canonical.clone();
                 // A layout without native default calls keeps its earlier form, so its fragment bytes are unchanged.
                 let declaration = if !callables.is_empty() {
@@ -380,11 +392,29 @@ pub(super) fn project_enums(
             continue;
         }
         match publication::project_enum(value, module, library, public) {
-            Ok((value, requirements)) => {
+            Ok((value, mut requirements)) => {
+                // An enum's adoptions dispatch to its own implementations exactly as a nominal's do, so they travel
+                // with the layout; an enum that adopts nothing keeps its earlier form and fragment bytes.
+                // A value enum publishes its layout beside its scalar declaration, which keeps its earlier form.
+                let identity = value.canonical.clone();
+                let value_enum = module
+                    .value_enum_declarations
+                    .iter()
+                    .any(|declaration| declaration.canonical == identity);
+                let implementations = if value_enum {
+                    Vec::new()
+                } else {
+                    owned_trait_implementations(module, &identity, &mut requirements)
+                };
+                let declaration = if implementations.is_empty() {
+                    ExecutableDeclaration::Enum(value)
+                } else {
+                    ExecutableDeclaration::EnumWithTraits(value, implementations)
+                };
                 admitted.insert(
-                    value.canonical.clone(),
+                    identity,
                     AdmittedDeclaration {
-                        declaration: ExecutableDeclaration::Enum(value),
+                        declaration,
                         requirements,
                     },
                 );
@@ -541,7 +571,9 @@ pub(super) fn record_type_context_members(
             ExecutableDeclaration::ValueEnum(value) | ExecutableDeclaration::ValueEnumWithLayout(value, _) => {
                 value.variants.iter().map(|variant| &variant.canonical).collect()
             }
-            ExecutableDeclaration::Enum(value) => value.variants.iter().map(|variant| &variant.canonical).collect(),
+            ExecutableDeclaration::Enum(value) | ExecutableDeclaration::EnumWithTraits(value, _) => {
+                value.variants.iter().map(|variant| &variant.canonical).collect()
+            }
             ExecutableDeclaration::Body(_)
             | ExecutableDeclaration::NativeBody { .. }
             | ExecutableDeclaration::CompiledCallableFrame { .. }

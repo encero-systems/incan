@@ -1,0 +1,6 @@
+[project]
+name = "relay"
+version = "0.1.0"
+
+[dependencies]
+facades = { path = "../facades" }

@@ -1,0 +1,86 @@
+"""The private channel and volatile work owned by one records settlement process."""
+
+from std.fs import Path
+from pub::incan_platform.ipc import session_id
+from core_process import Process
+from engine_channel import Channel
+from engine_endpoint import transport
+from engine_messages import Event, Message, Release, Submit
+from engine_replies import send
+from engine_settlement import SettlementProgram
+from engine_wire import Refusal, zero_id
+
+
+pub model Queued:
+    """One admitted request, in service order, before its source epoch has been read."""
+
+    pub session: bytes
+    pub request: bytes
+    pub token: str
+    pub origin: str
+    pub submit: Submit
+
+
+pub model Activation:
+    """Bind the original client's interest to this process's independently named activation."""
+
+    pub work: Queued
+    pub request: bytes
+
+
+pub model Lease:
+    """The public lease descriptor and the private process that owns its store lock."""
+
+    pub token: str
+    pub snapshot: str
+    pub handle: str
+    pub slot: bytes
+    pub request: bytes
+
+
+pub model LeaseRelease:
+    """A release awaiting delivery and, for a connected caller, its acknowledgment."""
+
+    pub lease: Lease
+    pub session: bytes = zero_id()
+    pub request: bytes = zero_id()
+    pub admitted: bool = true
+
+
+pub class Slot:
+    """One resident settlement process, with at most one active unit and one release in flight."""
+
+    pub identity: bytes
+    pub process: Process
+    pub channel: Channel
+    pub active: Option[Activation] = None
+    pub releasing: Option[LeaseRelease] = None
+    pub closed: bool = false
+
+    @staticmethod
+    pub def start(program: SettlementProgram, store: Path, producer: str, records: str) -> Result[Slot, Refusal]:
+        """Keep this process's identity distinct even if its pool position is later reused."""
+        identity = session_id().map_err(transport)?
+        process, channel = program.start(store, producer, records)?
+        return Ok(Slot(identity=identity, process=process, channel=channel))
+
+    pub def submit(mut self, work: Queued) -> Result[None, Refusal]:
+        """Allocate an activation identity that cannot collide with an old request's console or pin."""
+        request = session_id().map_err(transport)?
+        self.active = Some(Activation(work=work, request=request))
+        send(self.channel, request, Message.Event(Event(status="GraphOrigin", trace_handle=work.origin)))?
+        return send(self.channel, request, Message.Submit(work.submit))
+
+    pub def release(mut self, release: LeaseRelease, token: str) -> Result[None, Refusal]:
+        """Ask the owning process to drop the actual lock before we acknowledge the public release."""
+        self.releasing = Some(release)
+        return send(self.channel, zero_id(), Message.Release(Release(lease_id=token)))
+
+    pub def close(mut self) -> None:
+        """Close the only command stream; the child drops its pins and exits."""
+        _ = self.channel.transport.close()
+        self.closed = true
+
+    pub def reap(mut self) -> None:
+        """Reap the private child once its command stream has been closed."""
+        _ = self.process.wait()

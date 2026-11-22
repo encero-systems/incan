@@ -199,8 +199,12 @@ impl TypeChecker {
             .find(|(indexed, _)| *indexed == library)
             .map(|(_, provider)| provider.clone());
         self.public_library_type_identities.insert(key.to_owned(), identity);
-        self.cache_retained_nominal_layout(Some(&canonical), &info);
-        self.transitive_pub_types.entry(key.to_owned()).or_default().push(info);
+        let layout = crate::typechecker::TransitiveLayout::ready(info);
+        self.cache_retained_nominal_layout(Some(&canonical), &layout);
+        self.transitive_pub_types
+            .entry(key.to_owned())
+            .or_default()
+            .push(layout);
         Some(())
     }
 }

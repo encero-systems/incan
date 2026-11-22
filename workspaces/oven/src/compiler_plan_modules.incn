@@ -20,7 +20,7 @@ from compiler_source_projection import positioned_source_key
 from compiler_body_keys import IDENTITY_PROFILE, body_key
 from compiler_lowering_order import LoweringOrder, LoweringOrders
 from compiler_graph_records import EditCutoff, OutputSlots, family_outputs, prepare_evaluation, retire_output, reusable_evaluation
-from compiler_plan_values import AdmittedPlanModule, LOWERING_PROFILE
+from compiler_plan_values import AdmittedPlanModule, LOWERING_PROFILE, admitted_plan
 from compiler_prepared_records import PreparedBodyRecordSource, prepared_product_request
 
 pub model StagedPlan:
@@ -168,7 +168,7 @@ def restored_plans(
     Rebind only the functions restored in this compile to their selected scalar products and rank evidence. A
     function the edit's `cutoff` leaves valid by the snapshot is not validated again.
     """
-    page = module.plan
+    page = admitted_plan(graph, module)?
     if page.module != note.module:
         return Err("admitted module differs from its selected plan page")
     reported = set([plan.function.function for plan in keyed])
@@ -232,14 +232,11 @@ def rebind_complete_module(
             changes[function.function] = function
     if len(changes) == 0 and module.placement_current:
         return Ok(Some(module.key))
-    mut page = module.plan.clone()
+    mut page = admitted_plan(graph, module)?
     if page.module != note.module:
         return Err("restored module differs from its selected page")
-    mut proofs: Dict[str, str] = {}
-    for witness in module.receipt.witnesses:
-        if let ReadWitness.Found(prior, selection) = witness:
-            if prior.request.key.family == "plan-function" and prior.request == prepared_product_request(prior.request.key) and prior.semantic_digest == prior.revision and selection == prior.semantic_digest:
-                proofs[encode_record_key(prior.request.key)?] = prior.semantic_digest
+    # The plan functions the module's receipt proves, each with the digest it read, as its selection derived them.
+    proofs = module.proofs
     mut requests: list[RecordRequest] = []
     mut replaced = 0
     for index in range(len(page.functions)):

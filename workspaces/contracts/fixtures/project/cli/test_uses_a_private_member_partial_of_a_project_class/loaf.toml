@@ -1,0 +1,6 @@
+[project]
+name = "test_uses_a_private_member_partial_of_a_project_class"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"

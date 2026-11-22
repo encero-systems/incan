@@ -5,17 +5,21 @@ from std.tempfile import TemporaryDirectory
 from check_test_support import write
 from pub::incan_platform.probes import process_table
 from oven_tests import (
+    CUSTODY_INTERVAL_MS,
     HEADROOM_BYTES,
     LOWERING_RESERVATION_BYTES,
     PROJECT_RESERVATION_BYTES,
     Invocation,
+    admission_order,
     admitted,
     compile_ahead,
+    custody_due,
     default_jobs,
     file_lines,
     free_worker,
     invocations,
     join_logs,
+    library_prebuild_arguments,
     planned_outcome,
     log_name,
     parse_options,
@@ -120,15 +124,14 @@ def test_verification_phases_reserve_their_complete_parallel_work() -> Result[No
         VerificationPhase.Oven,
         VerificationPhase.RustFacets,
         VerificationPhase.DriverIntegration,
-        VerificationPhase.Lsp,
         VerificationPhase.Census,
         VerificationPhase.Memory,
     ]
-    assert [plan.reservation for plan in plans] == [2 * GIB, 24 * GIB, 12 * GIB, 6 * GIB, 2 * GIB, 36 * GIB, 6 * GIB]
-    assert admitted([plan.reservation for plan in plans], [0, 1, 2, 3, 4, 5, 6], [], 7, 0) == [0, 1, 2, 3, 4, 5, 6]
-    assert verification_phase_plans(0)[1].reservation == 4 * GIB
+    assert [plan.reservation for plan in plans] == [2 * GIB, 48 * GIB, 12 * GIB, 6 * GIB, 26 * GIB, 6 * GIB]
+    assert admitted([plan.reservation for plan in plans], [0, 1, 2, 3, 4, 5], [], 6, 0) == [0, 1, 2, 3, 4, 5]
+    assert verification_phase_plans(0)[1].reservation == 8 * GIB
     assert verification_phase_plans(0)[2].reservation == 2 * GIB
-    assert verification_phase_plans(0)[5].reservation == 6 * GIB
+    assert verification_phase_plans(0)[4].reservation == 6 * GIB
     assert len(verification_trace_environment(Path("/evidence"), "census", false)) == 0
     traces = verification_trace_environment(Path("/evidence"), "census", true)
     assert traces["INCAN_ENGINE_TRACE"] == "/evidence/traces/census"
@@ -153,17 +156,18 @@ def test_verification_phases_reserve_their_complete_parallel_work() -> Result[No
     _ = replacement.replace(shared_output).map_err((error) => error.message())?
     assert pinned.read_text("utf-8", "strict").map_err((error) => error.message())? == "verifier"
     assert shared_output.read_text("utf-8", "strict").map_err((error) => error.message())? == "oven tests"
-    assert selected_builder_bakery("") == ""
-    assert selected_builder_bakery(temporary.path().0) == ""
+    assert selected_builder_bakery("", "") == ""
+    assert selected_builder_bakery("", temporary.path().0) == ""
     temporary.path().joinpath("bakery").mkdir(true, true).map_err((error) => error.message())?
-    assert selected_builder_bakery(temporary.path().0) == temporary.path().joinpath("bakery").0
+    assert selected_builder_bakery("", temporary.path().0) == temporary.path().joinpath("bakery").0
     return Ok(None)
 
 
-def test_loaf_tests_share_the_release_builder_bakery() -> Result[None, str]:
+def test_every_release_test_asks_the_builder_bakery_which_admits_units_by_identity() -> Result[None, str]:
     """
-    Release-profile Loaf tests ask the builder's bakery, which already holds the release units the release built; Oven
-    sources keep the installation's own bakery, which their nested commands select through the inherited environment.
+    Oven sources and Loaf tests alike ask the release builder's bakery, which already holds the units the release
+    built, the Oven sources' shared project library among them, and admits one only by its full unit identity. Outside
+    a release every invocation keeps the installation's own bakery.
     """
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     root = temporary.path()
@@ -171,12 +175,26 @@ def test_loaf_tests_share_the_release_builder_bakery() -> Result[None, str]:
     evidence = root.joinpath("evidence")
     logs = evidence.joinpath("oven-tests")
     shared = invocations(root, evidence, logs, 2, "/builder/bakery")?
-    assert [len(item.environment) for item in shared] == [0, 0, 0, 1, 1, 1, 1, 1]
-    assert [item.environment["INCAN_BAKERY"] for item in shared[3:]] == ["/builder/bakery" for _ in range(5)]
+    assert [len(item.environment) for item in shared] == [1, 1, 1, 1, 1, 1, 1, 1]
+    assert [item.environment["INCAN_BAKERY"] for item in shared] == ["/builder/bakery" for _ in range(8)]
+    assert [item.environment["INCAN_BAKERY"] for item in compile_ahead(shared)] == ["/builder/bakery"]
     remove_worker_projects(shared)?
     own = invocations(root, evidence, logs, 2)?
     assert [len(item.environment) for item in own] == [0, 0, 0, 0, 0, 0, 0, 0]
     remove_worker_projects(own)?
+    return Ok(None)
+
+
+def test_the_release_prebuilds_exactly_the_compile_the_oven_step_starts_with() -> Result[None, str]:
+    """The project library a release builds ahead comes from the same compile-only invocation the step starts first."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    fixture(root)?
+    evidence = root.joinpath("evidence")
+    planned = invocations(root, evidence, evidence.joinpath("oven-tests"), 2)?
+    assert library_prebuild_arguments() == compile_ahead(planned)[0].arguments
+    assert library_prebuild_arguments() == ["test", "src/test_engine_protocol.incn", "--list"]
+    remove_worker_projects(planned)?
     return Ok(None)
 
 
@@ -325,6 +343,29 @@ def test_a_settled_source_compiles_beside_the_others() -> Result[None, str]:
     return Ok(None)
 
 
+def test_loaf_tests_run_while_the_first_oven_source_builds_the_shared_project_library() -> Result[None, str]:
+    """
+    Every Oven source links the project library that the first of them to start builds, and no Loaf test does: the
+    pool admits the compile-ahead first, then every Loaf test, then the other Oven sources. Without a settled source
+    the first Oven source leads. Positions, and so the joined log, keep the planned order.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    fixture(root)?
+    evidence = root.joinpath("evidence")
+    logs = evidence.joinpath("oven-tests")
+    planned = invocations(root, evidence, logs, 2)?
+    early = compile_ahead(planned)
+    pooled = early + [item for item in planned if not item.alone]
+    assert [len(item.workers) > 0 for item in pooled] == [true, true, true, false, false, false, false, false]
+    assert admission_order(pooled) == [0, 3, 4, 5, 6, 7, 1, 2]
+    without_ahead = [item for item in planned if not item.alone]
+    assert admission_order(without_ahead) == [0, 2, 3, 4, 5, 6, 1]
+    assert admission_order([]) == []
+    remove_worker_projects(planned)?
+    return Ok(None)
+
+
 def test_the_planned_invocations_alone_decide_the_outcome() -> Result[None, str]:
     """
     The compile-ahead runs in the pool before the settled run, and its status never decides the step.
@@ -439,6 +480,20 @@ def test_concurrent_invocations_have_distinct_compiler_worker_scopes() -> Result
     for item in planned:
         found = item.log.read_text("utf-8", "strict").map_err((error) => error.message())?
         assert found == item.log.0 + "\n"
+    return Ok(None)
+
+
+def test_a_running_invocation_is_probed_for_its_process_tree_at_most_once_a_second() -> Result[None, str]:
+    """
+    Each probe of a running tree starts `ps`, so a running invocation is probed when it starts being watched and then at
+    most once per interval, and always just before it is stopped; a settled one is not probed again.
+    """
+    assert CUSTODY_INTERVAL_MS == 1000
+    assert custody_due(None, 0)
+    assert not custody_due(Some(0), 999)
+    assert custody_due(Some(0), 1000)
+    assert custody_due(Some(4000), 5200)
+    assert not custody_due(Some(4900), 5200)
     return Ok(None)
 
 

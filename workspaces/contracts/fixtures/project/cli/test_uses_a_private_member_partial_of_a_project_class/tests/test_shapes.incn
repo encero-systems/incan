@@ -1,0 +1,7 @@
+"""Tests that call a member partial the project's shared library keeps to its package."""
+
+from shapes import Box
+
+
+def test_a_private_member_partial_is_called_with_its_preset() -> None:
+    assert Box(v=1).capped() == 4

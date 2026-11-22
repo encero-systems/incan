@@ -19,6 +19,7 @@ from pub::incan_platform.store.payloads import (
     pin_payload as platform_pin_payload,
     prepare_payloads as platform_prepare_payloads,
     put_payload as platform_put_payload,
+    put_payloads as platform_put_payloads,
 )
 from pub::incan_platform.store.repair import (
     quarantine_payload as platform_quarantine_payload,
@@ -67,6 +68,11 @@ pub def pin_payload(root: Union[Path, StorePath], digest: str) -> Result[Prepare
 pub def put_payload(root: Union[Path, StorePath], source: Path) -> Result[PreparedPayload, StoreError]:
     """Install one Oven path as a canonical platform payload."""
     return platform_put_payload(store_path(root), store_path(source))
+
+
+pub def put_payloads(root: Union[Path, StorePath], sources: list[Path]) -> Result[list[PreparedPayload], StoreError]:
+    """Install Oven paths as canonical platform payloads behind one drive flush, in order."""
+    return platform_put_payloads(store_path(root), [store_path(source) for source in sources])
 
 
 pub def prepare_payloads(

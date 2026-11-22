@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use super::{
     AliasExport, ClassExport, ConstExport, DslSurface, EnumExport, FunctionExport, LibraryContractMetadata,
     LibraryExports, LibraryManifest, LibraryManifestError, LibraryRustAbi, MadePrivateTypeExport, ModelExport,
-    NewtypeExport, PartialExport, SoftKeywordActivation, SoftKeywordExports, StaticExport, TraitExport,
-    TypeAliasExport, VocabDesugarerArtifact, VocabExports, VocabKeywordRegistration, VocabProviderManifest,
-    legacy_library_contract_metadata,
+    NewtypeExport, PackageInternalExports, PartialExport, SoftKeywordActivation, SoftKeywordExports, StaticExport,
+    TraitExport, TypeAliasExport, VocabDesugarerArtifact, VocabExports, VocabKeywordRegistration,
+    VocabProviderManifest, legacy_library_contract_metadata,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -29,6 +29,8 @@ pub struct RawLibraryManifest {
     pub(super) contract_metadata: LibraryContractMetadata,
     #[serde(default)]
     pub(super) rust_abi: Option<LibraryRustAbi>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) package_internal: Option<PackageInternalExports>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -143,6 +145,7 @@ impl RawLibraryManifest {
             },
             contract_metadata: semantic.contract_metadata.clone(),
             rust_abi: semantic.rust_abi.clone(),
+            package_internal: semantic.package_internal.clone(),
         }
     }
 
@@ -173,6 +176,7 @@ impl RawLibraryManifest {
             },
             contract_metadata: self.contract_metadata,
             rust_abi: self.rust_abi,
+            package_internal: self.package_internal,
         })
     }
 }

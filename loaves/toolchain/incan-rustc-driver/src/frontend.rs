@@ -31,6 +31,7 @@ mod checked_program;
 mod declaration_validation;
 pub(crate) mod decoded_pages;
 mod graph_body_output;
+mod namespace_admission;
 mod namespace_crumb;
 pub(crate) mod namespace_pages;
 
@@ -456,6 +457,17 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
         incan_frontend::checker_records::RecordAdapterFault,
     > {
         self.namespaces.read(&self.root, source)
+    }
+
+    /// Admit an unchanged namespace by the header the request offers beside its frame.
+    fn read_namespace_header(
+        &self,
+        source: &str,
+    ) -> Result<
+        Option<incan_frontend::checker_records::GraphNamespaceAdmission>,
+        incan_frontend::checker_records::RecordAdapterFault,
+    > {
+        self.namespaces.read_header(source)
     }
 
     fn publish_namespace(

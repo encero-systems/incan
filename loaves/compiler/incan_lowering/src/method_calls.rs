@@ -1244,7 +1244,7 @@ fn lower_global_method(
 /// A method partial's call carries its target's identity under the partial's own name; its presets are defaults of the
 /// owner's retained frame for that name and target, whose parameters must be the target body's own. One generic owner
 /// contributes a frame per closed layout; the retained receiver selects this instance. `None` means no such frame.
-fn method_partial_arguments(
+pub(crate) fn method_partial_arguments(
     module: &BodyIrModule,
     builder: &mut Builder,
     target: &MethodTarget,

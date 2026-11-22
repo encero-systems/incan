@@ -126,12 +126,46 @@ fn published(digest: &[u8; 32]) -> Option<Arc<RetainedInterface>> {
     PUBLISHED.lock().ok()?.entries.get(digest).cloned()
 }
 
+/// An admitted interface's bytes inside their authenticated namespace frame, with the identity the compiler's proof
+/// records. The bytes are hashed, and the proof bound to them, only when a checker installs the interface or the worker
+/// keeps it: an edit installs the few interfaces its checked modules import, not every unchanged namespace's.
 #[derive(Debug)]
-struct EncodedInterface {
+pub(super) struct EncodedInterface {
     name: String,
     path: Vec<String>,
     bytes: MappedView,
-    digest: [u8; 32],
+    source: String,
+    proof: Vec<u8>,
+    digest: OnceLock<[u8; 32]>,
+}
+
+impl EncodedInterface {
+    /// The bytes' digest, computed once.
+    fn digest(&self) -> [u8; 32] {
+        *self.digest.get_or_init(|| {
+            #[cfg(test)]
+            count_interface_digest();
+            Sha256::digest(self.bytes.0.as_bytes()).into()
+        })
+    }
+
+    /// The bytes' digest once the compiler's proof is bound to them: the proof's source, schema and identity are the
+    /// ones admission read, and the object it names is these bytes.
+    pub(super) fn verified_digest(&self) -> Result<[u8; 32], String> {
+        let digest = self.digest();
+        if !self.proof.is_empty() {
+            let root = internal_models::read_namespace_proof(
+                &self.proof,
+                &self.source,
+                CheckedNamespaceInterface::SCHEMA,
+                &digest.to_vec(),
+            )?;
+            if root.name != self.name || root.path != self.path {
+                return Err("checked namespace identity disagrees with the admitted root".into());
+            }
+        }
+        Ok(digest)
+    }
 }
 
 impl GraphNamespaceInterface for EncodedInterface {
@@ -141,7 +175,7 @@ impl GraphNamespaceInterface for EncodedInterface {
 
     fn installable(&self) -> Result<Arc<incan_frontend::typechecker::ModuleDependencyInterface>, String> {
         let byte_count = self.bytes.0.as_bytes().len();
-        let checked = restore_digest(byte_count, self.digest, || {
+        let checked = restore_digest(byte_count, self.verified_digest()?, || {
             if byte_count > 64 * 1024 * 1024 {
                 return Err("checked namespace exceeds its byte limit".into());
             }
@@ -155,46 +189,84 @@ impl GraphNamespaceInterface for EncodedInterface {
     }
 }
 
-/// Graph selection supplies the compiler's physical identity proof. Older rows recover the same
-/// identity from the full envelope. Installation independently verifies the declaration's own root.
+/// The digest of an admitted interface's bytes: known when admission had to hash them, otherwise taken from the
+/// interface when the worker keeps it.
+#[derive(Debug)]
+pub(super) enum InterfaceDigest {
+    Known([u8; 32]),
+    Deferred(Arc<EncodedInterface>),
+}
+
+impl InterfaceDigest {
+    /// The digest, with the deferred interface's proof bound to its bytes first.
+    pub(super) fn resolve(&self) -> Result<[u8; 32], String> {
+        match self {
+            Self::Known(digest) => Ok(*digest),
+            Self::Deferred(interface) => interface.verified_digest(),
+        }
+    }
+}
+
+/// Graph selection supplies the compiler's physical identity proof, which names the module the interface belongs to;
+/// the frame holding both was authenticated when it was read. Older rows without a proof recover the identity from
+/// the full envelope. Installation independently verifies the declaration's own root.
 pub(super) fn admit(
     source: &str,
     proof: &[u8],
     bytes: MappedView,
-) -> Result<(Arc<dyn GraphNamespaceInterface>, [u8; 32]), String> {
-    let digest = Sha256::digest(bytes.0.as_bytes()).into();
-    let root = if proof.is_empty() {
-        if let Some(hit) = published(&digest) {
-            return Ok((hit, digest));
-        }
-        internal_models::identify_prepared_namespace_view(
-            namespace_reader()?,
-            &bytes,
-            CheckedNamespaceInterface::SCHEMA,
-        )?
-    } else {
-        internal_models::read_namespace_proof(
-            &proof.to_vec(),
-            &source.to_owned(),
-            CheckedNamespaceInterface::SCHEMA,
-            &digest.to_vec(),
-        )?
-    };
-    if let Some(hit) = published(&digest) {
-        if !hit.belongs_to(&root.name, &root.path) {
-            return Err("retained namespace identity disagrees with the admitted root".into());
-        }
-        return Ok((hit, digest));
-    }
-    Ok((
-        Arc::new(EncodedInterface {
+) -> Result<(Arc<dyn GraphNamespaceInterface>, InterfaceDigest), String> {
+    if !proof.is_empty() {
+        let root = internal_models_native::namespace_proof_identity(proof)?;
+        let interface = Arc::new(EncodedInterface {
             name: root.name,
             path: root.path,
             bytes,
-            digest,
-        }),
-        digest,
-    ))
+            source: source.to_owned(),
+            proof: proof.to_vec(),
+            digest: OnceLock::new(),
+        });
+        return Ok((
+            Arc::clone(&interface) as Arc<dyn GraphNamespaceInterface>,
+            InterfaceDigest::Deferred(interface),
+        ));
+    }
+    #[cfg(test)]
+    count_interface_digest();
+    let digest = Sha256::digest(bytes.0.as_bytes()).into();
+    if let Some(hit) = published(&digest) {
+        return Ok((hit, InterfaceDigest::Known(digest)));
+    }
+    let root = internal_models::identify_prepared_namespace_view(
+        namespace_reader()?,
+        &bytes,
+        CheckedNamespaceInterface::SCHEMA,
+    )?;
+    let interface = EncodedInterface {
+        name: root.name,
+        path: root.path,
+        bytes,
+        source: source.to_owned(),
+        proof: Vec::new(),
+        digest: OnceLock::from(digest),
+    };
+    Ok((Arc::new(interface), InterfaceDigest::Known(digest)))
+}
+
+#[cfg(test)]
+thread_local! {
+    static INTERFACE_DIGESTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Count one digest of an admitted interface's bytes on this thread.
+#[cfg(test)]
+fn count_interface_digest() {
+    INTERFACE_DIGESTS.with(|count| count.set(count.get() + 1));
+}
+
+/// The admitted interfaces this thread has hashed.
+#[cfg(test)]
+fn interface_digests() -> usize {
+    INTERFACE_DIGESTS.with(std::cell::Cell::get)
 }
 
 fn restore_digest(
@@ -375,6 +447,50 @@ mod tests {
         Ok(())
     }
 
+    /// An unchanged namespace is admitted by its frame and its compiler's identity proof without hashing its
+    /// interface: the interface is hashed, and the proof checked against it, only when a checker installs it. An
+    /// interface whose proof names another source, or whose bytes differ from the ones the proof names, is still
+    /// refused there.
+    #[test]
+    fn an_interface_is_hashed_and_its_proof_checked_only_when_installed() -> Result<(), String> {
+        let provider = program(
+            "pub model Line:\n    pub width: int\n\npub def width(line: Line) -> int:\n    return line.width\n",
+        )?;
+        let path = vec!["shapes".to_string()];
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(path.clone()));
+        checker
+            .check_program(&provider)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let interface = CheckedNamespaceInterface::from_checked("shapes", &path, &provider, &checker)?
+            .ok_or("missing provider interface")?;
+        let bytes = interface.to_bytes(&CheckedNamespaceCrumb)?;
+        let (proof, _) = super::remember_published("shapes.incn", &bytes, interface, true)?;
+
+        let before = super::interface_digests();
+        let (admitted, _) = super::admit("shapes.incn", &proof, view(&bytes)?)?;
+        assert!(admitted.belongs_to("shapes", &path));
+        assert_eq!(
+            super::interface_digests(),
+            before,
+            "admission hashed an interface no checker installed"
+        );
+        admitted.installable()?;
+        assert_eq!(super::interface_digests(), before + 1);
+
+        let (renamed, _) = super::admit("renamed.incn", &proof, view(&bytes)?)?;
+        assert!(
+            renamed.installable().is_err(),
+            "a proof for another source was installed"
+        );
+        let (truncated, _) = super::admit("shapes.incn", &proof, view(&bytes[..bytes.len() - 1])?)?;
+        assert!(
+            truncated.installable().is_err(),
+            "bytes the proof does not name were installed"
+        );
+        Ok(())
+    }
+
     /// Downstream uses the restored namespace with an empty provider AST. Only the value the real compiler
     /// published can supply the callable, its model, the field type and the initializer's ownership proof.
     #[test]
@@ -397,8 +513,19 @@ mod tests {
         let (proof, _) = super::remember_published("domain.incn", &bytes, original, true)?;
         let truncated = &bytes[..bytes.len() - 1];
         let (selected, _) = super::admit("domain.incn", &proof, view(&bytes)?)?;
-        assert!(super::admit("renamed.incn", &proof, view(&bytes)?).is_err());
-        assert!(super::admit("domain.incn", &proof, view(truncated)?).is_err());
+        // A proof for another source, or bytes the proof does not name, are refused where the interface is installed.
+        assert!(
+            super::admit("renamed.incn", &proof, view(&bytes)?)?
+                .0
+                .installable()
+                .is_err()
+        );
+        assert!(
+            super::admit("domain.incn", &proof, view(truncated)?)?
+                .0
+                .installable()
+                .is_err()
+        );
         assert!(super::admit("domain.incn", &proof[..proof.len() - 1], view(&bytes)?).is_err());
         let (unproved, _) = super::admit("domain.incn", &[], view(&bytes)?)?;
         assert!(unproved.belongs_to("domain", &path));

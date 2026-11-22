@@ -29,11 +29,18 @@ pub class PreparedBodyRecordSource with RecordSource:
 
     scope: ReadScope
     values: Dict[str, bytes] = {}
+    # The unit's compiler generation record: every receipt this source authenticates also reads it, so a checked
+    # record is reused only under the compiler that wrote it.
+    compiler: Option[RecordKey] = None
 
     @staticmethod
     pub def open(scope: ReadScope) -> PreparedBodyRecordSource:
         """Create an empty source bound to one compiler profile and publication preparation."""
         return PreparedBodyRecordSource(scope=scope)
+
+    pub def bind_compiler(mut self, key: RecordKey) -> None:
+        """Make every later receipt read this staged compiler generation record."""
+        self.compiler = Some(key)
 
     pub def add(mut self, key: str, value: bytes) -> None:
         """Make one exact pending value available to later producers in the same transaction."""
@@ -54,7 +61,7 @@ pub class PreparedBodyRecordSource with RecordSource:
     pub def for_profile(self, profile: str) -> PreparedBodyRecordSource:
         """Bind the same staged values to the next producer profile without weakening its read-scope check."""
         scope = ReadScope(snapshot=self.scope.snapshot, profile=profile)
-        return PreparedBodyRecordSource(scope=scope, values=self.values)
+        return PreparedBodyRecordSource(scope=scope, values=self.values, compiler=self.compiler)
 
     pub def receipt(
         self,
@@ -72,7 +79,11 @@ pub class PreparedBodyRecordSource with RecordSource:
         )
         mut bounded: list[RecordRequest] = []
         mut positions: Dict[str, list[int]] = {}
-        for request in requests:
+        mut with_generation = requests
+        if let Some(generation) = self.compiler:
+            if reads_compiler_generation(output.family):
+                with_generation.append(prepared_product_request(generation))
+        for request in with_generation:
             encoded_key = encode_record_key(request.key)?
             mut item = request
             if request.byte_limit == MAX_CHECKER_ROW_BYTES and checked_row_family(request.key.family) and request.selection == RecordSelection.Field("value"):
@@ -163,6 +174,18 @@ class AdmittedPlanDigests with RecordSource:
 def plan_product(key: RecordKey) -> bool:
     """The plan products whose complete digest can witness an already admitted value."""
     return key.family == "plan-function" or key.family == "plan-module"
+
+
+def reads_compiler_generation(family: str) -> bool:
+    """
+    Every output beside the checked declaration, local and final records and the plan module reads the unit's
+    compiler generation. The first three are the closed checking bases the ranked producer re-evaluates from their
+    own inputs; their owner's Body IR frame reads the generation, so a change of compiler still withdraws the whole
+    owner. A plan module reads exactly its functions' plans, which read the generation themselves.
+    """
+    if family == "declaration" or family == "local" or family == "final":
+        return false
+    return family != "plan-module"
 
 
 pub def prepared_product_request(key: RecordKey) -> RecordRequest:

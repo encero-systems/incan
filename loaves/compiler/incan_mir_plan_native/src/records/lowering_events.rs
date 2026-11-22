@@ -20,6 +20,9 @@ const PLACEMENT: &[u8] = b"admgeo\x00";
 pub const INTERFACE_REPORT: &str = "native-interface.crumb";
 /// The filename for definitions already admitted by lowering.
 pub const ADMITTED_DEFINITIONS: &str = "admitted-definitions.crumb";
+/// The filename naming a native input for every plan function no event or admitted definition names: a helper frame by
+/// the product that carries it, a generated function by its own content. Native incremental reuse reads it.
+pub const NATIVE_DEFINITIONS: &str = "native-definitions.crumb";
 
 /// One field of a record shape.
 const fn field(identity: &'static [u8], name: &'static str, storage: &'static str) -> ShapeField {

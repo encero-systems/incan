@@ -18,13 +18,30 @@ use rustc_span::{Span, Symbol};
 use std::collections::BTreeSet;
 use thin_vec::{ThinVec, thin_vec};
 
+/// The unit operand of a call `incan_lowering::is_unit_keyed_runtime_call` names: this crate's stable id, in place of
+/// the plan's 0.
+///
+/// The runtime keeps one cell table per carrier for the whole process, and every unit (a Loaf, or the program)
+/// numbers its statics from 0, so a cell is keyed by its unit and its slot; rustc gives every crate of one build its
+/// own stable id.
+pub(crate) fn unit_operand<'tcx>(tcx: TyCtxt<'tcx>, span: Span) -> rustc_middle::mir::Operand<'tcx> {
+    let unit = tcx.stable_crate_id(rustc_hir::def_id::LOCAL_CRATE).as_u64();
+    rustc_middle::mir::Operand::const_from_scalar(
+        tcx,
+        tcx.types.u64,
+        rustc_middle::mir::interpret::Scalar::from_u64(unit),
+        span,
+    )
+}
+
 /// Name the guarded accessor for one exact storage slot and selected planned method.
 pub(crate) fn method_name(slot: i64, method: &str) -> String {
     format!("__incan_static_method_{slot}_{method}")
 }
 
-/// Require the selected method's receiver to borrow exactly this cell's carrier, a model or a dictionary, and its
-/// result to outlive the storage guard. The same signature controls adapter declaration and plan validation.
+/// Require the selected method's receiver to borrow exactly this cell's carrier, a model or a dictionary (shared, or
+/// exclusively for an insertion), and its result to outlive the storage guard. The same signature controls adapter
+/// declaration and plan validation.
 pub(crate) fn method_target<'plan>(plan: &'plan Plan, slot: i64, name: &str) -> Result<&'plan Function, PlanError> {
     let cell = cell(plan, slot)?;
     let method = plan
@@ -38,7 +55,7 @@ pub(crate) fn method_target<'plan>(plan: &'plan Plan, slot: i64, name: &str) -> 
     })?;
     let carrier = match &receiver.ty {
         PlanType::ModelRef(owner, name) | PlanType::ModelMutRef(owner, name) => PlanType::Model(*owner, name.clone()),
-        PlanType::DictRef(key, value) => PlanType::Dict(key.clone(), value.clone()),
+        PlanType::DictRef(key, value) | PlanType::DictMutRef(key, value) => PlanType::Dict(key.clone(), value.clone()),
         _ => {
             return Err(PlanError::Invalid {
                 function: method.name.clone(),
@@ -279,7 +296,7 @@ fn guarded_method_item(slot: i64, method: &Function, span: Span) -> Result<Box<a
         .parameters
         .first()
         .ok_or_else(|| PlanError::UnknownCallee(method.name.clone()))?;
-    let mutable = matches!(receiver.ty, PlanType::ModelMutRef(..));
+    let mutable = matches!(receiver.ty, PlanType::ModelMutRef(..) | PlanType::DictMutRef(..));
     let names = method
         .parameters
         .iter()

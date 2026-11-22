@@ -1,0 +1,9 @@
+[project]
+name = "renamed_function_through_two_reexporting_loaves"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+relay = { path = "deps/relay" }

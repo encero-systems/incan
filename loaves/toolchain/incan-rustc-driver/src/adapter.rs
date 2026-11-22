@@ -183,33 +183,17 @@ pub fn compile(
         args.extend(sysroot_linkage(identity));
     }
     args.extend_from_slice(rustc_args);
-    if NATIVE_INCREMENTAL_QUALIFIED && kind == UnitKind::Program && overflow_checks && reader.has_record_inputs() {
-        if let Some(report) = plan_record_report {
-            args.retain(|argument| !argument.starts_with("-Cmetadata=incan-unit-"));
-            let parent = report
-                .parent()
-                .ok_or_else(|| DriverError::Invocation("native plan report has no private unit directory".into()))?;
-            let compiler = incan_semantics_core::semantic_digest::semantic_digest(&identity.toolchain)
-                .map_err(|error| DriverError::Invocation(format!("cannot fingerprint compiler identity: {error}")))?;
-            let incremental = parent.join(format!(
-                ".{crate_name}.{}.rustc-incremental",
-                compiler.trim_start_matches("sha256:")
-            ));
-            std::fs::create_dir_all(&incremental).map_err(|error| {
-                DriverError::Invocation(format!("cannot create private incremental directory: {error}"))
-            })?;
-            let metadata = incan_semantics_core::semantic_digest::semantic_digest(&vec![
-                crate_name.to_owned(),
-                identity.toolchain.clone(),
-                identity.target.clone(),
-            ])
-            .map_err(|error| DriverError::Invocation(format!("cannot fingerprint crate identity: {error}")))?;
-            args.push("-C".into());
-            args.push(format!("metadata={}", metadata.trim_start_matches("sha256:")));
-            args.push("-C".into());
-            args.push(format!("incremental={}", incremental.display()));
+    let private = match plan_record_report {
+        Some(report)
+            if NATIVE_INCREMENTAL_QUALIFIED
+                && kind == UnitKind::Program
+                && overflow_checks
+                && reader.has_record_inputs() =>
+        {
+            native_incremental(&mut args, crate_name, identity, report, &all)?
         }
-    }
+        _ => None,
+    };
     timing.mark("native_arguments");
     let mut callbacks = Callbacks {
         features,
@@ -226,7 +210,9 @@ pub fn compile(
         reader,
     };
     let capture = crate::native_timing::Capture::begin();
+    crate::native_crates::release_extern_crates();
     let result = rustc_driver::catch_fatal_errors(|| rustc_driver::run_compiler(&args, &mut callbacks));
+    crate::native_crates::release_extern_crates();
     capture.finish(callbacks.codegen_started.map(|started| started.elapsed()));
     callbacks.timing.mark("rustc_codegen_link_teardown");
     *PLAN.lock().map_err(|_| DriverError::State)? = None;
@@ -236,11 +222,184 @@ pub fn compile(
 
     // ---- Completed loader witnesses ----
     result.map_err(|_| DriverError::Compilation)?;
+    if let Some(held) = &private {
+        // A development link on Darwin has already stored every unit object by its content.
+        held.publish(
+            output,
+            shared_store.is_some() && identity.target.ends_with("-apple-darwin"),
+        )?;
+    }
     if shared_store.is_some() {
         crate::native_shared::write_witness(output, &callbacks.loaded)?;
     }
     callbacks.timing.mark("loader_witness");
     Ok(())
+}
+
+/// Give a program whose every function has a record input rustc's incremental session in its private unit directory,
+/// under a crate identity and output path that do not change between its builds. The returned private output, when
+/// one could be held, receives rustc's output until the executable is published. The session is named by the crates
+/// the program links (`linked`) as well, see [`incremental_session`].
+fn native_incremental(
+    args: &mut Vec<String>,
+    crate_name: &str,
+    identity: &DriverIdentity,
+    report: &Path,
+    linked: &[(String, PathBuf)],
+) -> Result<Option<PrivateOutput>, DriverError> {
+    args.retain(|argument| !argument.starts_with("-Cmetadata=incan-unit-"));
+    let parent = report
+        .parent()
+        .ok_or_else(|| DriverError::Invocation("native plan report has no private unit directory".into()))?;
+    let compiler = incan_semantics_core::semantic_digest::semantic_digest(&identity.toolchain)
+        .map_err(|error| DriverError::Invocation(format!("cannot fingerprint compiler identity: {error}")))?;
+    let compiler = compiler.trim_start_matches("sha256:");
+    let private = PrivateOutput::acquire(parent, crate_name, compiler)?;
+    let incremental = incremental_session(parent, crate_name, compiler, linked, private.is_some())?;
+    let metadata = incan_semantics_core::semantic_digest::semantic_digest(&vec![
+        crate_name.to_owned(),
+        identity.toolchain.clone(),
+        identity.target.clone(),
+    ])
+    .map_err(|error| DriverError::Invocation(format!("cannot fingerprint crate identity: {error}")))?;
+    args.push("-C".into());
+    args.push(format!("metadata={}", metadata.trim_start_matches("sha256:")));
+    args.push("-C".into());
+    args.push(format!("incremental={}", incremental.display()));
+    if let Some(held) = &private {
+        held.redirect(args);
+    }
+    Ok(private)
+}
+
+/// The incremental session directory of a program: named by its crate, its compiler and the crates it links, each by
+/// its name, physical path and file generation.
+///
+/// rustc cannot load a session that names a crate whose identity changed since: a Rust facet built under another
+/// `-C metadata` (as when `INCAN_RUST_INCREMENTAL` changes) or an edited Incan library has another `StableCrateId`, and
+/// marking the earlier session's nodes green stops rustc ("uninterned StableCrateId"). A changed linked crate
+/// therefore starts a new session. A compilation that holds the program's private output removes the sessions named
+/// for other crates, except one a compilation is still working in.
+fn incremental_session(
+    parent: &Path,
+    crate_name: &str,
+    compiler: &str,
+    linked: &[(String, PathBuf)],
+    held: bool,
+) -> Result<PathBuf, DriverError> {
+    let mut crates = linked
+        .iter()
+        .map(|(name, path)| {
+            let physical = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+            let generation = crate::native_search::file_identity(&physical).unwrap_or_default();
+            format!("{name}\t{}\t{generation}", physical.display())
+        })
+        .collect::<Vec<_>>();
+    crates.sort();
+    let digest = incan_semantics_core::semantic_digest::semantic_digest(&crates)
+        .map_err(|error| DriverError::Invocation(format!("cannot fingerprint linked crates: {error}")))?;
+    let prefix = format!(".{crate_name}.{compiler}.");
+    let name = format!(
+        "{prefix}{}.rustc-incremental",
+        &digest.trim_start_matches("sha256:")[..16]
+    );
+    if held {
+        for entry in std::fs::read_dir(parent).into_iter().flatten().flatten() {
+            let other = entry.file_name().to_string_lossy().into_owned();
+            let earlier = other != name && other.starts_with(&prefix) && other.ends_with(".rustc-incremental");
+            if earlier && !working(&entry.path()) {
+                let _ = std::fs::remove_dir_all(entry.path());
+            }
+        }
+    }
+    let session = parent.join(name);
+    std::fs::create_dir_all(&session)
+        .map_err(|error| DriverError::Invocation(format!("cannot create private incremental directory: {error}")))?;
+    Ok(session)
+}
+
+/// Whether a compilation is working in an incremental session directory: rustc keeps each crate's sessions in a
+/// directory of their own and names the one it works in `s-...-working` until it finishes.
+fn working(session: &Path) -> bool {
+    std::fs::read_dir(session)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|crate_sessions| {
+            std::fs::read_dir(crate_sessions.path())
+                .into_iter()
+                .flatten()
+                .flatten()
+                .any(|entry| entry.file_name().to_string_lossy().ends_with("-working"))
+        })
+}
+
+/// The private output of a program compiled with native incremental reuse, named by its crate and compiler alone.
+/// rustc's output filenames are an input of every codegen unit, so compiling to the build's own staging path would
+/// make every unit's code stale on every edit; the executable is published to the requested output afterwards. The
+/// lock keeps a concurrent compilation of the same crate on its own requested output.
+struct PrivateOutput {
+    path: PathBuf,
+    _lock: std::fs::File,
+}
+
+impl PrivateOutput {
+    /// Hold the private output beside the unit's incremental directory, or none while another compilation holds it.
+    fn acquire(parent: &Path, crate_name: &str, compiler: &str) -> Result<Option<Self>, DriverError> {
+        let failed =
+            |error: std::io::Error| DriverError::Invocation(format!("cannot hold private native output: {error}"));
+        let directory = parent.join(format!(".{crate_name}.{compiler}.rustc-output"));
+        std::fs::create_dir_all(&directory).map_err(failed)?;
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(directory.join(".lock"))
+            .map_err(failed)?;
+        match lock.try_lock() {
+            Ok(()) => Ok(Some(Self {
+                path: directory.join(crate_name),
+                _lock: lock,
+            })),
+            Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+            Err(std::fs::TryLockError::Error(error)) => Err(failed(error)),
+        }
+    }
+
+    /// Point rustc's output argument at the private output.
+    fn redirect(&self, args: &mut [String]) {
+        if let Some(position) = args.iter().position(|argument| argument == "-o")
+            && let Some(slot) = args.get_mut(position + 1)
+        {
+            *slot = self.path.to_string_lossy().into_owned();
+        }
+    }
+
+    /// Move the executable to the requested output, copying it across volumes. When the development link has stored
+    /// every unit object by its content, the objects are removed: each is a hard link to a work product the
+    /// incremental session keeps, which the next build's codegen would otherwise write over in place.
+    fn publish(&self, output: &Path, objects_stored: bool) -> Result<(), DriverError> {
+        let failed =
+            |error: std::io::Error| DriverError::Invocation(format!("cannot publish private native output: {error}"));
+        match std::fs::rename(&self.path, output) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::CrossesDevices => {
+                std::fs::copy(&self.path, output).map_err(failed)?;
+                std::fs::remove_file(&self.path).map_err(failed)?;
+            }
+            Err(error) => return Err(failed(error)),
+        }
+        let Some(directory) = self.path.parent().filter(|_| objects_stored) else {
+            return Ok(());
+        };
+        for entry in std::fs::read_dir(directory).map_err(failed)? {
+            let path = entry.map_err(failed)?.path();
+            if path.extension().is_some_and(|extension| extension == "o") {
+                std::fs::remove_file(&path).map_err(failed)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Force one malformed-plan failure for the end-to-end refusal-retention contract, consuming the named sentinel.
@@ -409,7 +568,76 @@ fn absolute_rpaths(linked: &[(String, PathBuf)], identity: &DriverIdentity, darw
 
 #[cfg(test)]
 mod tests {
-    use super::{UnitKind, debuginfo, optimization_level};
+    use super::{PrivateOutput, UnitKind, debuginfo, incremental_session, optimization_level};
+    use std::path::Path;
+
+    /// Two builds of one program compile to the same private output whatever output each was asked for, so rustc's
+    /// output filenames, an input of every codegen unit, are the same between edits; one compilation holds it at a
+    /// time.
+    #[test]
+    fn a_program_with_native_reuse_compiles_to_one_private_output() -> Result<(), Box<dyn std::error::Error>> {
+        let units = tempfile::tempdir()?;
+        let arguments = |requested: &str| {
+            vec![
+                "incan-rustc-driver".to_owned(),
+                "-o".to_owned(),
+                requested.to_owned(),
+                "lib.incn".to_owned(),
+            ]
+        };
+        let (mut first, mut second) = (arguments("/staging/one/oven"), arguments("/staging/two/oven"));
+        let held = PrivateOutput::acquire(units.path(), "oven", "abc")?.ok_or("the private output is free")?;
+        held.redirect(&mut first);
+        assert!(PrivateOutput::acquire(units.path(), "oven", "abc")?.is_none());
+        drop(held);
+        let again = PrivateOutput::acquire(units.path(), "oven", "abc")?.ok_or("the private output is free again")?;
+        again.redirect(&mut second);
+        assert_eq!(first, second);
+        assert!(Path::new(&first[2]).starts_with(units.path()));
+        Ok(())
+    }
+
+    /// The executable reaches the requested output, and the unit objects the development link already stored by
+    /// content do not stay behind to be written again in place by the next build.
+    #[test]
+    fn a_private_output_publishes_its_executable_and_keeps_no_stored_objects() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (units, staging) = (tempfile::tempdir()?, tempfile::tempdir()?);
+        let held = PrivateOutput::acquire(units.path(), "oven", "abc")?.ok_or("the private output is free")?;
+        let mut arguments = vec!["-o".to_owned(), String::new()];
+        held.redirect(&mut arguments);
+        let executable = Path::new(&arguments[1]).to_path_buf();
+        std::fs::write(&executable, b"executable")?;
+        let object = executable.with_file_name("oven.unit.rcgu.o");
+        std::fs::write(&object, b"object")?;
+        let requested = staging.path().join("oven");
+        held.publish(&requested, true)?;
+        assert_eq!(std::fs::read(&requested)?, b"executable");
+        assert!(!executable.exists());
+        assert!(!object.exists());
+        Ok(())
+    }
+
+    /// A program's incremental session is named by the crates it links as well as by its crate and compiler: the same
+    /// linked crates name the same session; a linked crate that changed, such as a Rust facet built under another
+    /// `-C metadata`, names a new one, since rustc stops on a session naming a crate whose identity changed; and the
+    /// session named for the earlier crates is removed.
+    #[test]
+    fn a_program_s_incremental_session_is_named_by_the_crates_it_links() -> Result<(), Box<dyn std::error::Error>> {
+        let (units, crates) = (tempfile::tempdir()?, tempfile::tempdir()?);
+        let library = crates.path().join("libfacet.rlib");
+        std::fs::write(&library, b"facet built under one metadata")?;
+        let linked = vec![("facet".to_owned(), library.clone())];
+        let first = incremental_session(units.path(), "oven", "abc", &linked, true)?;
+        assert!(first.is_dir());
+        assert_eq!(incremental_session(units.path(), "oven", "abc", &linked, true)?, first);
+        std::fs::write(&library, b"facet built under another metadata")?;
+        let second = incremental_session(units.path(), "oven", "abc", &linked, true)?;
+        assert_ne!(second, first, "a changed linked crate kept the earlier session");
+        assert!(second.is_dir());
+        assert!(!first.exists(), "the session named for the earlier crates was kept");
+        Ok(())
+    }
 
     /// Release executables omit debug metadata while development executables and libraries retain it.
     #[test]

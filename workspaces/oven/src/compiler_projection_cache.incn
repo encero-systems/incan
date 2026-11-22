@@ -69,6 +69,19 @@ pub def cached_editable_dependency_signature_record(
     return Ok(signature_record(compiled_owner_source(projections[key], module, name, identity)?))
 
 
+pub def cached_editable_dependency_span_record(
+    projections: Borrowed[Dict[str, SourceProjection]],
+    package: str,
+    module: str,
+    name: str,
+    identity: str,
+) -> Result[SourceProjectionRecord, str]:
+    """Select an editable dependency declaration's span, its absolute offset and byte length, from the same cache."""
+    key = editable_dependency_projection_key(package, module)
+    owner = compiled_owner_source(projections[key], module, name, identity)?
+    return Ok(projections[key].spans[owner.key.facet])
+
+
 def editable_dependency_projection(root: str, package: str, module: str) -> Result[SourceProjection, str]:
     """Project one selected editable dependency module once for the complete body publication."""
     base = Path(root).joinpath(module)

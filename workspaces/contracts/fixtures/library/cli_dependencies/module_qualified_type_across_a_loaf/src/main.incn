@@ -1,0 +1,18 @@
+# behavior: a type reached through a nested module binding of a path-dependency Loaf keeps its fields and methods when another module of that Loaf declares the same name
+# expect-stdout:
+#   imported
+#   thing imported
+#   nested
+#   nested nested
+
+from pub::caselib.helper import Thing
+import pub::caselib.pkg as pkg
+
+
+def main() -> None:
+    imported = Thing(name="imported")
+    println(imported.name)
+    println(imported.label())
+    nested: pkg.sub.Thing = pkg.sub.Thing(name="nested")
+    println(nested.name)
+    println(nested.label())

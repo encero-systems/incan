@@ -50,18 +50,28 @@ impl PlanReader {
         let Some(report) = report else {
             return Ok(reader);
         };
-        let bytes = match std::fs::read(report.join(incan_mir_plan_native::native_interface_filename())) {
-            Ok(bytes) => bytes,
-            // A build without record input stays an ordinary compilation, ineligible for native incremental reuse.
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(reader),
+        match std::fs::read(report.join(incan_mir_plan_native::native_interface_filename())) {
+            Ok(bytes) => {
+                let interface = incan_mir_plan_native::decode_native_interface(&bytes)
+                    .map_err(|error| format!("cannot decode native-interface record: {error}"))?;
+                if interface.plan.is_empty() {
+                    return Err("native-interface record has no encoded plan".into());
+                }
+                reader.function_inputs = Self::read_function_inputs(report, &reader.plan)?;
+            }
+            // Without the whole-unit interface, the report's events and definitions must name every active function;
+            // otherwise the unit stays an ordinary compilation, ineligible for native incremental reuse.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                match Self::read_function_inputs(report, &reader.plan) {
+                    Ok(inputs) => reader.function_inputs = inputs,
+                    Err(reason) => {
+                        tracing::debug!(target: "incan::invocation", %reason, "native incremental reuse unavailable");
+                        return Ok(reader);
+                    }
+                }
+            }
             Err(error) => return Err(format!("cannot read native-interface record: {error}")),
-        };
-        let interface = incan_mir_plan_native::decode_native_interface(&bytes)
-            .map_err(|error| format!("cannot decode native-interface record: {error}"))?;
-        if interface.plan.is_empty() {
-            return Err("native-interface record has no encoded plan".into());
         }
-        reader.function_inputs = Self::read_function_inputs(report, &reader.plan)?;
         reader.alias_inputs = Self::layout_inputs(&reader.plan)?;
         Ok(reader)
     }
@@ -149,7 +159,18 @@ impl PlanReader {
                 return Err(format!("native plan report repeats function {}", event.function));
             }
         }
-        Self::read_admitted_definitions(report, plan, &mut inputs)?;
+        Self::read_admitted_definitions(
+            report,
+            plan,
+            incan_mir_plan_native::admitted_definitions_filename(),
+            &mut inputs,
+        )?;
+        Self::read_admitted_definitions(
+            report,
+            plan,
+            incan_mir_plan_native::NATIVE_DEFINITIONS.to_owned(),
+            &mut inputs,
+        )?;
         if inputs.len() != plan.functions.len() || plan.functions.iter().any(|value| !inputs.contains_key(&value.name))
         {
             return Err("native plan report does not cover every active function".into());
@@ -157,14 +178,16 @@ impl PlanReader {
         Ok(inputs)
     }
 
-    /// Add the definitions of functions restored from admitted module plan records, which reported no event. A
-    /// function that also reported an event keeps the input its event authenticated.
+    /// Add the definitions a report lists in `filename` for functions that reported no event: those restored from
+    /// admitted module plan records, and the native definitions of helper frames and generated functions. A function
+    /// that also reported an event keeps the input its event authenticated.
     fn read_admitted_definitions(
         report: &Path,
         plan: &Plan,
+        filename: String,
         inputs: &mut HashMap<String, DefinitionInput>,
     ) -> Result<(), String> {
-        let path = report.join(incan_mir_plan_native::admitted_definitions_filename());
+        let path = report.join(filename);
         if !path.is_file() {
             return Ok(());
         }
@@ -303,5 +326,62 @@ impl std::ops::Deref for PlanReader {
 
     fn deref(&self) -> &Plan {
         &self.plan
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PlanReader;
+    use crate::plan::{Function, Plan, PlanType};
+    use incan_mir_plan_native::{AdmittedDefinition, NATIVE_DEFINITIONS, encode_admitted_definitions, source_span};
+    use std::sync::Arc;
+
+    fn plan(names: &[&str]) -> Plan {
+        let span = source_span("reader.incn", 1, 1);
+        let functions = names
+            .iter()
+            .map(|name| {
+                Function::new(
+                    (*name).into(),
+                    Vec::new(),
+                    PlanType::Unit,
+                    Vec::new(),
+                    Vec::new(),
+                    span.clone(),
+                )
+            })
+            .collect();
+        Plan::new(Vec::new(), Vec::new(), functions, Vec::new(), span)
+    }
+
+    fn definitions(names: &[&str]) -> Result<Vec<u8>, String> {
+        let listed: Vec<AdmittedDefinition> = names
+            .iter()
+            .map(|name| AdmittedDefinition {
+                function: (*name).into(),
+                identity: (*name).into(),
+                key: "content".into(),
+                digest: format!("sha256:{name}"),
+            })
+            .collect();
+        encode_admitted_definitions(&listed)
+    }
+
+    /// A unit without a native-interface record still gives every function its record input when the report's native
+    /// definitions name them all, so native incremental reuse can track each definition; a report naming only some
+    /// keeps the unit an ordinary compilation.
+    #[test]
+    fn native_definitions_give_every_function_an_input_without_an_interface() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let report = tempfile::tempdir()?;
+        let names = ["main", "__incan_closure_main_0"];
+        std::fs::write(report.path().join(NATIVE_DEFINITIONS), definitions(&names)?)?;
+        let reader = PlanReader::new(Arc::new(plan(&names)), Some(report.path()))?;
+        assert!(reader.has_record_inputs());
+        assert!(names.iter().all(|name| reader.function_input(name).is_some()));
+        std::fs::write(report.path().join(NATIVE_DEFINITIONS), definitions(&names[..1])?)?;
+        let partial = PlanReader::new(Arc::new(plan(&names)), Some(report.path()))?;
+        assert!(!partial.has_record_inputs());
+        Ok(())
     }
 }

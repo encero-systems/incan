@@ -274,16 +274,14 @@ pub fn decode_product_parts(encoded: &[u8], references: &[NominalReference]) -> 
     Ok((function, runtime, frames, stored.nominals))
 }
 
-/// Encode a unit's resolved runtime inventory, loss-checked; its positions index the unit's own tables.
+/// Encode a unit's resolved runtime inventory, loss-checked; its positions index the unit's own tables. A function of
+/// a crate the unit links keeps the path that crate exports it at, as in a product; the interface carrying the
+/// inventory restores only in a unit that links the crate (`restore_record_plan`).
 pub fn encode_runtime(runtime: &[ExternalFunction]) -> Result<Vec<Vec<u8>>, String> {
     let mut remap = preserving_remap();
     let mut encoded = Vec::with_capacity(runtime.len());
     for value in runtime {
         let stored = store_external(value, &mut remap)?;
-        // A unit's inventory travels in its native interface without the product's linked-crate restore check.
-        if linked_crate(&stored.path).is_some() {
-            return Err(UNBOUND_EXTERNAL.to_owned());
-        }
         encoded.push(write_wire(
             EXTERNAL_ROOT,
             &STORED_EXTERNAL_SCHEMA,
@@ -298,11 +296,25 @@ pub fn encode_runtime(runtime: &[ExternalFunction]) -> Result<Vec<Vec<u8>>, Stri
 
 /// Restore a unit's resolved runtime inventory in its recorded order.
 pub fn decode_runtime(encoded: &[Vec<u8>]) -> Result<Vec<ExternalFunction>, String> {
+    decode_noted_runtime(encoded).map(|(runtime, _)| runtime)
+}
+
+/// Restore a unit's runtime inventory, with the linked crates its functions name.
+pub(crate) fn decode_noted_runtime(encoded: &[Vec<u8>]) -> Result<(Vec<ExternalFunction>, Vec<String>), String> {
     let mut remap = preserving_remap();
-    encoded
+    let runtime = encoded
         .iter()
         .map(|text| restore_external(&decode_external_record(text)?, &mut remap))
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((runtime, remap.crates))
+}
+
+/// Restore an interface product's function and runtime demand, with the linked crates they name.
+pub(crate) fn decode_noted_product(
+    text: &[u8],
+    references: &[NominalReference],
+) -> Result<(Function, Vec<ExternalFunction>, Vec<String>), String> {
+    restore_noted_product(&decode_product_record(text)?, references)
 }
 
 /// Retain one complete function that names no model or enum; the enclosing product retains its requirements.
@@ -668,12 +680,19 @@ pub fn native_crate(path: &str) -> Option<&str> {
     (valid && !item.is_empty()).then_some(name)
 }
 
-/// The crate a stored binding identity names when it is a crate the unit links, rather than Rust's own crates, the
-/// runtime, the standard library or an emitted package; `None` for every other identity.
+/// Rust's primitive types, whose inherent methods a native path names by the type alone (`f64::powf`, `i64::pow`).
+const PRIMITIVE_TYPES: [&str; 19] = [
+    "bool", "char", "str", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
+    "f16", "f32", "f64", "f128",
+];
+
+/// The crate a stored binding identity names when it is a crate the unit links, rather than Rust's own crates and
+/// primitive types, the runtime, the standard library or an emitted package; `None` for every other identity.
 fn linked_crate(identity: &str) -> Option<&str> {
     let path = identity.strip_prefix(RUST_BINDING)?;
     let name = native_crate(path)?;
-    (path != JSON_HOST_FUNCTION && !["std", "core", "alloc"].contains(&name)).then_some(name)
+    let own = ["std", "core", "alloc"].contains(&name) || PRIMITIVE_TYPES.contains(&name);
+    (path != JSON_HOST_FUNCTION && !own).then_some(name)
 }
 
 /// Recover the package's native item from the compiler's complete canonical symbol projection.

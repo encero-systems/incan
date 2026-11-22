@@ -117,11 +117,41 @@ pub(super) fn generation(_metadata: &Metadata) -> Option<Generation> {
     None
 }
 
+#[cfg(test)]
+thread_local! {
+    static TEST_HOME: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
+/// A focused test's private home for the optional identity, facts and inventory records, for its own thread, until
+/// the returned guard drops; the process environment stays untouched.
+#[cfg(test)]
+pub(super) fn select_test_home(home: &std::path::Path) -> TestHome {
+    TEST_HOME.with(|selected| *selected.borrow_mut() = Some(home.to_path_buf()));
+    TestHome
+}
+
+/// One test's selected home; dropping it leaves the thread with the ordinary home selection.
+#[cfg(test)]
+pub(super) struct TestHome;
+
+#[cfg(test)]
+impl Drop for TestHome {
+    fn drop(&mut self) {
+        TEST_HOME.with(|selected| *selected.borrow_mut() = None);
+    }
+}
+
 /// Use an explicit absolute home, or an installed executable's toolchain home; never write into a build directory.
 pub(super) fn cache_path(key: &str) -> Option<PathBuf> {
-    let explicit = std::env::var_os("INCAN_HOME")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute());
+    #[cfg(test)]
+    let explicit = TEST_HOME.with(|selected| selected.borrow().clone());
+    #[cfg(not(test))]
+    let explicit = None;
+    let explicit = explicit.or_else(|| {
+        std::env::var_os("INCAN_HOME")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+    });
     let root = explicit.or_else(|| {
         let executable = std::env::current_exe().ok()?;
         let bin = executable.parent()?;

@@ -1,7 +1,9 @@
 """Native source-security intake contracts."""
 
+from rust::std::thread import sleep
+from rust::std::time import Duration
 from scratch import scratch_directory
-from source_security import validate_native_project
+from source_security import source_reads_of, validate_native_project
 
 
 pub def test_native_source_security_refuses_controls_before_rust_or_c_compilation() -> Result[None, str]:
@@ -47,4 +49,24 @@ pub def test_native_source_security_accepts_visible_escapes_and_skips_outputs() 
         (error) => error.message(),
     )?
     validate_native_project(root.0)?
+    return Ok(None)
+
+
+pub def test_a_settled_clean_source_is_scanned_once_per_process() -> Result[None, str]:
+    """A resident engine scans an unchanged, settled native source once; a source that changed is scanned again."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    root.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    source = root.joinpath("src").joinpath("lib.rs")
+    source.write_text("pub fn clean() {}\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    # A scan is remembered only for metadata older than the settle window.
+    sleep(Duration.from_secs(3))
+    validate_native_project(root.0)?
+    validate_native_project(root.0)?
+    assert source_reads_of(source.0) == 1, f"a settled clean source was read {source_reads_of(source.0)} times"
+    source.write_bytes(b"pub \xe2\x80\xae").map_err((error) => error.message())?
+    match validate_native_project(root.0):
+        Ok(_) => return Err("a changed source was admitted without a scan")
+        Err(error) => assert "lib.rs:1:5" in error, error
+    assert source_reads_of(source.0) == 2
     return Ok(None)

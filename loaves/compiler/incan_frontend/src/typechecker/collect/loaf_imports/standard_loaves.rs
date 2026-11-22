@@ -1,6 +1,8 @@
 //! Standard Loaf traits, registry types, binding roots and standard Loaf imports.
 
 use super::*;
+use crate::api_metadata::resolve_api_alias_target;
+
 impl TypeChecker {
     /// Materialize one otherwise-unbound value exported by the source-defined standard prelude.
     ///
@@ -105,6 +107,75 @@ impl TypeChecker {
             .iter()
             .find(|module| module.module_path == rest)
             .map(|module| module.derivable_traits.clone())
+    }
+
+    /// Whether the `@derive(...)` argument `derive` names a Loaf module that lists derivable traits.
+    pub(in crate::typechecker) fn is_loaf_derive_module(&self, derive: &str) -> bool {
+        self.module_path_for_imported_name(derive)
+            .and_then(|module| self.loaf_module_derivable_traits(&module))
+            .is_some_and(|traits| !traits.is_empty())
+    }
+
+    /// The module and name, as this program spells them, of the trait one entry of a module's `__derives__` names.
+    ///
+    /// A Loaf module lists its derivable traits by its own spellings, which resolve in its checked declarations: an
+    /// import or alias of the module, public or private, is followed to its target through the Loaf's modules until it
+    /// reaches a declaration of the Loaf, or leaves the Loaf and is spelled by its absolute path. Another module's
+    /// entry, and a trait the module declares itself, is returned as written.
+    pub(in crate::typechecker) fn derivable_trait_target(
+        &self,
+        module_path: &[String],
+        name: &str,
+    ) -> (Vec<String>, String) {
+        let written = (module_path.to_vec(), name.to_owned());
+        let Some((library, mut module)) = self.loaf_module(module_path) else {
+            return written;
+        };
+        let Some(api) = self
+            .loaves
+            .manifest(&library)
+            .and_then(|manifest| manifest.contract_metadata.api.as_ref())
+        else {
+            return written;
+        };
+        let consumer_root = &module_path[..module_path.len() - module.len()];
+        let mut name = name.to_owned();
+        let mut visited = HashSet::new();
+        while visited.insert((module.clone(), name.clone())) {
+            let Some(ApiDeclaration::Alias(alias)) = api
+                .modules
+                .iter()
+                .find(|declared| declared.module_path == module)
+                .and_then(|declared| {
+                    declared
+                        .declarations
+                        .iter()
+                        .filter(|declaration| declaration.name() == name)
+                        .min_by_key(|declaration| matches!(declaration, ApiDeclaration::Alias(_)))
+                })
+            else {
+                break;
+            };
+            let target = resolve_api_alias_target(&module, &alias.target_path);
+            let binding_root = self
+                .loaves
+                .entry(&library)
+                .filter(|entry| entry.owns(&target))
+                .map(|entry| entry.binding_root());
+            let own = binding_root
+                .as_ref()
+                .and_then(|root| target.strip_prefix(root.as_slice()));
+            let Some((target_name, target_module)) = own.unwrap_or(&target).split_last() else {
+                break;
+            };
+            if own.is_none() && !api.modules.iter().any(|declared| declared.module_path == target_module) {
+                // The alias leaves the Loaf, so its target is spelled by its absolute path.
+                return (target_module.to_vec(), target_name.clone());
+            }
+            module = target_module.to_vec();
+            name = target_name.clone();
+        }
+        (consumer_root.iter().cloned().chain(module).collect(), name)
     }
 
     /// Record the standard `Registry` declarations when this module defines, imports or enters a registry, so lowering

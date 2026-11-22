@@ -80,6 +80,48 @@ pub(crate) fn attribute_item(
     )
 }
 
+/// One `#[doc = "text"]` attribute with the tokens a procedural macro invocation reads. An attribute macro on the same
+/// item collects the tokens of each of the item's attributes to pass them through, so an attribute without them would
+/// stop its expansion.
+pub(crate) fn doc_attribute(generator: &ast::attr::AttrIdGenerator, text: &str, span: Span) -> ast::Attribute {
+    let value = Lit::new(
+        LitKind::Str,
+        ast::util::literal::escape_string_symbol(Symbol::intern(text)),
+        None,
+    );
+    let tokens = LazyAttrTokenStream::new_direct(AttrTokenStream::new(vec![
+        AttrTokenTree::Token(Token::new(TokenKind::Pound, span), Spacing::JointHidden),
+        group_tokens(
+            Delimiter::Bracket,
+            AttrTokenStream::new(vec![
+                name_token("doc", span),
+                punctuation(TokenKind::Eq, span),
+                AttrTokenTree::Token(Token::new(TokenKind::Literal(value), span), Spacing::Alone),
+            ]),
+            span,
+        ),
+    ]));
+    let expr = Box::new(ast::Expr {
+        id: ast::DUMMY_NODE_ID,
+        kind: ast::ExprKind::Lit(value),
+        span,
+        attrs: ast::AttrVec::new(),
+        tokens: None,
+    });
+    ast::attr::mk_attr_from_item(
+        generator,
+        ast::AttrItem {
+            unsafety: ast::Safety::Default,
+            path: ast::Path::from_ident(ident("doc", span)),
+            args: ast::AttrItemKind::Unparsed(ast::AttrArgs::Eq { eq_span: span, expr }),
+            tokens: None,
+        },
+        Some(tokens),
+        ast::AttrStyle::Outer,
+        span,
+    )
+}
+
 /// The comma-separated arguments of one attribute, keyword arguments written `name = value`.
 fn argument_tokens(arguments: &[AttributeArgument], span: Span) -> Vec<AttrTokenTree> {
     let mut tokens = Vec::new();
@@ -221,4 +263,44 @@ fn literal(kind: LitKind, text: &str, span: Span) -> AttrTokenTree {
         Token::new(TokenKind::Literal(Lit::new(kind, Symbol::intern(text), None)), span),
         Spacing::Alone,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::doc_attribute;
+    use rustc_ast::token::{Delimiter, LitKind, TokenKind};
+    use rustc_ast::tokenstream::TokenTree;
+
+    /// An attribute macro reads every attribute of the item it decorates through the attribute's tokens, so the doc
+    /// attribute carrying a definition's tracked input has the tokens of `#[doc = "..."]` as well as its value.
+    #[test]
+    fn a_doc_attribute_carries_the_tokens_an_attribute_macro_reads() {
+        rustc_span::create_default_session_globals_then(|| {
+            let generator = rustc_ast::attr::AttrIdGenerator::new();
+            let text = "incan-native-input:0a1b \"quoted\"";
+            let attribute = doc_attribute(&generator, text, rustc_span::DUMMY_SP);
+            assert_eq!(
+                attribute.value_str().map(|value| value.to_string()),
+                Some(text.to_owned())
+            );
+            let trees = attribute.token_trees();
+            assert_eq!(trees.len(), 2, "{trees:?}");
+            assert!(matches!(&trees[0], TokenTree::Token(token, _) if token.kind == TokenKind::Pound));
+            let TokenTree::Delimited(_, _, Delimiter::Bracket, inside) = &trees[1] else {
+                panic!("the attribute's body is not bracketed: {trees:?}");
+            };
+            let inside: Vec<&TokenTree> = inside.iter().collect();
+            assert_eq!(inside.len(), 3, "{inside:?}");
+            assert!(matches!(inside[0], TokenTree::Token(token, _) if token.is_ident_named(rustc_span::sym::doc)));
+            assert!(matches!(inside[1], TokenTree::Token(token, _) if token.kind == TokenKind::Eq));
+            let TokenTree::Token(token, _) = inside[2] else {
+                panic!("the attribute's value is not one literal: {inside:?}");
+            };
+            let TokenKind::Literal(literal) = token.kind else {
+                panic!("the attribute's value is not a literal: {token:?}");
+            };
+            assert_eq!(literal.kind, LitKind::Str);
+            assert_eq!(literal.symbol.as_str(), "incan-native-input:0a1b \\\"quoted\\\"");
+        });
+    }
 }

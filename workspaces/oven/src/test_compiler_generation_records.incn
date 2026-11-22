@@ -1,0 +1,88 @@
+"""
+Checked records are reused only under the compiler generation that wrote them. Every checked record reads its unit's
+compiler generation, so after a toolchain update over the same Bakery the first request checks the unit afresh and
+the next one reuses what the new compiler wrote.
+"""
+
+from pub::incan_platform.store import begin
+from pub::incan_platform.store import snapshot as store_snapshot
+from pub::incan_platform.store.memory import root as memory_root
+from pub::internal_models import CompiledBodyOutputs, CompiledBodyValue, encode_compiled_body_rows
+from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily
+from std.fs import Path
+from checker_record_fixtures import empty_checker_record
+from compiler_body_publication import prepare_captured_source_inputs, publish_compiled_bodies
+from compiler_body_values import body_owners_reading
+from compiler_source_projection import compiler_generation_record
+from engine_capture import CapturedInput, InputRole
+from observation import file_digest, file_metadata
+from publication import publish_binary
+from scratch import scratch_directory
+from unit import UnitDescription
+
+
+pub def test_a_checked_record_is_withdrawn_once_under_another_compiler() -> Result[None, str]:
+    """
+    A capture under another compiler reports the unit's compiler generation changed, which withdraws every owner the
+    old compiler checked; a capture under the compiler that wrote them withdraws none.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("project")
+    source = root.joinpath("src").joinpath("main.incn")
+    source.parent().mkdir(true, true).map_err((error) => error.message())?
+    source.write_text("def main() -> int:\n    return 1\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    unit = UnitDescription(
+        source=source.0, project_root=root.0, source_root=source.parent().0, package="app", version="0.1.0",
+        profile="debug", declared_features=[], active_features=[], loaves=[], rust_crates=[], contract_models=[],
+        c_headers=[],
+    )
+    identity = "app|module:main|main|function|module|0|() -> int"
+    output = scratch.path().joinpath("compiled-body-output")
+    write_output(
+        output,
+        CompiledBodyOutputs(
+            namespaces=[],
+            values=[
+                CompiledBodyValue(
+                    module="src/main.incn",
+                    name="main",
+                    identity=identity,
+                    declaration=empty_checker_record(identity, CheckedFamily.Declaration)?,
+                    local=empty_checker_record(identity, CheckedFamily.Local)?,
+                    final=empty_checker_record(identity, CheckedFamily.Final)?,
+                    body_ir=b"owner-frame",
+                    dependency_reads=[],
+                ),
+            ],
+            fallbacks=[],
+        ),
+    )?
+    empty = store_snapshot(memory_root()).map_err((error) => error.message())?
+    published = publish_compiled_bodies(empty, unit, output, "compiler-a")?
+    generation = compiler_generation_record("app", "compiler-a").key
+    inputs = captured(source)?
+    updated = prepare_captured_source_inputs(published.snapshot, begin(published.snapshot), unit, inputs, "compiler-b")?
+    assert generation in updated.keys, "another compiler's capture reported no compiler change"
+    assert body_owners_reading(published.snapshot, updated.keys, CHECKER_PROFILE)? == [identity]
+    same = prepare_captured_source_inputs(published.snapshot, begin(published.snapshot), unit, inputs, "compiler-a")?
+    assert generation not in same.keys, "the writing compiler's capture reported a compiler change"
+    assert body_owners_reading(published.snapshot, same.keys, CHECKER_PROFILE)? == []
+    return Ok(None)
+
+
+def captured(path: Path) -> Result[list[CapturedInput], str]:
+    """Capture one source file with its metadata and the digest of its current bytes, as an epoch does."""
+    metadata = match file_metadata(path)?:
+        Some(value) => value
+        None => return Err("source fixture is missing")
+
+    return Ok([CapturedInput(path=path.0, role=InputRole.Resolved, metadata=metadata, digest=file_digest(path)?, settled=false)])
+
+
+def write_output(output: Path, outputs: CompiledBodyOutputs) -> Result[None, str]:
+    """Write one independently bounded Crumb row per sidecar page, as the native compiler does."""
+    output.mkdir(true, true).map_err((error) => error.message())?
+    rows = encode_compiled_body_rows(outputs).map_err((error) => f"{error:?}")?
+    for index in range(len(rows)):
+        publish_binary(output.joinpath(str(index) + ".crumb"), rows[index])?
+    return Ok(None)

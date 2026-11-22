@@ -77,18 +77,33 @@ pub fn read_namespace_proof(
     schema: u32,
     object_digest: &[u8],
 ) -> Result<NamespaceIdentity, String> {
+    let (identity, recorded) = proof_fields(encoded)?;
+    let expected = binding(source, schema, &identity.name, &identity.path, object_digest)?;
+    if recorded == expected {
+        Ok(identity)
+    } else {
+        Err("checked namespace physical identity differs".into())
+    }
+}
+
+/// The module name and path a proof records, read without binding them to the object they name. A reader that admits
+/// a namespace this way authenticates the proof with [`read_namespace_proof`] before it uses the object.
+pub fn namespace_proof_identity(encoded: &[u8]) -> Result<NamespaceIdentity, String> {
+    proof_fields(encoded).map(|(identity, _)| identity)
+}
+
+/// A proof's recorded identity and the binding digest it carries.
+fn proof_fields(encoded: &[u8]) -> Result<(NamespaceIdentity, Vec<u8>), String> {
     if encoded.len() > MAX_PROOF_BYTES {
         return Err("checked namespace physical identity exceeds its byte limit".into());
     }
-    let fields = decode_graph_row(encoded, SELECTOR, &description(), 3)?;
-    let name = text(&fields[1].value)?;
-    let path = items(&fields[2].value)?
-        .iter()
-        .map(text)
-        .collect::<Result<Vec<_>, _>>()?;
-    let expected = binding(source, schema, &name, &path, object_digest)?;
-    match &fields[0].value {
-        Value::Binary(actual) if *actual == expected => Ok(NamespaceIdentity { name, path }),
+    let [digest, name, path]: [_; 3] = decode_graph_row(encoded, SELECTOR, &description(), 3)?
+        .try_into()
+        .map_err(|_| "checked namespace physical identity has the wrong field count".to_owned())?;
+    let name = text(&name.value)?;
+    let path = items(&path.value)?.iter().map(text).collect::<Result<Vec<_>, _>>()?;
+    match digest.value {
+        Value::Binary(recorded) => Ok((NamespaceIdentity { name, path }, recorded)),
         _ => Err("checked namespace physical identity differs".into()),
     }
 }

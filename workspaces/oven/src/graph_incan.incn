@@ -155,6 +155,14 @@ pub def inspect_prepared(ready: UnitDescription, toolchain: Toolchain, owner: Op
     return admit_export(digest, pending_entry)
 
 
+pub def published_library_graph(ready: UnitDescription, toolchain: Toolchain, directory: Path) -> Result[i32, str]:
+    """Export a built library's checked graph and publish it beside the native library in `directory`."""
+    graph = inspect_prepared(ready, toolchain)?
+    if not publish_prepared_graph(ready, toolchain, directory, graph)?:
+        return Err(f"{ready.package}: native publication changed while exporting its graph; retry the build")
+    return Ok(0)
+
+
 pub def publish_prepared_graph(
     ready: UnitDescription,
     toolchain: Toolchain,

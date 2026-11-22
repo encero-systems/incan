@@ -4,8 +4,9 @@ imports looked for, as the compiler reports them.
 
 Oven keys such a unit by its graph instead of by every file under the source root, so a file nothing imports never
 rebuilds the unit, while a file created where an import looked does. The graph is recorded with the digest of each file
-it read, and is asked of the compiler again only when one of those files changed or one of those absent paths appeared,
-the only edits that can change what collection reads.
+it read and the surface of each (what its imports contributed to the collection). It is asked of the compiler again only
+when one of those absent paths appeared or an edited file's surface changed, the only edits that can change what
+collection reads; an edited file whose surface is unchanged costs the compiler that one file, not the graph.
 
 A unit is asked for under each scope it is keyed in: its compiler and description, which preparation extends. One
 record per entry keeps the current graph of each scope, at a location the records engine's request capture derives from
@@ -44,6 +45,8 @@ pub model SourceGraph:
     # The Rust crate requests the same collection found, as `--rust-imports` prints them; `None` when it refused or the
     # compiler did not report them.
     pub imports: Option[list[JsonValue]] = None
+    # The surface digest the compiler reported for each file read: what its imports contributed to the collection.
+    pub surfaces: Dict[str, str] = {}
 
 
 pub def graph_keyed(unit: UnitDescription) -> bool:
@@ -75,7 +78,8 @@ pub def source_graph(
     The unit's source graph under `scope` (its compiler and description), or `None` when it keeps the listing.
 
     1. A unit that is not graph-keyed keeps every source under its roots.
-    2. A recorded graph whose read files are unchanged and whose absent paths are still absent is current.
+    2. A recorded graph whose read files are unchanged and whose absent paths are still absent is current, and so is
+       one whose edited files the compiler finds with their recorded surfaces; it is recorded with the new digests.
     3. Otherwise the compiler collects the graph again, and it is recorded with the digests of what it read. A compiler
        that cannot report a graph leaves the unit on the listing, which covers every file the graph could name.
     """
@@ -83,9 +87,18 @@ pub def source_graph(
     if not graph_keyed(unit):
         return Ok(None)
     location = graph_location(unit.project_root, unit.profile, unit.kind, unit.source)
-    # 2. Unchanged reads and still-absent lookups collect the same graph.
-    if let Some(graph) = recorded_graph(location, scope, project)?:
-        return Ok(Some(graph))
+    # 2. Unchanged reads and still-absent lookups collect the same graph, and so do edits that keep each surface.
+    for entry in recorded_entries(location):
+        if required_text(entry, "scope").unwrap_or("") != scope:
+            continue
+        if let Some(changed) = changed_reads(entry, project)?:
+            graph = recorded_source_graph(entry)
+            if len(changed) == 0:
+                return Ok(Some(graph))
+            if surfaces_kept(unit, toolchain, location, graph, changed)?:
+                retain(location, scope, graph, project)?
+                return Ok(Some(graph))
+        break
     # 3. The compiler names what its collection reads.
     match discovered(unit, toolchain, location)?:
         None => return Ok(None)
@@ -175,42 +188,113 @@ def recorded_entries(location: Path, include_imports: bool = true) -> list[JsonV
 
 def current_graph(entry: JsonValue, mut project: Ledger) -> Result[Option[SourceGraph], str]:
     """A recorded graph whose read files are unchanged and whose absent paths are still absent, else `None`."""
-    mut read: list[str] = []
+    match changed_reads(entry, project)?:
+        Some(changed) =>
+            if len(changed) == 0:
+                return Ok(Some(recorded_source_graph(entry)))
+        None => pass
+    return Ok(None)
+
+
+def changed_reads(entry: JsonValue, mut project: Ledger) -> Result[Option[list[str]], str]:
+    """
+    The read files of a recorded graph whose bytes changed, in reading order, while every read file still exists and
+    every absent path is still absent; `None` when only a new collection can answer.
+    """
+    mut changed: list[str] = []
+    mut count = 0
     for item in required_items(entry, "read").unwrap_or([]):
         path = required_text(item, "path").unwrap_or("")
         if path == "" or not Path(path).is_file():
             return Ok(None)
         if project.digest(Path(path))? != required_text(item, "digest").unwrap_or(""):
-            return Ok(None)
-        read.append(path)
-    mut absent: list[str] = []
+            changed.append(path)
+        count += 1
     for item in required_items(entry, "absent").unwrap_or([]):
         path = item.as_str().unwrap_or("")
         if path == "" or Path(path).exists():
             return Ok(None)
-        absent.append(path)
-    if len(read) == 0:
+    if count == 0:
         return Ok(None)
-    return Ok(Some(SourceGraph(read=read, absent=absent, imports=reported_imports(entry))))
+    return Ok(Some(changed))
+
+
+def recorded_source_graph(entry: JsonValue) -> SourceGraph:
+    """The graph one recorded scope holds: what it read, the absent paths it probed, its imports and surfaces."""
+    read = [required_text(item, "path").unwrap_or("") for item in required_items(entry, "read").unwrap_or([])]
+    absent = [item.as_str().unwrap_or("") for item in required_items(entry, "absent").unwrap_or([])]
+    return SourceGraph(read=read, absent=absent, imports=reported_imports(entry), surfaces=reported_surfaces(entry))
+
+
+def reported_surfaces(report: JsonValue) -> Dict[str, str]:
+    """The surface digest of each file a report or record names; none from an older compiler or record."""
+    mut surfaces: Dict[str, str] = {}
+    for item in required_items(report, "surfaces").unwrap_or([]):
+        path = required_text(item, "path").unwrap_or("")
+        surface = required_text(item, "surface").unwrap_or("")
+        if path != "" and surface != "":
+            surfaces[path] = surface
+    return surfaces
+
+
+def surfaces_kept(
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    location: Path,
+    graph: SourceGraph,
+    changed: list[str],
+) -> Result[bool, str]:
+    """
+    Whether every edited file of a recorded graph still has the surface it was recorded with: the compiler collects
+    those files alone, and the graph's other files and absent paths are unchanged, so the same surfaces collect the same
+    graph. A file without a recorded surface, or a compiler that cannot answer, needs the whole graph collected.
+    """
+    for path in changed:
+        if path not in graph.surfaces:
+            return Ok(false)
+    description = published_description(unit, toolchain, location)?
+    arguments = ["--rust-imports", description.0, "--source-surfaces"] + changed
+    match compiler_report(toolchain, arguments, f"--rust-imports {description.0} --source-surfaces"):
+        None => return Ok(false)
+        Some(output) =>
+            match parse_json(decoded(output)):
+                Err(_) => return Ok(false)
+                Ok(report) =>
+                    found = reported_surfaces(report)
+                    for path in changed:
+                        if found.get(path, "") != graph.surfaces[path]:
+                            return Ok(false)
+    trace(f"unit {unit.package} source graph: kept, {len(changed)} edited files kept their surfaces")
+    return Ok(true)
+
+
+def published_description(unit: UnitDescription, toolchain: Toolchain, location: Path) -> Result[Path, str]:
+    """The unit description the compiler collects a recorded graph's files under, published beside that record."""
+    make_directory(location.parent())?
+    description = descriptor_path(location.parent(), location.name(), toolchain.unit_descriptor_crumb)
+    publish_unit_document(description, unit, toolchain.unit_descriptor_crumb)?
+    return Ok(description)
+
+
+def compiler_report(toolchain: Toolchain, arguments: list[str], label: str) -> Option[bytes]:
+    """What the resident compiler, or one compiler process, prints for `arguments`; `None` when neither answers."""
+    match captured_resident(toolchain, arguments):
+        Ok(Some(completed)) =>
+            if completed.code != 0:
+                return None
+            return Some(completed.output)
+        Ok(None) => return cold_report(toolchain, arguments, label)
+        Err(_) => return None
 
 
 def discovered(unit: UnitDescription, toolchain: Toolchain, location: Path) -> Result[Option[SourceGraph], str]:
     """Ask the resident compiler, or one compiler process, which files the unit's collection reads and probes."""
-    make_directory(location.parent())?
-    description = descriptor_path(location.parent(), location.name(), toolchain.unit_descriptor_crumb)
-    publish_unit_document(description, unit, toolchain.unit_descriptor_crumb)?
+    description = published_description(unit, toolchain, location)?
     arguments = ["--rust-imports", description.0, "--source-graph"]
     mut output = b""
-    match captured_resident(toolchain, arguments):
-        Ok(Some(completed)) =>
-            if completed.code != 0:
-                return unavailable(unit)
-            output = completed.output
-        Ok(None) =>
-            match cold_graph(toolchain, arguments, description):
-                Some(stdout) => output = stdout
-                None => return unavailable(unit)
-        Err(_) => return unavailable(unit)
+    match compiler_report(toolchain, arguments, f"--rust-imports {description.0} --source-graph"):
+        Some(stdout) => output = stdout
+        None => return unavailable(unit)
     # A compiler that answers with anything but a graph report keeps the unit on the listing.
     mut report = JsonValue.null()
     match parse_json(decoded(output)):
@@ -226,7 +310,7 @@ def discovered(unit: UnitDescription, toolchain: Toolchain, location: Path) -> R
     if len(read) == 0 or "" in read or "" in absent:
         return Ok(None)
     trace(f"unit {unit.package} source graph: collected {len(read)} files, {len(absent)} absent paths")
-    return Ok(Some(SourceGraph(read=read, absent=absent, imports=reported_imports(report))))
+    return Ok(Some(SourceGraph(read=read, absent=absent, imports=reported_imports(report), surfaces=reported_surfaces(report))))
 
 
 def reported_imports(report: JsonValue) -> Option[list[JsonValue]]:
@@ -252,6 +336,12 @@ def retain(location: Path, scope: str, graph: SourceGraph, mut project: Ledger) 
     fields["absent"] = JsonValue.array([JsonValue.string(path) for path in graph.absent])
     if let Some(records) = graph.imports:
         fields["imports"] = JsonValue.array(records)
+    mut surfaces: list[JsonValue] = []
+    for path in graph.read:
+        if path in graph.surfaces:
+            surfaces.append(JsonValue.object({"path": JsonValue.string(path), "surface": JsonValue.string(graph.surfaces[path])}))
+    if len(surfaces) > 0:
+        fields["surfaces"] = JsonValue.array(surfaces)
     mut graphs = [JsonValue.object(fields)]
     for entry in recorded_entries(location):
         if len(graphs) >= RECORDED_SCOPES:
@@ -265,8 +355,8 @@ def retain(location: Path, scope: str, graph: SourceGraph, mut project: Ledger) 
     return Ok(None)
 
 
-def cold_graph(toolchain: Toolchain, arguments: list[str], description: Path) -> Option[bytes]:
-    """One compiler process's graph report when no worker serves it; a compiler that cannot report one gives `None`."""
+def cold_report(toolchain: Toolchain, arguments: list[str], label: str) -> Option[bytes]:
+    """One compiler process's report when no worker serves it; a compiler that cannot report one gives `None`."""
     match driver_command(toolchain):
         Err(_) => return None
         Ok(found) =>
@@ -277,7 +367,7 @@ def cold_graph(toolchain: Toolchain, arguments: list[str], description: Path) ->
             match command.output():
                 Err(_) => return None
                 Ok(finished) =>
-                    record(Operation.DriverSpawn, f"--rust-imports {description.0} --source-graph", clock)
+                    record(Operation.DriverSpawn, label, clock)
                     if not finished.status.success():
                         return None
                     return Some(finished.stdout)

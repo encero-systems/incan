@@ -222,7 +222,7 @@ Trust controls only whether unattended preparation and the language server may r
 
 `PATH` names an Incan entry source or a directory. A directory, or no `PATH`, selects the Loaf at or above it, whose program is selected as for [`oven build`](#oven-build); outside a Loaf the command exits `1`. On `incan run`, `-c CODE` or `--command CODE` runs `CODE`, a whole module, as direct source, as `--direct` runs a file; when `CODE` does not contain `def main`, the module also gets a `main` that does nothing. `oven run` refuses it. Arguments after `--` are passed to the program. `--argv0 TEXT` sets the program's argument zero. Repeatable `--program-entry PATH` adds program entries. The compiled program inherits stdin, stdout and stderr; its exit status is the command's exit status.
 
-With `INCAN_ENGINE=records`, `PATH` must name one ordinary program source file or a directory whose Loaf's program [`oven build`](#oven-build) selects, the profile must be `debug` or `release`, and vocabulary entries, foreign headers, feature-selection flags, substitutions, additional program entries and `--interop-target` are refused; a library is refused with `records engine requires an Incan program`. Editable Incan path dependencies are captured with the program. Build and run select the same compiled unit. The program runs only after successful capture and native selection. `--engine-report` retains a proof report and prints one JSON line before any program output. Without that flag, proof reporting adds no console output. The flag is refused in legacy mode.
+With `INCAN_ENGINE=records`, `PATH` selects the unit legacy mode selects, with the same options, and the profile must be `debug` or `release`. A unit the engine keeps no declaration records for, such as a library, a unit with Cloves, vocabulary or foreign headers, or one with feature selections, additional program entries or `--interop-target`, is compiled whole under the identity of all its inputs; an `--engine-report` counts it in `whole_unit_compiles` and its `checks` names the reason. Editable Incan path dependencies are captured with the program. Build and run select the same compiled unit. The program runs only after successful capture and native selection. `--engine-report` retains a proof report and prints one JSON line before any program output. Without that flag, proof reporting adds no console output. The flag is refused in legacy mode.
 
 ## `oven check`
 
@@ -230,7 +230,7 @@ Checks the source at `PATH` without producing an executable. A directory, or no 
 
 The JSON report has `schema_version: 2`, Boolean `ok`, and a `diagnostics` array. Diagnostic entries carry `code`, `severity`, `phase`, `origin`, `message`, `primary_span`, `notes`, `hints` and `explain`, with additional related or comparison fields when applicable. `explain` is always the string `incan explain CODE`, with the diagnostic's code. Message wording is not stable. A span carries its source file and positions, including byte offsets.
 
-With `INCAN_ENGINE=records`, `PATH` selects a program as records-mode [`run`](#oven-run) does, with the same restrictions, `--format` accepts `text` or `json`, and the check writes no lock.
+With `INCAN_ENGINE=records`, `PATH` selects a unit as records-mode [`run`](#oven-run) does, `--format` accepts `text` or `json`, and the check writes no lock.
 
 ## `oven lint`
 
@@ -283,7 +283,7 @@ A library source named `lib.incn` produces an rlib and checked library sidecars.
 
 `--report json` runs the same build and prints one JSON build report on stdout, or writes it to `--report-output PATH`. The build's own output goes to stderr, and the command exits with the build's status. The report has `schema_version` `1`, `command` `build`, `incan_version`, `path` (the given `PATH`, empty without one), `profile` (the `--profile` value, `debug` without one), `status` (`succeeded` or `failed`), `exit_code`, `artifacts`, each with `kind` (`executable` or `library`), `path` and, when the file exists, `size` and `sha256`, and `timings` with `total_milliseconds`. Without `PATH` the artifacts are those of the project at the working directory. A `--report` other than `json`, and `--report-output` without `--report json`, exit `2`.
 
-With `INCAN_ENGINE=records`, `PATH` selects a program as records-mode [`run`](#oven-run) does, with the same restrictions and `--engine-report` behavior. Build does not execute the selected program; program arguments and `--argv0` exit `2`.
+With `INCAN_ENGINE=records`, `PATH` selects a unit as records-mode [`run`](#oven-run) does, with the same `--engine-report` behavior, and `OUTPUT_DIR` receives the built program as in legacy mode. A `PATH` without an Incan entry builds its Rust project as legacy mode does. Build does not execute the selected program; program arguments and `--argv0` exit `2`.
 
 ## `oven describe-unit`
 

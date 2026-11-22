@@ -100,7 +100,7 @@ const CHECK_CERTIFICATE: &str = "incan.compiler-check/1\n";
 
 const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [OPTIONS] | --rustc-handoff PATH | \
                      --source-interface UNIT SYSROOT DIRECTORY [OPTIONS] | --dependencies UNIT SYSROOT [OPTIONS] | --compiler-records INSTALLED OUTPUT | \
-                     --check UNIT SYSROOT [--format text|json] [--certify PATH] [--checked-bodies PATH | --checked-body-counts PATH] [OPTIONS] | --explain CODE | --fmt UNIT PATH [--check] | --source-files PATH | --rust-imports UNIT [--source-graph] | --emit-model PATH MODEL incan|json [LABEL] | --codegraph UNIT SYSROOT OUTPUT [INTERFACE] | --read-codegraph GRAPH ROOT GROUP [FIELDS_JSON] | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-compile-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --resident SOCKET GENERATION READY HOME | --identity SYSROOT\n\
+                     --check UNIT SYSROOT [--format text|json] [--certify PATH] [--checked-bodies PATH | --checked-body-counts PATH] [OPTIONS] | --explain CODE | --fmt UNIT PATH [--check] | --source-files PATH | --rust-imports UNIT [--source-graph] | --emit-model PATH MODEL incan|json [LABEL] | --codegraph UNIT SYSROOT OUTPUT [INTERFACE] | --read-codegraph GRAPH ROOT GROUP [FIELDS_JSON] | --read-codegraph-origins GRAPH... | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-compile-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --resident SOCKET GENERATION READY HOME | --identity SYSROOT\n\
                      OPTIONS: --rustc-arg ARG, --library, --no-codegraph, --inspection, --shared-native DIR, --toolchain-root DIR, --bakery-root DIR, --graph-body-records PATH, --graph-body-output PATH (native artifacts and ABI caches come from UNIT)";
 
 /// Compile an Incan unit (`--unit`, or serially from a `--resident` worker, with rustc in a fresh driver process that
@@ -108,8 +108,8 @@ const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT 
 /// unit description Oven wrote, publish a checking-only source interface (`--source-interface`), report a unit's
 /// settled dependency closure (`--dependencies`), or write the ABI cache of Rust crates (`--rust-abi`), format source
 /// with the unit's vocabulary (`--fmt`), discover authored files (`--source-files`), explain a stable diagnostic
-/// (`--explain`), or export and read checked graphs (`--codegraph`, `--read-codegraph`, `--rust-codegraph` and
-/// `--rust-compile-codegraph`).
+/// (`--explain`), or export and read checked graphs (`--codegraph`, `--read-codegraph`, `--read-codegraph-origins`,
+/// `--rust-codegraph` and `--rust-compile-codegraph`).
 ///
 /// The shared opt-in invocation sink is initialized before dispatch; disabled tracing uses the ordinary logging filter.
 /// A command that fails prints its error as [`report`] does and exits with that status.
@@ -181,6 +181,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
         Some("--source-files") => exit_with(source_files(&args[1..])?),
         Some("--codegraph") => codegraph::incan(&args[1..]),
         Some("--read-codegraph") => codegraph::read(&args[1..]),
+        Some("--read-codegraph-origins") => codegraph::read_origins(&args[1..]),
         Some("--rust-codegraph") => rust_codegraph::export(&args[1..]),
         Some("--rust-compile-codegraph") => rust_codegraph::compile(&args[1..]),
         Some("--rust-abi") => rust_abi(&args[1..]),

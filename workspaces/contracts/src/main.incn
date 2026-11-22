@@ -8,9 +8,10 @@ The contract table runner.
 Runs every case of every family under FIXTURES_ROOT with the `incan` at INCAN, or only the cases a selector names
 (`<family>`, `<family>/<area>` or `<family>/<area>/<name>`). Compatible programs share compilation unless `--isolated`
 is selected. Every case runs in its own process and working directory under scratch. Supervised families divide
-`--jobs` command slots (twelve by default). The runner prints one line per case (`PASS`, `FAIL` with its reasons,
-or `PEND` with what it waits for), one summary per area and one in total, and exits 1 when a case fails or a family
-cannot be read. A pending case that now holds fails: its `pending:` line is stale.
+`--jobs` command slots (twelve by default); with `--serial-families` the families run in turn, the graph family in a
+worker of its own beside them at one of the slots. The runner prints one line per case (`PASS`, `FAIL` with its
+reasons, or `PEND` with what it waits for), one summary per area and one in total, and exits 1 when a case fails or a
+family cannot be read. A pending case that now holds fails: its `pending:` line is stale.
 """
 
 from rust::std::env import args, current_exe
@@ -21,7 +22,7 @@ from std.environ import get_or
 from std.fs import Path
 from std.tempfile import TemporaryDirectory
 from compare import compare
-from families import AdmittedProgram, FAMILIES, command, read_program, work_order
+from families import AdmittedProgram, FAMILIES, command, graph_beside, read_program, work_order
 from fixture import Fixture, discover_family, materialize
 from run import Outcome, clear_trace, invoke, set_case_jobs, set_timeout, trace_file, unit_notes
 from formatting import compare_format
@@ -32,7 +33,7 @@ from batch import run_batches, run_separate
 from group_hints import hint_path
 from timing import report as report_time
 from files import make_directory
-from workers import Invocation, invoke_many
+from workers import Background, Invocation, finish_background, invoke_many, start_background
 from protocols import ProtocolRunner, forwarded_lines, protocol_case, run_protocols
 
 # A timeout of this many digits or fewer fits an integer; a job count of this many digits stays under 10,000.
@@ -237,7 +238,8 @@ def run_all(settings: Settings, scratch: Path) -> bool:
     """
     Run every selected case; whether all of them held.
 
-    Multiple families share the job budget across supervised processes unless `--serial-families` was selected.
+    Multiple families share the job budget across supervised processes unless `--serial-families` was selected; a
+    serial run still starts the graph family beside the others when `graph_beside` allows it.
 
     1. Each family a selector reaches is discovered; one that cannot be read is refused.
     2. Its selected cases run, sharing compilation unless the run is isolated, and are reported area by area.
@@ -247,8 +249,63 @@ def run_all(settings: Settings, scratch: Path) -> bool:
     if not settings.family_worker and not settings.serial_families and settings.jobs > 1:
         if len(families) > 1 or "graph" in families:
             return run_family_workers(settings, scratch, families)
+    if not settings.family_worker and graph_beside(families, settings.jobs):
+        match start_graph_worker(settings, scratch):
+            Ok(worker) => return run_graph_beside(settings, scratch, families, worker)
+            # A graph worker that cannot start leaves every family to run in turn, as without one.
+            Err(_) => pass
     mut total = Tally(passed=0, failed=0, pending=0)
     mut units = Units()
+    refused = run_in_turn(settings, scratch, families, total, units)
+    # 3. The total, the units Oven compiled and reused, and the families that could not be read close the report.
+    report_total(total, units, refused)
+    if settings.family_worker:
+        println("CONTRACT FAMILY COMPLETE")
+    return total.failed == 0 and refused == 0
+
+
+def start_graph_worker(settings: Settings, scratch: Path) -> Result[Background, str]:
+    """Start the graph family in a family worker of its own at one job, as the family workers run it."""
+    requests = family_requests(settings, scratch, ["graph"], 1)?
+    return start_background(requests[0])
+
+
+def run_graph_beside(settings: Settings, scratch: Path, families: list[str], worker: Background) -> bool:
+    """
+    Run the families other than graph in turn at one job fewer while the started graph worker runs beside them.
+
+    1. The other families run in turn, sharing compilation, and are reported as they finish.
+    2. The graph worker's report follows theirs, as graph comes last in family order.
+    3. The total, the units Oven compiled and reused, and the families that could not be read close the report.
+    """
+    # 1. The others keep every job the graph worker does not hold; their cases' independent commands share them.
+    others = [family for family in families if family != "graph"]
+    chain = Settings(
+        incan=settings.incan,
+        root=settings.root,
+        scratch_dir=settings.scratch_dir,
+        selectors=settings.selectors,
+        isolated=settings.isolated,
+        use_hints=settings.use_hints,
+        jobs=settings.jobs - 1,
+        timeout=settings.timeout,
+        serial_families=settings.serial_families,
+        family_worker=settings.family_worker,
+    )
+    set_case_jobs(chain.jobs)
+    mut total = Tally(passed=0, failed=0, pending=0)
+    mut units = Units()
+    mut refused = run_in_turn(chain, scratch, others, total, units)
+    set_case_jobs(settings.jobs)
+    # 2. The worker keeps its own per-command deadlines, as every family worker does, so it is awaited without one.
+    refused += forward_family("graph", finish_background(worker), total, units)
+    # 3. The same closing lines as a run in turn.
+    report_total(total, units, refused)
+    return total.failed == 0 and refused == 0
+
+
+def run_in_turn(settings: Settings, scratch: Path, families: list[str], mut total: Tally, mut units: Units) -> int:
+    """Run the selected families one after another into `total` and `units`; how many could not be read."""
     mut refused = 0
     for family in families:
         clock = Instant.now()
@@ -270,11 +327,7 @@ def run_all(settings: Settings, scratch: Path) -> bool:
         mut detail = f" compiled={units.compiled - compiled} reused={units.reused - reused}"
         detail += f" replayed={units.replayed - replayed}"
         report_time(f"family {family}", clock, detail)
-    # 3. The total, the units Oven compiled and reused, and the families that could not be read close the report.
-    report_total(total, units, refused)
-    if settings.family_worker:
-        println("CONTRACT FAMILY COMPLETE")
-    return total.failed == 0 and refused == 0
+    return refused
 
 
 def run_family_workers(settings: Settings, scratch: Path, families: list[str]) -> bool:

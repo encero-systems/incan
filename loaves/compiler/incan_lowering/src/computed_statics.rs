@@ -14,6 +14,9 @@ use incan_semantics_core::{SemanticSourceTargetKind, canonical_module_identity};
 
 use crate::frame::{Builder, literal, temporary, terminate_call};
 
+const BEGIN_MODULE_INITIALIZATION: &str = "incan_native_runtime::begin_unit_module_initialization";
+const END_MODULE_INITIALIZATION: &str = "incan_native_runtime::end_unit_module_initialization";
+
 /// Report whether a static's initializer is a computed body rather than an effect-free literal.
 pub fn is_computed_static(declaration: &StaticDeclaration) -> bool {
     matches!(declaration.initial, StaticInitializer::Computed(_))
@@ -39,6 +42,66 @@ pub fn module_static_key(statics: &[StaticDeclaration], owner: &str) -> i64 {
 /// initializer under every saved product whose frames enter it.
 pub fn module_initializer_name(owner: &str) -> String {
     format!("__incan_init_module_statics_{}", hex::encode(owner.as_bytes()))
+}
+
+/// The unit operand of a runtime call that keys a process-wide cell by unit and slot.
+///
+/// Every unit (a Loaf, or the program) numbers its statics from 0, and the runtime keeps one cell table per carrier
+/// for the whole process, so each cell is keyed by its unit and its slot in that unit. The unit is the compiled crate's
+/// stable id, which only the native adapter knows: the plan carries 0 here, and the adapter supplies the crate's id as
+/// the first argument of every call [`is_unit_keyed_runtime_call`] names.
+pub fn unit_operand(span: &SourceSpan) -> Operand {
+    literal(Constant::Numeric("0".into(), PlanType::U64), span)
+}
+
+/// Whether a runtime call keys a process-wide cell by its first argument, the unit, and its second, a unit-local
+/// static slot or module key.
+pub fn is_unit_keyed_runtime_call(path: &str) -> bool {
+    matches!(
+        path,
+        BEGIN_MODULE_INITIALIZATION
+            | END_MODULE_INITIALIZATION
+            | "incan_native_runtime::read_static_bool_in_unit"
+            | "incan_native_runtime::write_static_bool_in_unit"
+            | "incan_native_runtime::read_static_float_in_unit"
+            | "incan_native_runtime::write_static_float_in_unit"
+            | "incan_native_runtime::read_static_int_in_unit"
+            | "incan_native_runtime::write_static_int_in_unit"
+            | "incan_native_runtime::read_static_int_set_in_unit"
+            | "incan_native_runtime::write_static_int_set_in_unit"
+            | "incan_native_runtime::read_static_text_in_unit"
+            | "incan_native_runtime::write_static_text_in_unit"
+            | "incan_native_runtime::read_static_text_int_dict_in_unit"
+            | "incan_native_runtime::write_static_text_int_dict_in_unit"
+    )
+}
+
+#[cfg(test)]
+mod unit_key_tests {
+    use super::is_unit_keyed_runtime_call;
+
+    /// The adapter injects a unit ID only when a call names a candidate runtime entry point.
+    #[test]
+    fn only_unit_keyed_runtime_calls_take_the_unit() {
+        assert!(is_unit_keyed_runtime_call(
+            "incan_native_runtime::read_static_int_in_unit"
+        ));
+        assert!(is_unit_keyed_runtime_call(
+            "incan_native_runtime::write_static_text_int_dict_in_unit"
+        ));
+        assert!(is_unit_keyed_runtime_call(
+            "incan_native_runtime::begin_unit_module_initialization"
+        ));
+        assert!(is_unit_keyed_runtime_call(
+            "incan_native_runtime::end_unit_module_initialization"
+        ));
+        assert!(!is_unit_keyed_runtime_call("incan_native_runtime::read_static_int"));
+        assert!(!is_unit_keyed_runtime_call(
+            "incan_native_runtime::begin_module_initialization"
+        ));
+        assert!(!is_unit_keyed_runtime_call("incan_native_runtime::read_line"));
+        assert!(!is_unit_keyed_runtime_call("caselib::read_static_int_in_unit"));
+    }
 }
 
 /// Call module `owner`'s static initializer, as legacy calls `__incan_init_module_statics` at a function entry.
@@ -86,16 +149,16 @@ pub fn static_initializer_name(slot: usize) -> String {
 pub fn module_initialization_externals(span: &SourceSpan) -> Vec<ExternalFunction> {
     vec![
         ExternalFunction {
-            path: "incan_native_runtime::begin_module_initialization".into(),
+            path: BEGIN_MODULE_INITIALIZATION.into(),
             type_arguments: Vec::new(),
-            parameters: vec![PlanType::Int],
+            parameters: vec![PlanType::U64, PlanType::Int],
             return_type: PlanType::Bool,
             span: span.clone(),
         },
         ExternalFunction {
-            path: "incan_native_runtime::end_module_initialization".into(),
+            path: END_MODULE_INITIALIZATION.into(),
             type_arguments: Vec::new(),
-            parameters: vec![PlanType::Int],
+            parameters: vec![PlanType::U64, PlanType::Int],
             return_type: PlanType::Unit,
             span: span.clone(),
         },
@@ -139,8 +202,8 @@ pub fn module_initializer(statics: &[StaticDeclaration], key: i64, span: &Source
     let done = 4 + forced.len() as i64 + 2;
     let probe = initializer_call(CalleeKind::ModuleInitialized(key), Vec::new(), 1, 1, span);
     let claim = initializer_call(
-        CalleeKind::External("incan_native_runtime::begin_module_initialization".into()),
-        vec![literal(Constant::Int(key), span)],
+        CalleeKind::External(BEGIN_MODULE_INITIALIZATION.into()),
+        vec![unit_operand(span), literal(Constant::Int(key), span)],
         1,
         3,
         span,
@@ -161,8 +224,8 @@ pub fn module_initializer(statics: &[StaticDeclaration], key: i64, span: &Source
         blocks.push(plan_block(Vec::new(), force, span));
     }
     let complete = initializer_call(
-        CalleeKind::External("incan_native_runtime::end_module_initialization".into()),
-        vec![literal(Constant::Int(key), span)],
+        CalleeKind::External(END_MODULE_INITIALIZATION.into()),
+        vec![unit_operand(span), literal(Constant::Int(key), span)],
         2,
         done - 1,
         span,

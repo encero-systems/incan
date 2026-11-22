@@ -9,12 +9,14 @@
 //! from the declaration itself.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::api_metadata::{
     ApiDeclaration, CheckedApiMetadataPackage, is_package_root_module, resolve_api_alias_target,
 };
 use crate::library_manifest::{LibraryManifest, resolved_type_from_manifest_type_ref};
-use crate::symbols::{SymbolKind, TypeInfo};
+use crate::symbols::SymbolKind;
+use crate::typechecker::transitive_layouts::{LayoutDeclaration, LayoutRecipe};
 use crate::typechecker::{TypeChecker, canonical_public_library_type_name};
 use incan_semantics_core::CanonicalSymbolId;
 
@@ -23,11 +25,7 @@ impl TypeChecker {
     ///
     /// A root-module declaration is keyed by its root public name, as the root's own exports are. Any other declaration
     /// is keyed by its module path, the key a module-namespace import of it already uses.
-    pub(in crate::typechecker::collect) fn declaration_type_key(
-        library: &str,
-        module_path: &[String],
-        name: &str,
-    ) -> String {
+    pub(in crate::typechecker) fn declaration_type_key(library: &str, module_path: &[String], name: &str) -> String {
         if is_package_root_module(module_path) {
             return canonical_public_library_type_name(library, name);
         }
@@ -197,20 +195,59 @@ impl TypeChecker {
         canonical: Option<&CanonicalSymbolId>,
         kind: &mut SymbolKind,
     ) {
-        let Some(declaring_module) = canonical
-            .and_then(|canonical| {
-                manifest
-                    .contract_metadata
-                    .identity_graph
-                    .declaration_source_path(canonical)
-            })
-            .and_then(|source_path| source_path.split_last())
-            .map(|(_, module_path)| module_path.to_vec())
+        let Some(declaring_module) = canonical.and_then(|canonical| Self::declaring_module_path(manifest, canonical))
         else {
             return;
         };
         let scope = self.pub_library_declaration_scope(library, manifest, &declaring_module);
         self.remap_symbol_kind_with_import_aliases(kind, &scope);
+    }
+
+    /// The module that declares `canonical` in `manifest`'s identity graph: the module of its direct export, or, for a
+    /// partial, which the graph publishes as a partial projection rather than a direct export, the module that declares
+    /// the partial.
+    fn declaring_module_path(manifest: &LibraryManifest, canonical: &CanonicalSymbolId) -> Option<Vec<String>> {
+        let graph = &manifest.contract_metadata.identity_graph;
+        let source_path = graph.declaration_source_path(canonical).or_else(|| {
+            graph
+                .exports
+                .iter()
+                .find(|entry| {
+                    matches!(
+                        entry.projection,
+                        crate::library_manifest::ExportIdentityProjection::Partial { .. }
+                    ) && entry
+                        .canonical
+                        .as_ref()
+                        .is_some_and(|candidate| candidate.represents(canonical))
+                })
+                .map(|entry| entry.source_path.as_slice())
+        })?;
+        let (_, module_path) = source_path.split_last()?;
+        Some(module_path.to_vec())
+    }
+
+    /// `remapping` composed after the scope of the module that declares `canonical`, as
+    /// [`Self::remap_symbol_kind_through_declaring_module`] and then `remapping` read a type spelling: a spelling the
+    /// declaring module's scope maps is mapped on through `remapping`, and any other through `remapping` alone. Without
+    /// a declaring module in the identity graph it is `remapping`.
+    pub(in crate::typechecker) fn remapping_through_declaring_module(
+        &mut self,
+        library: &str,
+        manifest: &LibraryManifest,
+        canonical: Option<&CanonicalSymbolId>,
+        remapping: &HashMap<String, String>,
+    ) -> HashMap<String, String> {
+        let Some(declaring_module) = canonical.and_then(|canonical| Self::declaring_module_path(manifest, canonical))
+        else {
+            return remapping.clone();
+        };
+        let mut composed = remapping.clone();
+        for (spelling, key) in self.pub_library_declaration_scope(library, manifest, &declaring_module) {
+            let key = remapping.get(&key).cloned().unwrap_or(key);
+            composed.insert(spelling, key);
+        }
+        composed
     }
 
     /// Register every nominal declaration a submodule of `library` publishes under its declaration key: its identity,
@@ -225,16 +262,16 @@ impl TypeChecker {
     pub(super) fn register_pub_library_declarations(
         &mut self,
         library: &str,
-        manifest: &LibraryManifest,
+        manifest: &Arc<LibraryManifest>,
         root_remapping: &HashMap<String, String>,
     ) {
         let Some(api) = manifest.contract_metadata.api.as_ref() else {
             return;
         };
         let graph = &manifest.contract_metadata.identity_graph;
-        for module in &api.modules {
+        for (module_index, module) in api.modules.iter().enumerate() {
             let mut scope = None;
-            for declaration in &module.declarations {
+            for (declaration_index, declaration) in module.declarations.iter().enumerate() {
                 if !matches!(
                     declaration,
                     ApiDeclaration::Model(_)
@@ -275,26 +312,35 @@ impl TypeChecker {
                 let scope = scope.get_or_insert_with(|| {
                     let mut module_scope = root_remapping.clone();
                     module_scope.extend(self.pub_library_declaration_scope(library, manifest, &module.module_path));
-                    module_scope
+                    Arc::new(module_scope)
                 });
-                self.cache_declared_library_type(library, manifest, key, declaration, scope);
+                let position = LayoutDeclaration::Api {
+                    module: module_index,
+                    declaration: declaration_index,
+                };
+                let scope = Arc::clone(scope);
+                self.cache_declared_library_type(library, manifest, key, declaration, position, scope);
             }
         }
     }
 
     /// Cache each type in its checked declaration scope, including transparent aliases referenced by signatures
     /// without an explicit consumer import. Source aliases resolve through the same scope as fields and methods.
+    ///
+    /// A model, class, enum, newtype or trait is deferred to the first lookup that reads it, built from the
+    /// declaration at `position`.
     fn cache_declared_library_type(
         &mut self,
         library: &str,
-        manifest: &LibraryManifest,
+        manifest: &Arc<LibraryManifest>,
         key: String,
         declaration: &ApiDeclaration,
-        scope: &HashMap<String, String>,
+        position: LayoutDeclaration,
+        scope: Arc<HashMap<String, String>>,
     ) {
         if let ApiDeclaration::TypeAlias(item) = declaration {
             let mut target = resolved_type_from_manifest_type_ref(&item.type_alias.target);
-            Self::remap_resolved_type_with_import_aliases(&mut target, scope);
+            Self::remap_resolved_type_with_import_aliases(&mut target, scope.as_ref());
             self.type_aliases.insert(
                 key,
                 crate::typechecker::TypeAliasTarget {
@@ -310,25 +356,29 @@ impl TypeChecker {
             );
             return;
         }
-        let Some(mut kind) =
-            self.symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration)
-        else {
-            return;
+        let recipe = LayoutRecipe {
+            manifest: Arc::clone(manifest),
+            declaration: position,
+            remappings: vec![scope],
+            field_provider: Some(library.to_owned()),
         };
-        self.remap_symbol_kind_with_import_aliases(&mut kind, scope);
-        Self::mark_compiled_class_field_provider(&mut kind, library);
-        match kind {
-            SymbolKind::Type(info) if !matches!(info, TypeInfo::TypeAlias | TypeInfo::Builtin) => {
+        match declaration {
+            ApiDeclaration::Model(_)
+            | ApiDeclaration::Class(_)
+            | ApiDeclaration::Enum(_)
+            | ApiDeclaration::Newtype(_) => {
                 let declaration = self
                     .public_library_type_identities
                     .get(&key)
                     .and_then(|identity| identity.canonical.as_ref())
                     .cloned();
-                self.cache_retained_nominal_layout(declaration.as_ref(), &info);
-                self.transitive_pub_types.entry(key).or_default().push(info);
+                let layout = self.deferred_layout(recipe);
+                self.cache_retained_nominal_layout(declaration.as_ref(), &layout);
+                self.transitive_pub_types.entry(key).or_default().push(layout);
             }
-            SymbolKind::Trait(info) => {
-                self.transitive_pub_traits.entry(key).or_default().push(info);
+            ApiDeclaration::Trait(_) => {
+                let layout = self.deferred_layout(recipe);
+                self.transitive_pub_traits.entry(key).or_default().push(layout);
             }
             _ => {}
         }

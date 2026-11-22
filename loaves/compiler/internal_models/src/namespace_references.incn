@@ -5,6 +5,8 @@ pub from rust::internal_models_native import (
     NamespaceReference,
     namespace_reference_filename,
     namespace_key,
+    namespace_header_key,
+    namespace_header_reference_filename,
     encode_namespace_references,
     decode_namespace_references,
 )

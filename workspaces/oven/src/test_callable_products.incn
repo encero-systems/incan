@@ -1,8 +1,13 @@
-"""Checked-source selection contracts: a selection resolves each native path it compares once."""
+"""
+Checked-source selection contracts: a selection resolves each native path it compares once, and a dependency's manifest
+is read for its vocabulary once per generation.
+"""
 
 from std.fs import Path
 from std.json import JsonValue
-from callable_products import retain_callable_products
+from rust::std::thread import sleep
+from rust::std::time import Duration
+from callable_products import desugared_by_a_dependency, retain_callable_products
 from files import json_text
 from freshness_fixtures import fixture, write
 from scratch import scratch_directory
@@ -41,6 +46,43 @@ pub def test_a_checked_source_selection_resolves_each_native_path_once() -> Resu
     observed = finish_counting()
     assert selected.checked_context is not None, "the selection named no checked-source context"
     assert observed.resolutions == 2, f"three closures naming one archive and its directory resolved {observed.resolutions} paths"
+    return Ok(None)
+
+
+pub def test_an_edit_decodes_no_dependency_manifest_the_build_before_decoded() -> Result[None, str]:
+    """
+    Whether a dependency Loaf publishes vocabulary decides if the engine keeps per-declaration records for a unit. It is
+    read from the Loaf's manifest once per manifest generation: the request after the one that read it, an edit's,
+    decodes no manifest. A republished manifest is read again, once.
+
+    A Loaf's manifest can be megabytes of JSON: Oven's edits decoded three of them, about 1.4 s, on every request.
+    """
+    scratch = scratch_directory()?
+    setup = fixture(scratch.path())?
+    dependency = Path(setup.unit.loaves[0].dir)
+    manifest = dependency.joinpath("dep.incnlib")
+    # A published manifest has settled by the time a build reads it.
+    sleep(Duration.from_secs(3))
+    count_work(dependency.0)
+    assert not desugared_by_a_dependency(setup.unit)?
+    before = finish_counting()
+    count_work(dependency.0)
+    assert not desugared_by_a_dependency(setup.unit)?
+    edit = finish_counting()
+    assert before.decodes == 1, f"the build before decoded the dependency manifest {before.decodes} times"
+    assert edit.decodes == 0, f"the edit decoded the dependency manifest the build before decoded {edit.decodes} times"
+    # The Loaf republished with vocabulary: another generation, read once and then answered from that reading.
+    identity = "abababababababababababababababababababababababababababababababab"
+    write(manifest, f"{{\"vocab\": {{\"metadata_version\": 1, \"unit_identity\": \"{identity}\"}}}}")?
+    sleep(Duration.from_secs(3))
+    count_work(dependency.0)
+    assert desugared_by_a_dependency(setup.unit)?
+    republished = finish_counting()
+    count_work(dependency.0)
+    assert desugared_by_a_dependency(setup.unit)?
+    again = finish_counting()
+    assert republished.decodes == 1, f"the republished manifest was decoded {republished.decodes} times"
+    assert again.decodes == 0, f"the republished manifest was decoded again {again.decodes} times"
     return Ok(None)
 
 

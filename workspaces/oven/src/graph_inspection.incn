@@ -14,6 +14,7 @@ from graph_cache import (
     published,
     read_graph,
     relationships,
+    save_observations,
     stamp_file,
     tree_inputs,
     unchecked_note,
@@ -21,13 +22,13 @@ from graph_cache import (
     unchecked_warning,
 )
 from graph_dependencies import GraphDependencies, prepare_graph, unit_natives, unit_loaves
-from observation import file_digest, trace, watch_inputs, watched_inputs
+from observation import Ledger, trace, watch_inputs, watched_inputs
 from graph_pages import GraphPage, publish_page, request_key, warm_page
 from graph_incan import inspect_incan
 from graph_loaves import registry_artifacts, registry_graphs, standard_graphs
 from graph_queries import matches, query, query_group, selection_keys, text
 from graph_identity import keyed, link_keys, declaration_digests
-from graph_snapshot import snapshot_identity, snapshot_status
+from graph_snapshot import artifact_observations, snapshot_identity, snapshot_status
 from graph_context import pack
 from graph_context_index import ContextIndex
 from graph_context_items import anchor_root
@@ -726,18 +727,23 @@ def export_records(
     records = read_records(local, root, toolchain, "", selected.strict, degraded, snapshot, None, providers)?
     mut header = records[0].expect_object().map_err((error) => error.message())?
     mut references: list[JsonValue] = []
+    mut ledger = artifact_observations(root)
     for unit in dependencies:
         if not unit.path.is_file():
             continue
-        references.append(dependency_reference(unit)?)
+        references.append(dependency_reference(unit, ledger)?)
+    save_observations(ledger)
     header["dependencies"] = JsonValue.array(references)
     return Ok([JsonValue.object(header)] + records[1:])
 
 
-def dependency_reference(unit: GraphUnit) -> Result[JsonValue, str]:
-    """Address original immutable graph bytes by digest, retaining their package and source-anchor provenance."""
+pub def dependency_reference(unit: GraphUnit, mut ledger: Ledger) -> Result[JsonValue, str]:
+    """
+    Address original immutable graph bytes by digest, retaining their package and source-anchor provenance. The digest
+    comes through the requesting project's artifact observations, so a settled graph is hashed once, not per export.
+    """
     mut fields: Dict[str, JsonValue] = {}
-    fields["id"] = JsonValue.string(f"graph:sha256:{file_digest(unit.path)?}")
+    fields["id"] = JsonValue.string(f"graph:sha256:{ledger.digest(unit.path)?}")
     fields["graph"] = JsonValue.string(unit.path.0)
     fields["root_path"] = JsonValue.string(unit.root.0)
     fields["package"] = JsonValue.string(unit.package)

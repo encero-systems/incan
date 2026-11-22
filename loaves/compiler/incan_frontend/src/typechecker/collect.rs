@@ -26,6 +26,7 @@ mod imports;
 pub(in crate::typechecker) mod loaf_imports;
 pub(in crate::typechecker) mod method_visibility;
 mod nominal_declarations;
+mod package_internal_defaults;
 mod rust_imports;
 mod std_root_imports;
 mod trait_bounds;

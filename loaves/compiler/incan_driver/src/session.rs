@@ -24,7 +24,7 @@ use incan_frontend::contract_metadata::{
 use incan_frontend::hir::build_semantic_module_snapshot_v0;
 use incan_frontend::loaf_index::{LIBRARY_MANIFEST_EXTENSION, LoafIndex};
 use incan_frontend::parsed_module::ParsedModule;
-use incan_frontend::rust_abi_cache::{RustAbiCache, encode_rust_abi_cache};
+use incan_frontend::rust_abi_cache::RustAbiCache;
 use incan_frontend::testing_markers::{TestingMarkerSemantics, testing_marker_semantics_from_manifest};
 use incan_frontend::typechecker::{TypeCheckInfo, TypeChecker};
 use incan_frontend::{diagnostics, lexer, parser, vocab_desugar_pass};
@@ -78,8 +78,8 @@ pub type RustFacts = BTreeMap<String, incan_lang::interop::RustItemMetadata>;
 /// Where a session reads the Rust facts no ABI cache holds: the compiler's own rustc, over the unit's crates. The
 /// caches answer first; a source is asked only for the paths they leave uncovered, so a crate never has two answers.
 pub trait RustFactsSource: std::fmt::Debug + Send + Sync {
-    /// Facts for `paths`.
-    fn facts(&self, paths: &BTreeSet<String>) -> Result<RustFacts, String>;
+    /// Facts for `paths`, as one ABI cache whose items decode when a checker reads them.
+    fn facts(&self, paths: &BTreeSet<String>) -> Result<RustAbiCache, String>;
 }
 
 /// Where one session's Rust facts come from: the ABI caches of the crates the unit links, then the source.
@@ -292,9 +292,7 @@ impl CompilationSession {
         if uncovered.is_empty() {
             return Ok(());
         }
-        let facts = source.facts(&uncovered).map_err(CliError::failure)?;
-        let encoded = encode_rust_abi_cache(&facts).map_err(CliError::failure)?;
-        let cache = RustAbiCache::decode_owned(encoded).map_err(CliError::failure)?;
+        let cache = source.facts(&uncovered).map_err(CliError::failure)?;
         Arc::make_mut(&mut self.loaves).add_rust_fact_cache(&uncovered, Arc::new(cache));
         Ok(())
     }
@@ -344,14 +342,21 @@ impl CompilationSession {
             visit,
             crate::typecheck::TypecheckOutput::Full,
         )?;
-        let namespace_lowering_inputs = checked.namespace_lowering_inputs;
+        let mut namespace_lowering_inputs = checked.namespace_lowering_inputs;
+        let mut namespace_package_roots = checked.namespace_package_roots;
+        let mut namespace_bodies = checked.namespace_bodies;
+        self.read_admitted_namespace_bodies(
+            modules,
+            &checked.header_admitted,
+            &mut namespace_bodies,
+            &mut namespace_lowering_inputs,
+            &mut namespace_package_roots,
+        )?;
         let mut type_info_by_path = BTreeMap::new();
         let mut type_info_by_module_path = BTreeMap::new();
         let mut semantic_snapshots_by_path = BTreeMap::new();
         let mut namespace_body_by_path = BTreeMap::new();
-        for ((module, type_info), namespace_body) in
-            modules.iter().zip(checked.type_infos).zip(checked.namespace_bodies)
-        {
+        for ((module, type_info), namespace_body) in modules.iter().zip(checked.type_infos).zip(namespace_bodies) {
             if collect_semantic_snapshots {
                 let snapshot = build_semantic_module_snapshot_v0(&module.ast, &module.path_segments, &type_info);
                 semantic_snapshots_by_path.insert(module.file_path.clone(), snapshot);
@@ -370,8 +375,65 @@ impl CompilationSession {
             semantic_snapshots_by_path,
             namespace_body_by_path,
             namespace_lowering_inputs,
-            namespace_package_roots: checked.namespace_package_roots,
+            namespace_package_roots,
         })
+    }
+
+    /// Read the Body IR, lowering witnesses and package roots of every namespace checking admitted by its header, for
+    /// the consumers that lower them. Checking itself read no frame of these namespaces beyond installed interfaces.
+    fn read_admitted_namespace_bodies(
+        &self,
+        modules: &[ParsedModule],
+        header_admitted: &[bool],
+        bodies: &mut [Option<incan_semantics_core::body_ir::BodyIrModule>],
+        lowering_inputs: &mut Vec<Arc<[(incan_semantics_core::CompilerNodeId, String)]>>,
+        package_roots: &mut BTreeSet<incan_semantics_core::CanonicalSymbolId>,
+    ) -> Result<(), CliDiagnosticFailure> {
+        if !header_admitted.contains(&true) {
+            return Ok(());
+        }
+        let _invocation = tracing::trace_span!(
+            target: "incan::invocation",
+            "incan_driver::read_admitted_namespace_bodies",
+            modules = header_admitted.iter().filter(|admitted| **admitted).count(),
+        )
+        .entered();
+        let refused = |message: String| {
+            CliDiagnosticFailure::single(
+                "",
+                "",
+                diagnostics::CompileError::new(message, Span::default()),
+                diagnostics::DiagnosticPhase::Typecheck,
+            )
+        };
+        for ((module, admitted), body) in modules.iter().zip(header_admitted).zip(bodies.iter_mut()) {
+            if !admitted {
+                continue;
+            }
+            let source = module
+                .file_path
+                .strip_prefix(&self.unit.project_root)
+                .map(|path| path.to_string_lossy().into_owned())
+                .map_err(|_| {
+                    refused(format!(
+                        "admitted namespace {} is outside the project",
+                        module.file_path.display()
+                    ))
+                })?;
+            let record = self
+                .graph_body_records
+                .namespace(&source)
+                .map_err(|error| refused(format!("graph namespace `{source}` refused: {error:?}")))?
+                .ok_or_else(|| {
+                    refused(format!(
+                        "graph namespace `{source}` was admitted by its header but has no frame"
+                    ))
+                })?;
+            lowering_inputs.push(Arc::clone(&record.header.lowering_inputs));
+            package_roots.extend(record.header.package_roots.iter().cloned());
+            *body = Some(record.body_ir);
+        }
+        Ok(())
     }
 
     /// Check the unit once and combine retained expansion errors with ordinary diagnostics and warnings.

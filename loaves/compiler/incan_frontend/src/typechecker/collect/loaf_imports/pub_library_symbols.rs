@@ -1,6 +1,9 @@
 //! Public library function symbols, module member lookups, and transitive export semantics.
 
+use super::deferred_layouts::DeclaringScopes;
 use super::*;
+use crate::typechecker::TransitiveLayout;
+use crate::typechecker::transitive_layouts::{LayoutDeclaration, LayoutRecipe};
 
 impl TypeChecker {
     /// Resolve one exported function name from a public manifest into a local symbol kind.
@@ -207,54 +210,59 @@ impl TypeChecker {
     ///
     /// These caches are used only by the consumer-side typechecker when imported signatures mention provider types
     /// that the consumer did not explicitly import by name (for example `Session.read_csv(...) -> LazyFrame[T]`).
-    /// They do not change source-visible name resolution.
+    /// They do not change source-visible name resolution. Each declaration's layout is deferred (see
+    /// [`crate::typechecker::TransitiveLayout`]) and built the first time a lookup reads it; identities, scopes and
+    /// alias layouts are installed here, in the order the tables have always been filled.
     pub(in crate::typechecker) fn cache_transitive_pub_export_semantics(
         &mut self,
         library: &str,
-        manifest: &LibraryManifest,
+        manifest: &Arc<LibraryManifest>,
     ) {
         if !self.cached_pub_libraries.insert(library.to_string()) {
             return;
         }
-        let canonical_remapping = self.public_library_canonical_type_remapping(library, manifest);
-
-        for model in &manifest.exports.models {
-            let model_info = self.model_info_from_manifest(model);
+        let canonical_remapping = Arc::new(self.public_library_canonical_type_remapping(library, manifest));
+        let root_layout = |declaration, field_provider: Option<&str>| LayoutRecipe {
+            manifest: Arc::clone(manifest),
+            declaration,
+            remappings: Vec::new(),
+            field_provider: field_provider.map(str::to_owned),
+        };
+        let exports = &manifest.exports;
+        for (index, model) in exports.models.iter().enumerate() {
+            let layout = self.deferred_layout(root_layout(LayoutDeclaration::Model(index), None));
             self.transitive_pub_types
                 .entry(model.name.clone())
                 .or_default()
-                .push(TypeInfo::Model(model_info));
+                .push(layout);
         }
-        for class in &manifest.exports.classes {
-            let mut kind = SymbolKind::Type(TypeInfo::Class(self.class_info_from_manifest(class)));
-            Self::mark_compiled_class_field_provider(&mut kind, library);
-            if let SymbolKind::Type(info) = kind {
-                self.transitive_pub_types
-                    .entry(class.name.clone())
-                    .or_default()
-                    .push(info);
-            }
+        for (index, class) in exports.classes.iter().enumerate() {
+            let layout = self.deferred_layout(root_layout(LayoutDeclaration::Class(index), Some(library)));
+            self.transitive_pub_types
+                .entry(class.name.clone())
+                .or_default()
+                .push(layout);
         }
-        for enum_export in &manifest.exports.enums {
-            let enum_info = self.enum_info_from_manifest(enum_export);
+        for (index, enum_export) in exports.enums.iter().enumerate() {
+            let layout = self.deferred_layout(root_layout(LayoutDeclaration::Enum(index), None));
             self.transitive_pub_types
                 .entry(enum_export.name.clone())
                 .or_default()
-                .push(TypeInfo::Enum(enum_info));
+                .push(layout);
         }
-        for newtype in &manifest.exports.newtypes {
-            let newtype_info = self.newtype_info_from_manifest(newtype);
+        for (index, newtype) in exports.newtypes.iter().enumerate() {
+            let layout = self.deferred_layout(root_layout(LayoutDeclaration::Newtype(index), None));
             self.transitive_pub_types
                 .entry(newtype.name.clone())
                 .or_default()
-                .push(TypeInfo::Newtype(newtype_info));
+                .push(layout);
         }
-        for trait_export in &manifest.exports.traits {
-            let trait_info = self.trait_info_from_manifest(trait_export);
+        for (index, trait_export) in exports.traits.iter().enumerate() {
+            let layout = self.deferred_layout(root_layout(LayoutDeclaration::Trait(index), None));
             self.transitive_pub_traits
                 .entry(trait_export.name.clone())
                 .or_default()
-                .push(trait_info);
+                .push(layout);
         }
 
         self.register_pub_library_declarations(library, manifest, &canonical_remapping);
@@ -276,28 +284,62 @@ impl TypeChecker {
                 }
             }
         }
+        self.cache_canonical_type_layouts(library, manifest, &canonical_remapping);
+    }
+
+    /// Install each nominal public type of `library` under its canonical spelling and its retained carrier key, its
+    /// members read in its declaring module's scope and then through `canonical_remapping`.
+    ///
+    /// A model, class, enum or newtype export is deferred; an alias export is built now, because it reads the tables,
+    /// and one that names no nominal type is not installed. Every layout is made before any is installed, so an alias
+    /// reads the tables as the install found them.
+    fn cache_canonical_type_layouts(
+        &mut self,
+        library: &str,
+        manifest: &Arc<LibraryManifest>,
+        canonical_remapping: &Arc<HashMap<String, String>>,
+    ) {
         let identity_graph = &manifest.contract_metadata.identity_graph;
-        let canonical_types = identity_graph
-            .exports
-            .iter()
-            .filter_map(|identity| {
-                let info = self.manifest_nominal_type_info(manifest, &identity.public_name)?;
-                Some((
-                    canonical_public_library_type_name(library, &identity.public_name),
-                    identity_graph.canonical_for_public_name(&identity.public_name),
-                    info,
-                ))
-            })
-            .collect::<Vec<_>>();
-        for (canonical_name, declaration, info) in canonical_types {
-            let mut kind = SymbolKind::Type(info);
-            self.remap_symbol_kind_through_declaring_module(library, manifest, declaration.as_ref(), &mut kind);
-            self.remap_symbol_kind_with_import_aliases(&mut kind, &canonical_remapping);
-            Self::mark_compiled_class_field_provider(&mut kind, library);
-            if let SymbolKind::Type(info) = kind {
-                self.cache_retained_nominal_layout(declaration.as_ref(), &info);
-                self.transitive_pub_types.entry(canonical_name).or_default().push(info);
-            }
+        let mut scopes = DeclaringScopes::new();
+        let mut layouts = Vec::new();
+        for identity in &identity_graph.exports {
+            let public_name = identity.public_name.as_str();
+            let (declaration, layout) = if Self::export_layout_is_deferrable(manifest, public_name) {
+                let declaration = identity_graph.canonical_for_public_name(public_name);
+                let scope = self.declaring_module_scope(library, manifest, declaration.as_ref(), &mut scopes);
+                let layout = self.deferred_layout(LayoutRecipe {
+                    manifest: Arc::clone(manifest),
+                    declaration: LayoutDeclaration::Export(public_name.to_owned()),
+                    remappings: scope.into_iter().chain([Arc::clone(canonical_remapping)]).collect(),
+                    field_provider: Some(library.to_owned()),
+                });
+                (declaration, layout)
+            } else {
+                let Some(info) = self.manifest_nominal_type_info(manifest, public_name) else {
+                    continue;
+                };
+                let declaration = identity_graph.canonical_for_public_name(public_name);
+                let mut kind = SymbolKind::Type(info);
+                self.remap_symbol_kind_through_declaring_module(library, manifest, declaration.as_ref(), &mut kind);
+                self.remap_symbol_kind_with_import_aliases(&mut kind, canonical_remapping.as_ref());
+                Self::mark_compiled_class_field_provider(&mut kind, library);
+                let SymbolKind::Type(info) = kind else {
+                    continue;
+                };
+                (declaration, TransitiveLayout::ready(info))
+            };
+            layouts.push((
+                canonical_public_library_type_name(library, public_name),
+                declaration,
+                layout,
+            ));
+        }
+        for (canonical_name, declaration, layout) in layouts {
+            self.cache_retained_nominal_layout(declaration.as_ref(), &layout);
+            self.transitive_pub_types
+                .entry(canonical_name)
+                .or_default()
+                .push(layout);
         }
     }
 
@@ -306,7 +348,7 @@ impl TypeChecker {
     pub(in crate::typechecker) fn cache_retained_nominal_layout(
         &mut self,
         declaration: Option<&incan_semantics_core::CanonicalSymbolId>,
-        info: &TypeInfo,
+        layout: &TransitiveLayout<TypeInfo>,
     ) {
         let Some(declaration) = declaration else { return };
         let Some(carrier) = incan_semantics_core::body_ir::nominal_carrier_key(declaration) else {
@@ -314,6 +356,6 @@ impl TypeChecker {
         };
         self.transitive_pub_types
             .entry(carrier)
-            .or_insert_with(|| vec![info.clone()]);
+            .or_insert_with(|| vec![layout.clone()]);
     }
 }

@@ -93,17 +93,34 @@ pub fn lower_library_method(
         })
         .collect();
     let result = library_method_result(builder, delegation, target, destination, &names, &closed, span)?;
-    let boxed_operands = library_call_operands(
-        module,
-        builder,
-        delegation,
-        &target.binding,
-        arguments,
-        &argument_types,
-        span,
-        1,
-        false,
-    )?;
+    // A member partial of a linked class binds its presets from the frame its owner retains for that name, as a unit of
+    // the class's own package may call it (DD-0007); every other call binds the callee's own defaults.
+    let partial = match delegation.declaration_frame() {
+        Some(frame) => crate::method_calls::method_partial_arguments(
+            module,
+            builder,
+            target,
+            arguments,
+            frame,
+            &argument_types,
+            span,
+        )?,
+        None => None,
+    };
+    let boxed_operands = match partial {
+        Some(values) => values,
+        None => library_call_operands(
+            module,
+            builder,
+            delegation,
+            &target.binding,
+            arguments,
+            &argument_types,
+            span,
+            1,
+            false,
+        )?,
+    };
     let ordinary = shared_sdk_operands(builder, &ordinary_types, boxed_operands, span)?;
     let mut operands = vec![read_place(reference.clone(), true, span)];
     operands.extend(ordinary);

@@ -8,6 +8,9 @@ from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_gra
 from json_fields import required_text
 
 pub const DESUGARER: str = "vocab.desugarer_artifact"
+# Every vocabulary a manifest publishes names the unit that registered it, so this field is present exactly when the
+# manifest publishes vocabulary, with or without a desugarer.
+pub const VOCABULARY: str = "vocab.unit_identity"
 
 pub enum ReadingKind:
     Digest
@@ -27,13 +30,20 @@ def family(kind: ReadingKind) -> tuple[bytes, str, str]:
         ReadingKind.ProjectLock => return (b"lkroot\x00", "project-lock", "tuple<string,string>")
         ReadingKind.Vocabulary => return (
             b"rvoart\x00", "manifest-vocabulary",
-            "tuple<string,list<tuple<list<string>,list<string>,list<i64>,list<string>,list<string>>>>",
+            "tuple<string,list<tuple<list<string>,list<string>,list<i64>,list<string>,list<string>>>,list<string>>",
         )
+
+
+def generation(kind: ReadingKind) -> int:
+    """The version of a family's records: a manifest's reading names the vocabulary it publishes from version 2 on."""
+    match kind:
+        ReadingKind.Vocabulary => return 2
+        _ => return 1
 
 
 def contract(kind: ReadingKind) -> tuple[bytes, Description]:
     selector, name, storage = family(kind)
-    description = model_description(selector, f"incan.oven.retained-reading/{name}/1", [
+    description = model_description(selector, f"incan.oven.retained-reading/{name}/{generation(kind)}", [
         ModelField(identity=b"select", name="selection", storage="string"),
         ModelField(identity=b"source", name="source", storage="string"),
         ModelField(identity=b"stamp_", name="stamp", storage="string"),
@@ -73,11 +83,14 @@ def stored_value(kind: ReadingKind, value: JsonValue) -> Result[Value, str]:
                 return Err("unexpected retained vocabulary fields")
             fields = value.require("fields").map_err((error) => error.message())?
             _ = fields.expect_object().map_err((error) => error.message())?
-            mut artifacts: list[Value] = []
-            if len(fields.keys()) > 0:
-                if fields.keys() != [DESUGARER]:
+            for key in fields.keys():
+                if key != DESUGARER and key != VOCABULARY:
                     return Err("unrecognized manifest reading")
-                artifact = fields.require(DESUGARER).map_err((error) => error.message())?
+            mut identities: list[Value] = []
+            if let Some(identity) = fields.get(VOCABULARY):
+                identities.append(Value.Text(identity.expect_str().map_err((error) => error.message())?))
+            mut artifacts: list[Value] = []
+            if let Some(artifact) = fields.get(DESUGARER):
                 _ = artifact.expect_object().map_err((error) => error.message())?
                 for key in artifact.keys():
                     if key not in ["unit_identity", "artifact_kind", "abi_version", "relative_path", "sha256"]:
@@ -89,7 +102,7 @@ def stored_value(kind: ReadingKind, value: JsonValue) -> Result[Value, str]:
                     optional_text(artifact, "unit_identity")?, optional_text(artifact, "artifact_kind")?,
                     Value.List(abi), optional_text(artifact, "relative_path")?, optional_text(artifact, "sha256")?,
                 ]))
-            return Ok(Value.Tuple([Value.Text(required_text(value, "digest")?), Value.List(artifacts)]))
+            return Ok(Value.Tuple([Value.Text(required_text(value, "digest")?), Value.List(artifacts), Value.List(identities)]))
         _ => return Ok(Value.Text(value.expect_str().map_err((error) => error.message())?))
 
 
@@ -106,7 +119,7 @@ def public_value(kind: ReadingKind, value: Value) -> Result[JsonValue, str]:
             pair = tuple_items(value, 2)?
             return Ok(JsonValue.object({"manifest": JsonValue.string(text(pair[0])?), "digest": JsonValue.string(text(pair[1])?)}))
         ReadingKind.Vocabulary =>
-            pair = tuple_items(value, 2)?
+            pair = tuple_items(value, 3)?
             artifacts = items(pair[1])?
             if len(artifacts) > 1:
                 return Err("multiple retained vocabulary workers")
@@ -125,5 +138,10 @@ def public_value(kind: ReadingKind, value: Value) -> Result[JsonValue, str]:
                         else:
                             artifact[names[index]] = JsonValue.string(text(present[0])?)
                 fields[DESUGARER] = JsonValue.object(artifact)
+            identities = items(pair[2])?
+            if len(identities) > 1:
+                return Err("multiple retained vocabulary identities")
+            if len(identities) == 1:
+                fields[VOCABULARY] = JsonValue.string(text(identities[0])?)
             return Ok(JsonValue.object({"digest": JsonValue.string(text(pair[0])?), "fields": JsonValue.object(fields)}))
         _ => return Ok(JsonValue.string(text(value)?))

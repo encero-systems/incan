@@ -34,6 +34,39 @@ impl<'a> PublicationAudit<'a> {
         Ok(true)
     }
 
+    /// Admit the generated class name or field table of a binder of the owning generic frame (`T.__class_name__()`).
+    /// The consumer closes the receiver with the instance's type arguments and reads the closed nominal's own
+    /// layout, so the operation needs no declaration of this package; metadata of a named type stays refused.
+    pub(super) fn binder_type_metadata(
+        &mut self,
+        target: &mut crate::body_ir::TypeMetadataTarget,
+    ) -> Result<(), CoverageReason> {
+        let callable = self
+            .current_callable
+            .as_ref()
+            .ok_or(CoverageReason::UnresolvedReference)?;
+        if target.owner.kind != SemanticSourceTargetKind::GenericBinder
+            || target.member.kind != SemanticSourceTargetKind::Method
+            || !binder_belongs_to(
+                &target.owner,
+                callable,
+                &self.type_parameters,
+                self.nominal_declarations,
+            )
+        {
+            return Err(CoverageReason::UnsupportedConstruct);
+        }
+        self.ty(&target.receiver_type)?;
+        if let SymbolOrigin::Module(module_path) = &target.owner.origin {
+            target.owner.origin = SymbolOrigin::Package {
+                library: self.library.to_owned(),
+                module_path: module_path.clone(),
+            };
+        }
+        target.member.origin = target.owner.origin.clone();
+        Ok(())
+    }
+
     /// Combine source-local declarations, retained checked references and the executable native storage inventory,
     /// keeping conflicting source identities separate and performing no new name resolution.
     pub(super) fn new(
@@ -661,8 +694,9 @@ impl<'a> PublicationAudit<'a> {
     /// Audit the checked callee and retain exact native selections without exporting producer-session activation.
     ///
     /// Package calls keep canonical dispatch even within their own fragment. Generated generic field metadata
-    /// retains only its authenticated fragment-local binder; provider, type-metadata, foreign and bridge targets
-    /// remain refused until their portable execution requirements have a represented contract.
+    /// and type metadata of the frame's own binder retain only that authenticated binder; provider, foreign and bridge
+    /// targets, and type metadata of a named type, remain refused until their portable execution requirements have a
+    /// represented contract.
     pub(super) fn callee(&mut self, callee: &mut Callee) -> Result<(), CoverageReason> {
         match callee {
             Callee::Function(CallableTarget::Named(target)) => {
@@ -703,10 +737,10 @@ impl<'a> PublicationAudit<'a> {
                 }
             }
             Callee::Helper(_) => {}
-            Callee::ProviderOperation(_)
-            | Callee::TypeMetadata(_)
-            | Callee::CheckedForeign(_)
-            | Callee::CheckedBridge(_) => return Err(CoverageReason::UnsupportedConstruct),
+            Callee::TypeMetadata(target) => self.binder_type_metadata(target)?,
+            Callee::ProviderOperation(_) | Callee::CheckedForeign(_) | Callee::CheckedBridge(_) => {
+                return Err(CoverageReason::UnsupportedConstruct);
+            }
         }
         Ok(())
     }

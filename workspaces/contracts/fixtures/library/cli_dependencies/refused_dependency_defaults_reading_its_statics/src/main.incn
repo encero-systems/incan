@@ -1,0 +1,9 @@
+# behavior: another package's call that omits a parameter whose default is no value, here an expression reading the dependency's static, is refused for the missing argument; only a unit of the dependency's own package may omit it
+# expect-diagnostic: INCAN-T0001
+
+from pub::helpers import has, size
+
+
+def main() -> None:
+    println(has())
+    println(size())

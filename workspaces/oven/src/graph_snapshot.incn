@@ -38,7 +38,7 @@ pub def snapshot_identity(units: list[GraphUnit], root: str, strict: bool) -> Re
     return Ok(f"snapshot:{fingerprint(['incan.graph.snapshot/1', root, str(strict)] + sorted(parts))?}")
 
 
-def artifact_observations(root: str) -> Ledger:
+pub def artifact_observations(root: str) -> Ledger:
     """Keep optional artifact digest observations in the caller's cache; missing storage still hashes exact bytes."""
     mut owner = Path(root)
     if owner.is_file():
