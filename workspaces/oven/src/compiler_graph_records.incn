@@ -455,6 +455,64 @@ pub def family_outputs(
     return Ok(listed)
 
 
+pub model OutputSlot:
+    """One selected slot of a family's output index: the entry's key and the revision of the entry."""
+
+    pub indexed: str
+    pub revision: str
+
+
+pub def family_slots(selected: Snapshot, family: str, profile: str, slots: OutputSlots) -> Result[list[OutputSlot], str]:
+    """
+    The output-index entries of one family's slots of an origin, with their revisions, read from index pages alone: no
+    pointer, evaluation or value is read. They are the slots `family_outputs` reads the pointers of.
+    """
+    if "\t" in slots.origin or "\t" in slots.identity_profile or slots.identity_profile == "":
+        return Err("invalid compiler output range")
+    prefix = family_range(family, profile)? + slots.identity_profile + "\t" + slots.origin + "\t"
+    excluded = set(slots.excluded)
+    mut listed: list[OutputSlot] = []
+    for entry in entries_with_prefix(selected.root, selected.index, prefix).map_err((error) => f"{error.object}: {error.detail}")?:
+        if let Some(location) = entry.location:
+            if location.tombstone:
+                continue
+            fields = entry.key.split("\t")
+            if len(fields) != 7 or fields[4] != slots.origin or fields[5] in excluded:
+                continue
+            if let Some(names) = slots.included:
+                if fields[5] not in names:
+                    continue
+            listed.append(OutputSlot(indexed=entry.key, revision=hexlify(location.digest)))
+    return Ok(listed)
+
+
+pub def slot_output(selected: Snapshot, profile: str, slot: OutputSlot) -> Result[str, str]:
+    """The record key one slot's output-index entry names."""
+    note_graph_demand("output-slot", selected, slot.indexed)
+    output = read_pointer(required_value(selected, slot.indexed)?)?
+    if output_index_key(profile, output)? != slot.indexed:
+        return Err("compiler output index entry names a record of another slot")
+    return Ok(output)
+
+
+pub def evaluation_revision(selected: Snapshot, profile: str, output: str) -> Result[str, str]:
+    """The revision of an output's evaluation in the selected index, read from index pages alone; empty when it has none."""
+    match locate_value(selected, evaluation_record_key(profile, output)).map_err((error) => error.message())?:
+        Some(location) => return Ok(hexlify(location.digest))
+        None => return Ok("")
+
+
+pub def select_slot_record(selected: Snapshot, output: str, profile: str, cutoff: EditCutoff) -> Result[Option[ReusableRecord], str]:
+    """Select one slot's current output as `select_family_records` selects each of a family's."""
+    key = decode_record_key(output)?
+    mut verified: Dict[str, tuple[RecordRequest, str]] = {}
+    match select_evaluation(selected, key, profile, verified, false, cutoff)?:
+        Some(reused) =>
+            return Ok(Some(ReusableRecord(key=key, value=reused.value, value_digest=reused.value_digest,
+                receipt=reused.receipt, namespace=reused.namespace, location=reused.location)))
+        None => return Ok(None)
+
+
 pub def family_listing(
     selected: Snapshot, family: str, profile: str, identity_profile: str = "", origin: str = "",
 ) -> Result[list[str], str]:
