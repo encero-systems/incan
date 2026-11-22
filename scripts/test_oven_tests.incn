@@ -76,6 +76,9 @@ def test_explicit_options_override_the_defaults() -> Result[None, str]:
     assert parse_options(["oven", "evidence"], "2", 18, 4 * GIB)?.jobs == 2
     assert parse_options(["oven", "evidence", "--jobs", "1"], "", 18, 0)?.jobs == 1
     assert parse_options(["oven", "evidence", "--memory", "15"], "", 18, 128 * GIB)?.memory == 15 * GIB
+    assert parse_options(["oven", "evidence"], "", 18, 0)?.worker_projects == 0
+    bounded = parse_options(["oven", "evidence", "--jobs", "4", "--worker-projects", "2"], "", 18, 0)?
+    assert bounded.jobs == 4 and bounded.worker_projects == 2
     return Ok(None)
 
 

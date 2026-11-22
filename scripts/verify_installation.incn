@@ -281,6 +281,8 @@ pub def oven_test_arguments(oven: Path, checkout: Path, run: Path, jobs: int) ->
         run.0,
         "--jobs",
         str(oven_jobs(jobs)),
+        "--worker-projects",
+        str(verification_workers(jobs)),
         # A release names every failing test in one run, so no later failure hides behind the first.
         "--keep-going",
     ]

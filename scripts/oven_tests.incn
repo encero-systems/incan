@@ -62,7 +62,7 @@ const FAILED: str = "^test_[A-Za-z0-9_]+[.]incn::test_[A-Za-z0-9_]+ (FAILED|XPAS
 const NEEDS_SETTLED_INSTALLATION: FrozenList[str] = ["test_engine_protocol.incn"]
 # How long a running invocation's observed process tree stands before it is probed again: each probe starts `ps`.
 pub const CUSTODY_INTERVAL_MS: int = 1000
-const USAGE: str = "usage: oven_tests.incn OVEN EVIDENCE [--jobs N] [--memory GIB] [--keep-going]"
+const USAGE: str = "usage: oven_tests.incn OVEN EVIDENCE [--jobs N] [--worker-projects N] [--memory GIB] [--keep-going]"
 # The step reports failures under the installed-verification program's name.
 const REPORTER: str = "verify-installation"
 
@@ -77,6 +77,8 @@ pub model Options:
     pub memory: int
     # Whether a failure leaves the remaining invocations running, so one run reports every failure.
     pub keep_going: bool = false
+    # Private Oven checkouts, or zero to allocate one per job. Loaf tests do not borrow these checkouts.
+    pub worker_projects: int = 0
 
 
 pub model Invocation:
@@ -177,11 +179,12 @@ def main() -> None:
 
 pub def parse_options(arguments: list[str], configured: str, cores: int, physical: int) -> Result[Options, str]:
     """
-    OVEN and EVIDENCE, then optional `--jobs N`, `--memory GIB` and `--keep-going`. Without the first two, `configured`
-    or `cores` selects the count, and `physical` bytes less the headroom the shared memory.
+    OVEN and EVIDENCE select the installed command and logs. `--jobs N` and `--memory GIB` bound active work.
+    `--worker-projects N` limits the private Oven checkouts within those jobs. `--keep-going` retains all verdicts.
     """
     mut operands: list[str] = []
     mut jobs = default_jobs(configured, cores)
+    mut worker_projects = 0
     mut memory = shared_memory(physical)
     mut keep_going = false
     mut pending = ""
@@ -191,10 +194,12 @@ pub def parse_options(arguments: list[str], configured: str, cores: int, physica
                 return Err(f"`{pending}` needs a positive number")
             if pending == "--jobs":
                 jobs = int(argument)
+            elif pending == "--worker-projects":
+                worker_projects = int(argument)
             else:
                 memory = int(argument) * GIB
             pending = ""
-        elif argument == "--jobs" or argument == "--memory":
+        elif argument in ["--jobs", "--memory", "--worker-projects"]:
             pending = argument
         elif argument == "--keep-going":
             keep_going = true
@@ -207,7 +212,7 @@ pub def parse_options(arguments: list[str], configured: str, cores: int, physica
     if len(operands) != 2:
         return Err("OVEN and EVIDENCE are required")
     evidence = Path(operands[1]).absolute().map_err((error) => error.message())?
-    return Ok(Options(oven=operands[0], evidence=evidence, jobs=jobs, memory=memory, keep_going=keep_going))
+    return Ok(Options(oven=operands[0], evidence=evidence, jobs=jobs, memory=memory, keep_going=keep_going, worker_projects=worker_projects))
 
 
 pub def default_jobs(configured: str, cores: int) -> int:
@@ -242,7 +247,10 @@ def run(options: Options) -> Result[str, str]:
     logs = options.evidence.joinpath("oven-tests")
     logs.mkdir(true, true).map_err((error) => error.message())?
     bakery = selected_builder_bakery(get_or("INCAN_BUILDER_BAKERY", ""), get_or("INCAN_BUILDER_HOME", ""))
-    planned = invocations(root, options.evidence, logs, options.jobs, bakery)?
+    mut projects = options.jobs
+    if options.worker_projects > 0:
+        projects = min([projects, options.worker_projects])
+    planned = invocations(root, options.evidence, logs, projects, bakery)?
     outcome = planned_outcome(options.oven, planned, options.jobs, options.memory, options.keep_going)?
     remove_worker_projects(planned)?
     log = options.evidence.joinpath("oven-tests.log")
@@ -256,11 +264,11 @@ pub def invocations(
     root: Path,
     evidence: Path,
     logs: Path,
-    jobs: int,
+    projects: int,
     builder_bakery: str = "",
 ) -> Result[list[Invocation], str]:
     """
-    Plan fixed-order invocations; each Oven source may run in any of one private worker project per job.
+    Plan fixed-order invocations; each Oven source may run in any of the caller's private worker projects.
 
     A nonempty `builder_bakery` is the release builder's bakery: the release-profile Loaf tests ask it, so they reuse
     the release units the release already built under the same identities, as the Rust facet tests do. The Oven
@@ -274,7 +282,7 @@ pub def invocations(
     if len(sources) == 0:
         return Err("Oven test sources are absent")
     mut workers: list[str] = []
-    for position in range(min([jobs, len(sources)])):
+    for position in range(min([projects, len(sources)])):
         workers.append(isolated_oven_project(root, evidence, position)?.0)
     mut shared: Dict[str, str] = {}
     if builder_bakery != "":
