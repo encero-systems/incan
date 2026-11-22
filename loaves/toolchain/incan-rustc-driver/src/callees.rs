@@ -70,6 +70,7 @@ pub fn resolve(tcx: TyCtxt<'_>, callee: &Callee) -> Result<DefId, PlanError> {
         CalleeKind::ModuleComplete(slot) => planned(tcx, &crate::statics::complete_name(*slot)),
         CalleeKind::FieldMetadata(owner, _) => planned(tcx, &crate::field_metadata::name(*owner)),
         CalleeKind::StaticMethod(slot, method) => planned(tcx, &crate::statics::method_name(*slot, method)),
+        CalleeKind::LinkedStaticMethod(path, method) => planned(tcx, &crate::statics::linked_method_name(path, method)),
     }
 }
 

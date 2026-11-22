@@ -221,6 +221,11 @@ pub struct StaticCell {
     pub module_completion: bool,
 }
 
+/// Spell a native operation attached to the unit's storage slot. Only producer-local plans use slot names.
+pub fn static_accessor_name(slot: i64, operation: &str) -> String {
+    format!("__incan_static_{operation}_{slot}")
+}
+
 /// Checked source poll and item carrier authorizing an ordinary native SDK iterator implementation.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct IteratorMethods {

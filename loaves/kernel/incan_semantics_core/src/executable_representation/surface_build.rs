@@ -22,6 +22,27 @@ pub fn build_surface(
     public: &BTreeSet<CanonicalSymbolId>,
     unrepresentable: &BTreeSet<CanonicalSymbolId>,
 ) -> Result<Vec<u8>, ExecutableRepresentationError> {
+    Ok(prepare_surface(modules, library, package_version, public, unrepresentable, false)?.bytes)
+}
+
+/// The encoded executable surface and the native bindings the same Loaf must emit for its linked statics.
+pub struct PreparedSurface {
+    /// The indexed, encoded declaration fragments.
+    pub bytes: Vec<u8>,
+    /// One native binding per selected static or decorated replacement, in canonical order.
+    pub linked_statics: BTreeMap<CanonicalSymbolId, crate::body_ir::LinkedStaticAccessors>,
+}
+
+/// Prepare one producer surface. Source-only interfaces cannot promise native storage and keep the original
+/// slots, while a compiled Loaf must emit the accessors returned with its fragments.
+pub fn prepare_surface(
+    modules: &[BodyIrModule],
+    library: &str,
+    package_version: &str,
+    public: &BTreeSet<CanonicalSymbolId>,
+    unrepresentable: &BTreeSet<CanonicalSymbolId>,
+    native_storage: bool,
+) -> Result<PreparedSurface, ExecutableRepresentationError> {
     let candidates = checked_candidates(modules, library, public);
     let mut declarations = uncovered_owned_declarations(library, &candidates);
     let mut admitted = project_declarations(modules, library, &candidates, unrepresentable, &mut declarations)?;
@@ -34,7 +55,22 @@ pub fn build_surface(
             *coverage = DeclarationCoverage::Uncovered(CoverageReason::RequiredDeclarationUnavailable);
         }
     }
-    encode_surface(library, package_version, public, admitted, declarations)
+    let mut linked_statics = BTreeMap::new();
+    if native_storage {
+        for (identity, entry) in &mut admitted {
+            let declaration = match &mut entry.declaration {
+                ExecutableDeclaration::Static(declaration) => declaration,
+                ExecutableDeclaration::DecoratedBody { storage, .. } => storage,
+                _ => continue,
+            };
+            let links = crate::body_ir::LinkedStaticAccessors::for_declaration(declaration)
+                .ok_or_else(|| malformed("cannot publish native storage for the selected static"))?;
+            declaration.initial = crate::body_ir::StaticInitializer::Linked(Box::new(links.clone()));
+            linked_statics.insert(identity.clone(), links);
+        }
+    }
+    let bytes = encode_surface(library, package_version, public, admitted, declarations)?;
+    Ok(PreparedSurface { bytes, linked_statics })
 }
 
 /// Collect actual checked declarations and their members; eligibility never adds an importable export.

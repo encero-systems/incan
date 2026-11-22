@@ -84,7 +84,7 @@ def read_split_frame(reader: Connection) -> Result[None, str]:
 
 
 pub def test_records_engine_check_uses_the_build_route_without_codegen() -> Result[None, str]:
-    """An accepted and refused census check use records capture but produce no native binary."""
+    """Records checks produce no native binary and resolve standard imports against the caller's selected sources."""
     scratch = scratch_directory()?
     root = scratch.path()
     project = root.joinpath("project")
@@ -104,7 +104,8 @@ pub def test_records_engine_check_uses_the_build_route_without_codegen() -> Resu
                     Err(error) => return Err(f"{error}; engine cleanup failed: {cleanup}")
                     Ok(_) => return Err(cleanup)
             Ok(_) => pass
-    return checked
+    checked?
+    return check_explicit_standard_sources(binary, root)
 
 
 def exercise_records_check(binary: str, source: Path, store: Path, project: Path) -> Result[None, str]:
@@ -139,6 +140,31 @@ def exercise_records_check(binary: str, source: Path, store: Path, project: Path
     report = RustString.from_utf8(refused.stdout).map_err((error) => str(error))?
     assert refused.status.code() == Some(1i32) and "INCAN-T0001" in str(report) and refused.stderr == b""
     assert not project.joinpath("target/incan/debug/bin").exists(), "refused records check generated code"
+    return Ok(None)
+
+
+def check_explicit_standard_sources(binary: str, root: Path) -> Result[None, str]:
+    """An explicit empty standard source root supplies no standard packages to a records check."""
+    standard = root.joinpath("empty-standard")
+    standard.mkdir(true, true).map_err((error) => error.message())?
+    source = root.joinpath("use_fs.incn")
+    write(source, "from std.fs import Path\n\ndef main() -> None:\n    println(Path(\".\").0)\n")?
+    store = root.joinpath("override-store")
+    result = Command
+        .new(binary)
+        .arg("check")
+        .arg(source.0)
+        .arg("--format")
+        .arg("json")
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .env("INCAN_STDLIB", standard.0)
+        .output()
+        .map_err((error) => str(error))?
+    if store.joinpath("CURRENT").is_file():
+        stop_engine(store, binary)?
+    report = RustString.from_utf8(result.stdout).map_err((error) => str(error))?
+    assert result.status.code() == Some(1i32) and "Unknown stdlib module `std.fs`" in str(report), str(report)
     return Ok(None)
 
 

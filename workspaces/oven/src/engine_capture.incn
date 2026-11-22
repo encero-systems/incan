@@ -24,11 +24,12 @@ its inputs, so touching a file without changing its bytes leaves the identity as
 """
 
 from std.encoding.hex import hexlify
+from std.environ import get_or
 from std.fs import Path
 from std.hash import sha256
 from std.json import JsonValue, parse
 from engine_capture_identity import capture_identity
-from home import StandardPackage, home, standard_library_dir
+from home import StandardPackage, home, standard_library_dir, standard_packages
 from manifest_intent import parse_document
 from loaf_local_graph import unique
 from observation import SETTLE_SECONDS, FileMetadata, children, file_metadata
@@ -314,13 +315,16 @@ pub def admitted_home() -> Result[AdmittedHome, str]:
 
 
 pub def selected_home() -> Result[SelectedHome, str]:
-    """Select the admitted home and decoded toolchain together for one request."""
+    """Select one admitted toolchain and the standard packages of the request's selected source root."""
     pin = toolchain_file()?
     page = installation(pin.parent())?
     toolchain = page.toolchain.select()
     admission = match admitted_identity(pin.parent())?:
         Some(identity) => identity
         None => return Err("toolchain installation has no admitted page")
+    standard = match get_or("INCAN_STDLIB", ""):
+        "" => [StandardPackage(name=manifest.intent.name, root=manifest.root) for manifest in page.manifests]
+        _ => standard_packages()?
 
     return Ok(
         SelectedHome(
@@ -332,7 +336,7 @@ pub def selected_home() -> Result[SelectedHome, str]:
                 pinned=toolchain_roots(toolchain),
             ),
             toolchain=toolchain,
-            standard=[StandardPackage(name=manifest.intent.name, root=manifest.root) for manifest in page.manifests],
+            standard=standard,
         ),
     )
 

@@ -1,5 +1,4 @@
 # behavior: decorated generic and plain functions of a path-dependency Loaf keep reflection and names; nested and concurrent bindings initialize once and retry failures
-# pending: a generic Loaf function the consumer instantiates writes the Loaf's private statics (`names`, `nested_schema`) in a cell of the consumer's own, so the Loaf's compiled functions read them back unchanged; the nested from_csv[Nested] binding also stops as recursive initialization (not traced)
 # expect-stdout:
 #   Row:2:clone
 #   Point:3:clone

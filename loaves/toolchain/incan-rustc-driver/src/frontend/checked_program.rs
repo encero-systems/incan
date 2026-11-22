@@ -3,31 +3,54 @@
 
 use super::*;
 
-/// Recover generated-member ownership retained by the checker records that supplied reusable bodies.
+/// Recover the declaration that supplies each generated member reachable from the program.
 ///
-/// A generated member has no independent executable representation: its checked nominal owner is the dependency
-/// root. Conflicting owners for one canonical member are invalid retained checker evidence.
-fn retained_generated_member_owners(
+/// Checked bodies retain the checker's ownership facts. A whole admitted namespace retains its package roots and
+/// Body IR but drops transient type information. The linked value enum already admitted for one of those roots
+/// supplies the exact owner of its generated `from_value` member.
+fn retained_generated_member_owners<'a>(
     modules: &[ParsedModule],
-    analysis: &CompilationAnalysis,
-) -> Result<BTreeMap<CanonicalSymbolId, CanonicalSymbolId>, String> {
+    analysis: &'a CompilationAnalysis,
+    linked: &'a [BodyIrModule],
+) -> Result<BTreeMap<CanonicalSymbolId, &'a CanonicalSymbolId>, String> {
     let mut owners = BTreeMap::new();
     for module in modules {
         let info = analysis
             .type_info_for_path(&module.file_path)
             .ok_or("module analysis is missing")?;
         for (member, owner) in &info.calls.compiler_generated_member_identities {
-            if let Some(previous) = owners.insert(member.clone(), owner.clone())
-                && previous != *owner
-            {
-                return Err(format!(
-                    "compiler-generated member `{}` has conflicting retained owners",
-                    member.render_compact(),
-                ));
-            }
+            remember_generated_member_owner(&mut owners, member.clone(), owner)?;
         }
     }
+    for declaration in linked.iter().flat_map(|module| &module.value_enum_declarations) {
+        let owner = &declaration.canonical;
+        let member = owner.generated_member("from_value", SemanticSourceTargetKind::Method);
+        remember_generated_member_owner(&mut owners, member, owner)?;
+    }
     Ok(owners)
+}
+
+/// Record the owner of one exact generated member, refusing conflicting evidence for the same canonical identity.
+fn remember_generated_member_owner<'a>(
+    owners: &mut BTreeMap<CanonicalSymbolId, &'a CanonicalSymbolId>,
+    member: CanonicalSymbolId,
+    owner: &'a CanonicalSymbolId,
+) -> Result<(), String> {
+    use std::collections::btree_map::Entry;
+
+    match owners.entry(member) {
+        Entry::Vacant(entry) => {
+            entry.insert(owner);
+        }
+        Entry::Occupied(entry) if *entry.get() != owner => {
+            return Err(format!(
+                "compiler-generated member `{}` has conflicting retained owners",
+                entry.key().render_compact(),
+            ));
+        }
+        Entry::Occupied(_) => {}
+    }
+    Ok(())
 }
 
 /// Recover nonlocal call roots from accepted Body IR when a reused checker record no longer carries the reference
@@ -35,7 +58,7 @@ fn retained_generated_member_owners(
 fn retained_body_call_requirements(
     modules: &[BodyIrModule],
     package_identity: &str,
-    generated_member_owners: &BTreeMap<CanonicalSymbolId, CanonicalSymbolId>,
+    generated_member_owners: &BTreeMap<CanonicalSymbolId, &CanonicalSymbolId>,
 ) -> BTreeSet<CanonicalSymbolId> {
     let mut requirements = BTreeSet::new();
     for body in modules.iter().flat_map(|module| &module.bodies) {
@@ -49,10 +72,11 @@ fn retained_body_call_requirements(
     requirements
 }
 
+/// Recover package execution roots from canonical calls in the body and its nested statement sequences.
 fn collect_retained_body_calls(
     statements: &[incan_semantics_core::body_ir::Statement],
     package_identity: &str,
-    generated_member_owners: &BTreeMap<CanonicalSymbolId, CanonicalSymbolId>,
+    generated_member_owners: &BTreeMap<CanonicalSymbolId, &CanonicalSymbolId>,
     requirements: &mut BTreeSet<CanonicalSymbolId>,
 ) {
     use incan_semantics_core::body_ir::{CallableTarget, Callee, Rvalue, StatementKind};
@@ -64,7 +88,7 @@ fn collect_retained_body_calls(
                 ..
             } => {
                 if let Some(identity) = &target.canonical {
-                    let requirement = generated_member_owners.get(identity).unwrap_or(identity);
+                    let requirement = generated_member_owners.get(identity).copied().unwrap_or(identity);
                     if matches!(&requirement.origin, SymbolOrigin::Package { library, .. } if library != package_identity)
                     {
                         requirements.insert(requirement.clone());
@@ -508,7 +532,8 @@ fn checked_attempt(
         .map(|p| p.to_string_lossy().into_owned())
         .collect::<BTreeSet<_>>();
     let rebound = lower_authored_modules(&modules, &mut analysis, &session, &mut bodies, &mut files)?;
-    let retained_generated_member_owners = retained_generated_member_owners(&modules, &analysis)?;
+    let retained_generated_member_owners =
+        retained_generated_member_owners(&modules, &analysis, &bodies[..loaf_modules])?;
     let retained_requirements = retained_body_call_requirements(
         &bodies[loaf_modules..],
         package_identity,
