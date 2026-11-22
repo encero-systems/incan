@@ -89,6 +89,8 @@ pub struct LibraryManifest {
     pub contract_metadata: LibraryContractMetadata,
     /// Optional Rust-backed ABI metadata captured at library publication time.
     pub rust_abi: Option<LibraryRustAbi>,
+    /// What a project's shared library publishes for its own package alone (DD-0007); absent for every other Loaf.
+    pub package_internal: Option<super::PackageInternalExports>,
 }
 
 /// Public library exports grouped by declaration kind.
