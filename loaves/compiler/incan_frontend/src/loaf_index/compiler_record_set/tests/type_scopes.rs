@@ -226,3 +226,30 @@ fn a_program_checks_a_function_naming_a_reexported_model_from_its_records() -> R
     );
     Ok(())
 }
+
+/// The primitive provider is mandatory for a program, even when its expressions never use asynchronous tasks.
+/// Checking a plain value must neither open its task scope nor hydrate its entire contract.
+#[test]
+fn ordinary_body_does_not_open_the_task_error_provider_contract() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let package = "incan_stdlib_primitives";
+    let manifest = LibraryManifest::new(package, "0.1.0");
+    let _selection = thread_selection::select(installed_library(root.path(), &manifest)?);
+    let index = LoafIndex::deferred([(package.to_owned(), package.to_owned(), root.path().join("debug"), true)])?;
+    let source = "def main() -> bool:\n    return 0 in [0, 1]\n";
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let mut checker = crate::typechecker::TypeChecker::new();
+    checker.set_current_module_path(Some(vec!["main".to_owned()]));
+    checker.set_loaves(Arc::new(index));
+    checker
+        .check_with_imports_and_exports(&program, &[], Default::default())
+        .map_err(|errors| format!("{errors:?}"))?;
+    let read = thread_selection::read_keys();
+    assert!(
+        read.iter()
+            .all(|key| !key.contains("/contract-metadata/") && !key.contains("/type-scope/")),
+        "{read:?}"
+    );
+    Ok(())
+}

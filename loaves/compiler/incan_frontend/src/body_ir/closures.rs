@@ -270,6 +270,23 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 fact = bir::OwnershipFact::Borrow;
                 last_use = false;
             }
+            // RFC 164: a closure reading an exclusive borrow local holds a shared reborrow of what it borrows (`&*x`)
+            // until its last call, as the explicit spelling's exclusive input did.
+            if let IncanType::RefMut(referent) = &ty
+                && fact != bir::OwnershipFact::Move
+            {
+                let mut reborrowed = place;
+                reborrowed.projection.push(bir::PlaceElem::Deref);
+                let shared = IncanType::Ref(referent.clone());
+                return Some((
+                    reborrowed,
+                    shared,
+                    bir::OwnershipFact::Borrow,
+                    false,
+                    identity,
+                    Some(outer_local),
+                ));
+            }
             return Some((place, ty, fact, last_use, identity, Some(outer_local)));
         }
         let (identity, place, referent) = self.closure_alias_capture(name, span)?;

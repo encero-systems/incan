@@ -6,13 +6,15 @@
 use crate::body_ir::ContextModules;
 use std::collections::{HashMap, HashSet};
 
-use super::{CanonicalSymbolId, IncanPrimitiveType, IncanType, SemanticSourceTargetKind, bir};
+use super::{CanonicalSymbolId, IncanPrimitiveType, IncanType, bir};
 use incan_lang::lang::{builtins::BuiltinFnId, types::collections::CollectionTypeId};
-use incan_semantics_core::SymbolOrigin;
 
 mod closure_reads;
 mod consumed_reads;
+mod cursor_reads;
 mod derived_reads;
+mod ended_loans;
+mod loop_reads;
 mod match_reads;
 mod published_reads;
 mod string_parameter_reads;
@@ -48,26 +50,79 @@ struct FieldType {
 /// conflicting projection refuses instead of choosing whichever declaration was collected first.
 struct FieldTypes {
     by_identity: HashMap<CanonicalSymbolId, Vec<FieldType>>,
+    /// Available closed native loop-item layouts. A conflict between model and enum storage refuses the loan.
+    native_loop_items: HashMap<CanonicalSymbolId, Option<incan_semantics_core::SemanticSourceTargetKind>>,
 }
 
 impl FieldTypes {
     /// Collect the exact field contracts available to the bodies participating in this analysis.
     fn collect(modules: &[bir::BodyIrModule], context: ContextModules<'_>) -> Self {
-        let mut by_identity: HashMap<CanonicalSymbolId, Vec<FieldType>> = HashMap::new();
-        for declaration in context
-            .iter()
-            .chain(modules)
-            .flat_map(|module| &module.nominal_declarations)
-        {
-            for (identity, ty) in declaration.field_identities.iter().zip(&declaration.field_types) {
-                by_identity.entry(identity.clone()).or_default().push(FieldType {
-                    parameters: declaration.type_parameters.clone(),
-                    native_arguments: declaration.native_type_arguments.clone(),
-                    ty: ty.clone(),
-                });
+        use incan_semantics_core::SemanticSourceTargetKind::{Enum, Model};
+
+        let mut fields = Self {
+            by_identity: HashMap::new(),
+            native_loop_items: HashMap::new(),
+        };
+        for module in context.iter().chain(modules) {
+            for declaration in &module.nominal_declarations {
+                for (identity, ty) in declaration.field_identities.iter().zip(&declaration.field_types) {
+                    fields.by_identity.entry(identity.clone()).or_default().push(FieldType {
+                        parameters: declaration.type_parameters.clone(),
+                        native_arguments: declaration.native_type_arguments.clone(),
+                        ty: ty.clone(),
+                    });
+                }
+                if !declaration.fields.is_empty()
+                    && declaration.type_parameters.is_empty()
+                    && declaration.type_parameter_count == 0
+                    && declaration.native_type_arguments.is_empty()
+                {
+                    fields.record_native_loop_item(
+                        &declaration.canonical,
+                        &declaration.name,
+                        &declaration.native_item,
+                        Model,
+                    );
+                }
+            }
+            for declaration in &module.enum_declarations {
+                if !declaration.variants.is_empty()
+                    && declaration.type_parameters.is_empty()
+                    && declaration.native_type_arguments.is_empty()
+                {
+                    fields.record_native_loop_item(
+                        &declaration.canonical,
+                        &declaration.name,
+                        &declaration.native_item,
+                        Enum,
+                    );
+                }
             }
         }
-        Self { by_identity }
+        fields
+    }
+
+    /// Authenticate native storage once per identity. A repeated declaration requires no new path or owned key.
+    fn record_native_loop_item(
+        &mut self,
+        identity: &CanonicalSymbolId,
+        name: &str,
+        item: &str,
+        layout: incan_semantics_core::SemanticSourceTargetKind,
+    ) {
+        let incan_semantics_core::SymbolOrigin::RustCrate(path) = &identity.origin else {
+            return;
+        };
+        if name != item || !name.split("::").eq(path.iter().map(String::as_str)) {
+            return;
+        }
+        if let Some(previous) = self.native_loop_items.get_mut(identity) {
+            if previous.as_ref() != Some(&layout) {
+                *previous = None;
+            }
+        } else if bir::native_nominal_item(identity).is_some() {
+            self.native_loop_items.insert(identity.clone(), Some(layout));
+        }
     }
 
     /// Close one selected field against its checked owner type, declining missing or conflicting retained layouts.
@@ -108,6 +163,9 @@ struct SignatureParameter {
     access: incan_semantics_core::IncanInputAccess,
     candidate: Option<Candidate>,
     callback_does_not_escape: bool,
+    /// Whether the callable's result may hold a loan of this input: a declared returned view or result dependency
+    /// names it, the callable is deferred, or no checked frame says otherwise.
+    result_holds_loan: bool,
 }
 
 impl SignatureParameter {
@@ -155,30 +213,43 @@ pub(super) fn retain_modules_with_selected(
     context: ContextModules<'_>,
     selected: &HashSet<CanonicalSymbolId>,
 ) {
+    retain_modules_with_namespaces(modules, context, selected, &[]);
+}
+
+/// A namespace owns the settled ABI of all its bodies. Re-running inference over its rewritten reads can
+/// lend an input that its published native plan takes by value. Its signatures still constrain fresh callers.
+pub(super) fn retain_modules_with_namespaces(
+    modules: &mut [bir::BodyIrModule],
+    context: ContextModules<'_>,
+    selected: &HashSet<CanonicalSymbolId>,
+    restored: &[bool],
+) {
     let no_candidates = HashSet::new();
     let field_types = FieldTypes::collect(modules, context);
-    let cursor_signatures = collect_signatures(modules, context, &no_candidates);
-    for module in modules.iter_mut() {
+    let signatures = collect_signatures(modules, context);
+    for (index, module) in modules.iter_mut().enumerate() {
+        if restored.get(index) == Some(&true) {
+            continue;
+        }
         for body in &mut module.bodies {
             if super::body_is_selected(body, selected) {
                 continue;
             }
-            retain_cursors(body, &cursor_signatures, &field_types, &no_candidates);
+            cursor_reads::retain_cursors(body, &signatures, &field_types, &no_candidates);
         }
     }
 
-    // A published callable keeps the base's read-only rule under the base's own hypothesis; only the inputs of
-    // callables nothing outside the module can name follow the never-consumed rule.
-    let base = candidate_parameters(modules, selected, InputRule::Base);
-    let published = published_reads::read_only_parameters(modules, context, &field_types, base)
+    // Every callable follows the never-consumed rule; a published one also keeps each input the base's read-only rule
+    // lends under the base's own hypothesis, so no published input that was shared before becomes owned.
+    let base = candidate_parameters(modules, selected, restored, InputRule::Base);
+    let published = published_reads::read_only_parameters(modules, &signatures, &field_types, base)
         .into_iter()
         .filter(|&(module_index, body_index, _)| published_body(modules, module_index, body_index))
         .collect::<HashSet<_>>();
-    let mut candidates = candidate_parameters(modules, selected, InputRule::NeverConsumed);
-    candidates.extend(published);
-    consumed_reads::refuse_consumed_parameters(modules, context, &field_types, &mut candidates);
+    let mut candidates = candidate_parameters(modules, selected, restored, InputRule::NeverConsumed);
+    candidates.extend(published.iter().copied());
+    consumed_reads::refuse_consumed_parameters(modules, &signatures, &field_types, &published, &mut candidates);
 
-    let signatures = collect_signatures(modules, context, &candidates);
     for (module_index, body_index, parameter_index) in &candidates {
         if let Some(body) = modules
             .get_mut(*module_index)
@@ -187,13 +258,17 @@ pub(super) fn retain_modules_with_selected(
             retain_shared_parameter(body, *parameter_index, &signatures, &field_types, &candidates);
         }
     }
-    let final_signatures = collect_signatures(modules, context, &no_candidates);
-    for module in modules {
+    for (index, module) in modules.iter_mut().enumerate() {
+        if restored.get(index) == Some(&true) {
+            continue;
+        }
         for body in &mut module.bodies {
             if super::body_is_selected(body, selected) {
                 continue;
             }
-            retain_body_calls(body, &final_signatures, &field_types, &no_candidates);
+            match_reads::retain_borrowed_payload_bindings(body, &signatures, &field_types, &candidates);
+            loop_reads::retain_borrowed_loop_items(body, &signatures, &field_types, &candidates);
+            retain_body_calls(body, &signatures, &field_types, &candidates);
         }
     }
 }
@@ -227,8 +302,8 @@ fn retain_shared_parameter(
 }
 
 /// Select every ordinary non-Copy input whose source contract leaves access inferred, under `rule`. The base rule
-/// selects every eligible callable's inputs for the published read-only fixed point (`published_reads`); the
-/// never-consumed rule selects only the inputs of callables nothing outside the module can name. Such a frame receives
+/// selects every eligible callable's inputs for the read-only fixed point (`published_reads`); the never-consumed rule
+/// selects them too, published or not, since an explicit ownership contract is the only override. Such a frame receives
 /// shared storage because the binding is immutable; a move, store, return or owned call inside it materializes the
 /// independent value at that operation, unless the body consumes the input on any path (`consumed_reads`). Open trait
 /// slots and their checked implementations keep the trait's authored ABI because an implementation body cannot refine
@@ -237,10 +312,15 @@ fn retain_shared_parameter(
 fn candidate_parameters(
     modules: &[bir::BodyIrModule],
     selected: &HashSet<CanonicalSymbolId>,
+    restored: &[bool],
     rule: InputRule,
 ) -> HashSet<Candidate> {
     let mut candidates = HashSet::new();
+    let copy_nominals = copy_nominal_identities(modules);
     for (module_index, module) in modules.iter().enumerate() {
+        if restored.get(module_index) == Some(&true) {
+            continue;
+        }
         let trait_implementations = module
             .trait_implementations
             .iter()
@@ -264,17 +344,46 @@ fn candidate_parameters(
                     !trait_implementations.contains(identity) && !method_partial_targets.contains(identity)
                 })
                 && !has_open_trait_receiver(body);
-            if !eligible || (rule == InputRule::NeverConsumed && published_body(modules, module_index, body_index)) {
+            if !eligible {
                 continue;
             }
             for (parameter_index, parameter) in body.params.iter().enumerate() {
-                if parameter_is_candidate(body, parameter, rule) {
+                if parameter_is_candidate(body, parameter, rule, &copy_nominals) {
                     candidates.insert((module_index, body_index, parameter_index));
                 }
             }
         }
     }
     candidates
+}
+
+/// The models, classes, newtypes and enums these modules declare whose checked derives include `Copy`.
+fn copy_nominal_identities(modules: &[bir::BodyIrModule]) -> HashSet<CanonicalSymbolId> {
+    modules
+        .iter()
+        .flat_map(|module| {
+            let nominals = module
+                .nominal_declarations
+                .iter()
+                .filter(|declaration| super::places_and_ownership::derives_copy(&declaration.derives))
+                .map(|declaration| declaration.canonical.clone());
+            let enums = module
+                .enum_declarations
+                .iter()
+                .filter(|declaration| super::places_and_ownership::derives_copy(&declaration.derives))
+                .map(|declaration| declaration.canonical.clone());
+            nominals.chain(enums)
+        })
+        .collect()
+}
+
+/// Whether `ty` names one of `copy_nominals` through the body's retained identity, never its spelling. Such a value is
+/// copied in as a scalar is, so lending it would only turn each owned use into a clone of the referent.
+fn is_copy_nominal(body: &bir::Body, ty: &IncanType, copy_nominals: &HashSet<CanonicalSymbolId>) -> bool {
+    matches!(ty, IncanType::Named(name) if body
+        .named_type_identities
+        .get(name)
+        .is_some_and(|identity| copy_nominals.contains(identity)))
 }
 
 /// Whether this is a trait-owned default body whose receiver is still the open `Self` contract. Abstract trait
@@ -289,8 +398,8 @@ fn has_open_trait_receiver(body: &bir::Body) -> bool {
     })
 }
 
-/// Which rule selects an input for shared access: the base's read-only rule, which published callables keep, or the
-/// never-consumed rule of a callable nothing outside the module can name.
+/// Which rule selects an input for shared access: the base's read-only rule, whose lent inputs a published callable
+/// also keeps, or the never-consumed rule every callable follows.
 #[derive(Clone, Copy, PartialEq)]
 enum InputRule {
     Base,
@@ -309,14 +418,20 @@ pub(super) fn published_body(modules: &[bir::BodyIrModule], module_index: usize,
     })
 }
 
-/// Keep receivers, rest packs, defaults, explicit modes, mutable inputs and Copy values on their established passing
-/// rules. Under the base rule every other type except an explicit reference carrier, callable storage and an open type
-/// parameter may borrow. Under the never-consumed rule only a checked type that lowering gives a shared executable
-/// form (`IncanType::has_shared_executable_form`) may, because lowering materializes its owned uses; every other type
-/// keeps its by-value input, including a generator the callee advances. Function-item adapters may borrow inside their
-/// forwarding body, but callable-valued parameters keep the by-value closure carrier that lowering supports. Defaults
-/// need a retained invocation owner before they can publish a borrowed parameter contract.
-fn parameter_is_candidate(body: &bir::Body, parameter: &bir::CallableParam, rule: InputRule) -> bool {
+/// Keep receivers, rest packs, defaults, explicit modes, mutable inputs and Copy values (scalars, and the nominals in
+/// `copy_nominals`) on their established passing rules. Under the base rule every other type except an explicit
+/// reference carrier, callable storage and an open type parameter may borrow. Under the never-consumed rule only a
+/// checked type that lowering gives a shared executable form (`IncanType::has_shared_executable_form`) may, because
+/// lowering materializes its owned uses; every other type keeps its by-value input, including a generator the callee
+/// advances. Function-item adapters may borrow inside their forwarding body, but callable-valued parameters keep the
+/// by-value closure carrier that lowering supports. Defaults need a retained invocation owner before they can publish a
+/// borrowed parameter contract.
+fn parameter_is_candidate(
+    body: &bir::Body,
+    parameter: &bir::CallableParam,
+    rule: InputRule,
+    copy_nominals: &HashSet<CanonicalSymbolId>,
+) -> bool {
     let shareable = match rule {
         InputRule::Base => !matches!(
             parameter.ty,
@@ -338,6 +453,7 @@ fn parameter_is_candidate(body: &bir::Body, parameter: &bir::CallableParam, rule
         && !parameter.mutable
         && !parameter.native_owned
         && !parameter.ty.abi_v0_facts().ownership.is_trivially_copy()
+        && !is_copy_nominal(body, &parameter.ty, copy_nominals)
         && shareable
         && !body
             .locals
@@ -356,10 +472,16 @@ fn retain_body_calls(
     closure_reads::retain(body, signatures, field_types, candidates);
     retain_shared_call_temporaries(body, signatures, field_types, candidates);
     let locals = &body.locals;
+    let mut visited = 0;
+    let mut ended = Vec::new();
     walk_calls_mut(&mut body.block.stmts, &mut |statement| {
         retain_function_item_adapter(statement, signatures, candidates);
-        retain_call_loans(statement, locals, signatures, field_types, candidates);
+        for local in retain_call_loans(statement, locals, signatures, field_types, candidates) {
+            ended.push((visited, local));
+        }
+        visited += 1;
     });
+    ended_loans::drop_after_last_loans(body, signatures, candidates, &ended);
 }
 
 /// Keep a named function's declared by-value callable shape by lowering its forwarding closure as an adapter when
@@ -391,10 +513,11 @@ fn retain_function_item_adapter(
     };
     let adapts_inferred_shared = args.iter().enumerate().any(|(index, _)| {
         call_parameter(callee, index, signatures, candidates).is_some_and(|parameter| {
-            parameter.access(candidates) == incan_semantics_core::IncanInputAccess::InferredShared
+            let settled_access = parameter.access(candidates);
+            settled_access == incan_semantics_core::IncanInputAccess::InferredShared
                 && params
                     .get(index)
-                    .is_some_and(|adapter| adapter.input_access != parameter.access)
+                    .is_some_and(|adapter| adapter.input_access != settled_access)
         })
     });
     if adapts_inferred_shared {
@@ -407,11 +530,7 @@ fn retain_function_item_adapter(
 }
 
 /// Combine linked, previously settled module and current-body signatures without deriving a callable from its name.
-fn collect_signatures(
-    modules: &[bir::BodyIrModule],
-    context: ContextModules<'_>,
-    candidates: &HashSet<Candidate>,
-) -> Signatures {
+fn collect_signatures(modules: &[bir::BodyIrModule], context: ContextModules<'_>) -> Signatures {
     context
         .iter()
         .flat_map(module_signatures)
@@ -421,7 +540,7 @@ fn collect_signatures(
                     .bodies
                     .iter()
                     .enumerate()
-                    .filter_map(move |(body_index, body)| body_signature(body, module_index, body_index, candidates)),
+                    .filter_map(move |(body_index, body)| body_signature(body, Some((module_index, body_index)))),
             )
         }))
         .collect()
@@ -429,13 +548,11 @@ fn collect_signatures(
 
 /// Read already settled signatures from a dependency module.
 fn module_signatures(module: &bir::BodyIrModule) -> impl Iterator<Item = Signature> + '_ {
-    module.loaf_callables.iter().map(loaf_signature).chain(
-        module
-            .bodies
-            .iter()
-            .enumerate()
-            .filter_map(|(body_index, body)| body_signature(body, usize::MAX, body_index, &HashSet::new())),
-    )
+    module
+        .loaf_callables
+        .iter()
+        .map(loaf_signature)
+        .chain(module.bodies.iter().filter_map(|body| body_signature(body, None)))
 }
 
 /// Prefer an authenticated declaration frame's access facts; a native callable without one retains its reference
@@ -454,6 +571,7 @@ fn loaf_signature(callable: &bir::LoafCallable) -> Signature {
                     access: parameter.input_access,
                     candidate: None,
                     callback_does_not_escape: only_called_parameter(frame, parameter),
+                    result_holds_loan: result_holds_loan(frame, index),
                 })
                 .collect()
         })
@@ -466,6 +584,7 @@ fn loaf_signature(callable: &bir::LoafCallable) -> Signature {
                     access: incan_semantics_core::IncanInputAccess::Inferred,
                     candidate: None,
                     callback_does_not_escape: false,
+                    result_holds_loan: true,
                 })
                 .collect()
         });
@@ -479,13 +598,9 @@ fn loaf_signature(callable: &bir::LoafCallable) -> Signature {
 
 /// Project one body's parameter access independently from its executable statements. Receivers retain the same
 /// shared/exclusive representation as `LoafCallable::from_body`; anonymous frames supply no named signature.
-/// Candidate inputs are shared only for this fixed-point hypothesis.
-fn body_signature(
-    body: &bir::Body,
-    module_index: usize,
-    body_index: usize,
-    candidates: &HashSet<Candidate>,
-) -> Option<Signature> {
+/// Authored slots carry their stable position. The current hypothesis selects access at lookup, so all
+/// stages can share these signatures. An imported slot keeps its published access throughout.
+fn body_signature(body: &bir::Body, owner: Option<(usize, usize)>) -> Option<Signature> {
     Some(Signature {
         identity: body.canonical.clone()?,
         generic: !body.type_parameters.is_empty(),
@@ -505,13 +620,27 @@ fn body_signature(
                     _ => parameter.ty.clone(),
                 },
                 access: parameter.input_access,
-                candidate: candidates
-                    .contains(&(module_index, body_index, parameter_index))
-                    .then_some((module_index, body_index, parameter_index)),
+                candidate: owner.map(|(module, body)| (module, body, parameter_index)),
                 callback_does_not_escape: only_called_parameter(body, parameter),
+                result_holds_loan: result_holds_loan(body, parameter_index),
             })
             .collect(),
     })
+}
+
+/// Whether a callable's result may hold a loan of its input `index`. A returned view and an owned result's dependency
+/// are declared, and each names its one source input (a method's receiver is input 0), so every other input of a
+/// plain callable is free again when the call returns. A deferred callable's result holds its inputs until it runs,
+/// and a generic one's result obligations are only settled per instantiation.
+fn result_holds_loan(body: &bir::Body, index: usize) -> bool {
+    body.is_async
+        || body.is_generator()
+        || !body.type_parameters.is_empty()
+        || body.returned_view.as_ref().is_some_and(|view| view.slot == index)
+        || body
+            .checked_input_profile
+            .as_ref()
+            .is_some_and(|profile| !profile.result_requirements.is_empty())
 }
 
 /// Concrete function-typed slots retain the checker's `body_only_calls` proof. Generic closure-storage slots do not
@@ -527,115 +656,6 @@ fn only_called_parameter(body: &bir::Body, parameter: &bir::CallableParam) -> bo
             .callable_representation
             .as_ref()
             .is_some_and(|representation| representation.closure_holding_parameters.contains(&parameter.local))
-}
-
-/// Only native owners with retained declaration identity participate; source models and open types keep their ABI.
-fn native_owner(ty: &IncanType, identities: &std::collections::BTreeMap<String, CanonicalSymbolId>) -> bool {
-    let (name, checked_path) = match ty {
-        IncanType::Named(name) => (name, false),
-        IncanType::Generic { base: name, .. } | IncanType::RustInteropPath(name) => (name, true),
-        _ => return false,
-    };
-    let declaration_name = name.rsplit("::").next().unwrap_or(name);
-    identities
-        .get(name)
-        .or_else(|| {
-            identities
-                .values()
-                .find(|identity| identity.declaration_name == declaration_name)
-        })
-        .is_some_and(|identity| {
-            identity.kind == SemanticSourceTargetKind::RustItem && matches!(identity.origin, SymbolOrigin::RustCrate(_))
-        })
-        || checked_path && bir::rust_item_identity(name).is_some()
-}
-
-/// Borrow a shared native field binding or traversal cursor when every use stays read-only. A field binding starts
-/// from an explicit projected loan; a cursor's later assignments must already return shared views of its owner.
-fn retain_cursors(
-    body: &mut bir::Body,
-    signatures: &Signatures,
-    field_types: &FieldTypes,
-    candidates: &HashSet<Candidate>,
-) {
-    for index in 0..body.locals.len() {
-        let local = body.locals[index].id;
-        let owner = body.locals[index].ty.clone();
-        if !matches!(body.locals[index].origin, bir::LocalOrigin::UserBinding)
-            || !native_owner(&owner, &body.named_type_identities)
-        {
-            continue;
-        }
-        let mut writes = Vec::new();
-        walk(&body.block.stmts, &mut |statement| {
-            if let bir::StatementKind::Assign { place, rvalue } = &statement.kind
-                && place.local_id() == Some(local)
-            {
-                writes.push((place.clone(), rvalue.clone()));
-            }
-        });
-        let Some((_, bir::Rvalue::Use(bir::Operand::Place(initial)))) = writes.first() else {
-            continue;
-        };
-        let source = initial.place.clone();
-        let reference = IncanType::Ref(Box::new(owner.clone()));
-        let field_view = writes.len() == 1
-            && initial.fact == bir::OwnershipFact::Borrow
-            && !source.projection.is_empty()
-            && source
-                .projection
-                .iter()
-                .all(|step| matches!(step, bir::PlaceElem::Field { .. }))
-            && source
-                .local_id()
-                .and_then(|root| body.locals.get(root.index()))
-                .is_some_and(|root| !matches!(root.origin, bir::LocalOrigin::Temporary));
-        if (!field_view && writes.len() < 2) || writes.iter().any(|(place, _)| !place.projection.is_empty())
-            || writes.iter().skip(1).any(|(_, value)| !matches!(value,
-                bir::Rvalue::Use(bir::Operand::Place(read)) if whole_type(&read.place, &body.locals) == Some(&reference)))
-        { continue; }
-        let context = ReadContext {
-            locals: &body.locals,
-            signatures,
-            field_types,
-            candidates,
-            local,
-            cursor: true,
-            derived: false,
-        };
-        if !readonly(&body.block.stmts, &context) || source_changes(&body.block.stmts, &source, local) {
-            continue;
-        }
-        body.locals[index].ty = reference;
-        walk_mut(&mut body.block.stmts, &mut |statement| {
-            if let bir::StatementKind::Assign {
-                place,
-                rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
-            } = &mut statement.kind
-                && place.local_id() == Some(local)
-            {
-                read.fact = bir::OwnershipFact::Borrow;
-                read.last_use = false;
-            }
-        });
-    }
-}
-
-/// Refuse a view when the frame replaces or exclusively lends its original owner. Initializing the cursor itself
-/// is exempt; the checker already admitted that original value read.
-fn source_changes(statements: &[bir::Statement], source: &bir::Place, cursor: bir::LocalId) -> bool {
-    let mut changed = false;
-    walk(statements, &mut |statement| match &statement.kind {
-        bir::StatementKind::Assign { place, .. } if place.root == source.root && place.local_id() != Some(cursor) => {
-            changed = true
-        }
-        bir::StatementKind::Call { args, .. } => {
-            changed |= args.iter().filter_map(bir::ArgumentElement::as_one).any(|argument| matches!(argument,
-                bir::Operand::Place(read) if read.place.root == source.root && read.fact == bir::OwnershipFact::MutBorrow));
-        }
-        _ => {}
-    });
-    changed
 }
 
 /// Read the checked type of a whole reference binding; projected initialization keeps its checked destination type.
@@ -1036,6 +1056,7 @@ fn same_parameters(left: &[SignatureParameter], right: &[SignatureParameter], ca
             left.ty == right.ty
                 && left.access(candidates) == right.access(candidates)
                 && left.callback_does_not_escape == right.callback_does_not_escape
+                && left.result_holds_loan == right.result_holds_loan
         })
 }
 
@@ -1092,18 +1113,20 @@ fn retain_call_loans(
     signatures: &Signatures,
     field_types: &FieldTypes,
     candidates: &HashSet<Candidate>,
-) {
+) -> Vec<bir::LocalId> {
     let bir::StatementKind::Call { callee, args, .. } = &mut statement.kind else {
-        return;
+        return Vec::new();
     };
     let mut lent = Vec::new();
+    let mut ended = Vec::new();
     for (index, argument) in args.iter_mut().enumerate() {
         let bir::ArgumentElement::One(bir::Operand::Place(read)) = argument else {
             continue;
         };
-        let Some(owner) = call_parameter(callee, index, signatures, candidates)
-            .and_then(|parameter| parameter.shared_owner(candidates))
-        else {
+        let Some(parameter) = call_parameter(callee, index, signatures, candidates) else {
+            continue;
+        };
+        let Some(owner) = parameter.shared_owner(candidates) else {
             continue;
         };
         lent.push((index, read.place.clone()));
@@ -1120,6 +1143,9 @@ fn retain_call_loans(
                 actual == *owner || matches!(actual, IncanType::Ref(referent) if referent.as_ref() == owner)
             })
         {
+            if !parameter.result_holds_loan && ended_loans::replaces_last_transfer(read, locals, owner) {
+                ended.extend(read.place.local_id());
+            }
             read.fact = bir::OwnershipFact::Borrow;
             read.last_use = false;
         }
@@ -1135,6 +1161,7 @@ fn retain_call_loans(
             read.last_use = false;
         }
     }
+    ended
 }
 
 /// Whether two reads reach shared storage: the same root, with one projection path a prefix of the other.
@@ -1193,7 +1220,7 @@ fn walk_mut(statements: &mut [bir::Statement], visit: &mut impl FnMut(&mut bir::
 }
 
 /// Rewrite every call site of one body, including the calls inside its closure and generator bodies.
-fn walk_calls_mut(statements: &mut [bir::Statement], visit: &mut impl FnMut(&mut bir::Statement)) {
+pub(super) fn walk_calls_mut(statements: &mut [bir::Statement], visit: &mut impl FnMut(&mut bir::Statement)) {
     walk_statements_mut(statements, true, visit);
 }
 

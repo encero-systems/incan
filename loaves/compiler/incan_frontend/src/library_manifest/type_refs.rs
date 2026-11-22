@@ -77,9 +77,12 @@ pub fn type_ref_from_resolved(ty: &ResolvedType) -> TypeRef {
         ResolvedType::Ref(inner) => TypeRef::Ref {
             inner: Box::new(type_ref_from_resolved(inner)),
         },
-        // Mutable refs are compiler-internal today; manifests only preserve the borrowed inner type.
+        // RFC 164: an exclusive borrow is published as a borrow of a `mut`-marked type, which a reader decodes back to
+        // the exclusive borrow; a reader that does not know the marker still sees a borrow of the type.
         ResolvedType::RefMut(inner) => TypeRef::Ref {
-            inner: Box::new(type_ref_from_resolved(inner)),
+            inner: Box::new(TypeRef::MutParam {
+                inner: Box::new(type_ref_from_resolved(inner)),
+            }),
         },
         ResolvedType::RustPath(path) => TypeRef::RustPath { path: path.clone() },
         ResolvedType::CallSiteInfer => TypeRef::Unknown,
@@ -137,7 +140,10 @@ pub fn resolved_type_from_manifest_type_ref(ty: &TypeRef) -> ResolvedType {
         }
         TypeRef::TypeParam { name } => ResolvedType::TypeVar(name.clone()),
         TypeRef::SelfType => ResolvedType::SelfType,
-        TypeRef::Ref { inner } => ResolvedType::Ref(Box::new(resolved_type_from_manifest_type_ref(inner))),
+        TypeRef::Ref { inner } => match inner.as_ref() {
+            TypeRef::MutParam { inner } => ResolvedType::RefMut(Box::new(resolved_type_from_manifest_type_ref(inner))),
+            inner => ResolvedType::Ref(Box::new(resolved_type_from_manifest_type_ref(inner))),
+        },
         // The marker belongs to a function type's parameter, decoded above; anywhere else it names its type.
         TypeRef::MutParam { inner } => resolved_type_from_manifest_type_ref(inner),
         TypeRef::RustPath { path } => ResolvedType::RustPath(path.clone()),

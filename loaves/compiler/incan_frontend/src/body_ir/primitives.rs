@@ -74,7 +74,7 @@ pub(super) fn string_helper_for_binop(op: ast::BinaryOp) -> Option<bir::HelperOp
 ///
 /// Reads the collection registry rather than comparing base names against literals, so adding a collection to
 /// `incan_lang` cannot silently leave this mapping stale.
-fn builtin_collection_id(ty: &IncanType) -> Option<CollectionTypeId> {
+pub(super) fn builtin_collection_id(ty: &IncanType) -> Option<CollectionTypeId> {
     match ty.collection()? {
         (id @ (CollectionTypeId::List | CollectionTypeId::Set | CollectionTypeId::Dict), [_, ..]) => Some(id),
         _ => None,

@@ -16,9 +16,10 @@ pub def projection_cache(
     unit: UnitDescription,
     origin: str,
     outputs: CompiledBodyOutputs,
+    lookup_modules: set[str] = set(),
 ) -> Result[Dict[str, SourceProjection], str]:
     """Project each current module once, including project dependency modules read by fresh bodies."""
-    mut modules: set[str] = set()
+    mut modules = lookup_modules
     for namespace in outputs.namespaces:
         modules.add(namespace.module)
         for dependency in namespace.dependencies:
@@ -35,7 +36,7 @@ pub def projection_cache(
     for module in modules:
         path = Path(unit.project_root).joinpath(module)
         source = path.read_text("utf-8", "strict").map_err((error) => error.message())?
-        projections[module] = project_source(origin, module, source)?
+        projections[module] = project_source(origin, module, source, unit.declared_features, Some(unit.active_features))?
     mut roots: Dict[str, str] = {}
     for dependency in dependency_source_roots(unit):
         roots[dependency[0]] = dependency[1]
@@ -57,7 +58,7 @@ pub def editable_dependency_projection_key(package: str, module: str) -> str:
 
 
 pub def cached_editable_dependency_signature_record(
-    projections: &Dict[str, SourceProjection],
+    projections: Borrowed[Dict[str, SourceProjection]],
     package: str,
     module: str,
     name: str,
@@ -82,7 +83,7 @@ def editable_dependency_projection(root: str, package: str, module: str) -> Resu
 
 
 pub def cached_project_signature_record(
-    projections: &Dict[str, SourceProjection],
+    projections: Borrowed[Dict[str, SourceProjection]],
     unit: UnitDescription,
     module: str,
     name: str,

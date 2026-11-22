@@ -198,7 +198,7 @@ def compile(context: Context, name: str) -> Result[None, str]:
         ["--unit", context.unit.0, "identity_probe", output.0, context.sysroot.0],
         context.scratch,
         name,
-        {"INCAN_TRACE_DIR": trace.0},
+        {"INCAN_ENGINE_TRACE": trace.0},
     )?
     if result.code != 0:
         return Err(f"{name} failed with status {result.code}: {result.stderr.strip()}")
@@ -238,7 +238,7 @@ def start_compile(context: Context, name: str) -> Result[Child, str]:
     command
         .current_dir(context.scratch.0)
         .env_remove("RUSTC_BOOTSTRAP")
-        .env("INCAN_TRACE_DIR", trace.0)
+        .env("INCAN_ENGINE_TRACE", trace.0)
         .arg("--unit")
         .arg(context.unit.0)
         .arg("identity_probe")
@@ -355,7 +355,11 @@ def cached_values(trace: Path) -> Result[list[bool], str]:
         if json_text(record, "kind")? != "event":
             continue
         fields = record.require("fields").map_err((error) => error.message())?
-        if json_text(fields, "message")? == "loaded compiler library proof":
+        # Structured compiler events can carry counters without a message.
+        message = match fields.get("message"):
+            Some(value) => value.expect_str().map_err((error) => error.message())?
+            None => continue
+        if message == "loaded compiler library proof":
             values.append(
                 fields.require("cached").and_then((value) => value.expect_bool()).map_err((error) => error.message())?,
             )

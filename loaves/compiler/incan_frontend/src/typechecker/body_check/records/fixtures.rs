@@ -75,15 +75,19 @@ fn verify_checked_fixture(
     .cloned()
     .ok_or(NodeBindingError::MissingOwner)?;
     let positions = Positions::new(&checker, &program, owner, declaration)?;
-    let expected_binding = checker.declaration_view().function(owner).cloned();
+    let expected_binding = checker.declaration_view().callable(owner).cloned();
     let expected_types = final_type_values(&checker, &expected);
     let expected_ownership = expected_binding
         .as_ref()
         .and_then(|binding| binding.identity.as_ref())
         .and_then(|identity| checker.type_info.declarations.ownership_contracts.get(identity))
         .cloned();
+    let loaves = std::sync::Arc::clone(&checker.loaves);
     drop(checker);
-    let restored = restore(&positions, &program, owner, fields)?;
+    // The restore oracle can consult admitted provider metadata, but no checked facts from its baseline.
+    let mut authority = TypeChecker::new();
+    authority.set_loaves(loaves);
+    let restored = restore(&authority, &positions, &program, owner, fields)?;
     compare_checked_body(&expected, &restored.view)?;
     if restored.ownership != expected_ownership {
         return Err(NodeBindingError::BaselineDifference("ownership contract".into()));
@@ -131,16 +135,7 @@ pub(super) fn default_writers(
     program: &Program,
     owner: Span,
 ) -> Result<BTreeMap<Span, (Span, String)>, NodeBindingError> {
-    let declaration = program
-        .declarations
-        .iter()
-        .find(|declaration| declaration.span == owner)
-        .ok_or(NodeBindingError::MissingOwner)?;
-    let crate::ast::Declaration::Function(function) = &declaration.node else {
-        return Err(NodeBindingError::Unsupported("default owner"));
-    };
-    Ok(function
-        .params
+    Ok(callable_params(program, owner)?
         .iter()
         .filter_map(|parameter| {
             parameter
@@ -191,6 +186,116 @@ pub(crate) fn produce_local_record(
         .ok_or_else(|| NodeBindingError::InvalidField("projected local record is absent".into()))
 }
 
+/// Recover the project module of a top-level function from the selected record's stable owner. Both producers
+/// subsequently bind the complete identity and syntax root against the freshly collected owner before using it.
+fn projected_checker(name: &str, fields: &Fields) -> Result<TypeChecker, NodeBindingError> {
+    let identity = fields
+        .first()
+        .filter(|header| header.first().is_some_and(|tag| tag == "header"))
+        .and_then(|header| header.get(1))
+        .ok_or(NodeBindingError::MissingOwner)?;
+    let qualified = identity
+        .split_once('|')
+        .map_or(identity.as_str(), |(owner, _)| owner)
+        .strip_prefix("function:")
+        .ok_or(NodeBindingError::WrongOwner)?;
+    let (module, function) = qualified.rsplit_once("::").ok_or(NodeBindingError::WrongOwner)?;
+    if function != name || module.starts_with("pub::") || module.starts_with("rust::") {
+        return Err(NodeBindingError::WrongOwner);
+    }
+    let mut checker = TypeChecker::new();
+    if !module.is_empty() {
+        let path: Vec<_> = module.split("::").map(str::to_owned).collect();
+        if path.iter().any(String::is_empty) {
+            return Err(NodeBindingError::WrongOwner);
+        }
+        checker.set_current_module_path(Some(path));
+    }
+    Ok(checker)
+}
+
+/// Certify a project function whose signature resolves entirely through the scalar type registry and whose body
+/// can only read its parameters. Run its actual declaration rules and settlement without entering its statements.
+pub(crate) fn produce_closed_declaration(
+    source: &str,
+    name: &str,
+    previous: Fields,
+) -> Result<Option<Fields>, NodeBindingError> {
+    use crate::ast::{Declaration, Expr, FunctionDecl, Literal, ParamKind, Statement, Type};
+    use incan_lang::lang::types::{BuiltinTypeName, builtin_type_name};
+
+    fn scalar(ty: &Type) -> bool {
+        matches!(ty, Type::Simple(name) if matches!(builtin_type_name(name), Some(BuiltinTypeName::Numeric(_))))
+    }
+    fn closed(expr: &Expr, function: &FunctionDecl) -> bool {
+        match expr {
+            Expr::Ident(name) => function.params.iter().any(|parameter| parameter.node.name == *name),
+            Expr::Literal(Literal::Int(_) | Literal::Float(_) | Literal::Bool(_)) => true,
+            Expr::Paren(inner) | Expr::Unary(_, inner) => closed(&inner.node, function),
+            Expr::Binary(left, _, right) => closed(&left.node, function) && closed(&right.node, function),
+            _ => false,
+        }
+    }
+    // The normal unit producer owns syntax diagnostics for an edit that changes the discovery shape.
+    let Ok(tokens) = crate::lexer::lex(source) else {
+        return Ok(None);
+    };
+    let Ok(program) = crate::parser::parse(&tokens) else {
+        return Ok(None);
+    };
+    let Some((function, owner)) = program.declarations.iter().find_map(|item| match &item.node {
+        Declaration::Function(function) if function.name == name => Some((function, item.span)),
+        _ => None,
+    }) else {
+        return Ok(None);
+    };
+    let [statement] = function.body.as_slice() else {
+        return Ok(None);
+    };
+    let Statement::Return(Some(expression)) = &statement.node else {
+        return Ok(None);
+    };
+    if !function.decorators.is_empty()
+        || !function.type_params.is_empty()
+        || !function.surface_modifiers.is_empty()
+        || function.result_source.is_some()
+        || !scalar(&function.return_type.node)
+        || !function.params.iter().all(|param| {
+            param.node.kind == ParamKind::Normal
+                && !param.node.is_mut
+                && param.node.default.is_none()
+                && scalar(&param.node.ty.node)
+        })
+        || !closed(&expression.node, function)
+    {
+        return Ok(None);
+    }
+    let mut checker = projected_checker(name, &previous)?;
+    checker.reset_program_check(&program, false);
+    checker.collect_program_check_declarations(&program);
+    checker.record_program_header_facts();
+    checker.record_source_declaration_identities(&program);
+    // The complete prior identity must still designate the collected declaration under this revision's signature.
+    if !matches!(decoded_owner(&checker, &program, &previous), Ok(bound) if bound == owner) {
+        return Ok(None);
+    }
+    checker.record_type_param_declaration_spans(&program);
+    checker.visibility_point = super::super::VisibilityPoint::Collected;
+    checker.prepare_program_body_facts();
+    // The ordinary declaration pass validates source annotations and records their resolved type references.
+    // Enter the same visibility point before the isolated declaration scope captures those facts.
+    checker.validate_source_type_names = true;
+    checker.visibility_point = super::super::VisibilityPoint::BeforeDeclaration(owner);
+    let _frame =
+        checker.check_declaration_owner(owner, |checker| checker.prepare_function_declaration(function, owner));
+    checker.visibility_point = super::super::VisibilityPoint::AfterDeclaration(owner);
+    checker.settle_body_checks(&program);
+    if checker.check_work().function_bodies != 0 || !checker.errors.is_empty() {
+        return Ok(None);
+    }
+    Ok(checker.produced_declaration_record(owner).cloned())
+}
+
 /// Build the private checker used by the local-record producer so tests can inspect its publication boundary.
 fn projected_local_checker(
     source: &str,
@@ -206,7 +311,7 @@ fn projected_local_checker(
         .find(|item| matches!(&item.node, crate::ast::Declaration::Function(function) if function.name == name))
         .ok_or(NodeBindingError::MissingOwner)?;
     let owner = selected.span;
-    let mut checker = TypeChecker::new();
+    let mut checker = projected_checker(name, &declaration)?;
     checker.reset_program_check(&program, false);
     checker.collect_program_check_declarations(&program);
     checker.record_program_header_facts();
@@ -346,7 +451,7 @@ pub(crate) fn produce_final_record(
         .find(|item| matches!(&item.node, crate::ast::Declaration::Function(function) if function.name == name))
         .map(|item| item.span)
         .ok_or(NodeBindingError::MissingOwner)?;
-    let mut checker = TypeChecker::new();
+    let mut checker = projected_checker(name, &local)?;
     checker.reset_program_check(&program, false);
     checker.collect_program_check_declarations(&program);
     checker.record_program_header_facts();
@@ -357,8 +462,9 @@ pub(crate) fn produce_final_record(
     checker.record_type_param_declaration_spans(&program);
     checker.visibility_point = super::super::VisibilityPoint::Collected;
     checker.prepare_program_body_facts();
-    let positions = Positions::for_decoded_local(&checker, &program, owner, &local)?;
-    let restored = restore_pending(&positions, owner, &local)?;
+    let nodes = SemanticNodeBindings::new(&checker, &program, owner)?;
+    let positions = Positions::for_decoded_local(&checker, &program, owner, nodes, &local, false)?;
+    let restored = restore_pending(&mut checker, &program, &positions, owner, &local)?;
     checker.body_checks.push(BodyCheckInput::Local(restored));
     checker.settle_body_checks(&program);
     let view = checker.checked_body(owner).ok_or(NodeBindingError::MissingOwner)?;
@@ -418,11 +524,7 @@ pub(super) fn validate_local(local: &BodyLocal) -> Result<(), NodeBindingError> 
     unsupported::rust_interop_artifacts(&local.rust)?;
     unsupported::trait_artifacts(&local.traits)?;
     unsupported::cabi_interop_artifacts(&local.c_abi)?;
-    if !local.iterator_sum_items.is_empty()
-        || !local.dictionary.is_empty()
-        || !local.diagnostic_slots.is_empty()
-        || !local.warning_slots.is_empty()
-    {
+    if !local.iterator_sum_items.is_empty() || !local.dictionary.is_empty() {
         return Err(NodeBindingError::Unsupported("pending local decisions"));
     }
     Ok(())
@@ -450,13 +552,21 @@ pub(super) fn local_fields(positions: &Positions, local: &BodyLocal) -> Result<F
         fields.push(row);
     }
     inputs::project(positions, local, &mut fields)?;
+    if let Some(layout) = &positions.scopes {
+        fields.push(layout.row());
+    }
     for canonical in local.nested.values() {
-        fields.push(vec![
+        let mut binding = vec![
             "binding".into(),
             positions.nodes.anchor(span_of(canonical))?.path,
             "declaration".into(),
             positions.identity(canonical)?,
-        ]);
+        ];
+        if let Some(layout) = &positions.scopes {
+            let scope = canonical.scope_discriminant.ok_or(NodeBindingError::MissingOwner)?;
+            binding.push(layout.binding_ordinal(scope.0)?);
+        }
+        fields.push(binding);
     }
     mutation::project(positions, &local.mutation, &mut fields)?;
     Ok(fields)

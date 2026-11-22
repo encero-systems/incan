@@ -13,7 +13,7 @@ use std::fmt::Display;
 use serde::{Serialize, ser};
 use sha2::{Digest, Sha256};
 
-use crate::ast::{Declaration, Program, Span, Spanned, Statement};
+use crate::ast::{Declaration, MethodDecl, Program, Span, Spanned, Statement};
 use crate::diagnostics::{CompileError, DiagnosticRanges, DiagnosticRecipe, ErrorKind};
 use incan_semantics_core::SymbolOrigin;
 
@@ -430,11 +430,34 @@ impl OwnerSyntax {
 
     /// Keep one serializer and path vocabulary for both declared-header and executable-owner projections.
     fn with_profile(declaration: &Spanned<Declaration>, header_only: bool) -> Result<Self, AnchorFault> {
-        let mut inventory = SyntaxInventory {
-            header_only,
-            statements: undocumented_statements(declaration),
-            ..SyntaxInventory::default()
-        };
+        Self::inventory(
+            declaration,
+            SyntaxInventory {
+                header_only,
+                statements: undocumented_statements(declaration),
+                ..SyntaxInventory::default()
+            },
+        )
+    }
+
+    /// Bind a concrete member without making adjacent member statements part of its syntax root.
+    pub(super) fn method(method: &Spanned<MethodDecl>, header_only: bool) -> Result<Self, AnchorFault> {
+        let statements = method.node.body.as_deref().and_then(|body| {
+            let leading = crate::documentation::leading_documentation(body);
+            (leading > 0).then(|| &body[leading..])
+        });
+        Self::inventory(
+            method,
+            SyntaxInventory {
+                header_only,
+                method: true,
+                statements,
+                ..SyntaxInventory::default()
+            },
+        )
+    }
+
+    fn inventory(declaration: &impl Serialize, mut inventory: SyntaxInventory<'_>) -> Result<Self, AnchorFault> {
         declaration
             .serialize(&mut inventory)
             .map_err(|error| AnchorFault::Encoding(error.0))?;
@@ -498,6 +521,8 @@ impl ser::Error for InventoryError {
 struct SyntaxInventory<'syntax> {
     /// Declaration/default records do not depend on the selected function's statement body.
     header_only: bool,
+    /// Method bodies are fields of the selected method node, without a top-level declaration variant.
+    method: bool,
     /// A function's statements after the documentation that leads them, which stand for its whole body. Absent when
     /// no documentation leads them.
     statements: Option<&'syntax [Spanned<Statement>]>,
@@ -905,7 +930,9 @@ impl ser::SerializeStruct for &mut SyntaxInventory<'_> {
             span.field = key;
             return value.serialize(&mut **self);
         }
-        let function_body = key == "body" && self.path.iter().map(String::as_str).eq(["node", "Function"]);
+        let function_body = key == "body"
+            && ((self.method && self.path.iter().map(String::as_str).eq(["node"]))
+                || self.path.iter().map(String::as_str).eq(["node", "Function"]));
         if self.header_only && function_body {
             return Ok(());
         }

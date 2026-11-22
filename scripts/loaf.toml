@@ -8,3 +8,6 @@ memory_budget = "memory_budget.incn"
 
 [dependencies]
 incan_platform = { path = "../loaves/platform" }
+
+[envs.test.dependencies]
+internal_models = { path = "../loaves/compiler/internal_models" }

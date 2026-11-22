@@ -2,16 +2,489 @@
 
 use super::*;
 
+/// Immutable module constants are values outside a callable's storage graph. Mutable module static storage and
+/// every other unsupported root keep the existing exact refusal instead of acquiring synthetic local permissions.
+#[test]
+fn module_constants_are_values_but_static_storage_remains_refused() -> Result<(), Box<dyn std::error::Error>> {
+    let accepted = checked(
+        "const LIMIT: int = 1\ndef cap(limit: int) -> int:\n    return limit\ndef inspect(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return value + cap(LIMIT)\n",
+    )?;
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+    assert!(
+        accepted
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .any(|(owner, flow)| { owner.declaration_name == "inspect" && matches!(flow, InputFlow::Checked { .. }) })
+    );
+    assert!(
+        accepted
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .any(|(owner, flow)| { owner.declaration_name == "inspect" && matches!(flow, InputFlow::Checked { .. }) })
+    );
+
+    let refused = checked(
+        "static LIMIT: int = 1\ndef cap(limit: int) -> int:\n    return limit\ndef inspect(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return value + cap(LIMIT)\n",
+    )?;
+    let flow = refused
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find(|(owner, _)| owner.declaration_name == "inspect")
+        .map(|(_, flow)| flow)
+        .ok_or("missing static source flow")?;
+    let InputFlow::Unavailable(unavailable) = flow else {
+        return Err(format!("unsupported static storage admitted: {flow:?}").into());
+    };
+    assert_eq!(unavailable.reason, "place is not a prepared parameter or checked local");
+    assert!(
+        refused
+            .errors
+            .iter()
+            .any(|error| error.stable_code() == Some("INCAN-T0123"))
+    );
+    Ok(())
+}
+
+/// One explicit-input route may call a checked private helper, read supported fields and extend a checked local list.
+/// The compound update must not grant static storage, an alias or an unproved element transfer local permissions.
+#[test]
+fn explicit_input_uses_private_helper_fields_and_checked_local_compound_assignment()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = "const LIMIT: int = 1\nmodel Record:\n    value: int\ndef record_value(record: Borrowed[Record], proof: Owned[int] = 0) -> int:\n    return record.value\ndef above(value: int, limit: int) -> bool:\n    return value > limit\ndef summarize(values: list[int], limit: int) -> int:\n    return values[0] + limit\ndef encode_record(record: Borrowed[Record], proof: Owned[int] = 0) -> int:\n    mut values: list[int] = []\n    values += [record.value]\n    value = record_value(record)\n    if above(record.value, LIMIT):\n        return 0\n    return summarize([value], LIMIT)\n";
+    let checker = checked(source)?;
+    assert!(checker.errors.is_empty(), "{source}\n{:?}", checker.errors);
+    assert!(
+        checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .any(|(owner, flow)| {
+                owner.declaration_name == "encode_record" && matches!(flow, InputFlow::Checked { .. })
+            })
+    );
+    Ok(())
+}
+
+/// Ordinary immutable helper slots retain inferred access to exact checked parameter/field places. Explicit owned
+/// slots must still refuse a projection rooted in a borrowed input instead of manufacturing a transfer.
+#[test]
+fn explicit_input_infers_only_checked_parameter_and_field_reads() -> Result<(), Box<dyn std::error::Error>> {
+    let accepted = checked(
+        "enum Family:\n    Local\nmodel Record:\n    root: str\n    family: Family\ndef nonempty(value: str) -> bool:\n    return value != \"\"\ndef family_name(family: Family) -> str:\n    match family:\n        Family.Local => return \"local\"\ndef inspect(record: Borrowed[Record], proof: Owned[int] = 0) -> bool:\n    if not nonempty(record.root):\n        return false\n    return family_name(record.family) == \"local\"\n",
+    )?;
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+    assert!(
+        accepted
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .any(|(owner, flow)| { owner.declaration_name == "inspect" && matches!(flow, InputFlow::Checked { .. }) })
+    );
+
+    let refused = checked(
+        "model Record:\n    root: str\ndef consume(value: Owned[str]) -> None:\n    pass\ndef inspect(record: Borrowed[Record], proof: Owned[int] = 0) -> None:\n    consume(record.root)\n",
+    )?;
+    assert!(
+        refused.errors.iter().any(|error| {
+            error.stable_code() == Some("INCAN-T0126")
+                && error.message == "This operation requires access not granted by its ownership contract"
+        }),
+        "borrowed field acquired an owned transfer: {:?}",
+        refused.errors
+    );
+    Ok(())
+}
+
+/// A checker-selected call returning a closed scalar is fresh variant storage. A place projected from a borrowed
+/// input remains unavailable as an owned payload without checked transfer materialization.
+#[test]
+fn explicit_input_variant_payload_accepts_only_fresh_closed_calls() -> Result<(), Box<dyn std::error::Error>> {
+    let accepted = checked(
+        "enum Value:\n    Text(str)\ndef inspect(values: Borrowed[list[str]], proof: Owned[int] = 0) -> Value:\n    return Value.Text(str(len(values)))\n",
+    )?;
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+    assert!(
+        accepted
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .any(|(owner, flow)| { owner.declaration_name == "inspect" && matches!(flow, InputFlow::Checked { .. }) })
+    );
+
+    let refused_source = "enum Value:\n    Item(list[str])\ndef inspect(value: Owned[list[str]]) -> Value:\n    mut held: BorrowedMut[list[str]] = value\n    return Value.Item(held)\n";
+    let refused = checked(refused_source)?;
+    let state = refused
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find(|(owner, _)| owner.declaration_name == "inspect")
+        .map(|(_, state)| state)
+        .ok_or("missing borrowed-payload source flow")?;
+    let InputFlow::Unavailable(unavailable) = state else {
+        return Err(format!("borrowed payload admitted: {state:?}").into());
+    };
+    assert_eq!(unavailable.reason, source::BORROWED_VALUE_IN_OWNED_FIELD);
+    assert_eq!(
+        refused_source.get(unavailable.span.start..unavailable.span.end),
+        Some("held")
+    );
+    assert!(
+        refused
+            .errors
+            .iter()
+            .any(|error| error.stable_code() == Some("INCAN-T0123"))
+    );
+    Ok(())
+}
+
+/// A builtin list slice with a closed borrow-free result reads its checked base and bounds. A user-selected slice
+/// operator continues through the selected-call refusal rather than borrowing builtin list semantics.
+#[test]
+fn explicit_input_list_slice_requires_builtin_borrow_free_facts() -> Result<(), Box<dyn std::error::Error>> {
+    let accepted = checked(
+        "def inspect(rows: Borrowed[list[list[str]]], proof: Owned[int] = 0) -> int:\n    return len(rows[1:])\n",
+    )?;
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+    assert!(
+        accepted
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .any(|(owner, flow)| { owner.declaration_name == "inspect" && matches!(flow, InputFlow::Checked { .. }) })
+    );
+
+    let refused = checked(
+        "class Shelf with Sliceable[int]:\n    pub values: list[int]\n    def __getslice__(self, start: Option[int], end: Option[int], step: Option[int]) -> list[int]:\n        return self.values\ndef inspect(shelf: Borrowed[Shelf], proof: Owned[int] = 0) -> int:\n    return len(shelf[1:])\n",
+    )?;
+    let state = refused
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find(|(owner, _)| owner.declaration_name == "inspect")
+        .map(|(_, state)| state)
+        .ok_or("missing selected-slice source flow")?;
+    let InputFlow::Unavailable(unavailable) = state else {
+        return Err(format!("user-selected slice admitted as builtin: {state:?}").into());
+    };
+    assert_eq!(unavailable.reason, "operator needs selected callable access facts");
+    assert!(
+        refused
+            .errors
+            .iter()
+            .any(|error| error.stable_code() == Some("INCAN-T0123"))
+    );
+    Ok(())
+}
+
+/// An owned parameter can transfer a checked field into fresh aggregate storage. The same field under a borrowed
+/// parameter must remain refused; the list literal cannot hide a clone or partial ownership change.
+#[test]
+fn explicit_input_list_elements_require_transferable_field_roots() -> Result<(), Box<dyn std::error::Error>> {
+    let accepted_source =
+        "model Record:\n    value: str\ndef collect(record: Owned[Record]) -> list[str]:\n    return [record.value]\n";
+    let accepted = checked(accepted_source)?;
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+    assert!(
+        accepted
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .any(|(owner, flow)| { owner.declaration_name == "collect" && matches!(flow, InputFlow::Checked { .. }) })
+    );
+    let accepted_graph = accepted
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find(|(owner, _)| owner.declaration_name == "collect")
+        .and_then(|(_, flow)| match flow {
+            InputFlow::Checked { graph, .. } => Some(graph),
+            _ => None,
+        })
+        .ok_or("missing checked collect graph")?;
+    assert!(accepted_graph.value_uses.iter().any(|(span, value_use)| {
+        value_use.kind == flow::ValueUseKind::Move && accepted_source.get(span.start..span.end) == Some("record.value")
+    }));
+
+    let refused = [
+        (
+            "borrowed root",
+            "model Record:\n    value: str\ndef collect(record: Borrowed[Record], proof: Owned[int] = 0) -> list[str]:\n    return [record.value]\n",
+            "list element needs checked retained-owner projection",
+        ),
+        (
+            "borrowed alias",
+            "model Record:\n    value: str\ndef collect(record: Owned[Record]) -> list[str]:\n    let alias: Borrowed[Record] = record\n    return [alias.value]\n",
+            "list element needs checked retained-owner projection",
+        ),
+        (
+            "indexed element",
+            "def collect(values: Owned[list[str]]) -> list[str]:\n    return [values[0]]\n",
+            "list element needs checked retained-owner projection",
+        ),
+        (
+            "static root",
+            "model Record:\n    value: str\nstatic STORED: Record = Record(value=\"stored\")\ndef collect(seed: Owned[int]) -> list[str]:\n    return [STORED.value]\n",
+            "place is not a prepared parameter or checked local",
+        ),
+    ];
+    for (label, source, expected) in refused {
+        let checker = checked(source)?;
+        let state = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == "collect")
+            .map(|(_, state)| state)
+            .ok_or_else(|| format!("missing {label} source flow"))?;
+        let InputFlow::Unavailable(unavailable) = state else {
+            return Err(format!("{label} entered owned list storage: {state:?}").into());
+        };
+        assert_eq!(unavailable.reason, expected, "{label}: {:?}", checker.errors);
+        assert!(
+            !checker.errors.is_empty()
+                && checker
+                    .errors
+                    .iter()
+                    .all(|error| error.stable_code() == Some("INCAN-T0123")),
+            "{label} produced an unrelated diagnostic: {:?}",
+            checker.errors
+        );
+    }
+    Ok(())
+}
+
+/// A builtin method may receive `?` applied to a checked fresh call result. A stored borrowed value remains refused
+/// as a non-Copy append argument and cannot acquire transfer materialization from the surrounding method call.
+#[test]
+fn explicit_input_builtin_method_accepts_only_fresh_try_call_arguments() -> Result<(), Box<dyn std::error::Error>> {
+    let accepted = checked(
+        "enum Fault:\n    Bad\ndef make() -> Result[bytes, Fault]:\n    return Ok(b\"row\")\ndef collect(seed: Owned[int]) -> Result[list[bytes], Fault]:\n    mut rows: list[bytes] = []\n    rows.append(make()?)\n    return Ok(rows)\n",
+    )?;
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+    assert!(
+        accepted
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .any(|(owner, flow)| { owner.declaration_name == "collect" && matches!(flow, InputFlow::Checked { .. }) })
+    );
+
+    for (label, source) in [
+        (
+            "stored borrowed value",
+            "def collect(value: Borrowed[bytes], proof: Owned[int] = 0) -> list[bytes]:\n    mut rows: list[bytes] = []\n    rows.append(value)\n    return rows\n",
+        ),
+        (
+            "returned borrowed view",
+            "enum Fault:\n    Bad\ndef view(value: Borrowed[bytes]) -> Result[Borrowed[bytes], Fault] from value:\n    return Ok(value)\ndef collect(value: Borrowed[bytes], proof: Owned[int] = 0) -> Result[list[bytes], Fault]:\n    mut rows: list[bytes] = []\n    rows.append(view(value)?)\n    return Ok(rows)\n",
+        ),
+    ] {
+        let checker = checked(source)?;
+        let state = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == "collect")
+            .map(|(_, state)| state)
+            .ok_or_else(|| format!("missing {label} append source flow"))?;
+        let InputFlow::Unavailable(unavailable) = state else {
+            return Err(format!("{label} admitted as fresh append storage: {state:?}").into());
+        };
+        assert_eq!(
+            unavailable.reason, "a non-Copy builtin method argument needs checked ownership transfer materialization",
+            "{label}: {:?}",
+            checker.errors
+        );
+        assert!(
+            !checker.errors.is_empty()
+                && checker
+                    .errors
+                    .iter()
+                    .all(|error| error.stable_code() == Some("INCAN-T0123")),
+            "{label} produced an unrelated diagnostic: {:?}",
+            checker.errors
+        );
+    }
+    Ok(())
+}
+
+/// A closed source enum parameter may be observed by an immutable ordinary helper without widening the whole-value
+/// route for borrowed strings or other stored parameters.
+#[test]
+fn explicit_input_whole_parameter_requires_closed_enum_facts() -> Result<(), Box<dyn std::error::Error>> {
+    let positive = checked(
+        "enum Family:\n    Local\n    Final\ndef family_name(family: Family) -> str:\n    match family:\n        Family.Local => return \"local\"\n        Family.Final => return \"final\"\ndef inspect(rows: Borrowed[list[list[str]]], family: Family, proof: Owned[int] = 0) -> str:\n    if len(rows) == 0:\n        return \"empty\"\n    return family_name(family)\n",
+    )?;
+    let refused = checked(
+        "def inspect(value: Borrowed[str], proof: Owned[int] = 0) -> None:\n    user_print(value)\ndef user_print(value: str) -> None:\n    pass\n",
+    )?;
+    let state = refused
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find(|(owner, _)| owner.declaration_name == "inspect")
+        .map(|(_, state)| state)
+        .ok_or("missing whole borrowed observer flow")?;
+    let InputFlow::Unavailable(unavailable) = state else {
+        return Err(format!("whole borrowed observer admitted: {state:?}").into());
+    };
+    assert_eq!(
+        unavailable.reason,
+        "ordinary argument requires inferred access or mutable binding facts"
+    );
+    assert!(!refused.errors.is_empty());
+    assert!(
+        refused
+            .errors
+            .iter()
+            .all(|error| error.stable_code() == Some("INCAN-T0123"))
+    );
+    assert!(positive.errors.is_empty(), "{:?}", positive.errors);
+    assert!(
+        positive
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .any(|(owner, flow)| owner.declaration_name == "inspect" && matches!(flow, InputFlow::Checked { .. }))
+    );
+    Ok(())
+}
+
+/// A builtin list concatenation creates fresh list storage after reading both exact list operands. A stored list or
+/// checker-selected user `__add__` result must not acquire transfer authority from the append boundary.
+#[test]
+fn explicit_input_builtin_list_concat_is_fresh_without_transfer_authority() -> Result<(), Box<dyn std::error::Error>> {
+    let positive = checked(
+        "model Field:\n    family: str\n    node: str\n    values: list[str]\ndef collect(field: Borrowed[Field], proof: Owned[int] = 0) -> list[list[str]]:\n    mut rows: list[list[str]] = []\n    rows.append([field.family, field.node] + field.values)\n    return rows\n",
+    )?;
+    for (label, source) in [
+        (
+            "stored list field",
+            "model Field:\n    values: list[str]\ndef collect(field: Borrowed[Field], proof: Owned[int] = 0) -> list[list[str]]:\n    mut rows: list[list[str]] = []\n    rows.append(field.values)\n    return rows\n",
+        ),
+        (
+            "selected user addition",
+            "model Words:\n    values: list[str]\n    def __add__(self, other: Words) -> list[str]:\n        return []\ndef collect(left: Borrowed[Words], right: Borrowed[Words], proof: Owned[int] = 0) -> list[list[str]]:\n    mut rows: list[list[str]] = []\n    rows.append(left + right)\n    return rows\n",
+        ),
+    ] {
+        let checker = checked(source)?;
+        let state = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == "collect")
+            .map(|(_, state)| state)
+            .ok_or_else(|| format!("missing {label} flow"))?;
+        let InputFlow::Unavailable(unavailable) = state else {
+            return Err(format!("{label} acquired append transfer authority: {state:?}").into());
+        };
+        assert_eq!(
+            unavailable.reason, "a non-Copy builtin method argument needs checked ownership transfer materialization",
+            "{label}: {:?}",
+            checker.errors
+        );
+        assert!(!checker.errors.is_empty(), "{label} produced no refusal");
+        assert!(
+            checker
+                .errors
+                .iter()
+                .all(|error| error.stable_code() == Some("INCAN-T0123"))
+        );
+    }
+    assert!(positive.errors.is_empty(), "{:?}", positive.errors);
+    assert!(
+        positive
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .any(|(owner, flow)| owner.declaration_name == "collect" && matches!(flow, InputFlow::Checked { .. }))
+    );
+    Ok(())
+}
+
+/// `?` may unwrap a selected call only after the call result itself is proven to carry no retained dependency. A
+/// returned view in the success payload remains refused at the builtin append boundary.
+#[test]
+fn explicit_input_try_call_requires_closed_carrier_dependency_facts() -> Result<(), Box<dyn std::error::Error>> {
+    let positive = checked(
+        "enum Fault:\n    Bad(str)\ndef encode(value: int) -> Result[bytes, Fault]:\n    if value < 0:\n        return Err(Fault.Bad(\"negative\"))\n    return Ok(b\"row\")\ndef collect(seed: Owned[int]) -> Result[list[bytes], Fault]:\n    value = 1\n    mut rows: list[bytes] = []\n    rows.append(encode(value)?)\n    return Ok(rows)\n",
+    )?;
+    let refused = checked(
+        "enum Fault:\n    Bad\ndef view(value: Borrowed[bytes]) -> Result[Borrowed[bytes], Fault] from value:\n    return Ok(value)\ndef collect(value: Borrowed[bytes]) -> Result[list[bytes], Fault]:\n    mut rows: list[bytes] = []\n    rows.append(view(value)?)\n    return Ok(rows)\n",
+    )?;
+    let state = refused
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find(|(owner, _)| owner.declaration_name == "collect")
+        .map(|(_, state)| state)
+        .ok_or("missing returned-view carrier flow")?;
+    let InputFlow::Unavailable(unavailable) = state else {
+        return Err(format!("returned view bypassed dependency facts: {state:?}").into());
+    };
+    assert_eq!(
+        unavailable.reason,
+        "a non-Copy builtin method argument needs checked ownership transfer materialization"
+    );
+    assert!(!refused.errors.is_empty());
+    assert!(
+        refused
+            .errors
+            .iter()
+            .all(|error| error.stable_code() == Some("INCAN-T0123"))
+    );
+    assert!(positive.errors.is_empty(), "{:?}", positive.errors);
+    assert!(
+        positive
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .any(|(owner, flow)| owner.declaration_name == "collect" && matches!(flow, InputFlow::Checked { .. }))
+    );
+    Ok(())
+}
+
 /// Resource-observer fixtures must reach cleanup through represented call boundaries. An ordinary helper
 /// retains its selected header but still needs non-Copy argument or nominal returned-dependency facts.
 #[test]
 fn resource_probe_wrappers_retain_exact_source_boundary_refusals() -> Result<(), Box<dyn std::error::Error>> {
+    // A source-free label stays available after the conditional transfer of a different value.
+    let literal = checked(
+        "def observe(label: str) -> None:\n    print(label)\ndef consume(value: Owned[str]) -> None:\n    pass\ndef main(flag: bool) -> None:\n    value = \"initial\"\n    if flag:\n        consume(value)\n    observe(\"join\")\n",
+    )?;
+    assert!(literal.errors.is_empty(), "{:?}", literal.errors);
+    assert!(
+        literal
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .any(|(owner, state)| { owner.declaration_name == "main" && matches!(state, InputFlow::Checked { .. }) })
+    );
     for (source, call, reason) in [
-        (
-            "def observe(label: str) -> None:\n    print(label)\ndef consume(value: Owned[str]) -> None:\n    pass\ndef main(flag: bool) -> None:\n    value = \"initial\"\n    if flag:\n        consume(value)\n    observe(\"join\")\n",
-            "\"join\"",
-            "ordinary argument requires inferred access or mutable binding facts",
-        ),
         (
             "class Holder:\n    pub value: int\ndef make(value: int) -> Holder:\n    return Holder(value=value)\ndef consume(value: Owned[Holder]) -> None:\n    pass\ndef main(flag: bool) -> None:\n    value = make(1)\n    if flag:\n        consume(value)\n",
             "make(1)",
@@ -48,9 +521,9 @@ fn resource_probe_wrappers_retain_exact_source_boundary_refusals() -> Result<(),
 }
 
 /// An ordinary value parameter can take a fresh model constructor because its checked field binding authenticates
-/// both the nominal allocation and its inputs. A constructor containing a non-Copy place remains refused.
+/// both the nominal allocation and its inputs. One exact local field is transferred rather than copied.
 #[test]
-fn ordinary_calls_accept_only_authenticated_fresh_model_arguments() -> Result<(), Box<dyn std::error::Error>> {
+fn ordinary_calls_accept_authenticated_fresh_and_moved_model_arguments() -> Result<(), Box<dyn std::error::Error>> {
     let accepted = checked(
         "model Label:\n    pub name: str\nclass Graph:\n    pub labels: list[Label]\n    pub def add(mut self, label: Label) -> None:\n        self.labels.append(label)\n    pub def read_view(self) -> Borrowed[Graph] from self:\n        return self\ndef main() -> None:\n    mut graph = Graph(labels=[])\n    graph.add(Label(name=\"editor\"))\n    reader = graph.read_view()\n    println(reader.labels[0].name)\n",
     )?;
@@ -64,14 +537,35 @@ fn ordinary_calls_accept_only_authenticated_fresh_model_arguments() -> Result<()
             .any(|(owner, flow)| owner.declaration_name == "main" && matches!(flow, InputFlow::Checked { .. }))
     );
 
-    let refused = "model Label:\n    pub name: str\nclass Graph:\n    pub labels: list[Label]\n    pub def add(mut self, label: Label) -> None:\n        self.labels.append(label)\n    pub def read_view(self) -> Borrowed[Graph] from self:\n        return self\ndef main() -> None:\n    name = \"editor\"\n    mut graph = Graph(labels=[])\n    graph.add(Label(name=name))\n    reader = graph.read_view()\n    println(reader.labels[0].name)\n";
-    let checker = checked(refused)?;
+    let moved = "model Label:\n    pub name: str\nclass Graph:\n    pub labels: list[Label]\n    pub def add(mut self, label: Label) -> None:\n        self.labels.append(label)\n    pub def read_view(self) -> Borrowed[Graph] from self:\n        return self\ndef main() -> None:\n    name = \"editor\"\n    mut graph = Graph(labels=[])\n    graph.add(Label(name=name))\n    reader = graph.read_view()\n    println(reader.labels[0].name)\n";
+    let checker = checked(moved)?;
+    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+    let graph = checker
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find_map(|(owner, flow)| match flow {
+            InputFlow::Checked { graph, .. } if owner.declaration_name == "main" => Some(graph),
+            _ => None,
+        })
+        .ok_or("missing moved-constructor source graph")?;
     assert!(
-        checker
-            .errors
-            .iter()
-            .any(|error| error.stable_code() == Some("INCAN-T0123")),
-        "unsupported constructor admitted: {refused}"
+        graph.value_uses.iter().any(|(span, value_use)| {
+            value_use.kind == flow::ValueUseKind::Move && moved.get(span.start..span.end) == Some("name")
+        }),
+        "constructor local was not retained as a move: {graph:?}"
+    );
+
+    let reused_source = "model Label:\n    pub name: str\nclass Graph:\n    pub labels: list[Label]\n    pub def add(mut self, label: Label) -> None:\n        self.labels.append(label)\n    pub def read_view(self) -> Borrowed[Graph] from self:\n        return self\ndef main() -> None:\n    name = \"editor\"\n    mut graph = Graph(labels=[])\n    graph.add(Label(name=name))\n    reader = graph.read_view()\n    println(reader.labels[0].name)\n    println(name)\n";
+    let reused = checked(reused_source)?;
+    assert!(
+        reused.errors.iter().any(|error| {
+            error.stable_code() == Some("INCAN-T0126")
+                && reused_source.get(error.span.start..error.span.end) == Some("name")
+        }),
+        "post-move reuse was accepted: {:?}",
+        reused.type_info.protocols.explicit_input_flow
     );
     Ok(())
 }
@@ -80,7 +574,7 @@ fn ordinary_calls_accept_only_authenticated_fresh_model_arguments() -> Result<()
 /// inherit a previous body's ownership profile, including in the legacy cold-baseline comparison route.
 #[test]
 fn local_mode_facts_stay_with_their_callable() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def borrowed() -> int:\n    mut value = 1\n    mut view: BorrowedMut[int] = value\n    view = 2\n    return value\ndef ordinary() -> int:\n    return 3\n";
+    let source = "def borrowed(proof: Owned[int] = 0) -> int:\n    mut value = 1\n    mut view: BorrowedMut[int] = value\n    view = 2\n    return value\ndef ordinary() -> int:\n    return 3\n";
     for legacy in [false, true] {
         let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
@@ -116,8 +610,8 @@ fn collection_length_observes_transferred_storage() -> Result<(), Box<dyn std::e
         checker.errors
     );
     for source in [
-        "def collect(value: Borrowed[str]) -> None:\n    values = [value]\n",
-        "def collect(values: Borrowed[list[int]]) -> None:\n    copied = [*values]\n",
+        "def collect(value: Borrowed[str], proof: Owned[int] = 0) -> None:\n    values = [value]\n",
+        "def collect(values: Borrowed[list[int]], proof: Owned[int] = 0) -> None:\n    copied = [*values]\n",
     ] {
         let checker = checked(source)?;
         assert!(
@@ -188,12 +682,12 @@ fn owned_local_initializers_retain_exact_source_events() -> Result<(), Box<dyn s
 #[test]
 fn primitive_observers_keep_checked_reads() -> Result<(), Box<dyn std::error::Error>> {
     for source in [
-        "def inspect(value: Borrowed[str], flag: bool) -> None:\n    assert flag, value\n    print(value)\n",
-        "def inspect(value: Borrowed[str]) -> None:\n    assert false, f\"failed: {value}\"\n    print(value)\n",
-        "def inspect(value: Borrowed[str]) -> None:\n    assert true, \"literal\"\n    assert false, value\n",
-        "def inspect(value: Borrowed[str], flag: bool) -> None:\n    assert flag, f\"first: {value}\"\n    assert flag, f\"second: {value}\"\n    return\n    print(value)\n",
-        "def replace(mut value: BorrowedMut[str]) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef inspect(value: Borrowed[str], mut other: BorrowedMut[str], flag: bool) -> None:\n    assert flag, f\"{value}{replace(other)}\"\n    print(value)\n",
-        "def replace(mut value: BorrowedMut[str]) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef inspect(mut other: BorrowedMut[str], flag: bool) -> None:\n    assert flag, replace(other)\n    print(other)\n",
+        "def inspect(value: Borrowed[str], flag: bool, proof: Owned[int] = 0) -> None:\n    assert flag, value\n    print(value)\n",
+        "def inspect(value: Borrowed[str], proof: Owned[int] = 0) -> None:\n    assert false, f\"failed: {value}\"\n    print(value)\n",
+        "def inspect(value: Borrowed[str], proof: Owned[int] = 0) -> None:\n    assert true, \"literal\"\n    assert false, value\n",
+        "def inspect(value: Borrowed[str], flag: bool, proof: Owned[int] = 0) -> None:\n    assert flag, f\"first: {value}\"\n    assert flag, f\"second: {value}\"\n    return\n    print(value)\n",
+        "def replace(mut value: BorrowedMut[str], proof: Owned[int] = 0) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef inspect(value: Borrowed[str], mut other: BorrowedMut[str], flag: bool, proof: Owned[int] = 0) -> None:\n    assert flag, f\"{value}{replace(other)}\"\n    print(value)\n",
+        "def replace(mut value: BorrowedMut[str], proof: Owned[int] = 0) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef inspect(mut other: BorrowedMut[str], flag: bool, proof: Owned[int] = 0) -> None:\n    assert flag, replace(other)\n    print(other)\n",
         "def inspect(flag: bool) -> None:\n    assert flag, consume(\"fresh\")\ndef consume(value: Owned[str]) -> str:\n    return \"failed\"\n",
         "def inspect(value: Owned[int], flag: bool) -> None:\n    assert flag, consume(value)\n    print(value)\ndef consume(value: Owned[int]) -> str:\n    return \"failed\"\n",
         "def inspect(flag: bool) -> None:\n    value = \"stored\"\n    assert flag, consume(value)\ndef consume(value: Owned[str]) -> str:\n    return \"failed\"\n",
@@ -203,7 +697,7 @@ fn primitive_observers_keep_checked_reads() -> Result<(), Box<dyn std::error::Er
         let checker = checked(source)?;
         assert!(checker.errors.is_empty(), "{source}\n{:?}", checker.errors);
     }
-    let source = "def inspect(value: Borrowed[str]) -> None:\n    print(value)\n    assert len(value) > 0, \"empty\"\n";
+    let source = "def inspect(value: Borrowed[str], proof: Owned[int] = 0) -> None:\n    print(value)\n    assert len(value) > 0, \"empty\"\n";
     let graph = source_graph(source)?.map_err(|error| format!("{error:?}"))?;
     assert!(
         flow::analyze(&graph)
@@ -227,8 +721,8 @@ fn primitive_observers_keep_checked_reads() -> Result<(), Box<dyn std::error::Er
             .any(|error| error.stable_code() == Some("INCAN-T0126"))
     );
     for source in [
-        "def inspect(value: Borrowed[str]) -> None:\n    user_print(value)\ndef user_print(value: str) -> None:\n    pass\n",
-        "def inspect(value: Borrowed[Measure]) -> int:\n    return len(value)\nclass Measure:\n    def __len__(self) -> int:\n        return 1\n",
+        "def inspect(value: Borrowed[str], proof: Owned[int] = 0) -> None:\n    user_print(value)\ndef user_print(value: str) -> None:\n    pass\n",
+        "def inspect(value: Borrowed[Measure], proof: Owned[int] = 0) -> int:\n    return len(value)\nclass Measure:\n    def __len__(self) -> int:\n        return 1\n",
     ] {
         assert!(
             source_graph(source)?.is_err(),
@@ -236,7 +730,7 @@ fn primitive_observers_keep_checked_reads() -> Result<(), Box<dyn std::error::Er
         );
     }
     let shadowed = checked(
-        "def inspect(value: Borrowed[str]) -> None:\n    print(value)\ndef print(value: str) -> None:\n    pass\n",
+        "def inspect(value: Borrowed[str], proof: Owned[int] = 0) -> None:\n    print(value)\ndef print(value: str) -> None:\n    pass\n",
     )?;
     assert!(
         shadowed
@@ -252,9 +746,15 @@ fn primitive_observers_keep_checked_reads() -> Result<(), Box<dyn std::error::Er
 #[test]
 fn source_flow_tracks_inputs_through_branches_and_loops() -> Result<(), Box<dyn std::error::Error>> {
     for (source, conflict) in [
-        ("def add(value: Borrowed[int]) -> int:\n    return value + 1\n", false),
+        (
+            "def add(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return value + 1\n",
+            false,
+        ),
         ("def transfer(value: Owned[str]) -> str:\n    return value\n", false),
-        ("def copy(value: Borrowed[str]) -> str:\n    return value\n", true),
+        (
+            "def copy(value: Borrowed[str], proof: Owned[int] = 0) -> str:\n    return value\n",
+            true,
+        ),
         (
             "def branch(value: Owned[str], flag: bool) -> str:\n    if flag:\n        taken = value\n    return value\n",
             true,
@@ -272,7 +772,7 @@ fn source_flow_tracks_inputs_through_branches_and_loops() -> Result<(), Box<dyn 
             false,
         ),
         (
-            "def local_only() -> int:\n    mut value = 1\n    mut view: BorrowedMut[int] = value\n    view = 2\n    return value\n",
+            "def local_only(proof: Owned[int] = 0) -> int:\n    mut value = 1\n    mut view: BorrowedMut[int] = value\n    view = 2\n    return value\n",
             false,
         ),
         (
@@ -296,7 +796,7 @@ fn source_flow_tracks_inputs_through_branches_and_loops() -> Result<(), Box<dyn 
             true,
         ),
         (
-            "def nested(mut value: BorrowedMut[Customer]) -> int:\n    mut view: BorrowedMut[int] = value.address.count\n    view = 2\n    return value.address.count\nmodel Address:\n    count: int\nmodel Customer:\n    address: Address\n",
+            "def nested(mut value: BorrowedMut[Customer], proof: Owned[int] = 0) -> int:\n    mut view: BorrowedMut[int] = value.address.count\n    view = 2\n    return value.address.count\nmodel Address:\n    count: int\nmodel Customer:\n    address: Address\n",
             false,
         ),
         (
@@ -304,15 +804,15 @@ fn source_flow_tracks_inputs_through_branches_and_loops() -> Result<(), Box<dyn 
             true,
         ),
         (
-            "def sibling(mut value: BorrowedMut[Pair]) -> int:\n    let view: Borrowed[int] = value.left\n    value.right = 2\n    return view\nmodel Pair:\n    left: int\n    right: int\n",
+            "def sibling(mut value: BorrowedMut[Pair], proof: Owned[int] = 0) -> int:\n    let view: Borrowed[int] = value.left\n    value.right = 2\n    return view\nmodel Pair:\n    left: int\n    right: int\n",
             false,
         ),
         (
-            "def overlapping(mut value: BorrowedMut[Pair]) -> int:\n    let view: Borrowed[int] = value.left\n    value.left = 2\n    return view\nmodel Pair:\n    left: int\n    right: int\n",
+            "def overlapping(mut value: BorrowedMut[Pair], proof: Owned[int] = 0) -> int:\n    let view: Borrowed[int] = value.left\n    value.left = 2\n    return view\nmodel Pair:\n    left: int\n    right: int\n",
             true,
         ),
         (
-            "def compound(mut value: BorrowedMut[int]) -> int:\n    value += 1\n    return value\n",
+            "def compound(mut value: BorrowedMut[int], proof: Owned[int] = 0) -> int:\n    value += 1\n    return value\n",
             false,
         ),
         (
@@ -338,15 +838,15 @@ fn source_flow_tracks_inputs_through_branches_and_loops() -> Result<(), Box<dyn 
         // A loop shares its stored iterable for every poll: items are read freely, the iterable is not edited
         // until the loop ends.
         (
-            "def total(values: Borrowed[list[int]]) -> int:\n    mut sum = 0\n    for value in values:\n        sum += value\n    return sum\n",
+            "def total(values: Borrowed[list[int]], proof: Owned[int] = 0) -> int:\n    mut sum = 0\n    for value in values:\n        sum += value\n    return sum\n",
             false,
         ),
         (
-            "def reset(mut values: BorrowedMut[list[int]]) -> None:\n    for value in values:\n        values = [value]\n",
+            "def reset(mut values: BorrowedMut[list[int]], proof: Owned[int] = 0) -> None:\n    for value in values:\n        values = [value]\n",
             true,
         ),
         (
-            "def after(mut values: BorrowedMut[list[int]]) -> None:\n    mut sum = 0\n    for value in values:\n        sum += value\n    values = [sum]\n",
+            "def after(mut values: BorrowedMut[list[int]], proof: Owned[int] = 0) -> None:\n    mut sum = 0\n    for value in values:\n        sum += value\n    values = [sum]\n",
             false,
         ),
     ] {
@@ -360,7 +860,7 @@ fn source_flow_tracks_inputs_through_branches_and_loops() -> Result<(), Box<dyn 
         );
     }
     let dictionary = source_graph(
-        "def present(streams: Borrowed[dict[str, Generator[int]]], key: str) -> bool:\n    match streams.get(key):\n        Some(_) => return true\n        None => return false\n",
+        "def present(streams: Borrowed[dict[str, Generator[int]]], key: str, proof: Owned[int] = 0) -> bool:\n    match streams.get(key):\n        Some(_) => return true\n        None => return false\n",
     )?
     .map_err(|error| format!("{error:?}"))?;
     let dictionary_analysis = flow::analyze(&dictionary).map_err(|error| format!("{error:?}"))?;
@@ -376,14 +876,15 @@ fn source_flow_tracks_inputs_through_branches_and_loops() -> Result<(), Box<dyn 
 /// and dependency facts exist; a partial graph cannot count as validation of the whole callable.
 #[test]
 fn source_flow_refuses_unprojected_dependencies() -> Result<(), Box<dyn std::error::Error>> {
-    let builtin = source_graph("def show(value: Borrowed[int]) -> int:\n    return abs(value)\n")?;
+    let builtin =
+        source_graph("def show(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return abs(value)\n")?;
     assert!(
         builtin.is_ok(),
         "a selected core builtin must retain its checked operands"
     );
     for source in [
-        "def local(value: Borrowed[str]) -> None:\n    let view: Reference[str] = value\n",
-        "def temporary() -> None:\n    let view: Borrowed[str] = \"temporary\"\n",
+        "def local(value: Borrowed[str], proof: Owned[int] = 0) -> None:\n    let view: Reference[str] = value\n",
+        "def temporary(proof: Owned[int] = 0) -> None:\n    let view: Borrowed[str] = \"temporary\"\n",
     ] {
         assert!(
             source_graph(source)?.is_err(),
@@ -552,5 +1053,24 @@ def main() -> Result[None, str]:
             .result_requirement = replacement;
         assert!(corrupted.checked_input_body(owner).is_err());
     }
+    Ok(())
+}
+
+#[test]
+fn classified_index_read_covers_the_loop_index_before_the_element() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"def emit(value: bytes) -> Result[None, str]:
+    return Ok(None)
+
+def supplied(value: Borrowed[str]) -> Result[list[bytes], str]:
+    return Ok([b"a", b"b"])
+
+def collect(item: str) -> Result[None, str]:
+    rows = supplied(item)?
+    for idx in range(len(rows)):
+        emit(rows[idx])?
+    return Ok(None)
+"#;
+    let checker = checked(source)?;
+    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
     Ok(())
 }

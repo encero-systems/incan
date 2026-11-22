@@ -41,6 +41,7 @@ use api_identity::*;
 use export_rules::*;
 use identity_graph::*;
 pub(crate) use provider_metadata::*;
+pub(super) use vocab_payload::validate_vocabulary;
 use vocab_payload::*;
 
 /// Validate one raw manifest payload before it is written or decoded into the semantic model.
@@ -54,7 +55,9 @@ pub(super) fn validate_raw_manifest(raw: &RawLibraryManifest) -> Result<(), Libr
     validate_identity_graph(raw)?;
     validate_contract_metadata(raw)?;
     validate_rust_abi(raw)?;
-    validate_vocab_payload(raw)?;
+    if let Some(vocab) = &raw.vocab {
+        validate_vocabulary(vocab)?;
+    }
     validate_soft_keyword_activations(raw)?;
     Ok(())
 }

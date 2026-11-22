@@ -14,7 +14,7 @@ type Other = rusttype RawValue:
         ...
 
 
-pub def inspect(value: &Value) -> None:
+pub def inspect(value: Borrowed[Value]) -> None:
     match value:
         Other.String(_) => pass
         _ => pass

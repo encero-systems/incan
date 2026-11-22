@@ -90,7 +90,7 @@ def emit_inner(
 
 
 def sequence(
-    items: &list[Value],
+    items: Borrowed[list[Value]],
     projection: Projection,
     mut output: HashOutput,
     mut budget: Budget,
@@ -103,7 +103,7 @@ def sequence(
 
 
 def emit_map(
-    entries: &list[MapEntry],
+    entries: Borrowed[list[MapEntry]],
     projection: Projection,
     mut output: HashOutput,
     mut budget: Budget,
@@ -118,7 +118,7 @@ def emit_map(
 
 
 def emit_record(
-    fields: &list[ValueField],
+    fields: Borrowed[list[ValueField]],
     projection: Projection,
     mut output: HashOutput,
     mut budget: Budget,

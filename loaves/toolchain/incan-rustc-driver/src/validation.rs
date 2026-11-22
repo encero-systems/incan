@@ -3,7 +3,7 @@
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
-use internal_models::{CanonicalSymbolId, DeclarationKind, SymbolNamespace, SymbolOrigin};
+use incan_mir_plan_native::record_types::{CanonicalSymbolId, DeclarationKind, SymbolNamespace, SymbolOrigin};
 use std::collections::BTreeSet;
 
 use crate::error::PlanError;
@@ -209,7 +209,7 @@ impl Leaf {
             ListLeaf::Tuple(elements) => Leaf::Tuple(
                 elements
                     .iter()
-                    .map(|element| scalar(&tuple_element_type(element.clone())))
+                    .map(|element| scalar(&tuple_element_type(&element)))
                     .collect(),
             ),
             ListLeaf::Model(index, _) => Leaf::Model(*index),
@@ -236,7 +236,7 @@ impl Leaf {
 
 /// Mirror a flat tuple component at the iterator boundary.
 fn tuple_leaf(element: &crate::plan::TupleElement) -> Leaf {
-    Leaf::Tuple(vec![scalar(&tuple_element_type(element.clone()))])
+    Leaf::Tuple(vec![scalar(&tuple_element_type(&element))])
 }
 
 /// Compare source-authored types without requiring a Rust derive on Incan types.
@@ -357,7 +357,7 @@ fn scalar(ty: &PlanType) -> Scalar {
 fn tuple_scalars(elements: &[crate::plan::TupleElement]) -> Vec<Scalar> {
     elements
         .iter()
-        .map(|element| scalar(&tuple_element_type(element.clone())))
+        .map(|element| scalar(&tuple_element_type(&element)))
         .collect()
 }
 

@@ -43,6 +43,10 @@ struct CallArgumentBindings<'params, 'args, 'call> {
     unexpected_positional: usize,
     type_bindings: &'call mut std::collections::HashMap<String, ResolvedType>,
     context: CallArgumentValidationContext<'call>,
+    /// Spans of owned arguments lent to an exclusive reference parameter, whose places need write access.
+    exclusive_lends: Vec<Span>,
+    /// Spans of every argument bound to an exclusive reference parameter, owned or already a reference.
+    exclusive_slots: Vec<Span>,
 }
 
 impl<'params, 'args, 'call> CallArgumentBindings<'params, 'args, 'call> {
@@ -75,6 +79,8 @@ impl<'params, 'args, 'call> CallArgumentBindings<'params, 'args, 'call> {
             unexpected_positional: 0,
             type_bindings,
             context,
+            exclusive_lends: Vec::new(),
+            exclusive_slots: Vec::new(),
         }
     }
 
@@ -88,7 +94,7 @@ impl<'params, 'args, 'call> CallArgumentBindings<'params, 'args, 'call> {
         span: Span,
     ) {
         checker.infer_call_argument_type_param_bindings(&param.ty, actual, span, self.type_bindings);
-        checker.emit_arg_type_mismatch_if_needed(
+        let lends = checker.emit_arg_type_mismatch_if_needed(
             self.context.callee,
             param.name(),
             &param.ty,
@@ -97,6 +103,12 @@ impl<'params, 'args, 'call> CallArgumentBindings<'params, 'args, 'call> {
             span,
             self.context.compatibility,
         );
+        if lends {
+            self.exclusive_lends.push(span);
+        }
+        if matches!(param.ty, ResolvedType::RefMut(_)) {
+            self.exclusive_slots.push(span);
+        }
     }
 
     /// Bind one positional value to the next non-preset slot or positional rest parameter. Rest values do not
@@ -312,7 +324,11 @@ impl TypeChecker {
                     if matches!(inner.as_ref(), ResolvedType::Generic(base, _) if base == "[]"))
             });
         let expected = match expected {
-            ResolvedType::Ref(inner) if !matches!(actual, ResolvedType::Ref(_) | ResolvedType::RefMut(_)) => inner,
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner)
+                if !matches!(actual, ResolvedType::Ref(_) | ResolvedType::RefMut(_)) =>
+            {
+                inner
+            }
             _ => expected,
         };
         let (native_expected, native_actual) = match (expected, native) {
@@ -705,6 +721,7 @@ impl TypeChecker {
         type_bindings: &mut std::collections::HashMap<String, ResolvedType>,
         context: CallArgumentValidationContext<'_>,
     ) {
+        let context_callee = context.callee;
         let mut bindings = CallArgumentBindings::new(params, type_bindings, context);
         for (arg, arg_ty) in args.iter().zip(arg_types.iter()) {
             let arg_span = Self::call_arg_expr(arg).span;
@@ -721,8 +738,22 @@ impl TypeChecker {
                 }
             }
         }
-
+        let lends = std::mem::take(&mut bindings.exclusive_lends);
+        let exclusive_slots = std::mem::take(&mut bindings.exclusive_slots);
         bindings.finish(self);
+        for arg in args {
+            let argument = Self::call_arg_expr(arg);
+            if !matches!(arg, CallArg::Positional(_) | CallArg::Named(..)) {
+                continue;
+            }
+            if lends.contains(&argument.span) {
+                self.require_exclusive_lend(argument, context_callee);
+            }
+            // A place lent to an exclusive borrow outside the whole-body proof still has its loan conflicts checked.
+            if exclusive_slots.contains(&argument.span) && Self::written_place_root(argument).is_some() {
+                self.note_native_borrow_body();
+            }
+        }
     }
 
     /// Validate a source call argument, retaining metadata-selected dereferences and owned target materialization at
@@ -737,19 +768,27 @@ impl TypeChecker {
         actual: &ResolvedType,
         span: Span,
         compatibility: CallArgumentCompatibility,
-    ) {
+    ) -> bool {
         // ---- Native argument adjustments ----
         if self.retain_argument_dereferences(actual, expected, span).is_some() {
-            return;
+            return false;
         }
 
         // ---- Source compatibility ----
+        // An owned value is lent to a reference parameter (RFC 164 shape B1): shared to `&T` (`Borrowed[T]`), and
+        // exclusively to `&mut T` (`BorrowedMut[T]`), whose place the caller then checks for write access.
+        let owned = !matches!(actual, ResolvedType::Ref(_) | ResolvedType::RefMut(_));
+        let lends = owned && matches!(expected, ResolvedType::RefMut(inner) if self.types_compatible(actual, inner));
         let compatible = match expected {
-            ResolvedType::Ref(inner) if !matches!(actual, ResolvedType::Ref(_) | ResolvedType::RefMut(_)) => {
-                self.types_compatible(actual, inner)
-            }
+            ResolvedType::Ref(inner) if owned => self.types_compatible(actual, inner),
+            ResolvedType::RefMut(_) if lends => true,
             _ => self.types_compatible(actual, expected),
         };
+
+        // ---- Owned use of a borrowed value (RFC 164) ----
+        if compatible && self.refuse_borrowed_value_without_clone(actual, expected, span) {
+            return false;
+        }
 
         // ---- Boundary coercions and refusal ----
         if !compatible
@@ -757,7 +796,7 @@ impl TypeChecker {
                 && Self::checked_c_integer_bridge_compatible(actual, expected))
         {
             if self.record_validated_newtype_coercion_if_possible(actual, expected, span) {
-                return;
+                return false;
             }
             let expected_display = expected_display
                 .map(str::to_owned)
@@ -770,6 +809,22 @@ impl TypeChecker {
                 span,
             ));
         }
+        lends
+    }
+
+    /// RFC 164: an owned place lent to a `&mut T` (`BorrowedMut[T]`) parameter needs the write access a write through
+    /// it would: a binding declared without `mut`, or a place under a plain `self`, is refused there, and lending a
+    /// caller-visible `mut` parameter counts as a change to it.
+    fn require_exclusive_lend(&mut self, argument: &Spanned<Expr>, callee: &str) {
+        self.refuse_write_through_read_only_binding(argument, argument.span);
+        if let Some(place) = Self::self_rooted_place(argument) {
+            self.reject_write_through_immutable_self(
+                &place,
+                crate::diagnostics::errors::SelfMutation::MutatingCall { callee },
+                argument.span,
+            );
+        }
+        self.note_mut_param_exclusive_use(argument);
     }
 
     /// Return whether an ordinary Incan integer may cross one checked C integer boundary.

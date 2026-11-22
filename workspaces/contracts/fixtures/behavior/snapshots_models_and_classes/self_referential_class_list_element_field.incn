@@ -9,7 +9,7 @@ class Node:
     pub next: Option[Node]
 
 
-def describe_link(link: &Option[Node]) -> str:
+def describe_link(link: Borrowed[Option[Node]]) -> str:
     match link:
         Some(_n) => return "linked"
         None => return "end"

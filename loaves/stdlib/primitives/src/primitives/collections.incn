@@ -18,26 +18,26 @@ pub def append_list[T](mut values: list[T], value: T) -> None:
     Vec.push(values, value)
 
 
-pub def length_list[T](values: &list[T]) -> int:
+pub def length_list[T](values: Borrowed[list[T]]) -> int:
     """Return the number of elements in list storage without consuming it."""
-    native: &Vec[T] = values
+    native: Borrowed[Vec[T]] = values
     return int(native.len())
 
 
-pub def clone_list[T with Clone](values: &list[T]) -> list[T]:
+pub def clone_list[T with Clone](values: Borrowed[list[T]]) -> list[T]:
     """Explicitly copy list storage and each element through its native `Clone` contract."""
-    native: &Vec[T] = values
+    native: Borrowed[Vec[T]] = values
     return Clone.clone(native)
 
 
-pub def copy_list_at[T with Clone](values: &list[T], position: usize) -> Result[T, str]:
+pub def copy_list_at[T with Clone](values: Borrowed[list[T]], position: usize) -> Result[T, str]:
     """
     Copy the element at one nonnegative storage position.
 
     This operation deliberately does not normalize language indices or raise `IndexError`; language adapters retain
     those policies. An absent position is an ordinary primitive error.
     """
-    native: &Vec[T] = values
+    native: Borrowed[Vec[T]] = values
     match native.get(position):
         Some(value) => return Ok(Clone.clone(value))
         None => return Err("list position is outside storage")
@@ -66,15 +66,15 @@ pub def insert_set[T with (Eq, Hash)](mut values: Set[T], value: T) -> None:
     RuntimeSet.insert(values, value)
 
 
-pub def length_set[T](values: &Set[T]) -> int:
+pub def length_set[T](values: Borrowed[Set[T]]) -> int:
     """Return the number of elements in hash-set storage without consuming it."""
-    native: &RuntimeSet[T] = values
+    native: Borrowed[RuntimeSet[T]] = values
     return int(native.len())
 
 
-pub def clone_set[T with Clone](values: &Set[T]) -> Set[T]:
+pub def clone_set[T with Clone](values: Borrowed[Set[T]]) -> Set[T]:
     """Explicitly copy hash-set storage and each element through its native `Clone` contract."""
-    native: &RuntimeSet[T] = values
+    native: Borrowed[RuntimeSet[T]] = values
     return Clone.clone(native)
 
 
@@ -88,13 +88,13 @@ pub def insert_dict[K with (Eq, Hash), V](mut values: Dict[K, V], key: K, value:
     RuntimeDict.insert(values, key, value)
 
 
-pub def length_dict[K, V](values: &Dict[K, V]) -> int:
+pub def length_dict[K, V](values: Borrowed[Dict[K, V]]) -> int:
     """Return the number of entries in hash-map storage without consuming it."""
-    native: &RuntimeDict[K, V] = values
+    native: Borrowed[RuntimeDict[K, V]] = values
     return int(native.len())
 
 
-pub def clone_dict[K with Clone, V with Clone](values: &Dict[K, V]) -> Dict[K, V]:
+pub def clone_dict[K with Clone, V with Clone](values: Borrowed[Dict[K, V]]) -> Dict[K, V]:
     """Explicitly copy hash-map storage, keys and values through their native `Clone` contracts."""
-    native: &RuntimeDict[K, V] = values
+    native: Borrowed[RuntimeDict[K, V]] = values
     return Clone.clone(native)

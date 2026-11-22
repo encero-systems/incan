@@ -77,6 +77,11 @@ impl LibraryManifest {
         Ok(format!("{content}\n"))
     }
 
+    /// Validate the ordinary manifest contract without rendering its public JSON presentation.
+    pub(crate) fn validate_contract(&self) -> Result<(), LibraryManifestError> {
+        validate_raw_manifest(&RawLibraryManifest::from_semantic(self))
+    }
+
     /// Read, decode, validate, and convert a manifest from disk.
     pub fn read_from_path(path: &Path) -> Result<Self, LibraryManifestError> {
         let content = fs::read_to_string(path).map_err(|source| LibraryManifestError::Read {

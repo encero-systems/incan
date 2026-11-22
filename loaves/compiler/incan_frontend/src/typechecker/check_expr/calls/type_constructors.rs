@@ -222,29 +222,69 @@ impl TypeChecker {
             }
         }
 
-        let supports_default_fill = Self::rust_type_supports_default_field_fill(type_info);
-        let mut omitted_fields = false;
-        for field in &type_info.fields {
-            if !provided.contains(&field.name) {
-                omitted_fields = true;
-                if !supports_default_fill {
-                    self.errors.push(errors::missing_required_constructor_field(
-                        path,
-                        field.name.as_str(),
-                        span,
-                    ));
-                    has_shape_error = true;
-                }
+        // A record that publishes field defaults names exactly the fields a caller may leave out; only a record that
+        // publishes none falls back to its `Default` implementation, which grants no executable construction.
+        let published = self.rust_published_field_defaults(path, type_info);
+        let supports_default_fill = published.is_empty() && Self::rust_type_supports_default_field_fill(type_info);
+        let mut defaulted = Vec::new();
+        let mut unpublished_omission = false;
+        for (slot, field) in type_info.fields.iter().enumerate() {
+            if provided.contains(&field.name) {
+                continue;
+            }
+            if published.contains(&slot) {
+                defaulted.push(slot);
+                continue;
+            }
+            unpublished_omission = true;
+            if !supports_default_fill {
+                self.errors.push(errors::missing_required_constructor_field(
+                    path,
+                    field.name.as_str(),
+                    span,
+                ));
+                has_shape_error = true;
             }
         }
 
         if !has_shape_error
-            && !omitted_fields
-            && let Some(result) = self.retain_rust_construction(path, type_info, args, &selected_fields, span)
+            && !unpublished_omission
+            && let Some(result) =
+                self.retain_rust_construction(path, type_info, args, &selected_fields, &defaulted, span)
         {
             return result;
         }
         ResolvedType::RustPath(path.to_string())
+    }
+
+    /// Slots of the fields whose defaults a nongeneric Rust record publishes through
+    /// [`rust_field_default_function`](crate::typechecker::rust_field_default_function): a public associated function
+    /// with no arguments or type parameters that returns exactly the field's type. Anything else publishes nothing.
+    fn rust_published_field_defaults(&self, path: &str, type_info: &RustTypeInfo) -> Vec<usize> {
+        if !type_info.metadata_completeness.has_methods() || !type_info.type_params.is_empty() {
+            return Vec::new();
+        }
+        let publishes = |field: &RustFieldInfo| {
+            let name = crate::typechecker::rust_field_default_function(&field.name);
+            type_info.methods.iter().any(|method| {
+                let signature = &method.signature;
+                method.name == name
+                    && signature.params.is_empty()
+                    && signature.type_params.is_empty()
+                    && method.impl_type_params.is_empty()
+                    && !signature.is_async
+                    && !signature.is_unsafe
+                    && self.native_rust_signature_type(&signature.return_type, path)
+                        == self.native_rust_signature_type(&field.type_display, path)
+            })
+        };
+        type_info
+            .fields
+            .iter()
+            .enumerate()
+            .filter(|(_, field)| publishes(field))
+            .map(|(slot, _)| slot)
+            .collect()
     }
 
     /// Type-check a positional imported Rust tuple-struct constructor using checked field metadata.
@@ -300,7 +340,7 @@ impl TypeChecker {
 
         if !has_shape_error
             && type_info.fields.is_empty()
-            && let Some(result) = self.retain_rust_construction(path, type_info, args, &[], span)
+            && let Some(result) = self.retain_rust_construction(path, type_info, args, &[], &[], span)
         {
             return result;
         }

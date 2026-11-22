@@ -23,6 +23,28 @@ pub(crate) struct LibraryFacade {
     path: String,
 }
 
+impl LibraryFacade {
+    /// A facade publishing `name` as the item at `path`.
+    #[cfg(test)]
+    pub(crate) fn new(name: &str, path: &str) -> Self {
+        Self {
+            name: name.into(),
+            path: path.into(),
+        }
+    }
+
+    /// The crate this facade's `::` path names, which the unit declares as it declares the crate a body calls into: a
+    /// root re-export of a Rust item names that item's own crate, which a library reaching it through another Loaf does
+    /// not declare. `None` for an item of this crate.
+    pub(crate) fn native_root(&self) -> Option<&str> {
+        self.path
+            .strip_prefix("::")?
+            .split("::")
+            .next()
+            .filter(|root| !root.is_empty())
+    }
+}
+
 /// Resolve checked library metadata into the compact aliases rustc needs, releasing the manifest before compilation.
 pub(crate) fn resolve_facades(
     plan: &Plan,
@@ -207,7 +229,7 @@ fn export_path(path: &str, span: Span) -> ast::Path {
 
 #[cfg(test)]
 mod tests {
-    use super::public_names;
+    use super::{LibraryFacade, public_names};
     use incan_frontend::library_manifest::{
         AliasExport, CanonicalIdentityExport, ExportIdentity, ExportIdentityKind, ExportIdentityProjection,
         LibraryManifest, TypeRef,
@@ -292,5 +314,18 @@ mod tests {
         assert_eq!(manifest.exports.aliases.len(), 4);
         assert_eq!(manifest.contract_metadata.identity_graph.exports.len(), 4);
         Ok(())
+    }
+
+    /// A root re-export of a Rust item names that item's own crate, which the library declares as it declares a crate
+    /// its bodies call; an item of this crate or of a Loaf names its own root the same way, and `crate::` names none.
+    #[test]
+    fn root_reexports_name_the_crate_they_need_declared() {
+        let facade = |path: &str| LibraryFacade {
+            name: "read_key".into(),
+            path: path.into(),
+        };
+        assert_eq!(facade("::native::read_key").native_root(), Some("native"));
+        assert_eq!(facade("::models::__incan_symbol").native_root(), Some("models"));
+        assert_eq!(facade("crate::read_key").native_root(), None);
     }
 }

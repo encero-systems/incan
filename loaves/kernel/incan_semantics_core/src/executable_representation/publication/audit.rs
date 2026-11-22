@@ -352,6 +352,7 @@ impl<'a> PublicationAudit<'a> {
                         self.operand(value)?;
                     }
                 }
+                PlaceElem::Deref => {}
             }
         }
         Ok(())

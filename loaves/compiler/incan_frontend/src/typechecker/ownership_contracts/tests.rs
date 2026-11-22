@@ -4,10 +4,16 @@ use super::*;
 
 mod body_projection;
 mod contracts_and_modes;
+mod explicit_borrowed_twins;
 mod explicit_calls;
 mod invocations_and_accesses;
 mod lazy_reader_control_flow;
+mod one_type;
+mod signature_block;
+mod signature_package;
+mod signature_real_source;
 mod source_flow;
+mod source_flow_materialization;
 mod trait_inputs;
 
 /// Project actual checked source so CFG tests cannot bypass canonical root/type lookup with hand-built facts.

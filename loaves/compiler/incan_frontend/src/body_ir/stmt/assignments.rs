@@ -31,6 +31,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return;
         }
         let mut ty = self.assignment_binding_type(assignment, span, out);
+        // RFC 164: a value assigned to an exclusive borrow replaces what it borrows (`*x = value`), as for
+        // `BorrowedMut[T]`; a reference value rebinds the name.
+        let written_through = self.written_through_referent(assignment);
+        if let Some(referent) = &written_through {
+            ty = referent.clone();
+        }
         let materializes_range = self.expr_has_materialized_range_layout(&assignment.value);
         self.settle_open_result_value(&assignment.value, &ty);
         let value = self.lower_assignment_value(assignment, &mut ty, scope, out);
@@ -41,10 +47,24 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             });
             return;
         }
-        let Some(place) = self.assignment_target_place(assignment, ty, remaining, scope, span, out) else {
+        let Some(mut place) = self.assignment_target_place(assignment, ty, remaining, scope, span, out) else {
             return;
         };
+        if written_through.is_some() {
+            place.projection.push(bir::PlaceElem::Deref);
+        }
         self.finish_assignment(assignment, place, value, materializes_range, span, out);
+    }
+
+    /// The referent a reassignment writes through: the target is an exclusive reference local and the value is not
+    /// itself a reference (RFC 164).
+    fn written_through_referent(&self, assignment: &ast::AssignmentStmt) -> Option<IncanType> {
+        let local = self.reassigned_local(assignment)?;
+        let IncanType::RefMut(referent) = &self.locals.get(local.index())?.ty else {
+            return None;
+        };
+        let value = self.resolve_ty(assignment.value.span);
+        (!matches!(value, IncanType::Ref(_) | IncanType::RefMut(_))).then(|| referent.as_ref().clone())
     }
 
     /// Evaluate the replacement before writing it, counting only reads of the destination's current value.
@@ -90,6 +110,36 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             && let bir::Operand::Place(read) = &mut value
         {
             self.retain_argument_borrow(read, false);
+        }
+        // RFC 164: a local exclusive borrow bound to another exclusive borrow held in a named place (a local, a field
+        // or an element) reborrows what it borrows (`&mut *x`); a reference never takes a clone of another. A call's
+        // exclusive result is bound as it is.
+        if matches!(ty, IncanType::RefMut(_))
+            && replacement.is_none()
+            && matches!(self.resolve_ty(assignment.value.span), IncanType::RefMut(_))
+            && let bir::Operand::Place(read) = &mut value
+            && (!read.place.projection.is_empty()
+                || read
+                    .place
+                    .local_id()
+                    .and_then(|local| self.locals.get(local.index()))
+                    .is_some_and(|local| {
+                        matches!(local.ty, IncanType::RefMut(_)) && !matches!(local.origin, bir::LocalOrigin::Temporary)
+                    }))
+        {
+            read.place.projection.push(bir::PlaceElem::Deref);
+            self.retain_argument_borrow(read, true);
+        }
+        // RFC 164: a local exclusive borrow of a value lends it exclusively, as an `&mut T` argument does.
+        if matches!(ty, IncanType::RefMut(_))
+            && replacement.is_none()
+            && !matches!(
+                self.resolve_ty(assignment.value.span),
+                IncanType::Ref(_) | IncanType::RefMut(_)
+            )
+            && let bir::Operand::Place(read) = &mut value
+        {
+            self.retain_argument_borrow(read, true);
         }
         // An awaited method can retain its closed output only after its future has been constructed. Preserve that
         // checked native constraint through an inferred binding without changing an explicit annotation.
@@ -220,8 +270,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .map(|ty| self.checked_type(ty))
             .or_else(|| self.callable_value_ty(&assignment.value))
             .unwrap_or_else(|| self.resolve_ty(assignment.value.span));
+        // A `mut` local owns what it holds: a native `&'static str` constant initializes owned text storage, so a
+        // later text value can replace it, rather than fixing the local to the constant's native `&str`.
+        let mutable_static_text = assignment.binding == ast::BindingKind::Mutable
+            && self
+                .type_info
+                .rust
+                .checked_constants
+                .contains_key(&assignment.value.span);
         if assignment.ty.is_none()
             && !atomic_storage
+            && !mutable_static_text
             && let Some(returned) = self
                 .type_info
                 .expressions

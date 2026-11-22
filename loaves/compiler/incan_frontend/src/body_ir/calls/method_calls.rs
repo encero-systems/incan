@@ -75,6 +75,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             scope,
             hir_span: hir_span(span),
         };
+        if self.is_scalar_copy_clone(recv, name, type_args, args) {
+            return self.lower_expr_to_operand(recv, scope, out);
+        }
         if let Some(value) = self.lower_initial_method_forms(recv, name, &call, out) {
             return value;
         }
@@ -83,6 +86,26 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return value;
         }
         self.lower_bound_method_call(recv, name, &call, out)
+    }
+
+    /// Whether a method call is `.clone()` on a value of a builtin scalar type: `int`, `float`, a sized number or
+    /// `bool`. Such a value has no storage of its own to duplicate, so its clone is the value read once more: the
+    /// call lowers as that read, wherever the receiver is stored -- a local, a field, a collection element or a
+    /// constant -- instead of a native `Clone::clone` call that would need a reference to the receiver.
+    fn is_scalar_copy_clone(
+        &self,
+        recv: &ast::Spanned<ast::Expr>,
+        name: &str,
+        type_args: &[ast::Spanned<ast::Type>],
+        args: &[ast::CallArg],
+    ) -> bool {
+        name == "clone"
+            && type_args.is_empty()
+            && args.is_empty()
+            && matches!(
+                self.type_info.expr_type(recv.span),
+                Some(ResolvedType::Int | ResolvedType::Float | ResolvedType::Numeric(_) | ResolvedType::Bool)
+            )
     }
 
     /// Lower checked foreign, bridge, enum and isinstance forms before open arguments are settled.
@@ -94,6 +117,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> Option<bir::Operand> {
         let (type_args, args, span, scope) = (call.type_args, call.args, call.span, call.scope);
+        if let Some(value) = self.lower_stored_callable_method_call(recv, name, call, out) {
+            return Some(value);
+        }
         if let Some(owner) = self.type_info.body_ir_native_constructor_identity(span)
             && incan_semantics_core::body_ir::native_nominal_item(owner)
                 .is_some_and(|path| self.type_info.rust.checked_layouts.contains_key(&path))
@@ -464,7 +490,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let receiver_ty = self.resolve_ty(receiver.span);
         if let Some(constant) = self.checked_constant(&place, &receiver_ty) {
             let span = hir_span(receiver.span);
-            let local = self.new_temp(receiver_ty, scope, span);
+            let local = self.new_temp(receiver_ty.clone(), scope, span);
             place = bir::Place::from_local(local);
             out.push(bir::Statement {
                 kind: bir::StatementKind::Assign {
@@ -473,6 +499,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 },
                 span,
             });
+        }
+        // A list constructed by a call or literal has no enclosing binding to keep it alive.
+        // Transfer that whole temporary to its lazy iterator as an ordinary for-loop does.
+        if self.type_info.resolved_builtin_method_call(call_span) == Some(BuiltinMethodId::ListIter)
+            && self.temporary_list_iterable(&place, &receiver_ty)
+        {
+            return bir::Operand::place(place, bir::OwnershipFact::Move, true);
         }
         let key = call_span;
         let mutable = self
@@ -524,8 +557,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Invoke a checked callable expression through its evaluated value, retaining source evaluation order.
     ///
     /// The expression's retained function signature owns argument binding. A call result or closure expression is an
-    /// owned value evaluated before its arguments. Reads of existing callable storage, explicit type applications,
-    /// rest parameters and open carriers remain named refusals; no declaration is selected by source spelling.
+    /// owned value evaluated before its arguments. A field read, `(self.callback)(value)`, calls the value the field
+    /// holds in place (#2948). Reads of other callable storage, explicit type applications, rest parameters and open
+    /// carriers remain named refusals; no declaration is selected by source spelling.
     pub(super) fn lower_evaluated_callable_call(
         &mut self,
         expression: &ast::Spanned<ast::Expr>,
@@ -536,6 +570,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let hir_span_value = hir_span(span);
+        if type_args.is_empty()
+            && let Some(value) = self.lower_stored_callable_expression_call(expression, args, span, scope, out)
+        {
+            return value;
+        }
         if !matches!(
             expression.node,
             ast::Expr::Call(..) | ast::Expr::MethodCall(..) | ast::Expr::Closure(..)

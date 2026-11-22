@@ -156,6 +156,7 @@ impl Formatter {
         self.writer.write(&property.name);
         self.writer.write(" -> ");
         self.format_type(&property.return_type.node);
+        self.format_result_source(property.result_source.as_ref());
 
         if property.body.is_none() {
             self.writer.newline();

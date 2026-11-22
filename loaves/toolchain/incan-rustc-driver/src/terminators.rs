@@ -235,7 +235,7 @@ fn generator_element<'tcx>(
     depth: i64,
 ) -> Result<rustc_middle::ty::Ty<'tcx>, PlanError> {
     let kind = if depth == 0 {
-        crate::plan::list_leaf_type(leaf.clone())
+        crate::plan::list_leaf_type(&leaf)
     } else {
         crate::plan::PlanType::List(leaf.clone(), depth)
     };

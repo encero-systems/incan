@@ -1,0 +1,20 @@
+"""Shared Crumb field contracts for ranked compiler work and completed read witnesses. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
+
+pub from rust::internal_models_native import (
+    KEY_TYPE,
+    REQUEST_TYPE,
+    encode_graph_row,
+    decode_graph_row,
+    text_value as text,
+    integer,
+    number_value as number,
+    items_value as items,
+    tuple_items_value as tuple_items,
+    key_value,
+    read_key,
+    request_value,
+    read_request,
+    decode_graph_field,
+    graph_read_budget,
+    admit_graph_row,
+)

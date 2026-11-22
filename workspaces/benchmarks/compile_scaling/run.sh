@@ -89,8 +89,8 @@ build() {
 cd "$output/source"
 for subject in ${SCALING_SUBJECTS:-lowering data oven}; do
     case $subject in
-        lowering) file=loaves/compiler/incan_mir_lowering/src/lowering.incn
-            stamp=loaves/toolchain/incan-rustc-driver/target/incan/loaves/incan_mir_lowering/release/.oven-inputs.sha256 ;;
+        lowering) file=loaves/compiler/incan_lowering/src/lowering.rs
+            stamp=loaves/toolchain/incan-rustc-driver/target/incan/loaves/incan_lowering/release/library.oven-inputs ;;
         data) file=loaves/stdlib/data/src/datetime/civil/naive.incn
             stamp=$experiment_home/toolchains/0.6.0-dev.8/loaves/incan_stdlib_data/release/.oven-inputs.sha256 ;;
         oven) file=workspaces/oven/src/main.incn

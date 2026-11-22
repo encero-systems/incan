@@ -30,7 +30,7 @@ def word() -> str:
     return "word"
 
 
-def borrowed_key(value: &RustString) -> &RustString:
+def borrowed_key(value: Borrowed[RustString]) -> Borrowed[RustString] from value:
     """Preserve the native key's borrowed carrier."""
     return value
 

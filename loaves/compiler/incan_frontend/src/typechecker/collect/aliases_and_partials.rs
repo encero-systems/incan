@@ -100,6 +100,8 @@ impl TypeChecker {
             SymbolKind::Static(info) => SymbolKind::Static(info),
             SymbolKind::Type(info) => SymbolKind::Type(info),
             SymbolKind::Trait(info) => SymbolKind::Trait(info),
+            // An alias of a Rust item, imported by name or re-exported by a module, binds that item as its import does.
+            SymbolKind::RustItem(info) => SymbolKind::RustItem(info),
             other => {
                 self.errors.push(CompileError::type_error(
                     format!("Alias '{}' targets unsupported symbol '{}'", alias.name, target_name),

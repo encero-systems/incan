@@ -464,7 +464,12 @@ pub(super) fn collect_codegraph_semantic_contexts(
             Err(_) if allow_errors => continue,
             Err(error) => return Err(error),
         };
-        contexts.push(codegraph_semantic_context(&unit.project_root, session));
+        let context = codegraph_semantic_context(&unit.project_root, session);
+        session
+            .loaves()
+            .validate_demands()
+            .map_err(|e| CodegraphError::failure(e.to_string()))?;
+        contexts.push(context);
     }
     Ok(contexts)
 }

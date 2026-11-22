@@ -13,7 +13,7 @@ from rust::std::env import VarError
 from rust::std::ffi import OsString
 
 
-def native_payload(value: &VarError) -> str:
+def native_payload(value: Borrowed[VarError]) -> str:
     """Inspect a native payload through its exact shared enum owner and active variant."""
     match value:
         VarError.NotPresent => return "missing"

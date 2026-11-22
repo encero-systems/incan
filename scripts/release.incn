@@ -1,8 +1,6 @@
 """Build, verify, pack, and optionally prove one source toolchain generation without publishing it."""
 
-from rust::std::env::consts import ARCH, OS
-from rust::std::process import Command, exit
-from rust::std::string import String as RustString
+from rust::std::process import exit
 from rust::std::time import Instant
 from std.environ import args, get_or
 from std.fs import Path
@@ -14,10 +12,8 @@ from native_build import (
     PendingToolBuild,
     StandardGeneration,
     StandardProfile,
-    build_runtime,
     build_candidate_standard_with_lsp,
     build_oven_with_standard_profile,
-    build_source_interfaces,
     build_source_tools,
     build_standard_packages,
     cancel_tool_build,
@@ -27,7 +23,6 @@ from native_build import (
     require_unique_runtime_root,
     share_seed_generations,
     standard_profiles,
-    start_candidate_lsp,
 )
 from oven_tests import host_memory, shared_memory
 from release_support import (
@@ -61,13 +56,26 @@ from release_support import (
     run_step,
     start_background_step,
     finish_background_step,
-    shared_relocated_sysroot,
     store_reference_log,
     tree_bytes,
     verification_program,
     write_json,
 )
+from relocated_sysroot import shared_relocated_sysroot
 from registry_checksums import REGISTRY_CHECKSUMS, write_checksummed_registry
+from release_helpers import (
+    command_text,
+    host_target,
+    manifest_string,
+    optional_string,
+    read_json,
+    record_release_tree_bytes,
+    release_tree_bytes_json,
+    replace_json,
+    set_manifest_string,
+    write_difference,
+    ReleaseTreeBytes,
+)
 from release_signer import adopt_signed_bundle, stamp_release_signer
 from relink_driver import Relink, absolute_manifest, run as relink
 from verify_fixed_point import prove_fixed_point
@@ -75,6 +83,27 @@ from verify_fixed_point import prove_fixed_point
 # Sources of the native crates the seed installs and its built tools reach by path. The seed links an installed crate
 # only into builds of the sources it was built from, so its tools take these from the seed's own commit.
 const SEED_GENERATION_SOURCES: FrozenList[str] = ["loaves/kernel/incan_lang"]
+const SEED_BRIDGE_SOURCES: FrozenList[str] = [
+    "loaves/compiler/internal_models/src/checker_records.incn",
+    "loaves/compiler/internal_models/src/compiled_body_rows.incn",
+]
+# The dev.8 seed exposes the checked RowSet interface. Its two compiler readers have a bootstrap spelling using that
+# interface; the plan-function records are Rust in incan_mir_plan_native and have no Incan reader to bridge.
+# Authenticate both ends so that a change to a qualified reader cannot silently compile through a stale seed
+# implementation.
+const SEED_ROW_READERS: FrozenList[str] = [
+    "loaves/compiler/internal_models/src/namespace_rows.incn",
+    "loaves/compiler/internal_models/src/plan_wire_rows.incn",
+]
+const SEED_ROW_BLOBS: FrozenList[str] = [
+    "a908ce5b343728c59734a0d049f6b6c98209fd24", "35b42a2864d4c11b76ab03efcdf7876c40072bc2",
+    "4db20dca287cb21e8b5eae59606db5e7dc8d6bf3", "eea255210422c60d32935990c55cd20456efc44c",
+]
+const SEED_ROW_BLOBS_WITH_ENTRY_VERIFICATION: FrozenList[str] = [
+    "57239d8f2e7e6abd83c3c8ed5b2e7c47c6c8c4ac", "35b42a2864d4c11b76ab03efcdf7876c40072bc2",
+    "4db20dca287cb21e8b5eae59606db5e7dc8d6bf3", "eea255210422c60d32935990c55cd20456efc44c",
+]
+const SEED_BRIDGE_SOURCE: str = "seed-bridge-source"
 const SEED_TOOL_SOURCE: str = "seed-tool-source"
 
 
@@ -110,20 +139,6 @@ pub model Candidate:
     pub oven: Path
     pub lsp: Path
     pub pending_lsp: Option[PendingToolBuild]
-
-
-pub model ReleaseTreeBytes:
-    """Logical regular-file bytes retained in each release-owned output tree and their sum."""
-
-    pub build_home: int
-    pub source: int
-    pub verification_source: int
-    pub verification_home: int
-    pub relocated_rust: int
-    pub lane: int
-    pub bundle: int
-    pub ci: int
-    pub total: int
 
 
 def main() -> None:
@@ -185,9 +200,8 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
     # 3. The candidate is built here, or is the bundle the workflow signed; a refusal stops the overlapping census.
     candidate = match produce_candidate(run):
         Ok(built) => built
-        Err(message) =>
-            _ = cancel_background_step(reference)
-            return Err(message)
+        Err(message) => refuse_candidate_after_cancellation(reference, message)?
+
     if not run.options.prove_fixed_point and not signed:
         reclaim(run, "build-lane", [run.paths.lane])?
 
@@ -216,12 +230,25 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
         reclaim(
             run,
             "fixed-point-work",
-            [run.paths.lane, run.paths.home, run.paths.source, run.paths.output.joinpath(SEED_TOOL_SOURCE)],
+            [
+                run.paths.lane,
+                run.paths.home,
+                run.paths.source,
+                run.paths.output.joinpath(SEED_BRIDGE_SOURCE),
+                run.paths.output.joinpath(SEED_TOOL_SOURCE),
+            ],
         )?
     else:
         reclaim(run, "qualified-build-inputs", [run.paths.home, run.paths.source])?
     complete_receipt(run, counts)?
     return Ok(run.paths.output.joinpath("receipt.json"))
+
+
+def refuse_candidate_after_cancellation(reference: BackgroundStep, message: str) -> Result[Candidate, str]:
+    """Preserve both the candidate refusal and any failure to stop its overlapping reference census."""
+    match cancel_background_step(reference):
+        Ok(_) => return Err(message)
+        Err(cancel_message) => return Err(f"{message}; release cancellation failed: {cancel_message}")
 
 
 def produce_candidate(run: ReleaseRun) -> Result[Candidate, str]:
@@ -476,21 +503,13 @@ def apply_release_trust(source: Path, toolchain: Path) -> Result[None, str]:
 
 
 def build_source_closure(run: ReleaseRun) -> Result[Candidate, str]:
-    """Build the conductor and fresh support/runtime/standard source closure with the released seed."""
+    """Build the conductor and the fresh support (the Rust runtime included) and standard source closure with the seed."""
     seed_context = seed_tool_context(run)?
     conductor, helper = build_source_tools(seed_context, run.seed_home)?
     context = native_context(run, conductor, run.paths.home)
     withdraw_seed_providers(run)?
     readmit_build_home(context, helper, "source-home-readmit")?
     publish_support(context, helper)?
-    interfaces_started = Instant.now()
-    interfaces = build_source_interfaces(context, helper)?
-    append_timing(
-        run.paths.output.joinpath("timings.tsv"),
-        "source-interfaces",
-        interfaces_started.elapsed().as_secs_f64(),
-    )?
-    _ = build_runtime(context, helper, Some(interfaces), true, "candidate-")?
     require_unique_runtime_root(context)?
     build_standard_packages(context, helper, "", standard_profiles(StandardGeneration.SourceClosure))?
     return Ok(Candidate(context=context, oven=conductor, lsp=Path(""), pending_lsp=None))
@@ -530,10 +549,40 @@ def seed_tool_source(run: ReleaseRun) -> Result[Path, str]:
     verify = ["-C", run.root.0, "rev-parse", "--verify", f"{run.options.seed_source}^{{commit}}"]
     if command_text("git", verify).unwrap_or("").strip() != run.options.seed_source:
         return Err(f"--seed-source does not identify a commit in this repository: {run.options.seed_source}")
+    mut selected_source = run.options.source_sha
+    if run.options.seed_bridge != "":
+        verify_bridge = ["-C", run.root.0, "rev-parse", "--verify", f"{run.options.seed_bridge}^{{commit}}"]
+        if command_text("git", verify_bridge)?.strip() != run.options.seed_bridge:
+            return Err(f"--seed-bridge does not identify a commit in this repository: {run.options.seed_bridge}")
+        parent_text = command_text("git", ["-C", run.root.0, "show", "-s", "--format=%P", run.options.seed_bridge])?.strip()
+        parents = [parent for parent in parent_text.split(" ") if parent != ""]
+        changed = command_text(
+            "git",
+            [
+                "-C",
+                run.root.0,
+                "diff-tree",
+                "--no-commit-id",
+                "--name-only",
+                "-r",
+                run.options.source_sha,
+                run.options.seed_bridge,
+            ],
+        )?
+        paths = [line for line in changed.split("\n") if line != ""]
+        mut row_blobs: list[str] = []
+        if len(paths) == len(SEED_BRIDGE_SOURCES) + len(SEED_ROW_READERS):
+            mut refs = ["-C", run.root.0, "rev-parse"]
+            for path in SEED_ROW_READERS:
+                refs.append(run.options.source_sha + ":" + path)
+                refs.append(run.options.seed_bridge + ":" + path)
+            row_blobs = command_text("git", refs)?.strip().split("\n")
+        validate_seed_bridge(run.options.source_sha, run.options.seed_bridge, parents, paths, row_blobs)?
+        selected_source = run.options.seed_bridge
     root = run.paths.output.joinpath(SEED_TOOL_SOURCE)
     clone = ["clone", "--shared", "--no-checkout", run.root.0, root.0]
     require_release_step(run, release_step(run, "seed-tool-clone", "git", clone, run.root, {}))?
-    checkout = ["-C", root.0, "checkout", "--detach", run.options.source_sha]
+    checkout = ["-C", root.0, "checkout", "--detach", selected_source]
     require_release_step(run, release_step(run, "seed-tool-checkout", "git", checkout, run.root, {}))?
     mut restore = ["-C", root.0, "restore", f"--source={run.options.seed_source}", "--staged", "--worktree", "--"]
     for path in SEED_GENERATION_SOURCES:
@@ -542,8 +591,34 @@ def seed_tool_source(run: ReleaseRun) -> Result[Path, str]:
     return Ok(root)
 
 
+def exact_seed_bridge_source(run: ReleaseRun) -> Result[Path, str]:
+    """Materialize the authenticated bridge without seed-generation source restoration for its intermediate compiler."""
+    root = run.paths.output.joinpath(SEED_BRIDGE_SOURCE)
+    clone = ["clone", "--shared", "--no-checkout", run.root.0, root.0]
+    require_release_step(run, release_step(run, "bridge-source-clone", "git", clone, run.root, {}))?
+    checkout = ["-C", root.0, "checkout", "--detach", run.options.seed_bridge]
+    require_release_step(run, release_step(run, "bridge-source-checkout", "git", checkout, run.root, {}))?
+    return Ok(root)
+
+
+pub def validate_seed_bridge(source: str, bridge: str, parents: list[str], paths: list[str], row_blobs: list[str] = []) -> Result[None, str]:
+    """Require one direct-child seed bridge whose complete diff is the authenticated compatibility surface."""
+    if parents != [source]:
+        return Err(f"--seed-bridge {bridge} must have qualified source {source} as its only parent")
+    signatures = [path for path in SEED_BRIDGE_SOURCES]
+    if sorted(paths) == sorted(signatures) and len(row_blobs) == 0:
+        return Ok(None)
+    if sorted(paths) == sorted(signatures + [path for path in SEED_ROW_READERS]):
+        if row_blobs == [blob for blob in SEED_ROW_BLOBS] or row_blobs == [blob for blob in SEED_ROW_BLOBS_WITH_ENTRY_VERIFICATION]:
+            return Ok(None)
+        return Err("--seed-bridge contains an unrecognized bootstrap row reader")
+    return Err(f"--seed-bridge changes unsupported paths: {", ".join(sorted(paths))}")
+
+
 def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str]:
-    """Build the source compiler, then rebuild checking interfaces and shipped providers through it."""
+    """Bootstrap through an authenticated bridge when needed, then build and select only the qualified compiler."""
+    if run.options.seed_bridge != "":
+        build_bridge_compiler(run, candidate)?
     driver_started = Instant.now()
     driver_span = run.trace.begin("driver-build")?
     driver_result = relink(
@@ -554,7 +629,6 @@ def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Ca
             builder=candidate.oven.0,
             stdlib=run.paths.source.joinpath("loaves/stdlib").0,
             profile="release",
-            refresh=false,
             log=run.paths.output.joinpath("driver-build.log"),
         ),
     )
@@ -564,25 +638,39 @@ def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Ca
     retain_driver_build_evidence(run)?
     context = native_context(run, candidate.oven, run.paths.home)
     helper = run.paths.lane.joinpath("out/native-builds/toolchain-native")
-    # The language server records the compiler identity in its lock when it starts, and the readmit of the relinked
-    # driver changes that identity; it starts once the candidate interfaces and runtime are published.
     build_candidate_providers(context, helper)?
-    pending_lsp = start_candidate_lsp(context)?
-    lsp, pending = build_candidate_standard_with_lsp(context, helper, "candidate-", pending_lsp)?
+    lsp, pending = build_candidate_standard_with_lsp(context, helper, "candidate-")?
     return Ok(Candidate(context=context, oven=candidate.oven, lsp=lsp, pending_lsp=pending))
 
 
+def build_bridge_compiler(run: ReleaseRun, candidate: Candidate) -> Result[None, str]:
+    """Relink one exact bridge compiler and its providers before compiling the byte-exact qualified source generation."""
+    bridge = exact_seed_bridge_source(run)?
+    started = Instant.now()
+    span = run.trace.begin("bridge-driver-build")?
+    result = relink(
+        Relink(
+            repo=bridge,
+            bootstrap=run.paths.lane.joinpath("bridge-bootstrap"),
+            toolchain_home=run.paths.home,
+            builder=candidate.oven.0,
+            stdlib=bridge.joinpath("loaves/stdlib").0,
+            profile="release",
+            log=run.paths.output.joinpath("bridge-driver-build.log"),
+            readmit=true,
+            standard=true,
+            helper_home=run.paths.home.0,
+        ),
+    )
+    run.trace.finish(span)?
+    result?
+    append_timing(run.paths.output.joinpath("timings.tsv"), "bridge-driver-build", started.elapsed().as_secs_f64())?
+    return Ok(None)
+
+
 def build_candidate_providers(context: NativeContext, helper: Path) -> Result[None, str]:
-    """Readmit the relinked compiler, then produce the candidate interfaces and runtime the providers link."""
+    """Readmit the relinked compiler for the candidate providers; the Rust runtime they link is native support."""
     readmit_build_home(context, helper, "candidate-driver-readmit")?
-    interfaces_started = Instant.now()
-    interfaces = build_source_interfaces(context, helper, "candidate-")?
-    append_timing(
-        context.timings,
-        "candidate-source-interfaces",
-        interfaces_started.elapsed().as_secs_f64(),
-    )?
-    _ = build_runtime(context, helper, Some(interfaces), true)?
     require_unique_runtime_root(context)?
     return Ok(None)
 
@@ -753,6 +841,7 @@ def installed_verification(run: ReleaseRun, candidate: Candidate) -> Result[Path
     mut environment = build_environment(run, home, home.joinpath("bin/incan"))
     environment["RUSTUP_HOME"] = rustup_home.0
     environment["INCAN_LSP"] = home.joinpath("bin/incan-lsp").0
+    environment["INCAN_BAKERY"] = home.joinpath("bakery").0
     require_release_step(
         run,
         release_step(
@@ -805,7 +894,7 @@ def installed_verification(run: ReleaseRun, candidate: Candidate) -> Result[Path
     return Ok(log)
 
 
-def compare_reference(run: ReleaseRun, reference: Path, candidate: &BaselineReport) -> Result[None, str]:
+def compare_reference(run: ReleaseRun, reference: Path, candidate: Borrowed[BaselineReport]) -> Result[None, str]:
     """Require candidate case keys to equal the seed census and every seed PASS key to remain passing."""
     reference_report = census_results(reference)?
     match require_candidate_census(reference_report, candidate):
@@ -1074,6 +1163,7 @@ def phase(run: ReleaseRun, name: str) -> Result[None, str]:
 def generated_source_targets(run: ReleaseRun) -> list[Path]:
     """Name release-produced source and target roots whose binaries have already moved to the lane, home, or bundle."""
     return [
+        run.paths.output.joinpath(SEED_BRIDGE_SOURCE),
         run.paths.output.joinpath(SEED_TOOL_SOURCE),
         run.paths.source.joinpath("workspaces/oven/target"),
         run.paths.source.joinpath("workspaces/contracts/target"),
@@ -1197,104 +1287,3 @@ def measure_release_tree_bytes(run: ReleaseRun) -> Result[ReleaseTreeBytes, str]
             total=total,
         ),
     )
-
-
-def record_release_tree_bytes(path: Path, prefix: str, measured: ReleaseTreeBytes) -> Result[None, str]:
-    """Append every measured release tree and their total under one evidence label prefix."""
-    append_bytes(path, prefix + "build-home", measured.build_home)?
-    append_bytes(path, prefix + "source", measured.source)?
-    append_bytes(path, prefix + "verification-source", measured.verification_source)?
-    append_bytes(path, prefix + "verification-home", measured.verification_home)?
-    append_bytes(path, prefix + "relocated-rust", measured.relocated_rust)?
-    append_bytes(path, prefix + "lane", measured.lane)?
-    append_bytes(path, prefix + "bundle", measured.bundle)?
-    append_bytes(path, prefix + "ci", measured.ci)?
-    return append_bytes(path, prefix + "total", measured.total)
-
-
-def release_tree_bytes_json(measured: ReleaseTreeBytes) -> JsonValue:
-    """Encode every measured release tree and their total for the receipt."""
-    return JsonValue.object(
-        {"build_home": JsonValue.int(measured.build_home), "source": JsonValue.int(measured.source), "verification_source": JsonValue.int(
-            measured.verification_source,
-        ), "verification_home": JsonValue.int(measured.verification_home), "relocated_rust": JsonValue.int(
-            measured.relocated_rust,
-        ), "lane": JsonValue.int(measured.lane), "bundle": JsonValue.int(measured.bundle), "ci": JsonValue.int(
-            measured.ci,
-        ), "total": JsonValue.int(measured.total)},
-    )
-
-
-def write_difference(path: Path, left: &BaselineReport, right: &BaselineReport) -> Result[None, str]:
-    """Retain deterministic differing case outcomes without calling an external diff tool."""
-    mut lines: list[str] = []
-    keys = sorted(list(set(left.result_keys + right.result_keys)))
-    for key in keys:
-        mut left_status = "MISSING"
-        mut right_status = "MISSING"
-        if key in left.result_statuses:
-            left_status = left.result_statuses[key]
-        if key in right.result_statuses:
-            right_status = right.result_statuses[key]
-        if left_status != right_status:
-            lines.append(f"{key}\t{left_status}\t{right_status}")
-    return path.write_text("\n".join(lines) + "\n", "utf-8", "strict", None).map_err((error) => error.message())
-
-
-def host_target() -> Result[str, str]:
-    """Map the two supported native release hosts to their Rust target triples."""
-    if OS == "macos" and ARCH == "aarch64":
-        return Ok("aarch64-apple-darwin")
-    if OS == "linux" and ARCH == "x86_64":
-        return Ok("x86_64-unknown-linux-gnu")
-    return Err(f"supported hosts: macOS arm64 and Linux x86_64; observed {OS}/{ARCH}")
-
-
-def command_text(executable: str, arguments: list[str]) -> Result[str, str]:
-    """Run a small read-only command whose stdout is the result rather than release evidence."""
-    mut command = Command.new(executable)
-    for argument in arguments:
-        command.arg(argument)
-    output = command.output().map_err((error) => f"cannot run {executable}: {error}")?
-    stdout = RustString.from_utf8_lossy(output.stdout).into_owned()
-    if not output.status.success():
-        stderr = RustString.from_utf8_lossy(output.stderr).into_owned()
-        return Err(f"{executable} failed: {stderr}")
-    return Ok(stdout)
-
-
-def read_json(path: Path) -> Result[JsonValue, str]:
-    """Read one UTF-8 JSON document."""
-    text = path.read_text("utf-8", "strict").map_err((error) => f"{path.0}: {error.message()}")?
-    return JsonValue.parse(text).map_err((error) => f"{path.0}: {error.message()}")
-
-
-def replace_json(path: Path, value: JsonValue) -> Result[None, str]:
-    """Publish pretty JSON through one same-directory staged file."""
-    staged = Path(f"{path.0}.next")
-    staged
-        .write_text(value.to_pretty_json().map_err((error) => error.message())? + "\n", "utf-8", "strict", None)
-        .map_err((error) => error.message())?
-    if path.exists() or path.is_symlink():
-        path.unlink().map_err((error) => error.message())?
-    _ = staged.move(path).map_err((error) => error.message())?
-    return Ok(None)
-
-
-def set_manifest_string(path: Path, key: str, value: str) -> Result[None, str]:
-    """Replace one string field in a JSON document atomically."""
-    mut fields = read_json(path)?.expect_object().map_err((error) => error.message())?
-    fields[key] = JsonValue.string(value)
-    return replace_json(path, JsonValue.object(fields))
-
-
-def manifest_string(value: JsonValue, key: str) -> Result[str, str]:
-    """Read one required JSON object string."""
-    return value.require(key).and_then((entry) => entry.expect_str()).map_err((error) => f"{key}: {error.message()}")
-
-
-def optional_string(value: JsonValue, key: str) -> Result[str, str]:
-    """Read one optional JSON object string as empty when absent."""
-    match value.get(key):
-        Some(entry) => return entry.expect_str().map_err((error) => f"{key}: {error.message()}")
-        None => return Ok("")

@@ -1,0 +1,31 @@
+"""Compute a request's semantic identity from its selected inputs and absent lookups."""
+
+from std.encoding.hex import hexlify
+from std.hash import sha256
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from pub::internal_models.crumb_rows import ModelField, model_description, required_value
+from pub::internal_models.graph_crumb_fields import encode_graph_row
+
+const IDENTITY: bytes = b"capids\x00"
+
+
+def description() -> Description:
+    return model_description(IDENTITY, "incan.engine.capture-identity/1", [
+        ModelField(identity=b"absent", name="absent", storage="list<tuple<string,string>>"),
+        ModelField(identity=b"inputs", name="inputs", storage="list<tuple<string,string,string>>"),
+        ModelField(identity=b"roots_", name="roots", storage="list<string>"),
+        ModelField(identity=b"select", name="selection", storage="tuple<string,string,list<string>>"),
+    ])
+
+
+pub def capture_identity(roots: list[str], command: str, profile: str, features: list[str],
+    inputs: list[tuple[str, str, str]], absent: list[tuple[str, str]]) -> Result[str, str]:
+    """Use canonical field values. Mutable filesystem observations belong to the physical epoch revision."""
+    encoded = encode_graph_row(IDENTITY, description(), [
+        required_value(b"absent", Value.List([Value.Tuple([Value.Text(path), Value.Text(role)]) for path, role in absent])),
+        required_value(b"inputs", Value.List([Value.Tuple([Value.Text(path), Value.Text(role), Value.Text(digest)]) for path, role, digest in inputs])),
+        required_value(b"roots_", Value.List([Value.Text(path) for path in roots])),
+        required_value(b"select", Value.Tuple([Value.Text(command), Value.Text(profile), Value.List([Value.Text(item) for item in sorted(features)])])),
+    ])?
+    return Ok(hexlify(sha256.digest(encoded)))

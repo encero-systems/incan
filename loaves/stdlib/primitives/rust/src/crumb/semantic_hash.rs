@@ -4,9 +4,80 @@
 //! streamed through the same tagged V, S and D contributions as `std.primitives.crumb.hashes`.
 
 use std::cmp::Ordering;
+use std::fmt::Debug;
+use std::ops::Range;
+use std::sync::Arc;
 
 use serde_json::Value as Json;
 use sha2::{Digest, Sha256};
+
+/// The codec borrows immutable bytes independently of the native mapping implementation used by its caller.
+trait RowBacking: AsRef<[u8]> + Debug + Send + Sync {}
+impl<T: AsRef<[u8]> + Debug + Send + Sync> RowBacking for T {}
+
+/// A bounded view keeps its envelope's backing alive and only copies the shared handle when sliced.
+#[derive(Clone, Debug)]
+pub(super) struct RowView {
+    backing: Arc<dyn RowBacking>,
+    range: Range<usize>,
+}
+
+impl RowView {
+    /// Share an already-owned immutable input. Platform views carry their own mapping lifetime.
+    #[allow(
+        dead_code,
+        reason = "the shared standalone codegraph codec also accepts borrowed slices"
+    )]
+    pub(super) fn new(backing: impl AsRef<[u8]> + Debug + Send + Sync + 'static) -> Self {
+        let size = backing.as_ref().len();
+        Self {
+            backing: Arc::new(backing),
+            range: 0..size,
+        }
+    }
+
+    /// Borrow the bytes within this view's checked extent.
+    pub(super) fn as_bytes(&self) -> &[u8] {
+        &self.backing.as_ref().as_ref()[self.range.clone()]
+    }
+
+    /// Select an extent relative to this view, retaining only the shared backing handle.
+    pub(super) fn slice(&self, offset: usize, length: usize) -> Option<Self> {
+        let end = offset.checked_add(length)?;
+        if end > self.range.len() {
+            return None;
+        }
+        let start = self.range.start;
+        Some(Self {
+            backing: Arc::clone(&self.backing),
+            range: start + offset..start + end,
+        })
+    }
+}
+
+/// Binary cells are byte values regardless of whether they own bytes or retain part of an immutable row.
+#[derive(Clone)]
+pub(super) enum Binary {
+    Owned(Vec<u8>),
+    Mapped(RowView),
+}
+
+impl From<Vec<u8>> for Binary {
+    /// Move newly produced bytes into a logical cell.
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::Owned(bytes)
+    }
+}
+
+impl AsRef<[u8]> for Binary {
+    /// Borrow the logical bytes for comparisons, hashing and explicit materialization.
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Owned(bytes) => bytes,
+            Self::Mapped(view) => view.as_bytes(),
+        }
+    }
+}
 
 /// One logical value after notation translation, mirroring the Incan `Value` carrier.
 #[derive(Clone)]
@@ -18,7 +89,7 @@ pub(super) enum Value {
     Float(Vec<u8>),
     Decimal(i128, i64),
     Text(String),
-    Binary(Vec<u8>),
+    Binary(Binary),
     Withheld,
     List(Vec<Value>),
     Tuple(Vec<Value>),
@@ -157,7 +228,7 @@ pub(super) fn logical(value: &Json) -> Option<Value> {
             value.get("scale")?.as_i64()?,
         ),
         "string" => Value::Text(value.get("value")?.as_str()?.to_string()),
-        "binary" => Value::Binary(hex(value.get("hex")?)?),
+        "binary" => Value::Binary(hex(value.get("hex")?)?.into()),
         "withheld" => Value::Withheld,
         "list" => Value::List(logical_items(value.get("items")?)?),
         "tuple" => Value::Tuple(logical_items(value.get("items")?)?),
@@ -484,7 +555,7 @@ fn emit(value: &Value, projection: Projection, output: &mut Vec<u8>) -> Option<(
         }
         Value::Binary(data) => {
             output.push(6);
-            frame(output, data);
+            frame(output, data.as_ref());
         }
         Value::Withheld => output.push(7),
         Value::List(items) => sequence(8, items, projection, output)?,
@@ -631,7 +702,7 @@ pub(super) fn compare(left: &Value, right: &Value, projection: Projection) -> Op
         (Value::Float(a), Value::Float(b)) => Some(float_key(a).cmp(&float_key(b))),
         (Value::Decimal(a, a_scale), Value::Decimal(b, b_scale)) => compare_decimals(*a, *a_scale, *b, *b_scale),
         (Value::Text(a), Value::Text(b)) => Some(a.as_bytes().cmp(b.as_bytes())),
-        (Value::Binary(a), Value::Binary(b)) => Some(a.cmp(b)),
+        (Value::Binary(a), Value::Binary(b)) => Some(a.as_ref().cmp(b.as_ref())),
         (Value::Withheld, Value::Withheld) => Some(Ordering::Equal),
         (Value::List(a), Value::List(b)) | (Value::Tuple(a), Value::Tuple(b)) => compare_sequences(a, b, projection),
         (Value::Set(a), Value::Set(b)) => {
@@ -734,11 +805,16 @@ pub(super) fn selector_key(node: &Node) -> Option<(u8, Vec<u8>, String)> {
 }
 
 /// Frame a nominal identity, argument count and exact argument spellings.
+///
+/// A nominal has a selector when its identity has six bytes and each argument has a selector spelling, so the node
+/// itself is never spelled only to be discarded: a row read closes the selector of every nested record it reads.
 pub(super) fn closed_selector(node: &Node) -> Option<Vec<u8>> {
-    selector_spelling(node)?;
     let Node::Nominal(_, identity, arguments) = node else {
         return None;
     };
+    if identity.len() != 6 {
+        return None;
+    }
     let mut output = identity.clone();
     unsigned(&mut output, arguments.len() as u128);
     for argument in arguments {
@@ -888,139 +964,7 @@ fn compare_decimals(left: i128, left_scale: i64, right: i128, right_scale: i64) 
     Some(if a < 0 { magnitude.reverse() } else { magnitude })
 }
 
-/// Return the selector spelling N; bound definitions never expand into it.
-pub(super) fn selector_spelling(node: &Node) -> Option<String> {
-    spell(node, true, &mut Vec::new())
-}
-
-/// Return the structural spelling S; a bare nominal selector supplies no shape.
-pub(super) fn shape_spelling(node: &Node) -> Option<String> {
-    spell(node, false, &mut Vec::new())
-}
-
-/// Spell one node as N (nominal) or S (structural) under the active definition stack.
-fn spell(node: &Node, nominal: bool, active: &mut Vec<String>) -> Option<String> {
-    match node {
-        Node::Scalar(kind) => Some(kind.clone()),
-        Node::Decimal(precision, scale) => (*precision > 0 && *precision <= 38 && *scale >= 0 && scale <= precision)
-            .then(|| format!("decimal<{precision},{scale}>")),
-        Node::Container(kind, items) => container(kind, items, nominal, active),
-        Node::Nominal(kind, identity, arguments) => {
-            if !nominal || identity.len() != 6 {
-                return None;
-            }
-            let stem = format!("{kind}@{}", hex_string(identity));
-            if arguments.is_empty() {
-                return Some(stem);
-            }
-            let parts: Option<Vec<String>> = arguments
-                .iter()
-                .map(|argument| spell(argument, true, &mut Vec::new()))
-                .collect();
-            Some(format!("{stem}<{}>", parts?.join(",")))
-        }
-        Node::Record(key, fields) => {
-            enter(key, active)?;
-            let result = record_fields(fields, nominal, active);
-            active.pop();
-            result
-        }
-        Node::Enum(key, variants) => {
-            enter(key, active)?;
-            let result = variant_fields(variants, nominal, active);
-            active.pop();
-            result
-        }
-        Node::Reference(item) => {
-            if nominal {
-                Some(format!("ref<{}>", spell(item, true, active)?))
-            } else {
-                Some("reference".to_string())
-            }
-        }
-        Node::Recursive(key) => {
-            let offset = active.iter().rev().position(|item| item == key)?;
-            Some(format!("^{offset}"))
-        }
-    }
-}
-
-/// Push one active definition, refusing a duplicate on the current path.
-fn enter(key: &str, active: &mut Vec<String>) -> Option<()> {
-    if active.iter().any(|item| item == key) {
-        return None;
-    }
-    active.push(key.to_string());
-    Some(())
-}
-
-/// Validate constructor arity and sort unions by hashed spelling with full tie-breaks.
-fn container(kind: &str, items: &[Node], nominal: bool, active: &mut Vec<String>) -> Option<String> {
-    let arity = match kind {
-        "list" | "set" | "option" => items.len() == 1,
-        "map" => items.len() == 2,
-        "union" => !items.is_empty(),
-        "tuple" => true,
-        _ => false,
-    };
-    if !arity {
-        return None;
-    }
-    let mut parts = items
-        .iter()
-        .map(|item| spell(item, nominal, active))
-        .collect::<Option<Vec<String>>>()?;
-    if kind == "union" {
-        let mut keyed = Vec::with_capacity(parts.len());
-        for part in parts {
-            if nominal && keyed.iter().any(|(_, seen)| seen == &part) {
-                return None;
-            }
-            keyed.push((hex_string(&Sha256::digest(part.as_bytes())), part));
-        }
-        keyed.sort();
-        parts = keyed.into_iter().map(|(_, part)| part).collect();
-    }
-    Some(format!("{kind}<{}>", parts.join(",")))
-}
-
-/// Spell identity-sorted fields with their canonical flag and absence code.
-fn record_fields(fields: &[Shape], nominal: bool, active: &mut Vec<String>) -> Option<String> {
-    let mut ordered: Vec<(String, &Shape)> = Vec::with_capacity(fields.len());
-    for field in fields {
-        let identity = hex_string(&field.identity);
-        if field.identity.len() != 6 || ordered.iter().any(|(seen, _)| seen == &identity) {
-            return None;
-        }
-        ordered.push((identity, field));
-    }
-    ordered.sort_by(|left, right| left.0.cmp(&right.0));
-    let mut parts = Vec::with_capacity(ordered.len());
-    for (identity, field) in ordered {
-        let spelling = spell(&field.storage, nominal, active)?;
-        let canonical = if field.canonical { '1' } else { '0' };
-        parts.push(format!("{identity}:{spelling}:{canonical}:{}", field.absent));
-    }
-    Some(format!("record{{{}}}", parts.join(";")))
-}
-
-/// Spell identity-sorted variants with their payload records.
-fn variant_fields(variants: &[(Vec<u8>, Vec<Shape>)], nominal: bool, active: &mut Vec<String>) -> Option<String> {
-    let mut ordered: Vec<(String, &Vec<Shape>)> = Vec::with_capacity(variants.len());
-    for (identity, fields) in variants {
-        let name = hex_string(identity);
-        if identity.len() != 6 || ordered.iter().any(|(seen, _)| seen == &name) {
-            return None;
-        }
-        ordered.push((name, fields));
-    }
-    ordered.sort_by(|left, right| left.0.cmp(&right.0));
-    let mut parts = Vec::with_capacity(ordered.len());
-    for (identity, fields) in ordered {
-        parts.push(format!("{identity}:{}", record_fields(fields, nominal, active)?));
-    }
-    Some(format!("enum{{{}}}", parts.join(";")))
-}
+include!("semantic_hash/spelling.rs");
 
 /// Encode one tagged metadata node, sorting unique property-name map keys by UTF-8 bytes.
 fn metadata(value: &Json, output: &mut Vec<u8>) -> Option<()> {
@@ -1138,7 +1082,13 @@ pub(super) fn frame(output: &mut Vec<u8>, data: &[u8]) {
 
 /// Spell octets as lowercase hexadecimal.
 pub(super) fn hex_string(data: &[u8]) -> String {
-    data.iter().map(|byte| format!("{byte:02x}")).collect()
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut text = String::with_capacity(2 * data.len());
+    for byte in data {
+        text.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        text.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
+    }
+    text
 }
 
 /// Append one value's object contribution without validating it again.

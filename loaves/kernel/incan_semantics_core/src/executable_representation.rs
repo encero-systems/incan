@@ -15,11 +15,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 mod module_codec;
+mod namespace_codec;
 mod publication;
 mod surface_build;
 mod surface_reading;
 
 pub use module_codec::*;
+pub use namespace_codec::{decode_namespace_module, encode_namespace_module};
 pub use surface_build::*;
 
 use crate::CanonicalSymbolId;
@@ -88,12 +90,14 @@ use crate::body_ir::{
 /// templates carry their exact result types until the consuming instantiation proves independent storage.
 /// Version 56 passes eligible immutable parameters through inferred shared storage. Owned uses still materialize at
 /// their typed operation, so older owners with by-value parameter frames cannot be reused under this ABI.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 56;
+/// Version 57 lends the eligible immutable parameters of published callables by the same inference, so a published
+/// signature built under version 56 may pass by value what this one lends.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 57;
 
 /// Only the binding-aware combined layout is admitted. Missing input authority cannot be reconstructed from a
 /// native ABI, and a prior layout cannot silently omit initializer transfers, explicit local obligations, returned
 /// views, conditional profiles or the component carrying a view.
-const OLDEST_SUPPORTED_VERSION: u32 = 56;
+const OLDEST_SUPPORTED_VERSION: u32 = 57;
 
 /// Required-field witnesses transported separately from the legacy positional nominal layout.
 #[derive(Serialize, Deserialize)]
@@ -138,6 +142,16 @@ pub struct EncodedOwnerRepresentation {
     pub source: String,
     /// Position-free declaration identity used by the compiler record graph.
     pub identity: String,
+    /// Exact source coordinates and native binding handles from the producing activation, when authenticated.
+    #[serde(skip)]
+    pub physical_inputs: Option<[u8; 32]>,
+    /// Previous coordinates in the frontend's stable syntax-path order. Graph-only and bounded independently of the
+    /// body.
+    #[serde(skip)]
+    pub coordinates: Vec<(u32, u32)>,
+    /// Optional graph-only Crumb publication. The compiler's shared owner schema authenticates it before reuse.
+    #[serde(skip)]
+    pub call_witness: Option<Vec<u8>>,
     /// The complete checked executable owner.
     pub body: Body,
 }

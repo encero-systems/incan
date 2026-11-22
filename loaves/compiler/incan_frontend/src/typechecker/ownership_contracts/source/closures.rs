@@ -194,6 +194,7 @@ impl Builder<'_> {
             access: IncanInputAccess::Inferred,
             loan: None,
             source: Some(place),
+            closed_enum_parameter_observer: false,
             evaluation: InputEvaluation {
                 start_node,
                 end_node,

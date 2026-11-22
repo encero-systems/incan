@@ -56,13 +56,17 @@ impl TypeChecker {
         });
         self.symbols.resume_scope(prepared.scope);
         self.current_return_error_type = prepared.return_error_type;
-        if let Some(body) = &property.node.body {
+        // A ranked activation publishes one free-function record. Nominal signatures and defaults are still
+        // checked here. The selected local/final codecs refuse pending or cross-body effect decisions.
+        if let Some(body) = &property.node.body
+            && self.graph_body_records.ranked_owner().is_none()
+        {
             self.check_property_body(body, property.span);
         }
         self.current_return_error_type = None;
         self.symbols.exit_scope();
         #[cfg(test)]
-        if property.node.body.is_some() {
+        if property.node.body.is_some() && self.graph_body_records.ranked_owner().is_none() {
             self.observe_body_local(property.span);
         }
         self.current_method_owner = previous_owner;
@@ -126,6 +130,10 @@ impl TypeChecker {
         }
         let return_type = self.resolve_type_checked(&property.return_type);
         let effective_return_type = Self::concretize_self_type_in_annotation(&return_type, &self_ty);
+        // A `Borrowed[T]` result is a receiver-tied view: the body returns the value it views, as a method's does.
+        let effective_return_type = self
+            .explicit_ownership_value_type(&effective_return_type)
+            .unwrap_or(effective_return_type);
         self.symbols.set_return_type(effective_return_type);
         self.current_return_error_type = return_type.result_err_type().cloned();
 
@@ -170,13 +178,22 @@ impl TypeChecker {
         active_bounds.extend(self.type_param_bound_details_from_type_params(&method.type_params));
         self.current_type_param_bound_details.push(active_bounds);
         let previous_annotation_owner = self.enter_annotation_owner(&method.name, &method.type_params);
+        let receiver = method.receiver_binding.as_ref().map(|binding| binding.node.as_str());
+        self.refuse_rust_borrow_spellings(&method.return_type);
+        let route = self.result_route(&method.params, &method.return_type, method.result_source.as_ref());
         let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(
             &method.params,
+            // A trait slot declares its borrows as explicit input obligations its implementations inherit.
+            matches!(self_ty, ResolvedType::SelfType)
+                || self.signature_keeps_explicit_borrows(&method.params, &route.result, route.source),
             super::ownership_contracts::method_input_header(method),
         );
         let resolved_param_types =
             self.inherited_method_parameter_types(method, method_span, resolved_param_types, owner_params, &self_ty);
-        let return_type = self.resolve_callable_return_annotation(&method.return_type, method.result_source.is_some());
+        let return_type = self.resolve_callable_return_annotation(&route.result, route.source.is_some());
+        if let Some(source) = route.native_source {
+            self.check_native_result_elision(&method.name, &method.params, source, receiver);
+        }
         self.record_method_ownership(method, method_span, &resolved_param_types, &return_type, &self_ty);
 
         // Define the source receiver with its exact declaration token. Classmethod `cls` remains absent from the
@@ -266,21 +283,36 @@ impl TypeChecker {
         method: &MethodDecl,
         span: Span,
         prepared: PreparedMethodCheck,
+        program: Option<&Program>,
     ) {
         let previous_immutable_self =
             std::mem::replace(&mut self.current_immutable_self_method, prepared.immutable_self_method);
         let previous_classmethod =
             std::mem::replace(&mut self.current_classmethod_self_ty, prepared.classmethod_self_ty);
         let (restore, yield_context) = self.enter_prepared_callable(prepared.callable);
-        if let Some(body) = &method.body {
-            self.check_work.method_bodies += 1;
-            let _ = self.check_callable_body(
-                body,
-                method.is_async(),
-                span,
-                yield_context,
-                super::ownership_contracts::CallableSource::Method(method),
-            );
+        if let Some(body) = &method.body
+            && self.graph_body_records.ranked_owner().is_none()
+        {
+            let reused = program.is_some_and(|program| match self.reuse_graph_body_record(program, span) {
+                Ok(reused) => reused,
+                Err(error) => {
+                    tracing::debug!(target: "incan::invocation", ?span, ?error, "graph method selection refused");
+                    false
+                }
+            });
+            if !reused {
+                self.check_work.method_bodies += 1;
+                let index = self.check_callable_body(
+                    body,
+                    method.is_async(),
+                    span,
+                    yield_context,
+                    super::ownership_contracts::CallableSource::Method(method),
+                );
+                if let (Some(program), Some(index)) = (program, index) {
+                    self.produce_local_record(program, span, index);
+                }
+            }
         }
         self.current_classmethod_self_ty = previous_classmethod;
         self.current_immutable_self_method = previous_immutable_self;

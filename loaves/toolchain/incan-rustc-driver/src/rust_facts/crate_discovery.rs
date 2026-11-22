@@ -476,12 +476,16 @@ pub(super) fn resolution_rank(kind: DefKind) -> u8 {
     }
 }
 
-/// The path rustc shows a definition under from outside its crate (`std::fs::File`, not its definition path).
+/// The path rustc shows a definition under from outside its crate (`std::fs::File`, not its definition path); a
+/// type or trait of a crate the stub reaches only indirectly gets its public path too.
 pub(super) fn visible_path(tcx: TyCtxt<'_>, def: DefId) -> String {
-    ty::print::with_no_trimmed_paths!(tcx.def_path_str(def))
+    super::public_paths::public_path(tcx, def)
+        .unwrap_or_else(|| ty::print::with_no_trimmed_paths!(tcx.def_path_str(def)))
 }
 
-/// A type's display as the checker parses it: full visible paths, no trimming.
-pub(super) fn display(ty: Ty<'_>) -> String {
-    ty::print::with_no_trimmed_paths!(ty.to_string())
+/// A type's display as the checker parses it: full visible paths, no trimming, and public paths for the types and
+/// traits of indirect crates.
+pub(super) fn display<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> String {
+    let printed = ty::print::with_no_trimmed_paths!(ty.to_string());
+    super::public_paths::public_display(tcx, ty, printed)
 }

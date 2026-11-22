@@ -32,7 +32,7 @@ def main() -> None:
     println(cloned_value(key))
 
 
-def cloned_value(key: &Key) -> int:
+def cloned_value(key: Borrowed[Key]) -> int:
     """Clone a borrowed source model through its native trait and retain the source result type."""
     copied = Clone.clone(key)
     return copied.value

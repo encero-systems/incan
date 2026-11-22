@@ -1,4 +1,4 @@
-//! Position-free executable node and binding projections for the initial free-function record profile.
+//! Position-free executable node and binding projections for checked callable records.
 //!
 //! Checked source signatures own declaration identity. The existing syntax inventory owns normalized roots and
 //! structural paths; this adapter only binds those paths to the current revision. It never checks a body.
@@ -11,6 +11,39 @@ use incan_semantics_core::stable_identity::{StableDeclarationContext, StableDecl
 use super::TypeChecker;
 use super::diagnostic_values::OwnerSyntax;
 use crate::ast::{Declaration, Program, Span};
+
+/// The typed declaration owns these method nodes and their lexical relation to a nominal source owner.
+pub(crate) fn nominal_methods(declaration: &Declaration) -> &[crate::ast::Spanned<crate::ast::MethodDecl>] {
+    match declaration {
+        Declaration::Class(value) => &value.methods,
+        Declaration::Model(value) => &value.methods,
+        Declaration::Enum(value) => &value.methods,
+        Declaration::Newtype(value) => &value.methods,
+        Declaration::Trait(value) => &value.methods,
+        _ => &[],
+    }
+}
+
+/// Borrow the authored parameters of the exact callable supplying a checked record.
+pub(super) fn callable_params(
+    program: &Program,
+    owner: Span,
+) -> Result<&[crate::ast::Spanned<crate::ast::Param>], NodeBindingError> {
+    for declaration in &program.declarations {
+        if declaration.span == owner
+            && let Declaration::Function(function) = &declaration.node
+        {
+            return Ok(&function.params);
+        }
+        if let Some(method) = nominal_methods(&declaration.node)
+            .iter()
+            .find(|method| method.span == owner)
+        {
+            return Ok(&method.node.params);
+        }
+    }
+    Err(NodeBindingError::MissingOwner)
+}
 
 /// A compiler-owned node identity, with no revision-local offsets or symbol-table indices.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -32,7 +65,7 @@ pub enum NodeBindingError {
     /// A declaration has no checked source signature or is not in this captured revision.
     #[error("missing checked source owner")]
     MissingOwner,
-    /// Methods, generated ranges, joined ranges and opaque nested executable owners await their own profiles.
+    /// Generated ranges, joined ranges and opaque nested executable owners await their own profiles.
     #[error("unsupported canonical capability: {0}")]
     Unsupported(&'static str),
     /// A test-only native round trip differed from the complete independent cold baseline.
@@ -49,7 +82,7 @@ pub enum NodeBindingError {
     MissingNode,
 }
 
-/// Activation-owned positions for exactly one free function; dropping this value releases every native coordinate.
+/// Activation-owned positions for exactly one source callable; dropping this value releases every native coordinate.
 pub(crate) struct SemanticNodeBindings {
     owner: StableDeclarationId,
     syntax: OwnerSyntax,
@@ -73,14 +106,6 @@ impl SemanticNodeBindings {
         owner: Span,
         header_only: bool,
     ) -> Result<Self, NodeBindingError> {
-        let declaration = program
-            .declarations
-            .iter()
-            .find(|declaration| declaration.span == owner)
-            .ok_or(NodeBindingError::MissingOwner)?;
-        let Declaration::Function(function) = &declaration.node else {
-            return Err(NodeBindingError::Unsupported("free-function owner"));
-        };
         // The type grammar uses canonical prelude mode tags. Shadowed spellings require a nominal-type profile.
         for name in ["Borrowed", "BorrowedMut", "Owned", "Reference"] {
             if checker.explicit_ownership_mode(name).is_none() {
@@ -89,6 +114,58 @@ impl SemanticNodeBindings {
                 ));
             }
         }
+        if let Some(binding) = checker.declaration_view().method(owner) {
+            let member = binding.identity.as_ref().ok_or(NodeBindingError::MissingOwner)?;
+            for declaration in &program.declarations {
+                let methods = nominal_methods(&declaration.node);
+                let Some(method) = methods.iter().find(|method| method.span == owner) else {
+                    continue;
+                };
+                if method.node.body.is_none()
+                    || method.span.expansion.is_some()
+                    || !method.required_features.is_empty()
+                    || declaration.span.expansion.is_some()
+                    || !declaration.required_features.is_empty()
+                    || member.declaration_span != owner
+                    || member.declaration_name != method.node.name
+                    || methods
+                        .iter()
+                        .filter(|other| other.node.name == method.node.name)
+                        .count()
+                        != 1
+                {
+                    return Err(NodeBindingError::Unsupported("ambiguous or generated method owner"));
+                }
+                let nominal = checker
+                    .type_info()
+                    .declarations
+                    .declaration_identities
+                    .get(&declaration.span)
+                    .and_then(|id| StableDeclarationId::from_canonical(id, None, None))
+                    .ok_or(NodeBindingError::MissingOwner)?;
+                let stable = StableDeclarationId::from_canonical(
+                    member,
+                    None,
+                    Some(StableDeclarationContext {
+                        owner: nominal,
+                        binding_ordinal: 0,
+                    }),
+                )
+                .ok_or(NodeBindingError::MissingOwner)?;
+                let syntax = OwnerSyntax::method(method, header_only)
+                    .map_err(|_| NodeBindingError::Unsupported("method syntax inventory"))?;
+                return Ok(Self { owner: stable, syntax });
+            }
+            return Err(NodeBindingError::MissingOwner);
+        }
+        let declaration = program
+            .declarations
+            .iter()
+            .find(|declaration| declaration.span == owner)
+            .ok_or(NodeBindingError::MissingOwner)?;
+        let Declaration::Function(function) = &declaration.node else {
+            return Err(NodeBindingError::Unsupported("free-function owner"));
+        };
         // A generic owner is checked once against its own binders, so its records are as exact as a plain owner's;
         // each instance is closed later, by lowering.
         if !function.decorators.is_empty()
@@ -120,6 +197,18 @@ impl SemanticNodeBindings {
     /// The checked source identity is available before local checking and is independent of body coordinates.
     pub(crate) fn owner(&self) -> &StableDeclarationId {
         &self.owner
+    }
+
+    /// Pair a direct call's complete expression range with its callee from the checked syntax inventory.
+    /// Interpolation and parenthesized ranges can begin before the callee token.
+    pub(super) fn direct_call_sites(&self) -> impl Iterator<Item = (Span, Span)> + '_ {
+        self.syntax.by_path.iter().filter_map(|(path, callee)| {
+            let parent = path.strip_suffix("/node/Call/0/span")?;
+            self.syntax
+                .by_path
+                .get(&format!("{parent}/span"))
+                .map(|call| (*call, *callee))
+        })
     }
 
     /// The normalized syntax root is semantic data; all coordinates remain in the activation-owned inventory.
@@ -156,6 +245,11 @@ impl SemanticNodeBindings {
             .ok_or(NodeBindingError::MissingNode)
     }
 
+    /// All positioned nodes used by this exact owner's current syntax; only physical replay consumes this map.
+    pub(super) fn physical_nodes(&self) -> &BTreeMap<String, Span> {
+        &self.syntax.by_path
+    }
+
     /// Give nested references compiler-owned owner context and structural collision ordinals. The caller supplies
     /// only this owner's declarations, not a whole-module scope table; every declaration must have an exact node.
     pub(crate) fn binding_identities<'a>(
@@ -168,6 +262,7 @@ impl SemanticNodeBindings {
                 canonical.kind,
                 incan_semantics_core::SemanticSourceTargetKind::Local
                     | incan_semantics_core::SemanticSourceTargetKind::Parameter
+                    | incan_semantics_core::SemanticSourceTargetKind::Receiver
                     | incan_semantics_core::SemanticSourceTargetKind::GenericBinder
             ) {
                 return Err(NodeBindingError::Unsupported("nested declaration kind"));

@@ -96,8 +96,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .and_then(|local| self.locals.get(local.index()).map(|decl| decl.ty.clone()))
             .or_else(|| lhs_place.global().map(|global| global.ty.clone()))
             .unwrap_or(lhs_ty);
+        // RFC 164: `x op= y` on an exclusive borrow writes the value it borrows (`*x = *x op y`).
+        let (mut lhs_place, lhs_ty) = (lhs_place, lhs_ty);
+        let lhs_ty = match lhs_ty {
+            IncanType::RefMut(referent) if lhs_place.projection.is_empty() && lhs_place.local_id().is_some() => {
+                lhs_place.projection.push(bir::PlaceElem::Deref);
+                *referent
+            }
+            other => other,
+        };
         let op = compound_assignment.op.binary_op();
-        let rhs_ty = self.resolve_ty(compound_assignment.value.span);
+        let rhs_checked = self.resolve_ty(compound_assignment.value.span);
+        let rhs_ty = super::super::operators::borrowed_operand_view(&rhs_checked);
         if !Self::binary_op_is_supported(op, &lhs_ty, &rhs_ty) {
             self.push_unsupported_stmt(
                 format!("compound assignment operator {:?}", compound_assignment.op),
@@ -109,7 +119,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let read_place = self.static_alias_read_place(&lhs_place);
         let (fact, last_use) = self.ownership_fact_for_place(&read_place, &lhs_ty);
         let lhs_operand = bir::Operand::place(read_place, fact, last_use);
-        let rhs_operand = self.lower_expr_to_operand(&compound_assignment.value, scope, out);
+        let rhs_operand = super::super::operators::read_through_scalar_borrow(
+            &rhs_checked,
+            self.lower_expr_to_operand(&compound_assignment.value, scope, out),
+        );
         let result = self.lower_binary_from_operands(
             op,
             &lhs_ty,

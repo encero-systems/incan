@@ -270,26 +270,12 @@ impl TypeChecker {
                 callee.span,
                 expected_return_ty,
             ),
-            RustItemKind::Type(type_info)
-                if type_info.metadata_completeness.has_constructible_layout()
-                    && (!type_info.fields.is_empty() || (type_info.variants.is_empty() && args.is_empty())) =>
-            {
-                let error_count_before = self.errors.len();
-                let result = if type_info.fields.iter().all(|field| field.name.is_empty()) {
-                    self.check_rust_tuple_struct_constructor_call(rust_path, type_info, args, span)
-                } else {
-                    self.check_rust_named_field_constructor_call(rust_path, type_info, args, span)
-                };
-                if self.errors.len() == error_count_before {
-                    self.record_expr_type(callee.span, ResolvedType::RustPath(rust_path.to_owned()));
-                    self.type_info
-                        .expressions
-                        .ident_kinds
-                        .insert(callee.span, IdentKind::RustImport);
+            RustItemKind::Type(type_info) => {
+                if let Some(result) =
+                    self.check_rust_type_constructor_call(rust_path, type_info, args, span, Some(callee.span))
+                {
+                    return result;
                 }
-                result
-            }
-            RustItemKind::Type(_) => {
                 self.check_call_args(args);
                 self.errors
                     .push(errors::rust_constructor_metadata_unavailable(rust_path, span));
@@ -311,6 +297,40 @@ impl TypeChecker {
                 ResolvedType::Unknown
             }
         }
+    }
+
+    /// Check a Rust record or tuple struct built from its retained layout, as an imported name or a module member
+    /// that re-exports it is called. `None` when the layout cannot be constructed from these arguments, which the
+    /// caller reports. `callee_span` is the written callee's own span when the call names it apart from the call.
+    pub(in crate::typechecker::check_expr) fn check_rust_type_constructor_call(
+        &mut self,
+        rust_path: &str,
+        type_info: &RustTypeInfo,
+        args: &[CallArg],
+        span: Span,
+        callee_span: Option<Span>,
+    ) -> Option<ResolvedType> {
+        if !type_info.metadata_completeness.has_constructible_layout()
+            || (type_info.fields.is_empty() && (!type_info.variants.is_empty() || !args.is_empty()))
+        {
+            return None;
+        }
+        let error_count_before = self.errors.len();
+        let result = if type_info.fields.iter().all(|field| field.name.is_empty()) {
+            self.check_rust_tuple_struct_constructor_call(rust_path, type_info, args, span)
+        } else {
+            self.check_rust_named_field_constructor_call(rust_path, type_info, args, span)
+        };
+        if self.errors.len() == error_count_before
+            && let Some(callee_span) = callee_span
+        {
+            self.record_expr_type(callee_span, ResolvedType::RustPath(rust_path.to_owned()));
+            self.type_info
+                .expressions
+                .ident_kinds
+                .insert(callee_span, IdentKind::RustImport);
+        }
+        Some(result)
     }
 
     /// Preserve legacy in-scope surface aliases and constructor fallback after resolved declarations decline.

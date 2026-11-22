@@ -113,7 +113,7 @@ fn checked_nominal_copy_materializes_without_legacy_abi_evidence() -> Result<(),
         }));
     }
     let module = admitted(
-        "def consume(value: Owned[&mut int]) -> None:\n    pass\ndef main(value: Owned[&mut int]) -> None:\n    consume(value)\n",
+        "def consume(value: Owned[BorrowedMut[int]]) -> None:\n    pass\ndef main(value: Owned[BorrowedMut[int]]) -> None:\n    consume(value)\n",
     )?;
     let body = module
         .bodies
@@ -140,7 +140,7 @@ fn checked_nominal_copy_materializes_without_legacy_abi_evidence() -> Result<(),
 #[test]
 fn named_temporary_inputs_retain_binding_provenance() -> Result<(), Box<dyn std::error::Error>> {
     let module = staged(
-        "def total(first: Borrowed[int], second: Borrowed[int]) -> int:\n    return first + second\ndef main() -> int:\n    return total(second=2, first=1)\n",
+        "def total(first: Borrowed[int], second: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return first + second\ndef main() -> int:\n    return total(second=2, first=1)\n",
         false,
     )?;
     let body = module
@@ -168,7 +168,8 @@ fn named_temporary_inputs_retain_binding_provenance() -> Result<(), Box<dyn std:
     else {
         return Err("wrong evaluation policy".into());
     };
-    assert!(defaulted_slots.is_empty());
+    // Only the defaulted `Owned[int]` proof entry is filled from its default.
+    assert_eq!(defaulted_slots.as_slice(), &[2]);
     assert_eq!(
         arguments
             .iter()
@@ -263,7 +264,7 @@ fn nested_borrow_preserves_projection_and_conditional_move_executes() -> Result<
 #[test]
 fn local_scalar_alias_projects_existing_field_storage() -> Result<(), Box<dyn std::error::Error>> {
     let module = staged(
-        "model Settings:\n    attempts: int\ndef update(mut settings: BorrowedMut[Settings]) -> int:\n    mut alias: BorrowedMut[int] = settings.attempts\n    alias = 3\n    alias += 2\n    return alias\n",
+        "model Settings:\n    attempts: int\ndef update(mut settings: BorrowedMut[Settings], proof: Owned[int] = 0) -> int:\n    mut alias: BorrowedMut[int] = settings.attempts\n    alias = 3\n    alias += 2\n    return alias\n",
         false,
     )?;
     let body = module
@@ -298,7 +299,7 @@ fn local_scalar_alias_projects_existing_field_storage() -> Result<(), Box<dyn st
 #[test]
 fn missing_local_alias_proof_never_creates_owned_storage() -> Result<(), Box<dyn std::error::Error>> {
     let module = staged(
-        "def main() -> int:\n    mut value = 1\n    mut view: BorrowedMut[int] = value\n    view = 2\n    return view\n",
+        "def main(proof: Owned[int] = 0) -> int:\n    mut value = 1\n    mut view: BorrowedMut[int] = value\n    view = 2\n    return view\n",
         true,
     )?;
     let body = module
@@ -332,21 +333,106 @@ fn constructed_nested_models_keep_direct_input_authority() -> Result<(), Box<dyn
     Ok(())
 }
 
-/// A model's omitted field computation and a non-Copy source field transfer need their own access/storage proof.
+/// The constructor keeps a proven closed initializer in its declaration slot. A call in an omitted default
+/// still refuses the caller's explicit input flow before executable access to that input can be represented.
 #[test]
-fn construction_defaults_and_noncopy_place_fields_stay_refused() -> Result<(), Box<dyn std::error::Error>> {
-    for source in [
-        "model Page:\n    title: str = \"default\"\ndef read(value: Borrowed[int]) -> int:\n    return value\ndef main() -> int:\n    page = Page()\n    return read(1)\n",
+fn construction_defaults_retain_only_proven_omissions() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Page:\n    title: str = \"default\"\ndef read(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return value\ndef main() -> int:\n    page = Page()\n    return read(1)\n";
+    let module = staged(source, false)?;
+    let body = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("no caller")?;
+    assert!(body.first_representation_gap().is_none());
+    let (constructor, operands) = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::Constructor(target), args),
+                ..
+            } => Some((target, args)),
+            _ => None,
+        })
+        .ok_or("missing represented Page construction")?;
+    assert_eq!(
+        constructor
+            .canonical
+            .as_ref()
+            .map(|owner| owner.declaration_name.as_str()),
+        Some("Page")
+    );
+    assert!(operands.is_empty());
+    assert!(
+        matches!(&constructor.binding, bir::ArgumentBinding::Resolved { arguments, defaulted_slots } if arguments.is_empty() && defaulted_slots.as_slice() == [0])
+    );
+
+    let effectful = format!(
+        "def make_title() -> str:\n    return \"user\"\n{}",
+        source.replace("= \"default\"", "= make_title()")
+    );
+    let refused = staged(&effectful, false)?;
+    let body = refused
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("no refused caller")?;
+    assert!(body.first_representation_gap().is_some());
+    Ok(())
+}
+
+/// A complete constructor may consume one exact unaliased non-Copy local, and Body IR must retain that as a move.
+#[test]
+fn construction_noncopy_local_field_retains_move() -> Result<(), Box<dyn std::error::Error>> {
+    let module = staged(
         "model Page:\n    title: str\ndef read(value: Borrowed[int]) -> int:\n    return value\ndef main() -> int:\n    title = \"stored\"\n    page = Page(title=title)\n    return read(1)\n",
-    ] {
-        let module = staged(source, false)?;
-        let body = module
-            .bodies
-            .iter()
-            .find(|body| body.name == "main")
-            .ok_or("no caller")?;
-        assert!(body.first_representation_gap().is_some());
-    }
+        false,
+    )?;
+    let body = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("no caller")?;
+    assert!(
+        body.first_representation_gap().is_none(),
+        "{:?}",
+        body.first_representation_gap()
+    );
+    assert!(
+        body.block.stmts.iter().any(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
+                ..
+            } => {
+                read.fact == bir::OwnershipFact::Move
+                    && read
+                        .place
+                        .local_id()
+                        .and_then(|local| body.locals.get(local.index()))
+                        .is_some_and(|local| local.name.as_deref() == Some("title"))
+            }
+            _ => false,
+        }),
+        "{:#?}",
+        body.block
+    );
+    assert!(
+        body.block.stmts.iter().any(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::Constructor(_), arguments),
+                ..
+            } => arguments.iter().any(|argument| {
+                matches!(argument,
+                bir::ArgumentElement::One(bir::Operand::Place(read))
+                    if read.fact == bir::OwnershipFact::Move)
+            }),
+            _ => false,
+        }),
+        "{:#?}",
+        body.block
+    );
     Ok(())
 }
 
@@ -354,7 +440,7 @@ fn construction_defaults_and_noncopy_place_fields_stay_refused() -> Result<(), B
 #[test]
 fn local_alias_last_use_preserves_the_original_owner() -> Result<(), Box<dyn std::error::Error>> {
     let module = staged(
-        "model Settings:\n    attempts: int\n    label: str\ndef main() -> None:\n    mut settings = Settings(attempts=1, label=\"initial\")\n    mut attempts: BorrowedMut[int] = settings.attempts\n    attempts = 3\n    attempts += 2\n    assert attempts == 5\n    settings.attempts += 1\n    assert settings.attempts == 6\n    assert settings.label == \"initial\"\n",
+        "model Settings:\n    attempts: int\n    label: str\ndef main(proof: Owned[int] = 0) -> None:\n    mut settings = Settings(attempts=1, label=\"initial\")\n    mut attempts: BorrowedMut[int] = settings.attempts\n    attempts = 3\n    attempts += 2\n    assert attempts == 5\n    settings.attempts += 1\n    assert settings.attempts == 6\n    assert settings.label == \"initial\"\n",
         false,
     )?;
     let body = module
@@ -446,7 +532,7 @@ fn owned_local_copy_and_fresh_initializers_remain_distinct() -> Result<(), Box<d
     for source in [
         "def main() -> int:\n    original = 3\n    mut held: Owned[int] = original\n    held = 9\n    assert original == 3\n    return held\n",
         "def main() -> int:\n    let held: Owned[list[int]] = [1, 2]\n    return len(held)\n",
-        "def read(value: Borrowed[int]) -> int:\n    mut held: Owned[int] = (value)\n    held = 9\n    assert value == 3\n    return held\n",
+        "def read(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    mut held: Owned[int] = (value)\n    held = 9\n    assert value == 3\n    return held\n",
     ] {
         let module = staged(source, false)?;
         for body in &module.bodies {

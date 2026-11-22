@@ -4,13 +4,11 @@ use super::*;
 
 /// Extract symbols exported by a module.
 ///
-/// Visibility is enforced for declarations (`pub` only), and module-level `from ... import ...` statements are treated
-/// as re-exports by name (including aliases).
-///
-/// This follows Python semantics: `from foo import bar` at module level makes `bar` part of the module's public
-/// surface. The primary use case is stdlib prelude files (e.g., `loaves/stdlib/web/src/web/prelude.incn`) that
-/// re-export items from submodules, but it applies uniformly to all modules. The consumer of this list
-/// (`validate_import_visibility` in the typechecker) uses it to check whether `from some_module import X` is valid.
+/// A declaration is exported when it is `pub`, and a module-level import re-exports its names (by alias, when it has
+/// one) only when it is `pub` (RFC 176). A namespace's prelude (`loaves/stdlib/web/src/web/prelude.incn`) therefore
+/// re-exports a submodule's name with `pub from`; a plain `from ... import ...` binds the name for that module alone.
+/// The consumer of this list (`validate_import_visibility` in the typechecker) uses it to check whether
+/// `from some_module import X` is valid.
 pub fn exported_symbols(ast: &Program) -> Vec<ExportedSymbol> {
     let mut exports = Vec::new();
 
@@ -85,9 +83,11 @@ pub fn exported_symbols(ast: &Program) -> Vec<ExportedSymbol> {
                 }
             }
             Declaration::Import(import) => {
-                // Both `from module import X` and `from rust::crate import X` are treated as re-exports. This lets
-                // stdlib files like `response.incn` expose axum types (`from rust::axum import Json`) to importers
-                // without needing a newtype wrapper.
+                // A `pub` import re-exports its names, from a source module, a Loaf or a Rust crate; an import
+                // without `pub` binds them for the module alone (RFC 176).
+                if !matches!(import.visibility, Visibility::Public) {
+                    continue;
+                }
                 let items = match &import.kind {
                     ImportKind::From { items, .. } => Some(items.as_slice()),
                     ImportKind::RustFrom { items, .. } => Some(items.as_slice()),

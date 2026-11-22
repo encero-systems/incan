@@ -1,0 +1,184 @@
+"""Pinned RFC 125 registry roots, delegated signing keys and signed registry statements."""
+
+from std.encoding.hex import hexlify
+from std.hash import sha256, sha384
+from ecdsa import Curve, verify as verify_ecdsa
+from ed25519 import verify as verify_ed25519
+
+
+pub enum KeyKind(str):
+    """Registry key algorithms Oven verifies."""
+
+    Ed25519 = "ed25519"
+    EcdsaP256 = "ecdsa-p256"
+    EcdsaP384 = "ecdsa-p384"
+
+
+pub enum StatementKind(str):
+    """The signed registry projections and state records RFC 125 names."""
+
+    Event = "event"
+    Index = "index"
+    Manifest = "manifest"
+    Checkpoint = "checkpoint"
+
+
+pub model Key:
+    """A registry public key in its algorithm's canonical byte encoding."""
+
+    pub kind: KeyKind
+    pub material: bytes
+
+
+pub model Signature:
+    """A signature: `raw` for Ed25519, or the two integers for ECDSA."""
+
+    pub raw: bytes
+    pub r: bytes
+    pub s: bytes
+
+
+pub model Root:
+    """A root key whose digest matches the operator-pinned registry identity."""
+
+    pub registry: str
+    pub key: Key
+
+
+pub model Trust:
+    """A registry key authorized by the pinned root."""
+
+    pub registry: str
+    pub key: Key
+    pub key_id: str
+
+
+pub model VerifiedStatement:
+    """The authority and ordering facts proved for a registry statement."""
+
+    pub registry: str
+    pub key_id: str
+    pub kind: StatementKind
+    pub sequence: int
+    pub payload_digest: str
+
+
+pub def pin(expected_registry: str, root_key: Key) -> Result[Root, str]:
+    """Bind a configured registry identity to the digest of its root key."""
+    if not valid_key(root_key):
+        return Err("the registry root key is malformed")
+    identifier = key_identifier(root_key)
+    if expected_registry != identifier:
+        return Err("the registry root key does not match its pinned identity")
+    return Ok(Root(registry=identifier, key=root_key))
+
+
+pub def delegate(root: Root, signing_key: Key, signature: Signature) -> Result[Trust, str]:
+    """Admit a registry signing key only when the pinned root signed its canonical delegation."""
+    if not valid_key(signing_key):
+        return Err("the registry signing key is malformed")
+    payload = delegation_payload(root.registry, signing_key)
+    if not verifies(root.key, payload, signature):
+        return Err("the registry root did not authorize its signing key")
+    return Ok(Trust(registry=root.registry, key=signing_key, key_id=key_identifier(signing_key)))
+
+
+pub def verify_statement(
+    trust: Trust,
+    kind: StatementKind,
+    sequence: int,
+    payload: bytes,
+    signature: Signature,
+) -> Result[VerifiedStatement, str]:
+    """Verify an event, index, manifest or checkpoint under a root-delegated registry key."""
+    if sequence < 0:
+        return Err("a registry statement has a negative sequence")
+    digest = hexlify(sha256.digest(payload))
+    signed = statement_payload(trust.registry, trust.key_id, kind, sequence, digest)
+    if not verifies(trust.key, signed, signature):
+        return Err("the registry statement signature does not verify")
+    return Ok(
+        VerifiedStatement(
+            registry=trust.registry,
+            key_id=trust.key_id,
+            kind=kind,
+            sequence=sequence,
+            payload_digest=digest,
+        ),
+    )
+
+
+pub def verify_root_revocation(
+    root: Root,
+    key_id: str,
+    sequence: int,
+    reason: str,
+    signature: Signature,
+) -> Result[None, str]:
+    """Verify a delegated-key revocation under the pinned root, never under the delegated key itself."""
+    if sequence < 0 or key_id == "" or reason == "" or "\n" in reason or "\r" in reason:
+        return Err("the registry signing-key revocation is malformed")
+    text = (
+        "incan-registry-key-revocation-v1\n" +
+        f"registry={root.registry}\n" +
+        f"key={key_id}\n" +
+        f"sequence={sequence}\n" +
+        f"reason={reason}\n"
+    )
+    if not verifies(root.key, text.encode("utf-8"), signature):
+        return Err("the registry root did not authorize the signing-key revocation")
+    return Ok(None)
+
+
+def delegation_payload(registry: str, key: Key) -> bytes:
+    """Canonical root authorization for one registry signing key."""
+    text = (
+        "incan-registry-delegation-v1\n" +
+        f"registry={registry}\n" +
+        f"key-kind={key.kind.value()}\n" +
+        f"key={hexlify(key.material)}\n"
+    )
+    return text.encode("utf-8")
+
+
+def statement_payload(registry: str, key_id: str, kind: StatementKind, sequence: int, digest: str) -> bytes:
+    """Canonical signed envelope for one registry statement payload."""
+    text = (
+        "incan-registry-statement-v1\n" +
+        f"registry={registry}\n" +
+        f"key={key_id}\n" +
+        f"kind={kind.value()}\n" +
+        f"sequence={sequence}\n" +
+        f"payload-sha256={digest}\n"
+    )
+    return text.encode("utf-8")
+
+
+def key_identifier(key: Key) -> str:
+    """RFC 125 identity of a public key: its SHA-256 digest."""
+    return hexlify(sha256.digest(key.material))
+
+
+def valid_key(key: Key) -> bool:
+    """Reject public-key encodings that cannot belong to their declared algorithm."""
+    match key.kind:
+        KeyKind.Ed25519 => return len(key.material) == 32
+        KeyKind.EcdsaP256 => return len(key.material) == 65 and int(key.material[0]) == 4
+        KeyKind.EcdsaP384 => return len(key.material) == 97 and int(key.material[0]) == 4
+
+
+def verifies(key: Key, payload: bytes, signature: Signature) -> bool:
+    """Verify one canonical payload under its declared key algorithm."""
+    match key.kind:
+        KeyKind.Ed25519 =>
+            if len(signature.r) != 0 or len(signature.s) != 0:
+                return false
+            return verify_ed25519(key.material, payload, signature.raw)
+        KeyKind.EcdsaP256 =>
+            if len(signature.raw) != 0:
+                return false
+            return verify_ecdsa(Curve.P256, key.material, sha256.digest(payload), signature.r, signature.s)
+        KeyKind.EcdsaP384 =>
+            if len(signature.raw) != 0:
+                return false
+            return verify_ecdsa(Curve.P384, key.material, sha384.digest(payload), signature.r, signature.s)

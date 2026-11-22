@@ -64,7 +64,7 @@ pub(super) fn push_free(name: &str, bound: &HashSet<String>, free: &mut Vec<Stri
 pub(crate) fn bind_pattern_names(pattern: &ast::Pattern, bound: &mut HashSet<String>) {
     match pattern {
         ast::Pattern::Wildcard | ast::Pattern::Literal(_) => {}
-        ast::Pattern::Binding(name) => {
+        ast::Pattern::Binding(name) | ast::Pattern::MutBinding(name) => {
             bound.insert(name.clone());
         }
         ast::Pattern::Tuple(items) => {

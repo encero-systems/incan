@@ -9,13 +9,13 @@
 from rust::std::clone import Clone as RuntimeClone
 
 
-def copy_values(values: &list[float]) -> list[float]:
+def copy_values(values: Borrowed[list[float]]) -> list[float]:
     """Keep the annotated owned result of a native Clone call on shared list storage."""
     owned: list[float] = RuntimeClone.clone(values)
     return owned
 
 
-def size(values: &list[int]) -> int:
+def size(values: Borrowed[list[int]]) -> int:
     """Read a shared list without consuming its owned storage."""
     return len(values)
 

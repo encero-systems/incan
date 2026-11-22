@@ -153,16 +153,24 @@ impl TypeChecker {
         #[cfg(test)]
         if self.legacy_body_checking {
             self.retain_callable_input_bindings(ownership_source);
+            let previous_native_result = self.enter_native_result_body(ownership_source);
             self.check_callable_body_in_frame(body, is_async, context);
+            self.native_result_reach = previous_native_result;
             self.record_explicit_input_flow(ownership_source, span);
             self.record_mutation_flow(span);
             return None;
         }
         let scope = BodyCheckScope::enter(self);
+        let first_child = self.symbols.next_scope_index();
         self.retain_callable_input_bindings(ownership_source);
+        let previous_native_result = self.enter_native_result_body(ownership_source);
         self.check_callable_body_in_frame(body, is_async, context);
+        self.native_result_reach = previous_native_result;
         self.record_explicit_input_flow(ownership_source, span);
         self.record_mutation_flow(span);
+        if let Some(layout) = records::CallableScopeLayout::capture(&self.symbols, first_child) {
+            self.callable_scope_layouts.insert(span, layout);
+        }
         let mut local = scope.finish(self);
         local.owner = span;
         let index = self.body_checks.len();

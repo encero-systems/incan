@@ -42,5 +42,6 @@ workspaces/docs-site/docs/contributing/explanation/build_engine_architecture.md	
 workspaces/docs-site/docs/contributing/explanation/build_engine_architecture.md	loaves/stdlib/system/rust/src/mapping.rs	Reused mapping primitive at commit 296b28e4b
 workspaces/docs-site/docs/contributing/explanation/build_engine_architecture.md	workspaces/oven/src/invocation_identity.incn	Reused unit identity at commit 18ce40d88
 workspaces/docs-site/docs/contributing/explanation/build_engine_architecture.md	loaves/compiler/incan_mir_lowering/src/records.incn	Reused record read API at commit 411329faa
+workspaces/docs-site/docs/contributing/explanation/build_engine_architecture.md	loaves/compiler/incan_mir_lowering/src/project.incn	Reused lowering context at #2491; the lowering is now Rust in loaves/compiler/incan_lowering
 workspaces/docs-site/docs/contributing/explanation/build_engine_architecture.md	loaves/compiler/incan_frontend/src/record_read.rs	Reused record read adapter at commit 411329faa
 workspaces/docs-site/docs/contributing/explanation/build_engine_architecture.md	loaves/platform	The platform Loaf the architecture places below std, still to be built

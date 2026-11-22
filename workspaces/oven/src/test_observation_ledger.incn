@@ -1,0 +1,38 @@
+"""Persisted input observations preserve selected digests and reobserve unavailable or foreign ledgers."""
+
+from files import make_directory, write
+from observation import load_ledger
+from scratch import scratch_directory
+
+
+pub def test_reconciled_observations_use_typed_rows() -> Result[None, str]:
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("project")
+    make_directory(root)?
+    source = root.joinpath("módulo.incn")
+    write(source, "def value() -> int:\n    return 14\n")?
+    named = scratch.path().joinpath("ledger.crumb")
+    old = scratch.path().joinpath("ledger.json")
+    write(old, "{\"schema\":\"incan.oven.observations/1\",\"files\":[],\"directories\":[],\"extension\":\".incn\"}")?
+    mut first = load_ledger(named, 0)
+    assert first.sources(root, true)? == [source.0]
+    digest = first.digest(source)?
+    code = first.code_digest(source)?
+    assert first.listed == 1 and first.hashed == 2
+    first.save()?
+    encoded = named.read_bytes().map_err((error) => error.message())?
+    assert encoded[:4] == b"CRMB" and old.is_file()
+    mut warm = load_ledger(named, 0)
+    assert warm.sources(root, true)? == [source.0]
+    assert warm.digest(source)? == digest and warm.code_digest(source)? == code
+    assert warm.listed == 0 and warm.hashed == 0
+    mut foreign = load_ledger(named, 0, ".rs")
+    assert len(foreign.sources(root, true)?) == 0 and foreign.listed == 1
+    named.write_bytes(encoded[:12]).map_err((error) => error.message())?
+    mut damaged = load_ledger(named, 0)
+    assert damaged.digest(source)? == digest and damaged.hashed == 1
+    damaged.save()?
+    write(source, "def value() -> int:\n    return 15\n")?
+    mut edited = load_ledger(named, 0)
+    assert edited.digest(source)? != digest and edited.hashed == 1
+    return Ok(None)

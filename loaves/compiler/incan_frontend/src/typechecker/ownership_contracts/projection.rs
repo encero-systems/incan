@@ -1,5 +1,7 @@
 //! Authenticate the source body's ownership proof before any native projection consumes it.
 
+use std::collections::BTreeMap;
+
 use incan_lang::lang::types::ownership::OwnershipMode;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 
@@ -26,6 +28,26 @@ impl CheckedInputBody<'_> {
     /// Retain the source proof's exact owner for the frame profile it publishes.
     pub(crate) fn canonical_owner(&self) -> &CanonicalSymbolId {
         &self.owner
+    }
+
+    /// Authenticate one inline capture-free callback against the exact selected outer call and classified receiver.
+    pub(super) fn capture_free_result_map_err_callback(
+        &self,
+        invocation_span: incan_semantics_core::HirSourceSpan,
+        receiver: &crate::ast::Spanned<crate::ast::Expr>,
+        arguments: &[crate::ast::CallArg],
+    ) -> bool {
+        let [crate::ast::CallArg::Positional(callback) | crate::ast::CallArg::Named(_, callback)] = arguments else {
+            return false;
+        };
+        super::source::call_results::retained_result_map_err(
+            self.facts,
+            &self.owner,
+            receiver,
+            invocation_span,
+            arguments,
+            self.graph,
+        ) == Some(callback.span)
     }
 
     /// Whether the invocation argument written at `span` passes a closure local to a parameter its callee only calls.
@@ -67,7 +89,72 @@ impl CheckedInputBody<'_> {
     }
 }
 
+/// Resolve one spelling against the exact nominal scope selected by the caller's checking phase.
+pub(in crate::typechecker) fn checked_nominal_identity_in<'a>(
+    identities: &'a BTreeMap<String, CanonicalSymbolId>,
+    name: &str,
+) -> Option<&'a CanonicalSymbolId> {
+    if let Some(exact) = identities.get(name) {
+        return Some(exact);
+    }
+    let mut matches = identities.values().filter(|identity| identity.declaration_name == name);
+    let first = matches.next()?;
+    matches.all(|identity| identity == first).then_some(first)
+}
+
+/// Compare two checked value types through one explicit retained nominal scope.
+pub(in crate::typechecker) fn same_checked_value_type_in(
+    identities: &BTreeMap<String, CanonicalSymbolId>,
+    actual: &crate::symbols::ResolvedType,
+    expected: &crate::symbols::ResolvedType,
+) -> bool {
+    use crate::symbols::ResolvedType;
+
+    if actual == expected {
+        return true;
+    }
+    let same_nominal = |actual: &str, expected: &str| {
+        actual == expected
+            || matches!(
+                (
+                    checked_nominal_identity_in(identities, actual),
+                    checked_nominal_identity_in(identities, expected),
+                ),
+                (Some(actual), Some(expected)) if actual == expected
+            )
+    };
+    match (actual, expected) {
+        (ResolvedType::Named(actual), ResolvedType::Named(expected)) => same_nominal(actual, expected),
+        (ResolvedType::Generic(actual, actual_args), ResolvedType::Generic(expected, expected_args)) => {
+            same_nominal(actual, expected)
+                && actual_args.len() == expected_args.len()
+                && actual_args
+                    .iter()
+                    .zip(expected_args)
+                    .all(|(actual, expected)| same_checked_value_type_in(identities, actual, expected))
+        }
+        _ => false,
+    }
+}
+
 impl TypeCheckInfo {
+    /// Resolve one checked nominal spelling to its retained declaration identity. An exact key is authoritative;
+    /// a leaf-name fallback exists only when every retained match is the same canonical declaration. Distinct
+    /// same-leaf declarations therefore refuse instead of depending on map iteration order.
+    pub(in crate::typechecker) fn checked_nominal_identity(&self, name: &str) -> Option<&CanonicalSymbolId> {
+        checked_nominal_identity_in(&self.declarations.named_type_identities, name)
+    }
+
+    /// Compare checked value types through exact structure and the fail-closed retained nominal resolver. Generic
+    /// arguments recurse so a transparent `Result` success type and a direct nominal result use one policy.
+    pub(in crate::typechecker) fn same_checked_value_type(
+        &self,
+        actual: &crate::symbols::ResolvedType,
+        expected: &crate::symbols::ResolvedType,
+    ) -> bool {
+        same_checked_value_type_in(&self.declarations.named_type_identities, actual, expected)
+    }
+
     /// Authenticate an ordinary header affirmatively, not by absence of explicit metadata. Exact canonical
     /// identity and unchanged parameters preserve declaration ABI. A generic binder that does not change these
     /// parameters is not itself an access change; parameter substitution requires separate retained evidence.
@@ -101,6 +188,58 @@ impl TypeCheckInfo {
                 Ok(Some(contract))
             }
             InputCallKind::Ordinary => {
+                let selected_clone = call.callee
+                    == crate::symbols::canonical_builtin_member_identity(
+                        incan_lang::lang::traits::as_str(incan_lang::lang::traits::TraitId::Clone),
+                        incan_lang::lang::trait_bounds::rust::CLONE_METHOD,
+                    )
+                    && self.resolved_builtin_method_call(call.site)
+                        == Some(incan_lang::lang::builtins::BuiltinMethodId::Clone(
+                            incan_lang::lang::surface::clone_methods::CloneMethodId::Clone,
+                        ));
+                if selected_clone {
+                    let selected_identity = self.resolved_identity(call.site) == Some(&call.callee)
+                        || self.traits.inferred_method_identities.get(&call.site) == Some(&call.callee);
+                    if contract.is_some()
+                        || call.owner.is_none()
+                        || call.callee.kind != SemanticSourceTargetKind::Method
+                        || call.receiver != Some(crate::ast::Receiver::Immutable)
+                        || !call.parameters.is_empty()
+                        || !selected_identity
+                        || self.call_site_callable_params(call.site) != Some(call.parameters.as_slice())
+                    {
+                        return Err("builtin Clone invocation differs from its selected checked surface");
+                    }
+                    return Ok(None);
+                }
+                let selected_result_map_err = call.callee
+                    == crate::symbols::canonical_builtin_member_identity("Result", "map_err")
+                    && self.resolved_builtin_method_call(call.site)
+                        == Some(incan_lang::lang::builtins::BuiltinMethodId::Result(
+                            incan_lang::lang::surface::result_methods::ResultMethodId::MapErr,
+                        ));
+                if selected_result_map_err {
+                    let callback_is_checked = matches!(call.parameters.as_slice(), [parameter]
+                        if matches!(&parameter.ty, crate::symbols::ResolvedType::Function(parameters, _)
+                            if parameters.len() == 1));
+                    let result_is_checked = matches!(self.expr_type(call.site),
+                        Some(crate::symbols::ResolvedType::Generic(name, sides))
+                            if crate::typechecker::helpers::collection_type_id(name)
+                                == Some(incan_lang::lang::types::collections::CollectionTypeId::Result)
+                                && sides.len() == 2);
+                    if contract.is_some()
+                        || call.owner.is_none()
+                        || call.callee.kind != SemanticSourceTargetKind::Method
+                        || call.receiver != Some(crate::ast::Receiver::Immutable)
+                        || self.resolved_identity(call.site) != Some(&call.callee)
+                        || self.call_site_callable_params(call.site) != Some(call.parameters.as_slice())
+                        || !callback_is_checked
+                        || !result_is_checked
+                    {
+                        return Err("builtin Result.map_err invocation differs from its selected checked surface");
+                    }
+                    return Ok(None);
+                }
                 if !matches!(
                     call.callee.origin,
                     SymbolOrigin::Module(_) | SymbolOrigin::Package { .. }
@@ -128,7 +267,15 @@ impl TypeCheckInfo {
                             }
                             binding = Some(candidate);
                         }
-                        binding.ok_or("ordinary invocation has no canonical source header")?
+                        if let Some(binding) = binding {
+                            binding
+                        } else if matches!(call.callee.origin, SymbolOrigin::Package { .. })
+                            && !self.calls.body_ir_async_call_targets.contains_key(&call.site)
+                        {
+                            return Ok(None);
+                        } else {
+                            return Err("ordinary invocation has no canonical source header");
+                        }
                     }
                     SemanticSourceTargetKind::Method => {
                         let local = self
@@ -150,13 +297,35 @@ impl TypeCheckInfo {
                     }
                     _ => return Err("ordinary invocation syntax differs from its canonical declaration"),
                 };
+                // A native borrow slot takes its access from its mode, whatever instantiates its referent (RFC 164).
                 let free_parameter_types_changed = call.callee.kind == SemanticSourceTargetKind::Function
-                    && binding
-                        .params
-                        .iter()
-                        .zip(&call.parameters)
-                        .any(|(declared, selected)| declared.ty != selected.ty);
-                if binding.is_async
+                    && binding.params.iter().zip(&call.parameters).any(|(declared, selected)| {
+                        declared.ty != selected.ty
+                            && !matches!(
+                                (&declared.ty, &selected.ty),
+                                (
+                                    crate::symbols::ResolvedType::Ref(_),
+                                    crate::symbols::ResolvedType::Ref(_)
+                                ) | (
+                                    crate::symbols::ResolvedType::RefMut(_),
+                                    crate::symbols::ResolvedType::RefMut(_)
+                                )
+                            )
+                    });
+                // An async callee whose inputs are all native borrows or Copy scalars passes each by its mode, as its
+                // explicit spelling did (RFC 164); its loans last until the call is awaited.
+                let async_by_modes = binding.params.iter().all(|parameter| {
+                    matches!(
+                        parameter.ty,
+                        crate::symbols::ResolvedType::Ref(_)
+                            | crate::symbols::ResolvedType::RefMut(_)
+                            | crate::symbols::ResolvedType::Int
+                            | crate::symbols::ResolvedType::Float
+                            | crate::symbols::ResolvedType::Bool
+                            | crate::symbols::ResolvedType::Numeric(_)
+                    )
+                });
+                if (binding.is_async && !async_by_modes)
                     || !ordinary_header_matches(&binding.params, &call.parameters)
                     || free_parameter_types_changed
                 {
@@ -253,6 +422,14 @@ impl TypeCheckInfo {
             return Err("explicit input body has conflicting or stale source flow evidence");
         }
         self.validate_input_invocations(owner, graph)?;
+
+        // Current-source classifications are exact owner/type facts. Records restore this map empty and cannot
+        // manufacture the authority; a fresh source check supplies it again when one of the new routes is needed.
+        for (span, value_use) in &graph.value_uses {
+            if self.expr_type(*span) != Some(&value_use.value_type) {
+                return Err("value-use classification differs from its checked source type");
+            }
+        }
 
         // ---- Loan destinations and their source annotations ----
         for (local, loan) in &graph.local_loans {
@@ -423,8 +600,21 @@ impl TypeCheckInfo {
                 call.kind != InputCallKind::Indirect && call.receiver.is_none(),
             )?;
             for argument in &invocation.arguments {
-                let access = crate::ownership_metadata::direct_input_access(contract, argument.slot)?;
-                if argument.access != access {
+                let parameter_type = &call
+                    .parameters
+                    .get(argument.slot)
+                    .ok_or("invocation parameter is absent")?
+                    .ty;
+                let access = crate::ownership_metadata::slot_input_access(contract, argument.slot, parameter_type)?;
+                let classified_move = graph
+                    .value_uses
+                    .get(&argument.span)
+                    .is_some_and(|value_use| value_use.kind == flow::ValueUseKind::Move);
+                if argument.access != access
+                    && !(access == incan_semantics_core::IncanInputAccess::Inferred
+                        && argument.access == incan_semantics_core::IncanInputAccess::Owned
+                        && classified_move)
+                {
                     return Err("invocation argument access differs from the selected parameter");
                 }
                 if let Some(id) = argument.loan {

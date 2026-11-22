@@ -9,6 +9,8 @@ with its diagnostics in document coordinates.
 """
 
 from std.fs import Path
+from observation import FileMetadata, SETTLE_SECONDS, file_metadata, trace
+from publication import publish_binary
 from std.json import JsonValue, parse
 from intake import ManifestReader, entry_source
 from unit_freshness import fingerprint
@@ -81,21 +83,49 @@ def declares_main(source: str) -> bool:
     return false
 
 
+pub model MirroredFile:
+    """The exact pair of filesystem generations whose contents the mirror compared."""
+
+    pub source: FileMetadata
+    pub destination: FileMetadata
+
+
+pub model OverlayMirror:
+    """The open editor connection's metadata for one mirrored project. Source bytes stay in the overlay files."""
+
+    pub root: str = ""
+    pub files: Dict[str, Option[MirroredFile]] = {}
+    pub read_files: int = 0
+    pub read_bytes: int = 0
+
+
 pub def mirror_overlay(program: Path, overlay: Path, document: str, buffer: str) -> Result[int, str]:
-    """
-    Mirror `program`'s editable files into `overlay` with `buffer` in place of `document` (a path relative to
-    `program`), and remove mirrored files the program no longer has. Returns how many files were written; a file whose
-    bytes already match is left as it is, so an unchanged buffer leaves the overlay's metadata unchanged too.
-    """
-    mut written = mirror_directory(program, overlay, "", document)?
+    """Mirror a standalone request without carrying any observations to a later connection."""
+    mut state = OverlayMirror()
+    return mirror_into(state, program, overlay, document, buffer)
+
+
+pub def mirror_into(mut state: OverlayMirror, program: Path, overlay: Path, document: str, buffer: str) -> Result[int, str]:
+    """Reconcile source and mirror generations. An edit of the buffer lends unchanged files from the open session."""
+    root = program.0 + "\n" + overlay.0
+    if state.root != root:
+        state.files = {}
+        state.root = root
+    state.read_files = 0
+    state.read_bytes = 0
+    # An unsaved buffer is a separate input. It must never stand in for a verified disk-to-mirror comparison.
+    if document in state.files:
+        state.files[document] = None
+    mut written = mirror_directory(state, program, overlay, "", document)?
     if write_if_changed(overlay.joinpath(document), buffer.encode("utf-8"))?:
         written += 1
     remove_absent(program, overlay, "", document)?
+    trace(f"overlay mirror read {state.read_files} disk sources, {state.read_bytes} source bytes, wrote {written} files")
     return Ok(written)
 
 
-def mirror_directory(source: Path, destination: Path, relative: str, document: str) -> Result[int, str]:
-    """Mirror one directory's files, leaving out the document, build output and hidden entries."""
+def mirror_directory(mut state: OverlayMirror, source: Path, destination: Path, relative: str, document: str) -> Result[int, str]:
+    """Mirror one directory, observing each source entry once and opening only files whose generations changed."""
     mut written = 0
     for entry in source.iterdir().map_err((error) => f"cannot {error.message()}")?:
         name = entry.name()
@@ -104,12 +134,33 @@ def mirror_directory(source: Path, destination: Path, relative: str, document: s
         mut path = name
         if relative != "":
             path = f"{relative}/{name}"
-        if entry.is_dir():
-            written += mirror_directory(entry, destination.joinpath(name), path, document)?
-        elif entry.is_file() and path != document:
-            content = entry.read_bytes().map_err((error) => f"cannot {error.message()}")?
-            if write_if_changed(destination.joinpath(name), content)?:
-                written += 1
+        if path == document:
+            continue
+        if let Some(before) = file_metadata(entry)?:
+            if before.is_directory():
+                written += mirror_directory(state, entry, destination.joinpath(name), path, document)?
+            elif before.is_file():
+                if mirror_file(state, entry, destination.joinpath(name), path, before)?:
+                    written += 1
+    return Ok(written)
+
+
+def mirror_file(mut state: OverlayMirror, source: Path, destination: Path, key: str, before: FileMetadata) -> Result[bool, str]:
+    """Reuse a settled source only while both observed generations still agree with the verified copy."""
+    if let Some(Some(previous)) = state.files.get(key):
+        if previous.source == before and file_metadata(destination)? == Some(previous.destination):
+            return Ok(false)
+    if key in state.files:
+        state.files[key] = None
+    settled = before.settled(SETTLE_SECONDS)
+    content = source.read_bytes().map_err((error) => f"cannot {error.message()}")?
+    state.read_files += 1
+    state.read_bytes += len(content)
+    written = write_if_changed(destination, content)?
+    if settled and file_metadata(source)? == Some(before):
+        if let Some(after) = file_metadata(destination)?:
+            if key in state.files or len(state.files) < 8192:
+                state.files[key] = Some(MirroredFile(source=before, destination=after))
     return Ok(written)
 
 
@@ -147,7 +198,7 @@ def write_if_changed(path: Path, content: bytes) -> Result[bool, str]:
         if current == content:
             return Ok(false)
     path.parent().mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
-    path.write_bytes(content).map_err((error) => f"cannot {error.message()}")?
+    publish_binary(path, content)?
     return Ok(true)
 
 

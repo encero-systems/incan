@@ -10,20 +10,25 @@ mod inputs;
 mod local_restore;
 mod mutation;
 mod native_types;
+mod owner_records;
 mod ownership;
+mod placement;
 mod protocol_artifacts_generated;
 mod rust_artifact_admission;
+mod scope_layout;
+pub(in crate::typechecker) use scope_layout::CallableScopeLayout;
 mod rust_artifacts_generated;
 mod types;
 use diagnostics::{project_diagnostics, read_diagnostic};
 use local_restore::restore_local;
 mod unsupported;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use super::super::canonical_nodes::{NodeBindingError, SemanticNodeAnchor, SemanticNodeBindings};
+use super::super::canonical_nodes::{NodeBindingError, SemanticNodeAnchor, SemanticNodeBindings, callable_params};
 use super::super::diagnostic_values::DiagnosticPositions;
+use super::super::type_info::RustCheckedLayout;
 use super::{BodyCheckInput, BodyLocal, CheckedBodyView, LocalOwnerKind, TypeChecker};
 use crate::ast::{Program, Span};
 
@@ -50,7 +55,19 @@ fn produce_local(
     local: &BodyLocal,
 ) -> Result<Fields, NodeBindingError> {
     let positions = Positions::for_local(checker, program, owner, local)?;
+    if positions.scopes.is_none() {
+        return Err(NodeBindingError::Unsupported("callable scope allocation"));
+    }
     let mut fields = local_fields(&positions, local)?;
+    for (kind, slots, writer) in [
+        ("error", &local.diagnostic_slots, &checker.errors),
+        ("warning", &local.warning_slots, &checker.warnings),
+    ] {
+        for (index, slot) in slots.iter().enumerate() {
+            let value = writer.get(*slot).ok_or(NodeBindingError::MissingNode)?;
+            fields.push(diagnostics::diagnostic_row(&positions, value, kind, index)?);
+        }
+    }
     fields.push(vec!["status".into(), String::new(), "pending".into(), "true".into()]);
     fields.sort();
     fields.insert(
@@ -66,207 +83,6 @@ fn produce_local(
 }
 
 impl TypeChecker {
-    /// Return how many physical callable owners entered the body-check scope in the current test activation.
-    #[cfg(test)]
-    pub(crate) fn body_check_trace_count(&self) -> usize {
-        self.body_check_traces.len()
-    }
-
-    /// Complete one owner trace with the checker-record outcome decided after all producer boundaries settle.
-    pub(crate) fn record_body_check_outcome(&self, owner: Span, outcome: &'static str) {
-        if let Some(span) = self.body_check_traces.get(&owner) {
-            span.record("outcome", outcome);
-        }
-    }
-
-    /// Report whether this activation restored the selected local body instead of checking statements afresh.
-    pub fn restored_body_record(&self, owner: Span) -> bool {
-        self.selected_local_records.contains_key(&owner)
-    }
-
-    /// Publish the local record emitted by one just-completed callable producer. The index is returned by that exact
-    /// invocation, so this boundary never searches the settled body inventory or observes a sibling owner.
-    pub(in crate::typechecker) fn produce_local_record(&mut self, program: &Program, owner: Span, index: usize) {
-        let produced = {
-            let Some(BodyCheckInput::Local(local)) = self.body_checks.get(index) else {
-                tracing::debug!(target: "incan::invocation", ?owner, index, "local record output is missing");
-                return;
-            };
-            produce_local(self, program, owner, local)
-        };
-        match produced {
-            Ok(fields) => {
-                self.produced_local_records.insert(owner, fields);
-                self.check_work.local_record_evaluations += 1;
-            }
-            Err(error) => {
-                tracing::debug!(target: "incan::invocation", ?owner, ?error, "local record production refused");
-                self.local_record_refusals.insert(owner, error);
-            }
-        }
-    }
-
-    /// Borrow the declaration record emitted by this activation's declaration producer.
-    pub(crate) fn produced_declaration_record(&self, owner: Span) -> Option<&Fields> {
-        self.produced_declaration_records.get(&owner)
-    }
-
-    /// Borrow either the declaration evaluated in this activation or an independently validated selected predecessor.
-    pub(crate) fn available_declaration_record(&self, owner: Span) -> Option<&Fields> {
-        self.produced_declaration_records
-            .get(&owner)
-            .or_else(|| self.selected_declaration_records.get(&owner))
-    }
-
-    /// Clone the explicit refusal returned by this activation's direct declaration producer.
-    pub(crate) fn declaration_record_refusal(&self, owner: Span) -> Option<NodeBindingError> {
-        self.declaration_record_refusals.get(&owner).cloned()
-    }
-
-    /// Borrow the local record emitted directly by this activation's body-check producer.
-    pub(crate) fn produced_local_record(&self, owner: Span) -> Option<&Fields> {
-        self.produced_local_records.get(&owner)
-    }
-
-    /// Borrow either the value evaluated in this activation or an independently validated selected predecessor.
-    pub(crate) fn available_local_record(&self, owner: Span) -> Option<&Fields> {
-        self.produced_local_records
-            .get(&owner)
-            .or_else(|| self.selected_local_records.get(&owner))
-    }
-
-    /// Clone the explicit refusal returned by this activation's direct local producer.
-    pub(crate) fn local_record_refusal(&self, owner: Span) -> Option<NodeBindingError> {
-        self.local_record_refusals.get(&owner).cloned()
-    }
-
-    /// Name every nonempty artifact field that prevents this checked owner from crossing the reusable-record boundary.
-    pub(crate) fn body_artifact_refusals(&self, owner: Span) -> Vec<&'static str> {
-        let mut refusals = Vec::new();
-        if let Some(view) = self.checked_declaration(owner) {
-            refusals.extend(unsupported::artifact_refusals(view));
-        }
-        if let Some(view) = self.checked_body(owner) {
-            refusals.extend(unsupported::artifact_refusals(view));
-        }
-        refusals.sort_unstable();
-        refusals.dedup();
-        refusals
-    }
-
-    /// Retain one selected local value for republishing without treating selection as producer execution.
-    pub(crate) fn retain_local_record(&mut self, owner: Span, fields: Fields) {
-        self.selected_local_records.insert(owner, fields);
-    }
-
-    /// Borrow the final record emitted directly by this activation's settlement producer.
-    pub(crate) fn produced_final_record(&self, owner: Span) -> Option<&Fields> {
-        self.produced_final_records.get(&owner)
-    }
-
-    /// Borrow either the final value evaluated in this activation or a producer-validated settled predecessor.
-    pub(crate) fn available_final_record(&self, owner: Span) -> Option<&Fields> {
-        self.produced_final_records
-            .get(&owner)
-            .or_else(|| self.selected_final_records.get(&owner))
-    }
-
-    /// Stage one scalar product's settled value until its body passes the current physical-scope check.
-    pub(crate) fn retain_callable_final_record(&mut self, owner: Span, fields: Fields) {
-        self.callable_final_record_reuse.insert(owner, fields);
-    }
-
-    /// Publish the staged final value only after the matching scalar body is accepted for this activation.
-    pub(in crate::typechecker) fn select_callable_final_record(&mut self, owner: Span) {
-        if let Some(fields) = self.callable_final_record_reuse.remove(&owner) {
-            self.selected_final_records.insert(owner, fields);
-        }
-    }
-
-    /// Clone the explicit refusal returned by this activation's direct final producer.
-    pub(crate) fn final_record_refusal(&self, owner: Span) -> Option<NodeBindingError> {
-        self.final_record_refusals.get(&owner).cloned()
-    }
-
-    /// Retain one producer-validated declaration record until its source-order owner consumes it.
-    pub(crate) fn retain_declaration_record(&mut self, owner: Span, fields: Fields) {
-        self.callable_declaration_reuse.insert(owner, fields);
-    }
-
-    /// Report whether the current activation selected a declaration value for this exact source owner.
-    pub(crate) fn has_declaration_record(&self, owner: Span) -> bool {
-        self.callable_declaration_reuse.contains_key(&owner)
-    }
-
-    /// Restore one graph-selected final value against current compiler identities and syntax, then enqueue it for the
-    /// ordinary checked-body settlement join. A refusal leaves the caller on fresh body checking and publishes no
-    /// selected value.
-    pub(in crate::typechecker) fn reuse_graph_body_record(
-        &mut self,
-        program: &Program,
-        owner: Span,
-    ) -> Result<bool, NodeBindingError> {
-        let identity = Positions::new(self, program, owner, false)?
-            .nodes
-            .owner()
-            .render_compact();
-        let Some(selected) = self.graph_body_records.get(&identity)? else {
-            return Ok(false);
-        };
-        // The checker owns selected rows after this boundary so its publication view cannot outlive the invocation
-        // transport. This is the one deliberate copy from immutable transport into checker-owned selected output.
-        let local_fields = selected.local.clone();
-        let final_fields = selected.final_value.clone();
-        let positions = Positions::for_decoded_local(self, program, owner, &local_fields)?;
-        let restored = restore(&positions, program, owner, &final_fields)?;
-        if restored.binding.is_some() || !restored.defaults.is_empty() {
-            return Err(NodeBindingError::InvalidField(
-                "body record carried declaration output".into(),
-            ));
-        }
-        let canonical = self
-            .declaration_view()
-            .function(owner)
-            .and_then(|binding| binding.identity.as_ref())
-            .cloned()
-            .ok_or(NodeBindingError::MissingOwner)?;
-        let reused_body = selected
-            .body_ir
-            .as_ref()
-            .filter(|frame| {
-                frame.identity == canonical.render_compact() && frame.body.name == canonical.declaration_name
-            })
-            .map(|frame| frame.body.clone());
-        let mut diagnostic_positions = DiagnosticPositions::new(program, self.symbols.declaration_origin());
-        self.reuse_checked_body(Arc::new(restored.view), &mut diagnostic_positions)
-            .map_err(|_| NodeBindingError::ChangedBody)?;
-        match restored.ownership {
-            Some(contract) => {
-                self.type_info
-                    .declarations
-                    .ownership_contracts
-                    .insert(canonical.clone(), contract);
-            }
-            None => {
-                self.type_info.declarations.ownership_contracts.remove(&canonical);
-            }
-        }
-        self.type_info
-            .expressions
-            .body_ir_expr_types
-            .extend(restored.final_types.expressions);
-        self.type_info
-            .expressions
-            .body_ir_binding_types
-            .extend(restored.final_types.bindings);
-        self.selected_local_records.insert(owner, local_fields);
-        self.selected_final_records.insert(owner, final_fields);
-        if let Some(body) = reused_body {
-            self.type_info.reused_callable_bodies.insert(owner, body);
-        }
-        Ok(true)
-    }
-
     /// Restore one selected declaration value through current coordinates, publish its own final facts and enqueue
     /// it for ordinary settlement. This adapter performs no declaration validation or default checking.
     pub(super) fn reuse_declaration_record(
@@ -278,9 +94,9 @@ impl TypeChecker {
             return Ok(false);
         };
         let positions = Positions::new(self, program, owner, true)?;
-        let restored = restore(&positions, program, owner, &fields)?;
+        let restored = restore(self, &positions, program, owner, &fields)?;
         let binding = restored.binding.ok_or(NodeBindingError::MissingOwner)?;
-        if self.declaration_view().function(owner) != Some(&binding)
+        if self.declaration_view().callable(owner) != Some(&binding)
             || restored.defaults != default_writers(program, owner)?
         {
             return Err(NodeBindingError::BaselineDifference("declaration inputs".into()));
@@ -289,6 +105,7 @@ impl TypeChecker {
         let mut diagnostic_positions = DiagnosticPositions::new(program, self.symbols.declaration_origin());
         self.reuse_checked_declaration(Arc::new(restored.view), &mut diagnostic_positions)
             .map_err(|_| NodeBindingError::ChangedBody)?;
+        self.type_info.rust.checked_layouts.extend(restored.rust_layouts);
         match restored.ownership {
             Some(contract) => {
                 self.type_info
@@ -316,9 +133,11 @@ impl TypeChecker {
 /// Current coordinates and canonical activation handles, keyed by persisted semantic identity. No type, call or
 /// diagnostic payload is retained here. The test sink may build these from a separate fresh checker baseline.
 struct Positions {
+    scopes: Option<CallableScopeLayout>,
     nodes: SemanticNodeBindings,
     owner: Span,
     identities: BTreeMap<String, CanonicalSymbolId>,
+    rust_reads: BTreeMap<String, Option<CanonicalSymbolId>>,
     caller: Option<super::super::type_info::CBindingRawCallOwner>,
     type_identities: BTreeMap<String, CanonicalSymbolId>,
 }
@@ -331,6 +150,23 @@ impl Positions {
         } else {
             SemanticNodeBindings::new(checker, program, owner)?
         };
+        Self::from_nodes(checker, program, owner, declaration, nodes)
+    }
+
+    /// Bind the compiler's current declaration and type identities only after an owner page is selected.
+    fn from_nodes(
+        checker: &TypeChecker,
+        program: &Program,
+        owner: Span,
+        declaration: bool,
+        nodes: SemanticNodeBindings,
+    ) -> Result<Self, NodeBindingError> {
+        let parameters = callable_params(program, owner)?;
+        let origin = checker.symbols.declaration_origin();
+        let mut parameter_handles = parameters
+            .iter()
+            .map(|parameter| (parameter.span, None))
+            .collect::<std::collections::HashMap<_, _>>();
         let mut identities = checker
             .type_info
             .declarations
@@ -338,12 +174,42 @@ impl Positions {
             .iter()
             .map(|(canonical, stable)| (stable.render_compact(), canonical.clone()))
             .collect::<BTreeMap<_, _>>();
+        if let Some(binding) = checker.declaration_view().method(owner)
+            && let Some(canonical) = &binding.identity
+        {
+            identities.insert(nodes.owner().render_compact(), canonical.clone());
+        }
+        let mut rust_reads: BTreeMap<String, Option<CanonicalSymbolId>> = BTreeMap::new();
         // Imported package and sibling-module bindings are authenticated by their declaration records. Retain those
         // exact canonical identities alongside builtins so a body record can name the dependency declaration it read.
         for index in 0..checker.symbols.all_symbols().len() {
             let Some(canonical) = checker.symbols.identity_of(index) else {
                 continue;
             };
+            if canonical.kind == SemanticSourceTargetKind::Parameter
+                && canonical.origin == origin
+                && let Some(slot) = parameter_handles.get_mut(&canonical.declaration_span)
+            {
+                // The earliest handle wins when a span was registered more than once.
+                slot.get_or_insert(canonical);
+            }
+            if matches!(canonical.origin, incan_semantics_core::SymbolOrigin::RustCrate(_)) {
+                // The checked import owns this lexical read. Equal leaf spellings from different crates retain
+                // different full paths. A stable key with conflicting physical handles cannot be rebound.
+                if canonical.kind == SemanticSourceTargetKind::RustItem
+                    && let Some(stable) = StableDeclarationId::from_canonical(canonical, None, None)
+                {
+                    rust_reads
+                        .entry(stable.render_compact())
+                        .and_modify(|value| {
+                            if value.as_ref() != Some(canonical) {
+                                *value = None;
+                            }
+                        })
+                        .or_insert_with(|| Some(canonical.clone()));
+                }
+                continue;
+            }
             if !matches!(
                 canonical.origin,
                 incan_semantics_core::SymbolOrigin::Builtin
@@ -356,43 +222,9 @@ impl Positions {
                 identities.insert(stable.render_compact(), canonical.clone());
             }
         }
-        // A constructor of an imported model or class names the checked field each of its arguments initializes.
-        identities.extend(imported_members::field_identities(checker));
-        let mut type_identities: BTreeMap<String, CanonicalSymbolId> = checker
-            .symbols
-            .all_symbols()
-            .iter()
-            .enumerate()
-            .filter_map(|(index, _)| checker.symbols.identity_of(index))
-            .filter(|canonical| {
-                canonical.scope_discriminant.is_none()
-                    && ((canonical.origin == checker.symbols.declaration_origin()
-                        && matches!(
-                            canonical.kind,
-                            SemanticSourceTargetKind::Model
-                                | SemanticSourceTargetKind::Class
-                                | SemanticSourceTargetKind::Newtype
-                                | SemanticSourceTargetKind::Rusttype
-                                | SemanticSourceTargetKind::Enum
-                                | SemanticSourceTargetKind::TypeAlias
-                                | SemanticSourceTargetKind::Trait
-                        ))
-                        || (canonical.kind == SemanticSourceTargetKind::RustItem
-                            && matches!(canonical.origin, incan_semantics_core::SymbolOrigin::RustCrate(_))))
-            })
-            .filter_map(|canonical| {
-                StableDeclarationId::from_canonical(canonical, None, None)
-                    .map(|stable| (stable.render_compact(), canonical.clone()))
-            })
-            .collect();
-        for identity in checker.public_library_type_identities.values() {
-            let Some(canonical) = &identity.canonical else {
-                continue;
-            };
-            if let Some(stable) = StableDeclarationId::from_canonical(canonical, None, None) {
-                type_identities.insert(stable.render_compact(), canonical.clone());
-            }
-        }
+        // Restore imported member references against the current physical declaration in the checked nominal table.
+        identities.extend(imported_members::identities(checker));
+        let type_identities = admitted_type_identities(checker, &origin);
         let nested = checker
             .checked_body(owner)
             .into_iter()
@@ -408,28 +240,14 @@ impl Positions {
         // Declaration records are restored before the function scope is entered. Mint the current activation's
         // parameter handles from the symbol table's next scope index so stored nested identities bind without
         // running annotation/default checking or creating the scope early.
-        let declaration_bindings = program
-            .declarations
+        let declaration_bindings = parameters
             .iter()
-            .find(|declaration| declaration.span == owner)
-            .and_then(|declaration| match &declaration.node {
-                crate::ast::Declaration::Function(function) => Some(function),
-                _ => None,
-            })
-            .into_iter()
-            .flat_map(|function| &function.params)
             .map(|parameter| {
-                (0..checker.symbols.all_symbols().len())
-                    .filter_map(|index| checker.symbols.identity_of(index))
-                    .find(|canonical| {
-                        canonical.kind == SemanticSourceTargetKind::Parameter
-                            && canonical.origin == checker.symbols.declaration_origin()
-                            && canonical.declaration_span == parameter.span
-                    })
+                parameter_handles[&parameter.span]
                     .cloned()
                     .unwrap_or_else(|| CanonicalSymbolId {
                         namespace: SymbolNamespace::OrdinaryLexical,
-                        origin: checker.symbols.declaration_origin(),
+                        origin: origin.clone(),
                         declaration_name: parameter.node.name.clone(),
                         kind: SemanticSourceTargetKind::Parameter,
                         scope_discriminant: Some(ScopeDiscriminant(checker.symbols.next_scope_index())),
@@ -455,9 +273,15 @@ impl Positions {
             })
         });
         Ok(Self {
+            scopes: if declaration {
+                None
+            } else {
+                checker.callable_scope_layouts.get(&owner).cloned()
+            },
             nodes,
             owner,
             identities,
+            rust_reads,
             caller,
             type_identities,
         })
@@ -474,6 +298,18 @@ impl Positions {
         for (canonical, stable) in positions.nodes.binding_identities(local.nested.values())? {
             positions.identities.insert(stable.render_compact(), canonical);
         }
+        for canonical in local
+            .expressions
+            .expression_type_identities
+            .values()
+            .flat_map(|identities| identities.values())
+        {
+            if let Some(stable) = StableDeclarationId::from_canonical(canonical, None, None) {
+                positions
+                    .type_identities
+                    .insert(stable.render_compact(), canonical.clone());
+            }
+        }
         Ok(positions)
     }
 
@@ -484,29 +320,166 @@ impl Positions {
         checker: &TypeChecker,
         program: &Program,
         owner: Span,
+        nodes: SemanticNodeBindings,
         fields: &Fields,
+        active: bool,
     ) -> Result<Self, NodeBindingError> {
-        let mut positions = Self::new(checker, program, owner, false)?;
+        let mut positions = Self::from_nodes(checker, program, owner, false, nodes)?;
+        imported_members::bind_transitive(checker, &mut positions, fields)?;
+        let layout = CallableScopeLayout::decode(&checker.symbols, fields, active)?
+            .ok_or_else(|| NodeBindingError::InvalidField("callable scope allocation is missing".into()))?;
+        let mut nested = Vec::new();
         for row in fields {
-            if row.len() != 4 || row[0] != "binding" || row[2] != "declaration" {
+            if row.len() < 3 || row[0] != "binding" || row[2] != "declaration" {
                 continue;
             }
             let span = positions.span(&row[1])?;
+            let (kind, name) = persisted_nested_binding(positions.nodes.owner(), &row[3])?;
             let canonical = CanonicalSymbolId {
                 namespace: SymbolNamespace::OrdinaryLexical,
                 origin: checker.symbols.declaration_origin(),
-                declaration_name: persisted_local_name(positions.nodes.owner(), &row[3])?,
-                kind: SemanticSourceTargetKind::Local,
-                scope_discriminant: Some(ScopeDiscriminant(checker.symbols.next_scope_index())),
+                declaration_name: name,
+                kind,
+                scope_discriminant: Some(ScopeDiscriminant(
+                    layout.binding_scope(
+                        row.get(4)
+                            .ok_or_else(|| NodeBindingError::InvalidField("binding has no scope ordinal".into()))?,
+                    )?,
+                )),
                 declaration_span: span,
             };
-            if positions.identities.insert(row[3].clone(), canonical).is_some() {
+            nested.push((&row[3], canonical));
+        }
+        positions.scopes = Some(layout);
+        // The same structural grouping as the writer authenticates each kind, owner and collision ordinal.
+        let bound = positions
+            .nodes
+            .binding_identities(nested.iter().map(|(_, symbol)| symbol))?;
+        for (persisted, canonical) in nested {
+            if bound
+                .get(&canonical)
+                .is_none_or(|stable| stable.render_compact() != *persisted)
+            {
+                return Err(NodeBindingError::InvalidField("nested declaration identity".into()));
+            }
+            if positions.identities.insert(persisted.clone(), canonical).is_some() {
                 return Err(NodeBindingError::InvalidField(
                     "duplicate nested declaration identity".into(),
                 ));
             }
         }
         Ok(positions)
+    }
+
+    /// A position-free checker result can remain reusable after its native executable references have moved.
+    /// Bind the native frame to the current owner's entire syntax geometry, checked type providers, and the exact
+    /// reference, nested, and write handles settled for that owner. Hash ordered typed bytes, including scope IDs.
+    fn physical_inputs_in(
+        &self,
+        facts: &crate::typechecker::TypeCheckInfo,
+        local: &BodyLocal,
+        records: [&Fields; 3],
+        placement: Option<&placement::Placement>,
+    ) -> Option<[u8; 32]> {
+        use sha2::{Digest, Sha256};
+        let span = |current: &Span| match placement {
+            Some(layout) => layout.prior_span(*current),
+            None => Some(*current),
+        };
+        let target = |current| match placement {
+            Some(layout) => layout.prior_target(current),
+            None => current,
+        };
+        let references = local
+            .references
+            .resolved_identities
+            .iter()
+            .map(|(here, id)| Some((span(here)?, target(id))))
+            .collect::<Option<BTreeMap<_, _>>>()?;
+        let writes = local
+            .references
+            .resolved_write_identities
+            .iter()
+            .map(|((here, name), id)| Some(((span(here)?, name), target(id))))
+            .collect::<Option<BTreeMap<_, _>>>()?;
+        let types = local
+            .expressions
+            .expression_type_identities
+            .iter()
+            .map(|(here, ty)| Some((span(here)?, ty)))
+            .collect::<Option<BTreeMap<_, _>>>()?;
+        let contexts = local
+            .references
+            .stable_declaration_contexts
+            .iter()
+            .map(|(here, context)| Some((span(here)?, (target(&context.owner), context.binding_ordinal))))
+            .collect::<Option<BTreeMap<_, _>>>()?;
+        // The checked record codecs read persisted handles from complete cells. Type payloads also carry lexical
+        // spellings, so bind their current checked aliases where present. The read sets are derived from the owner
+        // records, independent of other declarations the checker happened to load in this activation.
+        // A nominal can also be listed as an ordinary declaration. Witness an equal binding only once.
+        let mut handles = BTreeMap::new();
+        let mut type_handles = BTreeMap::new();
+        let mut type_names = BTreeMap::new();
+        for cell in records.iter().flat_map(|fields| fields.iter()).flatten() {
+            let name = cell.as_str();
+            let type_identity = self.type_identities.get(name);
+            if let Some(identity) = self.identities.get(name)
+                && Some(identity) != type_identity
+            {
+                handles.insert(name, target(identity));
+            }
+            if let Some(identity) = type_identity {
+                type_handles.insert(name, target(identity));
+            }
+            if let Some(resolved) = facts
+                .declarations
+                .named_type_identities
+                .get(name)
+                .or_else(|| facts.declarations.body_ir_native_type_identities.get(name))
+                .or_else(|| {
+                    facts
+                        .declarations
+                        .qualified_type_references
+                        .get(name)
+                        .map(|entry| &entry.identity)
+                })
+            {
+                type_names.insert(name, target(resolved));
+            }
+        }
+        // A contextual reference already binds the stable member to its checked nominal and physical declaration.
+        // A matching entry from the ambient symbol table adds no input. Keep a differing binding in the witness.
+        for (here, context) in &local.references.stable_declaration_contexts {
+            if let Some(member) = local.references.resolved_identities.get(here)
+                && let Ok(key) = self.contextual_identity(member, context)
+                && self.identities.get(key.as_str()) == Some(member)
+            {
+                handles.remove(key.as_str());
+            }
+        }
+        // The store adds the family's selector to each native header and can return canonical rows in codec order.
+        // Hash the completed products' logical rows in their fixed declaration/local/final order.
+        let values = records.map(|fields| {
+            let mut rows = fields.iter().skip(1).collect::<Vec<_>>();
+            rows.sort_unstable();
+            rows
+        });
+        let bytes = postcard::to_allocvec(&(
+            self.nodes.root(),
+            placement.map_or_else(|| self.nodes.physical_nodes(), |layout| layout.nodes()),
+            values,
+            handles,
+            type_handles,
+            type_names,
+            &local.nested,
+            references,
+            writes,
+            types,
+            contexts,
+        ))
+        .ok()?;
+        Some(Sha256::digest(bytes).into())
     }
 
     /// Only a checked declaration or an explicitly admitted builtin can become a persistent reference.
@@ -519,7 +492,23 @@ impl Positions {
                 .map(|stable| stable.render_compact())
                 .ok_or(NodeBindingError::MissingOwner);
         }
+        tracing::debug!(target: "incan::invocation", declaration = ?canonical, "unadmitted checker record reference");
         Err(NodeBindingError::Unsupported("unadmitted declaration reference"))
+    }
+
+    /// Bind a source read to a checked lexical target, a Rust import, or the Rust field checked at that occurrence.
+    fn read_identity(&self, canonical: &CanonicalSymbolId, checked_field: bool) -> Result<String, NodeBindingError> {
+        if matches!(canonical.origin, incan_semantics_core::SymbolOrigin::RustCrate(_))
+            && let Some(stable) = StableDeclarationId::from_canonical(canonical, None, None)
+        {
+            let key = stable.render_compact();
+            if (canonical.kind == SemanticSourceTargetKind::Field && checked_field)
+                || self.rust_reads.get(&key).and_then(Option::as_ref) == Some(canonical)
+            {
+                return Ok(key);
+            }
+        }
+        self.identity(canonical)
     }
 
     /// Resolve a checked expression-type leaf through an admitted source/package identity or one imported Rust type.
@@ -576,45 +565,94 @@ impl Positions {
     }
 }
 
-/// The source spelling of a body-local declaration that a record names by its persisted identity, the one
-/// [`SemanticNodeBindings::binding_identities`] renders inside `owner`. A restored local is then named as a fresh check
-/// names it, so Body IR built from restored facts equals a fresh check's. The spelling is verified by rendering the
-/// identity again, so a malformed or foreign identity is refused instead of misread.
-fn persisted_local_name(owner: &StableDeclarationId, identity: &str) -> Result<String, NodeBindingError> {
+/// Recover the lexical spelling and kind for a decoded binding. The caller verifies the complete stable identity
+/// against the writer's current structural binding order before installing the handle.
+fn persisted_nested_binding(
+    owner: &StableDeclarationId,
+    identity: &str,
+) -> Result<(SemanticSourceTargetKind, String), NodeBindingError> {
     let refused = || NodeBindingError::InvalidField("nested declaration identity".into());
+    let (tag, _) = identity.split_once(':').ok_or_else(refused)?;
+    let kind = SemanticSourceTargetKind::from_kind_str(tag);
     let template = StableDeclarationId {
         namespace: SymbolNamespace::OrdinaryLexical,
         origin: owner.origin.clone(),
         declaration_name: String::new(),
-        kind: SemanticSourceTargetKind::Local,
+        kind,
         location: StableDeclarationLocation::ModuleLevel,
         signature: None,
     };
-    let (name, ordinal) = identity
+    let (name, _) = identity
         .strip_prefix(&template.render_compact())
-        .and_then(|rest| rest.split_once(&format!("#in({})[", owner.render_compact())))
+        .and_then(|rest| rest.split_once("#in("))
         .ok_or_else(refused)?;
-    let binding_ordinal = ordinal
-        .strip_suffix(']')
-        .and_then(|ordinal| ordinal.parse::<u32>().ok())
-        .ok_or_else(refused)?;
-    let rendered = StableDeclarationId {
-        declaration_name: name.to_owned(),
-        location: StableDeclarationLocation::Nested {
-            owner: Box::new(owner.clone()),
-            binding_ordinal,
-        },
-        ..template
-    };
-    if rendered.render_compact() != identity {
-        return Err(refused());
+    Ok((template.kind, name.to_owned()))
+}
+
+/// Collect every active nominal owner that the checker already authenticated independently of one lexical spelling.
+fn admitted_type_identities(
+    checker: &TypeChecker,
+    origin: &incan_semantics_core::SymbolOrigin,
+) -> BTreeMap<String, CanonicalSymbolId> {
+    let mut identities = checker
+        .symbols
+        .all_symbols()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, _)| checker.symbols.identity_of(index))
+        .filter(|canonical| {
+            canonical.scope_discriminant.is_none()
+                && ((&canonical.origin == origin
+                    && matches!(
+                        canonical.kind,
+                        SemanticSourceTargetKind::Model
+                            | SemanticSourceTargetKind::Class
+                            | SemanticSourceTargetKind::Newtype
+                            | SemanticSourceTargetKind::Rusttype
+                            | SemanticSourceTargetKind::Enum
+                            | SemanticSourceTargetKind::TypeAlias
+                            | SemanticSourceTargetKind::Trait
+                    ))
+                    || (canonical.kind == SemanticSourceTargetKind::RustItem
+                        && matches!(canonical.origin, incan_semantics_core::SymbolOrigin::RustCrate(_))))
+        })
+        .filter_map(|canonical| {
+            StableDeclarationId::from_canonical(canonical, None, None)
+                .map(|stable| (stable.render_compact(), canonical.clone()))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let active = checker
+        .type_info
+        .declarations
+        .named_type_identities
+        .values()
+        .chain(checker.type_info.declarations.body_ir_native_type_identities.values())
+        .chain(
+            checker
+                .type_info
+                .expressions
+                .expression_type_identities
+                .values()
+                .flat_map(|identities| identities.values()),
+        )
+        .chain(
+            checker
+                .public_library_type_identities
+                .values()
+                .filter_map(|identity| identity.canonical.as_ref()),
+        );
+    for canonical in active {
+        if let Some(stable) = StableDeclarationId::from_canonical(canonical, None, None) {
+            identities.insert(stable.render_compact(), canonical.clone());
+        }
     }
-    Ok(rendered.declaration_name)
+    identities
 }
 
 /// Rebuild a selected owner solely from canonical fields and current position/identity bindings. The independently
 /// checked current baseline supplies coordinates/handles only; no native fact payload is copied from it.
 fn restore(
+    checker: &TypeChecker,
     positions: &Positions,
     program: &Program,
     owner: Span,
@@ -654,13 +692,15 @@ fn restore(
             ));
         }
         previous = Some(row);
-        rebound.field(program, positions, header, row).map_err(|error| {
-            if error == NodeBindingError::MissingNode {
-                NodeBindingError::InvalidField(format!("family={} node={} selector={}", row[0], row[1], row[2]))
-            } else {
-                error
-            }
-        })?;
+        rebound
+            .field(checker, program, positions, header, row)
+            .map_err(|error| {
+                if error == NodeBindingError::MissingNode {
+                    NodeBindingError::InvalidField(format!("family={} node={} selector={}", row[0], row[1], row[2]))
+                } else {
+                    error
+                }
+            })?;
     }
     // Native input calls are not recorded; rebuild them from the restored native calls, as the body proof built them.
     if let Some(identity) = rebound.local.protocols.explicit_input_flow.keys().next().cloned() {
@@ -675,9 +715,14 @@ fn restore(
     rebound.finish(&header[3])
 }
 
-/// Rebuild one pending local producer value for its settlement activation. The value carries no finalized status,
-/// diagnostics or types; those remain owned by the settlement operation entered after this function returns.
-fn restore_pending(positions: &Positions, owner: Span, fields: &Fields) -> Result<BodyLocal, NodeBindingError> {
+/// Rebuild one pending owner and rebind its recorded local diagnostic values to this settlement's writers.
+fn restore_pending(
+    checker: &mut TypeChecker,
+    program: &Program,
+    positions: &Positions,
+    owner: Span,
+    fields: &Fields,
+) -> Result<BodyLocal, NodeBindingError> {
     let header = fields
         .first()
         .filter(|header| header.len() == 5)
@@ -690,12 +735,9 @@ fn restore_pending(positions: &Positions, owner: Span, fields: &Fields) -> Resul
     {
         return Err(NodeBindingError::Unsupported("local record header"));
     }
-    let mut local = BodyLocal {
-        owner,
-        kind: LocalOwnerKind::Body,
-        ..BodyLocal::default()
-    };
-    let mut record_identities = BTreeMap::new();
+    let mut restored = Rebinding::default();
+    restored.local.owner = owner;
+    restored.local.kind = LocalOwnerKind::Body;
     let mut previous: Option<&[String]> = None;
     let mut pending = false;
     for row in &fields[1..] {
@@ -712,7 +754,18 @@ fn restore_pending(positions: &Positions, owner: Span, fields: &Fields) -> Resul
             pending = true;
             continue;
         }
-        restore_local(positions, &mut local, &mut record_identities, row).map_err(|error| {
+        if row[0] == "diagnostic" {
+            restored.diagnostic(program, positions, row)?;
+            continue;
+        }
+        restore_local(
+            checker,
+            positions,
+            &mut restored.local,
+            &mut restored.record_identities,
+            row,
+        )
+        .map_err(|error| {
             if error == NodeBindingError::MissingNode {
                 NodeBindingError::InvalidField(format!("family={} node={} selector={}", row[0], row[1], row[2]))
             } else {
@@ -723,8 +776,35 @@ fn restore_pending(positions: &Positions, owner: Span, fields: &Fields) -> Resul
     if !pending {
         return Err(NodeBindingError::InvalidField("missing pending status".into()));
     }
+    let mut local = restored.local;
+    let mut current = DiagnosticPositions::new(program, checker.symbols.declaration_origin());
+    for (kind, values, slots, writer) in [
+        (
+            "error",
+            restored.diagnostics,
+            &mut local.diagnostic_slots,
+            &mut checker.errors,
+        ),
+        (
+            "warning",
+            restored.warnings,
+            &mut local.warning_slots,
+            &mut checker.warnings,
+        ),
+    ] {
+        for value in ordered_diagnostics(values, kind)? {
+            let diagnostic = current.render(&value).map_err(|_| NodeBindingError::MissingNode)?;
+            slots.push(writer.len());
+            writer.push(diagnostic);
+        }
+    }
     local.mutation.restore_flow_graphs(&mut local.protocols);
     function_calls::restore(positions, &mut local)?;
+    checker
+        .type_info
+        .rust
+        .checked_layouts
+        .extend(std::mem::take(&mut local.rust.checked_layouts));
     Ok(local)
 }
 
@@ -748,6 +828,7 @@ impl Rebinding {
     /// Dispatch exactly one admitted field grammar. Unrecognized selectors never fall back to native source facts.
     fn field(
         &mut self,
+        checker: &TypeChecker,
         program: &Program,
         positions: &Positions,
         header: &[String],
@@ -777,7 +858,7 @@ impl Rebinding {
             "final-type" => self.final_type(positions, row)?,
             "native-call" if row[1].is_empty() && row[2] == "empty" && row.len() == 4 && row[3] == "true" => {}
             "diagnostic" => self.diagnostic(program, positions, row)?,
-            _ => restore_local(positions, &mut self.local, &mut self.record_identities, row)?,
+            _ => restore_local(checker, positions, &mut self.local, &mut self.record_identities, row)?,
         }
         Ok(())
     }
@@ -853,6 +934,7 @@ impl Rebinding {
         self.local.mutation.restore_flow_graphs(&mut self.local.protocols);
         let diagnostics = ordered_diagnostics(self.diagnostics, "error")?;
         let warnings = ordered_diagnostics(self.warnings, "warning")?;
+        let rust_layouts = std::mem::take(&mut self.local.rust.checked_layouts);
         let view = CheckedBodyView {
             local: Arc::new(self.local),
             effect_reads: Default::default(),
@@ -867,6 +949,7 @@ impl Rebinding {
         }
         Ok(RestoredOwner {
             view,
+            rust_layouts,
             binding: self.binding,
             defaults: self.defaults,
             final_types: self.final_types,
@@ -892,101 +975,7 @@ fn ordered_diagnostics(
         .collect()
 }
 
-/// Select complete supported expression maps. Their native field names are schema selectors, not memory offsets.
-fn project_expressions(positions: &Positions, local: &BodyLocal, fields: &mut Fields) -> Result<(), NodeBindingError> {
-    let expressions = &local.expressions;
-    for (selector, values) in [
-        ("expr", &expressions.expr_types),
-        ("body-expr", &expressions.body_ir_expr_types),
-        ("assignment", &expressions.assignment_binding_types),
-        ("destination", &expressions.value_destination_types),
-    ] {
-        for (span, ty) in values {
-            let mut row = vec!["type".into(), positions.nodes.anchor(*span)?.path, selector.into()];
-            type_fields(ty, &mut row)?;
-            fields.push(row);
-        }
-    }
-    for (binding, ty) in &expressions.body_ir_binding_types {
-        let mut row = vec![
-            "binding-type".into(),
-            positions.nodes.anchor(span_of(binding))?.path,
-            "body".into(),
-            positions.identity(binding)?,
-        ];
-        type_fields(ty, &mut row)?;
-        fields.push(row);
-    }
-    for (binding, requirement) in &expressions.body_ir_parameter_requirements {
-        if binding.kind != incan_semantics_core::SemanticSourceTargetKind::Parameter {
-            return Err(NodeBindingError::WrongOwner);
-        }
-        let mut row = vec![
-            "binding-type".into(),
-            positions.nodes.anchor(span_of(binding))?.path,
-            "parameter-requirement".into(),
-            positions.identity(binding)?,
-        ];
-        match requirement {
-            Some(ty) => {
-                row.push("some".into());
-                type_fields(ty, &mut row)?;
-            }
-            None => row.push("none".into()),
-        }
-        fields.push(row);
-    }
-    for (span, kind) in &expressions.ident_kinds {
-        let tag = match kind {
-            super::super::type_info::IdentKind::Value => "value",
-            super::super::type_info::IdentKind::Static => "static",
-            super::super::type_info::IdentKind::TypeName => "type-name",
-            super::super::type_info::IdentKind::Variant => "variant",
-            super::super::type_info::IdentKind::Module => "module",
-            super::super::type_info::IdentKind::RustImport => "rust-import",
-            super::super::type_info::IdentKind::RustValue => "rust-value",
-            super::super::type_info::IdentKind::Trait => "trait",
-        };
-        fields.push(vec![
-            "identifier".into(),
-            positions.nodes.anchor(*span)?.path,
-            "kind".into(),
-            tag.into(),
-        ]);
-    }
-    for (span, target) in &expressions.source_targets {
-        let mut row = vec![
-            "target".into(),
-            positions.nodes.anchor(*span)?.path,
-            "source".into(),
-            target.name.clone(),
-            target.kind.clone(),
-        ];
-        row.extend(target.module_path.iter().cloned());
-        fields.push(row);
-    }
-    for (span, identities) in &expressions.expression_type_identities {
-        for (path, identity) in identities {
-            fields.push(vec![
-                "type-identity".into(),
-                positions.nodes.anchor(*span)?.path,
-                type_identity_path(path),
-                positions.type_identity(identity)?,
-            ]);
-        }
-    }
-    Ok(())
-}
-
-/// Encode one nested type-component path as a canonical field selector; `root` names the expression type itself.
-fn type_identity_path(path: &[usize]) -> String {
-    if path.is_empty() {
-        return "root".into();
-    }
-    path.iter().map(usize::to_string).collect::<Vec<_>>().join(".")
-}
-
-/// Decode the exact canonical component path emitted by [`type_identity_path`].
+/// Decode the exact canonical component path emitted by the expression-record projection.
 fn read_type_identity_path(path: &str) -> Result<Vec<usize>, NodeBindingError> {
     if path == "root" {
         return Ok(Vec::new());
@@ -1042,13 +1031,24 @@ fn restore_identity_context(
         return Err(NodeBindingError::MissingNode);
     }
     let name = next(values)?;
-    let canonical = positions
-        .canonical(&identity)
-        .unwrap_or_else(|_| owner.generated_member(name, kind.clone()));
+    let canonical = match positions.canonical(&identity) {
+        Ok(member) => member,
+        Err(error) if matches!(owner.origin, incan_semantics_core::SymbolOrigin::Package { .. }) => {
+            // A package declaration uses its own anchor. Only a checked generated member belongs at the owner.
+            let generated = owner.generated_member(name, kind.clone());
+            if local.calls.compiler_generated_member_identities.get(&generated) != Some(&owner) {
+                return Err(error);
+            }
+            generated
+        }
+        Err(_) => owner.generated_member(name, kind.clone()),
+    };
     if canonical.declaration_name != name
         || canonical.kind != kind
         || stable_member_identity(&canonical, &owner, binding_ordinal)? != identity
-        || record_identities.insert(identity, canonical).is_some()
+        || record_identities
+            .get(&identity)
+            .is_some_and(|previous| previous != &canonical)
         || local
             .references
             .stable_declaration_contexts
@@ -1060,6 +1060,7 @@ fn restore_identity_context(
     {
         return Err(NodeBindingError::MissingNode);
     }
+    record_identities.insert(identity, canonical);
     Ok(())
 }
 
@@ -1081,9 +1082,13 @@ fn restored_identity(
     record_identities: &BTreeMap<String, CanonicalSymbolId>,
     identity: &str,
 ) -> Result<CanonicalSymbolId, NodeBindingError> {
-    positions
-        .canonical(identity)
-        .or_else(|error| record_identities.get(identity).cloned().ok_or(error))
+    positions.canonical(identity).or_else(|error| {
+        record_identities
+            .get(identity)
+            .or_else(|| positions.rust_reads.get(identity).and_then(Option::as_ref))
+            .cloned()
+            .ok_or(error)
+    })
 }
 
 /// Admit a registry-validated builtin method identity for reference fields that follow it in canonical order.
@@ -1092,6 +1097,14 @@ fn retain_builtin_method_identity(
     builtin: incan_lang::lang::builtins::BuiltinMethodId,
 ) -> Result<(), NodeBindingError> {
     let canonical = crate::symbols::canonical_builtin_member_identity(builtin.owner(), builtin.member());
+    retain_registry_identity(record_identities, canonical)
+}
+
+/// A checked builtin call can name a registry target without a physical lexical symbol.
+fn retain_registry_identity(
+    record_identities: &mut BTreeMap<String, CanonicalSymbolId>,
+    canonical: CanonicalSymbolId,
+) -> Result<(), NodeBindingError> {
     let stable = StableDeclarationId::from_canonical(&canonical, None, None)
         .ok_or(NodeBindingError::MissingNode)?
         .render_compact();
@@ -1120,6 +1133,7 @@ fn compare_native(expected: &impl std::fmt::Debug, restored: &impl std::fmt::Deb
 /// Reconstructed semantic native values and default-writer references, separate from the current position bindings.
 struct RestoredOwner {
     view: CheckedBodyView,
+    rust_layouts: HashMap<String, RustCheckedLayout>,
     binding: Option<super::super::type_info::FunctionBindingInfo>,
     defaults: BTreeMap<Span, (Span, String)>,
     final_types: FinalTypes,
@@ -1132,4 +1146,64 @@ struct RestoredOwner {
 struct FinalTypes {
     expressions: BTreeMap<Span, crate::symbols::ResolvedType>,
     bindings: BTreeMap<CanonicalSymbolId, crate::symbols::ResolvedType>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn physical_inputs_ignore_duplicate_nominal_and_member_bindings() -> Result<(), Box<dyn std::error::Error>> {
+        let (program, checker, owner) = fixture(
+            "model Record:\n    value: int\n\ndef take(item: Record) -> int:\n    return item.value\n",
+            "take",
+        )?;
+        let local = &checker.checked_body(owner).ok_or("missing checked body")?.local;
+        let records = [
+            checker
+                .available_declaration_record(owner)
+                .ok_or("missing declaration record")?,
+            checker.available_local_record(owner).ok_or("missing local record")?,
+            checker.available_final_record(owner).ok_or("missing final record")?,
+        ];
+        let mut positions = Positions::for_local(&checker, &program, owner, local)?;
+        let (&here, context) = local
+            .references
+            .stable_declaration_contexts
+            .iter()
+            .next()
+            .ok_or("missing checked member context")?;
+        let member = local
+            .references
+            .resolved_identities
+            .get(&here)
+            .ok_or("missing checked member")?;
+        let member_key = positions.contextual_identity(member, context)?;
+        let nominal_key = StableDeclarationId::from_canonical(&context.owner, None, None)
+            .ok_or("missing nominal identity")?
+            .render_compact();
+        assert_eq!(positions.type_identities.get(&nominal_key), Some(&context.owner));
+
+        positions.identities.remove(&nominal_key);
+        positions.identities.remove(&member_key);
+        let before = positions
+            .physical_inputs_in(checker.type_info(), local, records, None)
+            .ok_or("missing witness")?;
+        for (key, identity) in [(nominal_key, &context.owner), (member_key, member)] {
+            positions.identities.insert(key.clone(), identity.clone());
+            let duplicate = positions.physical_inputs_in(checker.type_info(), local, records, None);
+            assert_eq!(duplicate, Some(before), "{key}");
+            positions
+                .identities
+                .get_mut(&key)
+                .ok_or("missing duplicate")?
+                .declaration_span
+                .start += 1;
+            let conflict = positions.physical_inputs_in(checker.type_info(), local, records, None);
+            assert!(conflict.is_some());
+            assert_ne!(conflict, Some(before), "{key}");
+            positions.identities.remove(&key);
+        }
+        Ok(())
+    }
 }

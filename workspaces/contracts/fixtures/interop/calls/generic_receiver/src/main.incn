@@ -160,7 +160,7 @@ def show_generic_receivers() -> None:
     value.set(8)
     println(value.get())
     text = "borrowed"
-    shared: Cell[&str] = Cell.new(text)
+    shared: Cell[Borrowed[str]] = Cell.new(text)
     assert len(shared.get()) == 8
     assert len(shared.get()) == 8
     assert text == "borrowed"
@@ -236,7 +236,7 @@ def show_slice_methods() -> None:
     assert len(encoded_bytes()) == 2
 
 
-def sorted_snapshot[T with (Clone, Ord)](values: &list[T]) -> list[T]:
+def sorted_snapshot[T with (Clone, Ord)](values: Borrowed[list[T]]) -> list[T]:
     """Sort a copied generic vector through its exclusive native slice."""
     mut owned: Vec[T] = NativeClone.clone(values)
     mut view = owned.as_mut_slice()
@@ -244,17 +244,17 @@ def sorted_snapshot[T with (Clone, Ord)](values: &list[T]) -> list[T]:
     return owned
 
 
-def set_cursor[T with Clone](values: &HashSet[T], index: int) -> T:
+def set_cursor[T with Clone](values: Borrowed[HashSet[T]], index: int) -> T:
     """Copy an indexed native iterator item without reentering a language set loop."""
     mut iterator: SetIter[T] = values.iter()
     match iterator.nth(nonnegative_count(index)):
         Some(value) =>
-            element: &T = value
+            element: Borrowed[T] = value
             return element.clone()
         None => return raise_index_error("set cursor outside collection")
 
 
-def first_set_item(values: &HashSet[int]) -> int:
+def first_set_item(values: Borrowed[HashSet[int]]) -> int:
     """Read a borrowed iterator's normalized associated item without consuming its set."""
     mut iterator = values.iter()
     match iterator.next():
@@ -262,7 +262,7 @@ def first_set_item(values: &HashSet[int]) -> int:
         None => return 0
 
 
-def clone_parameter[T with NativeClone](value: &T) -> T:
+def clone_parameter[T with NativeClone](value: Borrowed[T]) -> T:
     """Keep the receiver's type parameter as the explicit native Clone call's result."""
     return NativeClone.clone(value)
 
@@ -296,18 +296,18 @@ def copy_slice_bytes(value: bytes) -> bytes:
     return RuntimeInto.into(value.as_slice())
 
 
-def copy_native_text(value: &RustString) -> bytes:
+def copy_native_text(value: Borrowed[RustString]) -> bytes:
     """Clone shared native text before consuming its owned byte buffer."""
     copied: RustString = value.clone()
     return copied.into_bytes()
 
 
-def forward_native_text(value: &RustString) -> bytes:
+def forward_native_text(value: Borrowed[RustString]) -> bytes:
     """Forward a shared native reference without changing the native Clone receiver's Self."""
     return copy_native_text(value)
 
 
-def native_snapshot_length[Element with Clone](values: &list[Element]) -> int:
+def native_snapshot_length[Element with Clone](values: Borrowed[list[Element]]) -> int:
     """Count a snapshot: 1. Clone an independent vector. 2. Consume its iterator without changing the source."""
     # 1. Clone an independent vector.
     snapshot: list[Element] = NativeClone.clone(values)
@@ -338,7 +338,7 @@ def native_batches[T with (Clone, Static)](source: Generator[T], size: int) -> G
     return NativeGenerator.new(native_batch(native, size))
 
 
-def observe_captures(captures: &NativeCaptures) -> bool:
+def observe_captures(captures: Borrowed[NativeCaptures]) -> bool:
     """Read a lifetime-bearing native input without erasing its call-scoped binders (#2368)."""
     if let Some(found) = captures.name("word"):
         return found.as_str() == "ab"

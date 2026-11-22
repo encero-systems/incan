@@ -238,26 +238,31 @@ fn method_info_from_decl(
             )
         })
         .collect();
+    // A trait slot (collected without an owner) declares its borrows as explicit input obligations its
+    // implementations inherit.
+    let route = checker.result_route(
+        &method.node.params,
+        &method.node.return_type,
+        method.node.result_source.as_ref(),
+    );
+    let explicit_borrows = owner_name.is_none()
+        || checker.signature_keeps_explicit_borrows(&method.node.params, &route.result, route.source);
     let params: Vec<CallableParam> = method
         .node
         .params
         .iter()
         .map(|p| {
             let surface_type_name = checker.alias_surface_type_name(&p.node.ty.node);
-            let ty = resolve_declared_type(checker, &p.node.ty, &active_type_params, owner_name, owner_self_ty);
+            let annotation = checker.parameter_annotation(p, explicit_borrows);
+            let ty = resolve_declared_type(checker, &annotation, &active_type_params, owner_name, owner_self_ty);
+            let ty = checker.canonical_borrow_type(ty, explicit_borrows);
             let is_mut = checker.def_param_shows_changes_to_caller(&p.node, &ty);
             CallableParam::named_with_default(p.node.name.clone(), ty, p.node.kind, p.node.default.is_some())
                 .with_mut(is_mut)
                 .with_surface_type_name(surface_type_name)
         })
         .collect();
-    let return_type = resolve_declared_type(
-        checker,
-        &method.node.return_type,
-        &active_type_params,
-        owner_name,
-        owner_self_ty,
-    );
+    let return_type = resolve_declared_type(checker, &route.result, &active_type_params, owner_name, owner_self_ty);
     let trait_target = method.node.trait_target.as_ref().map(|target| TypeBoundInfo {
         name: checker.resolve_trait_bound_name(&target.node.name, target.span),
         source_name: checker.trait_bound_source_name(&target.node.name),

@@ -1,0 +1,131 @@
+"""Retain module collection and Rust import requests as typed fields. Reach queries read only the path witnesses."""
+
+from std.json import JsonValue
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from pub::internal_models.crumb_rows import ModelField, model_description, required_value
+from pub::internal_models.graph_crumb_fields import decode_graph_field, decode_graph_row, encode_graph_row, items, text, tuple_items
+from json_fields import required_items, required_text
+
+const SOURCES: bytes = b"srcgrp\x00"
+const IMPORTS: bytes = b"srcimp\x00"
+const REQUESTS: str = "list<tuple<string,option<string>,list<string>,string>>"
+
+
+def graph_description() -> Description:
+    return model_description(SOURCES, "incan.oven.source-graph/3", [
+        ModelField(identity=b"import", name="imports_by_scope", storage=f"list<option<{REQUESTS}>>"),
+        ModelField(identity=b"reach_", name="reach_by_scope", storage="list<tuple<string,list<tuple<string,string>>,list<string>>>"),
+    ])
+
+
+def imports_description() -> Description:
+    return model_description(IMPORTS, "incan.oven.rust-imports/2", [
+        ModelField(identity=b"ident_", name="identity", storage="string"),
+        ModelField(identity=b"import", name="imports", storage=REQUESTS),
+    ])
+
+
+def text_list(values: list[JsonValue]) -> Result[Value, str]:
+    mut result: list[Value] = []
+    for value in values:
+        result.append(Value.Text(value.expect_str().map_err((error) => error.message())?))
+    return Ok(Value.List(result))
+
+
+def read_text_list(value: Value) -> Result[JsonValue, str]:
+    mut result: list[JsonValue] = []
+    for item in items(value)?:
+        result.append(JsonValue.string(text(item)?))
+    return Ok(JsonValue.array(result))
+
+
+def requests(values: list[JsonValue]) -> Result[Value, str]:
+    mut rows: list[Value] = []
+    for item in values:
+        if len(item.keys()) != 4:
+            return Err("unknown Rust import request fields")
+        supplied = item.require("version").map_err((error) => error.message())?
+        mut version = Value.NoneValue
+        if not supplied.is_null():
+            version = Value.Some([Value.Text(supplied.expect_str().map_err((error) => error.message())?)])
+        rows.append(Value.Tuple([Value.Text(required_text(item, "crate")?), version,
+            text_list(required_items(item, "features")?)?, Value.Text(required_text(item, "source")?)]))
+    return Ok(Value.List(rows))
+
+
+def read_requests(value: Value) -> Result[list[JsonValue], str]:
+    mut result: list[JsonValue] = []
+    for item in items(value)?:
+        row = tuple_items(item, 4)?
+        mut version = JsonValue.null()
+        match row[1]:
+            Value.NoneValue => pass
+            Value.Some(values) =>
+                if len(values) != 1:
+                    return Err("invalid Rust import version")
+                version = JsonValue.string(text(values[0])?)
+            _ => return Err("invalid Rust import version")
+        result.append(JsonValue.object({"crate": JsonValue.string(text(row[0])?), "version": version,
+            "features": read_text_list(row[2])?, "source": JsonValue.string(text(row[3])?)}))
+    return Ok(result)
+
+
+pub def encode_imports(identity: str, records: list[JsonValue]) -> Result[bytes, str]:
+    return encode_graph_row(IMPORTS, imports_description(), [
+        required_value(b"ident_", Value.Text(identity)), required_value(b"import", requests(records)?),
+    ])
+
+
+pub def decode_imports(encoded: bytes, identity: str) -> Result[Option[list[JsonValue]], str]:
+    fields = decode_graph_row(encoded, IMPORTS, imports_description(), 2)?
+    if text(fields[0].value)? != identity:
+        return Ok(None)
+    return Ok(Some(read_requests(fields[1].value)?))
+
+
+pub def encode_scopes(graphs: list[JsonValue]) -> Result[bytes, str]:
+    mut reach: list[Value] = []
+    mut imports: list[Value] = []
+    for graph in graphs:
+        mut reads: list[Value] = []
+        for item in required_items(graph, "read")?:
+            reads.append(Value.Tuple([Value.Text(required_text(item, "path")?), Value.Text(required_text(item, "digest")?)]))
+        reach.append(Value.Tuple([Value.Text(required_text(graph, "scope")?), Value.List(reads), text_list(required_items(graph, "absent")?)?]))
+        match graph.get("imports"):
+            Some(rows) => imports.append(Value.Some([requests(rows.expect_array().map_err((error) => error.message())?)?]))
+            None => imports.append(Value.NoneValue)
+    return encode_graph_row(SOURCES, graph_description(), [
+        required_value(b"import", Value.List(imports)), required_value(b"reach_", Value.List(reach)),
+    ])
+
+
+pub def decode_scopes(encoded: bytes, include_imports: bool) -> Result[list[JsonValue], str]:
+    mut reach: list[Value] = []
+    mut imports: list[Value] = []
+    if include_imports:
+        fields = decode_graph_row(encoded, SOURCES, graph_description(), 2)?
+        imports = items(fields[0].value)?
+        reach = items(fields[1].value)?
+        if len(imports) != len(reach):
+            return Err("source graph scope count differs from its import inventory")
+    else:
+        reach = items(decode_graph_field(encoded, graph_description(), b"reach_")?)?
+    mut result: list[JsonValue] = []
+    for index in range(len(reach)):
+        row = tuple_items(reach[index], 3)?
+        mut reads: list[JsonValue] = []
+        for item in items(row[1])?:
+            pair = tuple_items(item, 2)?
+            reads.append(JsonValue.object({"path": JsonValue.string(text(pair[0])?), "digest": JsonValue.string(text(pair[1])?)}))
+        mut graph = {"scope": JsonValue.string(text(row[0])?), "read": JsonValue.array(reads), "absent": read_text_list(row[2])?}
+        if include_imports:
+            match imports[index]:
+                Value.NoneValue => pass
+                Value.Some(values) =>
+                    if len(values) != 1:
+                        return Err("invalid source graph imports")
+                    graph["imports"] = JsonValue.array(read_requests(values[0])?)
+                _ => return Err("invalid source graph imports")
+        result.append(JsonValue.object(graph))
+    return Ok(result)

@@ -1,0 +1,85 @@
+"""
+The receipt a Rust build leaves of the libraries it built, and the reading later builds select those libraries from.
+
+Each entry names a library's crate, artifact, directory and search directories, its Loaf, the authority that covered it
+and, for a hybrid provider, its own Rust facet. A keyed receipt also carries each unit's key.
+"""
+
+from std.fs import Path
+from std.json import JsonValue
+from files import parse_json, read
+from json_fields import field, required_items, required_text, strings
+from rust_build import BuiltUnit
+
+
+# The schema of the receipt a build leaves of the libraries it built.
+const RECEIPT_SCHEMA: str = "incan.rust-units/1"
+
+
+pub def receipt_document(built: Dict[str, BuiltUnit], keyed: bool) -> JsonValue:
+    """The receipt of built libraries: each one's crate, artifact and directory, and with `keyed` its unit key."""
+    mut units: list[JsonValue] = []
+    for key in sorted([key for key in built.keys()]):
+        mut fields: Dict[str, JsonValue] = {}
+        if keyed:
+            fields["key"] = JsonValue.string(key)
+        fields["crate"] = JsonValue.string(built[key].crate_name)
+        fields["artifact"] = JsonValue.string(built[key].artifact)
+        fields["directory"] = JsonValue.string(built[key].directory)
+        fields["search"] = JsonValue.array([JsonValue.string(path) for path in built[key].search])
+        fields["loaf"] = JsonValue.string(built[key].loaf)
+        fields["covered_by"] = JsonValue.string(built[key].covered_by)
+        # Only a hybrid provider records its own Rust facet, so every other unit's entry keeps its bytes.
+        if built[key].native_artifact != "":
+            fields["native_crate"] = JsonValue.string(built[key].native_crate)
+            fields["native_artifact"] = JsonValue.string(built[key].native_artifact)
+        units.append(JsonValue.object(fields))
+    return JsonValue.object({"schema": JsonValue.string(RECEIPT_SCHEMA), "units": JsonValue.array(units)})
+
+
+pub def read_receipt(path: Path, keyed: bool = false) -> Result[Dict[str, BuiltUnit], str]:
+    """
+    The exact native libraries a build recorded in its receipt, by crate name or, with `keyed`, by unit key.
+
+    A library is never selected by scanning directories, and one whose artifact is gone is left out.
+    """
+    if not path.is_file():
+        return Ok({})
+    receipt = parse_json(read(path)?)?
+    if required_text(receipt, "schema")? != RECEIPT_SCHEMA:
+        return Err(f"{path.0}: unsupported native unit receipt")
+    mut result: Dict[str, BuiltUnit] = {}
+    for item in required_items(receipt, "units")?:
+        name = required_text(item, "crate")?
+        artifact = required_text(item, "artifact")?
+        directory = required_text(item, "directory")?
+        mut key = name
+        if keyed:
+            key = required_text(item, "key")?
+        if key in result:
+            return Err(f"{path.0}: ambiguous native library {name}")
+        if Path(artifact).is_file():
+            listed = field(item, "search", []).map_err((_) => f"{path.0}: missing search")?
+            search = strings(listed, ["search"]).map_err((_) => f"{path.0}: search is not a list of directories")?
+            mut loaf = ""
+            if item.contains_key("loaf"):
+                loaf = required_text(item, "loaf")?
+            mut covered_by = ""
+            if item.contains_key("covered_by"):
+                covered_by = required_text(item, "covered_by")?
+            mut native_crate = ""
+            mut native_artifact = ""
+            if item.contains_key("native_artifact"):
+                native_crate = required_text(item, "native_crate")?
+                native_artifact = required_text(item, "native_artifact")?
+            result[key] = BuiltUnit(
+                crate_name=name,
+                artifact=artifact,
+                directory=directory,
+                search=search,
+                loaf=loaf,
+                covered_by=covered_by,
+                native_crate=native_crate,
+                native_artifact=native_artifact,
+            )
+    return Ok(result)

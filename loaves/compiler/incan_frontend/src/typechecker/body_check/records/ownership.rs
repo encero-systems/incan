@@ -16,7 +16,7 @@ pub(super) fn project(
 ) -> Result<(), NodeBindingError> {
     let Some(contract) = checker
         .declaration_view()
-        .function(owner)
+        .callable(owner)
         .and_then(|binding| binding.identity.as_ref())
         .and_then(|identity| checker.type_info.declarations.ownership_contracts.get(identity))
     else {
@@ -143,11 +143,11 @@ mod tests {
     fn explicit_input_body_records_rebind_all_authority() -> Result<(), Box<dyn std::error::Error>> {
         let cases = [
             (
-                "def read(value: Borrowed[int]) -> int:\n    return value\ndef use() -> int:\n    value = 3\n    return read(value)\n",
+                "def read(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return value\ndef use() -> int:\n    value = 3\n    return read(value)\n",
                 "use",
             ),
             (
-                "def replace(mut value: BorrowedMut[int]) -> int:\n    mut alias: BorrowedMut[int] = value\n    alias = 7\n    return value\n",
+                "def replace(mut value: BorrowedMut[int], proof: Owned[int] = 0) -> int:\n    mut alias: BorrowedMut[int] = value\n    alias = 7\n    return value\n",
                 "replace",
             ),
             (
@@ -186,14 +186,15 @@ mod tests {
     /// Reordered permission maps cannot acquire a second canonical byte representation of the same decoded graph.
     #[test]
     fn input_graph_map_order_is_canonical() -> Result<(), Box<dyn std::error::Error>> {
-        let source = "def together(left: Borrowed[int], right: Borrowed[int]) -> bool:\n    return left == right\n";
+        let source = "def together(left: Borrowed[int], right: Borrowed[int], proof: Owned[int] = 0) -> bool:\n    return left == right\n";
         let mut fields = fixture_record(source, "together", false)?;
         verify_fixture(source, "together", fields.clone())?;
         let row = fields
             .iter_mut()
             .find(|row| row[0] == "input-flow")
             .ok_or("missing input flow")?;
-        assert_eq!(row[7], "2");
+        // Two borrowed inputs and the defaulted `Owned[int]` proof entry.
+        assert_eq!(row[7], "3");
         assert_eq!(row[8], "binding");
         assert_eq!(row[13], "binding");
         row[8..18].rotate_left(5);
@@ -206,7 +207,8 @@ mod tests {
     /// Declaration contracts and refused body projections retain their distinct complete record payloads.
     #[test]
     fn checked_ownership_records_round_trip() -> Result<(), Box<dyn std::error::Error>> {
-        let source = "def view(value: Borrowed[str]) -> Borrowed[str] from value:\n    return value\n";
+        let source =
+            "def view(value: Borrowed[str], marker: Owned[int] = 0) -> Borrowed[str] from value:\n    return value\n";
         let moved = format!("# moved source\n{source}");
         let fields = fixture_record(source, "view", true)?;
         assert!(

@@ -144,7 +144,7 @@ from rust::std::borrow import Borrow
 from rust::std::path import PathBuf
 
 
-pub def borrowed(value: &PathBuf) -> &PathBuf:
+pub def borrowed(value: Borrowed[PathBuf]) -> Borrowed[PathBuf] from value:
     return value.borrow()
 ```
 
@@ -155,7 +155,7 @@ To disambiguate two imported traits with the same method name, call `Trait.metho
 When a Rust API requires a callback with a borrowed slice parameter, give a named Incan callback the matching borrowed list annotation:
 
 ```incan
-def write_silence(data: &mut list[f32], info: &OutputCallbackInfo) -> None:
+def write_silence(data: BorrowedMut[list[f32]], info: Borrowed[OutputCallbackInfo]) -> None:
     pass
 ```
 
@@ -201,7 +201,7 @@ Public metadata and editor previews are specified in [Checked API metadata](../.
 
 Exact numeric types and lossless widening are accepted at Rust call boundaries. The opening example passes `f32` to `Duration.from_secs_f64`; narrowing to `f32`, signed-to-unsigned conversions and other lossy changes need an explicit source conversion. Handle `try_resize()` with `Option` before making the call. See [Numeric semantics](../reference/numeric_semantics.md).
 
-Incan `str` values can satisfy Rust `String` or shared `&str` parameters, and `bytes` can satisfy `Vec<u8>` or shared byte slices. Write `&T` or `&mut T` where an API explicitly borrows a value; Rust types with lifetime parameters can require a lifetime contract and may be refused.
+Incan `str` values can satisfy Rust `String` or shared `&str` parameters, and `bytes` can satisfy `Vec<u8>` or shared byte slices. Write `Borrowed[T]` or `BorrowedMut[T]` where an API explicitly borrows a value (Rust's `&T` and `&mut T`); Rust types with lifetime parameters can require a lifetime contract and may be refused.
 
 For imported Rust free functions with checked parameter names, keyword arguments bind by those names. A name missing from the signature is refused rather than guessed.
 

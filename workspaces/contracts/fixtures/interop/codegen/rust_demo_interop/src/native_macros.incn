@@ -1,2 +1,3 @@
 """Source vocabulary backed by an exported Rust derive macro import."""
 pub from rust::demo_derive import Component
+pub from rust::demo import facade_value

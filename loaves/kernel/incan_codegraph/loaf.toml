@@ -1,7 +1,9 @@
 [dependencies]
+icu-normalizer = { default-features = false, features = ["compiled_data"], loaf = "crates-io/icu_normalizer", version = "2.3" }
 postcard = { default-features = false, features = ["use-std"], loaf = "crates-io/postcard", version = "1.1" }
 sha2 = { loaf = "crates-io/sha2", version = "0.10.9" }
 thiserror = { loaf = "crates-io/thiserror", version = "2.0" }
+unicode-ident = { default-features = true, features = [], loaf = "crates-io/unicode-ident", version = "1" }
 serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
 serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
 

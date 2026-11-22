@@ -24,17 +24,17 @@ use crate::typechecker::TypeChecker;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CheckedCallableModule {
-    schema: u32,
-    origin: SymbolOrigin,
-    callables: Vec<CallableEntry>,
+    pub(super) schema: u32,
+    pub(super) origin: SymbolOrigin,
+    pub(super) callables: Vec<CallableEntry>,
 }
 
 /// Keep the complete contract digest beside the header whose producer established its nominal correspondence.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CallableEntry {
-    header: CheckedCallableInterface,
-    signature: String,
+pub(super) struct CallableEntry {
+    pub(super) header: CheckedCallableInterface,
+    pub(super) signature: String,
 }
 
 /// The complete result of a callable-namespace query, including an empty candidate set.
@@ -42,9 +42,9 @@ struct CallableEntry {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CallableLookupWitness {
-    origin: SymbolOrigin,
-    name: String,
-    candidates: Vec<(StableDeclarationId, String)>,
+    pub(super) origin: SymbolOrigin,
+    pub(super) name: String,
+    pub(super) candidates: Vec<(StableDeclarationId, String)>,
 }
 
 /// One producer-owned positive lookup with the checked callable signatures its body digest consumes.

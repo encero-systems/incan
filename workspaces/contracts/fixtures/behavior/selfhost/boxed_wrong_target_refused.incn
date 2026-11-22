@@ -4,7 +4,7 @@
 from rust::std::boxed import Box
 
 
-def read(value: &str) -> int:
+def read(value: Borrowed[str]) -> int:
     """Require borrowed text rather than a borrowed integer."""
     return len(value)
 

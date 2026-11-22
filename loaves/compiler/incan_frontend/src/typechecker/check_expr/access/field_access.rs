@@ -219,7 +219,8 @@ impl TypeChecker {
         }
         self.type_info
             .record_computed_property_access(span, type_name, property);
-        Some(return_type)
+        // A `Borrowed[T]` property result is a receiver-tied view, read as its value type like a stored view field.
+        Some(self.explicit_ownership_value_type(&return_type).unwrap_or(return_type))
     }
 
     /// Return whether the receiver has a computed property with this name.
@@ -478,6 +479,29 @@ impl TypeChecker {
             ResolvedNamespaceMemberKind::Method(info) => {
                 Some(ResolvedType::Function(info.params, Box::new(info.return_type)))
             }
+            ResolvedNamespaceMemberKind::Symbol(SymbolKind::RustItem(info)) => {
+                // A re-exported Rust function read through its module is the function value a read of the imported
+                // name is; any other Rust item stays outside value position here.
+                let metadata = info
+                    .metadata
+                    .clone()
+                    .or_else(|| self.rust_item_metadata_for_path(&info.path));
+                if let Some(metadata) = metadata
+                    && let RustItemKind::Function(signature) = &metadata.kind
+                {
+                    let declared =
+                        self.resolved_function_type_from_rust_sig_for_owner_path(signature, false, &info.path);
+                    return Some(
+                        self.retain_rust_function_value(&info.path, signature, span)
+                            .unwrap_or(declared),
+                    );
+                }
+                self.errors.push(CompileError::type_error(
+                    format!("Qualified member '{callable}' is not a value"),
+                    span,
+                ));
+                Some(ResolvedType::Unknown)
+            }
             ResolvedNamespaceMemberKind::Symbol(_) => {
                 self.errors.push(CompileError::type_error(
                     format!("Qualified member '{callable}' is not a value"),
@@ -569,8 +593,8 @@ impl TypeChecker {
                             let RustItemKind::Constant { type_display } = &metadata.kind else {
                                 return ResolvedType::Unknown;
                             };
-                            self.type_info.rust.checked_constants.insert(span, selected);
-                            self.native_rust_signature_type(type_display, path)
+                            let display = type_display.clone();
+                            self.checked_rust_constant(span, selected, &display, path)
                         }
                     };
                 }
@@ -584,8 +608,8 @@ impl TypeChecker {
                 if let Some(metadata) = self.rust_item_metadata_for_path(&selected)
                     && let RustItemKind::Constant { type_display } = &metadata.kind
                 {
-                    self.type_info.rust.checked_constants.insert(span, selected);
-                    return self.native_rust_signature_type(type_display, path);
+                    let display = type_display.clone();
+                    return self.checked_rust_constant(span, selected, &display, path);
                 }
                 if let Some(method) = owner
                     .methods
@@ -606,11 +630,8 @@ impl TypeChecker {
                         if let Some(metadata) = self.rust_item_metadata_for_path(&selected)
                             && let RustItemKind::Constant { type_display } = &metadata.kind
                         {
-                            self.type_info
-                                .rust
-                                .checked_constants
-                                .insert(span, metadata.canonical_path.clone());
-                            return self.native_rust_signature_type(type_display, path);
+                            let (selected, display) = (metadata.canonical_path.clone(), type_display.clone());
+                            return self.checked_rust_constant(span, selected, &display, path);
                         }
                         self.retain_rust_variant_construction(path, field, &[], &params, span);
                         return ResolvedType::RustPath(path.to_string());

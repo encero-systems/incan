@@ -86,7 +86,7 @@ def skipped_directory(name: str) -> bool:
     return name.startswith(".") or name in ["target", "node_modules"]
 
 
-def control_at(data: &bytes, index: int) -> Option[tuple[str, str]]:
+def control_at(data: Borrowed[bytes], index: int) -> Option[tuple[str, str]]:
     """Decode the closed RFC 175 `Bidi_Control` set from UTF-8 bytes without embedding a raw control in Oven."""
     if pair(data, index, 216, 156):
         return Some(("\\u{61c}", "ARABIC LETTER MARK"))
@@ -111,12 +111,12 @@ def control_at(data: &bytes, index: int) -> Option[tuple[str, str]]:
     return None
 
 
-def pair(data: &bytes, index: int, first: int, second: int) -> bool:
+def pair(data: Borrowed[bytes], index: int, first: int, second: int) -> bool:
     """Compare a two-byte UTF-8 sequence only after proving its bounds."""
     return index + 1 < len(data) and int(data[index]) == first and int(data[index + 1]) == second
 
 
-def triple(data: &bytes, index: int, first: int, second: int, third: int) -> bool:
+def triple(data: Borrowed[bytes], index: int, first: int, second: int, third: int) -> bool:
     """Compare a three-byte UTF-8 sequence only after proving its bounds."""
     return index + 2 < len(data) and int(data[index]) == first and int(data[index + 1]) == second and int(data[index + 2]) == third
 

@@ -20,9 +20,9 @@ println(artifact.read_text(encoding="utf-8", errors="strict")?)
 ```
 """
 
-from std.fs.path import Path
-from std.fs.file import File, OpenFileMode, OpenOptions
-from std.fs.locking import FileLock
-from std.fs.mapping import MappedFile, MappedView
-from std.fs.metadata import DirEntry, PathStat, DiskUsage
+pub from crate.fs.path import Path
+pub from crate.fs.file import File, OpenFileMode, OpenOptions
+pub from crate.fs.locking import FileLock
+pub from crate.fs.mapping import MappedFile, MappedView
+pub from crate.fs.metadata import DirEntry, PathStat, DiskUsage
 pub from std.io import IoError

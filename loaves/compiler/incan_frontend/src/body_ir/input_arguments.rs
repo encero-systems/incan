@@ -77,6 +77,7 @@ impl BodyBuilder<'_, '_> {
                     let place = self.lower_expr_to_place(receiver, scope, out);
                     self.authenticate_input_place(&place, &root, &fields, &elements)?;
                     self.consume_input_source_read(receiver, &place);
+                    let place = self.through_borrow_local(place, access);
                     let fact = if checked.exclusive {
                         bir::OwnershipFact::MutBorrow
                     } else {
@@ -145,13 +146,26 @@ impl BodyBuilder<'_, '_> {
                 .get(*slot)
                 .ok_or("explicit input has no selected value parameter")?;
             let ty = super::parameter_types::physical_type_argument(self.checked_type(&parameter.ty));
+            // RFC 164: an `Owned[T]` parameter never receives an implicit clone of a borrowed value.
+            if argument.access == IncanInputAccess::Owned
+                && matches!(self.resolve_ty(expression.span), IncanType::Ref(_))
+                && !matches!(ty, IncanType::Ref(_) | IncanType::RefMut(_))
+            {
+                return Err(
+                    "an Owned[T] parameter takes no implicit clone of a borrowed value; write `.clone()` on it".into(),
+                );
+            }
             let value = match argument.source {
                 Some(CheckedInputSource::Place { root, fields, elements }) => {
-                    if super::parameter_types::physical_type_argument(self.resolve_ty(expression.span)) != ty {
+                    let source = super::parameter_types::physical_type_argument(self.resolve_ty(expression.span));
+                    let through_borrow = matches!(&source, IncanType::Ref(inner) | IncanType::RefMut(inner)
+                        if super::parameter_types::physical_type_argument(inner.as_ref().clone()) == ty);
+                    if source != ty && !through_borrow {
                         return Err("explicit source-place input cannot coerce or copy its owner".into());
                     }
                     let place = self.lower_expr_to_place(expression, scope, out);
                     self.authenticate_input_place(&place, &root, &fields, &elements)?;
+                    let place = self.through_borrow_local(place, argument.access);
                     self.explicit_place_operand(place, &ty, argument.access, expression)?
                 }
                 Some(CheckedInputSource::CarriedLocal) => {
@@ -204,6 +218,23 @@ impl BodyBuilder<'_, '_> {
 
     /// The physical local and every stored field must name the checked source place; similar names or layouts do
     /// not authorize a borrow. Indexed, global and adapted carriers remain refused by this first consumer.
+    /// RFC 164: a whole native borrow local named as the place of a borrowed input lends what it borrows (`*x`), as
+    /// the explicit spelling's value-typed input did. Every other place is lent as it is.
+    fn through_borrow_local(&self, mut place: bir::Place, access: IncanInputAccess) -> bir::Place {
+        let borrowed_access = matches!(
+            access,
+            IncanInputAccess::Shared | IncanInputAccess::InferredShared | IncanInputAccess::Exclusive
+        );
+        let borrow_local = place
+            .local_id()
+            .and_then(|id| self.locals.get(id.index()))
+            .is_some_and(|local| matches!(local.ty, IncanType::Ref(_) | IncanType::RefMut(_)));
+        if borrowed_access && borrow_local && place.projection.is_empty() {
+            place.projection.push(bir::PlaceElem::Deref);
+        }
+        place
+    }
+
     pub(super) fn authenticate_input_place(
         &self,
         place: &bir::Place,
@@ -215,11 +246,18 @@ impl BodyBuilder<'_, '_> {
             .local_id()
             .and_then(|id| self.locals.get(id.index()))
             .ok_or("explicit input has no local owner storage")?;
-        if local.identity.as_deref() != Some(root) || place.projection.len() != fields.len() + elements.len() {
+        // RFC 164: a place reached through a whole native borrow local starts with that borrow's dereference.
+        let through_borrow = usize::from(
+            matches!(place.projection.first(), Some(bir::PlaceElem::Deref))
+                && matches!(local.ty, IncanType::Ref(_) | IncanType::RefMut(_)),
+        );
+        if local.identity.as_deref() != Some(root)
+            || place.projection.len() != fields.len() + elements.len() + through_borrow
+        {
             return Err("explicit input storage differs from its checked source owner".into());
         }
         let mut fields = fields.iter();
-        for (position, projection) in place.projection.iter().enumerate() {
+        for (position, projection) in place.projection.iter().enumerate().skip(through_borrow) {
             if elements.contains(&position) {
                 if !matches!(projection, bir::PlaceElem::Index(_)) {
                     return Err("explicit input storage differs from its checked element projection".into());

@@ -7,7 +7,7 @@ use super::*;
 fn owned_local_source_conflicts_remain_typed() -> Result<(), Box<dyn std::error::Error>> {
     for source in [
         "def main() -> int:\n    original = \"payload\"\n    let held: Owned[str] = original\n    return len(original)\n",
-        "def read(original: Borrowed[str]) -> int:\n    let held: Owned[str] = original\n    return len(held)\n",
+        "def read(original: Borrowed[str], proof: Owned[int] = 0) -> int:\n    let held: Owned[str] = original\n    return len(held)\n",
         "def read(original: Owned[str]) -> str:\n    let view: Borrowed[str] = original\n    return view\n",
     ] {
         let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
@@ -29,7 +29,7 @@ fn owned_local_source_conflicts_remain_typed() -> Result<(), Box<dyn std::error:
 #[test]
 fn noncopy_local_alias_retains_owner_until_last_use() -> Result<(), Box<dyn std::error::Error>> {
     let module = staged(
-        "def length(value: Borrowed[str]) -> int:\n    return len(value)\ndef main() -> int:\n    original = \"payload\"\n    let view: Borrowed[str] = original\n    assert length(view) == 7\n    let held: Owned[str] = original\n    return len(held)\n",
+        "def length(value: Borrowed[str], proof: Owned[int] = 0) -> int:\n    return len(value)\ndef main(proof: Owned[int] = 0) -> int:\n    original = \"payload\"\n    let view: Borrowed[str] = original\n    assert length(view) == 7\n    let held: Owned[str] = original\n    return len(held)\n",
         false,
     )?;
     let body = module
@@ -50,7 +50,7 @@ fn noncopy_local_alias_retains_owner_until_last_use() -> Result<(), Box<dyn std:
 #[test]
 fn noncopy_model_alias_keeps_nested_storage() -> Result<(), Box<dyn std::error::Error>> {
     let module = staged(
-        "model Page:\n    title: str\n    count: int\ndef main() -> None:\n    mut page = Page(title=\"old\", count=1)\n    mut view: BorrowedMut[Page] = page\n    view.title = \"new\"\n    view.count += 1\n    assert view.title == \"new\"\n    assert page.count == 2\n",
+        "model Page:\n    title: str\n    count: int\ndef main(proof: Owned[int] = 0) -> None:\n    mut page = Page(title=\"old\", count=1)\n    mut view: BorrowedMut[Page] = page\n    view.title = \"new\"\n    view.count += 1\n    assert view.title == \"new\"\n    assert page.count == 2\n",
         false,
     )?;
     let body = module
@@ -76,7 +76,7 @@ fn noncopy_alias_operation_retains_loan_through_later_arguments() -> Result<(), 
         "print(f\"{view}{replace(original)}\")",
     ] {
         let source = format!(
-            "def replace(mut value: BorrowedMut[str]) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef main() -> None:\n    mut original = \"payload\"\n    let view: Borrowed[str] = original\n    {expression}\n"
+            "def replace(mut value: BorrowedMut[str], proof: Owned[int] = 0) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef main(proof: Owned[int] = 0) -> None:\n    mut original = \"payload\"\n    let view: Borrowed[str] = original\n    {expression}\n"
         );
         let tokens = crate::lexer::lex(&source).map_err(|errors| format!("{errors:?}"))?;
         let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
@@ -127,7 +127,7 @@ fn noncopy_alias_observers_preserve_disjoint_and_completed_reads() -> Result<(),
 fn borrowed_text_parameter_observers_keep_source_storage() -> Result<(), Box<dyn std::error::Error>> {
     for mode in ["Borrowed", "BorrowedMut"] {
         let module = admitted(&format!(
-            "def read(value: {mode}[str]) -> int:\n    return len(value)\n"
+            "def read(value: {mode}[str], proof: Owned[int] = 0) -> int:\n    return len(value)\n"
         ))?;
         let body = module.bodies.first().ok_or("missing body")?;
         let arguments = body
@@ -162,7 +162,7 @@ fn borrowed_parameter_operation_refuses_later_mutation() -> Result<(), Box<dyn s
         "print(f\"{value}{replace(value)}\")",
     ] {
         let source = format!(
-            "def replace(mut value: BorrowedMut[str]) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef inspect(mut value: BorrowedMut[str]) -> None:\n    {expression}\n"
+            "def replace(mut value: BorrowedMut[str], proof: Owned[int] = 0) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef inspect(mut value: BorrowedMut[str], proof: Owned[int] = 0) -> None:\n    {expression}\n"
         );
         let tokens = crate::lexer::lex(&source).map_err(|errors| format!("{errors:?}"))?;
         let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
@@ -182,7 +182,7 @@ fn borrowed_parameter_operation_refuses_later_mutation() -> Result<(), Box<dyn s
 /// An exclusive alias cannot use its parent capability to mutate a text operand still shared by an operation.
 #[test]
 fn exclusive_alias_operation_requires_a_shared_child() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def replace(mut value: BorrowedMut[str]) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef inspect(mut value: BorrowedMut[str]) -> None:\n    mut view: BorrowedMut[str] = value\n    print(view, replace(view))\n";
+    let source = "def replace(mut value: BorrowedMut[str], proof: Owned[int] = 0) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef inspect(mut value: BorrowedMut[str], proof: Owned[int] = 0) -> None:\n    mut view: BorrowedMut[str] = value\n    print(view, replace(view))\n";
     let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
     let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
     let mut checker = crate::typechecker::TypeChecker::new();
@@ -232,12 +232,13 @@ fn borrowed_parameter_operations_keep_disjoint_and_copy_behavior() -> Result<(),
     Ok(())
 }
 
-/// A plain Copy helper keeps its inferred declaration ABI, while an explicit local still gives its caller a profile.
+/// A plain Copy helper keeps its inferred declaration ABI, while an explicit local in a body whose signature needs the
+/// proof still gives its caller a profile.
 /// Native persistence of that local-only obligation is a separate representation acceptance gate.
 #[test]
 fn ordinary_copy_helper_retains_caller_profile_and_value_operand() -> Result<(), Box<dyn std::error::Error>> {
     let module = admitted(
-        "def add(value: int) -> int:\n    return value + 1\ndef use(value: int) -> int:\n    let view: Borrowed[int] = value\n    return add(view)\n",
+        "def add(value: int) -> int:\n    return value + 1\ndef use(value: int, proof: Owned[int] = 0) -> int:\n    let view: Borrowed[int] = value\n    return add(view)\n",
     )?;
     let caller = module
         .bodies
@@ -249,11 +250,12 @@ fn ordinary_copy_helper_retains_caller_profile_and_value_operand() -> Result<(),
         .iter()
         .find(|body| body.name == "add")
         .ok_or("missing callee")?;
+    // The ordinary value input stays inferred; the defaulted `Owned[int]` proof entry is explicit.
     assert!(
         caller
             .params
-            .iter()
-            .all(|parameter| parameter.input_access.is_inferred())
+            .first()
+            .is_some_and(|parameter| parameter.input_access.is_inferred())
     );
     assert!(
         callee
@@ -283,12 +285,12 @@ fn ordinary_copy_helper_retains_caller_profile_and_value_operand() -> Result<(),
     Ok(())
 }
 
-/// An explicit local in an otherwise ordinary body keeps its obligation on the body: losing the checked profile
-/// refuses the body and its call to an ordinary helper instead of leaving a body that no longer looks explicit.
+/// An explicit local in a body whose signature needs the proof keeps its obligation on the body: losing the checked
+/// profile refuses the body and its call to an ordinary helper instead of leaving a body that no longer looks explicit.
 #[test]
 fn explicit_local_requires_profile_when_callee_is_ordinary() -> Result<(), Box<dyn std::error::Error>> {
     let module = admitted(
-        "def add(value: int) -> int:\n    return value + 1\ndef use(value: int) -> int:\n    let view: Borrowed[int] = value\n    return add(view)\n",
+        "def add(value: int) -> int:\n    return value + 1\ndef use(value: int, proof: Owned[int] = 0) -> int:\n    let view: Borrowed[int] = value\n    return add(view)\n",
     )?;
     let caller = module
         .bodies
@@ -300,11 +302,12 @@ fn explicit_local_requires_profile_when_callee_is_ordinary() -> Result<(), Box<d
         .iter()
         .find(|body| body.name == "add")
         .ok_or("missing callee")?;
+    // The ordinary value input stays inferred; the defaulted `Owned[int]` proof entry is explicit.
     assert!(
         caller
             .params
-            .iter()
-            .all(|parameter| parameter.input_access.is_inferred())
+            .first()
+            .is_some_and(|parameter| parameter.input_access.is_inferred())
     );
     assert!(
         callee
@@ -340,7 +343,7 @@ fn explicit_local_requires_profile_when_callee_is_ordinary() -> Result<(), Box<d
 #[test]
 fn method_frames_borrow_receiver_and_inputs() -> Result<(), Box<dyn std::error::Error>> {
     let module = admitted(
-        "class Counter:\n    pub value: int\n\n    pub def bump(mut self, mut amount: BorrowedMut[int]) -> None:\n        self.value = self.value + amount\n        amount = 0\n\ndef main() -> int:\n    mut counter = Counter(value=1)\n    mut step = 2\n    counter.bump(step)\n    return counter.value + step\n",
+        "class Counter:\n    pub value: int\n\n    pub def bump(mut self, mut amount: BorrowedMut[int], proof: Owned[int] = 0) -> None:\n        self.value = self.value + amount\n        amount = 0\n\ndef main() -> int:\n    mut counter = Counter(value=1)\n    mut step = 2\n    counter.bump(step)\n    return counter.value + step\n",
     )?;
     let method = module
         .bodies
@@ -351,7 +354,8 @@ fn method_frames_borrow_receiver_and_inputs() -> Result<(), Box<dyn std::error::
         .checked_input_profile
         .as_ref()
         .ok_or("method has no checked profile")?;
-    assert_eq!(profile.parameters.len(), 2);
+    // The receiver, the exclusive input and the defaulted `Owned[int]` proof entry.
+    assert_eq!(profile.parameters.len(), 3);
     assert_eq!(
         profile.parameters[1].access,
         incan_semantics_core::IncanInputAccess::Exclusive

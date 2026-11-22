@@ -491,7 +491,7 @@ class Hooks with Callbacks:
     calls: int = 0
     flag: str
 
-    def config(mut self, mut config: &mut Config) -> None:
+    def config(mut self, mut config: BorrowedMut[Config]) -> None:
         self.calls += 1
         config.flags.append(self.flag)
 

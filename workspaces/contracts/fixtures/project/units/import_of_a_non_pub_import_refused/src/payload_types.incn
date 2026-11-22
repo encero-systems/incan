@@ -1,0 +1,5 @@
+"""The admission record."""
+
+
+pub model PayloadAdmission:
+    pub identity: str

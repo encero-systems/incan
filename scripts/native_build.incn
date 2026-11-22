@@ -16,12 +16,10 @@ from release_support import (
     Step,
     append_timing,
     cancel_background_step,
-    digest,
     finish_background_step,
     log_tail,
     run_reserved_steps,
     run_step,
-    same_bytes,
     start_background_step,
 )
 
@@ -30,8 +28,7 @@ pub const LOWERING_RESERVATION_BYTES: int = 6 * GIB
 pub const PROJECT_RESERVATION_BYTES: int = 2 * GIB
 pub const STANDARD_RESERVATION_BYTES: int = 2 * GIB
 const SUPPORT_PROGRAM: str = "workspaces/oven/src/toolchain_native.incn"
-const RUNTIME_NAME: str = "incan_native_runtime"
-const RUNTIME_PROJECT: str = "loaves/compiler/incan_native_runtime"
+const OVEN_OBSERVATION: str = "bundle/memory-oven-1"
 
 
 pub model NativeContext:
@@ -150,62 +147,6 @@ pub def readmit_build_home(context: NativeContext, helper: Path, phase: str) -> 
     )
 
 
-pub def build_source_interfaces(context: NativeContext, helper: Path, phase_prefix: str = "") -> Result[Path, str]:
-    """Check and publish the three source interfaces through the selected compiler generation."""
-    toolchain = context.home.joinpath(TOOLCHAIN_DIRECTORY)
-    manifest = read_json(toolchain.joinpath("toolchain.json"))?
-    driver = absolute(manifest_text(manifest, "driver")?, toolchain)
-    sysroot = absolute(manifest_text(manifest, "sysroot")?, toolchain)
-    interfaces = context.home.joinpath("source-interfaces")
-    interfaces.mkdir(true, true).map_err((error) => error.message())?
-    inventory = interfaces.joinpath("loaves.json")
-    write_json(inventory, JsonValue.array([]))?
-    for package in ["primitives", "async"]:
-        build_source_interface(context, helper, package, driver, sysroot, inventory, interfaces, phase_prefix)?
-    return Ok(inventory)
-
-
-pub def build_runtime(
-    context: NativeContext,
-    helper: Path,
-    source_interfaces: Option[Path],
-    install: bool,
-    phase_prefix: str = "",
-) -> Result[Path, str]:
-    """Compile checked runtime source without an earlier runtime or compiled standard provider in its closure."""
-    toolchain = context.home.joinpath(TOOLCHAIN_DIRECTORY)
-    manifest = read_json(toolchain.joinpath("toolchain.json"))?
-    driver = absolute(manifest_text(manifest, "driver")?, toolchain)
-    sysroot = absolute(manifest_text(manifest, "sysroot")?, toolchain)
-    requested_graph = codegraph_on_request(manifest)?
-    output = context.repo.joinpath(f"{RUNTIME_PROJECT}/target/incan/native/release")
-    output.mkdir(true, true).map_err((error) => error.message())?
-    unit = output.joinpath(f"{RUNTIME_NAME}.unit.json")
-    prepared = helper_json(
-        context,
-        helper,
-        [context.repo.0, "runtime", "release"],
-        {},
-        f"{phase_prefix}runtime-describe",
-    )?
-    write_json(unit, runtime_unit(prepared, source_interfaces)?)?
-    identify(context, helper, unit, false, f"{phase_prefix}runtime-identify")?
-    compile_library(
-        context,
-        driver,
-        sysroot,
-        unit,
-        RUNTIME_NAME,
-        output,
-        f"{phase_prefix}runtime-build",
-    )?
-    publish(context, helper, unit, output, false, f"{phase_prefix}runtime-publish")?
-    require_requested_codegraph(requested_graph, output, RUNTIME_NAME)?
-    if not install:
-        return Ok(output.joinpath(f"lib{RUNTIME_NAME}.rlib"))
-    return install_runtime(context, helper, unit, output)
-
-
 pub def build_standard_packages(
     context: NativeContext,
     helper: Path,
@@ -225,47 +166,23 @@ pub def build_standard_packages(
     return Ok(None)
 
 
-pub def start_candidate_lsp(context: NativeContext) -> Result[Option[PendingToolBuild], str]:
-    """Start the Rust-only language server once candidate relinking has selected its complete compiler closure."""
-    if overlapping_project_capacity(context.jobs, context.memory) is None:
-        return Ok(None)
-    lsp = tool_build_plan(context, "lsp", false, "lsp-build")?
-    return Ok(Some(PendingToolBuild(plan=lsp, worker=start_background_step(lsp.child)?)))
-
-
 pub def build_candidate_standard_with_lsp(
     context: NativeContext,
     helper: Path,
     phase_prefix: str,
-    pending: Option[PendingToolBuild],
 ) -> Result[tuple[Path, Option[PendingToolBuild]], str]:
     """
-    Build candidate release providers while the independent Rust-only language server builds.
+    Publish release providers before starting the release language server.
 
-    The language-server project contains no Incan source and reads the selected driver, sysroot, compiler Loaves, and
-    Rust dependency closure that already exist after candidate relinking. It does not consume the standard providers
-    being produced here. One project slot and its memory reservation remain unavailable to standard-package waves until
-    the language-server child finishes.
+    Its Rust dependency closure builds mixed Loaves that import the current compiler's standard providers.
+    Once those release profiles settle, the language server can run beside the debug profiles and Oven.
     """
-    match pending:
-        None =>
-            build_standard_packages(context, helper, phase_prefix, [StandardProfile.Release])?
-            lsp = tool_build_plan(context, "lsp", false, "lsp-build")?
-            run_build_plans(context, [lsp])?
-            return Ok((complete_build_plan(lsp)?, None))
-        Some(started) =>
-            jobs, memory = match overlapping_project_capacity(context.jobs, context.memory):
-                Some(capacity) => capacity
-                None =>
-                    _ = cancel_background_step(started.worker)
-                    return Err("project capacity disappeared before candidate standard production")
-            reserved = reserve_project_capacity(context, jobs, memory)
-            match build_standard_packages(reserved, helper, phase_prefix, [StandardProfile.Release]):
-                Ok(_) => pass
-                Err(message) =>
-                    _ = cancel_background_step(started.worker)
-                    return Err(message)
-            return Ok((Path(""), Some(started)))
+    build_standard_packages(context, helper, phase_prefix, [StandardProfile.Release])?
+    lsp = tool_build_plan(context, "lsp", false, "lsp-build")?
+    if overlapping_project_capacity(context.jobs, context.memory) is not None:
+        return Ok((Path(""), Some(PendingToolBuild(plan=lsp, worker=start_background_step(lsp.child)?))))
+    run_build_plans(context, [lsp])?
+    return Ok((complete_build_plan(lsp)?, None))
 
 
 pub def finish_tool_build(context: NativeContext, pending: PendingToolBuild) -> Result[Path, str]:
@@ -398,99 +315,14 @@ pub def require_unique_runtime_root(context: NativeContext) -> Result[None, str]
     return Ok(None)
 
 
-def build_source_interface(
-    context: NativeContext,
-    helper: Path,
-    package: str,
-    driver: Path,
-    sysroot: Path,
-    inventory: Path,
-    interfaces: Path,
-    phase_prefix: str,
-) -> Result[None, str]:
-    """Describe, check, and admit one checking-only source interface without compiled standard providers."""
-    project = context.repo.joinpath(f"loaves/stdlib/{package}")
-    name = project_name(project.joinpath("loaf.toml"))?
-    temporary = TemporaryDirectory.try_new_with(f"{package}.", "", Some(interfaces)).map_err((error) => error.message())?
-    directory = temporary.persist().map_err((error) => error.message())?
-    unit = directory.joinpath("unit.json")
-    prepared = helper_json(
-        context,
-        helper,
-        [context.repo.0, package, "release"],
-        {"SELFBUILD_LIBRARY_OUTPUT": ""},
-        f"{phase_prefix}source-interface-{package}-describe",
-    )?
-    interfaces_value = read_json(inventory)?.expect_array().map_err((error) => error.message())?
-    write_json(unit, source_interface_unit(prepared, interfaces_value)?)?
-    identify(context, helper, unit, true, f"{phase_prefix}source-interface-{package}-identify")?
-    require_native_step(
-        context,
-        step(
-            context,
-            f"{phase_prefix}source-interface-{package}",
-            driver.0,
-            ["--source-interface", unit.0, sysroot.0, directory.0],
-            common_environment(context),
-            context.repo,
-            context.evidence.joinpath(f"{phase_prefix}source-interface-{package}.log"),
-        ),
-    )?
-    publish(context, helper, unit, directory, true, f"{phase_prefix}source-interface-{package}-publish")?
-    append_interface(inventory, name, directory)?
-    return Ok(None)
-
-
-def source_interface_unit(prepared: JsonValue, interfaces: list[JsonValue]) -> Result[JsonValue, str]:
-    """Replace compiled standard providers with prior interfaces in one metadata-only standard unit."""
-    mut fields = prepared.expect_object().map_err((error) => error.message())?
-    fields["kind"] = JsonValue.string("library")
-    mut loaves = nonstandard(entries(JsonValue.object(fields), "loaves")?)?
-    loaves += interfaces
-    fields["loaves"] = JsonValue.array(loaves)
-    return Ok(JsonValue.object(fields))
-
-
-def runtime_unit(prepared: JsonValue, source_interfaces: Option[Path]) -> Result[JsonValue, str]:
-    """Remove earlier runtime providers and substitute explicit checked source interfaces when supplied."""
-    mut fields = prepared.expect_object().map_err((error) => error.message())?
-    fields["kind"] = JsonValue.string("library")
-    mut externs: list[JsonValue] = []
-    for entry in entries(JsonValue.object(fields), "externs")?:
-        name = manifest_text(entry, "name")?
-        if name != RUNTIME_NAME and not name.startswith("incan_stdlib_"):
-            externs.append(entry)
-    mut loaves: list[JsonValue] = []
-    for entry in entries(JsonValue.object(fields), "loaves")?:
-        if manifest_text(entry, "name")? != RUNTIME_NAME:
-            loaves.append(entry)
-    fields["externs"] = JsonValue.array(externs)
-    fields["loaves"] = JsonValue.array(loaves)
-    if let Some(inventory) = source_interfaces:
-        fields["loaves"] = JsonValue.array(nonstandard(loaves)? + entries(read_json(inventory)?, "")?)
-        fields["search"] = JsonValue.array(unique_paths(externs)?)
-    return Ok(JsonValue.object(fields))
-
-
-def nonstandard(loaves: list[JsonValue]) -> Result[list[JsonValue], str]:
-    """Keep only nonstandard Loaf bindings before checked source interfaces are injected."""
-    mut selected: list[JsonValue] = []
-    for entry in loaves:
-        standard = entry
-            .require("standard")
-            .and_then((value) => value.expect_bool())
-            .map_err((error) => error.message())?
-        if not standard:
-            selected.append(entry)
-    return Ok(selected)
-
-
-def unique_paths(externs: list[JsonValue]) -> Result[list[JsonValue], str]:
-    """Return sorted unique directories that contain the selected native externs."""
-    mut paths: set[str] = set()
-    for entry in externs:
-        paths.add(Path(manifest_text(entry, "path")?).parent().0)
-    return Ok([JsonValue.string(path) for path in sorted([path for path in paths])])
+pub def runtime_library(home: Path) -> Result[Path, str]:
+    """The Rust native runtime crate the home's manifest binds; the support build produces it with the other crates."""
+    toolchain = home.joinpath(TOOLCHAIN_DIRECTORY)
+    manifest = read_json(toolchain.joinpath("toolchain.json"))?
+    for entry in entries(manifest, "externs")?:
+        if manifest_text(entry, "name")? == "incan_native_runtime":
+            return Ok(absolute(manifest_text(entry, "path")?, toolchain))
+    return Err("the toolchain manifest binds no incan_native_runtime crate")
 
 
 pub def share_seed_generations(seed: Path, destination: Path, name: str) -> Result[None, str]:
@@ -516,93 +348,6 @@ pub def runtime_root(toolchain: Path) -> Path:
     and a home that installs the bundle and reuses that unit from the builder's bakery resolves the same reference.
     """
     return toolchain.joinpath("native")
-
-
-def install_runtime(context: NativeContext, helper: Path, unit: Path, output: Path) -> Result[Path, str]:
-    """Stage the complete runtime generation, bind it by content, and update the candidate manifest."""
-    toolchain = context.home.joinpath(TOOLCHAIN_DIRECTORY)
-    generations = runtime_root(toolchain)
-    generations.mkdir(true, true).map_err((error) => error.message())?
-    temporary = TemporaryDirectory.try_new_with(".staged.", "", Some(generations)).map_err((error) => error.message())?
-    staged = temporary.path()
-    artifacts = runtime_artifacts()
-    for artifact in artifacts:
-        _ = output.joinpath(artifact).copy(staged.joinpath(artifact), true, true).map_err((error) => error.message())?
-    rewrite_native_paths(staged.joinpath(f"{RUNTIME_NAME}.native.json"), output)?
-    publish(context, helper, unit, staged, false, "runtime-install-publish")?
-    write_artifact_digests(staged, artifacts)?
-    generation = digest(staged.joinpath("artifacts.sha256"))?
-    installed = generations.joinpath(generation)
-    if installed.exists():
-        require_same_generation(staged, installed, artifacts + ["artifacts.sha256"])?
-        publish(context, helper, unit, installed, false, "runtime-existing-publish")?
-    else:
-        persisted = temporary.persist().map_err((error) => error.message())?
-        _ = persisted.move(installed).map_err((error) => error.message())?
-    update_runtime_manifest(toolchain, installed)?
-    readmit_build_home(context, helper, "runtime-readmit")?
-    return Ok(installed.joinpath(f"lib{RUNTIME_NAME}.rlib"))
-
-
-def rewrite_native_paths(document: Path, directory: Path) -> Result[None, str]:
-    """Restate runtime sidecar extern, macro, and search references against their producer directory."""
-    mut fields = read_json(document)?.expect_object().map_err((error) => error.message())?
-    for key in ["externs", "macro_externs"]:
-        mut rewritten: list[JsonValue] = []
-        for entry in entries(JsonValue.object(fields), key)?:
-            mut pair = entry.expect_array().map_err((error) => error.message())?
-            text = pair[1].expect_str().map_err((error) => error.message())?
-            pair[1] = JsonValue.string(producer_reference(text, directory))
-            rewritten.append(JsonValue.array(pair))
-        fields[key] = JsonValue.array(rewritten)
-    mut search: list[JsonValue] = []
-    for path in entries(JsonValue.object(fields), "search")?:
-        text = path.expect_str().map_err((error) => error.message())?
-        search.append(JsonValue.string(producer_reference(text, directory)))
-    fields["search"] = JsonValue.array(search)
-    return write_json(document, JsonValue.object(fields))
-
-
-def producer_reference(reference: str, directory: Path) -> str:
-    """
-    Restate one runtime sidecar reference against its producer directory. A `sibling:` reference becomes `absolute:`;
-    `toolchain:`, `bakery:` and `absolute:` references keep their anchor; a legacy bare path is made absolute.
-    """
-    parts = reference.split(":")
-    if len(parts) > 1 and parts[0] in ["toolchain", "bakery", "absolute"]:
-        return reference
-    if len(parts) > 1 and parts[0] == "sibling":
-        return "absolute:" + absolute(":".join(parts[1:]), directory).0
-    return absolute(reference, directory).0
-
-
-def update_runtime_manifest(toolchain: Path, installed: Path) -> Result[None, str]:
-    """Replace the direct runtime binding and its search directory in `toolchain.json`."""
-    path = toolchain.joinpath("toolchain.json")
-    mut fields = read_json(path)?.expect_object().map_err((error) => error.message())?
-    mut externs: list[JsonValue] = []
-    mut previous: list[str] = []
-    for entry in entries(JsonValue.object(fields), "externs")?:
-        if manifest_text(entry, "name")? == RUNTIME_NAME:
-            previous.append(Path(manifest_text(entry, "path")?).parent().0)
-        else:
-            externs.append(entry)
-    externs.append(
-        JsonValue.object(
-            {"name": JsonValue.string(RUNTIME_NAME), "path": JsonValue.string(
-                installed.joinpath(f"lib{RUNTIME_NAME}.rlib").0,
-            )},
-        ),
-    )
-    mut search: set[str] = set()
-    for entry in entries(JsonValue.object(fields), "search")?:
-        value = entry.expect_str().map_err((error) => error.message())?
-        if value not in previous:
-            search.add(value)
-    search.add(installed.0)
-    fields["externs"] = JsonValue.array(externs)
-    fields["search"] = JsonValue.array([JsonValue.string(value) for value in sorted([value for value in search])])
-    return replace_json(path, JsonValue.object(fields))
 
 
 def build_standard_package(
@@ -907,22 +652,48 @@ def tool_build_plan(context: NativeContext, name: str, rebuild: bool, phase: str
             stamp.unlink().map_err((error) => error.message())?
     mut environment = common_environment(context)
     environment["OVEN_TRACE"] = "-"
+    child = tool_build_step(context, project, environment, phase)
     return Ok(
         NativeBuildPlan(
             name=name,
             output=output,
             destination=destination,
-            child=step(
-                context,
-                phase,
-                context.builder,
-                ["build", project.0, "--profile", "release"],
-                environment,
-                context.repo,
-                context.evidence.joinpath(f"{phase}.log"),
-            ),
+            child=child,
             reservation=PROJECT_RESERVATION_BYTES,
         ),
+    )
+
+
+def tool_build_step(context: NativeContext, project: Path, environment: Dict[str, str], phase: str) -> Step:
+    """Build an ordinary tool directly, or sample the shipped Oven build the release already requires."""
+    if phase != "oven-build":
+        return step(
+            context,
+            phase,
+            context.builder,
+            ["build", project.0, "--profile", "release"],
+            environment,
+            context.repo,
+            context.evidence.joinpath(f"{phase}.log"),
+        )
+    return step(
+        context,
+        phase,
+        context.builder,
+        [
+            "run",
+            context.repo.joinpath("scripts/memory_budget.incn").0,
+            "--",
+            "--observe-oven",
+            context.builder,
+            project.0,
+            context.repo.0,
+            context.evidence.joinpath("oven-build.log").0,
+            context.evidence.joinpath(OVEN_OBSERVATION).0,
+        ],
+        environment,
+        context.repo,
+        context.evidence.joinpath("oven-build-observer.log"),
     )
 
 
@@ -1023,50 +794,6 @@ def project_name(manifest: Path) -> Result[str, str]:
         if stripped.startswith("name = \"") and stripped.endswith("\""):
             return Ok(stripped[8:-1])
     return Err(f"manifest has no project name: {manifest.0}")
-
-
-def append_interface(inventory: Path, name: str, directory: Path) -> Result[None, str]:
-    """Append one source interface to the checking-only inventory."""
-    mut values = read_json(inventory)?.expect_array().map_err((error) => error.message())?
-    values.append(
-        JsonValue.object(
-            {"key": JsonValue.string(name), "name": JsonValue.string(name), "dir": JsonValue.string(directory.0), "standard": JsonValue.bool(
-                true,
-            )},
-        ),
-    )
-    return replace_json(inventory, JsonValue.array(values))
-
-
-def runtime_artifacts() -> list[str]:
-    """Return the native runtime generation artifacts and its separately proved requested inspection graph."""
-    return [
-        f"lib{RUNTIME_NAME}.rlib",
-        f"{RUNTIME_NAME}.incnlib",
-        f"{RUNTIME_NAME}.incnbody",
-        f"{RUNTIME_NAME}.native.json",
-        f"{RUNTIME_NAME}.rustabi",
-        f"{RUNTIME_NAME}.incngraph",
-    ]
-
-
-def write_artifact_digests(directory: Path, artifacts: list[str]) -> Result[None, str]:
-    """Write names and content digests so both contribute to the runtime generation identity."""
-    mut rows: list[str] = []
-    for artifact in artifacts:
-        rows.append(f"{digest(directory.joinpath(artifact))?}  {artifact}")
-    return directory
-        .joinpath("artifacts.sha256")
-        .write_text("\n".join(rows) + "\n", "utf-8", "strict", None)
-        .map_err((error) => error.message())
-
-
-def require_same_generation(staged: Path, installed: Path, artifacts: list[str]) -> Result[None, str]:
-    """Refuse a content-named runtime directory whose retained bytes disagree with the staged generation."""
-    for artifact in artifacts:
-        if not same_bytes(staged.joinpath(artifact), installed.joinpath(artifact))?:
-            return Err(f"runtime generation has conflicting {artifact} bytes: {installed.0}")
-    return Ok(None)
 
 
 def replace_directory(temporary: TemporaryDirectory, output: Path) -> Result[None, str]:

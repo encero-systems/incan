@@ -194,10 +194,7 @@ impl BodyBuilder<'_, '_> {
             .map(|(span, ty)| {
                 (
                     span,
-                    super::parameter_types::retain_parameter_type(
-                        super::semantic_type_from_resolved(ty),
-                        &self.type_parameters,
-                    ),
+                    super::parameter_types::checked_parameter_type(ty, self.type_info, &self.type_parameters),
                 )
             })
             .collect();

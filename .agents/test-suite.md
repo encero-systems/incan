@@ -21,7 +21,7 @@ You validate compiler changes through the installed Incan toolchain and the repo
 | `loaves/kernel/incan_syntax/src/parser/` | Matching `check`, `behavior` and `format` cases |
 | `loaves/compiler/incan_frontend/src/typechecker/` | Matching accepted/refused `check` cases and executable `behavior` cases |
 | `loaves/compiler/incan_frontend/src/body_ir/` | Executable `behavior`, `library` and `interop` cases for the changed boundary |
-| `loaves/compiler/incan_mir_lowering/src/` | Focused executable cases followed by the affected families |
+| `loaves/compiler/incan_lowering/src/` | Focused executable cases followed by the affected families |
 | `loaves/toolchain/incan-rustc-driver/src/` | Native `behavior`, `interop`, `library` or `testing` contracts for the changed adapter |
 | `workspaces/oven/src/` | Its matching Incan tests and `project`, `library`, `testing` or `graph` contracts |
 | `loaves/compiler/incan_format/src/` | Matching `format` cases |

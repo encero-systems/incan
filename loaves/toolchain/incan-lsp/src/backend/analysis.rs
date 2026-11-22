@@ -544,6 +544,7 @@ pub(super) fn unit_description(path: &Path, profile: &str) -> incan_driver::erro
     let output = std::process::Command::new(&incan)
         .arg0("oven")
         .arg("describe-unit")
+        .env("INCAN_DESCRIBE_SEARCH_INDEX", "crumb")
         .arg(path)
         .arg("--unattended")
         .arg("--profile")

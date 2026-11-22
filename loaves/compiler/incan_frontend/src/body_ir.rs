@@ -63,6 +63,8 @@ pub use context_modules::{ContextModules, ContextModulesIter};
 pub use free_function_baseline::verify_module as verify_free_function_inputs;
 pub(crate) use nominal_carriers::{retain_published_frame, retain_published_module};
 pub use primitive_adapter_requirements::required as required_primitive_adapters;
+pub use settled_call_inputs::needs_call_witness;
+pub use settled_call_inputs::{SettledCallInputs, SettledCallRead};
 pub use source_comparison::required_published_defaults as required_comparison_defaults;
 
 use incan_lang::lang::keywords::KeywordId;
@@ -188,6 +190,17 @@ pub fn settle_shared_reads_with_selected(
     selected: &HashSet<CanonicalSymbolId>,
 ) {
     shared_reads::retain_modules_with_selected(modules, context.into(), selected);
+}
+
+/// Settle fresh owners using admitted namespace frames as immutable ABI evidence, including anonymous bodies.
+pub fn settle_shared_reads_with_namespaces(
+    modules: &mut [bir::BodyIrModule],
+    context: &[bir::BodyIrModule],
+    selected: &HashSet<CanonicalSymbolId>,
+    restored: &[bool],
+) {
+    assert_eq!(modules.len(), restored.len());
+    shared_reads::retain_modules_with_namespaces(modules, context.into(), selected, restored);
 }
 
 /// Return the canonical owners whose final Body IR was selected from the graph for this checked module.
@@ -512,6 +525,9 @@ struct BodyBuilder<'type_info, 'source> {
     /// Locals whose value has been moved out via a full-value (non-projected) read, so scope-exit drop insertion
     /// skips them.
     moved_out: HashSet<bir::LocalId>,
+    /// Owner and field of each copied source read of an enum field that may leave its owner. The liveness pass
+    /// transfers the field at such a read when nothing reads the owner afterward.
+    field_transfer_candidates: HashSet<(bir::LocalId, CanonicalSymbolId)>,
     /// `mut` parameters of non-`Copy` type: the callee borrows the caller's value (#2022), so it never drops one.
     pub(super) borrowed_parameters: HashSet<bir::LocalId>,
     /// Rest packs and native collection value parameters own their storage, despite their builtin collection layout.
@@ -602,6 +618,7 @@ mod trait_partials;
 mod async_;
 
 mod literals;
+mod liveness;
 mod nominal_carriers;
 
 mod calls;
@@ -656,6 +673,7 @@ mod registry_effects;
 mod representation_facts;
 mod result_channels;
 mod returned_views;
+mod settled_call_inputs;
 mod static_aliases;
 mod union_layouts;
 pub use union_layouts::reaches_union;

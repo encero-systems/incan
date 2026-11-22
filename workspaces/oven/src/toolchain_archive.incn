@@ -41,6 +41,7 @@ from unit_publication import publication, published_identity, record_path, recor
 from cli_help import render, unknown_option
 from jec import begin, record
 from installation_check import verify_installed_runtime
+from installation_page import admitted_identity, restore_selection
 from surfaces import expose_entry_points
 from compiler_record_admission import CompilerRecordPin, convert, installed_records, shipped_pin
 from release_trust import CARRIED_TRUST, admit_release, anchor, record as record_signer, ship, stamped
@@ -48,7 +49,7 @@ from release_trust import CARRIED_TRUST, admit_release, anchor, record as record
 # The file extensions of the native libraries an archive keeps in a Loaf's profile directory.
 const NATIVE_LIBRARY_SUFFIXES: FrozenList[str] = [".rlib", ".dylib", ".so", ".a", ".lib"]
 # The caches of file observations, keyed by the builder's paths; an installation observes its files afresh.
-const OBSERVATION_CACHES: FrozenList[str] = ["observations.json", "portable-observations.json"]
+const OBSERVATION_CACHES: FrozenList[str] = ["observations.crumb", "portable-observations.crumb", "observations.json", "portable-observations.json"]
 # The profile directories of a standard Loaf an archive keeps.
 const PACKED_PROFILES: FrozenList[str] = ["debug", "release"]
 # What a packed Loaf's native document is relative to: its profile directory, three levels below the archive root.
@@ -163,7 +164,7 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
     # The standard Loaves' compiler records ship sealed and admitted, in the store's own format, so installing the
     # archive converts and copies nothing. The set holds the records of the Loaves the stage ships and no others.
     manifests = stage.parent().joinpath(f"{stage.name()}-manifests")
-    sealed = sealed_records(toolchain.driver, stage, manifests)
+    sealed = sealed_records(toolchain.driver, stage, manifests, toolchain.compiler_record_export_crumb)
     if manifests.is_dir():
         remove_dir_all(manifests.0).map_err((error) => f"cannot remove staged manifests {manifests.0}: {error}")?
     records = sealed?
@@ -180,6 +181,20 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
         description = replaced(description, "codegraph_on_request", JsonValue.bool(true))?
     if toolchain.closure_anchors:
         description = replaced(description, "closure_anchors", JsonValue.bool(true))?
+    if toolchain.search_index_crumb:
+        description = replaced(description, "search_index_crumb", JsonValue.bool(true))?
+    if toolchain.checked_body_counts_crumb:
+        description = replaced(description, "checked_body_counts_crumb", JsonValue.bool(true))?
+    if toolchain.worker_protocol_crumb:
+        description = replaced(description, "worker_protocol_crumb", JsonValue.bool(true))?
+    if toolchain.unit_descriptor_crumb:
+        description = replaced(description, "unit_descriptor_crumb", JsonValue.bool(true))?
+    if toolchain.compiler_record_export_crumb:
+        description = replaced(description, "compiler_record_export_crumb", JsonValue.bool(true))?
+    if toolchain.namespace_references:
+        description = replaced(description, "namespace_references", JsonValue.bool(true))?
+    if toolchain.retain_checked_modules:
+        description = replaced(description, "retain_checked_modules", JsonValue.bool(true))?
     write_json(stage.joinpath("toolchain.json"), description)?
     # The release signer the installation carries travels inside the archive (DD-0016).
     _ = ship(directory, stage)?
@@ -187,15 +202,15 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
     return archive(stage, output)
 
 
-def sealed_records(driver: str, stage: Path, manifests: Path) -> Result[CompilerRecordPin, str]:
+def sealed_records(driver: str, stage: Path, manifests: Path, typed: bool) -> Result[CompilerRecordPin, str]:
     """Seal the compiler records of the staged Loaves into the stage, exporting them from a view of their manifests."""
     shipped_manifests(stage, manifests)?
-    return convert(driver, manifests, stage)
+    return convert(driver, manifests, stage, typed)
 
 
 pub def shipped_manifests(stage: Path, view: Path) -> Result[None, str]:
     """
-    Copy every Loaf manifest the stage ships to the same place under `view`, as a plain file.
+    Copy the shipped manifests and executable sidecars as plain files at their staged relative paths.
 
     The compiler exports the records of each manifest below one directory and follows no link. The packing home may
     hold Loaves the archive leaves behind, such as a runtime an earlier compiler built, so the sealed set is exported
@@ -210,11 +225,11 @@ pub def shipped_manifests(stage: Path, view: Path) -> Result[None, str]:
             if entry.is_dir():
                 if not entry.is_symlink():
                     pending.append(entry)
-            elif entry.name().endswith(".incnlib"):
+            elif entry.name().endswith(".incnlib") or entry.name().endswith(".incnbody"):
                 copy = view.joinpath(entry.0[len(stage.0) + 1:])
                 make_directory(copy.parent())?
-                contents = entry.read_bytes().map_err((error) => f"staged manifest: cannot {error.message()}")?
-                copy.write_bytes(contents).map_err((error) => f"staged manifest: cannot {error.message()}")?
+                contents = entry.read_bytes().map_err((error) => f"staged compiler artifact: cannot {error.message()}")?
+                copy.write_bytes(contents).map_err((error) => f"staged compiler artifact: cannot {error.message()}")?
     return Ok(None)
 
 
@@ -518,6 +533,7 @@ pub def stage_loaves(source: Path, stage: Path) -> Result[None, str]:
                     not artifact.is_file()
                     or name == "build.log"
                     or ".unit.json" in name
+                    or ".unit.crumb" in name
                     or name.endswith(RESTATED_RECORD_SUFFIX)
                 ):
                     continue
@@ -877,7 +893,7 @@ def install_staged(archive: Path, plain: Path, stage: Path, target: Path) -> Res
         (error) => f"cannot verify compiler {toolchain.driver} against Rust sysroot {toolchain.sysroot}: {error}",
     )?
     # A sealed set the archive ships is verified in place; only an archive without one has its records converted.
-    pin = installed_records(toolchain.driver, stage, shipped_pin(document)?)?
+    pin = installed_records(toolchain.driver, stage, shipped_pin(document)?, toolchain.compiler_record_export_crumb)?
     document = read_json(stage.joinpath("toolchain.json"))?
     document = replaced(document, "compiler_records", pin.to_json())?
     write_json(stage.joinpath("toolchain.json"), document)?
@@ -999,6 +1015,7 @@ def publish_install(stage: Path, target: Path, admission: InstallationAdmission)
     4. Finish preparation at the installed location, restoring the previous installation on failure.
     5. Remove the previous installation.
     """
+    prior = admitted_identity(target)?
     # 1. With nothing installed yet, the stage simply becomes the installation.
     if not target.is_dir():
         rename(stage.0, target.0).map_err((error) => f"cannot publish staged toolchain {stage.0} at {target.0}: {error}")?
@@ -1008,6 +1025,7 @@ def publish_install(stage: Path, target: Path, admission: InstallationAdmission)
                 rename(target.0, stage.0).map_err(
                     (failed) => f"{error}; cannot return failed installation {target.0} to {stage.0}: {failed}",
                 )?
+                restore_selection(target, prior).map_err((failed) => f"{error}; cannot restore installation selection: {failed}")?
                 return Err(error)
     # 2. The previous installation is moved aside, not deleted, until the new one is in place.
     previous = target.parent().joinpath(f".previous-{TOOLCHAIN}-{id()}")
@@ -1030,7 +1048,11 @@ def publish_install(stage: Path, target: Path, admission: InstallationAdmission)
             rename(target.0, stage.0).map_err(
                 (failed) => f"{error}; cannot return failed installation {target.0} to {stage.0}: {failed}",
             )?
-            return Err(restored_after(error, previous, target))
+            rename(previous.0, target.0).map_err(
+                (failed) => f"{error}; cannot restore previous installation {previous.0} at {target.0}: {failed}",
+            )?
+            restore_selection(target, prior).map_err((failed) => f"{error}; cannot restore installation selection: {failed}")?
+            return Err(f"installation failed; previous installation restored: {error}")
     # 5. Only a fully prepared installation makes the previous one disposable.
     remove_dir_all(previous.0).map_err((error) => f"cannot remove previous toolchain installation {previous.0}: {error}")?
     return Ok(None)

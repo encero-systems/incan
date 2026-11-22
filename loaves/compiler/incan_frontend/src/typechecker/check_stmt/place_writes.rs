@@ -29,7 +29,7 @@ impl TypeChecker {
 
     /// Return the name a written place is rooted at, `items` for `items[0].count`, or `None` for a place rooted at
     /// anything else, such as `self` or a call result.
-    pub(super) fn written_place_root(expr: &Spanned<Expr>) -> Option<&str> {
+    pub(in crate::typechecker) fn written_place_root(expr: &Spanned<Expr>) -> Option<&str> {
         match &expr.node {
             Expr::Ident(name) => Some(name),
             Expr::Paren(inner) | Expr::Field(inner, _) | Expr::Index(inner, _) => Self::written_place_root(inner),

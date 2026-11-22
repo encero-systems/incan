@@ -244,10 +244,14 @@ impl TypeChecker {
     /// static or enum variant. The identity graph still names the exact declaring artifact and source declaration, so
     /// consumers hydrate that ordinary declaration instead of treating the facade member as ambiguous. Hydration
     /// admits the declaring Loaf through the normal import boundary so its ownership contracts accompany the symbol.
+    /// A Rust item has no declaring Loaf: its identity is the item itself.
     pub(in crate::typechecker::collect) fn symbol_kind_from_canonical_identity(
         &mut self,
         canonical: &CanonicalSymbolId,
     ) -> Option<SymbolKind> {
+        if let SymbolOrigin::RustCrate(path) = &canonical.origin {
+            return self.rust_item_from_canonical_identity(&canonical.kind, path);
+        }
         let library = self.loaves.declaring_loaf(canonical)?.key.clone();
         let manifest = self.loaf_manifest_or_refuse(&library, Span::default())?;
         let identity = manifest
@@ -267,6 +271,43 @@ impl TypeChecker {
         self.remap_symbol_kind_through_declaring_module(&library, &manifest, Some(canonical), &mut kind);
         self.remap_symbol_kind_with_import_aliases(&mut kind, &root_remapping);
         Some(kind)
+    }
+
+    /// The Rust item a `from rust::` import published under the canonical identity `kind` at `path`, bound as that
+    /// import binds it, with the metadata the Loaves this checker reaches ship for it.
+    ///
+    /// Every `pub from` that re-exports the item, through any number of Loaves, publishes this one identity, so a
+    /// consumer of the outermost re-export binds the same Rust item as one of the first.
+    fn rust_item_from_canonical_identity(
+        &self,
+        kind: &SemanticSourceTargetKind,
+        path: &[String],
+    ) -> Option<SymbolKind> {
+        if *kind != SemanticSourceTargetKind::RustItem {
+            return None;
+        }
+        let crate_name = path.first()?.clone();
+        let path = path.join("::");
+        Some(SymbolKind::RustItem(RustItemInfo {
+            crate_name,
+            metadata: self.rust_item_metadata_for_path(&path),
+            path,
+            binding: RustImportBindingKind::FromImport,
+        }))
+    }
+
+    /// The Rust item a package-root alias publishes when its canonical identity is one, as a module member's alias
+    /// resolves (see [`Self::symbol_kind_from_canonical_identity`]): the root re-export of another Loaf's re-export
+    /// names no Rust path of its own provider.
+    pub(in crate::typechecker::collect) fn rust_item_for_canonical(
+        &self,
+        canonical: Option<&CanonicalSymbolId>,
+    ) -> Option<SymbolKind> {
+        let canonical = canonical?;
+        let SymbolOrigin::RustCrate(path) = &canonical.origin else {
+            return None;
+        };
+        self.rust_item_from_canonical_identity(&canonical.kind, path)
     }
 
     /// Reconstruct one trait from the exact canonical identity admitted by its declaring manifest.
@@ -741,7 +782,8 @@ impl TypeChecker {
                 canonical
                     .filter(|identity| identity.kind == SemanticSourceTargetKind::Function)
                     .and_then(|identity| self.symbol_kind_from_canonical_identity(identity))
-                    .or_else(|| self.symbol_kind_from_manifest_alias(manifest, export, &mut HashSet::new()))?
+                    .or_else(|| self.symbol_kind_from_manifest_alias(manifest, export, &mut HashSet::new()))
+                    .or_else(|| self.rust_item_for_canonical(canonical))?
             }
         };
         Some((kind, type_alias_target))

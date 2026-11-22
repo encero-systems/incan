@@ -14,7 +14,7 @@ pub def record(category: Operation, input: str, clock: Option[Clock], bytes: int
     work(category, input, clock, bytes)
 
 
-pub def text_size(content: &str, clock: Option[Clock]) -> int:
+pub def text_size(content: Borrowed[str], clock: Option[Clock]) -> int:
     """Count UTF-8 payload bytes only for an enabled observation."""
     match clock:
         None => return 0

@@ -450,7 +450,7 @@ impl ReservedNameWalk {
     /// Walk the names a pattern binds.
     fn pattern(&mut self, pattern: &Spanned<Pattern>) {
         match &pattern.node {
-            Pattern::Binding(name) => self.check(name, "binding", pattern.span),
+            Pattern::Binding(name) | Pattern::MutBinding(name) => self.check(name, "binding", pattern.span),
             Pattern::Constructor(_, args) => {
                 for arg in args {
                     match arg {

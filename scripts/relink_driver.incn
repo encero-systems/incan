@@ -19,8 +19,6 @@ from check_support import write_stderr
 from native_build import (
     NativeContext,
     StandardGeneration,
-    build_runtime,
-    build_source_interfaces,
     build_standard_packages,
     build_support_tool,
     publish_support,
@@ -43,7 +41,6 @@ pub model Relink:
     pub builder: str
     pub stdlib: str
     pub profile: str
-    pub refresh: bool
     pub log: Path
     # Re-admit each home whose installation this relink rewrites. Release production re-admits through its own
     # helper, so only a standalone relink asks its builder.
@@ -71,15 +68,12 @@ def main() -> None:
 
 
 def options() -> Result[Relink, str]:
-    """Read `--lowering`, `--release` and `--standard` and the lane's environment."""
+    """Read `--release` and `--standard` and the lane's environment."""
     mut profile = "debug"
-    mut refresh = false
     mut standard = false
     arguments = [argument for argument in args()]
     for argument in arguments[1:]:
-        if argument == "--lowering":
-            refresh = true
-        elif argument == "--release":
+        if argument == "--release":
             profile = "release"
         elif argument == "--standard":
             standard = true
@@ -99,7 +93,6 @@ def options() -> Result[Relink, str]:
             builder=get_or("SELFBUILD_OVEN", lane.joinpath("oven-bin/incan").0),
             stdlib=get_or("SELFBUILD_STDLIB", repo.joinpath("loaves/stdlib").0),
             profile=profile,
-            refresh=refresh,
             log=Path(get_or("INCAN_RELINK_LOG", lane.joinpath("bootstrap/driver-build.log").0)),
             readmit=true,
             standard=standard,
@@ -112,22 +105,14 @@ pub def run(relink: Relink) -> Result[None, str]:
     """Build the driver against a compiler home bound to the installation, then install it unless asked not to."""
     started = Instant.now()
     toolchain = relink.toolchain_home.joinpath(TOOLCHAIN_DIRECTORY)
-    if relink.refresh:
-        # Withdraw only the generated library stamp; Oven recompiles the lowering through the installed driver.
-        stamp = relink.repo.joinpath(
-            f"{DRIVER_LOAF}/target/incan/loaves/incan_mir_lowering/{relink.profile}/.oven-inputs.sha256",
-        )
-        if stamp.is_file():
-            stamp.unlink().map_err((error) => error.message())?
     sysroot = absolute(manifest_text(read_manifest(toolchain)?, "sysroot")?, toolchain.0)
     mut helper: Option[Path] = None
     if relink.standard:
         # As a release builds it with its seed: the relinked compiler would read the standard Loaves it replaces.
         helper = Some(build_support_tool(standard_context(relink)?, Path(relink.helper_home))?)
     compiler_home = relink.toolchain_home.joinpath("compiler-build")
-    if prepare_compiler_home(relink.toolchain_home, compiler_home)? and relink.readmit:
-        # The compiler home selects the installation's current driver; its admitted page still names the earlier one.
-        readmit(relink.builder, compiler_home, [])?
+    # The compiler home selects the installation's current driver; its admitted page may still name the earlier one.
+    refresh_compiler_home(relink.builder, relink.toolchain_home, compiler_home, [], relink.readmit)?
     prepared = started.elapsed().as_secs_f64()
     build_driver(relink, sysroot, compiler_home, relink.log)?
     compiled = started.elapsed().as_secs_f64()
@@ -142,10 +127,17 @@ pub def run(relink: Relink) -> Result[None, str]:
     if relink.readmit:
         # Both homes select the new driver now, and the records of the files it replaced retire with them.
         readmit(relink.builder, relink.toolchain_home, removed)?
-        if prepare_compiler_home(relink.toolchain_home, compiler_home)?:
-            readmit(relink.builder, compiler_home, removed)?
+        refresh_compiler_home(relink.builder, relink.toolchain_home, compiler_home, removed, true)?
     if let Some(built_helper) = helper:
         rebuild_standard(standard_context(relink)?, built_helper)?
+        # The support helper admitted the providers using its own installation-page format. The consumer may
+        # still select its earlier page until it observes the completed provider generation with its own reader.
+        if relink.readmit:
+            readmit(relink.builder, relink.toolchain_home, [])?
+        # Standard publication rewrites the installed provider paths after the compiler home was prepared. Bind the
+        # compiler home to that final manifest too, so a copied relink never keeps the seed home's externs and search
+        # roots after the installed home has moved to the relinked providers.
+        refresh_compiler_home(relink.builder, relink.toolchain_home, compiler_home, [], relink.readmit)?
     ended = started.elapsed().as_secs_f64()
     report_relink_timing(
         [("setup", prepared), ("compilation", compiled - prepared), ("install", ended - compiled), ("total", ended)],
@@ -178,8 +170,8 @@ pub def standard_context(relink: Relink) -> Result[NativeContext, str]:
 
 def rebuild_standard(context: NativeContext, helper: Path) -> Result[None, str]:
     """
-    Withdraw the installed providers and readmit the relinked compiler, then build the support crates, interfaces,
-    runtime and standard Loaves through it, as a release builds them in a fresh candidate home.
+    Withdraw the installed providers and readmit the relinked compiler, then build the support crates (the Rust
+    runtime among them) and the standard Loaves through it, as a release builds them in a fresh candidate home.
 
     The support crates are built again too: a standard Loaf's Rust facet whose source changed would otherwise be built
     alone, while the installed crates that depend on it still name the installed one (E0460).
@@ -187,8 +179,6 @@ def rebuild_standard(context: NativeContext, helper: Path) -> Result[None, str]:
     withdraw_installed_providers(context.home)?
     readmit_build_home(context, helper, "relink-driver-readmit")?
     publish_support(context, helper)?
-    interfaces = build_source_interfaces(context, helper, "relink-")?
-    _ = build_runtime(context, helper, Some(interfaces), true)?
     require_unique_runtime_root(context)?
     return build_standard_packages(context, helper, "relink-", standard_profiles(StandardGeneration.Candidate))
 
@@ -246,6 +236,19 @@ pub def prepare_compiler_home(installed_home: Path, compiler_home: Path) -> Resu
     return Ok(true)
 
 
+pub def refresh_compiler_home(
+    builder: str,
+    installed_home: Path,
+    compiler_home: Path,
+    removed: list[str],
+    admit: bool,
+) -> Result[None, str]:
+    """Bind the compiler home to the installed manifest and re-admit it exactly when that manifest changed."""
+    if prepare_compiler_home(installed_home, compiler_home)? and admit:
+        readmit(builder, compiler_home, removed)?
+    return Ok(None)
+
+
 def share_tree(selected: Path, destination: Path, tree: str) -> Result[None, str]:
     """Link one installed tree into the compiler home, refusing a home that already selects another."""
     source = selected.joinpath(tree)
@@ -279,10 +282,34 @@ def compiler_manifest(manifest: JsonValue, base: str) -> Result[str, str]:
     units = registry_text(manifest, "registry_units")
     lock = registry_text(manifest, "registry_lock")
     if units.startswith("registry/") and (lock == "" or lock.startswith("registry/")):
+        fields["search"] = JsonValue.array(
+            [JsonValue.string(compiler_registry_path(path, base)) for path in manifest_list(manifest, "search")?],
+        )
+        mut externs: list[JsonValue] = []
+        for entry in manifest_entries(manifest, "externs")?:
+            mut extern = entry.expect_object().map_err((error) => error.message())?
+            extern["path"] = JsonValue.string(compiler_registry_path(manifest_text(entry, "path")?, base))
+            externs.append(JsonValue.object(extern))
+        fields["externs"] = JsonValue.array(externs)
         fields["registry_units"] = JsonValue.string(units)
         if lock != "":
             fields["registry_lock"] = JsonValue.string(lock)
     return JsonValue.object(fields).to_pretty_json().map_err((error) => error.message())
+
+
+def compiler_registry_path(path: str, base: str) -> str:
+    """Name an installed registry artifact through the compiler home's registry link; keep other paths absolute."""
+    installed = absolute(path, base)
+    registry = f"{base}/registry"
+    if installed == registry:
+        return "registry"
+    prefix = registry + "/"
+    if installed.startswith(prefix):
+        suffix = installed[len(prefix):]
+        components = suffix.split("/")
+        if "" not in components and "." not in components and ".." not in components:
+            return "registry/" + suffix
+    return installed
 
 
 def registry_text(manifest: JsonValue, key: str) -> str:
@@ -381,6 +408,13 @@ pub def install_driver(toolchain: Path, built: Path, sysroot: str) -> Result[tup
     fields["rust_abi"] = JsonValue.array([JsonValue.string(f"rust-abi/{abi.name()}")])
     fields["codegraph_on_request"] = JsonValue.bool(true)
     fields["closure_anchors"] = JsonValue.bool(true)
+    fields["search_index_crumb"] = JsonValue.bool(true)
+    fields["checked_body_counts_crumb"] = JsonValue.bool(true)
+    fields["worker_protocol_crumb"] = JsonValue.bool(true)
+    fields["unit_descriptor_crumb"] = JsonValue.bool(true)
+    fields["compiler_record_export_crumb"] = JsonValue.bool(true)
+    fields["namespace_references"] = JsonValue.bool(true)
+    fields["retain_checked_modules"] = JsonValue.bool(true)
     # The bundle's compiler records describe the Loaves its own compiler built; the relinked compiler keeps no pin to
     # them, as a release candidate home keeps none.
     mut retained: Dict[str, JsonValue] = {}

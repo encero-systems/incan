@@ -1,0 +1,167 @@
+"""A baked executable is viewed only after its seal's full flush, on the legacy route and on the records route."""
+
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from std.environ import get_or
+from std.fs import Path
+from std.json import JsonValue, parse
+from engine_client import service_generation, service_identity
+from engine_endpoint import connect_with
+from engine_messages import Message, Stop
+from engine_wire import zero_id
+from files import write
+from scratch import scratch_directory
+
+const SEALS: FrozenList[str] = ["bakery_seal", "engine_fact_seal"]
+
+
+model Span:
+    """One completed trace span: its operation, its process and its interval on the host clock."""
+
+    operation: str
+    process: int
+    start: int
+    end: int
+
+
+pub def test_a_baked_executable_is_viewed_after_its_seal_is_flushed_on_both_routes() -> Result[None, str]:
+    """
+    Linked objects are flushed with `fsync` only, so a view of a baked executable must wait for the full flush that
+    seals it. Each route bakes a program and then an edit of it; the trace orders every seal, flush and view.
+    """
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    for route in ["legacy", "records"]:
+        scratch = scratch_directory()?
+        root = scratch.path()
+        checked = bake_twice(root, binary, route)
+        store = root.joinpath("store")
+        if route == "records" and store.joinpath("CURRENT").is_file():
+            stopped = stop_engine(store, binary)
+            if checked.is_ok():
+                stopped?
+        checked?
+        check_seal_order(route, trace_spans(root.joinpath("observations"))?)?
+    return Ok(None)
+
+
+def bake_twice(root: Path, binary: str, route: str) -> Result[None, str]:
+    """Run a program and an edit of it on `route`, in a private store, so two executables are sealed and viewed."""
+    project = root.joinpath("project")
+    project.mkdir(true, true).map_err((error) => error.message())?
+    observations = root.joinpath("observations")
+    observations.mkdir(true, true).map_err((error) => error.message())?
+    source = project.joinpath("hello.incn")
+    for word in ["hello", "hullo"]:
+        write(source, f"def main() -> None:\n    println(\"{word}\")\n")?
+        outcome = Command
+            .new(binary)
+            .arg("run")
+            .arg(source.0)
+            .env("INCAN_ENGINE", route)
+            .env("OVEN_OWNER", "off")
+            .env("INCAN_BAKERY", root.joinpath("store").0)
+            .env("INCAN_ENGINE_TRACE", observations.0)
+            .output()
+            .map_err((error) => str(error))?
+        printed = RustString.from_utf8(outcome.stdout).map_err((error) => str(error))?
+        if not outcome.status.success() or str(printed) != f"{word}\n":
+            error = RustString.from_utf8(outcome.stderr).map_err((decode_error) => str(decode_error))?
+            return Err(f"{route} run of {word}: status={outcome.status.code()} stderr={error}")
+    return Ok(None)
+
+
+def stop_engine(store: Path, binary: str) -> Result[None, str]:
+    """Stop the records engine serving `store`, and require its acknowledgment, which follows its trace."""
+    mut identity = service_identity(store)?
+    identity.service_generation = service_generation(binary)?
+    mut channel = connect_with(store, identity, binary).map_err((refusal) => refusal.detail)?
+    channel.send(zero_id(), Message.Stop(Stop(reason="seal order proof completed"))).map_err(
+        (refusal) => refusal.detail,
+    )?
+    stopped = channel.receive().map_err((refusal) => refusal.detail)?
+    match stopped.message:
+        Message.Event(value) =>
+            assert value.status == "Stopping"
+        _ => return Err("seal order proof did not stop its engine")
+    _ = channel.transport.close()
+    return Ok(None)
+
+
+def trace_spans(directory: Path) -> Result[list[Span], str]:
+    """Every seal, full-flush and view span of every trace file in `directory`."""
+    mut spans: list[Span] = []
+    for file in directory.iterdir().map_err((error) => error.message())?:
+        if not file.is_file():
+            continue
+        for line in file.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
+            if line == "":
+                continue
+            row = parse(line).map_err((error) => error.message())?
+            operation = optional_text(row, "operation")
+            if operation not in SEALS and operation != "store_durable_sync" and operation != "bakery_view":
+                continue
+            spans.append(
+                Span(
+                    operation=operation,
+                    process=trace_number(row, "process")?,
+                    start=trace_number(row, "start_ns")?,
+                    end=trace_number(row, "end_ns")?,
+                ),
+            )
+    return Ok(spans)
+
+
+def optional_text(row: JsonValue, key: str) -> str:
+    """A string field of a trace row, or the empty string when the row has none."""
+    match row.get(key):
+        None => return ""
+        Some(value) =>
+            match value.as_str():
+                None => return ""
+                Some(text) => return text
+
+
+def trace_number(row: JsonValue, key: str) -> Result[int, str]:
+    """Read a required nanosecond or process field without coercion."""
+    return row.require(key).map_err((error) => error.message())?.expect_int().map_err((error) => error.message())
+
+
+def check_seal_order(route: str, spans: list[Span]) -> Result[None, str]:
+    """
+    Every view that follows a seal in its process starts after a full flush that began inside or after that seal has
+    ended. Both bakes must show a seal, and each seal must be followed by a view.
+    """
+    seals = [span for span in spans if span.operation in SEALS]
+    if len(seals) < 2:
+        return Err(f"{route} route: the two bakes recorded {len(seals)} seals")
+    mut early = 0
+    mut viewed = 0
+    for seal in seals:
+        mut next_seal = -1
+        for other in seals:
+            if other.process == seal.process and other.start > seal.start:
+                if next_seal == -1 or other.start < next_seal:
+                    next_seal = other.start
+        for view in spans:
+            if view.operation != "bakery_view" or view.process != seal.process or view.start < seal.start:
+                continue
+            if next_seal != -1 and view.start >= next_seal:
+                continue
+            viewed += 1
+            if not flushed_between(spans, seal, view):
+                early += 1
+    if viewed < 2:
+        return Err(f"{route} route: the two bakes recorded {viewed} views after their seals")
+    if early > 0:
+        return Err(f"{route} route: {early} of {viewed} views were made before their seal's full flush completed")
+    return Ok(None)
+
+
+def flushed_between(spans: list[Span], seal: Span, view: Span) -> bool:
+    """Whether a full flush of `seal`'s process began no earlier than the seal and ended before `view` began."""
+    for flush in spans:
+        if flush.operation != "store_durable_sync" or flush.process != seal.process:
+            continue
+        if flush.start >= seal.start and flush.end <= view.start:
+            return true
+    return false

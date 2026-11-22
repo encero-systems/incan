@@ -119,7 +119,7 @@ fn dependency_refresh_replaces_input_contracts() -> Result<(), Box<dyn std::erro
         let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
         checker.import_module(&program, "protocols");
-        assert_eq!(checker.dependency_method_input_contracts.len(), expected);
+        assert_eq!(checker.dependency_input_contracts.len(), expected);
     }
     Ok(())
 }

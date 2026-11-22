@@ -8,9 +8,8 @@ Unit keys, artifact sets and vocabulary admission read two facts from a manifest
 from std.fs import Path
 from std.json import JsonValue
 from graph_queries import nested
+from retained_reading_records import DESUGARER
 from retained_readings import retained_reading
-
-const DESUGARER: str = "vocab.desugarer_artifact"
 
 
 pub model ManifestVocabulary:

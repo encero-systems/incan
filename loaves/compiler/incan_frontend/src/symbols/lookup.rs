@@ -39,11 +39,8 @@ impl SymbolTable {
                     namespace = SymbolNamespace::ModulePath;
                     kind = SemanticSourceTargetKind::Module;
                 }
-                (
-                    SymbolOrigin::RustCrate(info.path.split("::").map(str::to_string).collect()),
-                    info.path.rsplit("::").next().unwrap_or(&symbol.name).to_string(),
-                    HirSourceSpan::new(0, 0),
-                )
+                let (origin, declaration_name) = rust_item_origin_and_name(info, &symbol.name);
+                (origin, declaration_name, HirSourceSpan::new(0, 0))
             }
             _ => (self.declaration_origin(), symbol.name.clone(), symbol.span),
         };

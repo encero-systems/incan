@@ -2,7 +2,7 @@
 
 The compiler: a second front end to the pinned rustc (DD-0004). Oven runs it once per unit, from the unit description it wrote (DD-0008).
 
-- `--unit UNIT CRATE OUTPUT SYSROOT [--rustc-arg ARG] [--library] [--shared-native DIR]` checks the unit, lowers its Body IR through `incan_mir_lowering` and compiles it with rustc to `OUTPUT`. A library unit also writes its Loaf beside the rlib (DD-0007). Native artifacts, search paths and ABI caches come from `UNIT`.
+- `--unit UNIT CRATE OUTPUT SYSROOT [--rustc-arg ARG] [--library] [--shared-native DIR]` checks the unit, lowers its Body IR through `incan_lowering` and compiles it with rustc to `OUTPUT`. A library unit also writes its Loaf beside the rlib (DD-0007). Native artifacts, search paths and ABI caches come from `UNIT`.
 - `--check UNIT SYSROOT [--format text|json] [--rustc-arg ARG] [--library] [--shared-native DIR]` checks the unit and prints its report; JSON is the stable `incan check` report.
 - `--fmt UNIT PATH [--check]` formats source with the unit's vocabulary, or only reports with `--check`.
 - `--source-files PATH` returns the compiler's deterministic authored `.incn` file list as JSON, preserving explicit file selection and excluding nested hidden directories, build output, vendored packages and symbolic links.
@@ -15,7 +15,7 @@ The compiler: a second front end to the pinned rustc (DD-0004). Oven runs it onc
 
 Checking reads the Rust facts of `rust::` imports from the ABI caches it is given, and reads any path they do not cover from rustc's metadata of the unit's own crates, with the same extractor (`loaves/toolchain/incan-rustc-driver/src/rust_facts.rs`).
 
-The plan types and the lowering's entry points come from `incan_mir_lowering::caller::incan`; no Rust mirror of the plan is kept. Declarations are injected AST items with diverging placeholders, and bodies are supplied through `mir_built`.
+The plan types come from `incan_mir_plan_native` and the lowering's entry points from `incan_lowering`; no second copy of the plan is kept. Declarations are injected AST items with diverging placeholders, and bodies are supplied through `mir_built`.
 
 The unit description's `kind` selects `program` (the default), `library` or `test`. Every kind uses the same checked-source and Body IR pipeline and the lowering's `unit_plan` entry. `--library` remains a bootstrap spelling for the library kind. Test collection uses the compilation session's marker semantics; lowering maps collected functions to native entries, which the adapter registers with rustc's test harness. The compiler writes `<OUTPUT>.tests.json` with each entry's source name, native name, skip reason and expected-failure reason for Oven to execute and report.
 

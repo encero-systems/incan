@@ -2,6 +2,8 @@
 
 from rust::scopes import Badge, Scope
 
+pub from rust::scopes import Ranked
+
 
 pub def scope_depth(scope: Option[Scope]) -> int:
     """The scope's depth, or -1 without one."""

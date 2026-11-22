@@ -1,0 +1,9 @@
+[project]
+name = "test_links_classes_adopting_rust_traits"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+tiny = { loaf = "tiny", path = "rust/tiny" }

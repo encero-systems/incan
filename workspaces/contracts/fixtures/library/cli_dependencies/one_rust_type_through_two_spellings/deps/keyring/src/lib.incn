@@ -1,0 +1,8 @@
+"""Keys named by the crate root's re-export."""
+
+pub from rust::records import RecordKey
+
+
+pub def describe(key: RecordKey) -> str:
+    """Describe a key declared by its root spelling."""
+    return f"key {key.value}"

@@ -11,6 +11,7 @@ mod admission;
 mod builtins;
 mod checked;
 mod copy;
+pub(super) mod defaults;
 mod dictionary;
 pub(super) mod flow;
 mod iteration;
@@ -22,6 +23,7 @@ pub(super) mod projection;
 mod report;
 mod source;
 mod trait_inputs;
+mod view_arguments;
 
 pub(super) use admission::{direct_function_boundary, method_input_header};
 pub(crate) use builtins::carried_view_binding;
@@ -109,6 +111,14 @@ impl TypeChecker {
         }
     }
 
+    /// RFC 164: mark the active callable as lending a place to an exclusive borrow or binding a local borrow of a
+    /// value outside the whole-body proof, so its loan conflicts are still reported.
+    pub(in crate::typechecker) fn note_native_borrow_body(&mut self) {
+        if let Some(identity) = self.current_body_identity().cloned() {
+            self.native_borrow_bodies.insert(identity);
+        }
+    }
+
     /// Mark the active callable as containing a checked lazy result. This keeps the ordinary-body activation path
     /// proportional to bodies that can retain a lazy source instead of rescanning every checked callable.
     pub(in crate::typechecker) fn note_lazy_result_body(&mut self) {
@@ -120,7 +130,12 @@ impl TypeChecker {
     /// Mark a statement loop as borrowing a direct stored list. This is activation metadata only: the ownership graph
     /// later resolves the canonical place, loan, loop back-edge and any conflicting replacement.
     pub(in crate::typechecker) fn note_borrowed_iteration_loop(&mut self, iter: &Spanned<Expr>) {
-        if !matches!(self.type_info.expr_type(iter.span), Some(ResolvedType::Generic(name, _))
+        // A borrowed list, in either spelling, is iterated through its borrow (RFC 164).
+        let iterated = self
+            .type_info
+            .expr_type(iter.span)
+            .map(|ty| super::helpers::borrowed_value_type(ty.clone()));
+        if !matches!(&iterated, Some(ResolvedType::Generic(name, _))
                 if collections::from_str(name) == Some(CollectionTypeId::List))
         {
             return;
@@ -223,6 +238,7 @@ impl TypeChecker {
         let may_replace_borrowed_iteration = self.iteration_replacement_bodies.remove(&identity);
         let may_classify_dictionary_lookup = self.dictionary_lookup_bodies.remove(&identity);
         let may_take_loop_items = self.loop_item_bodies.remove(&identity);
+        let may_conflict_through_borrows = self.native_borrow_bodies.remove(&identity);
         let retains_lazy_result = may_retain_lazy_result && body_retains_lazy_result(callable.body(), &self.type_info);
         // Existing explicit bodies already need complete flow. Ordinary bodies are scanned only when expression
         // checking observed a generator or authenticated lazy iterator member in that body, or when statement
@@ -232,6 +248,7 @@ impl TypeChecker {
             && !may_classify_dictionary_lookup
             && !may_take_loop_items
             && !retains_lazy_result
+            && !may_conflict_through_borrows
         {
             self.type_info
                 .protocols
@@ -239,10 +256,20 @@ impl TypeChecker {
                 .retain(|_, call| call.owner.as_ref() != Some(&identity) || call.kind == InputCallKind::Explicit);
             return;
         }
+        // RFC 164: a body that needs no proof but lends a place to an exclusive borrow, or binds a local borrow of a
+        // value, still has its loan conflicts reported. Only overlapping loans are reported there: an owned use of a
+        // borrow takes a clone, so the proof's transfer and permission refusals do not apply to it.
+        let borrow_conflicts_only = may_conflict_through_borrows
+            && !requires_explicit_flow
+            && !may_replace_borrowed_iteration
+            && !may_classify_dictionary_lookup
+            && !may_take_loop_items
+            && !retains_lazy_result;
         self.retain_input_copy_values(&identity, span);
         if body.is_some() {
             native::retain_native_input_calls(&mut self.type_info.protocols, &self.type_info.rust, &identity, body);
         }
+        self.native_borrow_pass = borrow_conflicts_only;
         let (graph, view_errors) = source::build_reporting_views(
             self,
             callable,
@@ -250,6 +277,7 @@ impl TypeChecker {
             &identity,
             may_replace_borrowed_iteration || may_take_loop_items,
         );
+        self.native_borrow_pass = false;
         let view_refused = !view_errors.is_empty();
         self.errors.extend(view_errors);
         let output = match graph {
@@ -265,8 +293,16 @@ impl TypeChecker {
                         for lookup in dictionary::read_only_lookups(&graph, &analysis) {
                             self.type_info.record_read_only_dict_lookup(lookup);
                         }
-                        self.errors
-                            .extend(report::conflicts(&graph, &analysis, &self.type_info));
+                        if borrow_conflicts_only {
+                            let mut loans = analysis.clone();
+                            loans
+                                .conflicts
+                                .retain(|conflict| matches!(conflict.kind, flow::ConflictKind::ActiveLoan(_)));
+                            self.errors.extend(report::conflicts(&graph, &loans, &self.type_info));
+                        } else {
+                            self.errors
+                                .extend(report::conflicts(&graph, &analysis, &self.type_info));
+                        }
                         InputFlow::Checked { graph, analysis }
                     }
                     Err(fault) => InputFlow::Invalid { graph, fault },
@@ -282,7 +318,7 @@ impl TypeChecker {
             .insert(identity.clone(), output);
         // Iteration-only activation reports graph conflicts but does not turn an unrelated unsupported construct or
         // an otherwise ordinary body into an explicit-input admission requirement.
-        if (may_replace_borrowed_iteration || may_take_loop_items) && !requires_declared_flow {
+        if (may_replace_borrowed_iteration || may_take_loop_items || borrow_conflicts_only) && !requires_declared_flow {
             self.type_info.protocols.explicit_input_flow.remove(&identity);
             self.type_info
                 .protocols

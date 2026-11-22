@@ -1,0 +1,9 @@
+[project]
+name = "rust_optional_bytes_in_a_result"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+optional_bytes = { loaf = "optional_bytes", path = "rust/optional_bytes" }

@@ -5,11 +5,10 @@ from std.fs import Path
 from native_build import (
     NativeContext,
     StandardGeneration,
-    build_runtime,
     readmit_build_home,
-    build_source_interfaces,
     build_standard_packages,
     build_tool,
+    runtime_library,
     standard_profiles,
 )
 from release_support import TOOLCHAIN_DIRECTORY, append_timing, digest, same_bytes
@@ -36,7 +35,7 @@ pub def prove_fixed_point(context: NativeContext) -> Result[None, str]:
     """
     evidence = context.evidence.joinpath("generations")
     evidence.mkdir(true, true).map_err((error) => error.message())?
-    artifacts = named_artifacts(context)
+    artifacts = named_artifacts(context)?
 
     # 1-2. Generation one is evidence and the immutable producer of generation two, never the comparison baseline.
     first = snapshot_generation(evidence, artifacts, "generation-one")?
@@ -55,19 +54,23 @@ pub def prove_fixed_point(context: NativeContext) -> Result[None, str]:
     return Ok(None)
 
 
-pub def named_artifacts(context: NativeContext) -> list[Artifact]:
-    """Return DD-0010's six byte-bearing release outputs in stable order."""
+pub def named_artifacts(context: NativeContext) -> Result[list[Artifact], str]:
+    """
+    Return DD-0010's five byte-bearing release outputs in stable order.
+
+    The Rust runtime is the support build's. The lowering is Rust and statically linked into the driver, so the driver
+    artifact carries it; it is no longer a separate library the toolchain compiles.
+    """
     driver = context.repo.joinpath("loaves/toolchain/incan-rustc-driver/target/incan")
-    runtime = context.repo.joinpath("loaves/compiler/incan_native_runtime/target/incan/native/release")
+    runtime = runtime_library(context.home)?
     primitives = context.home.joinpath(f"{TOOLCHAIN_DIRECTORY}/loaves/incan_stdlib_primitives/release")
-    return [
+    return Ok([
         Artifact(name="driver", path=driver.joinpath("rust/release/bin/incan-rustc-driver")),
-        Artifact(name="runtime", path=runtime.joinpath("libincan_native_runtime.rlib")),
-        Artifact(name="lowering", path=driver.joinpath("loaves/incan_mir_lowering/release/libincan_mir_lowering.rlib")),
+        Artifact(name="runtime", path=runtime),
         Artifact(name="standard-floor", path=primitives.joinpath("libincan_stdlib_primitives.rlib")),
         Artifact(name="oven", path=context.lane.joinpath("oven-bin/incan")),
         Artifact(name="runner", path=context.lane.joinpath("contracts-bin/contracts")),
-    ]
+    ])
 
 
 def snapshot_generation(evidence: Path, artifacts: list[Artifact], generation: str) -> Result[Dict[str, Path], str]:
@@ -95,7 +98,6 @@ def rebuild_generation(context: NativeContext, evidence: Path, builder: Path, ge
             builder=builder.0,
             stdlib=context.stdlib,
             profile="release",
-            refresh=true,
             log=evidence.joinpath(f"{generation}-driver.log"),
         ),
     )?
@@ -114,8 +116,6 @@ def rebuild_generation(context: NativeContext, evidence: Path, builder: Path, ge
         timeout_seconds=context.timeout_seconds,
     )
     readmit_build_home(successor, helper, f"{generation}-driver-readmit")?
-    interfaces = build_source_interfaces(successor, helper, f"{generation}-")?
-    _ = build_runtime(successor, helper, Some(interfaces), true, f"{generation}-")?
     build_standard_packages(successor, helper, f"{generation}-", standard_profiles(StandardGeneration.Candidate))?
     _ = build_tool(successor, "oven", true, f"{generation}-oven")?
     _ = build_tool(successor, "contracts", true, f"{generation}-runner")?

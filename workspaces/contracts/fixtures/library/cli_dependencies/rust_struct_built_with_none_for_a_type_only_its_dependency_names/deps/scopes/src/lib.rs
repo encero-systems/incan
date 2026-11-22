@@ -15,3 +15,18 @@ pub struct Badge {
     /// The scope, when the badge has one.
     pub scope: Option<Scope>,
 }
+
+/// A badge ranked at a level another crate defines.
+pub struct Ranked {
+    /// The badge number.
+    pub id: i64,
+    /// The level, a type of another crate.
+    pub level: levels::Level,
+}
+
+pub use depths;
+
+/// The deepest scope, a type of a crate the caller reaches only through this re-export.
+pub fn deepest() -> depths::Depth {
+    depths::Depth { value: 9 }
+}

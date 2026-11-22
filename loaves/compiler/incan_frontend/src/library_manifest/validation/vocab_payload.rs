@@ -6,11 +6,9 @@ use super::*;
 ///
 /// This keeps producer-facing vocab metadata internally consistent before the compiler tries to load any companion
 /// artifact or resolve helper references against exported symbols.
-pub(super) fn validate_vocab_payload(raw: &RawLibraryManifest) -> Result<(), LibraryManifestError> {
-    let Some(vocab) = &raw.vocab else {
-        return Ok(());
-    };
-
+pub(in crate::library_manifest) fn validate_vocabulary(
+    vocab: &crate::library_manifest::wire::RawVocabExports,
+) -> Result<(), LibraryManifestError> {
     if vocab.metadata_version != incan_vocab::VOCAB_METADATA_VERSION {
         return Err(LibraryManifestError::Invalid(format!(
             "vocabulary schema version {}; supported version {}",
@@ -30,8 +28,8 @@ pub(super) fn validate_vocab_payload(raw: &RawLibraryManifest) -> Result<(), Lib
         ));
     }
 
-    validate_scoped_surface_descriptors(raw)?;
-    validate_scoped_symbol_descriptors(raw)?;
+    validate_scoped_surface_descriptors(vocab)?;
+    validate_scoped_symbol_descriptors(vocab)?;
 
     let Some(desugarer) = &vocab.desugarer_artifact else {
         return Ok(());
@@ -67,11 +65,9 @@ pub(super) fn validate_vocab_payload(raw: &RawLibraryManifest) -> Result<(), Lib
 }
 
 /// Validate RFC 045 scoped-symbol descriptors before they become compiler-facing manifest data.
-pub(super) fn validate_scoped_symbol_descriptors(raw: &RawLibraryManifest) -> Result<(), LibraryManifestError> {
-    let Some(vocab) = &raw.vocab else {
-        return Ok(());
-    };
-
+fn validate_scoped_symbol_descriptors(
+    vocab: &crate::library_manifest::wire::RawVocabExports,
+) -> Result<(), LibraryManifestError> {
     let mut seen_descriptor_keys = HashSet::new();
     let mut seen_positive_positions = HashSet::new();
 
@@ -302,11 +298,9 @@ pub(super) fn is_identifier_spelling(symbol: &str) -> bool {
 }
 
 /// Validate RFC 040 scoped-surface descriptors before they become compiler-facing manifest data.
-pub(super) fn validate_scoped_surface_descriptors(raw: &RawLibraryManifest) -> Result<(), LibraryManifestError> {
-    let Some(vocab) = &raw.vocab else {
-        return Ok(());
-    };
-
+fn validate_scoped_surface_descriptors(
+    vocab: &crate::library_manifest::wire::RawVocabExports,
+) -> Result<(), LibraryManifestError> {
     let mut seen_descriptor_keys = HashSet::new();
     let mut seen_positive_positions = HashSet::new();
 

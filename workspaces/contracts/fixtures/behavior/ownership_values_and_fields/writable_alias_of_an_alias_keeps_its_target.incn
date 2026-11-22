@@ -1,0 +1,20 @@
+# behavior: a writable alias declared from another writable alias keeps the original place as its target, and the parent alias is usable again after the derived one's last use (RFC 129 writable alias rule 6, #1846).
+# pending: a `mut` local declared from a place is still an independent copy, so the field keeps its one line and the program prints `["one"]`.
+# expect-stdout:
+#   ["one", "two", "three"]
+
+class Address:
+    pub lines: list[str]
+
+
+class Customer:
+    pub address: Address
+
+
+def main() -> None:
+    mut customer = Customer(address=Address(lines=["one"]))
+    mut address = customer.address
+    mut lines = address.lines
+    lines.append("two")
+    address.lines.append("three")
+    println(customer.address.lines)

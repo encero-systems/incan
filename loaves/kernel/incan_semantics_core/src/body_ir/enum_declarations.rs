@@ -104,7 +104,8 @@ pub struct EnumDeclaration {
     pub derives: Vec<String>,
     /// Checker-retained origins for named payload types; publication keeps only bindings the payloads require.
     #[serde(default)]
-    pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
+    #[serde(with = "shared_identities")]
+    pub named_type_identities: SharedIdentities,
 }
 
 /// One canonical variant and its checked positional payload layout.

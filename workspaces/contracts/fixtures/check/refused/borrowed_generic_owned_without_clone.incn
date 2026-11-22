@@ -1,0 +1,5 @@
+# behavior: An owned use of a borrowed value takes a clone of it, so a borrowed generic argument whose type parameter has no `Clone` bound cannot become an owned `Err` payload; the checker refuses it rather than leaving it to the build (RFC 164, #2939).
+# expect-diagnostic: INCAN-T0001
+
+def borrowed_error[E](error: Borrowed[E]) -> Result[None, E]:
+    return Err(error)

@@ -122,7 +122,10 @@ fn row_head<'p>(row: &CoverageRow<'p>) -> Option<&'p Pattern> {
 
 /// Whether a head pattern matches every value of its column.
 fn coverage_head_is_wild(head: Option<&Pattern>) -> bool {
-    matches!(head, None | Some(Pattern::Wildcard | Pattern::Binding(_)))
+    matches!(
+        head,
+        None | Some(Pattern::Wildcard | Pattern::Binding(_) | Pattern::MutBinding(_))
+    )
 }
 
 /// Whether a row's head matches every value of its column.

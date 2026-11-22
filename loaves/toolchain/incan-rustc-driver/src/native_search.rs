@@ -14,8 +14,8 @@ const MAX_DIRECTORIES: usize = 4096;
 static LISTINGS: Mutex<BTreeMap<PathBuf, Listing>> = Mutex::new(BTreeMap::new());
 
 /// A directory's identity, including replacement and nanosecond status changes, rather than its path alone.
-#[derive(PartialEq, Eq)]
-struct Generation {
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub(crate) struct FileGeneration {
     device: u64,
     inode: u64,
     mode: u32,
@@ -42,7 +42,7 @@ pub(crate) fn file_identity(path: &Path) -> Option<String> {
 
 /// Rustc's sorted filename index under the exact directory generation that produced it.
 struct Listing {
-    generation: Generation,
+    generation: FileGeneration,
     search: SearchPath,
 }
 
@@ -90,23 +90,29 @@ fn listing(listings: &mut BTreeMap<PathBuf, Listing>, path: &Path) -> SearchPath
     search
 }
 
-/// Follow directory symlinks so replacement or retargeting invalidates a retained filename index.
-#[cfg(unix)]
-fn generation(path: &Path) -> Option<Generation> {
-    use std::os::unix::fs::MetadataExt;
-    let metadata = std::fs::metadata(path).ok()?;
-    Some(Generation {
-        device: metadata.dev(),
-        inode: metadata.ino(),
-        mode: metadata.mode(),
-        size: metadata.size(),
-        modified: (metadata.mtime(), metadata.mtime_nsec()),
-        changed: (metadata.ctime(), metadata.ctime_nsec()),
-    })
+/// Follow symlinks so replacement or retargeting invalidates a retained observation.
+fn generation(path: &Path) -> Option<FileGeneration> {
+    FileGeneration::observe(&std::fs::metadata(path).ok()?)
 }
 
-/// Without a complete directory-generation observation, always retain rustc's original fresh scan.
-#[cfg(not(unix))]
-fn generation(_path: &Path) -> Option<Generation> {
-    None
+impl FileGeneration {
+    /// Identify a followed file or directory at the exact metadata observation already needed by its reader.
+    #[cfg(unix)]
+    pub(crate) fn observe(metadata: &std::fs::Metadata) -> Option<Self> {
+        use std::os::unix::fs::MetadataExt;
+        Some(Self {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            mode: metadata.mode(),
+            size: metadata.size(),
+            modified: (metadata.mtime(), metadata.mtime_nsec()),
+            changed: (metadata.ctime(), metadata.ctime_nsec()),
+        })
+    }
+
+    /// Without a complete filesystem observation, the reader always uses its normal fresh path.
+    #[cfg(not(unix))]
+    pub(crate) fn observe(_metadata: &std::fs::Metadata) -> Option<Self> {
+        None
+    }
 }

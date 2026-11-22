@@ -44,6 +44,7 @@
 
 pub(crate) mod body_check;
 mod body_ir_classes;
+mod borrowed_results;
 mod capturing_callables;
 mod check_decl;
 mod check_work;
@@ -108,7 +109,7 @@ mod source_signatures;
 pub use declaration_views::{CheckEnvironmentView, CheckedBindingView, DeclarationView, VisibilityPoint};
 mod trait_bound_relations;
 mod type_info;
-pub(crate) use type_info::{ClassLayoutInfo, RustCheckedCall};
+pub(crate) use type_info::{ClassLayoutInfo, RustCheckedCall, rust_field_default_function};
 mod undetermined_type_params;
 mod union_member_identity;
 mod web_routes;
@@ -178,9 +179,10 @@ use incan_lang::lang::types::stringlike::StringLikeId;
 use incan_lang::numeric_values::numeric_type_losslessly_widens_to;
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 
+pub(crate) use dependency_interface::{CheckedCellProjection, callable_projection};
 pub use dependency_interface::{
     CheckedNamespaceInterface, DependencyInterfacePreparationCache, ModuleDependencyInterface,
-    ModuleDependencyInterfaceSnapshot,
+    ModuleDependencyInterfaceSnapshot, NamespaceCell, NamespaceCrumb,
 };
 
 /// Immutable public-export projections for source dependencies, keyed by the same canonical module names as the
@@ -549,12 +551,17 @@ pub struct TypeChecker {
     selected_declaration_records: std::collections::BTreeMap<Span, body_check::records::Fields>,
     /// Local-family records emitted at the direct statement-check boundary, before any settlement or module observer.
     produced_local_records: std::collections::BTreeMap<Span, body_check::records::Fields>,
+    callable_scope_layouts: std::collections::BTreeMap<Span, body_check::records::CallableScopeLayout>,
     local_record_refusals: std::collections::BTreeMap<Span, canonical_nodes::NodeBindingError>,
     /// Producer-validated local records selected for this source revision without counting them as evaluations.
-    selected_local_records: std::collections::BTreeMap<Span, body_check::records::Fields>,
+    selected_local_records: std::collections::BTreeMap<Span, Arc<body_check::records::Fields>>,
     /// Codec-validated settled values restored through the ordinary checked-body assembly and retained for graph
     /// publication without pretending the settlement producer ran in this invocation.
-    selected_final_records: std::collections::BTreeMap<Span, body_check::records::Fields>,
+    selected_final_records: std::collections::BTreeMap<Span, Arc<body_check::records::Fields>>,
+    /// Frames whose physical inputs can be checked only after the complete module has settled.
+    pending_graph_frames: Vec<(Span, [u8; 32], incan_semantics_core::body_ir::Body, Vec<(u32, u32)>)>,
+    /// Completed current owner inputs, shared between frame admission and graph publication for this check.
+    completed_graph_body_digests: std::collections::BTreeMap<Span, [u8; 32]>,
     /// Final-family records emitted by direct settlement, before any module observer.
     produced_final_records: std::collections::BTreeMap<Span, body_check::records::Fields>,
     /// Explicit capability refusals from direct final producers, retained for test and adapter reporting.
@@ -574,6 +581,17 @@ pub struct TypeChecker {
     /// Callable bodies that replace storage inside a direct borrowed iteration and therefore need graph analysis.
     /// The marker only activates the canonical ownership pass; it does not retain a parallel place or loan model.
     iteration_replacement_bodies: HashSet<CanonicalSymbolId>,
+    /// RFC 164: callable bodies that lend a place to an exclusive borrow, or bind a local borrow of a value, outside
+    /// the whole-body proof. The marker activates the canonical ownership pass to report loan conflicts only.
+    native_borrow_bodies: HashSet<CanonicalSymbolId>,
+    /// Local borrows of values outside the whole-body proof, keyed by their binding, for that conflict pass.
+    native_local_borrows: std::collections::BTreeMap<CanonicalSymbolId, ownership_contracts::LocalMode>,
+    /// Whether the ownership pass being built reports loan conflicts only; only then are native local borrows loans.
+    native_borrow_pass: bool,
+    /// While a native borrowed result's body is checked, what its returns must be reached from.
+    native_result_reach: Option<borrowed_results::NativeResultReach>,
+    /// Written annotations the checking pass has examined for a Rust reference spelling, by their root span.
+    borrow_spellings_examined: HashSet<Span>,
     /// Callable bodies containing an optional dictionary lookup whose matched payload may borrow its stored entry.
     /// The marker only activates canonical graph construction and is consumed when that body is finalized.
     dictionary_lookup_bodies: HashSet<CanonicalSymbolId>,
@@ -587,6 +605,8 @@ pub struct TypeChecker {
     /// Local declarations whose explicit ownership bodies were refused before callers were checked. The marker
     /// suppresses dependent caller-graph diagnostics without becoming serialized type information.
     refused_ownership_authorities: HashSet<CanonicalSymbolId>,
+    /// Field default initializers resolved in each declaring source module.
+    constructor_defaults: ownership_contracts::defaults::ConstructorDefaults,
     /// Nested producer diagnostic intervals used only while capturing independently owned outputs.
     diagnostic_owner_ranges: Vec<(std::ops::Range<usize>, std::ops::Range<usize>)>,
     /// Symbol table populated during the first pass.
@@ -956,7 +976,7 @@ pub struct TypeChecker {
     dependency_semantics_pending: bool,
     /// Header-only ownership facts from imported source modules. Replayed into a fresh program check separately
     /// from body proofs; each dependency refresh replaces its own entries and a new import set clears the cache.
-    dependency_method_input_contracts:
+    dependency_input_contracts:
         std::collections::BTreeMap<CanonicalSymbolId, crate::ownership_metadata::CheckedOwnershipContract>,
     /// Module path for the program being checked (if known).
     pub current_module_path: Option<Vec<String>>,
@@ -1175,3 +1195,5 @@ pub fn check(program: &Program) -> Result<(), Vec<CompileError>> {
 mod diagnostic_types_tests;
 #[cfg(test)]
 mod nominal_scope_tests;
+#[cfg(test)]
+mod standard_trait_default_tests;

@@ -1,15 +1,7 @@
 """Verified payload identity and generation, shared by publication and frozen installation readings."""
 
 
-pub model PayloadAdmission:
-    """Verified bytes and their producer, transferable only to the same filesystem generation after a rename."""
-
-    pub identity: str
-    pub payload: str
-    pub observation: str
-    pub provenance: list[str]
-    # The semantic facts a library manifest's publication recorded for these bytes; empty when it recorded none.
-    pub facts: str = ""
+pub from pub::internal_models.unit_admission import PayloadAdmission
 
 
 pub model InstalledPayload:

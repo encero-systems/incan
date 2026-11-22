@@ -1,0 +1,25 @@
+# behavior: a `bytes` slice, with constant or dynamic bounds, is passed to a native byte-slice parameter, and the native call receives exactly the selected range, bounds clamped and counted from the end as slicing does (#3036)
+# expect-stdout:
+#   2
+#   2
+#   2
+#   3
+
+from rust::std::io import Cursor, Write
+
+
+def written(raw: bytes, start: int, end: int) -> Result[int, str]:
+    mut output = Cursor.new(b"")
+    output.write_all(raw[start:end]).map_err((error) => str(error))?
+    return Ok(int(output.position()))
+
+
+def main() -> Result[None, str]:
+    raw = b"abcd"
+    mut fixed = Cursor.new(b"")
+    fixed.write_all(raw[1:3]).map_err((error) => str(error))?
+    println(int(fixed.position()))
+    println(written(raw, 1, 3)?)
+    println(written(raw, 2, 10)?)
+    println(written(raw, 0, -1)?)
+    return Ok(None)

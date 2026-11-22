@@ -1,0 +1,8 @@
+[project]
+name = "internal_models_bindings"
+version = "0.6.0-dev.9"
+description = "Public names of the existing Crumb and platform items used by compiler record models"
+private = true
+
+[dependencies]
+incan_platform = { path = "../../platform" }

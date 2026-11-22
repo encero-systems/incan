@@ -1,0 +1,8 @@
+"""Admissions, built from a record this module imports without pub."""
+
+from payload_types import PayloadAdmission
+
+
+pub def admitted(identity: str) -> PayloadAdmission:
+    """Admit one unit."""
+    return PayloadAdmission(identity=identity)

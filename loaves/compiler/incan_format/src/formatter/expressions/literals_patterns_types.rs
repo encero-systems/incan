@@ -242,6 +242,10 @@ impl Formatter {
         match pattern {
             Pattern::Wildcard => self.writer.write("_"),
             Pattern::Binding(name) => self.writer.write(name),
+            Pattern::MutBinding(name) => {
+                self.writer.write("mut ");
+                self.writer.write(name);
+            }
             Pattern::Literal(lit) => self.format_literal(lit),
             Pattern::Constructor(name, patterns) => {
                 self.write_pattern_constructor_name(&name.node);

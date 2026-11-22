@@ -42,13 +42,11 @@ pub(super) fn read_runtime_bindings_in(
         return Ok(Some(found.clone()));
     }
     let entries = set
-        .entries
-        .iter()
-        .filter(|entry| entry.key.starts_with(&prefix))
-        .collect::<Vec<_>>();
+        .members(&prefix, None, 2)
+        .map_err(|reason| unreadable(dir, name, reason))?;
     let entry = match entries.as_slice() {
         [] => return Ok(None),
-        [entry] if entry.revision == entry.value => *entry,
+        [entry] if entry.revision == entry.value => entry,
         [entry] => {
             return Err(unreadable(
                 dir,

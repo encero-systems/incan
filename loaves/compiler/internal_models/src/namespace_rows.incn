@@ -1,0 +1,21 @@
+"""The native frontend's typed checked namespace projection, framed by the public Crumb row codec. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
+
+pub from rust::internal_models_native import (
+    NamespaceField,
+    NamespaceEntry,
+    NamespaceAtom,
+    PreparedNamespaceReader,
+    prepare_namespace_reader,
+    decode_prepared_namespace,
+    identify_prepared_namespace,
+    decode_prepared_namespace_view,
+    identify_prepared_namespace_view,
+    encode_namespace_interface,
+    decode_namespace_interface,
+    NamespaceIdentity,
+    namespace_identity,
+    NamespacePublication,
+    publish_namespace_interface,
+    encode_callable_inventory,
+    decode_callable_inventory,
+)

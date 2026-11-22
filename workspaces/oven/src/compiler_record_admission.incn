@@ -7,11 +7,13 @@ from std.fs import Path
 from std.hash import sha256
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
-from pub::incan_platform.store import Snapshot, begin, commit, put
+from pub::internal_models.compiler_export import CompilerExportMember, decode_compiler_export
+from pub::incan_platform.store import begin, commit, stage_put
 from files import read_json
 from json_fields import required_items, required_text
 from observation import file_digest
-from sealed_set import Profile, Record, SetSpec, admit, export_set
+from sealed_set import Profile, Record, SetSpec, admit, admit_content_revisions, export_set
+from pub::incan_worker_host.record_directory import directory_member_key, read_directory
 from store_path_conversion import snapshot
 
 pub const COMPILER_RECORD_PROFILE: str = "incan.compiler-records/2"
@@ -25,13 +27,17 @@ pub model CompilerRecordPin:
 
     pub root: str
     pub digest: str
+    pub directory: str = ""
 
     pub def to_json(self) -> JsonValue:
-        """Encode the two authoritative pin fields without exposing the converter's scratch transport."""
-        return JsonValue.object({"root": JsonValue.string(self.root), "digest": JsonValue.string(self.digest)})
+        """Encode the sealed transport and its authenticated lookup root when available."""
+        mut fields = {"root": JsonValue.string(self.root), "digest": JsonValue.string(self.digest)}
+        if self.directory != "":
+            fields["directory"] = JsonValue.string(self.directory)
+        return JsonValue.object(fields)
 
 
-pub def convert(driver: str, installed: Path, installation: Path) -> Result[CompilerRecordPin, str]:
+pub def convert(driver: str, installed: Path, installation: Path, typed: bool = false) -> Result[CompilerRecordPin, str]:
     """
     Admit the installed Loaves' compiler records as one sealed set, converting nothing when the toolchain ships them.
 
@@ -43,28 +49,25 @@ pub def convert(driver: str, installed: Path, installation: Path) -> Result[Comp
     temporary = TemporaryDirectory.try_new().map_err((error) => f"cannot {error.message()}")?
     shipped = installed.joinpath(SHIPPED_RECORDS)
     mut converted = shipped
-    if not shipped.joinpath("index.json").is_file():
+    if not shipped.joinpath("index.crumb").is_file() and not shipped.joinpath("index.json").is_file():
         converted = temporary.path().joinpath("converted")
-        export_records(driver, installed, converted)?
-    index = read_json(converted.joinpath("index.json"))?
-    if required_text(index, "schema")? != EXPORT_SCHEMA:
-        return Err("candidate compiler returned an unsupported record export")
+        export_records(driver, installed, converted, typed)?
+    members = read_export(converted)?
     source = temporary.path().joinpath("source")
-    mut view = snapshot(source).map_err((error) => error.message())?
+    mut source_records = begin(snapshot(source).map_err((error) => error.message())?)
     mut records: list[Record] = []
     mut receipt: list[str] = []
-    for item in required_items(index, "records")?:
-        key = required_text(item, "key")?
-        revision = required_text(item, "revision")?
-        object = required_text(item, "object")?
-        if object != f"objects/{revision}":
-            return Err(f"compiler record `{key}` names a non-canonical object")
-        path = converted.joinpath(object)
-        if file_digest(path)? != revision:
+    for member in members:
+        key = member.key
+        revision = member.revision
+        path = converted.joinpath(f"objects/{revision}")
+        value = path.read_bytes().map_err((error) => f"cannot {error.message()}")?
+        if hexlify(sha256.digest(value)) != revision:
             return Err(f"compiler record `{key}` differs from revision {revision}")
-        view = write_value(view, key, path.read_bytes().map_err((error) => f"cannot {error.message()}")?)?
+        stage_put(source_records, key, value)
         records.append(Record(key=key, revision=revision, payloads=[], references=[]))
         receipt.append(f"{key}\t{revision}")
+    view = commit(source_records).map_err((error) => error.message())?
     profile = compiler_record_profile()
     spec = SetSpec(
         profile=profile,
@@ -84,13 +87,65 @@ pub def convert(driver: str, installed: Path, installation: Path) -> Result[Comp
     # The admitted set now holds every shipped object; the shipped transport would be a third copy.
     if converted.0 == shipped.0:
         remove_dir_all(shipped.0).map_err((error) => f"cannot remove shipped compiler records {shipped.0}: {error}")?
-    return Ok(CompilerRecordPin(root=relative, digest=digest))
+    top = publish_directory(transport, digest, records)?
+    return Ok(CompilerRecordPin(root=relative, digest=digest, directory=top))
+
+
+def read_export(directory: Path) -> Result[list[CompilerExportMember], str]:
+    """The declared typed index is authoritative. A predecessor index must name the same canonical object paths."""
+    index_path = directory.joinpath("index.crumb")
+    if index_path.is_file():
+        return decode_compiler_export(index_path.read_bytes().map_err((error) => error.message())?)
+    index = read_json(directory.joinpath("index.json"))?
+    if required_text(index, "schema")? != EXPORT_SCHEMA:
+        return Err("candidate compiler returned an unsupported record export")
+    mut members: list[CompilerExportMember] = []
+    mut seen: set[str] = set()
+    for item in required_items(index, "records")?:
+        key = required_text(item, "key")?
+        revision = required_text(item, "revision")?
+        object = required_text(item, "object")?
+        if key == "" or key in seen or len(revision) != 64 or object != f"objects/{revision}":
+            return Err("invalid legacy compiler record export membership")
+        for digit in revision:
+            if digit not in "0123456789abcdef":
+                return Err("invalid legacy compiler record export revision")
+        members.append(CompilerExportMember(key=key, revision=revision))
+        seen.add(key)
+    return Ok(members)
+
+
+def publish_directory(transport: Path, digest: str, records: list[Record]) -> Result[str, str]:
+    """Root one immutable logical-key index in the toolchain's pin; payloads stay in the sealed transport."""
+    view = snapshot(transport.joinpath("selection")).map_err((error) => error.message())?
+    mut staged = begin(view)
+    stage_put(staged, "@" + digest, b"")
+    for item in records:
+        stage_put(staged, directory_member_key(digest, item.key, item.revision)?, b"")
+    return Ok(commit(staged).map_err((error) => error.message())?.index)
+
+
+def validate_directory(transport: Path, pin: CompilerRecordPin, spec: SetSpec) -> Result[None, str]:
+    """At installation verify the complete relation, including absence of extras, against the admitted set."""
+    selected = read_directory(transport.joinpath("selection").0, pin.directory, pin.digest, "", 0)?
+    mut expected: Dict[str, str] = {}
+    for row in spec.records:
+        expected[row.key] = row.revision
+    if len(selected.members) != len(expected):
+        return Err("compiler directory membership differs from its sealed manifest")
+    mut seen: set[str] = set()
+    for member in selected.members:
+        if member.key in seen or expected.get(member.key, "") != member.revision:
+            return Err("installed compiler directory selects an unknown or changed member")
+        seen.add(member.key)
+    return Ok(None)
 
 
 pub def installed_records(
     driver: str,
     installation: Path,
     shipped: Option[CompilerRecordPin],
+    typed: bool = false,
 ) -> Result[CompilerRecordPin, str]:
     """
     The installation's compiler-record set: the sealed set an archive ships, verified in place, or one converted here.
@@ -103,9 +158,17 @@ pub def installed_records(
         transport = installation.joinpath(pin.root)
         if transport.joinpath("manifest.json").is_file():
             store = installation.joinpath("compiler-record-store")
-            _ = admit(store, transport, pin.digest, compiler_record_profile()).map_err((error) => error.message())?
+            if pin.directory != "":
+                _, spec = admit_content_revisions(
+                    store, transport, pin.digest, compiler_record_profile(), "installed-toolchain", file_digest(Path(driver))?,
+                ).map_err((error) => error.message())?
+                validate_directory(transport, pin, spec)?
+            else:
+                _ = admit(store, transport, pin.digest, compiler_record_profile()).map_err((error) => error.message())?
             return Ok(pin)
-    return convert(driver, installation, installation)
+        if pin.directory != "":
+            return Err("missing sealed manifest for the shipped compiler directory")
+    return convert(driver, installation, installation, typed)
 
 
 pub def shipped_pin(document: JsonValue) -> Result[Option[CompilerRecordPin], str]:
@@ -113,20 +176,20 @@ pub def shipped_pin(document: JsonValue) -> Result[Option[CompilerRecordPin], st
     match document.get("compiler_records"):
         None => return Ok(None)
         Some(value) =>
-            return Ok(
-                Some(CompilerRecordPin(root=required_text(value, "root")?, digest=required_text(value, "digest")?)),
-            )
+            mut directory = ""
+            if let Some(found) = value.get("directory"):
+                directory = found.expect_str().map_err((error) => error.message())?
+                if directory == "":
+                    return Err("empty compiler selector index root")
+            return Ok(Some(CompilerRecordPin(root=required_text(value, "root")?, digest=required_text(value, "digest")?, directory=directory)))
 
 
-def export_records(driver: str, installed: Path, output: Path) -> Result[None, str]:
+def export_records(driver: str, installed: Path, output: Path, typed: bool) -> Result[None, str]:
     """Have the candidate compiler validate the installed manifests and export their compiler records into `output`."""
-    result = Command
-        .new(driver)
-        .arg("--compiler-records")
-        .arg(installed.0)
-        .arg(output.0)
-        .output()
-        .map_err((error) => f"cannot convert installed compiler records: {error}")?
+    mut arguments = ["--compiler-records", installed.0, output.0]
+    if typed:
+        arguments.append("--crumb-index")
+    result = Command.new(driver).args(arguments).output().map_err((error) => f"cannot convert installed compiler records: {error}")?
     if not result.status.success():
         return Err("cannot convert installed compiler records: " + decoded(result.stderr))
     return Ok(None)
@@ -139,11 +202,6 @@ pub def compiler_record_profile() -> Profile:
         schema=COMPILER_RECORD_PROFILE,
         codec="incan.compiler-record-value/1",
     )
-
-
-def write_value(view: Snapshot, key: str, value: bytes) -> Result[Snapshot, str]:
-    """Publish one converter value into the temporary source snapshot used only for sealed export."""
-    return commit(put(begin(view), key, value)).map_err((error) => error.message())
 
 
 def decoded(value: bytes) -> str:

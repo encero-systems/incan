@@ -82,7 +82,7 @@ pub def retry_count() -> int:
     return count(gate)
 
 
-def initialize(gate: &InitializationGate, fail_first: bool) -> None:
+def initialize(gate: Borrowed[InitializationGate], fail_first: bool) -> None:
     """Count each attempt, hold the first until released, and optionally fail that first attempt."""
     attempt = next_attempt(gate.attempts)
     if attempt != 0:
@@ -93,9 +93,9 @@ def initialize(gate: &InitializationGate, fail_first: bool) -> None:
         raise_value_error("first concurrent initialization failed")
 
 
-def count(gate: &InitializationGate) -> int:
+def count(gate: Borrowed[InitializationGate]) -> int:
     """Observe the initializer count in the same atomic order as its increments."""
-    counter: &AtomicUsize = gate.attempts.as_ref()
+    counter: Borrowed[AtomicUsize] = gate.attempts.as_ref()
     return int(counter.load(Ordering.SeqCst))
 
 
@@ -106,7 +106,7 @@ pub def signals() -> tuple[Sender[bool], Arc[Mutex[Receiver[bool]]]]:
     return (sender, Arc.new(Mutex.new(receiver)))
 
 
-pub def send_signal(sender: &Sender[bool], context: str) -> None:
+pub def send_signal(sender: Borrowed[Sender[bool]], context: str) -> None:
     """Send a synchronization event or fail with its concrete channel cause."""
     match sender.send(true):
         Ok(_value) => return
@@ -114,7 +114,7 @@ pub def send_signal(sender: &Sender[bool], context: str) -> None:
             assert false, f"{context}: {error}"
 
 
-pub def await_signal(receiver: &Arc[Mutex[Receiver[bool]]], context: str) -> None:
+pub def await_signal(receiver: Borrowed[Arc[Mutex[Receiver[bool]]]], context: str) -> None:
     """Bound a synchronization wait; timeout is a failed test, never evidence of thread timing."""
     guard = match receiver.lock():
         Ok(value) => value
@@ -139,7 +139,7 @@ def make_gate() -> InitializationGate:
     )
 
 
-def next_attempt(attempts: &Arc[AtomicUsize]) -> int:
+def next_attempt(attempts: Borrowed[Arc[AtomicUsize]]) -> int:
     """Return the old count while atomically incrementing it; competing initializers cannot lose updates."""
-    counter: &AtomicUsize = attempts.as_ref()
+    counter: Borrowed[AtomicUsize] = attempts.as_ref()
     return int(counter.fetch_add(1usize, Ordering.SeqCst))

@@ -1,9 +1,87 @@
 use super::*;
 
+/// A caller rebuilt against an admitted namespace uses its published ABI, even if running the optimizer
+/// a second time on the provider body would infer a different access after its reads were rewritten.
+#[test]
+fn restored_namespace_access_guides_fresh_calls() -> Result<(), Box<dyn std::error::Error>> {
+    use incan_semantics_core::IncanInputAccess::{Inferred, InferredShared};
+    let (_, _, seed) = checked_seed(
+        "model Request:\n    value: int\ndef inspect(request: Request) -> int:\n    return request.value\ndef caller(request: Request) -> int:\n    return inspect(request)\n",
+    )?;
+    for access in [Inferred, InferredShared] {
+        let mut provider = seed.clone();
+        provider.bodies.retain(|body| body.name == "inspect");
+        let body = provider.bodies.first_mut().ok_or("missing provider body")?;
+        body.params[0].input_access = access;
+        let mut caller = seed.clone();
+        caller.bodies.retain(|body| body.name == "caller");
+        let mut modules = [provider.clone(), caller];
+        crate::body_ir::settle_shared_reads_with_namespaces(
+            &mut modules,
+            &[],
+            &std::collections::HashSet::new(),
+            &[true, false],
+        );
+        assert_eq!(modules[0].bodies, provider.bodies);
+        let caller = modules[1].bodies.first().ok_or("missing fresh caller")?;
+        let operand = caller
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Call { args, .. } => match args.first()? {
+                    bir::ArgumentElement::One(bir::Operand::Place(read)) => Some(read),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .ok_or("missing caller operand")?;
+        assert_eq!(operand.fact == bir::OwnershipFact::Borrow, access == InferredShared);
+    }
+    Ok(())
+}
+
+/// The ownership frontier reads the actual selected callees. Changes stop at callers whose own
+/// exported input access stays equal, even when their outgoing reads changed.
+#[test]
+fn only_direct_readers_see_a_changed_settled_input() -> Result<(), Box<dyn std::error::Error>> {
+    use incan_semantics_core::IncanInputAccess::{Inferred, InferredShared};
+    let (_, _, mut module) = checked_seed(
+        "model Request:\n    value: int\ndef leaf(request: Request) -> int:\n    return request.value\ndef invoke(value: int) -> int:\n    return leaf(Request(value=value))\ndef main() -> None:\n    println(invoke(4))\n",
+    )?;
+    let leaf = module
+        .bodies
+        .iter_mut()
+        .find(|b| b.name == "leaf")
+        .ok_or("missing leaf")?;
+    leaf.params[0].input_access = InferredShared;
+    let first = crate::body_ir::SettledCallInputs::from_modules(std::slice::from_ref(&module))?;
+    let prior = first.reads(&mut module);
+    assert_eq!(prior.len(), 2);
+    assert!(prior.iter().all(|r| first.matches(r)));
+    module
+        .bodies
+        .iter_mut()
+        .find(|b| b.name == "leaf")
+        .ok_or("missing leaf")?
+        .params[0]
+        .input_access = Inferred;
+    let changed = crate::body_ir::SettledCallInputs::from_modules(std::slice::from_ref(&module))?;
+    let stale = prior.iter().filter(|r| !changed.matches(r)).collect::<Vec<_>>();
+    assert_eq!(stale.len(), 1);
+    let invoke = module
+        .bodies
+        .iter()
+        .find(|b| b.name == "invoke")
+        .ok_or("missing invoke")?;
+    assert_eq!(stale[0].reader, invoke.direct_call_id.path());
+    Ok(())
+}
+
 /// Prove immutable parameter sharing across forwarding, recursion and a function-item adapter while explicit source
 /// contracts keep their established ownership and escaping operations retain their checked transfer facts.
 pub(super) fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "model Native:\n    value: int\nmodel Wrapper:\n    item: Native\nclass Reader:\n    pub def read(self, items: Native) -> int:\n        return items.value\ntrait Fetcher:\n    def fetch(self, scope: Native, request: Native) -> int: ...\nclass Fetch with Fetcher:\n    def fetch(self, scope: Native, request: Native) -> int:\n        return scope.value + request.value\ndef leaf(items: Native) -> int:\n    return items.value\ndef explicit(items: &Native) -> int:\n    return items.value\ndef forward(items: Native) -> int:\n    return leaf(items)\ndef explicit_forward(items: Native) -> int:\n    return explicit(items)\ndef explicit_projected(wrapper: &Wrapper) -> int:\n    return explicit(wrapper.item)\ndef method_forward(reader: Reader, items: Native) -> int:\n    return reader.read(items)\ndef trait_forward[F with Fetcher](source: F, scope: Native, request: Native) -> int:\n    return source.fetch(scope, request)\ndef left(items: Native, remaining: int) -> int:\n    if remaining == 0:\n        return items.value\n    return right(items, remaining - 1)\ndef right(items: Native, remaining: int) -> int:\n    if remaining == 0:\n        return items.value\n    return left(items, remaining - 1)\ndef escaped(items: Native) -> int:\n    return items.value\ndef take(items: Native) -> Native:\n    return items\ndef use() -> int:\n    callback = escaped\n    return callback(Native(value=1))\n";
+    let source = "model Native:\n    value: int\nmodel Wrapper:\n    item: Native\nclass Reader:\n    pub def read(self, items: Native) -> int:\n        return items.value\ntrait Fetcher:\n    def fetch(self, scope: Native, request: Native) -> int: ...\nclass Fetch with Fetcher:\n    def fetch(self, scope: Native, request: Native) -> int:\n        return scope.value + request.value\ndef leaf(items: Native) -> int:\n    return items.value\ndef explicit(items: Borrowed[Native]) -> int:\n    return items.value\ndef forward(items: Native) -> int:\n    return leaf(items)\ndef explicit_forward(items: Native) -> int:\n    return explicit(items)\ndef explicit_projected(wrapper: Borrowed[Wrapper]) -> int:\n    return explicit(wrapper.item)\ndef method_forward(reader: Reader, items: Native) -> int:\n    return reader.read(items)\ndef trait_forward[F with Fetcher](source: F, scope: Native, request: Native) -> int:\n    return source.fetch(scope, request)\ndef left(items: Native, remaining: int) -> int:\n    if remaining == 0:\n        return items.value\n    return right(items, remaining - 1)\ndef right(items: Native, remaining: int) -> int:\n    if remaining == 0:\n        return items.value\n    return left(items, remaining - 1)\ndef escaped(items: Native) -> int:\n    return items.value\ndef take(items: Native) -> Native:\n    return items\ndef use() -> int:\n    callback = escaped\n    return callback(Native(value=1))\n";
     let (program, facts, mut candidate) = checked_seed(source)?;
     let leaf = candidate
         .bodies

@@ -129,10 +129,10 @@ fn nominal_scope_inventory_matches_fresh_inputs() -> Result<(), Box<dyn std::err
         .map_err(|errors| format!("{errors:?}"))?;
     let replayed_first_interface =
         replay_builder.seal_current_module_dependency_interface("first", &first, exports, true);
-    assert_eq!(first_interface.snapshot, replayed_first_interface.snapshot);
+    assert_eq!(first_interface.snapshot(), replayed_first_interface.snapshot());
     assert_eq!(
-        first_interface.snapshot.render(),
-        replayed_first_interface.snapshot.render()
+        first_interface.snapshot().render(),
+        replayed_first_interface.snapshot().render()
     );
     let consumer = program("from first import First\n\ndef read(value: First) -> int:\n    return 1\n")?;
     let dependencies = [("first", &first)];

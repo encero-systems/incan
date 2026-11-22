@@ -135,7 +135,10 @@ pub(super) fn abi(path: &Path) -> Result<Arc<RustAbiCache>, String> {
         tracing::debug!(target: "incan::invocation", path = %path.display(), "retained immutable Rust ABI index");
         return Ok(value);
     }
-    let value = Arc::new(RustAbiCache::open(&canonical)?);
+    let value = {
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_frontend::open_rust_abi_index", path = %path.display()).entered();
+        Arc::new(RustAbiCache::open(&canonical)?)
+    };
     if let Some(inputs) = before
         && observe(&paths).as_ref() == Some(&inputs)
         && let Ok(mut store) = store.lock()
@@ -143,4 +146,48 @@ pub(super) fn abi(path: &Path) -> Result<Arc<RustAbiCache>, String> {
         store.insert(canonical, inputs, Arc::clone(&value));
     }
     Ok(value)
+}
+
+/// The readings this process keeps, store by store: Loaf artifacts (each a decoded manifest) and Rust ABI indexes,
+/// with the bytes of the files each was read from.
+pub(super) fn inventory() -> [(&'static str, usize, u64); 2] {
+    let (artifacts, artifact_bytes) = stored(&ARTIFACTS);
+    let (indexes, index_bytes) = stored(&ABI);
+    [
+        ("Loaf artifacts", artifacts, artifact_bytes),
+        ("Rust ABI indexes", indexes, index_bytes),
+    ]
+}
+
+/// How many readings a store keeps and the bytes of the files they were read from.
+fn stored<T>(store: &OnceLock<Mutex<Store<T>>>) -> (usize, u64) {
+    store
+        .get()
+        .and_then(|store| store.lock().ok())
+        .map(|store| {
+            let bytes = store.readings.values().map(|reading| reading.inputs.bytes).sum();
+            (store.readings.len(), bytes)
+        })
+        .unwrap_or((0, 0))
+}
+
+/// Drop every retained Loaf artifact reading, so no decoded manifest outlives the request that read it. Rust ABI
+/// indexes stay: they are file-backed and read their items lazily.
+pub(super) fn release_artifacts() {
+    if let Some(store) = ARTIFACTS.get()
+        && let Ok(mut store) = store.lock()
+    {
+        store.readings.clear();
+    }
+}
+
+/// Whether a reading of the Loaf `name` in `dir` is retained.
+#[cfg(test)]
+pub(super) fn retains_artifact(dir: &Path, name: &str) -> bool {
+    let canonical = fs::canonicalize(dir).unwrap_or_else(|_| dir.to_owned());
+    let key = canonical.join(format!("{}.incnlib", artifact_stem(name)));
+    ARTIFACTS
+        .get()
+        .and_then(|store| store.lock().ok())
+        .is_some_and(|store| store.readings.contains_key(&key))
 }

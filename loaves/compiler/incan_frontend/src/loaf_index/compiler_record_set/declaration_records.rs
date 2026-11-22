@@ -2,6 +2,7 @@
 //! layout or defaults, or one public namespace, opens that record of that family alone.
 
 use std::path::Path;
+use std::sync::PoisonError;
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -14,13 +15,14 @@ use crate::library_manifest::LibraryManifest;
 
 /// The record families a consumer reads by name: a declaration's own facts, a public namespace, the names an enum
 /// publishes at the package root and a module's type scope. A manifest projection never selects them.
-pub(super) const NAMED_FAMILIES: [&str; 6] = [
+pub(super) const NAMED_FAMILIES: [&str; 7] = [
     "declaration-signature",
     "layout",
     "default",
     "public-namespace",
     "enum-variant",
     "type-scope",
+    "runtime-binding",
 ];
 
 /// Read the `family` records named `declaration` (a declaration, or a public namespace by its path) in one installed
@@ -61,12 +63,10 @@ pub(super) fn read_declaration_in(
         .and_then(|value| value.to_str())
         .ok_or_else(|| unreadable(dir, name, "Loaf profile directory is not UTF-8".to_owned()))?;
     let prefix = format!("loaf/{profile}/{name}/{family}/");
-    let suffix = format!("/{:x}", Sha256::digest(declaration.as_bytes()));
+    let hash = format!("{:x}", Sha256::digest(declaration.as_bytes()));
     let mut entries = set
-        .entries
-        .iter()
-        .filter(|entry| entry.key.starts_with(&prefix) && entry.key.ends_with(&suffix))
-        .collect::<Vec<_>>();
+        .members(&prefix, Some(&hash), 0)
+        .map_err(|reason| unreadable(dir, name, reason))?;
     // A record key carries its ordinal in its family, so key order is declaration order: an overloaded name's
     // records are read in the order their overloads are declared.
     entries.sort_by(|left, right| left.key.cmp(&right.key));
@@ -110,6 +110,10 @@ pub(super) fn read_declaration_in(
         process_records = process.records,
         process_bytes = process.bytes
     );
+    set.present_named_families
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(prefix);
     Ok(Some((values, summary.identity.digest)))
 }
 
@@ -130,20 +134,34 @@ pub(in crate::loaf_index) fn names_record(
         .and_then(|value| value.to_str())
         .ok_or_else(|| unreadable(dir, name, "Loaf profile directory is not UTF-8".to_owned()))?;
     let group = format!("loaf/{profile}/{name}/");
-    let held = set
-        .entries
-        .iter()
-        .filter_map(|entry| entry.key.strip_prefix(&group))
-        .collect::<Vec<_>>();
-    if held.is_empty() {
+    if record.is_none() {
+        let present = set
+            .present_named_families
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if families
+            .iter()
+            .any(|family| present.contains(&format!("{group}{family}/")))
+        {
+            return Ok(Some(true));
+        }
+    }
+    if set
+        .members(&format!("{group}metadata/"), None, 1)
+        .map_err(|reason| unreadable(dir, name, reason))?
+        .is_empty()
+    {
         return Ok(None);
     }
-    let suffix = record.map(|record| format!("/{:x}", Sha256::digest(record.as_bytes())));
-    Ok(Some(held.iter().any(|key| {
-        families.iter().any(|family| {
-            key.strip_prefix(*family).is_some_and(|rest| {
-                rest.starts_with('/') && suffix.as_ref().is_none_or(|suffix| rest.ends_with(suffix))
-            })
-        })
-    })))
+    let hash = record.map(|member| format!("{:x}", Sha256::digest(member.as_bytes())));
+    for family in families {
+        if !set
+            .members(&format!("{group}{family}/"), hash.as_deref(), 1)
+            .map_err(|reason| unreadable(dir, name, reason))?
+            .is_empty()
+        {
+            return Ok(Some(true));
+        }
+    }
+    Ok(Some(false))
 }

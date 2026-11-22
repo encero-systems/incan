@@ -1,7 +1,8 @@
 //! A Loaf's metadata record and the inventory summary read from it (#2946): the small authenticated record an index
 //! admits an installed Loaf by, read once per process before any of the Loaf's other records.
 
-use std::collections::BTreeSet;
+use crate::library_manifest::capabilities::{self, Contributions};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::PoisonError;
 
@@ -55,10 +56,8 @@ pub(super) fn read_summary(set: &RecordSet, dir: &Path, name: &str) -> Result<Op
         return Ok(Some(summary.clone()));
     }
     let entries = set
-        .entries
-        .iter()
-        .filter(|entry| entry.key.starts_with(&prefix))
-        .collect::<Vec<_>>();
+        .members(&prefix, None, 2)
+        .map_err(|reason| unreadable(dir, name, reason))?;
     if entries.is_empty() {
         return Ok(None);
     }
@@ -69,7 +68,7 @@ pub(super) fn read_summary(set: &RecordSet, dir: &Path, name: &str) -> Result<Op
             "compiler-record metadata requires exactly one value".to_owned(),
         ));
     }
-    let entry = entries[0];
+    let entry = &entries[0];
     if entry.revision != entry.value {
         return Err(unreadable(
             dir,
@@ -113,4 +112,42 @@ pub(super) fn read_summary(set: &RecordSet, dir: &Path, name: &str) -> Result<Op
         .unwrap_or_else(PoisonError::into_inner)
         .insert(prefix, summary.clone());
     Ok(Some(summary))
+}
+
+/// Admit the profile's global contributors once. Installations without a catalog retain individual metadata reads.
+pub(in crate::loaf_index) fn admit_capabilities(
+    dir: &Path,
+    names: &BTreeSet<String>,
+) -> Result<BTreeMap<String, Contributions>, LoafIndexError> {
+    let profile = dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let Some(set) = installed().map_err(|e| unreadable(dir, profile, e))? else {
+        return Ok(BTreeMap::new());
+    };
+    load_capabilities(set, profile, names).map_err(|reason| unreadable(dir, profile, reason))
+}
+
+fn load_capabilities(
+    set: &RecordSet,
+    profile: &str,
+    names: &BTreeSet<String>,
+) -> Result<BTreeMap<String, Contributions>, String> {
+    let key = capabilities::key(profile, names);
+    let hash = key.rsplit('/').next().ok_or("invalid compiler catalog key")?;
+    let mut checked = set.capability_profiles.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(found) = checked.get(&key) {
+        return Ok(found.clone());
+    }
+    let entries = set.members(&capabilities::prefix(profile), Some(hash), 2)?;
+    let admitted = if let Some(entry) = entries.first() {
+        if entries.len() != 1 || entry.key != key || entry.value != entry.revision {
+            return Err("ambiguous or mismatched compiler contributors record".into());
+        }
+        let bytes = read_value(&set.root, &entry.value).map_err(|reason| record_failure(&entry.key, reason))?;
+        set.count_read(&entry.key, bytes.len());
+        capabilities::decode(&bytes, profile, names)?
+    } else {
+        BTreeMap::new()
+    };
+    checked.insert(key, admitted.clone());
+    Ok(admitted)
 }

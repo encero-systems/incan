@@ -43,6 +43,9 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
+        if ty.is_some() && matches!(self.peek().kind, TokenKind::Newline | TokenKind::Eof) {
+            return Err(errors::declaration_without_value(&name.node, name.span));
+        }
         self.expect(&TokenKind::Operator(OperatorId::Eq), "Expected '=' in assignment")?;
 
         // Check for chained assignment: x = y = z = 5

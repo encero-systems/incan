@@ -1,0 +1,50 @@
+"""Canonical record keys for compiled body publication and selection."""
+
+from pub::internal_models.records import RecordKey
+
+pub from pub::internal_models.namespace_references import NAMESPACE_IDENTITY_PROFILE, namespace_key
+
+pub const IDENTITY_PROFILE: str = "incan.stable-declaration/1"
+
+
+pub def project_declaration_slot(origin: str, module: str, name: str, identity: str) -> RecordKey:
+    """Distinguish selected members and symbolic reads even when their module and spelling agree."""
+    marker = "|incan.source-signature/2:sha256:"
+    mut context = "symbol:" + identity
+    # A compact checked identity ends with this fixed-size signature only when this particular read selected one.
+    # A nominal owner's signature inside #in(...) remains part of the address.
+    prefix = len(identity) - len(marker) - 64
+    if prefix >= 0 and identity[prefix:prefix + len(marker)] == marker:
+        context = "checked-signature:" + identity[:prefix]
+    return RecordKey(
+        family="declaration-slot",
+        identity_profile=IDENTITY_PROFILE,
+        origin=origin,
+        identity=module,
+        facet=name,
+        context=context,
+    )
+
+
+pub def body_key(family: str, origin: str, identity: str, facet: str, context: str) -> RecordKey:
+    """Name one canonical checker value under its stable owner and semantic root."""
+    return RecordKey(
+        family=family,
+        identity_profile=IDENTITY_PROFILE,
+        origin=origin,
+        identity=identity,
+        facet=facet,
+        context=context,
+    )
+
+
+pub def eligibility_key(origin: str, identity: str, name: str) -> RecordKey:
+    """Name the explicit record-fast-path decision for one successfully checked owner."""
+    return RecordKey(
+        family="eligibility",
+        identity_profile=IDENTITY_PROFILE,
+        origin=origin,
+        identity=identity,
+        facet=name,
+        context="checker-record",
+    )

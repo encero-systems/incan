@@ -1,0 +1,402 @@
+"""
+Ed25519 signature verification for RFC 125 registry statements.
+
+Verification handles public values only, so its arithmetic is not constant-time and it never signs. Field and scalar
+values use 24-bit limbs and Montgomery multiplication. Points use extended twisted-Edwards coordinates.
+"""
+
+from std.encoding.hex import unhexlify
+from std.hash import sha512
+
+const LIMB_BITS: int = 24
+const LIMB_MASK: int = 16777215
+const LIMBS: int = 11
+const POINT_OCTETS: int = 32
+const SIGNATURE_OCTETS: int = 64
+
+
+model Modulus:
+    """An odd modulus and the constants needed for Montgomery multiplication."""
+
+    value: list[int]
+    inverse: int
+    one: list[int]
+    radix_squared: list[int]
+
+
+model Domain:
+    """The Ed25519 field, group order and curve constants in Montgomery form."""
+
+    field: Modulus
+    order: Modulus
+    d: list[int]
+    square_root_minus_one: list[int]
+    square_root_exponent: list[int]
+
+
+model Point:
+    """An extended-coordinate point with `x * y = z * t`."""
+
+    x: list[int]
+    y: list[int]
+    z: list[int]
+    t: list[int]
+
+
+pub def verify(public_key: bytes, message: bytes, signature: bytes) -> bool:
+    """Return whether an RFC 8032 Ed25519 signature verifies under its encoded public key."""
+    if len(public_key) != POINT_OCTETS or len(signature) != SIGNATURE_OCTETS:
+        return false
+    match built_domain():
+        Err(_) => return false
+        Ok(domain) =>
+            match decoded_point(domain, public_key):
+                Err(_) => return false
+                Ok(author) =>
+                    match decoded_point(domain, signature[0:POINT_OCTETS]):
+                        Err(_) => return false
+                        Ok(record) => return verified(domain, author, record, public_key, message, signature)
+
+
+def verified(
+    domain: Domain,
+    author: Point,
+    record: Point,
+    public_key: bytes,
+    message: bytes,
+    signature: bytes,
+) -> bool:
+    """Check the scalar range, reject small-order points, and prove the cofactored group equation."""
+    scalar = number_little(signature[POINT_OCTETS:SIGNATURE_OCTETS], LIMBS)
+    if compare(scalar, domain.order.value) >= 0:
+        return false
+    author8 = cofactored(domain.field, author)
+    record8 = cofactored(domain.field, record)
+    if is_identity(domain.field, author8) or is_identity(domain.field, record8):
+        return false
+    digest = sha512.digest(joined([signature[0:POINT_OCTETS], public_key, message]))
+    challenge = reduced_little(digest, domain.order.value)
+    match decoded_point(domain, base_encoding()):
+        Err(_) => return false
+        Ok(base) =>
+            left = cofactored(domain.field, scaled(domain.field, base, scalar))
+            combined = added(domain.field, record, scaled(domain.field, author, challenge))
+            right = cofactored(domain.field, combined)
+            return same_point(domain.field, left, right)
+
+
+def built_domain() -> Result[Domain, str]:
+    """Build the field, order and published Ed25519 constants."""
+    field = modulus(parameter("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffed")?)
+    order = modulus(parameter("1000000000000000000000000000000014def9dea2f79cd65812631a5cf5d3ed")?)
+    d = parameter("52036cee2b6ffe738cc740797779e89800700a4d4141d8ab75eb4dca135978a3")?
+    root = parameter("2b8324804fc1df0b2b4d00993dfbd7a72f431806ad2fe478c4ee1b274a0ea0b0")?
+    exponent = parameter("0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe")?
+    return Ok(
+        Domain(
+            field=field,
+            order=order,
+            d=to_montgomery(d, field),
+            square_root_minus_one=to_montgomery(root, field),
+            square_root_exponent=exponent,
+        ),
+    )
+
+
+def parameter(text: str) -> Result[list[int], str]:
+    """Decode a big-endian hexadecimal domain parameter."""
+    octets = unhexlify(text).map_err((error) => error.message())?
+    return Ok(number_big(octets, LIMBS))
+
+
+def base_encoding() -> bytes:
+    """Return RFC 8032's canonical encoding of the Ed25519 base point."""
+    return unhexlify("5866666666666666666666666666666666666666666666666666666666666666").unwrap()
+
+
+def decoded_point(domain: Domain, compressed: bytes) -> Result[Point, str]:
+    """Decode one canonical Edwards point and recover its x coordinate."""
+    if len(compressed) != POINT_OCTETS:
+        return Err("an Ed25519 point has the wrong length")
+    sign = int(compressed[POINT_OCTETS - 1]) >> 7
+    y_plain = point_number(compressed)
+    if compare(y_plain, domain.field.value) >= 0:
+        return Err("an Ed25519 point is not canonical")
+    y = to_montgomery(y_plain, domain.field)
+    y_squared = multiply(y, y, domain.field)
+    numerator = subtract_modular(y_squared, domain.field.one, domain.field.value)
+    denominator = add_modular(multiply(domain.d, y_squared, domain.field), domain.field.one, domain.field.value)
+    if is_zero(denominator):
+        return Err("an Ed25519 point has no x coordinate")
+    x_squared = multiply(numerator, inverted(denominator, domain.field), domain.field)
+    mut x = powered(x_squared, domain.square_root_exponent, domain.field)
+    if compare(multiply(x, x, domain.field), x_squared) != 0:
+        x = multiply(x, domain.square_root_minus_one, domain.field)
+    if compare(multiply(x, x, domain.field), x_squared) != 0:
+        return Err("an Ed25519 point is not on the curve")
+    x_plain = from_montgomery(x, domain.field)
+    if is_zero(x_plain) and sign == 1:
+        return Err("an Ed25519 point has a noncanonical sign")
+    if (x_plain[0] & 1) != sign:
+        x = subtract_modular([0 for _ in range(LIMBS)], x, domain.field.value)
+    return Ok(Point(x=x, y=y, z=domain.field.one, t=multiply(x, y, domain.field)))
+
+
+def modulus(value: list[int]) -> Modulus:
+    """Derive Montgomery constants for an odd modulus."""
+    mut inverse: int = 1
+    for _ in range(6):
+        product = (value[0] * inverse) & LIMB_MASK
+        inverse = (inverse * ((LIMB_MASK + 3 - product) & LIMB_MASK)) & LIMB_MASK
+    mut power: list[int] = [0 for _ in range(len(value))]
+    power[0] = 1
+    mut one: list[int] = []
+    for step in range(2 * LIMB_BITS * len(value)):
+        if step == LIMB_BITS * len(value):
+            one = power.clone()
+        power = add_modular(power, power, value)
+    return Modulus(value=value, inverse=(LIMB_MASK + 1 - inverse) & LIMB_MASK, one=one, radix_squared=power)
+
+
+def number_big(octets: bytes, limbs: int) -> list[int]:
+    """Read big-endian octets into a fixed number of little-endian limbs."""
+    mut value: list[int] = [0 for _ in range(limbs)]
+    count = len(octets)
+    for index in range(count):
+        position = count - 1 - index
+        limb = index // 3
+        if limb < limbs:
+            value[limb] = value[limb] | (int(octets[position]) << (8 * (index % 3)))
+    return value
+
+
+def number_little(octets: bytes, limbs: int) -> list[int]:
+    """Read little-endian octets into a fixed number of little-endian limbs."""
+    mut value: list[int] = [0 for _ in range(limbs)]
+    for index in range(len(octets)):
+        limb = index // 3
+        if limb < limbs:
+            value[limb] = value[limb] | (int(octets[index]) << (8 * (index % 3)))
+    return value
+
+
+def point_number(octets: bytes) -> list[int]:
+    """Read a compressed point's little-endian y coordinate, excluding its sign bit."""
+    mut value: list[int] = [0 for _ in range(LIMBS)]
+    for index in range(POINT_OCTETS):
+        mut octet = int(octets[index])
+        if index == POINT_OCTETS - 1:
+            octet = octet & 127
+        value[index // 3] = value[index // 3] | (octet << (8 * (index % 3)))
+    return value
+
+
+def reduced_little(octets: bytes, bound: list[int]) -> list[int]:
+    """Reduce an arbitrary little-endian octet string modulo `bound`."""
+    mut result: list[int] = [0 for _ in range(len(bound))]
+    mut one: list[int] = [0 for _ in range(len(bound))]
+    one[0] = 1
+    bits = 8 * len(octets)
+    for offset in range(bits):
+        bit = bits - 1 - offset
+        result = add_modular(result, result, bound)
+        if ((int(octets[bit // 8]) >> (bit % 8)) & 1) == 1:
+            result = add_modular(result, one, bound)
+    return result
+
+
+def joined(parts: list[bytes]) -> bytes:
+    """Join byte strings without a native layout dependency."""
+    mut result: list[u8] = []
+    for part in parts:
+        for byte in part:
+            result.append(byte.wrapping_resize())
+    return result
+
+
+def compare(left: list[int], right: list[int]) -> int:
+    """Order two numbers of equal limb count."""
+    for offset in range(len(left)):
+        index = len(left) - 1 - offset
+        if left[index] > right[index]:
+            return 1
+        if left[index] < right[index]:
+            return -1
+    return 0
+
+
+def is_zero(value: list[int]) -> bool:
+    """Return whether every limb is zero."""
+    for limb in value:
+        if limb != 0:
+            return false
+    return true
+
+
+def subtracted(left: list[int], right: list[int]) -> list[int]:
+    """Subtract modulo the limb range; callers know the represented difference."""
+    mut result: list[int] = [0 for _ in range(len(left))]
+    mut borrow: int = 0
+    for index in range(len(left)):
+        difference = left[index] + LIMB_MASK + 1 - right[index] - borrow
+        result[index] = difference & LIMB_MASK
+        borrow = 1 - (difference >> LIMB_BITS)
+    return result
+
+
+def add_modular(left: list[int], right: list[int], bound: list[int]) -> list[int]:
+    """Add two reduced values modulo `bound`."""
+    mut result: list[int] = [0 for _ in range(len(left))]
+    mut carry: int = 0
+    for index in range(len(left)):
+        total = left[index] + right[index] + carry
+        result[index] = total & LIMB_MASK
+        carry = total >> LIMB_BITS
+    if carry != 0 or compare(result, bound) >= 0:
+        return subtracted(result, bound)
+    return result
+
+
+def subtract_modular(left: list[int], right: list[int], bound: list[int]) -> list[int]:
+    """Subtract two reduced values modulo `bound`."""
+    if compare(left, right) >= 0:
+        return subtracted(left, right)
+    return subtracted(left, subtracted(right, bound))
+
+
+def multiply(left: list[int], right: list[int], bound: Modulus) -> list[int]:
+    """Montgomery multiplication by coarsely integrated operand scanning."""
+    limbs = len(bound.value)
+    mut window: list[int] = [0 for _ in range(limbs + 2)]
+    for outer in range(limbs):
+        mut carry: int = 0
+        for inner in range(limbs):
+            total = window[inner] + left[inner] * right[outer] + carry
+            window[inner] = total & LIMB_MASK
+            carry = total >> LIMB_BITS
+        top = window[limbs] + carry
+        window[limbs] = top & LIMB_MASK
+        window[limbs + 1] = top >> LIMB_BITS
+        quotient = (window[0] * bound.inverse) & LIMB_MASK
+        carry = (window[0] + quotient * bound.value[0]) >> LIMB_BITS
+        for inner in range(1, limbs):
+            total = window[inner] + quotient * bound.value[inner] + carry
+            window[inner - 1] = total & LIMB_MASK
+            carry = total >> LIMB_BITS
+        folded = window[limbs] + carry
+        window[limbs - 1] = folded & LIMB_MASK
+        window[limbs] = window[limbs + 1] + (folded >> LIMB_BITS)
+    result: list[int] = window[0:limbs]
+    if window[limbs] != 0 or compare(result, bound.value) >= 0:
+        return subtracted(result, bound.value)
+    return result
+
+
+def to_montgomery(value: list[int], bound: Modulus) -> list[int]:
+    """Enter Montgomery form."""
+    return multiply(value, bound.radix_squared, bound)
+
+
+def from_montgomery(value: list[int], bound: Modulus) -> list[int]:
+    """Leave Montgomery form."""
+    mut unit: list[int] = [0 for _ in range(len(value))]
+    unit[0] = 1
+    return multiply(value, unit, bound)
+
+
+def powered(value: list[int], exponent: list[int], bound: Modulus) -> list[int]:
+    """Raise a Montgomery value to a public exponent."""
+    mut result = bound.one.clone()
+    for offset in range(LIMB_BITS * len(exponent)):
+        bit = LIMB_BITS * len(exponent) - 1 - offset
+        result = multiply(result, result, bound)
+        if bit_of(exponent, bit):
+            result = multiply(result, value, bound)
+    return result
+
+
+def inverted(value: list[int], bound: Modulus) -> list[int]:
+    """Invert a nonzero Montgomery value by Fermat's theorem."""
+    mut two: list[int] = [0 for _ in range(len(value))]
+    two[0] = 2
+    return powered(value, subtracted(bound.value, two), bound)
+
+
+def bit_of(value: list[int], bit: int) -> bool:
+    """Read one bit of a limb number."""
+    return ((value[bit // LIMB_BITS] >> (bit % LIMB_BITS)) & 1) == 1
+
+
+def identity(field: Modulus) -> Point:
+    """Return the Edwards identity."""
+    zero: list[int] = [0 for _ in range(len(field.value))]
+    return Point(x=zero.clone(), y=field.one, z=field.one, t=zero)
+
+
+def added(field: Modulus, left: Point, right: Point) -> Point:
+    """Add extended points on the `a = -1` twisted Edwards curve."""
+    a = multiply(
+        subtract_modular(left.y, left.x, field.value),
+        subtract_modular(right.y, right.x, field.value),
+        field,
+    )
+    b = multiply(add_modular(left.y, left.x, field.value), add_modular(right.y, right.x, field.value), field)
+    mut c = multiply(add_modular(left.t, left.t, field.value), right.t, field)
+    # `left.t` is multiplied by d by the caller-visible point operation below.
+    c = multiply(c, curve_d(field), field)
+    d = multiply(add_modular(left.z, left.z, field.value), right.z, field)
+    e = subtract_modular(b, a, field.value)
+    f = subtract_modular(d, c, field.value)
+    g = add_modular(d, c, field.value)
+    h = add_modular(b, a, field.value)
+    return Point(x=multiply(e, f, field), y=multiply(g, h, field), z=multiply(f, g, field), t=multiply(e, h, field))
+
+
+def curve_d(field: Modulus) -> list[int]:
+    """Return the curve coefficient in this field's Montgomery domain."""
+    value = number_big(unhexlify("52036cee2b6ffe738cc740797779e89800700a4d4141d8ab75eb4dca135978a3").unwrap(), LIMBS)
+    return to_montgomery(value, field)
+
+
+def doubled(field: Modulus, point: Point) -> Point:
+    """Double an extended point on the `a = -1` twisted Edwards curve."""
+    a = multiply(point.x, point.x, field)
+    b = multiply(point.y, point.y, field)
+    c = multiply(add_modular(point.z, point.z, field.value), point.z, field)
+    d = subtract_modular([0 for _ in range(len(field.value))], a, field.value)
+    sum = add_modular(point.x, point.y, field.value)
+    e = subtract_modular(subtract_modular(multiply(sum, sum, field), a, field.value), b, field.value)
+    g = add_modular(d, b, field.value)
+    f = subtract_modular(g, c, field.value)
+    h = subtract_modular(d, b, field.value)
+    return Point(x=multiply(e, f, field), y=multiply(g, h, field), z=multiply(f, g, field), t=multiply(e, h, field))
+
+
+def scaled(field: Modulus, point: Point, scalar: list[int]) -> Point:
+    """Multiply a point by a public scalar."""
+    mut result = identity(field)
+    for offset in range(LIMB_BITS * len(scalar)):
+        result = doubled(field, result)
+        if bit_of(scalar, LIMB_BITS * len(scalar) - 1 - offset):
+            result = added(field, result, point)
+    return result
+
+
+def cofactored(field: Modulus, point: Point) -> Point:
+    """Multiply a point by Ed25519's cofactor eight."""
+    mut result = point
+    for _ in range(3):
+        result = doubled(field, result)
+    return result
+
+
+def same_point(field: Modulus, left: Point, right: Point) -> bool:
+    """Compare two projective points without inversion."""
+    x_equal = compare(multiply(left.x, right.z, field), multiply(right.x, left.z, field)) == 0
+    y_equal = compare(multiply(left.y, right.z, field), multiply(right.y, left.z, field)) == 0
+    return x_equal and y_equal
+
+
+def is_identity(field: Modulus, point: Point) -> bool:
+    """Return whether a projective point is the Edwards identity."""
+    return is_zero(point.x) and compare(point.y, point.z) == 0

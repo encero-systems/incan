@@ -57,7 +57,7 @@ pub def sdk_identity(sysroot: str) -> Result[str, str]:
     return Ok(selection_identity(sysroot) + "\n" + root + "\n" + sdk_observation(root))
 
 
-pub def configure_sdk(mut command: &mut Command, sysroot: str) -> Result[None, str]:
+pub def configure_sdk(mut command: BorrowedMut[Command], sysroot: str) -> Result[None, str]:
     """Configure the caller's command with the validated SDK without changing the parent process's environment."""
     mut root = selected_sdk(sysroot)?
     if root != "":

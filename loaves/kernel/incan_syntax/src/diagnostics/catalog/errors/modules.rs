@@ -336,6 +336,48 @@ pub fn import_not_exported(name: &str, module_path: &str, exported_names: &[Stri
     .with_hint(format!("Public exports from `{}`: {}", module_path, exports))
 }
 
+/// Importing a name from a module that does not export it while other modules of the program do: the module at most
+/// imports the name itself, which makes it no export of that module (RFC 176). `exporting_modules` is sorted.
+pub fn import_not_exported_by_module(
+    name: &str,
+    module_path: &str,
+    exporting_modules: &[String],
+    span: Span,
+) -> CompileError {
+    let modules = exporting_modules
+        .iter()
+        .map(|module| format!("`{module}`"))
+        .collect::<Vec<_>>()
+        .join(" or ");
+    let which = if exporting_modules.len() == 1 {
+        "which exports it"
+    } else {
+        "each of which exports it"
+    };
+    CompileError::new(format!("`{name}` is not exported by `{module_path}`"), span)
+        .with_stable_code("INCAN-I0001")
+        .with_primary_label(format!("`{module_path}` does not export `{name}`"))
+        .with_hint(format!(
+            "Import it from {modules}, {which}, or re-export it from `{module_path}` with `pub from`"
+        ))
+}
+
+/// Importing a name from a namespace whose own module (its prelude) does not re-export it, while a module inside the
+/// namespace exports it: the namespace is the documented import path, so the fix is its `pub from` line (RFC 176).
+pub fn import_not_reexported_by_namespace(
+    name: &str,
+    namespace: &str,
+    exporting_module: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::new(format!("`{name}` is not exported by `{namespace}`"), span)
+        .with_stable_code("INCAN-I0001")
+        .with_primary_label(format!("`{namespace}` does not export `{name}`"))
+        .with_hint(format!(
+            "Re-export it from `{namespace}` with `pub from {exporting_module} import {name}` in that namespace's prelude"
+        ))
+}
+
 /// Refuse an import of a type whose provider explicitly records its public-to-private migration.
 pub fn import_made_private(
     name: &str,

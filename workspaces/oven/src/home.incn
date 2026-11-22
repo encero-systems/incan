@@ -45,7 +45,7 @@ pub def loaf_build_dir(root_project: str, package: str) -> Path:
 
 pub def unit_ledger(project_root: str, name: str) -> Path:
     """The ledger of one unit's inputs, in the target directory of the project that builds it."""
-    return Path(project_root).joinpath("target").joinpath("incan").joinpath("observations").joinpath(f"{name}.json")
+    return Path(project_root).joinpath("target").joinpath("incan").joinpath("observations").joinpath(f"{name}.crumb")
 
 
 pub def standard_library_dir() -> Result[Path, str]:

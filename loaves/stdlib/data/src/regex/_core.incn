@@ -62,7 +62,7 @@ def _compile_raw(
     return builder.build().map_err((err) => RegexError(kind_value="compile_error", detail=err.to_string()))
 
 
-def _captures(raw: &_RawRegex, text: str) -> Option[Captures]:
+def _captures(raw: Borrowed[_RawRegex], text: str) -> Option[Captures]:
     """
     Copy indexed and named engine captures into owned source values for either matching mode.
 

@@ -214,17 +214,23 @@ impl TypeChecker {
                     });
 
                 if let Some((is_mutable, var_ty)) = var_info_opt {
+                    // RFC 164: `x op= y` on an exclusive borrow writes its referent through the borrow.
+                    let referent = match &var_ty {
+                        ResolvedType::RefMut(referent) => Some(referent.as_ref().clone()),
+                        _ => None,
+                    };
                     if !is_mutable {
                         self.errors
                             .push(errors::mutation_without_mut(&compound.name, stmt.span));
-                    } else {
+                    } else if referent.is_none() {
                         self.refuse_caller_visible_mut_param_rebinding(&compound.name, stmt.span);
                     }
-                    // Type check the value expression
-                    let value_ty = self.check_expr(&compound.value);
+                    // Type check the value expression, read through any borrow it is.
+                    let value_ty = crate::typechecker::helpers::borrowed_value_type(self.check_expr(&compound.value));
                     self.refuse_capturing_reassignment(Some(&compound.name), &compound.value, compound.name_span);
 
-                    self.check_compound_assignment_value(compound, &var_ty, &value_ty, stmt.span);
+                    let target_ty = referent.unwrap_or(var_ty);
+                    self.check_compound_assignment_value(compound, &target_ty, &value_ty, stmt.span);
                 } else if let Some(static_info) = self.lookup_static_info(&compound.name).cloned() {
                     if static_info.is_imported {
                         self.errors.push(errors::imported_static_reassignment_not_allowed(

@@ -240,7 +240,7 @@ mod tests {
     /// Function and method inputs are admitted, and their frame locals use the payload type.
     #[test]
     fn source_parameters_and_locals_share_projected_value_types() -> Result<(), Box<dyn std::error::Error>> {
-        let source = "def read(value: Borrowed[int]) -> int:\n    return value\ndef take(value: Owned[int]) -> int:\n    return value\nclass Reader:\n    def read(self, value: Borrowed[int]) -> int:\n        return value\n";
+        let source = "def read(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return value\ndef take(value: Owned[int]) -> int:\n    return value\nclass Reader:\n    def read(self, value: Borrowed[int], proof: Owned[int] = 0) -> int:\n        return value\n";
         let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
         let mut checker = crate::typechecker::TypeChecker::new();
@@ -272,15 +272,15 @@ mod tests {
                 assert_eq!(local.ty, parameter.ty);
             }
         }
-        assert_eq!(inputs, 3);
+        // Each callable also takes its defaulted `Owned[int]` proof entry, an explicit input of its own.
+        assert_eq!(inputs, 5);
         Ok(())
     }
 
     /// A non-Copy alias reads the original borrowed storage without an owned copy or first-class reference local.
     #[test]
     fn noncopy_local_alias_reads_retain_borrowed_storage() -> Result<(), Box<dyn std::error::Error>> {
-        let source =
-            "def read(value: Borrowed[str]) -> int:\n    let view: Borrowed[str] = value\n    return len(view)\n";
+        let source = "def read(value: Borrowed[str], proof: Owned[int] = 0) -> int:\n    let view: Borrowed[str] = value\n    return len(view)\n";
         let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
         let mut checker = crate::typechecker::TypeChecker::new();

@@ -41,7 +41,7 @@ model Person:
     name: Name
 
 
-def replace_items(mut items: ProviderHandle[tuple[&mut int, &mut int]]) -> None:
+def replace_items(mut items: ProviderHandle[tuple[BorrowedMut[int], BorrowedMut[int]]]) -> None:
     pass
 
 

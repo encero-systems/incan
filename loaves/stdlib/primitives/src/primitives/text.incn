@@ -6,7 +6,7 @@ from rust::std::convert import Into as RustInto
 from rust::incan_std_primitives::frozen import FrozenStr as RuntimeFrozenStr, FrozenBytes as RuntimeFrozenBytes
 
 
-pub def encode_utf8(value: &str) -> bytes:
+pub def encode_utf8(value: Borrowed[str]) -> bytes:
     """
     Copy borrowed UTF-8 text into independent byte storage.
 
@@ -25,7 +25,7 @@ pub def copy_frozen_bytes(value: RuntimeFrozenBytes) -> bytes:
     return RustInto.into(value.as_slice())
 
 
-pub def decode_utf8(value: &bytes, replace_invalid: bool) -> tuple[bool, str]:
+pub def decode_utf8(value: Borrowed[bytes], replace_invalid: bool) -> tuple[bool, str]:
     """
     Decode borrowed bytes as UTF-8 into independent text storage.
 

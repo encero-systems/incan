@@ -357,35 +357,36 @@ fn test_exported_symbols_ignores_module_imports() {
     assert!(exports.is_empty());
 }
 
+/// A `pub from` import re-exports its items under their local names; the same import without `pub` binds them for
+/// the module alone and exports nothing (RFC 176).
 #[test]
 fn test_exported_symbols_reexports_from_import_items() {
-    let import = ImportDecl {
-        visibility: Visibility::Private,
-        kind: ImportKind::From {
-            module: ImportPath {
-                segments: vec!["std".to_string(), "web".to_string(), "routing".to_string()],
-                is_absolute: false,
-                parent_levels: 0,
+    let program = |visibility: Visibility| Program {
+        declarations: vec![make_spanned(Declaration::Import(ImportDecl {
+            visibility,
+            kind: ImportKind::From {
+                module: ImportPath {
+                    segments: vec!["std".to_string(), "web".to_string(), "routing".to_string()],
+                    is_absolute: false,
+                    parent_levels: 0,
+                },
+                items: vec![
+                    ImportItem {
+                        name: "route".to_string(),
+                        alias: None,
+                    },
+                    ImportItem {
+                        name: "GET".to_string(),
+                        alias: Some("METHOD_GET".to_string()),
+                    },
+                ],
             },
-            items: vec![
-                ImportItem {
-                    name: "route".to_string(),
-                    alias: None,
-                },
-                ImportItem {
-                    name: "GET".to_string(),
-                    alias: Some("METHOD_GET".to_string()),
-                },
-            ],
-        },
-        alias: None,
-    };
-    let program = Program {
-        declarations: vec![make_spanned(Declaration::Import(import))],
+            alias: None,
+        }))],
         source_path: None,
         warnings: vec![],
     };
-    let exports = exported_symbols(&program);
+    let exports = exported_symbols(&program(Visibility::Public));
     assert_eq!(exports.len(), 2);
     match &exports[0] {
         ExportedSymbol::Reexported(name) => assert_eq!(name, "route"),
@@ -395,6 +396,7 @@ fn test_exported_symbols_reexports_from_import_items() {
         ExportedSymbol::Reexported(name) => assert_eq!(name, "METHOD_GET"),
         _ => panic!("Expected Reexported export"),
     }
+    assert!(exported_symbols(&program(Visibility::Private)).is_empty());
 }
 
 #[test]

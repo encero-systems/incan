@@ -59,7 +59,7 @@ pub(crate) fn method_target<'plan>(plan: &'plan Plan, slot: i64, name: &str) -> 
 /// returns a clone of the value type the cell itself stores, which a static can only hold when it is owned.
 fn result_outlives_guard(plan: &Plan, method: &Function, tcx: Option<TyCtxt<'_>>) -> bool {
     if let Some(PlanType::DictRef(_, value)) = method.parameters.first().map(|receiver| &receiver.ty)
-        && crate::plan::list_leaf_type(value.clone()) == method.return_type
+        && crate::plan::list_leaf_type(&value) == method.return_type
     {
         return true;
     }
@@ -75,7 +75,7 @@ fn guard_owned_result(
     visiting: &mut BTreeSet<(bool, i64)>,
     tcx: Option<TyCtxt<'_>>,
 ) -> bool {
-    if incan_mir_lowering::numeric_carrier(ty) {
+    if incan_lowering::numeric_carrier(ty) {
         return true;
     }
     match ty {
@@ -98,7 +98,7 @@ fn guard_owned_result(
         }
         PlanType::Tuple(elements) => elements
             .iter()
-            .all(|element| guard_owned_result(plan, &tuple_element_type(element.clone()), visiting, tcx)),
+            .all(|element| guard_owned_result(plan, &tuple_element_type(&element), visiting, tcx)),
         PlanType::Model(index, name) => {
             if !visiting.insert((false, *index)) {
                 return false;

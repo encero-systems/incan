@@ -1,6 +1,6 @@
 # Frontend developer notes
 
-The frontend checks parsed Incan modules, records semantic facts and constructs checked Body IR. The native driver lowers that representation through `incan_mir_lowering` and compiles it through rustc MIR. It does not generate Rust source.
+The frontend checks parsed Incan modules, records semantic facts and constructs checked Body IR. The native driver lowers that representation through `incan_lowering` and compiles it through rustc MIR. It does not generate Rust source.
 
 ## Source owners
 

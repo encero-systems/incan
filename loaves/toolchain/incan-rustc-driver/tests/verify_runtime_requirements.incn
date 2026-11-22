@@ -53,7 +53,7 @@ pub def verify(settings: Settings) -> Result[None, str]:
     """
     Prove runtime requirements at the direct-driver boundary.
 
-    1. Compile four library fixtures with only the governed runtime Loaf retained.
+    1. Compile four library fixtures with no Loaf retained: the Rust runtime is a native crate of the template.
     2. Compile and execute a separate consumer against the minimal hex provider.
     """
     if settings.scratch.exists():
@@ -160,15 +160,23 @@ def consumer_unit(
 
 
 def runtime_loaves(template: JsonValue) -> Result[list[JsonValue], str]:
-    """Keep exactly the installed runtime provider and refuse a template without it."""
+    """
+    Retain no Loaf for the runtime: the Rust runtime is a native crate the template binds exactly once, never a Loaf
+    with governed bodies.
+    """
     loaves = template.require("loaves").and_then((value) => value.expect_array()).map_err((error) => error.message())?
-    mut runtime: list[JsonValue] = []
     for loaf in loaves:
         if json_text(loaf, "name")? == "incan_native_runtime":
-            runtime.append(loaf)
-    if len(runtime) != 1:
-        return Err("template must contain exactly one incan_native_runtime Loaf")
-    return Ok(runtime)
+            return Err("template lists incan_native_runtime as a Loaf; the Rust runtime is a native crate")
+    externs = template.require("externs").and_then((value) => value.expect_array()).map_err((error) => error.message())?
+    mut bound = 0
+    for native in externs:
+        if json_text(native, "name")? == "incan_native_runtime":
+            bound += 1
+    if bound != 1:
+        return Err("template must bind exactly one incan_native_runtime crate")
+    retained: list[JsonValue] = []
+    return Ok(retained)
 
 
 def identify(settings: Settings, unit: Path, project: Path) -> Result[None, str]:

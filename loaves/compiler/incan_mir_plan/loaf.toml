@@ -2,19 +2,8 @@
 name = "incan_mir_plan"
 version = "0.6.0-dev.9"
 
-[rust]
-name = "incan_mir_plan_files"
-type = "lib"
-edition = "2024"
-
-[rust.source]
-root = "rust"
-
 [dependencies]
-serde = { features = ["derive"], loaf = "crates-io/serde", version = "1" }
-serde_json = { loaf = "crates-io/serde_json", version = "1" }
-internal_models = { path = "../internal_models" }
-incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
+incan_mir_plan_native = { loaf = "incan_mir_plan_native", path = "../incan_mir_plan_native" }
 
 [build]
 rust-edition = "2024"

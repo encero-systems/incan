@@ -166,7 +166,7 @@ def owned_tuple_fields() -> None:
     println(typed.is_poisoned())
 
 
-def borrowed_tuple_owner(handles: &Tuple[Mutex[int], int]) -> None:
+def borrowed_tuple_owner(handles: Borrowed[Tuple[Mutex[int], int]]) -> None:
     """Require the same owned-copy evidence when the tuple owner is itself borrowed."""
     through_reference = handles[0]
     println(through_reference.is_poisoned())
@@ -225,7 +225,7 @@ def read_through_a_shared_binding() -> None:
         Err(_) => pass
 
 
-def native_field_through_shared_owner(output: &Output) -> bool:
+def native_field_through_shared_owner(output: Borrowed[Output]) -> bool:
     """Refuse exclusive source access to byte storage projected through a shared native owner."""
     return empty_bytes(output.stdout)
 

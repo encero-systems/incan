@@ -6,6 +6,7 @@ from rust::std::string import String as RustString
 from std.fs import Path
 from std.json import JsonValue
 from observation import observe
+from retained_reading_records import ReadingKind
 from retained_readings import recall, retain
 from rust_activation import CfgSnapshot, TargetConfiguration
 
@@ -61,11 +62,11 @@ def probed(rustc: str, arguments: list[str], settings: list[tuple[str, str]] = [
     program = Path(rustc)
     observed = observe(program)?
     selection = " ".join(arguments + deployment_configuration(settings))
-    if let Some(value) = recall(program, selection, observed.stamp):
+    if let Some(value) = recall(program, selection, observed.stamp, ReadingKind.RustProbe):
         if let Some(printed) = value.as_str():
             return Ok(printed)
     printed = run_text(rustc, arguments, settings)?
-    retain(program, selection, observed, JsonValue.string(printed))
+    retain(program, selection, observed, JsonValue.string(printed), ReadingKind.RustProbe)
     return Ok(printed)
 
 

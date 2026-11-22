@@ -15,7 +15,7 @@ from std.testing import assert_raises
 static original_items: list[int] = [4, 2, 9]
 
 
-def render(items: &list[int]) -> str:
+def render(items: Borrowed[list[int]]) -> str:
     """Render every element of the three-item list."""
     return f"{items[0]} {items[1]} {items[2]}"
 

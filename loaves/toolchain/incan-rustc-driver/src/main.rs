@@ -22,6 +22,7 @@ mod bodies;
 mod callable_bridges;
 mod callees;
 mod captured_generators;
+mod checked_body_counts;
 mod checked_json;
 mod cloneable_closures;
 mod closures;
@@ -99,7 +100,7 @@ const CHECK_CERTIFICATE: &str = "incan.compiler-check/1\n";
 
 const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [OPTIONS] | --rustc-handoff PATH | \
                      --source-interface UNIT SYSROOT DIRECTORY [OPTIONS] | --dependencies UNIT SYSROOT [OPTIONS] | --compiler-records INSTALLED OUTPUT | \
-                     --check UNIT SYSROOT [--format text|json] [--certify PATH] [--checked-bodies PATH] [OPTIONS] | --explain CODE | --fmt UNIT PATH [--check] | --source-files PATH | --rust-imports UNIT [--source-graph] | --emit-model PATH MODEL incan|json [LABEL] | --codegraph UNIT SYSROOT OUTPUT [INTERFACE] | --read-codegraph GRAPH ROOT GROUP [FIELDS_JSON] | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-compile-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --resident SOCKET GENERATION READY HOME | --identity SYSROOT\n\
+                     --check UNIT SYSROOT [--format text|json] [--certify PATH] [--checked-bodies PATH | --checked-body-counts PATH] [OPTIONS] | --explain CODE | --fmt UNIT PATH [--check] | --source-files PATH | --rust-imports UNIT [--source-graph] | --emit-model PATH MODEL incan|json [LABEL] | --codegraph UNIT SYSROOT OUTPUT [INTERFACE] | --read-codegraph GRAPH ROOT GROUP [FIELDS_JSON] | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-compile-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --resident SOCKET GENERATION READY HOME | --identity SYSROOT\n\
                      OPTIONS: --rustc-arg ARG, --library, --no-codegraph, --inspection, --shared-native DIR, --toolchain-root DIR, --bakery-root DIR, --graph-body-records PATH, --graph-body-output PATH (native artifacts and ABI caches come from UNIT)";
 
 /// Compile an Incan unit (`--unit`, or serially from a `--resident` worker, with rustc in a fresh driver process that
@@ -121,6 +122,42 @@ fn main() -> std::process::ExitCode {
 
 /// Dispatch the command the first argument names.
 fn command() -> Result<(), Box<dyn std::error::Error>> {
+    incan_frontend::library_manifest::capabilities::install_codec(
+        |value| {
+            internal_models::encode_compiler_contributors(&internal_models::CompilerContributors {
+                profile: value.profile,
+                scope: value.scope,
+                vocabulary: value.vocabulary,
+                operations: value.operations,
+            })
+        },
+        |bytes| {
+            let facts = internal_models::decode_compiler_contributors(&bytes.to_vec())?;
+            Ok(incan_frontend::library_manifest::capabilities::Contributors {
+                profile: facts.profile,
+                scope: facts.scope,
+                vocabulary: facts.vocabulary,
+                operations: facts.operations,
+            })
+        },
+    );
+    incan_frontend::loaf_index::install_directory_reader(|path, top, seal, prefix, maximum| {
+        let answer = incan_worker_host_native::read_directory(
+            path,
+            top,
+            seal,
+            prefix,
+            i64::try_from(maximum).map_err(|e| e.to_string())?,
+        )?;
+        Ok((
+            answer
+                .members
+                .into_iter()
+                .map(|member| (member.key, member.revision))
+                .collect(),
+            usize::try_from(answer.checked_bytes).map_err(|e| e.to_string())?,
+        ))
+    });
     incan_driver::invocation_trace::initialize()?;
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args
@@ -138,6 +175,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
         Some("--dependencies") => frontend::dependency_report(&args[1..]),
         Some("--compiler-records") => compiler_records::export(&args[1..]),
         Some("--check") => exit_with(check(&args[1..])?),
+        Some("--check-ranked-reader") => frontend::check_ranked_reader(&args[1..]),
         Some("--explain") => exit_with(command_diagnostics::explain(&args[1..])?),
         Some("--fmt") => exit_with(format(&args[1..])?),
         Some("--source-files") => exit_with(source_files(&args[1..])?),
@@ -293,18 +331,43 @@ pub(crate) fn check(arguments: &[String]) -> Result<i32, Box<dyn std::error::Err
     };
     let (certificate, options) = certified_options(rest);
     let (bodies_report, options) = match options {
-        [flag, report, options @ ..] if flag == "--checked-bodies" => (Some(Path::new(report)), options),
+        [flag, report, options @ ..] if flag == "--checked-bodies" || flag == "--checked-body-counts" => {
+            (Some((Path::new(report), flag == "--checked-body-counts")), options)
+        }
         options => (None, options),
+    };
+    let (retain_editor_modules, options) = match options {
+        [flag, options @ ..] if flag == "--retain-checked-modules" => (true, options),
+        options => (false, options),
     };
     let unit = UnitDescription::read(Path::new(path)).map_err(|error| error.message)?;
     let dependencies = frontend::dependencies(&unit, options)?;
     let rust = dependencies.rust_facts(&unit, Path::new(sysroot));
     let decoded_before = frontend::decoded_pages::decodes();
-    let checked = incan_driver::check::check_unit(&unit, &rust, dependencies.graph_body_records());
+    let checked = if retain_editor_modules {
+        thread_local! {
+            static EDITOR_CHECKS: std::cell::RefCell<incan_driver::check::RetainedModuleChecks> = Default::default();
+        }
+        EDITOR_CHECKS.with_borrow_mut(|cache| {
+            incan_driver::check::check_unit_with_retained_modules(
+                &unit,
+                &rust,
+                dependencies.graph_body_records(),
+                Some(cache),
+            )
+        })
+    } else {
+        incan_driver::check::check_unit(&unit, &rust, dependencies.graph_body_records())
+    };
     let decoded = frontend::decoded_pages::decodes() - decoded_before;
     let checked = checked.and_then(|(output, bodies)| {
-        if let Some(report) = bodies_report {
-            std::fs::write(report, checked_bodies_report(&bodies, decoded)?).map_err(|error| {
+        if let Some((report, counts_only)) = bodies_report {
+            let bytes = if counts_only {
+                checked_body_counts::encode(&bodies, decoded)?
+            } else {
+                checked_bodies_report(&bodies, decoded)?.into_bytes()
+            };
+            std::fs::write(report, bytes).map_err(|error| {
                 incan_driver::error::CliError::failure(format!("cannot write {}: {error}", report.display()))
             })?;
         }

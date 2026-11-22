@@ -3,7 +3,6 @@
 use super::*;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
-use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
@@ -34,32 +33,6 @@ impl DefinitionInput {
     }
 }
 
-#[derive(Deserialize)]
-struct FunctionEvent {
-    schema: u64,
-    identity: String,
-    key: String,
-    function: String,
-    product: String,
-    role: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct FunctionProduct {
-    schema: u64,
-    inputs: Vec<String>,
-    function: String,
-    /// The generic instance requests the function's lowering made; the digest authenticates them with the function.
-    requests: Vec<String>,
-    digest: String,
-}
-
-#[derive(Deserialize)]
-struct NativeInterface {
-    schema: String,
-    plan: String,
-}
-
 /// A record-backed plan reader. Missing record input keeps ordinary compilation available but makes the unit
 /// ineligible for native incremental reuse.
 pub(crate) struct PlanReader {
@@ -77,17 +50,14 @@ impl PlanReader {
         let Some(report) = report else {
             return Ok(reader);
         };
-        let bytes = match std::fs::read(report.join("native-interface.json")) {
+        let bytes = match std::fs::read(report.join(incan_mir_plan_native::native_interface_filename())) {
             Ok(bytes) => bytes,
             // A build without record input stays an ordinary compilation, ineligible for native incremental reuse.
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(reader),
             Err(error) => return Err(format!("cannot read native-interface record: {error}")),
         };
-        let interface: NativeInterface = serde_json::from_slice(&bytes)
+        let interface = incan_mir_plan_native::decode_native_interface(&bytes)
             .map_err(|error| format!("cannot decode native-interface record: {error}"))?;
-        if interface.schema != "incan.native-interface/1" {
-            return Err("native-interface record has an unsupported schema".into());
-        }
         if interface.plan.is_empty() {
             return Err("native-interface record has no encoded plan".into());
         }
@@ -135,35 +105,21 @@ impl PlanReader {
             if path.extension().and_then(|value| value.to_str()) != Some("event") {
                 continue;
             }
-            let event: FunctionEvent = serde_json::from_slice(
+            let event = incan_mir_plan_native::decode_lowering_event(
                 &std::fs::read(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))?,
             )
             .map_err(|error| format!("cannot decode {}: {error}", path.display()))?;
-            if event.role.is_some() {
+            if event.role == "entry" {
                 continue;
             }
-            if event.schema != 2 {
-                return Err(format!(
-                    "native function event for {} has an unsupported schema",
-                    event.function
-                ));
-            }
-            let product: FunctionProduct = serde_json::from_str(&event.product)
+            let product = incan_mir_plan_native::decode_plan_function_record(&event.product)
                 .map_err(|error| format!("cannot decode native function product for {}: {error}", event.function))?;
-            if product.schema != 4 {
-                return Err(format!(
-                    "native function product for {} has an unsupported schema",
-                    event.function
-                ));
-            }
             let key = incan_semantics_core::semantic_digest::semantic_digest(&product.inputs)
                 .map_err(|error| format!("cannot fingerprint native function inputs: {error}"))?;
             if key.strip_prefix("sha256:") != Some(event.key.as_str()) {
                 return Err(format!("native function event key differs for {}", event.function));
             }
-            let mut authenticated = vec![product.function.clone()];
-            authenticated.extend(product.requests.iter().cloned());
-            let digest = incan_semantics_core::semantic_digest::semantic_digest(&authenticated)
+            let digest = incan_mir_plan_native::plan_function_digest(&product.function, &product.requests)
                 .map_err(|error| format!("cannot fingerprint native function product: {error}"))?;
             if digest != product.digest {
                 return Err(format!("native function product digest differs for {}", event.function));
@@ -193,11 +149,52 @@ impl PlanReader {
                 return Err(format!("native plan report repeats function {}", event.function));
             }
         }
+        Self::read_admitted_definitions(report, plan, &mut inputs)?;
         if inputs.len() != plan.functions.len() || plan.functions.iter().any(|value| !inputs.contains_key(&value.name))
         {
             return Err("native plan report does not cover every active function".into());
         }
         Ok(inputs)
+    }
+
+    /// Add the definitions of functions restored from admitted module plan records, which reported no event. A
+    /// function that also reported an event keeps the input its event authenticated.
+    fn read_admitted_definitions(
+        report: &Path,
+        plan: &Plan,
+        inputs: &mut HashMap<String, DefinitionInput>,
+    ) -> Result<(), String> {
+        let path = report.join(incan_mir_plan_native::admitted_definitions_filename());
+        if !path.is_file() {
+            return Ok(());
+        }
+        let definitions = incan_mir_plan_native::decode_admitted_definitions(
+            &std::fs::read(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))?,
+        )
+        .map_err(|error| format!("cannot decode {}: {error}", path.display()))?;
+        for definition in definitions {
+            if inputs.contains_key(&definition.function) {
+                continue;
+            }
+            if !plan.functions.iter().any(|value| value.name == definition.function) {
+                return Err(format!(
+                    "admitted function product is outside the active plan for {}",
+                    definition.function
+                ));
+            }
+            let fingerprint =
+                incan_semantics_core::semantic_digest::semantic_digest(&vec![definition.key, definition.digest])
+                    .map_err(|error| format!("cannot fingerprint native function record: {error}"))?;
+            inputs.insert(
+                definition.function.clone(),
+                DefinitionInput {
+                    name: definition.function,
+                    identity: definition.identity,
+                    fingerprint: fingerprint.trim_start_matches("sha256:").to_owned(),
+                },
+            );
+        }
+        Ok(())
     }
 
     fn layout_inputs(plan: &Plan) -> Result<HashMap<String, DefinitionInput>, String> {

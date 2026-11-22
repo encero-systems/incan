@@ -61,7 +61,7 @@ A virtual store is a set of binding roots selected over that bakery:
 | `BuildEpoch` | One captured source and configuration selection plus its private result view |
 | `ExecutionHandle` | Exact native unit, payload and loader roots, and an execution pin |
 
-Forking copies a root descriptor; the first differing binding path copies index pages. Reads use the child's root directly and never walk a parent chain. Views publish by comparing their expected prior revision; there is no implicit merge-back. A home finds its bakery through a small `<home>/bakery.view` descriptor (`incan.store-view/1`: store id, locator, home view key) and nothing else.
+Forking copies a root descriptor; the first differing binding path copies index pages. Reads use the child's root directly and never walk a parent chain. Views publish by comparing their expected prior revision; there is no implicit merge-back. A home finds its bakery through the portable `<home>/bakery.view` descriptor. Its `incan.store-view/1` fields identify the store, its locator and the home view key. Current owners and workers can read these fields from `bakery.view.crumb` after verifying that they reproduce the portable descriptor byte for byte. A copied descriptor works on its own, including with older workers.
 
 Three questions have three answers: **available** (bytes present and intact), **admitted** (origin, producer, format and capability closure accepted by policy) and **selected** (this view binds those exact revisions). A digest hit answers only the first. Scoped leases pin a view's logical roots and the index generations needed to reach them, not every other view's payloads. Virtual stores are same-user isolation, not a security boundary.
 

@@ -19,6 +19,100 @@ use crate::{
 mod coverage;
 mod public_contexts;
 
+/// A coordinate attachment must be bounded, backed by a physical witness, and leave the following call row intact.
+#[test]
+fn graph_owner_coordinates_are_bounded_and_authenticated() -> Result<(), Box<dyn std::error::Error>> {
+    let owner = body("pick", 17);
+    let module = owner.decl_id.clone();
+    let stamped = super::encode_graph_owner(&module, "sample.incn", "pick", &owner, Some([17; 32]))?;
+    assert!(decode_owner(&stamped)?.coordinates.is_empty());
+    let mut encoded = stamped.clone();
+    super::append_owner_coordinates(&mut encoded, &[(1, 7), (9, 12)]);
+    assert!(decode_owner(&encoded[..encoded.len() - 1]).is_err());
+    let witness = b"CRMB\x01\x01\x00call";
+    encoded.extend_from_slice(witness);
+    let decoded = decode_owner(&encoded)?;
+    assert_eq!(decoded.coordinates, [(1, 7), (9, 12)]);
+    assert_eq!(decoded.call_witness.as_deref(), Some(witness.as_slice()));
+    let mut bare = encode_owner(&module, "sample.incn", "pick", &owner)?;
+    super::append_owner_coordinates(&mut bare, &[(1, 7)]);
+    assert!(decode_owner(&bare).is_err());
+    let mut invalid = stamped.clone();
+    super::append_owner_coordinates(&mut invalid, &[(7, 1)]);
+    assert!(decode_owner(&invalid).is_err());
+    let mut large = stamped.clone();
+    super::append_owner_coordinates(&mut large, &[(1, 7); super::MAX_OWNER_COORDINATES + 1]);
+    assert_eq!(large, stamped);
+    Ok(())
+}
+
+#[test]
+fn namespace_scopes_round_trip_and_restore_shared_bindings() -> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::Arc;
+    let mut first = body("first", 1);
+    let mut second = body("second", 2);
+    let third = body("third", 3);
+    let bindings = BTreeMap::from([("Provider".into(), identity("Provider", 17))]);
+    first.named_type_identities = Arc::new(bindings.clone());
+    second.named_type_identities = Arc::new(bindings);
+    let mut source = module(vec![first, second, third]);
+    let native = crate::body_ir::rust_item_identity("std::fs::File").ok_or("missing test carrier")?;
+    let mut nominal = crate::body_ir::native_opaque_nominal(&native, 0).ok_or("missing nominal layout")?;
+    nominal.named_type_identities = Arc::new(source.bodies[0].named_type_identities.as_ref().clone());
+    source.nominal_declarations.push(nominal);
+    let mut enumeration =
+        crate::body_ir::native_enum_declaration("std::cmp::Ordering", vec![], vec![]).ok_or("missing enum layout")?;
+    enumeration.named_type_identities = Arc::clone(&source.bodies[0].named_type_identities);
+    source.enum_declarations.push(enumeration);
+    source
+        .type_alias_declarations
+        .push(crate::body_ir::TypeAliasDeclaration {
+            canonical: identity("Alias", 21),
+            ty: IncanType::Named("Provider".into()),
+            named_type_identities: Arc::clone(&source.bodies[0].named_type_identities),
+        });
+    let ordinary = encode_module(&source)?;
+    let mut legacy_module = source.clone();
+    for body in &mut legacy_module.bodies {
+        body.named_type_identities = Default::default();
+    }
+    let mut legacy_frame = b"INCNNS\x01".to_vec();
+    legacy_frame.extend(postcard::to_allocvec(&(
+        vec![
+            source.bodies[0].named_type_identities.as_ref(),
+            source.bodies[2].named_type_identities.as_ref(),
+        ],
+        [0_usize, 0, 1].as_slice(),
+    ))?);
+    legacy_frame.extend(encode_module(&legacy_module)?);
+    let frame = super::encode_namespace_module(&mut source)?;
+    assert!(frame.len() < legacy_frame.len());
+    assert_eq!(super::decode_namespace_module(&legacy_frame)?, source);
+    assert_eq!(encode_module(&source)?, ordinary);
+    let mut restored = super::decode_namespace_module(&frame)?;
+    assert_eq!(encode_module(&restored)?, ordinary);
+    assert_eq!(super::decode_namespace_module(&ordinary)?, restored);
+    assert!(Arc::ptr_eq(
+        &restored.bodies[0].named_type_identities,
+        &restored.bodies[1].named_type_identities
+    ));
+    assert!(!Arc::ptr_eq(
+        &restored.bodies[0].named_type_identities,
+        &restored.bodies[2].named_type_identities
+    ));
+    for scope in [
+        &restored.nominal_declarations[0].named_type_identities,
+        &restored.enum_declarations[0].named_type_identities,
+        &restored.type_alias_declarations[0].named_type_identities,
+    ] {
+        assert!(Arc::ptr_eq(&restored.bodies[0].named_type_identities, scope));
+    }
+    assert_eq!(super::encode_namespace_module(&mut restored)?, frame);
+    let truncated = &frame[..frame.len() / 2];
+    assert!(super::decode_namespace_module(truncated).is_err());
+    Ok(())
+}
+
 #[test]
 fn executable_owner_frame_round_trips_the_native_body_and_provenance() -> Result<(), Box<dyn std::error::Error>> {
     let owner = body("retained", 4);
@@ -100,6 +194,7 @@ fn body(name: &str, ordinal: usize) -> Body {
 pub(super) fn module(bodies: Vec<Body>) -> BodyIrModule {
     BodyIrModule {
         runtime_callable_bindings: Vec::new(),
+        runtime_binding_scopes: Vec::new(),
         decorated_bindings: Vec::new(),
         entrypoint_effects: Vec::new(),
         program_entrypoints: Vec::new(),

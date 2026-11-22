@@ -49,6 +49,9 @@ impl BodyBuilder<'_, '_> {
                                 ..
                             } => fields.push(identity.clone()),
                             bir::PlaceElem::Index(_) => elements.push(position),
+                            // RFC 164: an alias of what a whole native borrow local borrows starts with its
+                            // dereference.
+                            bir::PlaceElem::Deref if position == 0 => {}
                             _ => return Err("local alias source is not checked stored storage"),
                         }
                     }

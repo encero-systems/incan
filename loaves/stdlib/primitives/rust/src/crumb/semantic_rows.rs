@@ -9,7 +9,7 @@ use serde_json::Value as Json;
 use sha2::{Digest, Sha256};
 
 use super::columns::{self, Budget, Cursor, Refused};
-use super::hash::{self, Node, Projection, Value};
+use super::hash::{self, Node, Projection, RowView, Value};
 use super::row_cells::read_root;
 use super::row_cursor::{Place, Positioned, Refusal, Span, at, bounded_count, read_text};
 
@@ -66,6 +66,8 @@ pub(super) struct Stored {
 pub(super) struct Record {
     pub(super) slot: usize,
     pub(super) value: Value,
+    /// Bytes, elements and starting depth used to validate this row's logical value.
+    pub(super) read_allowance: Option<(u64, u64, u64)>,
     /// The row frame's envelope offset and length, for reading it again on request.
     pub(super) origin: usize,
     pub(super) length: usize,
@@ -74,7 +76,7 @@ pub(super) struct Record {
 /// A decoded envelope: the K-ordered dictionary, records, seal status and the input bytes it occupies.
 #[derive(Clone)]
 pub(super) struct Rows {
-    pub(super) dictionary: Vec<Stored>,
+    pub(super) dictionary: std::sync::Arc<[Stored]>,
     pub(super) records: Vec<Record>,
     pub(super) sealed: bool,
     pub(super) consumed: usize,
@@ -84,6 +86,7 @@ pub(super) struct Rows {
 /// record (true) or enum (false) shapes, whether the envelope must be sealed, and whether it must end the input.
 pub(super) struct ReadInputs<'a> {
     pub(super) supplied: &'a [Meta],
+    pub(super) encoded_descriptions: Option<(&'a [Vec<u8>], &'a std::sync::Arc<[Meta]>)>,
     pub(super) kinds: &'a [(String, bool)],
     pub(super) require_sealed: bool,
     pub(super) exact: bool,
@@ -94,6 +97,7 @@ impl<'a> ReadInputs<'a> {
     fn case(supplied: &'a [Meta], document: &Json) -> Self {
         Self {
             supplied,
+            encoded_descriptions: None,
             kinds: &[],
             require_sealed: require_sealed(document),
             exact: true,
@@ -112,7 +116,12 @@ pub(super) fn decode(document: &Json) -> Option<Vec<u8>> {
     let mut output = Vec::new();
     for length in lengths {
         let mut budget = row_budget(document)?;
-        match read_rows(&data[..length], &ReadInputs::case(&supplied, document), &mut budget) {
+        match read_rows(
+            &data[..length],
+            &ReadInputs::case(&supplied, document),
+            None,
+            &mut budget,
+        ) {
             Ok(rows) => {
                 output.push(0);
                 output.push(u8::from(rows.sealed));
@@ -150,7 +159,7 @@ fn refusal_bytes(refusal: &Refusal, output: &mut Vec<u8>) {
 pub(super) fn encode(document: &Json) -> Option<Vec<u8>> {
     let (data, supplied) = row_inputs(document)?;
     let mut budget = row_budget(document)?;
-    match read_rows(&data, &ReadInputs::case(&supplied, document), &mut budget) {
+    match read_rows(&data, &ReadInputs::case(&supplied, document), None, &mut budget) {
         Ok(rows) => super::row_write::write_rows(&rows),
         Err(_) => Some(Vec::new()),
     }
@@ -224,7 +233,12 @@ pub(super) fn notation(value: &Json) -> Option<Meta> {
 
 /// Check the header and frame, then admit the dictionary, every row and any seal; an exact read refuses any bytes
 /// after the envelope, and a prefix read reports how many it occupies.
-pub(super) fn read_rows(data: &[u8], inputs: &ReadInputs, budget: &mut Budget) -> Positioned<Rows> {
+pub(super) fn read_rows(
+    data: &[u8],
+    inputs: &ReadInputs,
+    mapped: Option<&RowView>,
+    budget: &mut Budget,
+) -> Positioned<Rows> {
     let mut cursor = Span::new(data, 0);
     let magic = cursor.take(4, budget)?;
     budget.bytes(4).place(0)?;
@@ -248,9 +262,8 @@ pub(super) fn read_rows(data: &[u8], inputs: &ReadInputs, budget: &mut Budget) -
     if inputs.require_sealed && !sealed {
         return Err(at("seal_required", 6));
     }
-    let mut body = Span::new(payload, payload_origin);
-    let dictionary = read_entries(&mut body, inputs.supplied, inputs.kinds, budget)?;
-    let records = read_records(&mut body, &dictionary, sealed, budget)?;
+    let (dictionary, mut body) = admitted_dictionary(payload, payload_origin, inputs, budget)?;
+    let records = read_records(&mut body, &dictionary, sealed, mapped, budget)?;
     body.finished()?;
     Ok(Rows {
         dictionary,
@@ -260,11 +273,109 @@ pub(super) fn read_rows(data: &[u8], inputs: &ReadInputs, budget: &mut Budget) -
     })
 }
 
+/// Compiler row families repeatedly supply and reference the same complete descriptions. Share only the
+/// admitted dictionary; every envelope still validates its own rows, nesting, trailer and seal.
+struct AdmittedDictionary {
+    wire: Vec<u8>,
+    supplied: Vec<Vec<u8>>,
+    metadata: std::sync::Arc<[Meta]>,
+    kinds: Vec<(String, bool)>,
+    entries: std::sync::Arc<[Stored]>,
+    depth: u64,
+    bytes: u64,
+    elements: u64,
+}
+
+static RECENT_DICTIONARIES: std::sync::Mutex<std::collections::VecDeque<AdmittedDictionary>> =
+    std::sync::Mutex::new(std::collections::VecDeque::new());
+
+/// Reuse reference metadata only when a previous admission validated exactly the same complete D inputs.
+pub(super) fn cached_reference_metadata(encoded: &[Vec<u8>]) -> Option<std::sync::Arc<[Meta]>> {
+    if !(2..=1024).contains(&encoded.len()) {
+        return None;
+    }
+    RECENT_DICTIONARIES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .rev()
+        .find(|saved| encoded == saved.supplied)
+        .map(|saved| std::sync::Arc::clone(&saved.metadata))
+}
+
+/// Admit one dictionary or reuse its previously validated wire and reference inputs.
+fn admitted_dictionary<'a>(
+    payload: &'a [u8],
+    origin: usize,
+    inputs: &ReadInputs,
+    budget: &mut Budget,
+) -> Positioned<(std::sync::Arc<[Stored]>, Span<'a>)> {
+    use std::sync::Arc;
+    let mut body = Span::new(payload, origin);
+    let eligible = inputs
+        .encoded_descriptions
+        .filter(|(descriptions, _)| (2..=1024).contains(&descriptions.len()));
+    let before = budget.left();
+    let depth = budget.depth();
+    if let Some((supplied, _)) = eligible {
+        let recent = RECENT_DICTIONARIES
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for saved in recent.iter().rev() {
+            if depth == saved.depth
+                && before.0 >= saved.bytes
+                && before.1 >= saved.elements
+                && inputs.kinds == saved.kinds
+                && payload.starts_with(&saved.wire)
+                && supplied == saved.supplied
+            {
+                // A smaller budget must execute the original charge sequence so its first refusal and offset agree.
+                budget.bytes(saved.bytes).place(origin)?;
+                budget.elements(saved.elements).place(origin)?;
+                let end = saved.wire.len();
+                return Ok((Arc::clone(&saved.entries), Span::new(&payload[end..], origin + end)));
+            }
+        }
+    }
+
+    let entries: Arc<[Stored]> = read_entries(&mut body, inputs.supplied, inputs.kinds, budget)?.into();
+    let after = budget.left();
+    let bytes = before.0 - after.0;
+    if let Some((supplied, metadata)) = eligible
+        && body.consumed() <= 64 * 1024
+        && bytes <= 8 * 1024 * 1024
+        && supplied.iter().map(Vec::len).sum::<usize>() <= 256 * 1024
+        && inputs.kinds.len() <= 64
+        && inputs.kinds.iter().all(|(kind, _)| kind.len() <= 1024)
+        && entries.iter().all(|entry| !entry.inline)
+    {
+        let saved = AdmittedDictionary {
+            wire: payload[..body.consumed()].to_vec(),
+            supplied: supplied.to_vec(),
+            metadata: Arc::clone(metadata),
+            kinds: inputs.kinds.to_vec(),
+            entries: Arc::clone(&entries),
+            depth,
+            bytes,
+            elements: before.1 - after.1,
+        };
+        let mut recent = RECENT_DICTIONARIES
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if recent.len() == 4 {
+            recent.pop_front();
+        }
+        recent.push_back(saved);
+    }
+    Ok((entries, body))
+}
+
 /// Read every row, feeding object contributions to the seal, then verify its count and digest.
 fn read_records(
     cursor: &mut Span,
     dictionary: &[Stored],
     sealed: bool,
+    mapped: Option<&RowView>,
     budget: &mut Budget,
 ) -> Positioned<Vec<Record>> {
     let count_offset = cursor.absolute();
@@ -287,7 +398,11 @@ fn read_records(
         }
         let raw = cursor.frame(budget)?;
         let origin = cursor.absolute() - raw.len();
-        let value = read_root(&dictionary[slot], raw, origin, dictionary, budget)?;
+        let (bytes, elements) = budget.left();
+        let depth = budget.depth();
+        let value = read_root(&dictionary[slot], raw, origin, dictionary, mapped, budget)?;
+        let (remaining_bytes, remaining_elements) = budget.left();
+        let read_allowance = (bytes - remaining_bytes, elements - remaining_elements, depth);
         if sealed {
             let mut contribution = Vec::new();
             hash::emit_object_charged(&value, &mut contribution, budget).place(origin)?;
@@ -297,6 +412,7 @@ fn read_records(
         records.push(Record {
             slot,
             value,
+            read_allowance: Some(read_allowance),
             origin,
             length: raw.len(),
         });
@@ -390,6 +506,32 @@ fn settle_dictionary(entries: &[Stored], kinds: &[(String, bool)], budget: &mut 
         charge_copy(&entry.metadata, budget)?;
     }
     check_dictionary(entries, budget)
+}
+
+/// Admit a writer's complete D descriptions, preserve their requested modes, and order them by exact K.
+pub(super) fn admit_written(
+    sources: Vec<(Meta, bool)>,
+    kinds: &[(String, bool)],
+    budget: &mut Budget,
+) -> Result<Vec<Stored>, Refused> {
+    let mut entries = Vec::with_capacity(sources.len());
+    for (metadata, inline) in sources {
+        budget.elements(1)?;
+        budget.bytes(16)?;
+        let entry = admit(metadata, inline, kinds, budget)?;
+        budget.elements(1)?;
+        budget.bytes(2 * entry.key.len() as u64)?;
+        if entries.iter().any(|known: &Stored| known.key == entry.key) {
+            return Err("duplicate_selector");
+        }
+        entries.push(entry);
+    }
+    entries.sort_by(|left, right| left.key.cmp(&right.key));
+    for entry in &entries {
+        charge_copy(&entry.metadata, budget)?;
+    }
+    check_dictionary(&entries, budget)?;
+    Ok(entries)
 }
 
 /// Every K and field selector must name descriptions the dictionary holds, with the same record or enum kind.
@@ -591,7 +733,7 @@ fn validate_selectors(source: &Meta, kinds: &[(String, bool)], budget: &mut Budg
 }
 
 /// One named property of a metadata map.
-fn get<'a>(value: &'a Meta, name: &str) -> Option<&'a Meta> {
+pub(super) fn get<'a>(value: &'a Meta, name: &str) -> Option<&'a Meta> {
     let Meta::Map(entries) = value else { return None };
     entries.iter().find(|(key, _)| key == name).map(|(_, value)| value)
 }
@@ -656,7 +798,12 @@ fn record_kind(metadata: &Meta, kinds: &[(String, bool)], budget: &mut Budget) -
 }
 
 /// Admit one complete description: its D digest, kind, K, path, properties and member tables.
-fn admit(metadata: Meta, inline: bool, kinds: &[(String, bool)], budget: &mut Budget) -> Result<Stored, Refused> {
+pub(super) fn admit(
+    metadata: Meta,
+    inline: bool,
+    kinds: &[(String, bool)],
+    budget: &mut Budget,
+) -> Result<Stored, Refused> {
     let mut encoded = b"crumb1\x00\x05".to_vec();
     budget.bytes(8)?;
     encode_metadata(&metadata, &mut encoded, budget)?;

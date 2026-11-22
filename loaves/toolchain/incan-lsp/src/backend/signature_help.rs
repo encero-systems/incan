@@ -1,6 +1,7 @@
 //! Source signature formatting and local call signature help.
 
 use super::*;
+use incan_lang::lang::types::ownership::OwnershipMode;
 
 /// Format a function signature for display using source-backed default expressions.
 pub(super) fn format_function_signature(func: &incan_frontend::ast::FunctionDecl, source: &str) -> String {
@@ -591,8 +592,9 @@ pub(super) fn format_type(ty: &Type) -> String {
             let params_str: Vec<String> = params.iter().map(|p| format_type(&p.node)).collect();
             format!("({}) -> {}", params_str.join(", "), format_type(&ret.node))
         }
-        Type::Ref(inner) => format!("&{}", format_type(&inner.node)),
-        Type::RefMut(inner) => format!("&mut {}", format_type(&inner.node)),
+        // RFC 164: a reference reads as `Borrowed[T]` or `BorrowedMut[T]` in every tool.
+        Type::Ref(inner) => format!("{}[{}]", OwnershipMode::Borrowed.as_str(), format_type(&inner.node)),
+        Type::RefMut(inner) => format!("{}[{}]", OwnershipMode::BorrowedMut.as_str(), format_type(&inner.node)),
         Type::MutParam(inner) => format!("mut {}", format_type(&inner.node)),
         Type::IntLiteral(value) => value.repr.clone(),
         Type::Unit => "()".to_string(),

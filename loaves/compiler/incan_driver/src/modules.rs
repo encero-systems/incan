@@ -604,23 +604,99 @@ pub fn import_cycle_peers(
     modules: &[ParsedModule],
     own_standard_package: Option<&'static StandardPackageNamespacePolicy>,
 ) -> Vec<Vec<usize>> {
-    let module_idx_by_key = module_key_index(modules);
-    let dependencies: Vec<Vec<usize>> = (0..modules.len())
-        .map(|index| {
-            direct_local_dep_indexes(modules, index, &module_idx_by_key, own_standard_package)
-                .into_iter()
-                .collect()
-        })
-        .collect();
-    let mut peers = vec![Vec::new(); modules.len()];
-    for component in strongly_connected_components(&dependencies) {
-        for &member in &component {
-            let mut others: Vec<usize> = component.iter().copied().filter(|&peer| peer != member).collect();
-            others.sort_unstable();
-            peers[member] = others;
+    SourceModuleImports::new(modules, own_standard_package)
+        .cycle_peers()
+        .to_vec()
+}
+
+/// Direct local imports in the exact order of a collected module graph. Resolve syntax once before walking more
+/// than one dependency closure; a consumer's transitive imports must not repeatedly revisit its providers' ASTs.
+#[derive(Debug)]
+pub struct SourceModuleImports {
+    direct: Vec<Vec<usize>>,
+    closures: Vec<std::sync::OnceLock<Vec<usize>>>,
+    peers: std::sync::OnceLock<Vec<Vec<usize>>>,
+}
+
+impl SourceModuleImports {
+    /// Resolve the collected modules' local import declarations under this package's namespace policy.
+    pub fn new(
+        modules: &[ParsedModule],
+        own_standard_package: Option<&'static StandardPackageNamespacePolicy>,
+    ) -> Self {
+        let _span = tracing::trace_span!(
+            target: "incan::invocation", "incan_driver::resolve_source_imports", modules = modules.len(),
+        )
+        .entered();
+        let keys = module_key_index(modules);
+        let direct = (0..modules.len())
+            .map(|index| {
+                direct_local_dep_indexes(modules, index, &keys, own_standard_package)
+                    .into_iter()
+                    .collect()
+            })
+            .collect();
+        Self {
+            direct,
+            closures: (0..modules.len()).map(|_| std::sync::OnceLock::new()).collect(),
+            peers: std::sync::OnceLock::new(),
         }
     }
-    peers
+
+    /// Borrow direct source edges in the same module order as collection.
+    pub(crate) fn direct_edges(&self) -> &[Vec<usize>] {
+        &self.direct
+    }
+
+    /// Borrow the computed import-cycle peers in stable module order.
+    pub fn cycle_peers(&self) -> &[Vec<usize>] {
+        self.peers.get_or_init(|| {
+            let mut peers = vec![Vec::new(); self.direct.len()];
+            for component in strongly_connected_components(&self.direct) {
+                for &member in &component {
+                    let mut others: Vec<usize> = component.iter().copied().filter(|&peer| peer != member).collect();
+                    others.sort_unstable();
+                    peers[member] = others;
+                }
+            }
+            peers
+        })
+    }
+
+    /// Resolve each checked module's full import closure once. Only providers reachable from one of those
+    /// modules need checker lookup tables when their authenticated namespace supplies the compiled body.
+    pub(crate) fn checker_dependencies(&self, restored: &[bool]) -> (Vec<&[usize]>, Vec<bool>) {
+        let mut needed = vec![false; self.direct.len()];
+        let closures = restored
+            .iter()
+            .enumerate()
+            .map(|(index, &restore)| -> &[usize] {
+                if restore {
+                    return &[];
+                }
+                let dependencies = self.dependencies(index);
+                for &provider in dependencies {
+                    needed[provider] = true;
+                }
+                dependencies
+            })
+            .collect();
+        (closures, needed)
+    }
+
+    /// Borrow one module's transitive local imports in collected order, excluding the requesting module on back edges.
+    pub fn dependencies(&self, index: usize) -> &[usize] {
+        let Some(cache) = self.closures.get(index) else {
+            return &[];
+        };
+        cache.get_or_init(|| {
+            let _span = tracing::trace_span!(
+                target: "incan::invocation", "incan_driver::walk_source_imports", module = index,
+            )
+            .entered();
+            reachable_imports(self.direct.len(), index, |module| self.direct[module].iter().copied())
+        })
+    }
 }
 
 /// Build a lookup map from canonical module key (`a_b_c`) to module index in `collect_modules` output.
@@ -665,30 +741,34 @@ pub fn imported_module_dep_indexes_for(
     module_idx_by_key: &HashMap<String, usize>,
     own_standard_package: Option<&'static StandardPackageNamespacePolicy>,
 ) -> Vec<usize> {
-    // ---- Context: bounds and setup ----
-    if module_index >= modules.len() {
+    reachable_imports(modules.len(), module_index, |index| {
+        direct_local_dep_indexes(modules, index, module_idx_by_key, own_standard_package).into_iter()
+    })
+}
+
+fn reachable_imports<I: Iterator<Item = usize>>(
+    module_count: usize,
+    index: usize,
+    direct: impl Fn(usize) -> I,
+) -> Vec<usize> {
+    if index >= module_count {
         return Vec::new();
     }
-
-    // ---- Context: walk the transitive local source-module import closure ----
-    let mut dep_indexes: BTreeSet<usize> = BTreeSet::new();
-    let mut pending: Vec<usize> =
-        direct_local_dep_indexes(modules, module_index, module_idx_by_key, own_standard_package)
-            .into_iter()
-            .collect();
-    while let Some(dep_idx) = pending.pop() {
-        if dep_idx == module_index || !dep_indexes.insert(dep_idx) {
-            continue;
+    let mut visited = vec![false; module_count];
+    visited[index] = true;
+    let mut pending: Vec<_> = direct(index).collect();
+    while let Some(dependency) = pending.pop() {
+        if !visited[dependency] {
+            visited[dependency] = true;
+            pending.extend(direct(dependency));
         }
-        pending.extend(direct_local_dep_indexes(
-            modules,
-            dep_idx,
-            module_idx_by_key,
-            own_standard_package,
-        ));
     }
-
-    dep_indexes.into_iter().collect()
+    visited[index] = false;
+    visited
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, used)| used.then_some(index))
+        .collect()
 }
 
 /// Collect immediate local source dependencies for one collected module from bare and absolute `crate.*` imports.
@@ -811,5 +891,30 @@ fn resolve_local_dep_index(
 pub fn register_module_path_segments(checker: &mut typechecker::TypeChecker, modules: &[ParsedModule]) {
     for module in modules {
         checker.register_dependency_module_path_segments(&module.name, module.path_segments.clone());
+    }
+}
+
+#[cfg(test)]
+mod retained_namespace_tests {
+    use super::SourceModuleImports;
+
+    #[test]
+    fn source_checker_demands_transitive_providers_and_partial_cycles_only() {
+        // 0 and 1 import one another, 2 imports 1, and 3 is an unrelated source module.
+        let direct = vec![vec![1], vec![0], vec![1], vec![]];
+        let imports = SourceModuleImports {
+            closures: direct.iter().map(|_| std::sync::OnceLock::new()).collect(),
+            peers: std::sync::OnceLock::new(),
+            direct,
+        };
+        let (closures, needed) = imports.checker_dependencies(&[true, true, false, true]);
+        assert_eq!(closures, [vec![], vec![], vec![0, 1], vec![]]);
+        assert_eq!(needed, [true, true, false, false]);
+        let (closures, needed) = imports.checker_dependencies(&[false, false, true, true]);
+        assert_eq!(closures, [vec![1], vec![0], vec![], vec![]]);
+        assert_eq!(needed, [true, true, false, false]);
+        let (closures, needed) = imports.checker_dependencies(&[true; 4]);
+        assert!(closures.iter().all(|closure| closure.is_empty()));
+        assert_eq!(needed, [false; 4]);
     }
 }

@@ -51,7 +51,7 @@ pub def build_rust_tests(request: RustBuild) -> Result[list[str], str]:
     mut programs: list[str] = []
     # 3. Harnesses share crate arguments, linking, environments and keys with ordinary executables.
     for facet in facets:
-        if facet.project != root.0 or facet.domain != DependencyDomain.Target:
+        if not facet.is_root(root.0, ActivationPurpose.Test):
             continue
         if declared.library != "" and declared.kind != "incan":
             name = declared.crate_name
@@ -110,6 +110,9 @@ def production_roots(root: Path, kind: str, needed: bool, request: RustBuild) ->
 def production_library_key(root: Path, facets: list[LocalFacet], host: bool) -> Result[str, str]:
     """Name the selected host producer explicitly; ordinary harnesses retain their root's library key."""
     if not host:
+        for facet in facets:
+            if facet.is_root(root.0, ActivationPurpose.Normal):
+                return Ok(facet.key())
         return Ok("")
     for facet in facets:
         if facet.project == root.0 and facet.domain == DependencyDomain.Host:

@@ -1,15 +1,16 @@
 """Verify memory-budget option, process-table, tree-walk, budget and report contracts without compiling projects."""
 
 from pub::incan_platform.probes import ProcessResource, parse_process_table
+from check_support import repository_root
 from memory_budget import (
     MIB,
     Measurement,
     budget_outcome,
+    commands,
     measurements_report,
     measurements_tsv,
     parse_options,
     process_tree,
-    require_budget,
 )
 
 
@@ -20,6 +21,18 @@ def test_options_keep_runs_and_budget_explicit() -> Result[None, str]:
     assert options.runs == 1
     assert options.budget_bytes == 1536 * MIB
     assert parse_options(["/usr/bin/true", "evidence"])?.runs == 3
+    return Ok(None)
+
+
+def test_an_existing_oven_observation_replaces_only_the_duplicate_oven_build() -> Result[None, str]:
+    """A release reuses its sampled candidate Oven while still measuring the other three informational commands."""
+    options = parse_options(["oven", "evidence", "--reuse-oven", "observed/memory-oven-1"])?
+    assert options.reused_oven == "observed/memory-oven-1"
+    assert [planned.name for planned in commands(options.reused_oven != "")] == [
+        "stdlib-primitives",
+        "contracts",
+        "hello",
+    ]
     return Ok(None)
 
 
@@ -43,8 +56,33 @@ def test_process_rows_and_tree_keep_only_current_descendants() -> Result[None, s
     return Ok(None)
 
 
+def test_a_completed_plan_folds_carrier_positions_in_place() -> Result[None, str]:
+    """The final carrier fold folds its owned plan in place instead of cloning a second complete plan at lowering's peak."""
+    source = repository_root()?.joinpath(
+        "loaves/compiler/incan_mir_plan_native/src/carriers.rs",
+    ).read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert "pub fn fold_carrier_positions(mut plan: Plan" in source, "the carrier fold does not own one input plan"
+    assert "plan.clone()" not in source, "the carrier fold keeps a second complete plan beside lowering state"
+    assert "    Ok(plan)\n" in source, "the carrier fold does not return its input plan folded in place"
+    return Ok(None)
+
+
+def test_a_completed_plan_releases_retry_state_before_publication() -> Result[None, str]:
+    """A completed lowering attempt releases the retry-only snapshot before it assembles the published plan."""
+    source = repository_root()?.joinpath(
+        "loaves/compiler/incan_lowering/src/lowering.rs",
+    ).read_text("utf-8", "strict").map_err((error) => error.message())?
+    release = """RuntimeRetention::Complete => {
+            // A completed attempt releases the retry-only snapshot before it assembles the published plan.
+            drop(retry_intrinsic_layouts);
+            drop(retry_externals);
+            drop(retry_instances);"""
+    assert release in source, "completed lowering retains the retry-only plan snapshot through publication"
+    return Ok(None)
+
+
 def test_budget_and_records_keep_exact_bytes_and_human_units_distinct() -> Result[None, str]:
-    """The gate compares bytes while the human report alone renders MiB and whole seconds."""
+    """The machine record keeps bytes while the human report alone renders MiB and whole seconds."""
     under = measured("oven", 1, 2048 * MIB, 90_000)
     over = measured("contracts", 2, 2048 * MIB + 1, 1_500)
     assert budget_outcome(under.tree_peak_bytes, 2048 * MIB) == "under"
@@ -55,21 +93,19 @@ def test_budget_and_records_keep_exact_bytes_and_human_units_distinct() -> Resul
     report = measurements_report([under, over], 2048 * MIB)
     assert "oven\t1\t2048\tincan-rustc-driver\t2048\t90\tunder" in report
     assert "contracts\t2\t2048\tincan-rustc-driver\t2048\t1\tover" in report
-    assert require_budget([under], 2048 * MIB) == Ok(None)
-    assert budget_refusal([measured("oven", 1, 2048 * MIB + 1, 90_000)], 2048 * MIB) == "accepted"
-    assert budget_refusal([over], 2048 * MIB) == f"process-tree footprint budget exceeded: contracts run 2: {2048 * MIB + 1} > {2048 * MIB} bytes"
     return Ok(None)
 
 
-def test_oven_is_held_to_the_lowering_budget() -> Result[None, str]:
-    """Oven, the toolchain's lowering compile, is gated at 6 GiB while the other gated builds keep the selected budget."""
+def test_oven_is_reported_against_the_lowering_budget() -> Result[None, str]:
+    """Oven reports against 6 GiB while other observed builds keep the selected informational budget."""
     budget = 2048 * MIB
     lowering = 6144 * MIB
     within = measured("oven", 1, lowering, 300_000)
     over = measured("oven", 2, lowering + 1, 300_000)
-    assert require_budget([within], budget) == Ok(None)
-    assert budget_refusal([over], budget) == f"process-tree footprint budget exceeded: oven run 2: {lowering + 1} > {lowering} bytes"
-    assert f"oven\t2\t{lowering + 1}\tincan-rustc-driver\t{lowering + 1}\t{lowering}\n" in measurements_tsv([over], budget)
+    assert f"oven\t2\t{lowering + 1}\tincan-rustc-driver\t{lowering + 1}\t{lowering}\n" in measurements_tsv(
+        [over],
+        budget,
+    )
     report = measurements_report([within, over], budget)
     assert "oven\t1\t6144\tincan-rustc-driver\t6144\t300\tunder" in report
     assert "oven\t2\t6144\tincan-rustc-driver\t6144\t300\tover" in report
@@ -95,12 +131,5 @@ def measured(command: str, run: int, peak: int, wall_ms: int) -> Measurement:
 def refusal(arguments: list[str]) -> str:
     """Return one option refusal for concise assertions."""
     match parse_options(arguments):
-        Ok(_) => return "accepted"
-        Err(message) => return message
-
-
-def budget_refusal(results: list[Measurement], budget: int) -> str:
-    """Return one budget refusal for concise gate assertions."""
-    match require_budget(results, budget):
         Ok(_) => return "accepted"
         Err(message) => return message

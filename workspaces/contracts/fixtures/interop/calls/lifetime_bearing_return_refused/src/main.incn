@@ -6,7 +6,7 @@
 from rust::regex import Captures, Regex
 
 
-def observe(value: &Captures) -> bool:
+def observe(value: Borrowed[Captures]) -> bool:
     """Accept a borrowed lifetime-bearing parameter."""
     return value.len() > 0
 
@@ -16,7 +16,7 @@ def take(value: Captures) -> bool:
     return value.len() > 0
 
 
-def first(pattern: &Regex, text: str) -> Option[Captures]:
+def first(pattern: Borrowed[Regex], text: str) -> Option[Captures]:
     """Return a value whose lifetime ties it to `text`: refused."""
     return pattern.captures(text)
 

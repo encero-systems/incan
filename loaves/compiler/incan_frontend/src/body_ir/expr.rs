@@ -82,7 +82,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Copy the accepting checker's physical field path, including native extractor forwarding.
     /// Ordinary fields retain their existing checked projection; no wrapper is recognized from its name or shape.
-    fn lower_checked_field_projections(
+    pub(super) fn lower_checked_field_projections(
         &self,
         base: &ast::Spanned<ast::Expr>,
         name: &str,
@@ -324,6 +324,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Keep a frozen byte const's checked carrier in a typed temporary. The byte literal vocabulary alone does not
     /// distinguish mutable bytes from static storage, so flattening this read to a bare constant would lose that fact.
+    /// A const that is a Rust constant is read the way the Rust item itself is: assigned to a temporary first, which
+    /// is where the driver finds the crate the item needs.
     pub(super) fn checked_constant_operand(
         &mut self,
         constant: bir::Constant,
@@ -332,9 +334,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
-        if ty != IncanType::Primitive(IncanPrimitiveType::FrozenBytes) {
-            return bir::Operand::Constant(constant);
-        }
+        let ty = match &constant {
+            bir::Constant::RustItem(_, carrier) => carrier.clone(),
+            _ if ty == IncanType::Primitive(IncanPrimitiveType::FrozenBytes) => ty,
+            _ => return bir::Operand::Constant(constant),
+        };
         let local = self.new_temp(ty, scope, span);
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {
@@ -432,6 +436,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             ast::Expr::Paren(inner) => self.lower_expr_to_operand(inner, scope, out),
             ast::Expr::Field(base, name) => self.lower_field_value(expr, base, name, scope, span, out),
             ast::Expr::Index(base, index) => {
+                if let Some(call) = self.type_info.rust.checked_calls.get(&expr.span).cloned() {
+                    return self.lower_checked_native_index(base, index, &call, expr.span, scope, out);
+                }
                 let index_operand = self.lower_checked_index_operand(base, index, scope, out);
                 let mut place = self.lower_expr_to_place(base, scope, out);
                 place.projection.push(bir::PlaceElem::Index(Box::new(index_operand)));
@@ -446,13 +453,20 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 {
                     bir::Operand::Constant(constant)
                 } else {
-                    let operand = self.lower_expr_to_operand(inner, scope, out);
+                    // RFC 164: a borrowed scalar operand is read through its borrow.
+                    let operand = super::operators::read_through_scalar_borrow(
+                        &self.resolve_ty(inner.span),
+                        self.lower_expr_to_operand(inner, scope, out),
+                    );
                     self.push_assign_temp(bir::Rvalue::UnaryOp(bir::UnOp::Neg, operand), ty, scope, span, out)
                 }
             }
             ast::Expr::Unary(op, inner) => {
                 let un_op = lower_unary_op(*op);
-                let operand = self.lower_expr_to_operand(inner, scope, out);
+                let operand = super::operators::read_through_scalar_borrow(
+                    &self.resolve_ty(inner.span),
+                    self.lower_expr_to_operand(inner, scope, out),
+                );
                 let ty = self.resolve_ty(expr.span);
                 self.push_assign_temp(bir::Rvalue::UnaryOp(un_op, operand), ty, scope, span, out)
             }
@@ -630,6 +644,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Lower an expression that is being used as a place base (the target of `.field`/`[index]` projection or a
     /// bare name), synthesizing a temporary to hold the value when the expression is not itself place-shaped.
+    /// RFC 164: a projection of what a whole borrow local borrows (`*x` named by an alias of a borrowed input) is a
+    /// projection of the borrow local itself, whose fields and elements are reached through it.
+    fn project_through_reference(&self, place: &mut bir::Place) {
+        let reference = place
+            .local_id()
+            .and_then(|id| self.locals.get(id.index()))
+            .is_some_and(|local| matches!(local.ty, IncanType::Ref(_) | IncanType::RefMut(_)));
+        if reference && matches!(place.projection.as_slice(), [bir::PlaceElem::Deref]) {
+            place.projection.clear();
+        }
+    }
+
     pub(super) fn lower_expr_to_place(
         &mut self,
         expr: &ast::Spanned<ast::Expr>,
@@ -723,6 +749,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     return place;
                 }
                 let mut place = self.lower_checked_field_base(base, expr.span, scope, out);
+                self.project_through_reference(&mut place);
                 place
                     .projection
                     .extend(self.lower_checked_field_projections(base, name, expr.span));
@@ -732,6 +759,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             ast::Expr::Index(base, index) if self.type_info.resolved_operator_call(expr.span).is_none() => {
                 let index_operand = self.lower_checked_index_operand(base, index, scope, out);
                 let mut place = self.lower_expr_to_place(base, scope, out);
+                self.project_through_reference(&mut place);
                 place.projection.push(bir::PlaceElem::Index(Box::new(index_operand)));
                 place
             }

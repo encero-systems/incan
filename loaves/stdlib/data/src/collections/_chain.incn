@@ -195,30 +195,30 @@ pub model ChainMap[K with (Clone, Eq), V with Clone]:
         return _chain_items(self.layers)
 
 
-def _chain_keys[K with (Clone, Eq), V with Clone](layers: &list[OrderedDict[K, V]]) -> list[K]:
+def _chain_keys[K with (Clone, Eq), V with Clone](layers: Borrowed[list[OrderedDict[K, V]]]) -> list[K]:
     """Collect visible keys without copying layers or values; preserve explicit comparison clones."""
     mut out: list[K] = []
     for layer_index in range(len(layers)):
-        layer: &OrderedDict[K, V] = list_get(layers, layer_index)
+        layer: Borrowed[OrderedDict[K, V]] = list_get(layers, layer_index)
         for entry_index in range(len(layer.entries)):
-            entry: &_MapEntry[K, V] = list_get(layer.entries, entry_index)
+            entry: Borrowed[_MapEntry[K, V]] = list_get(layer.entries, entry_index)
             _append_visible_key(out, entry.key)
     return out
 
 
-def _chain_items[K with (Clone, Eq), V with Clone](layers: &list[OrderedDict[K, V]]) -> list[Tuple[K, V]]:
+def _chain_items[K with (Clone, Eq), V with Clone](layers: Borrowed[list[OrderedDict[K, V]]]) -> list[Tuple[K, V]]:
     """Borrow layers while retaining visible-key order and the explicit clones in returned pairs."""
     mut out: list[Tuple[K, V]] = []
     mut visible: list[K] = []
     for layer_index in range(len(layers)):
-        layer: &OrderedDict[K, V] = list_get(layers, layer_index)
+        layer: Borrowed[OrderedDict[K, V]] = list_get(layers, layer_index)
         for entry_index in range(len(layer.entries)):
-            entry: &_MapEntry[K, V] = list_get(layer.entries, entry_index)
+            entry: Borrowed[_MapEntry[K, V]] = list_get(layer.entries, entry_index)
             _append_visible_key(visible, entry.key)
     for index in range(len(visible)):
-        key: &K = list_get(visible, index)
+        key: Borrowed[K] = list_get(visible, index)
         for layer_index in range(len(layers)):
-            layer: &OrderedDict[K, V] = list_get(layers, layer_index)
+            layer: Borrowed[OrderedDict[K, V]] = list_get(layers, layer_index)
             match layer.get(key):
                 Some(value) =>
                     pair: Tuple[K, V] = (_clone_referent(key), value.clone())
@@ -232,7 +232,7 @@ def _append_visible_key[K with (Clone, Eq)](mut visible: list[K], key: K) -> Non
     """Append one independent key only when absent, preserving each explicit comparison clone."""
     mut seen = false
     for index in range(len(visible)):
-        existing: &K = list_get(visible, index)
+        existing: Borrowed[K] = list_get(visible, index)
         if _clone_referent(existing) == key:
             seen = true
     if not seen:

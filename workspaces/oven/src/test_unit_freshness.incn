@@ -2,7 +2,7 @@
 
 from rust::std::fs import Permissions, metadata, set_permissions
 from rust::std::os::unix::fs import PermissionsExt
-from rust::std::process import Child, Command, Stdio
+from rust::std::process import Child, Command, Output, Stdio
 from std.environ import get_or
 from std.fs import Path
 from files import json_text, read, remove
@@ -22,13 +22,14 @@ from toolchain import NativeCrate, Toolchain
 from toolchain_access import ToolchainAccess
 from unit import UnitDescription, UnitLoaf
 from unit_reading import read_unit
-from unit_compiler import crate_name, described_by, write_unit
+from unit_compiler import crate_name, described_by, graph_body_output_path, plan_record_report_path, write_unit
+from unit_transport import read_unit_document
 from unit_publication import admit_payload, published_identity, record_path, record_payload
 from unit_freshness import Key, artifact_files, reusable, record, description_digest, staleness
 from freshness_fixtures import Fixture, fixture, make_executable, reconcile, unit_key, write
 
 # The description digest of `ordinary_unit()` before units could declare rustc-internal access.
-const ORDINARY_DIGEST: str = "37f5ff93d4e0748e7ccc89cc39fa6bba5465849d86b69bcf6219755891cdd2a8"
+const ORDINARY_DIGEST: str = "11e94de6d5495e1294faa8119ce1552b76aca18fb52cc3d2c42b2726bc9be470"
 
 
 pub def test_unchanged_unit_is_keyed_without_reading_or_listing() -> Result[None, str]:
@@ -36,15 +37,16 @@ pub def test_unchanged_unit_is_keyed_without_reading_or_listing() -> Result[None
     scratch = scratch_directory()?
     setup = fixture(scratch.path())?
     first = reconcile(scratch.path(), setup)?
-    assert first.hashed > 0
-    assert first.listed == 1
+    assert first.hashed > 0, f"the first pass hashed {first.hashed} files"
+    assert first.listed == 1, f"the first pass listed {first.listed} directories"
     second = reconcile(scratch.path(), setup)?
-    assert second.key == first.key
-    assert second.hashed == 0
-    assert second.listed == 0
+    assert second.key == first.key, "an unchanged unit was rekeyed"
+    assert second.hashed == 0, f"the second pass hashed {second.hashed} files"
+    assert second.listed == 0, f"the second pass listed {second.listed} directories"
     # RFC 124: checkout, target and installed-home locations are publication provenance.
     relocated = fixture(scratch.path().joinpath("another-checkout"))?
-    assert reconcile(scratch.path().joinpath("another-checkout"), relocated)?.key == first.key
+    moved = reconcile(scratch.path().joinpath("another-checkout"), relocated)?
+    assert moved.key == first.key, "another checkout of the same unit was keyed differently"
     verify_be34_position_changes(scratch.path().joinpath("positions"))?
     verify_source_move(scratch.path().joinpath("moved-entry"))?
     verify_project_entries(scratch.path().joinpath("project-entries"))?
@@ -137,6 +139,14 @@ def verify_invocation_identity(setup: Fixture) -> Result[None, str]:
     mut changed = setup.unit
     changed.package = "another_crate"
     assert description_digest(changed)? != first
+    # The same text describes distinct inputs when it names a native crate and when it admits a vocabulary.
+    mut rust_input = setup.unit
+    rust_input.rust_crates = ["same"]
+    rust_input.vocab_admissions = []
+    mut vocabulary_input = setup.unit
+    vocabulary_input.rust_crates = []
+    vocabulary_input.vocab_admissions = ["same"]
+    assert description_digest(rust_input)? != description_digest(vocabulary_input)?
     changed = setup.unit
     changed.active_features = ["extra"]
     assert description_digest(changed)? != first
@@ -186,6 +196,29 @@ def ordinary_unit() -> UnitDescription:
     )
 
 
+pub def test_prepared_descriptor_generations_keep_their_own_witnesses_and_reports() -> Result[None, str]:
+    scratch = scratch_directory()?
+    mut unit = ordinary_unit()
+    unit.project_root = scratch.path().0
+    key = Key(digest="portable", parts=[], descriptor="descriptor")
+    legacy = write_unit(unit, "app", None, described_by(key), false, typed=false)?
+    typed = write_unit(unit, "app", None, described_by(key), false, typed=true)?
+    assert legacy.name() == "descriptor.unit.json" and typed.name() == "descriptor.unit.crumb"
+    assert read_unit_document(legacy)?.dumps().map_err((error) => error.message())? == read_unit_document(typed)?.dumps().map_err((error) => error.message())?
+    assert Path(typed.0 + ".oven-description").is_file() and Path(legacy.0 + ".oven-description").is_file()
+    assert graph_body_output_path(unit, key, true).0 == typed.0 + ".published.scope.contracts.placement.methods.ranked.cmpns5.graph-body-output"
+    assert graph_body_output_path(unit, key, false).0 == legacy.0 + ".graph-body-output"
+    assert plan_record_report_path(unit, key, true).0 == typed.0 + ".graph-plan-report"
+    assert plan_record_report_path(unit, key, false).0 == legacy.0 + ".graph-plan-report"
+    original = typed.read_bytes().map_err((error) => error.message())?
+    assert original[:4] == b"CRMB"
+    typed.write_bytes(b"CRMBtruncated").map_err((error) => error.message())?
+    assert read_unit_document(typed).is_err()
+    refreshed = write_unit(unit, "app", None, described_by(key), false, typed=true)?
+    assert refreshed.read_bytes().map_err((error) => error.message())? == original
+    return Ok(None)
+
+
 def verify_declared_access(setup: Fixture) -> Result[None, str]:
     """
     Declared rustc-internal access is part of a unit's identity, and an undeclared unit's identity is unchanged.
@@ -198,8 +231,9 @@ def verify_declared_access(setup: Fixture) -> Result[None, str]:
        library undeclared refuses the unit's identity.
     """
     # 1. The digest was recorded from the description of this unit before declarations existed.
-    assert description_digest(ordinary_unit())? == ORDINARY_DIGEST
-    assert "toolchain_access" not in json_text(ordinary_unit().to_json())?
+    ordinary = description_digest(ordinary_unit())?
+    assert ordinary == ORDINARY_DIGEST, f"an ordinary unit's description digest is now {ordinary}"
+    assert "toolchain_access" not in json_text(ordinary_unit().to_json())?, "an ordinary unit names toolchain access"
     # 2. A declaration is identity, and its written order is not.
     first = description_digest(setup.unit)?
     mut seen = [first]
@@ -304,6 +338,38 @@ pub def test_source_edit_rekeys_and_hashes_only_what_changed() -> Result[None, s
     verify_check_replay(scratch.path().joinpath("checks"))?
     verify_import_records(scratch.path().joinpath("imports"))?
     return Ok(None)
+
+
+pub def test_toolchain_plan_failure_is_retried() -> Result[None, str]:
+    """A one-shot malformed-plan failure is not retained as a source refusal, so the unchanged next build retries."""
+    scratch = scratch_directory()?
+    project = scratch.path().joinpath("project")
+    failure = scratch.path().joinpath("fail-native-plan-once")
+    write(
+        project.joinpath("loaf.toml"),
+        "[project]\nname = \"retry_toolchain_failure\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n",
+    )?
+    write(project.joinpath("src/main.incn"), "def main() -> None:\n    println(\"retried\")\n")?
+    write(failure, "fail once")?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    first = build_project(binary, project, scratch.path().joinpath("bakery"), failure)?
+    first_text = decoded(first.stdout) + decoded(first.stderr)
+    assert not first.status.success(), first_text
+    assert "forced toolchain plan failure" in first_text, first_text
+    assert not failure.is_file(), "the driver did not consume the one-shot failure"
+    second = build_project(binary, project, scratch.path().joinpath("bakery"), failure)?
+    second_text = decoded(second.stdout) + decoded(second.stderr)
+    assert second.status.success(), second_text
+    return Ok(None)
+
+
+def build_project(binary: str, project: Path, bakery: Path, failure: Path) -> Result[Output, str]:
+    """Build `project` without an owner, retaining one bakery while the one-shot native-plan failure is consumed."""
+    mut command = Command.new(binary)
+    command.arg("build").arg(project.0).current_dir(project.0)
+    command.env("OVEN_OWNER", "off").env("INCAN_ENGINE", "records")
+    command.env("INCAN_BAKERY", bakery.0).env("INCAN_TEST_PLAN_FAILURE_ONCE", failure.0)
+    return command.output().map_err((error) => f"cannot run {binary}: {error}")
 
 
 def verify_import_records(scratch: Path) -> Result[None, str]:
@@ -825,4 +891,33 @@ def verify_record_identity() -> Result[None, str]:
     files = artifact_files(Path("/not-present"), unit.package)?
     assert files[0].name() == f"lib{crate_name(unit)}.rlib"
     assert files[1].name() == f"{crate_name(unit)}.incnlib"
+    return Ok(None)
+
+
+pub def test_a_concurrent_lock_refresh_is_no_rust_compile_input() -> Result[None, str]:
+    """
+    Another build that refreshes a Rust Loaf's oven.lock while this build compiles it changes none of its inputs.
+
+    Two `oven test` runs that share a Rust dependency, one testing that Loaf and one testing a Loaf that links it, can
+    compile it at once: the first writes the Loaf's lock as its root project while the second compiles the Loaf as a
+    dependency. The lock is Oven's resolution record, never a file rustc reads, so it must not refuse the compile; a
+    changed resolution reaches the compile through its arguments and linked artifacts, which stay observed.
+    """
+    scratch = scratch_directory()?
+    setup = fixture(scratch.path())?
+    lock = setup.root.joinpath("oven.lock")
+    write(lock, "# Generated by Oven. Do not edit.\nformat = 1\nmode = \"locked\"\n")?
+    source = setup.root.joinpath("src").joinpath("lib.rs")
+    write(source, "pub fn value() -> i32 { 1 }\n")?
+    dependencies = scratch.path().joinpath("native").joinpath("library.d")
+    write(dependencies, f"library: {source.0}\n")?
+    arguments = ["--extern", f"runtime={setup.toolchain.externs[0].path}"]
+    observations = compilation_observations(setup.root, dependencies, arguments, [], setup.toolchain)?
+    assert lock.0 not in observations, "the lock was observed as a compiler input"
+    # The other build refreshes the lock while this one compiles.
+    write(lock, "# Generated by Oven. Do not edit.\nformat = 1\nmode = \"refreshed by another build\"\n")?
+    assert inputs_unchanged(dependencies, observations, Some(setup.root), arguments)?, "a lock refresh refused the compile"
+    # An authored source written meanwhile still refuses it.
+    write(source, "pub fn value() -> i32 { 2 }\n")?
+    assert not inputs_unchanged(dependencies, observations, Some(setup.root), arguments)?
     return Ok(None)

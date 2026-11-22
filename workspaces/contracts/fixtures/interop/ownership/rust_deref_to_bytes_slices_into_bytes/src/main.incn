@@ -8,7 +8,7 @@
 from rust::byte_views import Window
 
 
-def tail(window: &Window) -> bytes:
+def tail(window: Borrowed[Window]) -> bytes:
     """Copy from an annotated borrowed native parameter without consuming its owner."""
     return window[-6:]
 

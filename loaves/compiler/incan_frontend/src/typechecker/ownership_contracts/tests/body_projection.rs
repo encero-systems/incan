@@ -6,7 +6,7 @@ use super::*;
 /// cannot turn the current callable's borrowed parameter into an ordinary transferable one.
 #[test]
 fn flow_owner_is_independent_of_shared_span_tables() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def read(value: Borrowed[int]) -> int:\n    return value\n";
+    let source = "def read(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    return value\n";
     let mut checker = checked(source)?;
     let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
     let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
@@ -33,12 +33,15 @@ fn flow_owner_is_independent_of_shared_span_tables() -> Result<(), Box<dyn std::
     binding.identity = Some(other);
     let graph = super::source::build(&checker, CallableSource::Function(function), declaration.span, &owner)
         .map_err(|error| format!("{error:?}"))?;
-    assert_eq!(graph.permissions.len(), 1);
-    assert!(
+    // The borrowed parameter stays a shared, non-transferable input beside the defaulted `Owned[int]` proof entry.
+    assert_eq!(graph.permissions.len(), 2);
+    assert_eq!(
         graph
             .permissions
             .values()
-            .all(|permission| !permission.transferable && !permission.exclusive)
+            .filter(|permission| !permission.transferable && !permission.exclusive)
+            .count(),
+        1
     );
     Ok(())
 }
@@ -46,8 +49,9 @@ fn flow_owner_is_independent_of_shared_span_tables() -> Result<(), Box<dyn std::
 /// A retained map entry alone cannot authenticate an annotation, destination, graph owner or analysis result.
 #[test]
 fn body_projection_requires_complete_canonical_local_evidence() -> Result<(), Box<dyn std::error::Error>> {
-    let checker =
-        checked("def read(value: Borrowed[int]) -> int:\n    let view: Borrowed[int] = value\n    return view\n")?;
+    let checker = checked(
+        "def read(value: Borrowed[int], proof: Owned[int] = 0) -> int:\n    let view: Borrowed[int] = value\n    return view\n",
+    )?;
     let (local, mode) = checker
         .type_info
         .protocols
@@ -120,7 +124,7 @@ fn body_projection_requires_complete_canonical_local_evidence() -> Result<(), Bo
 /// Restored graphs cannot omit an operand's consumption dependency and recompute themselves into acceptance.
 #[test]
 fn restored_alias_flow_requires_operation_consumption() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def replace(mut value: BorrowedMut[str]) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef main() -> None:\n    mut original = \"payload\"\n    let view: Borrowed[str] = original\n    print(view, replace(original))\n";
+    let source = "def replace(mut value: BorrowedMut[str], proof: Owned[int] = 0) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef main(proof: Owned[int] = 0) -> None:\n    mut original = \"payload\"\n    let view: Borrowed[str] = original\n    print(view, replace(original))\n";
     let mut checker = checked(source)?;
     assert!(
         checker
@@ -186,7 +190,7 @@ fn restored_alias_flow_requires_operation_consumption() -> Result<(), Box<dyn st
 /// Existing operation metadata cannot authorize missing, reused or changed consumption events.
 #[test]
 fn operation_consumption_rejects_altered_relationships() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def read(value: Borrowed[str]) -> int:\n    let view: Borrowed[str] = value\n    return len(view)\n";
+    let source = "def read(value: Borrowed[str], proof: Owned[int] = 0) -> int:\n    let view: Borrowed[str] = value\n    return len(view)\n";
     let checker = checked(source)?;
     assert!(checker.errors.is_empty(), "{:?}", checker.errors);
     let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
@@ -255,8 +259,8 @@ fn operation_consumption_rejects_altered_relationships() -> Result<(), Box<dyn s
 #[test]
 fn operation_reads_cannot_move_after_later_operands() -> Result<(), Box<dyn std::error::Error>> {
     for source in [
-        "def replace(mut value: BorrowedMut[str]) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef inspect(mut value: BorrowedMut[str]) -> None:\n    print(value, replace(value))\n",
-        "def replace(mut value: BorrowedMut[str]) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef inspect(mut value: BorrowedMut[str], flag: bool) -> None:\n    assert flag, f\"{value}{replace(value)}\"\n    print(value)\n",
+        "def replace(mut value: BorrowedMut[str], proof: Owned[int] = 0) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef inspect(mut value: BorrowedMut[str], proof: Owned[int] = 0) -> None:\n    print(value, replace(value))\n",
+        "def replace(mut value: BorrowedMut[str], proof: Owned[int] = 0) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef inspect(mut value: BorrowedMut[str], flag: bool, proof: Owned[int] = 0) -> None:\n    assert flag, f\"{value}{replace(value)}\"\n    print(value)\n",
     ] {
         let mut checker = checked(source)?;
         assert!(
@@ -355,11 +359,11 @@ fn operation_reads_cannot_move_after_later_operands() -> Result<(), Box<dyn std:
 #[test]
 fn conditional_paths_require_their_source_edges() -> Result<(), Box<dyn std::error::Error>> {
     for source in [
-        "def inspect(value: Borrowed[str], flag: bool) -> None:\n    if flag:\n        pass\n    print(value)\n",
-        "def inspect(value: Borrowed[str]) -> None:\n    if true:\n        pass\n    else:\n        pass\n    print(value)\n",
-        "def inspect(value: Borrowed[str], flag: bool, other: bool) -> None:\n    if flag:\n        print(value)\n    elif other:\n        assert other, f\"failed: {value}\"\n        return\n    else:\n        pass\n    print(value)\n",
-        "def inspect(value: Borrowed[str], flag: bool) -> None:\n    if flag:\n        print(value)\n        return\n    else:\n        print(value)\n        return\n    print(value)\n",
-        "def inspect(value: Borrowed[str], flag: bool, other: bool) -> None:\n    if flag:\n        if other:\n            print(value)\n        else:\n            pass\n    else:\n        assert true, \"literal\"\n    print(value)\n",
+        "def inspect(value: Borrowed[str], flag: bool, proof: Owned[int] = 0) -> None:\n    if flag:\n        pass\n    print(value)\n",
+        "def inspect(value: Borrowed[str], proof: Owned[int] = 0) -> None:\n    if true:\n        pass\n    else:\n        pass\n    print(value)\n",
+        "def inspect(value: Borrowed[str], flag: bool, other: bool, proof: Owned[int] = 0) -> None:\n    if flag:\n        print(value)\n    elif other:\n        assert other, f\"failed: {value}\"\n        return\n    else:\n        pass\n    print(value)\n",
+        "def inspect(value: Borrowed[str], flag: bool, proof: Owned[int] = 0) -> None:\n    if flag:\n        print(value)\n        return\n    else:\n        print(value)\n        return\n    print(value)\n",
+        "def inspect(value: Borrowed[str], flag: bool, other: bool, proof: Owned[int] = 0) -> None:\n    if flag:\n        if other:\n            print(value)\n        else:\n            pass\n    else:\n        assert true, \"literal\"\n    print(value)\n",
     ] {
         let checker = checked(source)?;
         assert!(
@@ -446,7 +450,7 @@ fn conditional_paths_require_their_source_edges() -> Result<(), Box<dyn std::err
 /// Failure-only message evaluation cannot become unconditional, skip its dependency, or join the success path.
 #[test]
 fn assertion_execution_retains_failure_edges() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def inspect(value: Borrowed[str], flag: bool) -> None:\n    assert flag, f\"failed: {value}\"\n    print(value)\n";
+    let source = "def inspect(value: Borrowed[str], flag: bool, proof: Owned[int] = 0) -> None:\n    assert flag, f\"failed: {value}\"\n    print(value)\n";
     let checker = checked(source)?;
     assert!(checker.errors.is_empty(), "{:?}", checker.errors);
     let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;

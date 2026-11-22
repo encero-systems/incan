@@ -181,12 +181,20 @@ pub def documentation_free(source: str) -> str:
     end: a block's last statement can be its value (`def name() -> str:` ending in `"text"`), and a docstring followed
     only by `pass` keeps a trait method a documented placeholder. Those strings stay.
     """
+    return split_documentation(source)[0]
+
+
+pub def split_documentation(source: str) -> tuple[str, str]:
+    """Classify each logical line once for the semantic and documentation records of an owner."""
     lines = scanned(source)
     mut kept: list[str] = []
+    mut docs: list[str] = []
     for index in range(len(lines)):
-        if not (lines[index].only_strings and documents(lines, index)):
+        if lines[index].only_strings and documents(lines, index):
+            docs.append(lines[index].text)
+        else:
             kept.append(lines[index].text)
-    return "\n".join(kept)
+    return ("\n".join(kept), "\n".join(docs))
 
 
 pub def comment_free(source: str) -> str:

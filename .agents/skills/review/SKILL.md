@@ -174,7 +174,7 @@ Only applies when the diff touches a language feature (not a pure refactor or do
   - Parsed and stored in the AST?
   - Validated in the typechecker (`check_decl`, `check_expr`, or `collect`)?
   - Represented by checked facts in Body IR (`loaves/compiler/incan_frontend/`)?
-  - Lowered by `loaves/compiler/incan_mir_lowering/src/` into `incan_mir_plan`?
+  - Lowered by `loaves/compiler/incan_lowering/src/` into `incan_mir_plan_native`?
   - Adapted to MIR in `loaves/toolchain/incan-rustc-driver/src/`?
 - [ ] **Out-of-scope features are rejected at the typechecker**, not silently passed to lowering to fail later. Rejection should emit a typed diagnostic from `loaves/kernel/incan_syntax/src/diagnostics/catalog/errors/`.
 - [ ] **Stdlib changes** (`loaves/stdlib/`) remain ordinary Loaves with behavior authored in Incan and existing Rust crates used through `rust::` interop where needed. Verify the owning manifests and canonical registries instead of assuming a new Rust facet is required.

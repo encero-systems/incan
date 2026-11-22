@@ -124,7 +124,7 @@ pub def fixture(scratch: Path) -> Result[Fixture, str]:
 
 pub def reconcile(scratch: Path, setup: Fixture) -> Result[Pass, str]:
     """Key the unit as a new process would: load its ledger, reconcile, save it. Settling is immediate."""
-    mut project = load_ledger(scratch.joinpath("ledgers").joinpath("project.json"), 0)
+    mut project = load_ledger(scratch.joinpath("ledgers").joinpath("project.crumb"), 0)
     keyed = unit_key_with(setup.unit, compiler_fingerprint(setup.toolchain)?, description_digest(setup.unit)?, project)?
     project.save()?
     return Ok(Pass(key=keyed.digest, hashed=project.hashed, listed=project.listed, replay=keyed.replayed()))

@@ -232,7 +232,7 @@ def letter_pattern() -> Result[Regex, str]:
     return Regex("[\\p{L}\\p{Nl}\\p{No}]+").map_err((error) => error.message())
 
 
-def line_hits(line: str, table: Dict[str, str], letters: &Regex) -> list[Hit]:
+def line_hits(line: str, table: Dict[str, str], letters: Borrowed[Regex]) -> list[Hit]:
     """Find case-preserving spelling hits with the audit's already compiled pattern."""
     mut result: list[Hit] = []
     ascii = len(line.encode("utf-8")) == len(line)

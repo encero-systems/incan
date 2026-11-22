@@ -1,0 +1,6 @@
+"""Store a named selection and the identity it currently selects in the same authenticated row. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
+
+pub from rust::internal_models_native import (
+    encode_binding,
+    read_binding,
+)

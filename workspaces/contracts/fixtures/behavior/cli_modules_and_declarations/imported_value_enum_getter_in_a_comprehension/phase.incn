@@ -1,0 +1,11 @@
+pub enum Phase(str):
+    A = "a"
+    B = "b"
+
+
+pub model Plan:
+    pub phase: Phase
+
+
+pub def plans() -> list[Plan]:
+    return [Plan(phase=Phase.A), Plan(phase=Phase.B)]

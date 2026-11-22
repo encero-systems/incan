@@ -91,7 +91,7 @@ pub def built_from(project: Path, directory: Path) -> Result[bool, str]:
         Err(_) => return Ok(false)
         Ok(selected) =>
             # The guard reads the same ledger next, so digests taken here are not taken twice.
-            mut ledger = load_ledger(directory.joinpath("observations.json"), SETTLE_SECONDS)
+            mut ledger = load_ledger(directory.joinpath("observations.crumb"), SETTLE_SECONDS)
             # 3. A file the inventory lists and the project lacks is a different source.
             match recorded_sources(selected, project, ledger):
                 Err(_) => return Ok(false)

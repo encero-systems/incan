@@ -18,12 +18,12 @@ model Value:
     text: str
 
 
-def read(value: &Value) -> str:
+def read(value: Borrowed[Value]) -> str:
     """Read the borrowed model's field while its box keeps owning it."""
     return value.text
 
 
-def read_text(value: &str) -> int:
+def read_text(value: Borrowed[str]) -> int:
     """Read shared text without taking its owning box."""
     return len(value)
 

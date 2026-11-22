@@ -16,7 +16,7 @@ from crate.primitives.hex import hexlify
 pub def write_group(
     index: int,
     description: StoredDescription,
-    records: &list[RowRecord],
+    records: Borrowed[list[RowRecord]],
     start: int,
     end: int,
     choice: Option[GroupChoice],
@@ -68,7 +68,7 @@ pub def write_group(
 
 def transpose_column(
     description: StoredDescription,
-    records: &list[RowRecord],
+    records: Borrowed[list[RowRecord]],
     start: int,
     end: int,
     field_index: int,

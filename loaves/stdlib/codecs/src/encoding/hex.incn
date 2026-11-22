@@ -216,7 +216,7 @@ def _decode_text(text: str) -> Result[bytes, EncodingError]:
     return _decode_pairs(text)
 
 
-def _decode_pairs(text: &str) -> Result[bytes, EncodingError]:
+def _decode_pairs(text: Borrowed[str]) -> Result[bytes, EncodingError]:
     """Decode already length-checked hexadecimal pairs from one UTF-8 byte projection."""
     encoded = _encode_utf8(text)
     mut out: list[u8] = []
@@ -245,7 +245,7 @@ def _hex_value(code: int) -> int:
     return -1
 
 
-def _invalid_hex_character(text: &str, position: int) -> EncodingError:
+def _invalid_hex_character(text: Borrowed[str], position: int) -> EncodingError:
     """Recover the original scalar for an invalid byte while preserving the public error contract."""
     for index, character in enumerate(text):
         if index == position:
@@ -253,7 +253,7 @@ def _invalid_hex_character(text: &str, position: int) -> EncodingError:
     return _invalid_character("hex", "", position)
 
 
-def _strip_ascii_whitespace(value: &str) -> str:
+def _strip_ascii_whitespace(value: Borrowed[str]) -> str:
     """Remove ASCII whitespace in one byte pass while preserving every other UTF-8 sequence."""
     mut out: list[u8] = []
     for code in _encode_utf8(value):

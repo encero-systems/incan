@@ -263,7 +263,7 @@ fn stores_exclusive_view(ty: &PlanType) -> bool {
     match ty {
         PlanType::Tuple(elements) => elements
             .iter()
-            .any(|element| stores_exclusive_view(&tuple_element_type(element.clone()))),
+            .any(|element| stores_exclusive_view(&tuple_element_type(&element))),
         PlanType::NativeArray(elements, _) | PlanType::Boxed(elements) => elements.iter().any(stores_exclusive_view),
         PlanType::TupleMutRef(_)
         | PlanType::ScalarMutRef(_)

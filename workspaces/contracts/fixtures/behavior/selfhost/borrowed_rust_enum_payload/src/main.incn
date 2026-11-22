@@ -53,7 +53,7 @@ model MessageHolder:
     value: Message
 
 
-def copy_field(holder: &MessageHolder) -> Message:
+def copy_field(holder: Borrowed[MessageHolder]) -> Message:
     """Copy a borrowed enum field into independent value storage before returning it."""
     copied = holder.value
     return copied
@@ -61,12 +61,12 @@ def copy_field(holder: &MessageHolder) -> Message:
 
 def shared_local(value: Message) -> bool:
     """Initialize shared-reference storage from an owner and keep that owner readable afterward."""
-    reference: &Message = value
+    reference: Borrowed[Message] = value
     assert has_record(reference)
     return has_record(value)
 
 
-def loopback[T](value: &IpAddr, unused: T) -> bool:
+def loopback[T](value: Borrowed[IpAddr], unused: T) -> bool:
     """Inspect the concrete borrowed payload of either address variant."""
     match value:
         IpAddr.V4(address) => return address.is_loopback()
@@ -80,7 +80,7 @@ def offset[T](position: SeekFrom, unused: T) -> u64:
         _ => return 0
 
 
-def inspect(value: &Message) -> None:
+def inspect(value: Borrowed[Message]) -> None:
     """Read both fields from the selected native record without transferring its owner."""
     match value:
         Message.Record(text=message, ready=ready, count=number) =>
@@ -94,7 +94,7 @@ def inspect(value: &Message) -> None:
         _ => pass
 
 
-def inspect_count(value: &Message) -> None:
+def inspect_count(value: Borrowed[Message]) -> None:
     """Omit the other payload fields while borrowing the same native owner again."""
     match value:
         Message.Record(count=number) => println(number)
@@ -102,7 +102,7 @@ def inspect_count(value: &Message) -> None:
         _ => pass
 
 
-def inspect_wrapped(value: &Message) -> None:
+def inspect_wrapped(value: Borrowed[Message]) -> None:
     """Use the named payload's exact native Box carrier before borrowing its content."""
     match value:
         Message.NamedBox(inner=inner) => inspect_count(inner.as_ref())
@@ -114,41 +114,41 @@ def constructed_result() -> Result[Message, str]:
     return Ok(Message.Wrapped(message()))
 
 
-def inspect_positional(value: &Message) -> None:
+def inspect_positional(value: Borrowed[Message]) -> None:
     """Borrow the exact Box stored in a positional native payload before borrowing its content."""
     match value:
         Message.Wrapped(inner) => inspect_count(inner.as_ref())
         _ => pass
 
 
-def inspect_optional(values: &list[Message]) -> None:
+def inspect_optional(values: Borrowed[list[Message]]) -> None:
     """Resolve an indexed native method and copy its stored shared enum reference into the arm binding."""
     match values[0].borrowed_message():
         Some(value) => inspect_count(value)
         None => println("missing message")
 
 
-def inspect_nested_optional(values: &list[Message]) -> None:
+def inspect_nested_optional(values: Borrowed[list[Message]]) -> None:
     """Match a native enum through the shared reference stored in an Option payload."""
     match values[0].borrowed_message():
         Some(Message.Record(count=number)) => println(number)
         _ => println("missing nested record")
 
 
-def borrowed_record(envelope: &Envelope) -> bool:
+def borrowed_record(envelope: Borrowed[Envelope]) -> bool:
     """Bind a native shared result and pass its reference to a separate source function."""
     frame = envelope.message.as_ref()
     return has_record(frame)
 
 
-def has_record(value: &Message) -> bool:
+def has_record(value: Borrowed[Message]) -> bool:
     """Observe a shared native enum without moving its referent."""
     match value:
         Message.Record(count=number) => return number == 7
         _ => return false
 
 
-def reference_records(left: &Message, right: &Message) -> bool:
+def reference_records(left: Borrowed[Message], right: Borrowed[Message]) -> bool:
     """Keep a temporary list's native references while visiting both original owners."""
     for value in [left, right]:
         if not has_record(value):

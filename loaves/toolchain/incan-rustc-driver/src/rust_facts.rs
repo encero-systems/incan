@@ -24,6 +24,7 @@ use rustc_span::{FileName, sym};
 
 mod crate_discovery;
 mod item_descriptions;
+mod public_paths;
 
 pub(crate) use crate_discovery::*;
 use item_descriptions::*;

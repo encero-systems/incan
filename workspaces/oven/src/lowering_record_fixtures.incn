@@ -1,0 +1,60 @@
+"""Example runs shared by the lowering record tests: building a report fixture, counting engine proofs and stopping
+the example engine."""
+
+from rust::std::process import Command
+from rust::std::str import from_utf8
+from std.fs import Path
+from std.json import JsonValue, parse
+from engine_client import service_generation, service_identity
+from engine_endpoint import connect_with
+from engine_messages import Message, Stop
+from engine_wire import zero_id
+
+
+pub def stop_example_engine(binary: str, store: Path) -> Result[None, str]:
+    """Stop one disposable records engine after its final request."""
+    mut identity = service_identity(store)?
+    identity.service_generation = service_generation(binary)?
+    mut channel = connect_with(store, identity, binary).map_err((refusal) => refusal.detail)?
+    channel
+        .send(zero_id(), Message.Stop(Stop(reason="lowering example completed")))
+        .map_err((refusal) => refusal.detail)?
+    stopped = channel.receive().map_err((refusal) => refusal.detail)?
+    match stopped.message:
+        Message.Event(value) =>
+            assert value.status == "Stopping", f"the engine answered {value.status}"
+        _ => return Err("lowering example did not stop its engine")
+    _ = channel.transport.close()
+    return Ok(None)
+
+
+pub def command_proof(output: bytes) -> Result[JsonValue, str]:
+    """Decode the first line emitted by `--engine-report`, leaving the following program stdout independent."""
+    text = from_utf8(output).map_err((error) => str(error))?
+    lines = text.split("\n")
+    if len(lines) < 2:
+        return Err("records command emitted no proof report")
+    return parse(lines[0]).map_err((error) => error.message())
+
+
+pub def report_fixture_build(binary: str, project: Path, store: Path, trace: Option[Path] = None) -> Result[JsonValue, str]:
+    """Build one fixture through the records engine and decode its requested report."""
+    mut command = Command.new(binary)
+    command.arg("build")
+        .arg(project.0)
+        .args(["--profile", "release", "--engine-report"])
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+    if let Some(directory) = trace:
+        command.env("INCAN_ENGINE_TRACE", directory.0)
+    outcome = command.output().map_err((error) => str(error))?
+    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
+    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+    if not outcome.status.success() or (errors != "" and (trace is None or "warning[INCAN-T0125]" not in errors)):
+        return Err(f"checker report fixture: status={outcome.status.code()} stdout={output} stderr={errors}")
+    return command_proof(outcome.stdout)
+
+
+pub def proof_count(report: JsonValue, name: str) -> Result[int, str]:
+    """Read one required producer counter without accepting an absent or nonnumeric field."""
+    return report.require(name).map_err((error) => error.message())?.expect_int().map_err((error) => error.message())

@@ -1,9 +1,11 @@
 //! Restoration of one local record row into the native local maps it names.
 
 use super::*;
+use crate::symbols::ResolvedType;
 
 /// Recreate every supported local map directly from the selected field's typed primitives.
 pub(super) fn restore_local(
+    checker: &TypeChecker,
     positions: &Positions,
     local: &mut BodyLocal,
     record_identities: &mut BTreeMap<String, CanonicalSymbolId>,
@@ -23,6 +25,14 @@ pub(super) fn restore_local(
         "input-call" | "input-local" | "input-flow" | "input-copy"
     ) {
         return inputs::restore(positions, local, row);
+    }
+    if row[0] == "scope" {
+        if positions.scopes.as_ref().is_none_or(|layout| layout.row() != row) {
+            return Err(NodeBindingError::InvalidField(
+                "scope allocation differs from selected local".into(),
+            ));
+        }
+        return Ok(());
     }
     let span = positions.span(&row[1])?;
     let mut values = row[3..].iter();
@@ -103,7 +113,10 @@ pub(super) fn restore_local(
         }
         "reference" if row[2] == "read" => {
             let identity = next(&mut values)?;
-            let canonical = restored_identity(positions, record_identities, identity)?;
+            let canonical = match restore_rust_field_reference(checker, local, span, identity) {
+                Some(canonical) => canonical,
+                None => restored_identity(positions, record_identities, identity)?,
+            };
             local.references.resolved_identities.insert(span, canonical);
         }
         "write" => {
@@ -113,7 +126,18 @@ pub(super) fn restore_local(
                 .insert((span, row[2].clone()), positions.canonical(next(&mut values)?)?);
         }
         "binding" if row[2] == "declaration" => {
-            local.nested.insert(span, positions.canonical(next(&mut values)?)?);
+            let canonical = positions.canonical(next(&mut values)?)?;
+            if let Some(ordinal) = values.next() {
+                let scope = positions
+                    .scopes
+                    .as_ref()
+                    .ok_or(NodeBindingError::MissingOwner)?
+                    .binding_scope(ordinal)?;
+                if canonical.scope_discriminant.map(|physical| physical.0) != Some(scope) {
+                    return Err(NodeBindingError::WrongOwner);
+                }
+            }
+            local.nested.insert(span, canonical);
         }
         "identifier" if row[2] == "kind" => {
             let kind = match next(&mut values)? {
@@ -133,7 +157,10 @@ pub(super) fn restore_local(
         }
         "type-identity" if row.len() == 4 => {
             let path = read_type_identity_path(&row[2])?;
-            let identity = positions.canonical_type(next(&mut values)?)?;
+            let stable = next(&mut values)?;
+            let identity = positions.canonical_type(stable).or_else(|error| {
+                restore_native_expression_identity(checker, local, span, &path, stable).ok_or(error)
+            })?;
             if local
                 .expressions
                 .expression_type_identities
@@ -202,6 +229,9 @@ pub(super) fn restore_local(
         "builtin" if row[2] == "call" => {
             let builtin =
                 incan_lang::lang::builtins::from_str(next(&mut values)?).ok_or(NodeBindingError::MissingNode)?;
+            let canonical =
+                crate::symbols::canonical_builtin_function_identity(builtin).ok_or(NodeBindingError::MissingNode)?;
+            retain_registry_identity(record_identities, canonical)?;
             local.calls.resolved_builtin_calls.insert(span, builtin);
         }
         "builtin" if row[2] == "method" => {
@@ -255,4 +285,84 @@ pub(super) fn restore_local(
         return Err(NodeBindingError::MissingNode);
     }
     Ok(())
+}
+
+/// Rebind one checked field occurrence against the public field of its currently admitted Rust ABI owner.
+/// Keep its native owner layout in the pending restoration until the entire record is admitted.
+fn restore_rust_field_reference(
+    checker: &TypeChecker,
+    local: &mut BodyLocal,
+    span: Span,
+    identity: &str,
+) -> Option<CanonicalSymbolId> {
+    use incan_lang::interop::RustItemKind;
+
+    let (path, name) = identity.strip_prefix("member/field:rust::")?.rsplit_once("::")?;
+    local.rust.field_values.get(&span)?;
+    let owner = incan_semantics_core::body_ir::rust_item_identity(path)?;
+    let metadata = checker.rust_item_metadata_for_path(path)?;
+    let RustItemKind::Type(info) = &metadata.kind else {
+        return None;
+    };
+    let field = TypeChecker::rust_field_for_source_name(info, name)?;
+    let canonical = owner.generated_member(&field.name, SemanticSourceTargetKind::Field);
+    let stable = StableDeclarationId::from_canonical(&canonical, None, None)?;
+    if stable.render_compact() != identity {
+        return None;
+    }
+    let existing = local
+        .rust
+        .checked_layouts
+        .get(path)
+        .or_else(|| checker.type_info.rust.checked_layouts.get(path));
+    if let Some(layout) = checker.rust_layout_from_metadata(path, info, existing) {
+        local.rust.checked_layouts.insert(path.to_owned(), layout);
+    }
+    Some(canonical)
+}
+
+/// Restore an unbound Rust item only at the decoded expression's exact type component. The current ABI must
+/// validate its identity. The root of a checked native call can also use the result item that the call witnessed.
+fn restore_native_expression_identity(
+    checker: &TypeChecker,
+    local: &BodyLocal,
+    span: Span,
+    path: &[usize],
+    stable: &str,
+) -> Option<CanonicalSymbolId> {
+    let agrees = |canonical: &CanonicalSymbolId| {
+        StableDeclarationId::from_canonical(canonical, None, None)
+            .is_some_and(|candidate| candidate.render_compact() == stable)
+    };
+    if path.is_empty()
+        && let Some(item) = local
+            .rust
+            .checked_calls
+            .get(&span)
+            .and_then(|call| call.result_item_path.as_deref())
+            .and_then(incan_semantics_core::body_ir::rust_item_identity)
+            .filter(agrees)
+    {
+        return Some(item);
+    }
+
+    let ty = local.expressions.expr_types.get(&span)?;
+    let leaf = path.iter().try_fold(ty, |ty, &component| match ty {
+        ResolvedType::Generic(_, arguments) | ResolvedType::Tuple(arguments) => arguments.get(component),
+        ResolvedType::Ref(inner)
+        | ResolvedType::RefMut(inner)
+        | ResolvedType::TypeToken(inner)
+        | ResolvedType::FrozenList(inner)
+        | ResolvedType::FrozenSet(inner)
+            if component == 0 =>
+        {
+            Some(inner.as_ref())
+        }
+        ResolvedType::FrozenDict(key, value) => [key.as_ref(), value.as_ref()].get(component).copied(),
+        _ => None,
+    })?;
+    let ResolvedType::RustPath(native) = leaf else {
+        return None;
+    };
+    checker.native_expression_leaf_identity(native).filter(agrees)
 }

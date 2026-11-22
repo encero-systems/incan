@@ -121,6 +121,15 @@ pub struct RustInteropArtifacts {
     pub type_aliases: HashMap<String, (Vec<String>, ResolvedType)>,
 }
 
+/// The associated function through which a Rust record publishes one field's default to Incan callers.
+///
+/// It is public and takes no arguments or type parameters, and it returns the field's type. A construction that leaves
+/// the field out calls it after evaluating the written arguments, as Rust evaluates a struct update's base after the
+/// written fields. A record that publishes any default names exactly the fields a caller may leave out.
+pub fn rust_field_default_function(field: &str) -> String {
+    format!("__incan_default_{field}")
+}
+
 /// A metadata-selected native struct layout, generic over its declaring type parameters.
 #[derive(Debug, Clone)]
 pub struct RustCheckedLayout {

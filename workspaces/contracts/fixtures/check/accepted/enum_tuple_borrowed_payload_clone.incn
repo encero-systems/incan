@@ -1,0 +1,11 @@
+# behavior: a tuple match reads a borrowed enum input's payload, and returning it as an owned value takes a clone (RFC 164, #2834).
+# expect-accepted:
+
+enum Message:
+    Text(str)
+
+
+def first_text(message: Borrowed[Message], count: int) -> str:
+    match (message, count):
+        (Message.Text(text), _) => return text
+    return ""

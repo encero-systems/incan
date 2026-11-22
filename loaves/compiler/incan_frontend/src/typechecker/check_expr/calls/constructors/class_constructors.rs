@@ -612,7 +612,7 @@ impl TypeChecker {
             return;
         };
         if info.fields.len() == 1 && info.fields[0].name == "0" {
-            self.retain_rust_construction(&path, info, args, &["0".into()], span);
+            self.retain_rust_construction(&path, info, args, &["0".into()], &[], span);
         }
     }
 }

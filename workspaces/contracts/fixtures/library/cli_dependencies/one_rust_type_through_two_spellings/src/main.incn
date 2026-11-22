@@ -1,0 +1,13 @@
+# behavior: one Rust type, defined in a public module and re-exported at its crate root, is one owner whatever the spelling: a key made by a library that names the module path goes to a function a second library declares with the root re-export, and a key built by the root spelling is read by the module-path library
+# expect-stdout:
+#   key 7
+#   5
+
+from pub::keyring import RecordKey, describe
+from pub::scoped import scoped_key, scoped_value
+
+
+def main() -> None:
+    """One Rust type crosses between the libraries that spell it by its module path and by its root re-export."""
+    println(describe(scoped_key(7)))
+    println(scoped_value(RecordKey(value=5)))

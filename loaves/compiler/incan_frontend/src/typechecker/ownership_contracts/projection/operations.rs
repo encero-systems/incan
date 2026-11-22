@@ -6,7 +6,7 @@ use incan_lang::lang::builtins::BuiltinFnId;
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess, SemanticSourceTargetKind};
 
 use super::{CheckedInputBody, flow};
-use crate::ast::{AssertKind, CallArg, Condition, Expr, FStringPart, ListEntry, MatchBody, Spanned, Statement};
+use crate::ast::{AssertKind, CallArg, Condition, Expr, FStringPart, ListEntry, MatchBody, Span, Spanned, Statement};
 use crate::typechecker::ownership_contracts::CallableSource;
 
 mod paths;
@@ -196,11 +196,10 @@ impl CheckedInputBody<'_> {
         &self,
         function: CallableSource<'_>,
     ) -> Result<BTreeSet<CanonicalSymbolId>, &'static str> {
-        let contract = self.facts.declarations.ownership_contracts.get(self.canonical_owner());
         let mut parameters = BTreeSet::new();
         for (slot, parameter) in function.params().iter().enumerate() {
             if matches!(
-                crate::ownership_metadata::direct_input_access(contract, slot)?,
+                self.facts.body_input_access(self.canonical_owner(), slot)?,
                 IncanInputAccess::Shared | IncanInputAccess::Exclusive
             ) {
                 let identity = self
@@ -223,6 +222,14 @@ impl CheckedInputBody<'_> {
         execution: &[usize],
         seen: &mut SourceCoverage,
     ) -> Result<(), &'static str> {
+        if self
+            .graph
+            .value_uses
+            .get(&expression.span)
+            .is_some_and(|value_use| value_use.kind != flow::ValueUseKind::CallResult)
+        {
+            return Ok(());
+        }
         match &expression.node {
             Expr::Ident(_) | Expr::SelfExpr | Expr::Literal(_) => {}
             // `?` evaluates its carrier; the propagating path leaves the body without a further operation.
@@ -232,6 +239,17 @@ impl CheckedInputBody<'_> {
             Expr::Index(base, index) => {
                 self.visit_operation_expression(base, parameters, execution, seen)?;
                 self.visit_operation_expression(index, parameters, execution, seen)?;
+            }
+            // Source admission separately proves this is the builtin borrow-free list route. Keep the coverage
+            // traversal closed over that route instead of treating a user-selected slice operator as builtin.
+            Expr::Slice(base, slice) => {
+                if self.facts.calls.resolved_operator_calls.contains_key(&expression.span) {
+                    return Err("operation coverage needs builtin slice selection");
+                }
+                self.visit_operation_expression(base, parameters, execution, seen)?;
+                for bound in [&slice.start, &slice.end, &slice.step].into_iter().flatten() {
+                    self.visit_operation_expression(bound, parameters, execution, seen)?;
+                }
             }
             Expr::Binary(left, _, right) => {
                 self.visit_operation_expression(left, parameters, execution, seen)?;
@@ -358,6 +376,10 @@ impl CheckedInputBody<'_> {
         execution: &[usize],
         seen: &mut SourceCoverage,
     ) -> Result<(), &'static str> {
+        if let Some(receiver) = super::super::builtins::builtin_str_encode_receiver(self.facts, expression) {
+            self.visit_operation_expression(receiver, parameters, execution, seen)?;
+            return self.require_operation(expression.span, &[receiver], parameters, execution, seen);
+        }
         self.visit_operation_expression(receiver, parameters, execution, seen)?;
         let retained = super::super::builtins::retained_iterator_method(self.facts, expression.span).is_some();
         let place_method = super::super::builtins::builtin_place_method_writes(self.facts, expression.span).is_some();
@@ -372,6 +394,11 @@ impl CheckedInputBody<'_> {
                 _ if place_method => return Err("operation coverage needs positional builtin place method arguments"),
                 _ => return Err("operation coverage needs checked fixed call arguments"),
             };
+            if matches!(value.node, Expr::Closure(..))
+                && self.capture_free_result_map_err_callback(expression.span, receiver, arguments)
+            {
+                continue;
+            }
             self.visit_operation_expression(value, parameters, execution, seen)?;
         }
         if self
@@ -623,14 +650,8 @@ impl CheckedInputBody<'_> {
                 let Some((mut place, loan)) = self.operation_borrowed_place(base, parameters)? else {
                     return Ok(None);
                 };
-                let field = self
-                    .facts
-                    .resolved_identity(expression.span)
-                    .filter(|field| field.kind == SemanticSourceTargetKind::Field)
+                let field = super::super::source::call_results::stored_projection_identity(self.facts, expression)
                     .ok_or("operation alias projection lacks its canonical field")?;
-                if self.facts.computed_property_access(expression.span).is_some() {
-                    return Err("operation alias cannot infer computed property access");
-                }
                 place.projection.push(flow::Projection::Field(field.clone()));
                 Ok(Some((place, loan)))
             }

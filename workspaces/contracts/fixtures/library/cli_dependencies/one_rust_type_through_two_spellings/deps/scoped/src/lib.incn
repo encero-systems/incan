@@ -1,0 +1,13 @@
+"""Keys named by the public module that defines them."""
+
+from rust::records::scope import RecordKey, make
+
+
+pub def scoped_key(value: int) -> RecordKey:
+    """Make a key declared by its module spelling."""
+    return make(value)
+
+
+pub def scoped_value(key: RecordKey) -> int:
+    """Read a key declared by its module spelling."""
+    return key.value

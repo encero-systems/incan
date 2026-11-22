@@ -4,7 +4,7 @@ use super::*;
 
 impl TypeChecker {
     /// Validate enum decorators, value-enum rules, and variant payload field types.
-    pub(super) fn check_enum(&mut self, en: &EnumDecl) {
+    pub(super) fn check_enum(&mut self, en: &EnumDecl, program: Option<&Program>) {
         self.symbols.enter_scope(ScopeKind::Block);
         self.refuse_unbounded_enum_members(en);
 
@@ -60,7 +60,7 @@ impl TypeChecker {
             .filter(|method| self.member_binding_is_active(method.span))
             .collect::<Vec<_>>();
         for method in active_methods {
-            self.check_method_with_owner_type_params(&method.node, method.span, &en.name, &en.type_params);
+            self.check_method_with_owner_type_params(&method.node, method.span, &en.name, &en.type_params, program);
         }
         if let Some(TypeInfo::Enum(info)) = self.lookup_type_info(&en.name).cloned() {
             let mut native_derives = self.json_derive_selections(&derives);

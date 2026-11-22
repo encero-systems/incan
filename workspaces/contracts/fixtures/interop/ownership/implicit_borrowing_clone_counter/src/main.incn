@@ -165,7 +165,7 @@ def unrelated(item: Item) -> bool:
     return item.is_table()
 
 
-def is_table_ref(item: &Item) -> bool:
+def is_table_ref(item: Borrowed[Item]) -> bool:
     return item.is_table()
 
 
@@ -190,7 +190,7 @@ pub class Maker with Factory:
     pub name: str
 
 
-pub def traverse_ref(item: &Item, keys: list[str]) -> bool:
+pub def traverse_ref(item: Borrowed[Item], keys: list[str]) -> bool:
     mut current = item
     for key in keys:
         match current.get(key):
@@ -255,7 +255,7 @@ pub class Holder:
         return is_table(self.item)
 
     pub def view(self) -> bool:
-        current: &Item = self.item
+        current: Borrowed[Item] = self.item
         return current.is_table()
 
     pub def walk(self, keys: list[str]) -> bool:
@@ -275,12 +275,12 @@ pub class Holder:
         return self.item.is_integer()
 
 
-def clear_ref(mut item: &mut Item) -> None:
+def clear_ref(mut item: BorrowedMut[Item]) -> None:
     """Clear a foreign owner through its declared exclusive loan."""
     item.clear()
 
 
-def forward_clear_ref(mut item: &mut Item) -> None:
+def forward_clear_ref(mut item: BorrowedMut[Item]) -> None:
     """Forward the same exclusive owner without creating an owned snapshot."""
     clear_ref(item)
 

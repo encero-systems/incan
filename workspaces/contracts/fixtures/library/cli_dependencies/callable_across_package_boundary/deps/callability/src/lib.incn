@@ -33,6 +33,6 @@ def preserve[F]() -> (F) -> F:
 
 
 @preserve()
-pub def keep_refs(mut items: ProviderHandle[tuple[&mut int, &mut int]]) -> None:
+pub def keep_refs(mut items: ProviderHandle[tuple[BorrowedMut[int], BorrowedMut[int]]]) -> None:
     """Accept an owned native vector whose elements keep their exclusive reference ABI."""
     pass

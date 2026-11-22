@@ -1,0 +1,123 @@
+# behavior: a local transferred to a call and given a new value by a match arm holds that value after the match, on every path that continues, and each replaced value is dropped once (#1604)
+# expect-stdout:
+#   in an arm: Some(a payload long enough to own heap storage, kept)
+#   in an arm, unchecked: Some(a payload long enough to own heap storage)
+#   in an arm, refused: None
+#   in a nested arm: Some(a payload long enough to own heap storage, kept, kept)
+#   in every arm: a payload long enough to own heap storage, kept
+#   in every arm, refused: longer than 4
+#   in a literal arm: 41 bytes
+#   in an arm: heap flat
+#   in a nested arm: heap flat
+#   in every arm: heap flat
+#   in a literal arm: heap flat
+
+"""Transfer a local at a read no later statement follows, give it a new value in a match arm, and read it after the match."""
+
+from rust::drop_probe import live_heap_bytes
+
+const ROUNDS: int = 1000
+const TEXT: str = "a payload long enough to own heap storage"
+
+
+def kept(text: str, limit: int) -> Result[str, str]:
+    """Take the text and hand it back marked, or refuse one longer than the limit."""
+    if len(text) > limit:
+        return Err(f"longer than {limit}")
+    mut marked = text
+    marked += ", kept"
+    return Ok(marked)
+
+
+def stored(text: str) -> int:
+    """Take the text into a list of its own and return its size."""
+    held = [text]
+    return len(held[0])
+
+
+def in_an_arm(limit: int, checked: bool) -> Option[str]:
+    """Replace the local in the one arm that continues; the other arm returns."""
+    mut payload = TEXT + ""
+    if checked:
+        match kept(payload, limit):
+            Err(_) => return None
+            Ok(moved) => payload = moved
+    return Some(payload)
+
+
+def in_a_nested_arm(limit: int) -> Option[str]:
+    """Replace the local in an arm of a match inside another match's arm."""
+    mut payload = TEXT + ""
+    if limit > 0:
+        match kept(payload, limit):
+            Err(_) => return None
+            Ok(placed) =>
+                match kept(placed, limit):
+                    Ok(moved) => payload = moved
+                    Err(_) => return None
+    return Some(payload)
+
+
+def in_every_arm(limit: int) -> str:
+    """Replace the local in every arm."""
+    mut payload = TEXT + ""
+    match kept(payload, limit):
+        Ok(moved) => payload = moved
+        Err(reason) => payload = reason
+    return payload
+
+
+def in_a_literal_arm() -> str:
+    """Replace the local in the arms of a match over a number."""
+    mut payload = TEXT + ""
+    size = stored(payload)
+    match size:
+        0 => payload = "empty"
+        _ => payload = f"{size} bytes"
+    return payload
+
+
+def shown(value: Option[str]) -> str:
+    """Spell an optional text."""
+    match value:
+        Some(text) => return f"Some({text})"
+        None => return "None"
+
+
+def report(label: str, grown: int) -> None:
+    """Print whether a shape's rounds left the heap where they found it, from `grown` bytes measured before printing."""
+    if grown < ROUNDS:
+        println(f"{label}: heap flat")
+    else:
+        println(f"{label}: heap grew by {grown} bytes over {ROUNDS} rounds")
+
+
+def main() -> None:
+    println(f"in an arm: {shown(in_an_arm(100, true))}")
+    println(f"in an arm, unchecked: {shown(in_an_arm(100, false))}")
+    println(f"in an arm, refused: {shown(in_an_arm(4, true))}")
+    println(f"in a nested arm: {shown(in_a_nested_arm(100))}")
+    println(f"in every arm: {in_every_arm(100)}")
+    println(f"in every arm, refused: {in_every_arm(4)}")
+    println(f"in a literal arm: {in_a_literal_arm()}")
+    mut total = 0
+    mut before = live_heap_bytes()
+    for round in range(ROUNDS):
+        total += len(shown(in_an_arm(100 - round % 2 * 96, round % 3 != 0)))
+    mut grown = live_heap_bytes() - before
+    report("in an arm", grown)
+    before = live_heap_bytes()
+    for round in range(ROUNDS):
+        total += len(shown(in_a_nested_arm(100 - round % 2 * 96)))
+    grown = live_heap_bytes() - before
+    report("in a nested arm", grown)
+    before = live_heap_bytes()
+    for round in range(ROUNDS):
+        total += len(in_every_arm(100 - round % 2 * 96))
+    grown = live_heap_bytes() - before
+    report("in every arm", grown)
+    before = live_heap_bytes()
+    for _ in range(ROUNDS):
+        total += len(in_a_literal_arm())
+    grown = live_heap_bytes() - before
+    report("in a literal arm", grown)

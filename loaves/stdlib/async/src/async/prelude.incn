@@ -13,11 +13,11 @@ It re-exports:
 - `RaceArm`, `arm`, `race`, and `race_timeout`
 
 Example:
-    from std.async.prelude import *
+    from std.async import spawn, sleep, channel
 """
 
 # Time primitives
-from std.async.time import (
+pub from crate.async.time import (
     sleep,
     sleep_ms,
     timeout,
@@ -30,18 +30,18 @@ from std.async.time import (
 )
 
 # Task spawning
-from std.async.task import spawn, spawn_blocking, yield_now, JoinHandle, TaskJoinError
+pub from crate.async.task import spawn, spawn_blocking, yield_now, JoinHandle, TaskJoinError
 
 # Channels
-from std.async.channel import channel, unbounded_channel, oneshot
-from std.async.channel import Sender, Receiver, OneshotSender, OneshotReceiver
-from std.async.channel import SendError, RecvError
+pub from crate.async.channel import channel, unbounded_channel, oneshot
+pub from crate.async.channel import Sender, Receiver, OneshotSender, OneshotReceiver
+pub from crate.async.channel import SendError, RecvError
 
 # Synchronization
-from std.async.sync import Mutex, MutexGuard
-from std.async.sync import RwLock, RwLockReadGuard, RwLockWriteGuard
-from std.async.sync import Semaphore, SemaphorePermit, SemaphoreAcquireError
-from std.async.sync import Barrier
+pub from crate.async.sync import Mutex, MutexGuard
+pub from crate.async.sync import RwLock, RwLockReadGuard, RwLockWriteGuard
+pub from crate.async.sync import Semaphore, SemaphorePermit, SemaphoreAcquireError
+pub from crate.async.sync import Barrier
 
 # Race
-from std.async.race import RaceArm, arm, race, race_timeout
+pub from crate.async.race import RaceArm, arm, race, race_timeout

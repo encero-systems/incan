@@ -43,32 +43,32 @@ model Stamped:
     value: Duration
 
 
-def same_time(left: &Timed, right: &Timed) -> bool:
+def same_time(left: Borrowed[Timed], right: Borrowed[Timed]) -> bool:
     """Borrow native fields for their actual Rust equality implementation."""
     return left.duration == right.duration
 
 
-def same_index(values: &list[Duration], index: int, other: Duration) -> bool:
+def same_index(values: Borrowed[list[Duration]], index: int, other: Duration) -> bool:
     """Compare a dynamically selected native element with a whole value."""
     return values[index] == other
 
 
-def same_reference(left: Duration, right: &Duration) -> bool:
+def same_reference(left: Duration, right: Borrowed[Duration]) -> bool:
     """Preserve an explicit borrowed argument in a trait-qualified native call."""
     return PartialEq.eq(left, right)
 
 
-def add_seconds(value: &Duration) -> Duration:
+def add_seconds(value: Borrowed[Duration]) -> Duration:
     """Copy an opaque by-value receiver without requiring access to its private native fields."""
     return value.saturating_add(Duration.from_secs(2))
 
 
-def first_seconds(values: &list[Duration]) -> int:
+def first_seconds(values: Borrowed[list[Duration]]) -> int:
     """Keep the native element type when a shared list is indexed for a method receiver."""
     return int(values[0].as_secs())
 
 
-def range_start(values: &list[Range[usize]], index: int) -> int:
+def range_start(values: Borrowed[list[Range[usize]]], index: int) -> int:
     """Convert an indexed native field without changing the borrowed list or evaluating its index twice."""
     return int(values[index].start)
 

@@ -4,6 +4,7 @@
 #   config/app.toml
 #   app.toml .toml app config
 #   config/log.txt
+#   config/owned
 
 from rust::std::process import Command
 from rust::std::string import String as RustString
@@ -21,7 +22,8 @@ def consume_file(file: File) -> None:
 
 
 def main() -> Result[None, str]:
-    """Observe lexical paths and wrapped slots returned by selected methods.
+    """
+    Observe lexical paths and wrapped slots returned by selected methods.
 
     1. Construct and pass a stored path.
     2. Read its wrapped text and lexical components.
@@ -39,13 +41,20 @@ def main() -> Result[None, str]:
     # 3. Keep the exact published owner through a method result.
     println(Path("config").joinpath("log.txt").0)
     assert Path("project").joinpath("src").joinpath("main.incn").0 == "project/src/main.incn"
+    println(owned_child(Path("config")).0)
     # 4. Keep the documented error type available through the filesystem facade.
     match create_directory(Path("created")):
         Ok(_) => pass
-        Err(_) => assert false
+        Err(_) =>
+            assert false
     # 5. The available and total counts use the same units as the independent host command.
     assert_disk_usage_matches_df(Path("."))?
     return Ok(None)
+
+
+def owned_child(root: Borrowed[Path]) -> Owned[Path]:
+    """Return independently owned storage from a lexical join on a borrowed path."""
+    return root.joinpath("owned")
 
 
 def create_directory(path: Path) -> Result[None, IoError]:
@@ -54,7 +63,8 @@ def create_directory(path: Path) -> Result[None, IoError]:
 
 
 def assert_disk_usage_matches_df(path: Path) -> Result[None, str]:
-    """Require facade total bytes to equal the POSIX `df` report, and available bytes to agree in scale with it.
+    """
+    Require facade total bytes to equal the POSIX `df` report, and available bytes to agree in scale with it.
 
     Other processes change a live volume's available bytes between the two readings, so those are compared within 1% of
     the total. That still refuses a wrong unit and reserved blocks counted as available.

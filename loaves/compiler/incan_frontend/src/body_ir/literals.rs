@@ -33,7 +33,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         Some(Err(reason)) => self.unsupported_operand(reason, scope, hir_span(item.span), out),
                         None => self.lower_expr_to_operand(item, scope, out),
                     };
-                    let value = self.retain_evaluated_value_read(item, value, scope, out);
+                    let value = if self.aggregate_holds_borrow(span, 0) {
+                        value
+                    } else {
+                        self.retain_evaluated_value_read(item, value, scope, out)
+                    };
                     elements.push(bir::ArgumentElement::One(value));
                 }
                 ast::ListEntry::Spread(source) => {
@@ -70,6 +74,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         )
     }
 
+    /// Whether the aggregate at `span` holds a borrow at `position` (RFC 164): the element is the borrow itself, so a
+    /// borrowed scalar is not read through its reference into it.
+    fn aggregate_holds_borrow(&self, span: ast::Span, position: usize) -> bool {
+        let ty = self.resolve_ty(span);
+        let element = match &ty {
+            IncanType::Tuple(items) => items.get(position),
+            other => other.collection().and_then(|(_, arguments)| arguments.first()),
+        };
+        matches!(element, Some(IncanType::Ref(_) | IncanType::RefMut(_)))
+    }
+
     /// Lower one spread source into a [`bir::ArgumentElement::Spread`].
     ///
     /// The source is read through the ordinary ownership path, so a spliced source carries the same
@@ -102,9 +117,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let hir_span_value = hir_span(span);
         let pending_start = self.pending_argument_reads.len();
         let mut operands = Vec::with_capacity(items.len());
-        for item in items {
+        for (position, item) in items.iter().enumerate() {
             let value = self.lower_expr_to_operand(item, scope, out);
-            let value = self.retain_evaluated_value_read(item, value, scope, out);
+            let value = if self.aggregate_holds_borrow(span, position) {
+                value
+            } else {
+                self.retain_evaluated_value_read(item, value, scope, out)
+            };
             self.retain_pending_operand_read(&value);
             operands.push(value);
         }
@@ -480,6 +499,46 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         .unwrap_or_else(|| {
             self.unsupported_operand(
                 "native slice without checked storage".to_string(),
+                scope,
+                hir_span(span),
+                out,
+            )
+        })
+    }
+
+    /// Materialize a checked native index, `container[index]` on a Rust container, as its already selected call to
+    /// the container's `Index` impl (#2977). The index is evaluated before the borrowed container, as a built-in index
+    /// is; the call returns the element as a copy the container keeps.
+    pub(super) fn lower_checked_native_index(
+        &mut self,
+        base: &ast::Spanned<ast::Expr>,
+        index: &ast::Spanned<ast::Expr>,
+        call: &crate::typechecker::RustCheckedCall,
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let selected = self.lower_expr_to_operand(index, scope, out);
+        let selected = self.retain_evaluated_value_read(index, selected, scope, out);
+        let mut receiver = match self.lower_native_adjustment_value(base, &call.receiver_adjustments, scope, out) {
+            Ok(value) => value,
+            Err(reason) => return self.unsupported_operand(reason, scope, hir_span(span), out),
+        };
+        if let bir::Operand::Place(read) = &mut receiver {
+            self.retain_argument_borrow(read, false);
+        }
+        let arguments = vec![bir::ArgumentElement::One(receiver), bir::ArgumentElement::One(selected)];
+        self.emit_checked_rust_call(
+            call,
+            arguments,
+            bir::ArgumentBinding::resolved_positional(2),
+            span,
+            scope,
+            out,
+        )
+        .unwrap_or_else(|| {
+            self.unsupported_operand(
+                "native index without checked storage".to_string(),
                 scope,
                 hir_span(span),
                 out,

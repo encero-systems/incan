@@ -222,6 +222,9 @@ impl Place {
                 PlaceElem::Index(operand) => {
                     let _ = write!(&mut out, "[{}]", operand.render_snapshot());
                 }
+                PlaceElem::Deref => {
+                    let _ = write!(&mut out, ".*");
+                }
                 PlaceElem::Slice { start, end, step } => {
                     let start = start.as_ref().map(|o| o.render_snapshot()).unwrap_or_default();
                     let end = end.as_ref().map(|o| o.render_snapshot()).unwrap_or_default();
@@ -280,6 +283,10 @@ pub enum PlaceElem {
         /// Exact checked type of its Some payload before any subsequent union-member projection.
         payload_type: IncanType,
     },
+    /// The referent of a reference-valued place, read or written through the reference (`*x`). RFC 164: a value
+    /// assigned to an exclusive borrow replaces what it borrows, and an operator reads a borrowed scalar through it.
+    /// The place before this step holds the reference; the step names the value it borrows.
+    Deref,
 }
 
 impl PlaceElem {

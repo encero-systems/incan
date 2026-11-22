@@ -246,19 +246,22 @@ impl TypeChecker {
         ty: &ResolvedType,
     ) {
         match &pattern.node {
-            Pattern::Binding(name) => {
+            Pattern::Binding(name) | Pattern::MutBinding(name) => {
                 self.validate_protected_builtin_binding(name, pattern.span);
                 self.symbols.define(Symbol {
                     name: name.clone(),
                     kind: SymbolKind::Variable(VariableInfo {
                         ty: ty.clone(),
-                        is_mutable: false,
+                        is_mutable: matches!(pattern.node, Pattern::MutBinding(_)),
                         is_used: false,
                     }),
                     span: pattern.span,
                     scope: 0,
                 });
                 self.record_write_target_identity(pattern.span, name);
+                if matches!(pattern.node, Pattern::MutBinding(_)) {
+                    self.mutable_bindings.insert(name.clone());
+                }
             }
             Pattern::Wildcard => {}
             Pattern::Tuple(items) => {
@@ -477,7 +480,7 @@ impl TypeChecker {
                 };
                 let binding = match &arg.node {
                     Pattern::Wildcard => None,
-                    Pattern::Binding(name) => Some((name.clone(), arg.span)),
+                    Pattern::Binding(name) | Pattern::MutBinding(name) => Some((name.clone(), arg.span)),
                     _ => return None,
                 };
                 Some(AssertIsPattern {

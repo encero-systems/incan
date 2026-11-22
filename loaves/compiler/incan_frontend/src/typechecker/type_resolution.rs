@@ -26,6 +26,211 @@ impl TypeChecker {
         )
     }
 
+    /// RFC 164: `Borrowed[T]` and `&T` are one type, and so are `BorrowedMut[T]` and `&mut T`. A top-level borrow on a
+    /// parameter or a local binding takes one spelling, whichever was written, so both resolve, check and lower as one
+    /// type. It is the native spelling, with no contract mode and no whole-body proof, unless `explicit`: a callable
+    /// whose signature already needs the proof keeps every top-level borrow parameter as its explicit contract mode
+    /// ([`Self::signature_keeps_explicit_borrows`]). The annotation keeps its span; only the canonical prelude modes
+    /// are respelled, never a same-named user type.
+    pub(super) fn canonical_borrow_annotation(
+        &self,
+        annotation: &Spanned<Type>,
+        explicit: bool,
+    ) -> Option<Spanned<Type>> {
+        let root = self.canonical_borrow_root(annotation, explicit);
+        self.native_nested_borrows(root.as_ref().unwrap_or(annotation), true)
+            .or(root)
+    }
+
+    /// The top-level spelling of [`Self::canonical_borrow_annotation`].
+    pub(super) fn canonical_borrow_root(&self, annotation: &Spanned<Type>, explicit: bool) -> Option<Spanned<Type>> {
+        use incan_lang::lang::types::ownership::OwnershipMode;
+        let node = match (&annotation.node, explicit) {
+            (Type::Generic(name, arguments), false) => {
+                let [argument] = arguments.as_slice() else {
+                    return None;
+                };
+                match self.explicit_ownership_mode(name)? {
+                    OwnershipMode::Borrowed => Type::Ref(Box::new(argument.clone())),
+                    OwnershipMode::BorrowedMut => Type::RefMut(Box::new(argument.clone())),
+                    OwnershipMode::Owned | OwnershipMode::Reference => return None,
+                }
+            }
+            (Type::Ref(inner), true) => self.explicit_borrow_spelling(OwnershipMode::Borrowed, inner)?,
+            (Type::RefMut(inner), true) => self.explicit_borrow_spelling(OwnershipMode::BorrowedMut, inner)?,
+            _ => return None,
+        };
+        Some(Spanned::new(node, annotation.span))
+    }
+
+    /// RFC 164: a borrow mode nested where no contract applies is the native reference, as `&T` is there. Inside a
+    /// callable type or a Rust type's arguments that holds in every annotation role; below the top of a parameter or
+    /// local binding annotation it holds everywhere (`everywhere`). A top-level mode, a returned view and a stored
+    /// view keep their contract mode, so the root itself is never respelled here. `None` when nothing changes.
+    pub(super) fn native_nested_borrows(&self, annotation: &Spanned<Type>, everywhere: bool) -> Option<Spanned<Type>> {
+        self.respell_nested_borrows(annotation, false, everywhere)
+    }
+
+    /// One node of [`Self::native_nested_borrows`]; `native` says a borrow mode at this node is the native reference.
+    fn respell_nested_borrows(
+        &self,
+        annotation: &Spanned<Type>,
+        native: bool,
+        everywhere: bool,
+    ) -> Option<Spanned<Type>> {
+        use incan_lang::lang::types::ownership::OwnershipMode;
+        let children = |native: bool, items: &[Spanned<Type>]| -> Option<Vec<Spanned<Type>>> {
+            let respelled: Vec<Option<Spanned<Type>>> = items
+                .iter()
+                .map(|item| self.respell_nested_borrows(item, native, everywhere))
+                .collect();
+            respelled.iter().any(Option::is_some).then(|| {
+                respelled
+                    .into_iter()
+                    .zip(items)
+                    .map(|(respelled, item)| respelled.unwrap_or_else(|| item.clone()))
+                    .collect()
+            })
+        };
+        let inner = |native: bool, item: &Spanned<Type>| self.respell_nested_borrows(item, native, everywhere);
+        let node = match &annotation.node {
+            Type::Generic(name, arguments) => {
+                let mode = self.explicit_ownership_mode(name).filter(|_| arguments.len() == 1);
+                match (mode, arguments.as_slice()) {
+                    (Some(OwnershipMode::Borrowed), [argument]) if native => {
+                        Type::Ref(Box::new(inner(true, argument).unwrap_or_else(|| argument.clone())))
+                    }
+                    (Some(OwnershipMode::BorrowedMut), [argument]) if native => {
+                        Type::RefMut(Box::new(inner(true, argument).unwrap_or_else(|| argument.clone())))
+                    }
+                    _ => Type::Generic(
+                        name.clone(),
+                        children(native || everywhere || self.names_rust_type(name), arguments)?,
+                    ),
+                }
+            }
+            Type::DottedGeneric(segments, arguments) => {
+                Type::DottedGeneric(segments.clone(), children(native || everywhere, arguments)?)
+            }
+            Type::Tuple(items) => Type::Tuple(children(native || everywhere, items)?),
+            Type::Function(parameters, result) => {
+                let respelled_parameters = children(true, parameters);
+                let respelled_result = inner(true, result);
+                if respelled_parameters.is_none() && respelled_result.is_none() {
+                    return None;
+                }
+                Type::Function(
+                    respelled_parameters.unwrap_or_else(|| parameters.clone()),
+                    Box::new(respelled_result.unwrap_or_else(|| result.as_ref().clone())),
+                )
+            }
+            Type::Ref(item) => Type::Ref(Box::new(inner(native || everywhere, item)?)),
+            Type::RefMut(item) => Type::RefMut(Box::new(inner(native || everywhere, item)?)),
+            Type::MutParam(item) => Type::MutParam(Box::new(inner(native || everywhere, item)?)),
+            _ => return None,
+        };
+        Some(Spanned::new(node, annotation.span))
+    }
+
+    /// Whether `name` binds an imported Rust item, whose type arguments are Rust types.
+    fn names_rust_type(&self, name: &str) -> bool {
+        self.lookup_symbol(name)
+            .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::RustItem(_)))
+    }
+
+    /// The explicit spelling of one borrow mode around `inner`, when the prelude mode is not shadowed.
+    fn explicit_borrow_spelling(
+        &self,
+        mode: incan_lang::lang::types::ownership::OwnershipMode,
+        inner: &Spanned<Type>,
+    ) -> Option<Type> {
+        let name = mode.as_str();
+        (self.explicit_ownership_mode(name) == Some(mode)).then(|| Type::Generic(name.to_owned(), vec![inner.clone()]))
+    }
+
+    /// Whether a callable's signature already needs the whole-body proof, so its top-level borrow parameters keep their
+    /// explicit contract mode: it names a `from` source, takes an `Owned[T]` input, or its result carries an explicit
+    /// mode. A signature of plain borrows needs no proof (RFC 164: the whole-body proof belongs to inferred passing
+    /// modes, owned inputs and returned views, not to an explicit borrow).
+    pub(super) fn signature_keeps_explicit_borrows(
+        &self,
+        parameters: &[Spanned<Param>],
+        result: &Spanned<Type>,
+        source: Option<&Spanned<crate::ast::ResultSource>>,
+    ) -> bool {
+        let native_result = self.native_nested_borrows(result, false);
+        source.is_some()
+            || self.has_owned_or_reference_parameter(parameters)
+            || self.annotation_mentions_ownership_mode(&native_result.as_ref().unwrap_or(result).node)
+    }
+
+    /// Whether a top-level parameter takes an `Owned[T]` or `Reference[T]` input.
+    pub(super) fn has_owned_or_reference_parameter(&self, parameters: &[Spanned<Param>]) -> bool {
+        use incan_lang::lang::types::ownership::OwnershipMode;
+        parameters.iter().any(|parameter| {
+            matches!(&parameter.node.ty.node, Type::Generic(name, arguments)
+                if arguments.len() == 1
+                    && matches!(self.explicit_ownership_mode(name), Some(OwnershipMode::Owned | OwnershipMode::Reference)))
+        })
+    }
+
+    /// Whether an annotation names a canonical ownership mode at any depth.
+    fn annotation_mentions_ownership_mode(&self, annotation: &Type) -> bool {
+        match annotation {
+            Type::Simple(name) => self.explicit_ownership_mode(name).is_some(),
+            Type::Generic(name, arguments) => {
+                self.explicit_ownership_mode(name).is_some()
+                    || arguments
+                        .iter()
+                        .any(|argument| self.annotation_mentions_ownership_mode(&argument.node))
+            }
+            Type::DottedGeneric(_, arguments) | Type::Tuple(arguments) => arguments
+                .iter()
+                .any(|argument| self.annotation_mentions_ownership_mode(&argument.node)),
+            Type::Function(parameters, result) => {
+                parameters
+                    .iter()
+                    .any(|parameter| self.annotation_mentions_ownership_mode(&parameter.node))
+                    || self.annotation_mentions_ownership_mode(&result.node)
+            }
+            Type::Ref(inner) | Type::RefMut(inner) | Type::MutParam(inner) => {
+                self.annotation_mentions_ownership_mode(&inner.node)
+            }
+            _ => false,
+        }
+    }
+
+    /// The type a resolved top-level borrow takes when its annotation reached it through an alias (`type Input =
+    /// Borrowed[int]`): the native reference, as the written spelling takes, unless `explicit`.
+    pub(super) fn canonical_borrow_type(&self, ty: ResolvedType, explicit: bool) -> ResolvedType {
+        use incan_lang::lang::types::ownership::OwnershipMode;
+        if explicit {
+            return ty;
+        }
+        match ty {
+            ResolvedType::Generic(name, mut arguments) if arguments.len() == 1 => {
+                match self.explicit_ownership_mode(&name) {
+                    Some(OwnershipMode::Borrowed) => ResolvedType::Ref(Box::new(arguments.remove(0))),
+                    Some(OwnershipMode::BorrowedMut) => ResolvedType::RefMut(Box::new(arguments.remove(0))),
+                    _ => ResolvedType::Generic(name, arguments),
+                }
+            }
+            other => other,
+        }
+    }
+
+    /// The annotation one callable parameter resolves through; see [`Self::canonical_borrow_annotation`].
+    pub(super) fn parameter_annotation<'a>(
+        &self,
+        parameter: &'a Spanned<Param>,
+        explicit: bool,
+    ) -> std::borrow::Cow<'a, Spanned<Type>> {
+        match self.canonical_borrow_annotation(&parameter.node.ty, explicit) {
+            Some(annotation) => std::borrow::Cow::Owned(annotation),
+            None => std::borrow::Cow::Borrowed(&parameter.node.ty),
+        }
+    }
+
     /// Resolve an annotation whose outer ownership mode, when `defer` selects it, is checked by its declaration's
     /// contract instead of being refused here. With `carried`, the mode of one `Result` or `Option` payload, or of one
     /// tuple element, is deferred the same way, for a view carried in the result. Other nested modes are always
@@ -36,6 +241,9 @@ impl TypeChecker {
         defer: impl Fn(incan_lang::lang::types::ownership::OwnershipMode) -> bool,
         carried: bool,
     ) -> ResolvedType {
+        self.refuse_rust_borrow_spellings(ty);
+        let respelled = self.native_nested_borrows(ty, false);
+        let ty = respelled.as_ref().unwrap_or(ty);
         self.resolve_qualified_type_annotations(ty);
         if self.validate_source_type_names {
             if let Type::Generic(name, arguments) = &ty.node

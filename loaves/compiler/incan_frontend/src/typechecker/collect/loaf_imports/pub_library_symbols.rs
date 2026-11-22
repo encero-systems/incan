@@ -94,9 +94,15 @@ impl TypeChecker {
                     enum_name: enum_name.to_string(),
                     fields: fields.iter().map(resolved_type_from_manifest_type_ref).collect(),
                 }),
-                ManifestExportRef::Alias(export) => {
-                    self.symbol_kind_from_manifest_alias(&manifest, export, &mut HashSet::new())?
-                }
+                ManifestExportRef::Alias(export) => self
+                    .symbol_kind_from_manifest_alias(&manifest, export, &mut HashSet::new())
+                    .or_else(|| {
+                        let canonical = manifest
+                            .contract_metadata
+                            .identity_graph
+                            .canonical_for_public_name(member);
+                        self.rust_item_for_canonical(canonical.as_ref())
+                    })?,
             }
         };
         let canonical = manifest
@@ -254,16 +260,19 @@ impl TypeChecker {
         self.register_pub_library_declarations(library, manifest, &canonical_remapping);
         if let Some(api) = manifest.contract_metadata.api.as_ref() {
             for module in &api.modules {
+                let mut public_path = std::iter::once(manifest.name.clone())
+                    .chain(module.module_path.iter().cloned())
+                    .collect::<Vec<_>>();
                 for declaration in &module.declarations {
-                    let public_path = std::iter::once(manifest.name.clone())
-                        .chain(module.module_path.iter().cloned())
-                        .chain(std::iter::once(Self::api_declaration_name(declaration).to_string()))
-                        .collect::<Vec<_>>();
-                    let canonical = manifest
-                        .contract_metadata
-                        .identity_graph
-                        .canonical_for_public_path(&public_path);
-                    self.record_provider_type_param_bounds(declaration, canonical.as_ref());
+                    self.record_provider_type_param_bounds(declaration, || {
+                        public_path.push(Self::api_declaration_name(declaration).to_owned());
+                        let canonical = manifest
+                            .contract_metadata
+                            .identity_graph
+                            .canonical_for_public_path(&public_path);
+                        let _ = public_path.pop();
+                        canonical
+                    });
                 }
             }
         }

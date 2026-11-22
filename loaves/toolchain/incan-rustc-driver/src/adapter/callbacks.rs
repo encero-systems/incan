@@ -109,6 +109,12 @@ impl Callbacks {
         }
         let mut roots = native_roots(&self.plan);
         roots.extend(crate::native_crates::declaration_roots(krate));
+        // A root re-export names its item's own crate, declared here as a callee's crate is (see `library_exports`).
+        roots.extend(
+            self.library_facades
+                .iter()
+                .filter_map(crate::library_exports::LibraryFacade::native_root),
+        );
         // `std` is already declared by the prelude injection; a second `extern crate std;` would collide with it.
         for root in roots
             .into_iter()

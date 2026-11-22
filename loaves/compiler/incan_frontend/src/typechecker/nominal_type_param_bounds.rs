@@ -203,19 +203,22 @@ impl TypeChecker {
     /// under the canonical identity its identity graph gives the declaration.
     ///
     /// An import from a module such a provider serves binds the provider's member with that identity, so the check
-    /// finds the bounds without the import recording them. A declaration without an identity is not recorded.
+    /// finds the bounds without the import recording them. Resolve the identity only for declarations with
+    /// type parameters.
     pub(in crate::typechecker) fn record_provider_type_param_bounds(
         &mut self,
         declaration: &ApiDeclaration,
-        identity: Option<&CanonicalSymbolId>,
+        identity: impl FnOnce() -> Option<CanonicalSymbolId>,
     ) {
         let type_params = match declaration {
             ApiDeclaration::Model(model) => &model.type_params,
             ApiDeclaration::Class(class) => &class.type_params,
             _ => return,
         };
-        if let Some(identity) = identity.filter(|_| !type_params.is_empty()) {
-            let key = declaration_key(identity);
+        if !type_params.is_empty()
+            && let Some(identity) = identity()
+        {
+            let key = declaration_key(&identity);
             let bounds = exported_type_param_bounds(type_params, &key);
             self.record_nominal_type_param_bounds(key, bounds);
         }

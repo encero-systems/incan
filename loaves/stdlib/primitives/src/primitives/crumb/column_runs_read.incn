@@ -14,7 +14,7 @@ from crate.primitives.crumb.value_admission import validate
 
 
 pub def read_runs(
-    block: &BlockData,
+    block: Borrowed[BlockData],
     node: TypeNode,
     keys: Option[ColumnKeys],
     dictionary: Dictionary,

@@ -51,6 +51,49 @@ impl CheckedExportReplay {
         Ok(function.clone())
     }
 
+    /// Separate an admitted direct callable from the general package manifest used to validate its ordinary export.
+    pub(crate) fn callable_transport(
+        &self,
+    ) -> Result<(String, String, Vec<String>, CanonicalSymbolId, FunctionExport), LibraryManifestError> {
+        let export = self.to_checked()?;
+        if export.identity.projection != crate::library_exports::CheckedExportProjection::Direct
+            || !export.identity.type_origins.is_empty()
+        {
+            return Err(invalid("callable product requires a direct export"));
+        }
+        let identity = export
+            .identity
+            .canonical
+            .ok_or_else(|| invalid("callable product lacks its canonical export"))?;
+        let [function] = self.projection.exports.functions.as_slice() else {
+            return Err(invalid("callable product requires exactly one checked function"));
+        };
+        Ok((
+            self.projection.name.clone(),
+            self.projection.version.clone(),
+            export.identity.source_path,
+            identity,
+            function.clone(),
+        ))
+    }
+
+    /// Rebuild the ordinary single-export contract from the fields its producer admitted.
+    pub(crate) fn from_callable_transport(
+        package: &str,
+        version: &str,
+        source_path: Vec<String>,
+        canonical: CanonicalSymbolId,
+        shape: FunctionExport,
+    ) -> Result<Self, LibraryManifestError> {
+        let export = CheckedNamedExport {
+            name: shape.name.clone(),
+            identity: crate::library_exports::CheckedExportIdentity::direct(source_path)
+                .with_canonical(Some(canonical)),
+            kind: CheckedExportKind::Function(function(&shape)?),
+        };
+        Self::from_checked(package, version, &export)
+    }
+
     /// Project one already checked export through the canonical manifest encoder, retaining overload association.
     pub fn from_checked(
         package: &str,
@@ -77,7 +120,7 @@ impl CheckedExportReplay {
         if self.schema_version != 1 {
             return Err(invalid("unsupported checked export replay version"));
         }
-        self.projection.to_json_string()?;
+        self.projection.validate_contract()?;
         let manifest = &self.projection;
         let roots: Vec<_> = manifest
             .contract_metadata

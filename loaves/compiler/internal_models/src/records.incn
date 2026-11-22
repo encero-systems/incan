@@ -1,6 +1,6 @@
-"""Public compiler record-read boundary; revision, scope and witness validation have one implementation."""
+"""Public compiler record-read boundary; revision, scope and witness validation have one implementation. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
 
-pub from record_scope import (
+pub from rust::internal_models_native import (
     RecordKey,
     ReadScope,
     PayloadSelection,
@@ -21,5 +21,7 @@ pub from record_scope import (
     ReadCounters,
     PreparationEvidence,
     READ_SCHEMA,
+    StoreRecordSource,
+    encode_record_key,
+    selected_record_bytes,
 )
-pub from store_record_source import StoreRecordSource, encode_record_key, selected_record_bytes

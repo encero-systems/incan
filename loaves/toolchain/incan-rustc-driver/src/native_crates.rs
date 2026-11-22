@@ -117,7 +117,9 @@ impl<'ast> Visitor<'ast> for DeclarationRoots {
     }
 }
 
-/// Select exact artifacts needed by a checked plan from direct inputs and its reached Loaves' native closures.
+/// Select exact artifacts needed by a checked plan, and by the library's root re-exports (`facades`), from direct
+/// inputs and its reached Loaves' native closures. A root re-export of a Rust item names that item's crate, which the
+/// unit declares as it declares a crate its bodies call, so it is linked the same way.
 /// Every offered binding of a required root must name the same complete artifact. Compiled providers and checked
 /// source interfaces both contribute their exact native dependencies, including dependencies used by governed source
 /// templates. A direct input cannot replace a provider's native type identity: its exported fields and signatures
@@ -129,6 +131,7 @@ impl<'ast> Visitor<'ast> for DeclarationRoots {
 /// Each closure's anchored references resolve against the current home's `anchors`.
 pub(crate) fn link_externs(
     plan: &crate::plan::Plan,
+    facades: &[crate::library_exports::LibraryFacade],
     direct: &[(String, PathBuf)],
     loaves: &[UnitLoaf],
     reached: &BTreeSet<String>,
@@ -136,6 +139,11 @@ pub(crate) fn link_externs(
 ) -> Result<Vec<(String, PathBuf)>, String> {
     let roots = native_roots(plan)
         .into_iter()
+        .chain(
+            facades
+                .iter()
+                .filter_map(crate::library_exports::LibraryFacade::native_root),
+        )
         .filter(|root| !matches!(*root, "" | "std" | "core" | "alloc" | "crate"))
         .collect::<BTreeSet<_>>();
     let closures = loaves
@@ -237,4 +245,65 @@ fn extern_crate_alias(tcx: TyCtxt<'_>, item: LocalDefId) -> Option<Symbol> {
         return Some(original.unwrap_or(binding.name));
     }
     Some(binding.name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::link_externs;
+    use crate::library_exports::LibraryFacade;
+    use crate::plan::Plan;
+    use incan_driver::unit::UnitLoaf;
+    use incan_frontend::loaf_index::NativeAnchors;
+    use incan_mir_plan_native::types::source_span;
+    use std::collections::BTreeSet;
+
+    /// A library whose root re-exports a Rust item of a crate it reaches only through another Loaf (`pub from
+    /// pub::models.keys import read_key`, where `models` links `native`) and whose bodies call nothing passes rustc
+    /// `--extern native=…`, the artifact `models`' native closure names, as a body calling `native` would. Without
+    /// the facade the crate is not linked.
+    #[test]
+    fn a_root_reexport_links_the_crate_it_names() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let native = root.path().join("libnative.rlib");
+        std::fs::write(&native, b"native")?;
+        let models = root.path().join("models");
+        std::fs::create_dir(&models)?;
+        let models_rlib = models.join("libmodels.rlib");
+        std::fs::write(&models_rlib, b"models")?;
+        let closure = serde_json::json!({ "externs": [["native", native]], "search": [] });
+        std::fs::write(models.join("models.native.json"), serde_json::to_vec(&closure)?)?;
+        let loaves = [UnitLoaf {
+            key: "models".into(),
+            name: "models".into(),
+            dir: models,
+            standard: false,
+            toolchain_provided: false,
+            source_root: None,
+        }];
+        let direct = [("models".to_owned(), models_rlib)];
+        let plan = Plan::new(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            source_span("lib.incn", 1, 1),
+        );
+        let link = |facades: &[LibraryFacade]| {
+            link_externs(
+                &plan,
+                facades,
+                &direct,
+                &loaves,
+                &BTreeSet::new(),
+                &NativeAnchors::default(),
+            )
+        };
+
+        let without = link(&[])?;
+        assert!(!without.iter().any(|(name, _)| name == "native"), "{without:?}");
+        let with = link(&[LibraryFacade::new("read_key", "::native::read_key")])?;
+        assert!(with.contains(&("native".to_owned(), native)), "{with:?}");
+        assert!(with.iter().any(|(name, _)| name == "models"), "{with:?}");
+        Ok(())
+    }
 }

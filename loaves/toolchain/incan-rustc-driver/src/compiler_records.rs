@@ -5,11 +5,14 @@
 //! writes independently content-named values for Oven to admit through the sealed-set path. Which records a Loaf has,
 //! and their two digests, are the front end's (`LibraryManifest::compiler_records`); this module only writes them.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use incan_frontend::library_manifest::LibraryManifest;
+use incan_frontend::library_manifest::{
+    LibraryManifest, capabilities::CapabilityCatalog, compiler_records::RecordFamily,
+};
 use serde::Serialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -26,8 +29,10 @@ struct ExportedRecord {
 
 /// Convert every installed standard Loaf manifest below `loaves` into independently addressed record values.
 pub(crate) fn export(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    let [installed, output] = arguments else {
-        return Err("usage: incan-rustc-driver --compiler-records INSTALLED OUTPUT".into());
+    let (installed, output, typed) = match arguments {
+        [installed, output] => (installed, output, false),
+        [installed, output, flag] if flag == "--crumb-index" => (installed, output, true),
+        _ => return Err("usage: incan-rustc-driver --compiler-records INSTALLED OUTPUT [--crumb-index]".into()),
     };
     let installed = Path::new(installed);
     let output = Path::new(output);
@@ -38,6 +43,7 @@ pub(crate) fn export(arguments: &[String]) -> Result<(), Box<dyn std::error::Err
     let mut manifests = manifest_paths(installed)?;
     manifests.sort();
     let mut records = Vec::new();
+    let mut catalogs = BTreeMap::<String, CapabilityCatalog>::new();
     for path in manifests {
         let manifest_digest = format!("{:x}", Sha256::digest(fs::read(&path)?));
         let manifest = LibraryManifest::read_from_path(&path)?;
@@ -46,11 +52,45 @@ pub(crate) fn export(arguments: &[String]) -> Result<(), Box<dyn std::error::Err
             .and_then(Path::file_name)
             .and_then(|name| name.to_str())
             .ok_or_else(|| format!("manifest has no UTF-8 profile directory: {}", path.display()))?;
-        export_manifest(output, profile, &manifest_digest, &manifest, &mut records)?;
+        let catalog = matches!(profile, "debug" | "release").then(|| catalogs.entry(profile.to_owned()).or_default());
+        export_manifest(output, profile, &manifest_digest, &manifest, &mut records, catalog)?;
+        if manifest.contract_metadata.executable_representation.is_some() {
+            let sidecar = path.with_extension("incnbody");
+            match fs::read(&sidecar) {
+                Ok(bytes) => {
+                    let prefix = format!("loaf/{profile}/{}", manifest.name);
+                    for (key, value) in incan_frontend::library_manifest::executable_ranges::export_ranges(
+                        &manifest,
+                        &manifest_digest,
+                        &bytes,
+                    )? {
+                        write_object(output, format!("{prefix}/{key}"), value, &mut records)?;
+                    }
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+    for (profile, catalog) in catalogs {
+        let (key, value) = catalog.encode(&profile)?;
+        write_object(output, key, value, &mut records)?;
     }
     records.sort_by(|left, right| left.key.cmp(&right.key));
-    let index = json!({"schema": EXPORT_SCHEMA, "records": records});
-    fs::write(output.join("index.json"), serde_json::to_vec(&index)?)?;
+    if typed {
+        let members = records
+            .into_iter()
+            .map(|record| internal_models::CompilerExportMember {
+                key: record.key,
+                revision: record.revision,
+            })
+            .collect::<Vec<_>>();
+        let encoded = internal_models::encode_compiler_export(&members)?;
+        fs::write(output.join("index.crumb"), encoded)?;
+    } else {
+        let index = json!({"schema": EXPORT_SCHEMA, "records": records});
+        fs::write(output.join("index.json"), serde_json::to_vec(&index)?)?;
+    }
     Ok(())
 }
 
@@ -83,9 +123,15 @@ fn export_manifest(
     manifest_digest: &str,
     manifest: &LibraryManifest,
     records: &mut Vec<ExportedRecord>,
+    mut catalog: Option<&mut CapabilityCatalog>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let prefix = format!("loaf/{profile}/{}", manifest.name);
     for record in manifest.compiler_records(manifest_digest)?.records {
+        if record.family == RecordFamily::Metadata
+            && let Some(catalog) = catalog.as_deref_mut()
+        {
+            catalog.insert(&manifest.name, &record.value)?;
+        }
         write_object(output, format!("{prefix}/{}", record.key()), record.value, records)?;
     }
     Ok(())

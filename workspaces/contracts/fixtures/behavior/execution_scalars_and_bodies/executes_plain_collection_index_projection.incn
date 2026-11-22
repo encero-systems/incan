@@ -22,7 +22,7 @@ def program_result() -> int:
     return pair.0
 
 
-def text_at(value: &str, index: int) -> str:
+def text_at(value: Borrowed[str], index: int) -> str:
     """Index borrowed Unicode text by scalar position without changing its owner."""
     return value[index]
 

@@ -11,7 +11,7 @@ class Box:
     pub def get[T with Clone](self, value: T) -> T:
         return value
 
-    def inspect[T with Display](self, value: &T) -> str:
+    def inspect[T with Display](self, value: Borrowed[T]) -> str:
         """Format an inferred shared borrow without consuming its caller's value."""
         return f"{value}"
 

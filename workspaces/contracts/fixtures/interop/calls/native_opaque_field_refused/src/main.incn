@@ -13,7 +13,7 @@ class Hooks with Callbacks:
 
     marker: int = 0
 
-    def config(mut self, mut config: &mut Config) -> None:
+    def config(mut self, mut config: BorrowedMut[Config]) -> None:
         """Count the borrowed names: refused."""
         _ = len(config.extra_symbols)
 

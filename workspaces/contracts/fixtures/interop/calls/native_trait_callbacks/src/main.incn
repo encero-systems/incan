@@ -27,7 +27,7 @@ class Hooks with Callbacks, Reporter:
     pub calls: int = 0
     pub flag: str
 
-    def config(mut self, mut config: &mut Config) -> None:
+    def config(mut self, mut config: BorrowedMut[Config]) -> None:
         """Record the call and add the flag to the configuration the host lends."""
         self.calls += 1
         config.crate_cfg.append(self.flag)

@@ -1,0 +1,472 @@
+//! Standard derive methods: Clone of any admitted carrier, Display and comparison dunders.
+
+use incan_mir_plan_native::{
+    CalleeKind, OperandKind, Place, PlanType, Projection, RvalueKind, SourceSpan, assign as plan_assign,
+};
+use incan_semantics_core::CanonicalSymbolId;
+use incan_semantics_core::body_ir::{
+    ArgumentElement, BinOp, BodyIrModule, MethodTarget, Operand as SourceOperand, Place as SourcePlace, Rvalue,
+};
+
+use crate::assignments::lower_assignment;
+use crate::callable_calls::lower_callable_result;
+use crate::checked_values::scalar_place;
+use crate::decls::library_enum_item;
+use crate::element_places::is_element_place;
+use crate::frame::{Builder, drop_owned, forget_owned, place_type, read_place, temporary, track_rvalue_moves};
+use crate::list_methods::materialized_receiver;
+use crate::method_calls::is_std_primitives_method;
+use crate::numerics::numeric_carrier;
+use crate::operators::{binary_operator, scalar_operator_operand};
+use crate::options::{carrier_payload_value, clone_tuple_operand};
+use crate::sequence_builtins::source_operand_type;
+use crate::text_plan::clone_text;
+use crate::trait_links::contains;
+use crate::tuples::is_tuple_type;
+
+/// Clone a standard or inferred Clone receiver through its concrete native representation.
+///
+/// Scalars copy and owned strings clone through the runtime. Models and classes always derive Clone; a source enum's
+/// checked derives must name it. Builtin aggregates and synthetic union, Option, and Result carriers use the same
+/// native cloning path as a borrowed payload read. An indexed receiver follows the ordinary element read once before
+/// its selected Clone call.
+pub fn lower_derived_clone(
+    builder: &mut Builder,
+    arguments: &[ArgumentElement],
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    if arguments.len() != 1 {
+        return Err("invalid Body IR Clone arguments".into());
+    }
+    let Some(value) = arguments[0].as_one() else {
+        return Err("unsupported Body IR Clone spread receiver".into());
+    };
+    let SourceOperand::Place(read) = value else {
+        return Err("unsupported Body IR Clone of a nonplace receiver".into());
+    };
+    let source = if is_element_place(builder, &read.place)? {
+        materialized_receiver(builder, &read.place, span)?
+    } else {
+        scalar_place(builder, &read.place, span)?
+    };
+    clone_place(builder, source, destination, span)
+}
+
+/// Clone through the retained carrier and its owning implementation; compiled enums do not acquire local derives.
+fn clone_place(
+    builder: &mut Builder,
+    source: Place,
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let ty = place_type(&builder.locals, &source);
+    let referent = match &ty {
+        PlanType::StringRef => Some(PlanType::String),
+        PlanType::TupleRef(elements) => Some(PlanType::Tuple(elements.clone())),
+        PlanType::ListRef(leaf, depth) => Some(PlanType::List(leaf.clone(), *depth)),
+        PlanType::SetRef(leaf) => Some(PlanType::Set(leaf.clone())),
+        PlanType::DictRef(key, value) => Some(PlanType::Dict(key.clone(), value.clone())),
+        PlanType::ModelRef(owner, name) => Some(PlanType::Model(*owner, name.clone())),
+        PlanType::EnumRef(owner, name) => Some(PlanType::Enum(*owner, name.clone())),
+        PlanType::ValidationErrorRef => Some(PlanType::ValidationError),
+        _ => None,
+    };
+    if let Some(referent) = referent {
+        return clone_referent(builder, source, referent, destination, span);
+    }
+    if let PlanType::ScalarRef(elements) = &ty
+        && elements.len() == 1
+    {
+        let element = &elements[0];
+        let copyable = numeric_carrier(element)
+            || matches!(element, PlanType::Bool | PlanType::Unit | PlanType::FunctionPointer(_));
+        if copyable {
+            let reference = temporary(builder, ty.clone(), span);
+            builder.emit(plan_assign(
+                reference.clone(),
+                RvalueKind::Use(read_place(source, false, span)),
+                span,
+            ));
+            let pointer = Place {
+                local: reference.local,
+                projection: Projection::Deref(element.clone()),
+                span: span.clone(),
+            };
+            return copy_clone_into(builder, pointer, element, destination, span);
+        }
+    }
+    if numeric_carrier(&ty) || matches!(ty, PlanType::Bool | PlanType::Unit | PlanType::FrozenStr) {
+        return copy_clone_into(builder, source, &ty, destination, span);
+    }
+    if ty == PlanType::String {
+        return clone_string_into(builder, source, destination, span);
+    }
+    match &ty {
+        PlanType::Model(index, name) => {
+            let reference = PlanType::ModelRef(*index, name.clone());
+            let callee = CalleeKind::CloneModel(*index, name.clone());
+            clone_into(builder, source, reference, callee, ty.clone(), destination, span)
+        }
+        PlanType::Enum(index, name) => {
+            if *index >= builder.enums().len() as i64 {
+                return clone_builtin_place(builder, source, destination, span);
+            }
+            if *index < 0 {
+                return Err("unsupported Body IR enum Clone without a derived Clone".into());
+            }
+            let declaration = &builder.enums()[*index as usize];
+            if !library_enum_item(declaration).is_empty() {
+                return clone_builtin_place(builder, source, destination, span);
+            }
+            if !declaration.derives.iter().any(|derive| derive == "Clone") {
+                return Err("unsupported Body IR enum Clone without a derived Clone".into());
+            }
+            let reference = PlanType::EnumRef(*index, name.clone());
+            let callee = CalleeKind::CloneEnum(*index, name.clone());
+            clone_into(builder, source, reference, callee, ty.clone(), destination, span)
+        }
+        _ => clone_builtin_place(builder, source, destination, span),
+    }
+}
+
+/// Clone a selected shared receiver's referent, including a stored reference projected from a carrier.
+///
+/// The standard Clone selection returns the referent's owned type. Copying its shared reference would instead change
+/// the result ABI and retain the caller's storage. Materialize the reference once before dereferencing it.
+fn clone_referent(
+    builder: &mut Builder,
+    source: Place,
+    ty: PlanType,
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let reference = temporary(builder, place_type(&builder.locals, &source), span);
+    builder.emit(plan_assign(
+        reference.clone(),
+        RvalueKind::Use(read_place(source, false, span)),
+        span,
+    ));
+    let referent = Place {
+        local: reference.local,
+        projection: Projection::Deref(ty),
+        span: span.clone(),
+    };
+    clone_place(builder, referent, destination, span)
+}
+
+/// Copy an admitted scalar or frozen string without consuming the receiver; a discarded copy has no effect.
+fn copy_clone_into(
+    builder: &mut Builder,
+    source: Place,
+    ty: &PlanType,
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    if let Some(place) = destination {
+        let output = scalar_place(builder, place, span)?;
+        if place_type(&builder.locals, &output) != *ty {
+            return Err("unsupported Body IR Clone destination carrier mismatch".into());
+        }
+        builder.emit(plan_assign(
+            output,
+            RvalueKind::Use(read_place(source, false, span)),
+            span,
+        ));
+    }
+    Ok(())
+}
+
+/// Borrow the source, replace a whole owned text destination after cloning, or immediately drop a discarded clone.
+fn clone_string_into(
+    builder: &mut Builder,
+    source: Place,
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    match destination {
+        Some(place) => {
+            let output = scalar_place(builder, place, span)?;
+            if output.projection != Projection::Whole || place_type(&builder.locals, &output) != PlanType::String {
+                return Err("unsupported Body IR Clone projected or nontext destination".into());
+            }
+            let cloned = clone_text(builder, source, span)?;
+            drop_owned(builder, output.local, span);
+            forget_owned(builder, cloned.local);
+            let local = output.local;
+            builder.emit(plan_assign(
+                output,
+                RvalueKind::Use(read_place(cloned, true, span)),
+                span,
+            ));
+            builder.owned.push(local);
+        }
+        None => {
+            let cloned = clone_text(builder, source, span)?;
+            drop_owned(builder, cloned.local, span);
+        }
+    }
+    Ok(())
+}
+
+/// Borrow the receiver and write the owned copy to the call's destination, replacing what it held.
+#[allow(clippy::too_many_arguments)]
+fn clone_into(
+    builder: &mut Builder,
+    source: Place,
+    reference_type: PlanType,
+    callee: CalleeKind,
+    ty: PlanType,
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let reference = temporary(builder, reference_type, span);
+    builder.emit(plan_assign(reference.clone(), RvalueKind::Borrow(source), span));
+    let output = match destination {
+        Some(place) => scalar_place(builder, place, span)?,
+        None => temporary(builder, ty.clone(), span),
+    };
+    lower_callable_result(
+        builder,
+        callee,
+        vec![read_place(reference, false, span)],
+        output,
+        ty,
+        span,
+    )
+}
+
+/// Copy builtin scalars and clone the owned storage of carriers through the existing borrowed payload operation.
+fn clone_builtin_place(
+    builder: &mut Builder,
+    source: Place,
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    let value = if is_tuple_type(&place_type(&builder.locals, &source)) {
+        clone_tuple_operand(builder, source, span)?
+    } else {
+        carrier_payload_value(builder, source, span)?
+    };
+    if let Some(place) = destination {
+        let output = scalar_place(builder, place, span)?;
+        if output.projection != Projection::Whole {
+            return Err("unsupported Body IR projected builtin Clone destination".into());
+        }
+        let owned = matches!(value.kind, OperandKind::Move(_));
+        if owned {
+            drop_owned(builder, output.local, span);
+        }
+        track_rvalue_moves(builder, &RvalueKind::Use(value.clone()));
+        let local = output.local;
+        builder.emit(plan_assign(output, RvalueKind::Use(value), span));
+        if owned {
+            builder.owned.push(local);
+        }
+    }
+    Ok(())
+}
+
+/// Recognize `clone` of the standard library's Clone in source and compiled SDK identities, never a same-name method.
+pub fn is_derived_clone(target: &MethodTarget) -> bool {
+    is_std_derive_method(target, "copying", "clone")
+}
+
+/// Recognize `__str__` of the standard library's Display, never a same-name method.
+pub fn is_derived_display(target: &MethodTarget) -> bool {
+    is_std_derive_method(target, "string", "__str__")
+}
+
+/// Whether the checker selected `name` of a trait declared by the standard library's `std.derives.<module>`.
+fn is_std_derive_method(target: &MethodTarget, module: &str, name: &str) -> bool {
+    is_std_primitives_method(target, "derives", module, name)
+}
+
+/// Select the operator a dunder of the standard library's Eq or Ord names, never a same-name method.
+pub fn comparison_dunder(target: &MethodTarget) -> Option<BinOp> {
+    [
+        ("__eq__", BinOp::Eq),
+        ("__ne__", BinOp::Ne),
+        ("__lt__", BinOp::Lt),
+        ("__le__", BinOp::Le),
+        ("__gt__", BinOp::Gt),
+        ("__ge__", BinOp::Ge),
+    ]
+    .into_iter()
+    .find(|(name, _)| is_std_derive_method(target, "comparison", name))
+    .map(|(_, operator)| operator)
+}
+
+/// Lower an explicit standard comparison dunder as the operator it names, through that operator's own lowering.
+///
+/// A derived Eq or Ord implements each dunder as its operator, so `a.__ge__(b)` is `a >= b`; a number or a bool
+/// compares by value. A source comparison adopter must retain its complete native forwarding frame; any other receiver
+/// with its own comparison methods keeps refusing.
+pub fn lower_comparison_dunder(
+    module: &BodyIrModule,
+    builder: &mut Builder,
+    operator: BinOp,
+    arguments: &[ArgumentElement],
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<(), String> {
+    if arguments.len() != 2 {
+        return Err("invalid Body IR comparison dunder arguments".into());
+    }
+    let left = single_operand(&arguments[0])?;
+    let right = single_operand(&arguments[1])?;
+    if compare_scalars(builder, operator, &left, &right, destination, span)? {
+        return Ok(());
+    }
+    if declares_own_comparison(module, builder, &left, span)? && !has_native_comparison(builder, &left, operator, span)?
+    {
+        return Err("unsupported Body IR comparison dunder on a type with its own comparison methods".into());
+    }
+    match destination {
+        Some(place) => lower_assignment(module, builder, place, &Rvalue::BinaryOp(operator, left, right), span),
+        None => Err("unsupported Body IR discarded comparison dunder".into()),
+    }
+}
+
+/// Require the already validated native comparison frame before an explicit standard default forwards to an operator.
+fn has_native_comparison(
+    builder: &mut Builder,
+    value: &SourceOperand,
+    operator: BinOp,
+    span: &SourceSpan,
+) -> Result<bool, String> {
+    if let SourceOperand::Place(_) = value
+        && let PlanType::Model(owner, _) = source_operand_type(builder, value, span)?
+    {
+        let count = if operator == BinOp::Eq || operator == BinOp::Ne {
+            1
+        } else {
+            5
+        };
+        let functions = builder
+            .program
+            .comparison_functions
+            .get(owner as usize)
+            .map_or(0, Vec::len);
+        return Ok(functions >= count);
+    }
+    Ok(false)
+}
+
+/// Compare two values of one numeric or boolean carrier, as a closed type-parameter instance reaches them.
+///
+/// The receiver is borrowed for the method call the checker selected, but a number or a bool is copied freely, so the
+/// comparison materializes each checked read once. Type inspection never projects collection elements, and other
+/// carriers are left to the operator's own lowering.
+fn compare_scalars(
+    builder: &mut Builder,
+    operator: BinOp,
+    left: &SourceOperand,
+    right: &SourceOperand,
+    destination: &Option<SourcePlace>,
+    span: &SourceSpan,
+) -> Result<bool, String> {
+    if !matches!(left, SourceOperand::Place(_)) || !matches!(right, SourceOperand::Place(_)) {
+        return Ok(false);
+    }
+    let ty = source_operand_type(builder, left, span)?;
+    if !(numeric_carrier(&ty) || ty == PlanType::Bool) {
+        return Ok(false);
+    }
+    if ty != source_operand_type(builder, right, span)? {
+        return Ok(false);
+    }
+    let Some(place) = destination else {
+        return Err("unsupported Body IR discarded comparison dunder".into());
+    };
+    let output = scalar_place(builder, place, span)?;
+    let left_value = scalar_operator_operand(builder, left, span)?;
+    let right_value = scalar_operator_operand(builder, right, span)?;
+    let comparison = RvalueKind::Binary(binary_operator(operator)?, left_value, right_value);
+    builder.emit(plan_assign(output, comparison, span));
+    Ok(true)
+}
+
+/// Read one positional argument's checked operand, refusing a spread.
+fn single_operand(argument: &ArgumentElement) -> Result<SourceOperand, String> {
+    match argument.as_one() {
+        Some(value) => Ok(value.clone()),
+        None => Err("unsupported Body IR comparison dunder spread argument".into()),
+    }
+}
+
+/// Whether the receiver's source nominal or enum declares a comparison dunder or fills one from a source trait.
+fn declares_own_comparison(
+    module: &BodyIrModule,
+    builder: &mut Builder,
+    receiver: &SourceOperand,
+    span: &SourceSpan,
+) -> Result<bool, String> {
+    let dunders = ["__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__"];
+    declares_own_method(module, builder, receiver, &dunders, span)
+}
+
+/// The checker-selected slot's declared name, empty for an unproven target.
+pub fn slot_name(target: &MethodTarget) -> String {
+    target
+        .canonical
+        .as_ref()
+        .map(|identity| identity.declaration_name.to_string())
+        .unwrap_or_default()
+}
+
+/// Whether a method call's receiver type declares a method of `name` itself or fills that slot from a source trait.
+///
+/// A standard derive's behavior stands in for a slot only where the type supplies no method of its own for it.
+pub fn receiver_declares_method(
+    module: &BodyIrModule,
+    builder: &mut Builder,
+    receiver: &ArgumentElement,
+    name: &str,
+    span: &SourceSpan,
+) -> Result<bool, String> {
+    match receiver.as_one() {
+        Some(value) => declares_own_method(module, builder, value, &[name], span),
+        None => Ok(false),
+    }
+}
+
+/// Whether the retained receiver type declares a method of one of `names` or fills one from a trait, without
+/// evaluating an index.
+fn declares_own_method(
+    module: &BodyIrModule,
+    builder: &mut Builder,
+    receiver: &SourceOperand,
+    names: &[&str],
+    span: &SourceSpan,
+) -> Result<bool, String> {
+    if !matches!(receiver, SourceOperand::Place(_)) {
+        return Ok(false);
+    }
+    match source_operand_type(builder, receiver, span)? {
+        PlanType::Model(index, _) => match builder.nominals().get(index as usize) {
+            Some(declaration) => Ok(owns_method(module, &declaration.canonical, names)),
+            None => Err("invalid Body IR receiver model owner".into()),
+        },
+        PlanType::Enum(index, _) => match usize::try_from(index).ok().and_then(|slot| builder.enums().get(slot)) {
+            Some(declaration) => Ok(owns_method(module, &declaration.canonical, names)),
+            None => Ok(false),
+        },
+        _ => Ok(false),
+    }
+}
+
+/// Whether a body inside the owner's declaration, or a trait slot recorded for it, has one of `names`.
+fn owns_method(module: &BodyIrModule, owner: &CanonicalSymbolId, names: &[&str]) -> bool {
+    let named = |name: &str| names.contains(&name);
+    let declared = module.bodies.iter().any(|body| {
+        body.canonical.as_ref().is_some_and(|identity| {
+            identity.origin == owner.origin && contains(owner, identity) && named(&identity.declaration_name)
+        })
+    });
+    declared
+        || module
+            .trait_implementations
+            .iter()
+            .any(|implementation| implementation.owner == *owner && named(&implementation.method.declaration_name))
+}

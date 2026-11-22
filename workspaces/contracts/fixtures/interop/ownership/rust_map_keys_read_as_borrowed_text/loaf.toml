@@ -1,0 +1,9 @@
+[project]
+name = "rust_map_keys_read_as_borrowed_text"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+key_index = { loaf = "key_index", path = "rust/key_index" }

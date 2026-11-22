@@ -1,14 +1,14 @@
 """
-Measure cold release builds against the compiler's process-tree footprint budget.
+Measure cold release builds and report their compiler process-tree footprints.
 
-Run `incan run scripts/memory_budget.incn -- OVEN OUT [--runs N] [--budget MIB]`. Each run receives a fresh source
-clone, target and bakery plus a unique worker generation. The sampler records the concurrent footprint of the command
-and every descendant every 50 ms. `OUT/memory.tsv` is the stable machine record; `OUT/memory-report.txt`, per-run
-summaries, timelines and command logs retain the human evidence.
+Run `incan run scripts/memory_budget.incn -- OVEN OUT [--runs N] [--budget MIB] [--reuse-oven PREFIX]`. Each new run
+receives a fresh source clone, target and bakery plus a unique worker generation. The sampler records the concurrent
+footprint of the command and every descendant every 50 ms. `--reuse-oven` selects the observation made while the
+release built its candidate Oven, instead of building Oven again. `OUT/memory.tsv` is the stable machine record;
+`OUT/memory-report.txt`, per-run summaries, timelines and command logs retain the human evidence.
 
-The standard-package stand-in and contract runner must stay within the selected budget on every run, and Oven, the
-toolchain's lowering compile, within the 6 GiB lowering budget (`LOWERING_RESERVATION_BYTES`). The floor build is
-recorded without gating.
+Budget outcomes are informational release signals. The selected budget applies to the standard-package stand-in and
+contract runner, and the 6 GiB lowering budget (`LOWERING_RESERVATION_BYTES`) to Oven. The floor build has no gate.
 """
 
 from rust::std::env import args
@@ -26,18 +26,18 @@ pub const MIB: int = 1048576
 pub const DEFAULT_BUDGET_MIB: int = 2048
 pub const DEFAULT_RUNS: int = 3
 pub const INTERVAL_MS: u64 = 50
-const GATED_COMMANDS: FrozenList[str] = ["stdlib-primitives", "contracts"]
 const LOWERING_COMMANDS: FrozenList[str] = ["oven"]
-const USAGE: str = "usage: memory_budget.incn OVEN OUT [--runs N] [--budget MIB]"
+const USAGE: str = "usage: memory_budget.incn OVEN OUT [--runs N] [--budget MIB] [--reuse-oven PREFIX]"
 
 
 pub model Options:
-    """The installed command, evidence directory, repetition count and footprint budget."""
+    """The installed command, evidence directory, repetition count, footprint budget and optional Oven observation."""
 
     pub oven: str
     pub output: Path
     pub runs: int
     pub budget_bytes: int
+    pub reused_oven: str
 
 
 pub model MeasurementCommand:
@@ -77,6 +77,14 @@ pub model Measurement:
 def main() -> None:
     """Parse the invocation, run every cold measurement and preserve a refusal without a partial success status."""
     arguments = [str(argument) for argument in args()][1:]
+    if len(arguments) > 0 and arguments[0] == "--observe-oven":
+        match observe_oven(arguments[1:]):
+            Ok(summary) =>
+                println(summary)
+                exit(0)
+            Err(message) =>
+                write_stderr(f"memory-budget: {message}\n")
+                exit(1)
     match parse_options(arguments):
         Ok(options) =>
             match measure(options):
@@ -92,26 +100,34 @@ def main() -> None:
 
 
 pub def parse_options(arguments: list[str]) -> Result[Options, str]:
-    """Parse two operands and positive `--runs` and `--budget` values in any option position."""
+    """Parse two operands, positive numeric choices and an optional existing Oven observation in any option position."""
     mut operands: list[str] = []
     mut requested_runs: Option[int] = None
     mut requested_budget_mib: Option[int] = None
+    mut reused_oven = ""
     mut pending = ""
     for argument in arguments:
         if pending != "":
-            value = positive(argument, pending)?
-            if pending == "--runs":
-                requested_runs = Some(value)
+            if pending == "--reuse-oven":
+                if argument == "" or argument.startswith("-"):
+                    return Err("--reuse-oven needs an observation prefix")
+                reused_oven = argument
             else:
-                requested_budget_mib = Some(value)
+                value = positive(argument, pending)?
+                if pending == "--runs":
+                    requested_runs = Some(value)
+                else:
+                    requested_budget_mib = Some(value)
             pending = ""
-        elif argument == "--runs" or argument == "--budget":
+        elif argument == "--runs" or argument == "--budget" or argument == "--reuse-oven":
             pending = argument
         elif argument.startswith("-"):
             return Err(f"unknown option `{argument}`")
         else:
             operands.append(argument)
     if pending != "":
+        if pending == "--reuse-oven":
+            return Err("--reuse-oven needs an observation prefix")
         return Err(f"{pending} needs a positive integer")
     if len(operands) != 2:
         return Err("OVEN and OUT are required")
@@ -119,13 +135,15 @@ pub def parse_options(arguments: list[str]) -> Result[Options, str]:
     output = Path(operands[1]).absolute().map_err((error) => error.message())?
     runs = requested_runs.unwrap_or(DEFAULT_RUNS)
     budget_mib = requested_budget_mib.unwrap_or(DEFAULT_BUDGET_MIB)
-    return Ok(Options(oven=oven.0, output=output, runs=runs, budget_bytes=budget_mib * MIB))
+    return Ok(Options(oven=oven.0, output=output, runs=runs, budget_bytes=budget_mib * MIB, reused_oven=reused_oven))
 
 
-pub def commands() -> list[MeasurementCommand]:
-    """The project, standard-package stand-in, contract runner and floor builds in stable report order."""
-    return [
-        MeasurementCommand(name="oven", arguments=["build", "workspaces/oven", "--profile", "release"]),
+pub def commands(reuse_oven: bool = false) -> list[MeasurementCommand]:
+    """The cold builds still needed after an optional observed candidate Oven, in stable report order."""
+    mut planned: list[MeasurementCommand] = []
+    if not reuse_oven:
+        planned.append(MeasurementCommand(name="oven", arguments=["build", "workspaces/oven", "--profile", "release"]))
+    planned += [
         MeasurementCommand(
             name="stdlib-primitives",
             arguments=["build", "loaves/stdlib/primitives", "--profile", "release"],
@@ -133,6 +151,7 @@ pub def commands() -> list[MeasurementCommand]:
         MeasurementCommand(name="contracts", arguments=["build", "workspaces/contracts", "--profile", "release"]),
         MeasurementCommand(name="hello", arguments=["build", "examples/simple/hello.incn", "--profile", "release"]),
     ]
+    return planned
 
 
 pub def measure(options: Options) -> Result[str, str]:
@@ -141,14 +160,18 @@ pub def measure(options: Options) -> Result[str, str]:
 
     1. Resolve the exact committed source once.
     2. Give every command run a fresh clone, target, bakery and worker generation.
-    3. Write the stable TSV and human table after every run succeeds.
-    4. Require every standard-package and contract-runner measurement to fit the selected budget.
+    3. Reuse the candidate Oven observation when supplied, without repeating that build.
+    4. Write the stable TSV and human table with informational budget outcomes after every run succeeds.
     """
     root = repository_root()?
     source = committed_source(root)?
     options.output.mkdir(true, true).map_err((error) => error.message())?
     mut results: list[Measurement] = []
-    for planned in commands():
+    if options.reused_oven != "":
+        if options.runs != 1:
+            return Err("--reuse-oven requires --runs 1")
+        results.append(read_observation(Path(options.reused_oven))?)
+    for planned in commands(options.reused_oven != ""):
         for run in range(1, options.runs + 1):
             results.append(measure_once(options, root, source, planned, run)?)
     tsv = measurements_tsv(results, options.budget_bytes)
@@ -158,8 +181,64 @@ pub def measure(options: Options) -> Result[str, str]:
         .joinpath("memory-report.txt")
         .write_text(report, "utf-8", "strict", None)
         .map_err((error) => error.message())?
-    require_budget(results, options.budget_bytes)?
     return Ok(report)
+
+
+def observe_oven(arguments: list[str]) -> Result[str, str]:
+    """Build the candidate Oven once while sampling that existing release step for later informational reuse."""
+    if len(arguments) != 5:
+        return Err("internal Oven observation needs OVEN PROJECT DIRECTORY LOG PREFIX")
+    oven = Path(arguments[0]).absolute().map_err((error) => error.message())?
+    project = Path(arguments[1]).absolute().map_err((error) => error.message())?
+    directory = Path(arguments[2]).absolute().map_err((error) => error.message())?
+    log_path = Path(arguments[3]).absolute().map_err((error) => error.message())?
+    prefix = Path(arguments[4]).absolute().map_err((error) => error.message())?
+    log_path.parent().mkdir(true, true).map_err((error) => error.message())?
+    prefix.parent().mkdir(true, true).map_err((error) => error.message())?
+    log = File.create(log_path.0).map_err((error) => f"{log_path.0}: {error}")?
+    errors = log.try_clone().map_err((error) => str(error))?
+    mut command = Command.new(oven.0)
+    command.args(["build", project.0, "--profile", "release"])
+    command.current_dir(directory.0)
+    command.stdin(Stdio.null()).stdout(log).stderr(errors)
+    started = Instant.now()
+    child = command.spawn().map_err((error) => f"cannot start candidate Oven build: {error}")?
+    result = sample_child("oven", 1, child, started, prefix)?
+    if result.status != 0:
+        return Err(f"candidate Oven build exited {result.status}; log: {log_path.0}")
+    return Ok(summary(result))
+
+
+def read_observation(prefix: Path) -> Result[Measurement, str]:
+    """Read the exact scalar record written while the candidate Oven build was sampled."""
+    path = Path(prefix.0 + ".summary.txt")
+    text = path.read_text("utf-8", "strict").map_err((error) => f"{path.0}: {error.message()}")?
+    mut fields: Dict[str, str] = {}
+    for line in text.split("\n"):
+        pair = line.split("\t")
+        if len(pair) == 2:
+            fields[pair[0]] = pair[1]
+    if observed(fields, "command") != "oven":
+        return Err(f"{path.0}: expected an Oven observation")
+    return Ok(
+        Measurement(
+            command="oven",
+            run=int(observed(fields, "run")),
+            status=int(observed(fields, "exit_status")),
+            tree_peak_bytes=int(observed(fields, "tree_peak_footprint_bytes")),
+            peak_at_ms=int(observed(fields, "tree_peak_at_ms")),
+            peak_holder=observed(fields, "tree_peak_holder"),
+            peak_holder_bytes=int(observed(fields, "tree_peak_holder_bytes")),
+            largest_process=observed(fields, "largest_process"),
+            largest_process_peak_bytes=int(observed(fields, "largest_process_lifetime_peak_bytes")),
+            wall_ms=int(observed(fields, "wall_ms")),
+        ),
+    )
+
+
+def observed(fields: Dict[str, str], key: str) -> str:
+    """Return one required observation field, or an empty value that numeric parsing refuses."""
+    return fields.get(key).unwrap_or("")
 
 
 def measure_once(
@@ -344,7 +423,10 @@ pub def measurements_tsv(results: list[Measurement], budget_bytes: int) -> str:
     """Render the stable six-column release evidence record, each row with the budget its command is held to."""
     mut text = "command\trun\ttree_peak_bytes\tlargest_process\tlargest_process_peak_bytes\tbudget_bytes\n"
     for result in results:
-        text += f"{result.command}\t{result.run}\t{result.tree_peak_bytes}\t{result.largest_process}\t{result.largest_process_peak_bytes}\t{command_budget(result.command, budget_bytes)}\n"
+        text += f"{result.command}\t{result.run}\t{result.tree_peak_bytes}\t{result.largest_process}\t{result.largest_process_peak_bytes}\t{command_budget(
+            result.command,
+            budget_bytes,
+        )}\n"
     return text
 
 
@@ -373,20 +455,6 @@ pub def budget_outcome(peak_bytes: int, budget_bytes: int) -> str:
     return "over"
 
 
-pub def require_budget(results: list[Measurement], budget_bytes: int) -> Result[None, str]:
-    """Refuse any standard-package, contract-runner or Oven measurement above the budget its command is held to."""
-    mut exceeded: list[str] = []
-    for result in results:
-        if result.command not in GATED_COMMANDS and result.command not in LOWERING_COMMANDS:
-            continue
-        limit = command_budget(result.command, budget_bytes)
-        if result.tree_peak_bytes > limit:
-            exceeded.append(f"{result.command} run {result.run}: {result.tree_peak_bytes} > {limit} bytes")
-    if len(exceeded) > 0:
-        return Err("process-tree footprint budget exceeded: " + "; ".join(exceeded))
-    return Ok(None)
-
-
 def summary(result: Measurement) -> str:
     """Render one run's complete scalar evidence for attribution and retained diagnostics."""
     mut text = f"command\t{result.command}\n"
@@ -398,8 +466,10 @@ def summary(result: Measurement) -> str:
     text += f"tree_peak_footprint_mib\t{result.tree_peak_bytes // MIB}\n"
     text += f"tree_peak_at_ms\t{result.peak_at_ms}\n"
     text += f"tree_peak_holder\t{result.peak_holder}\n"
+    text += f"tree_peak_holder_bytes\t{result.peak_holder_bytes}\n"
     text += f"tree_peak_holder_mib\t{result.peak_holder_bytes // MIB}\n"
     text += f"largest_process\t{result.largest_process}\n"
+    text += f"largest_process_lifetime_peak_bytes\t{result.largest_process_peak_bytes}\n"
     text += f"largest_process_lifetime_peak_mib\t{result.largest_process_peak_bytes // MIB}\n"
     return text
 

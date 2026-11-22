@@ -1,0 +1,310 @@
+//! The public record surface: every reference model's fields by name and type, and its defaults.
+
+use crate::overload_members::{MethodLookup, MethodReads};
+use crate::{
+    CheckedBodyCounts, CheckerRecordCounts, CompiledBodyDependencyRead, CompiledBodyFallback, CompiledBodyOutput,
+    CompiledBodyOutputs, CompiledBodyValue, CompiledNamespaceValue, CompilerContributors, CompilerExportMember,
+    GraphBodyFields, GraphBodyValue, GraphNamespaceValue, ManifestCacheValue, ManifestInventory, NamespaceAtom,
+    NamespaceEntry, NamespaceField, NamespaceIdentity, NamespaceOrder, NamespacePublication, NamespaceReference,
+    PayloadAdmission, RecordKey, SettledCallContract, SettledCallRead,
+};
+
+/// A complete key whose context keeps its reference default.
+fn key() -> RecordKey {
+    RecordKey {
+        family: "declaration".into(),
+        identity: "i".into(),
+        identity_profile: "p".into(),
+        origin: "o".into(),
+        facet: "f".into(),
+        context: String::new(),
+    }
+}
+
+/// Models whose every field has a reference default publish those defaults through `Default`.
+#[test]
+fn fully_defaulted_models_keep_reference_defaults() {
+    assert_eq!(
+        CheckedBodyCounts::default(),
+        CheckedBodyCounts {
+            checked: 0,
+            reused: 0,
+            decoded: 0
+        }
+    );
+    let counts = CheckerRecordCounts::default();
+    assert_eq!(counts.summary, "0/0 reusable declarations");
+    assert_eq!((counts.reusable_declarations, counts.all_declarations), (0, 0));
+    assert!(counts.artifact_refusals.is_empty() && counts.restored.is_empty() && counts.restored_body_ir.is_empty());
+    let order = NamespaceOrder::default();
+    assert_eq!((order.rank, order.evidence.as_str()), (0, "compiled-check"));
+    assert!(order.members.is_empty() && order.certificate.is_empty());
+    let reads = MethodReads::default();
+    assert!(reads.groups.is_empty() && reads.retained.is_empty());
+}
+
+/// Compiled outputs carry every reference field, including the namespace contract and publication fields.
+#[test]
+fn compiled_outputs_carry_every_reference_field() {
+    let read = SettledCallRead {
+        reader: "r".into(),
+        target: "t".into(),
+        digest: "d".into(),
+    };
+    let namespace = CompiledNamespaceValue {
+        module: "m".into(),
+        interface: vec![1],
+        body_ir: vec![2],
+        dependencies: vec![],
+        lowering_inputs: vec![],
+        package_roots: vec![],
+        call_reads: vec![read.clone()],
+        semantic_interface: vec![],
+        member_witnesses: vec![],
+        call_contracts: Some(vec![SettledCallContract {
+            target: "t".into(),
+            digest: "d".into(),
+            reader: "r".into(),
+            owner: "o".into(),
+        }]),
+        identity_proof: vec![],
+        published_record: vec![],
+    };
+    let value = CompiledBodyValue {
+        module: "m".into(),
+        name: "n".into(),
+        identity: "i".into(),
+        declaration: vec![],
+        local: vec![],
+        r#final: vec![],
+        body_ir: vec![],
+        dependency_reads: vec![CompiledBodyDependencyRead {
+            package: None,
+            module: "m".into(),
+            name: "n".into(),
+            identity: "i".into(),
+            reference_subject: "s".into(),
+        }],
+        scope_names: vec![],
+    };
+    let fallback = CompiledBodyFallback {
+        module: "m".into(),
+        name: "n".into(),
+        identity: None,
+        reason: "r".into(),
+    };
+    let outputs = CompiledBodyOutputs {
+        namespaces: vec![namespace.clone()],
+        values: vec![value],
+        fallbacks: vec![],
+    };
+    assert_eq!(outputs.namespaces.len(), 1);
+    assert_ne!(
+        CompiledBodyOutput::Namespace(namespace),
+        CompiledBodyOutput::Fallback(fallback)
+    );
+    assert_eq!(
+        CompiledBodyOutput::LegacyNamespace("m".into()),
+        CompiledBodyOutput::LegacyNamespace("m".into())
+    );
+    let graph = GraphNamespaceValue {
+        module: "m".into(),
+        interface: vec![],
+        body_ir: vec![],
+        lowering_inputs: vec![],
+        package_roots: vec![],
+        call_reads: vec![read],
+        call_reads_known: true,
+        identity_proof: vec![],
+    };
+    assert!(graph.call_reads_known);
+    let body = GraphBodyValue {
+        identity: "i".into(),
+        local: vec![],
+        r#final: vec![],
+        body_ir: vec![],
+    };
+    let fields = GraphBodyFields {
+        identity: body.identity,
+        local: vec![],
+        final_fields: vec![],
+        body_ir: vec![],
+    };
+    assert!(fields.local.is_empty());
+}
+
+/// Method lookup and namespace records carry every reference field. The lowering events and plan module records are
+/// the plan Loaf's, and its tests cover them.
+#[test]
+fn lookup_and_namespace_records_carry_every_reference_field() {
+    let lookup = MethodLookup {
+        reader: "r".into(),
+        module: "m".into(),
+        receiver: "x".into(),
+        method: "m".into(),
+        candidates: vec![],
+    };
+    let atom = NamespaceAtom::Fields(vec![NamespaceField {
+        identity: 1,
+        value: NamespaceAtom::Mapping(vec![NamespaceEntry {
+            key: NamespaceAtom::Missing,
+            value: NamespaceAtom::Real(1.5),
+        }]),
+    }]);
+    let identity = NamespaceIdentity {
+        name: "n".into(),
+        path: vec![],
+    };
+    let publication = NamespacePublication {
+        interface: vec![],
+        semantic_interface: vec![],
+    };
+    let reference = NamespaceReference {
+        key: key(),
+        segment: "s".into(),
+        offset: 0,
+        length: 0,
+        frame_digest: vec![],
+        value_digest: "v".into(),
+    };
+    assert!(lookup.candidates.is_empty() && identity.path.is_empty() && publication.interface.is_empty());
+    assert!(matches!(atom, NamespaceAtom::Fields(_)) && reference.offset == 0);
+}
+
+/// Unit, manifest and contributor records carry every reference field.
+#[test]
+fn unit_manifest_and_contributor_records_carry_every_reference_field() {
+    let admission = PayloadAdmission {
+        identity: "i".into(),
+        payload: "p".into(),
+        observation: "o".into(),
+        provenance: vec![],
+        facts: String::new(),
+        refusal: String::new(),
+    };
+    let cache = ManifestCacheValue {
+        digest: vec![],
+        payload: vec![],
+    };
+    let inventory = ManifestInventory {
+        name: "n".into(),
+        version: "v".into(),
+        features: vec![],
+        vocabulary: false,
+        operations: false,
+        native_unions: false,
+        rust_paths: vec![],
+        declares_abi_cache: false,
+        has_abi_cache: false,
+        abi_digest: None,
+    };
+    let contributors = CompilerContributors {
+        profile: "release".into(),
+        scope: "s".into(),
+        vocabulary: vec![],
+        operations: vec![],
+    };
+    let member = CompilerExportMember {
+        key: "k".into(),
+        revision: "r".into(),
+    };
+    assert!(admission.facts.is_empty() && cache.digest.is_empty() && inventory.abi_digest.is_none());
+    assert!(contributors.vocabulary.is_empty() && member.key == "k");
+}
+
+/// Every reference field default is published to Incan callers under the name the frontend reads, with the
+/// reference value.
+#[test]
+fn every_reference_field_default_is_published() {
+    use crate::body_ir_declarations::CompilerBodyIrModule;
+    use crate::compiler_records::HirSourceSpan;
+    use crate::crumb_rows::ModelField;
+    use crate::record_scope::{DEFAULT_READ_BYTES, RecordRequest};
+
+    assert!(CompilerBodyIrModule::__incan_default_runtime_binding_scopes().is_empty());
+    let counts = [
+        CheckedBodyCounts::__incan_default_checked(),
+        CheckedBodyCounts::__incan_default_reused(),
+        CheckedBodyCounts::__incan_default_decoded(),
+        CheckerRecordCounts::__incan_default_reusable_declarations(),
+        CheckerRecordCounts::__incan_default_all_declarations(),
+        NamespaceOrder::__incan_default_rank(),
+    ];
+    assert_eq!(counts, [0; 6]);
+    assert_eq!(
+        CheckerRecordCounts::__incan_default_summary(),
+        "0/0 reusable declarations"
+    );
+    assert!(CheckerRecordCounts::__incan_default_artifact_refusals().is_empty());
+    assert!(CheckerRecordCounts::__incan_default_restored().is_empty());
+    assert!(CheckerRecordCounts::__incan_default_restored_body_ir().is_empty());
+    assert!(GraphNamespaceValue::__incan_default_lowering_inputs().is_empty());
+    assert!(GraphNamespaceValue::__incan_default_package_roots().is_empty());
+    assert!(GraphNamespaceValue::__incan_default_call_reads().is_empty());
+    assert!(GraphNamespaceValue::__incan_default_call_reads_known());
+    assert!(GraphNamespaceValue::__incan_default_identity_proof().is_empty());
+    assert!(CompiledBodyValue::__incan_default_dependency_reads().is_empty());
+    assert!(CompiledBodyValue::__incan_default_scope_names().is_empty());
+    assert!(CompiledNamespaceValue::__incan_default_lowering_inputs().is_empty());
+    assert!(CompiledNamespaceValue::__incan_default_package_roots().is_empty());
+    assert!(CompiledNamespaceValue::__incan_default_call_reads().is_empty());
+    assert!(CompiledNamespaceValue::__incan_default_semantic_interface().is_empty());
+    assert!(CompiledNamespaceValue::__incan_default_member_witnesses().is_empty());
+    assert_eq!(CompiledNamespaceValue::__incan_default_call_contracts(), None);
+    assert!(CompiledNamespaceValue::__incan_default_identity_proof().is_empty());
+    assert!(CompiledNamespaceValue::__incan_default_published_record().is_empty());
+    assert!(CompiledBodyOutputs::__incan_default_namespaces().is_empty());
+    assert!(CompilerContributors::__incan_default_vocabulary().is_empty());
+    assert!(CompilerContributors::__incan_default_operations().is_empty());
+    assert_eq!(HirSourceSpan::__incan_default_expansion(), None);
+    assert!(ModelField::__incan_default_canonical());
+    let texts = [
+        RecordKey::__incan_default_context(),
+        PayloadAdmission::__incan_default_facts(),
+        PayloadAdmission::__incan_default_refusal(),
+    ];
+    assert!(texts.iter().all(String::is_empty));
+    assert_eq!(NamespaceOrder::__incan_default_evidence(), "compiled-check");
+    assert!(NamespaceOrder::__incan_default_members().is_empty());
+    assert!(NamespaceOrder::__incan_default_certificate().is_empty());
+    assert!(MethodReads::__incan_default_groups().is_empty());
+    assert!(MethodReads::__incan_default_retained().is_empty());
+    assert_eq!(RecordRequest::__incan_default_byte_limit(), DEFAULT_READ_BYTES);
+}
+
+/// The by-value field readers Incan callers use agree with the borrowing readers, values and refusals alike.
+#[test]
+fn by_value_field_readers_agree_with_borrowing_readers() {
+    use crate::graph_crumb_fields::{
+        integer, items, items_value, number, number_value, text, text_value, tuple_items, tuple_items_value,
+    };
+    use internal_models_bindings::Value;
+
+    let word = Value::Text("w".into());
+    let list = Value::List(vec![word.clone(), integer(3)]);
+    let pair = Value::Tuple(vec![word.clone(), integer(4)]);
+    assert_eq!(text_value(word.clone()), text(&word));
+    assert_eq!(text_value(integer(1)), text(&integer(1)));
+    assert_eq!(number_value(integer(3)), number(&integer(3)));
+    assert_eq!(number_value(word.clone()), number(&word));
+    assert_eq!(
+        format!("{:?}", items_value(list.clone())),
+        format!("{:?}", items(&list).cloned())
+    );
+    assert_eq!(
+        format!("{:?}", items_value(word.clone())),
+        format!("{:?}", items(&word).cloned())
+    );
+    assert_eq!(
+        format!("{:?}", tuple_items_value(pair.clone(), 2)),
+        format!("{:?}", tuple_items(&pair, 2).cloned())
+    );
+    assert_eq!(
+        format!("{:?}", tuple_items_value(pair.clone(), 3)),
+        format!("{:?}", tuple_items(&pair, 3).cloned())
+    );
+    assert_eq!(
+        format!("{:?}", tuple_items_value(pair.clone(), -1)),
+        format!("{:?}", tuple_items(&pair, usize::MAX).cloned())
+    );
+}

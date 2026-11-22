@@ -2,7 +2,8 @@
 //! (`pub::<key>` or a `std.*` namespace of a standard package) is bound from the Loaf's manifest (`loaf_imports`), a
 //! `rust::` path from Rust metadata (`rust_imports`), and anything else from the program's own source modules (here).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::ast::*;
 use crate::diagnostics::errors;
@@ -34,13 +35,13 @@ impl TypeChecker {
 
     /// Register an import declaration in the symbol table.
     pub(super) fn collect_import(&mut self, import: &ImportDecl, span: Span) {
-        self.validate_import_visibility(import, span);
+        let refused = self.validate_import_visibility(import, span);
         match &import.kind {
             ImportKind::Module(path) => {
                 self.collect_module_import(path, import.alias.as_ref(), span);
             }
             ImportKind::From { module, items } => {
-                self.collect_from_imports(module, items, span);
+                self.collect_from_imports(module, items, &refused, span);
             }
             ImportKind::PubLibrary { library, path } => {
                 let target = LoafImport {
@@ -234,7 +235,13 @@ impl TypeChecker {
     /// Collect a `from module import item, ...` declaration.
     ///
     /// A `std.<namespace>.prelude` path resolves as the namespace's module.
-    pub(super) fn collect_from_imports(&mut self, written_module: &ImportPath, items: &[ImportItem], span: Span) {
+    pub(super) fn collect_from_imports(
+        &mut self,
+        written_module: &ImportPath,
+        items: &[ImportItem],
+        refused: &HashMap<String, Option<ImportPath>>,
+        span: Span,
+    ) {
         let prelude_namespace = Self::stdlib_prelude_import_namespace(written_module);
         let module = prelude_namespace.as_ref().unwrap_or(written_module);
         if let Some(target) = self.std_loaf_import(module) {
@@ -258,6 +265,16 @@ impl TypeChecker {
                 .push(errors::unknown_stdlib_module(&module.segments.join("."), span));
         }
         for item in items {
+            // A refused item binds what its exporting module exports, so its uses report nothing further.
+            if let Some(exporter) = refused.get(&item.name) {
+                let bound = exporter
+                    .as_ref()
+                    .is_some_and(|exporter| self.materialize_source_dependency_import(exporter, item, span));
+                if !bound {
+                    self.define_from_import_placeholder(module, item, span);
+                }
+                continue;
+            }
             if self.materialize_source_submodule_import(module, item, span) {
                 continue;
             }
@@ -641,11 +658,18 @@ impl TypeChecker {
         Some(kind)
     }
 
-    /// Ensure imported items are public in the dependency module.
+    /// Ensure imported items are public in the dependency module, and return each refused item with the module it
+    /// is bound from instead, so its uses add no further errors: the first of the program's modules that export it.
     ///
     /// `from M import X` and `import M::X` of a declaration `X` (a path that names no module) bind the same item, so
-    /// both require `M` to export it (#1561).
-    pub(super) fn validate_import_visibility(&mut self, import: &ImportDecl, span: Span) {
+    /// both require `M` to export it (#1561). A name `M` itself imports without `pub` is no export of `M` (RFC 176);
+    /// the module's source and its published namespace alike list only its exports.
+    pub(super) fn validate_import_visibility(
+        &mut self,
+        import: &ImportDecl,
+        span: Span,
+    ) -> HashMap<String, Option<ImportPath>> {
+        let mut refused = HashMap::new();
         let (module, item_names) = match &import.kind {
             ImportKind::From { module, items } => (
                 module.clone(),
@@ -653,10 +677,10 @@ impl TypeChecker {
             ),
             ImportKind::Module(path) if !self.full_path_names_a_module(path) => {
                 let Some((item_name, parent_segments)) = path.segments.split_last() else {
-                    return;
+                    return refused;
                 };
                 if parent_segments.is_empty() {
-                    return;
+                    return refused;
                 }
                 let parent = ImportPath {
                     segments: parent_segments.to_vec(),
@@ -665,7 +689,7 @@ impl TypeChecker {
                 };
                 (parent, vec![item_name.clone()])
             }
-            _ => return,
+            _ => return refused,
         };
         let module = &module;
 
@@ -676,44 +700,88 @@ impl TypeChecker {
             .dependency_module_entry_for_path(module, &self.dependency_exports)
             .cloned()
         else {
-            return;
+            return refused;
         };
-
-        let mut exported_names: HashSet<String> = HashSet::new();
-        for sym in exports.iter() {
-            match sym {
-                ExportedSymbol::Const(name)
-                | ExportedSymbol::Static(name)
-                | ExportedSymbol::Type(name)
-                | ExportedSymbol::Trait(name)
-                | ExportedSymbol::Function(name)
-                | ExportedSymbol::Capability(name)
-                | ExportedSymbol::Reexported(name) => {
-                    exported_names.insert(name.clone());
-                }
-                ExportedSymbol::Variant { variant_name, .. } => {
-                    exported_names.insert(variant_name.clone());
-                }
-            }
-        }
-
-        let exported_list: Vec<String> = exported_names.iter().cloned().collect();
-
+        let exported_names = exported_symbol_names(&exports);
+        let written = incan_module_spelling(module);
         for item_name in &item_names {
-            if self.source_submodule_path(module, item_name).is_some() {
+            if exported_names.contains(item_name) || self.source_submodule_path(module, item_name).is_some() {
                 continue;
             }
-            if !exported_names.contains(item_name)
-                && self.dependency_member_symbol_for_path(module, item_name).is_none()
-            {
+            let exporters = self.dependency_modules_exporting(item_name, &exports);
+            if exporters.is_empty() {
+                let exported_list: Vec<String> = exported_names.iter().cloned().collect();
                 self.errors.push(errors::import_not_exported(
                     item_name,
                     &module.to_rust_path(),
                     &exported_list,
                     span,
                 ));
+                refused.insert(item_name.clone(), None);
+                continue;
             }
+            if let Some(submodule) = self.namespace_submodule_exporting(item_name, &exports) {
+                // The named module is a namespace's own module (its prelude), so the name belongs in the namespace.
+                self.errors.push(errors::import_not_reexported_by_namespace(
+                    item_name,
+                    &written,
+                    &format!("{written}.{}", submodule.join(".")),
+                    span,
+                ));
+            } else {
+                let names = exporters.iter().map(|path| path.join(".")).collect::<Vec<_>>();
+                self.errors
+                    .push(errors::import_not_exported_by_module(item_name, &written, &names, span));
+            }
+            refused.insert(item_name.clone(), exporters.into_iter().next().map(ImportPath::simple));
         }
+        refused
+    }
+
+    /// The module paths of the program's source modules other than `provider` that export `name`, in path order.
+    fn dependency_modules_exporting(&self, name: &str, provider: &Arc<[ExportedSymbol]>) -> Vec<Vec<String>> {
+        let mut modules = self
+            .dependency_exports
+            .iter()
+            .filter(|(_, exports)| !Arc::ptr_eq(exports, provider) && exported_symbol_names(exports).contains(name))
+            .map(|(key, _)| self.dependency_module_segments(key))
+            .collect::<Vec<_>>();
+        modules.sort();
+        modules.dedup();
+        modules
+    }
+
+    /// When `provider` is a namespace's own module and a module inside that namespace exports `name`, the path of
+    /// that module below the namespace: one that declares `name` before one that re-exports it, then in path order.
+    fn namespace_submodule_exporting(&self, name: &str, provider: &Arc<[ExportedSymbol]>) -> Option<Vec<String>> {
+        let (namespace_key, _) = self
+            .dependency_exports
+            .iter()
+            .find(|(_, exports)| Arc::ptr_eq(exports, provider))?;
+        let namespace = self.dependency_module_segments(namespace_key);
+        self.dependency_exports
+            .iter()
+            .filter_map(|(key, exports)| {
+                let path = self.dependency_module_segments(key);
+                let below = path
+                    .strip_prefix(namespace.as_slice())
+                    .filter(|below| !below.is_empty())?;
+                let reexported = exports
+                    .iter()
+                    .any(|symbol| matches!(symbol, ExportedSymbol::Reexported(n) if n == name));
+                let declared = exported_symbol_names(exports).contains(name) && !reexported;
+                (declared || reexported).then(|| (reexported, below.to_vec()))
+            })
+            .min()
+            .map(|(_, below)| below)
+    }
+
+    /// The logical module path of one cached dependency module.
+    fn dependency_module_segments(&self, key: &str) -> Vec<String> {
+        self.dependency_module_path_segments
+            .get(key)
+            .cloned()
+            .unwrap_or_else(|| vec![key.to_owned()])
     }
 
     /// Define a symbol for a module import through the shared binding registry.
@@ -767,4 +835,32 @@ impl TypeChecker {
             info.is_imported = true;
         }
     }
+}
+
+/// The names a module export list makes importable: each declaration, re-export and enum variant.
+fn exported_symbol_names(exports: &[ExportedSymbol]) -> HashSet<String> {
+    exports
+        .iter()
+        .map(|symbol| match symbol {
+            ExportedSymbol::Const(name)
+            | ExportedSymbol::Static(name)
+            | ExportedSymbol::Type(name)
+            | ExportedSymbol::Trait(name)
+            | ExportedSymbol::Function(name)
+            | ExportedSymbol::Capability(name)
+            | ExportedSymbol::Reexported(name) => name.clone(),
+            ExportedSymbol::Variant { variant_name, .. } => variant_name.clone(),
+        })
+        .collect()
+}
+
+/// An import's module path as Incan source spells it: `std.fs`, `crate.config`, `super.common`.
+fn incan_module_spelling(module: &ImportPath) -> String {
+    let mut parts = Vec::new();
+    if module.is_absolute {
+        parts.push("crate".to_owned());
+    }
+    parts.extend(std::iter::repeat_n("super".to_owned(), module.parent_levels));
+    parts.extend(module.segments.iter().cloned());
+    parts.join(".")
 }

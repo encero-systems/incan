@@ -1,0 +1,10 @@
+"""Generation-bound optional facts from ordinary admission of a published Loaf manifest. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
+
+pub from rust::internal_models_native import (
+    ManifestCacheValue,
+    encode_manifest_cache,
+    decode_manifest_cache,
+    ManifestInventory,
+    encode_manifest_inventory,
+    decode_manifest_inventory,
+)

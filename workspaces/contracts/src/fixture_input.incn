@@ -59,7 +59,7 @@ pub model FixtureInput:
         return program_in(path, held.deref_mut())
 
 
-def reading(path: Path, mut store: &mut Readings) -> Result[Reading, str]:
+def reading(path: Path, mut store: BorrowedMut[Readings]) -> Result[Reading, str]:
     """Recall only unchanged bytes; a failed or interrupted read never authorizes stale data."""
     observed = stamp(path)?
     if path.0 in store.files:
@@ -73,7 +73,7 @@ def reading(path: Path, mut store: &mut Readings) -> Result[Reading, str]:
     return Ok(result)
 
 
-def program_in(path: Path, mut store: &mut Readings) -> Result[ProgramInput, str]:
+def program_in(path: Path, mut store: BorrowedMut[Readings]) -> Result[ProgramInput, str]:
     """Keep decoding and header parsing tied to the exact byte snapshot they describe."""
     # 1. File metadata, including replacement identity and nanosecond change time, guards reuse.
     mut input = reading(path, store)?

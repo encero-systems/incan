@@ -298,6 +298,11 @@ impl TypeChecker {
                 self.call_argument_depth += 1;
                 let ty = self.check_expr_with_expected(expr, Some(&expected_payload));
                 self.call_argument_depth -= 1;
+                // RFC 164: an owned payload takes a clone of a borrowed value, so a borrowed value without one, an
+                // unbounded type parameter's included, is refused here rather than left to the build.
+                if self.types_compatible(&ty, &expected_payload) {
+                    self.refuse_borrowed_payload_without_clone(&ty, &expected_payload, expr.span);
+                }
                 vec![ty]
             }
             _ => self.check_call_arg_types(args),

@@ -1,11 +1,12 @@
 """Canonical little-endian byte construction shared by store pages and segments."""
 
 
+from rust::std::vec import Vec
+
+
 pub def append_bytes(mut output: list[u8], data: bytes) -> None:
     """Append `data` to an owned byte buffer."""
-    for value in data:
-        byte: u8 = value.wrapping_resize()
-        output.append(byte)
+    Vec.extend_from_slice(output, data.as_slice())
 
 
 pub def append_u64(mut output: list[u8], value: int, object: str) -> Result[None, str]:

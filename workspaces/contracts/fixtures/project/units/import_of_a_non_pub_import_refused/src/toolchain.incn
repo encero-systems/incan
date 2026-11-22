@@ -1,0 +1,12 @@
+"""A toolchain whose field type names the record unit_publication imports."""
+
+from unit_publication import PayloadAdmission, admitted
+
+
+pub model Toolchain:
+    pub payloads: list[PayloadAdmission]
+
+
+pub def installed() -> Toolchain:
+    """The toolchain with one admitted unit."""
+    return Toolchain(payloads=[admitted("unit")])
