@@ -5,6 +5,8 @@ from std.fs import Path
 from std.json import JsonValue
 from compiler_record_admission import CompilerRecordPin
 from compiler_worker import generation_for
+from core_process import executable
+from engine_client import service_generation
 from files import json_text, read_json
 from freshness_fixtures import compiler_fingerprint, fixture, unit_key, write
 from observation import file_digest, observe
@@ -170,6 +172,18 @@ pub def test_replacing_a_staged_payload_rechecks_its_new_transport_proof() -> Re
     import_publication(staged)?
     assert published_identity(staged)? == "next"
     import_publication(staged)?
+    return Ok(None)
+
+
+pub def test_service_generation_follows_binary_bytes_not_its_path() -> Result[None, str]:
+    """Byte-identical engine executables negotiate one service generation after installation relocation."""
+    scratch = scratch_directory()?
+    binary = Path(executable()?)
+    relocated = scratch.path().joinpath("relocated-oven")
+    relocated.write_bytes(binary.read_bytes().map_err((error) => error.message())?).map_err(
+        (error) => error.message(),
+    )?
+    assert service_generation(binary.0)? == service_generation(relocated.0)?
     return Ok(None)
 
 
