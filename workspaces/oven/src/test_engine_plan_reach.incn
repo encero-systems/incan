@@ -5,6 +5,7 @@ from rust::std::str import from_utf8
 from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue, parse
+from pub::internal_models import certified_namespace_order
 from engine_protocol_fixtures import stop_engine
 from files import make_directory, write
 from scratch import scratch_directory
@@ -41,6 +42,14 @@ def measure_reach(binary: str, project: Path, store: Path) -> Result[None, str]:
     unwanted = module_reads(reduced, seed_only)?
     assert module_reads(restored, seed_only)? > 0, "the add-back must select the published owners again"
     assert unwanted == 0, f"the reduced import reach opened {unwanted} seed-only slots or plans"
+    assert reduced.require("plan_module_reuses").map_err((error) => error.message())?.expect_int().map_err(
+        (error) => error.message(),
+    )? == 1, "the retained module plan must reach publication"
+    required = "required.incn"
+    author_order = certified_namespace_order("main", {required: []})?
+    certificate = "incan.compiler.namespace-order\t" + author_order[required].evidence
+    reads = certificate_reads(reduced, certificate)?
+    assert reads == 1, f"namespace selection and lowering publication opened the required certificate {reads} times"
     return Ok(None)
 
 
@@ -75,6 +84,23 @@ def module_reads(report: JsonValue, names: list[str]) -> Result[int, str]:
         ] and fields[5] in names
         payload = len(fields) == 6 and fields[0] == "plan-module" and fields[3] in names
         if slot or payload:
+            calls += record.require("reads").map_err((error) => error.message())?.expect_int().map_err(
+                (error) => error.message(),
+            )?
+    return Ok(calls)
+
+
+def certificate_reads(report: JsonValue, certificate: str) -> Result[int, str]:
+    """Count frame authentications of the authored required module's certificate in the settlement."""
+    records = report.require("store_reads").map_err((error) => error.message())?.expect_array().map_err(
+        (error) => error.message(),
+    )?
+    mut calls = 0
+    for record in records:
+        key = record.require("key").map_err((error) => error.message())?.expect_str().map_err(
+            (error) => error.message(),
+        )?
+        if key == certificate:
             calls += record.require("reads").map_err((error) => error.message())?.expect_int().map_err(
                 (error) => error.message(),
             )?
