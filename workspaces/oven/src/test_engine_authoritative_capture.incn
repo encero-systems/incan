@@ -50,7 +50,10 @@ pub def test_first_named_project_capture_uses_the_baked_program_reach() -> Resul
 def write_project(project: Path) -> Result[Path, str]:
     """Give a named project an invalid helper that the initial entry does not import."""
     make_directory(project.joinpath("src/nested"))?
-    write(project.joinpath("loaf.toml"), "[project]\nname = \"capture_probe\"\nversion = \"0.1.0\"\n")?
+    write(
+        project.joinpath("loaf.toml"),
+        "[project]\nname = \"capture_probe\"\nversion = \"0.1.0\"\n[project.scripts]\nmain = \"src/main.incn\"\n",
+    )?
     source = project.joinpath("src/main.incn")
     write(
         source,
