@@ -190,6 +190,15 @@ pub def command(fixture: Fixture, header: Header) -> list[str]:
     return ["run", "src/main.incn"]
 
 
+pub def graph_beside(families: list[str], jobs: int) -> bool:
+    """
+    Whether a serial run starts the graph family beside the others: when graph and another family are selected and two
+    jobs allow it. The graph family compiles nothing the others build or reuse, and its cases are sequential protocols,
+    so it runs in a family worker of its own at one job while the others run in turn at the rest.
+    """
+    return jobs >= 2 and "graph" in families and len(families) > 1
+
+
 pub def work_order(families: list[str], graph_cases: list[str]) -> list[str]:
     """
     The order family workers start in: every graph case, then the other selected families longest first. Each graph

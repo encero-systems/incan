@@ -1,6 +1,6 @@
-"""Family workers start the families that run longest first, so the short ones fill the slots behind them."""
+"""How families are scheduled: family workers start the longest first, and a serial run starts graph beside the rest."""
 
-from families import FAMILIES, work_order
+from families import FAMILIES, graph_beside, work_order
 
 
 def test_family_workers_start_graph_cases_then_the_longest_families() -> None:
@@ -14,3 +14,18 @@ def test_family_workers_start_graph_cases_then_the_longest_families() -> None:
     expected = graph_cases + ["project", "behavior", "interop", "library", "check", "testing", "format"]
     assert order == expected, ", ".join(order)
     assert work_order(["check", "behavior"], []) == ["behavior", "check"]
+
+
+def test_a_serial_run_starts_the_graph_family_beside_the_others_when_two_jobs_allow() -> None:
+    """
+    The graph family shares no compilation with the others and its cases are sequential protocols, so a serial run
+    with two jobs or more starts it in a family worker of its own at one job, and the others run in turn at the rest.
+    Alone, or with one job, the families run in turn as before.
+    """
+    every = [family for family in FAMILIES]
+    assert graph_beside(every, 5)
+    assert graph_beside(every, 2)
+    assert graph_beside(["graph", "check"], 2)
+    assert not graph_beside(every, 1)
+    assert not graph_beside(["graph"], 5)
+    assert not graph_beside(["behavior", "check"], 5)

@@ -256,10 +256,10 @@ pub def verification_phase_plans(jobs: int) -> list[VerificationPhasePlan]:
 
 pub def census_jobs(jobs: int) -> int:
     """
-    The census's workers: twice the release's jobs. It outlasts every other gate, which end in about half its time
-    and leave their processors to it.
+    The census's workers: twice the release's jobs for its families in turn, which share compilation, and one for its
+    graph family beside them, which compiles nothing they build; the runner gives the graph worker one of its jobs.
     """
-    return 2 * verification_workers(jobs)
+    return 2 * verification_workers(jobs) + 1
 
 
 pub def oven_jobs(jobs: int) -> int:
