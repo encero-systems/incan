@@ -135,10 +135,11 @@ def check_generated_enum_member_after_edit(binary: str, root: Path) -> Result[No
         "from pub::pathlib import Level, Reading\n\npub def announce() -> None:\n" + "    match Level.from_value(\"loud\"):\n        Some(level) => println(f\"{level.value()} {Reading().radix}\")\n" + "        None => println(\"missing\")\n",
     )?
     store = root.joinpath("warm-store")
-    cold = records_run(binary, app, store)?
-    assert cold.output == "loud 10\n", cold.output
-    write(app.joinpath("src/main.incn"), main + "    println(\"after edit\")\n")?
     warm_trace = attempt_trace(root, "layout-warm")?
+    cold = records_run(binary, app, store, Some(warm_trace))?
+    assert cold.output == "loud 10\n", cold.output
+    before_edit = trace_lengths(warm_trace)?
+    write(app.joinpath("src/main.incn"), main + "    println(\"after edit\")\n")?
     warm = records_run(binary, app, store, Some(warm_trace))?
     warm_plan = app.joinpath("native.plan").read_bytes().map_err((error) => error.message())?
     fresh_store = root.joinpath("fresh-store")
@@ -148,18 +149,18 @@ def check_generated_enum_member_after_edit(binary: str, root: Path) -> Result[No
     assert warm.output == fresh.output and warm.output == "loud 10\nafter edit\n", warm.output
     assert proof_count(warm.report, "unit_evaluations")? == 1
     assert proof_count(warm.report, "body_evaluations")? == 1
-    warm_layouts = provider_layouts(warm_trace)?
+    warm_layouts = provider_layouts(warm_trace, before_edit)?
     assert len(warm_layouts) == 2, f"expected the two selected provider layouts, got {warm_layouts}"
     assert warm_layouts == provider_layouts(fresh_trace)?
     assert warm_plan == app.joinpath("native.plan").read_bytes().map_err((error) => error.message())?
     edit_library(root, "pub radix: int = 10", "pub radix: int = 16\n    pub scale: int = 1")?
-    changed_trace = attempt_trace(root, "layout-changed")?
-    changed = records_run(binary, app, store, Some(changed_trace))?
+    before_provider_edit = trace_lengths(warm_trace)?
+    changed = records_run(binary, app, store, Some(warm_trace))?
     stop_example_engine(binary, store)?
     assert changed.output == "loud 16\nafter edit\n", changed.output
     changed_plan = app.joinpath("native.plan").read_bytes().map_err((error) => error.message())?
     assert changed_plan != warm_plan
-    changed_layouts = provider_layouts(changed_trace)?
+    changed_layouts = provider_layouts(warm_trace, before_provider_edit)?
     assert len(changed_layouts) == 2 and changed_layouts != warm_layouts
     assert [row for row in changed_layouts if "::Level@" in row] == [row for row in warm_layouts if "::Level@" in row]
     changed_fresh = root.joinpath("changed-fresh-store")
@@ -179,13 +180,24 @@ def edit_library(root: Path, before: str, after: str) -> Result[None, str]:
     return write(source, text.replace(before, after))
 
 
-def provider_layouts(trace: Path) -> Result[list[str], str]:
+def trace_lengths(trace: Path) -> Result[Dict[str, int], str]:
+    """Pin where each resident compiler's trace ended before the next request."""
+    mut sizes: Dict[str, int] = {}
+    for path in trace.iterdir().map_err((error) => error.message())?:
+        if path.name().startswith("engine-compiler-"):
+            text = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+            sizes[path.name()] = len(text.split("\n")) - 1
+    return Ok(sizes)
+
+
+def provider_layouts(trace: Path, before: Dict[str, int] = {}) -> Result[list[str], str]:
     """Read the two selected layouts from the compiler channel and reject consumer recomputation."""
     mut layouts: list[str] = []
     for path in trace.iterdir().map_err((error) => error.message())?:
         if not path.name().startswith("engine-compiler-"):
             continue
-        for line in path.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
+        text = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+        for line in text.split("\n")[before.get(path.name(), 0):]:
             if "pathlib" not in line:
                 continue
             assert "\"operation\":\"linked_layout_fallback\"" not in line, line
