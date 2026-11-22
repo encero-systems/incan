@@ -199,20 +199,59 @@ impl TypeChecker {
         canonical: Option<&CanonicalSymbolId>,
         kind: &mut SymbolKind,
     ) {
-        let Some(declaring_module) = canonical
-            .and_then(|canonical| {
-                manifest
-                    .contract_metadata
-                    .identity_graph
-                    .declaration_source_path(canonical)
-            })
-            .and_then(|source_path| source_path.split_last())
-            .map(|(_, module_path)| module_path.to_vec())
+        let Some(declaring_module) = canonical.and_then(|canonical| Self::declaring_module_path(manifest, canonical))
         else {
             return;
         };
         let scope = self.pub_library_declaration_scope(library, manifest, &declaring_module);
         self.remap_symbol_kind_with_import_aliases(kind, &scope);
+    }
+
+    /// The module that declares `canonical` in `manifest`'s identity graph: the module of its direct export, or, for a
+    /// partial, which the graph publishes as a partial projection rather than a direct export, the module that declares
+    /// the partial.
+    fn declaring_module_path(manifest: &LibraryManifest, canonical: &CanonicalSymbolId) -> Option<Vec<String>> {
+        let graph = &manifest.contract_metadata.identity_graph;
+        let source_path = graph.declaration_source_path(canonical).or_else(|| {
+            graph
+                .exports
+                .iter()
+                .find(|entry| {
+                    matches!(
+                        entry.projection,
+                        crate::library_manifest::ExportIdentityProjection::Partial { .. }
+                    ) && entry
+                        .canonical
+                        .as_ref()
+                        .is_some_and(|candidate| candidate.represents(canonical))
+                })
+                .map(|entry| entry.source_path.as_slice())
+        })?;
+        let (_, module_path) = source_path.split_last()?;
+        Some(module_path.to_vec())
+    }
+
+    /// `remapping` composed after the scope of the module that declares `canonical`, as
+    /// [`Self::remap_symbol_kind_through_declaring_module`] and then `remapping` read a type spelling: a spelling the
+    /// declaring module's scope maps is mapped on through `remapping`, and any other through `remapping` alone. Without
+    /// a declaring module in the identity graph it is `remapping`.
+    pub(in crate::typechecker) fn remapping_through_declaring_module(
+        &mut self,
+        library: &str,
+        manifest: &LibraryManifest,
+        canonical: Option<&CanonicalSymbolId>,
+        remapping: &HashMap<String, String>,
+    ) -> HashMap<String, String> {
+        let Some(declaring_module) = canonical.and_then(|canonical| Self::declaring_module_path(manifest, canonical))
+        else {
+            return remapping.clone();
+        };
+        let mut composed = remapping.clone();
+        for (spelling, key) in self.pub_library_declaration_scope(library, manifest, &declaring_module) {
+            let key = remapping.get(&key).cloned().unwrap_or(key);
+            composed.insert(spelling, key);
+        }
+        composed
     }
 
     /// Register every nominal declaration a submodule of `library` publishes under its declaration key: its identity,
