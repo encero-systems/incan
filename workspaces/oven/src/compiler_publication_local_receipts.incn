@@ -1,0 +1,31 @@
+"""Select the local checker receipts used by the two stages of one body publication."""
+
+from rust::std::rc import Rc
+from pub::incan_platform.store import Snapshot
+from pub::internal_models.checker_records import CHECKER_PROFILE
+from pub::internal_models.records import ReadReceipt, RecordKey
+from compiler_graph_records import EditCutoff, reusable_evaluation
+
+
+pub class PublicationLocalReceipts:
+    """Separate the span consumer's selection from the lowering consumer's selection."""
+
+    @staticmethod
+    pub def open(selected: Option[Snapshot], for_plan: bool) -> PublicationLocalReceipts:
+        """Create a publication-local selector."""
+        return PublicationLocalReceipts()
+
+    pub def for_spans(mut self, prior: Snapshot, key: RecordKey, cutoff: EditCutoff) -> Result[Option[Rc[ReadReceipt]], str]:
+        """Select the local receipt under the publication's cutoff before gathering owner spans."""
+        return select_receipt(prior, key, cutoff)
+
+    pub def for_lowering(self, prior: Snapshot, key: RecordKey, cutoff: EditCutoff) -> Result[Option[Rc[ReadReceipt]], str]:
+        """Select the local receipt before validating its lowering signature witnesses."""
+        return select_receipt(prior, key, cutoff)
+
+
+def select_receipt(prior: Snapshot, key: RecordKey, cutoff: EditCutoff) -> Result[Option[Rc[ReadReceipt]], str]:
+    """Read the graph's complete local evaluation and retain only its receipt."""
+    match reusable_evaluation(prior, key, CHECKER_PROFILE, cutoff)?:
+        Some(selected) => return Ok(Some(Rc.new(selected.receipt)))
+        None => return Ok(None)
