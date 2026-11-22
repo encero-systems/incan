@@ -369,10 +369,19 @@ fn lower_component(
         if let Some(restored) = restored {
             let mut restored = Arc::unwrap_or_clone(restored);
             let borrowed = imported.iter().copied().chain(&completed).collect::<Vec<_>>();
-            changed_calls.push(incan_frontend::body_ir::refresh_dependency_call_targets(
-                &mut restored,
-                ContextModules::new(dependency_bodies, &borrowed),
-            ));
+            let changed = tracing::trace_span!(
+                target: "incan::invocation",
+                "incan_driver::refresh_body_ir_dependency_calls",
+                file = %module.file_path.display(),
+                restored = true,
+            )
+            .in_scope(|| {
+                incan_frontend::body_ir::refresh_dependency_call_targets(
+                    &mut restored,
+                    ContextModules::new(dependency_bodies, &borrowed),
+                )
+            });
+            changed_calls.push(changed);
             completed.push(restored);
             continue;
         }
@@ -428,10 +437,18 @@ fn lower_component(
             // A changed dependency declaration span can invalidate this namespace while leaving an exact scalar body
             // reusable. That retained body still carries the dependency's previous edit-local canonical locator, so a
             // newly assembled module needs the same rebinding as a whole-module restore before native planning.
-            incan_frontend::body_ir::refresh_dependency_call_targets(
-                &mut lowered,
-                ContextModules::new(dependency_bodies, &borrowed),
-            );
+            tracing::trace_span!(
+                target: "incan::invocation",
+                "incan_driver::refresh_body_ir_dependency_calls",
+                file = %module.file_path.display(),
+                restored = false,
+            )
+            .in_scope(|| {
+                incan_frontend::body_ir::refresh_dependency_call_targets(
+                    &mut lowered,
+                    ContextModules::new(dependency_bodies, &borrowed),
+                );
+            });
             lowered
         };
         completed.push(lowered);

@@ -149,6 +149,14 @@ impl TypeChecker {
             );
         }
         self.check_work.body_local_checks += 1;
+        let _invocation = tracing::trace_span!(
+            target: "incan::invocation",
+            "incan_frontend::check_body_statements",
+            kind = "callable",
+            start = span.start,
+            end = span.end,
+        )
+        .entered();
         self.record_check_work("body", "callable", span);
         #[cfg(test)]
         if self.legacy_body_checking {
@@ -190,6 +198,14 @@ impl TypeChecker {
         }
         self.check_work.body_local_checks += 1;
         self.check_work.property_bodies += 1;
+        let _invocation = tracing::trace_span!(
+            target: "incan::invocation",
+            "incan_frontend::check_body_statements",
+            kind = "property",
+            start = span.start,
+            end = span.end,
+        )
+        .entered();
         self.record_check_work("body", "property", span);
         #[cfg(test)]
         if self.legacy_body_checking {
