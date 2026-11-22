@@ -687,6 +687,7 @@ fn a_dependency_outside_the_installed_set_opens_from_its_retained_inventory() ->
     );
 
     let full = crate::loaf_index::LoafArtifact::read(&directory, "dependency")?;
+    crate::loaf_index::settle_retained_loaves(true);
     let warm = crate::loaf_index::LoafArtifact::read(&directory, "dependency")?;
     assert_eq!(full.identity, warm.identity);
     assert!(
