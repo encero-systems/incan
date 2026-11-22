@@ -55,7 +55,7 @@ use crate::string_conversion_contracts::validate_conversion_placement;
 use crate::trace_channel::{emit, traced};
 use crate::trait_links::{has_open_trait_arguments, validate_project_implementation};
 use crate::type_parameters::{Instance, merge_instance_requests};
-use crate::unions::{collect_unions, extend_unions, publish_unions, union_index};
+use crate::unions::{collect_unions, extend_unions, publish_unions, trace_union_selection, union_index};
 
 /// Ordinary-frame work retained while the frontend resolves only the runtime declarations that work selected.
 pub struct UnitContinuation {
@@ -765,13 +765,7 @@ pub fn layout_tables(
     let constructors = index_constructors(&context.nominal_declarations, source_files, package_versions);
     let unions = collect_unions(context);
     let intrinsics = intrinsic_declarations(&constructors, context, file, retained_intrinsics, "initial")?;
-    if crate::trace_channel::tracing_products() {
-        emit(
-            "carrier_unions",
-            "",
-            &format!("initial {} {}", unions.len(), unions.len()),
-        );
-    }
+    trace_union_selection("initial", unions.len(), unions.len(), &unions);
     Ok((constructors, unions, intrinsics))
 }
 

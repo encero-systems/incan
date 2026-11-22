@@ -1,6 +1,8 @@
 //! Concrete standard Option and Result layouts shared with native enum operations.
 
 use std::collections::HashSet;
+use std::mem::size_of;
+use std::time::Instant;
 
 use incan_lang::lang::surface::constructors::{ConstructorId, from_str as builtin_constructor};
 use incan_lang::lang::surface::option_methods::OptionMethodId;
@@ -50,6 +52,7 @@ pub fn intrinsic_declarations(
     let retained_count = declarations.len();
     let mut pass = CarrierPass::new(constructors, module, &mut declarations, file);
     let tracing = tracing_products();
+    let started = tracing.then(Instant::now);
     let mut bodies = Vec::new();
     for ty in declaration_storage(module) {
         if closed_type(&ty) {
@@ -103,16 +106,22 @@ pub fn intrinsic_declarations(
             pass.retain_body(body)?;
         }
     }
-    if tracing {
+    if let Some(started) = started {
+        let elapsed_ns = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
         let owners: Vec<String> = bodies.into_iter().map(frame_label).collect();
         let row = serde_json::json!({
             "phase": phase,
+            "elapsed_ns": elapsed_ns,
             "bodies": owners,
             "nominals": module.nominal_declarations.len(),
             "enums": module.enum_declarations.len(),
             "statics": module.static_declarations.len(),
-            "callable_candidates": pass.callable_candidates,
+            "callable_candidates": pass.body_candidates + pass.loaf_candidates,
+            "body_candidates": pass.body_candidates,
+            "loaf_candidates": pass.loaf_candidates,
+            "source_parameter_copy_slot_bytes": pass.parameter_copy_bytes,
             "carriers_constructed": pass.declarations.len() - retained_count,
+            "ordered_layouts": pass.declarations,
         });
         emit("carrier_traversal", "", &row.to_string());
     }
@@ -142,7 +151,10 @@ struct CarrierPass<'a> {
     declarations: &'a mut Vec<EnumDeclaration>,
     file: &'a str,
     retained: HashSet<IncanType>,
-    callable_candidates: usize,
+    body_candidates: usize,
+    loaf_candidates: usize,
+    /// Contiguous vector slots allocated for a matched source signature, excluding nested type allocations.
+    parameter_copy_bytes: usize,
 }
 
 impl<'a> CarrierPass<'a> {
@@ -159,7 +171,9 @@ impl<'a> CarrierPass<'a> {
             declarations,
             file,
             retained: HashSet::new(),
-            callable_candidates: 0,
+            body_candidates: 0,
+            loaf_candidates: 0,
+            parameter_copy_bytes: 0,
         }
     }
 
@@ -268,11 +282,13 @@ impl<'a> CarrierPass<'a> {
             return Ok(());
         }
         let module = self.module;
-        self.callable_candidates += module.bodies.len() + module.loaf_callables.len();
+        self.body_candidates += module.bodies.len();
+        self.loaf_candidates += module.loaf_callables.len();
         for candidate in &module.bodies {
             if target.canonical != candidate.canonical || candidate.type_parameters.len() != target.type_args.len() {
                 continue;
             }
+            self.parameter_copy_bytes += candidate.params.len() * size_of::<IncanType>();
             let parameters: Vec<IncanType> = candidate.params.iter().map(|parameter| parameter.ty.clone()).collect();
             self.retain_closed_signature(
                 &parameters,

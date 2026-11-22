@@ -76,12 +76,19 @@ pub fn extend_unions(unions: &mut Vec<IncanType>, module: &BodyIrModule) {
             unions.push(ty);
         }
     }
+    trace_union_selection("continuation", constructed, unions.len() - previous_count, unions);
+}
+
+/// Trace the exact ordered union shapes beside the counts of temporary and newly published entries.
+pub(crate) fn trace_union_selection(phase: &str, constructed: usize, appended: usize, unions: &[IncanType]) {
     if crate::trace_channel::tracing_products() {
-        crate::trace_channel::emit(
-            "carrier_unions",
-            "",
-            &format!("continuation {constructed} {}", unions.len() - previous_count),
-        );
+        let row = serde_json::json!({
+            "phase": phase,
+            "constructed": constructed,
+            "appended": appended,
+            "ordered_layouts": unions,
+        });
+        crate::trace_channel::emit("carrier_unions", "", &row.to_string());
     }
 }
 
