@@ -156,6 +156,7 @@ mod sequence_builtins;
 mod shared_callables;
 mod signature_lifetimes;
 mod statements;
+mod static_guards;
 mod static_methods;
 mod static_storage;
 mod stored_types;
