@@ -15,7 +15,6 @@ from semantic_text import comment_free, documentation_free, split_documentation
 
 from pub::internal_models.source_value_records import SOURCE_PROFILE, encode_documentation, encode_source_text
 
-
 pub model SourceProjectionRecord:
     """One exact source slice, its original coordinates and its digest over only the slice bytes."""
 
@@ -315,17 +314,27 @@ pub def compiled_owner_source(
     name: str,
     identity: str = "",
 ) -> Result[SourceProjectionRecord, str]:
-    """Map one compiler body name to its exact owner or unambiguous declaration-qualified default expression."""
+    """
+    Map one compiler body name to its exact owner or unambiguous declaration-qualified default expression.
+
+    A stable identity that names a declaration kind selects that kind's owner of the name first, so a field or
+    default that shares a type's name never stands in for the type.
+    """
     if identity.startswith("member/method:"):
         enclosing = stable_member_declaration(identity)
         context = identity.split("#in(")
         if len(context) == 2 and enclosing != "":
             kind = context[1].split(":")[0]
-            if kind in ["model", "class", "trait", "enum", "newtype"]:
+            if nominal_kind(kind):
                 for owner in projection.owners:
                     if owner.key.facet == kind + ":" + enclosing:
                         return Ok(owner)
         return Err(f"compiled method has no enclosing declaration source: {module}:{name}; identity={identity}")
+    kind = identity.split(":")[0]
+    if nominal_kind(kind) or kind in ["type_alias", "const", "static", "capability"]:
+        for owner in projection.owners:
+            if owner.key.facet == kind + ":" + name:
+                return Ok(owner)
     for owner in projection.owners:
         if owner.key.facet == name:
             return Ok(owner)
@@ -335,9 +344,9 @@ pub def compiled_owner_source(
             for owner in projection.owners:
                 if owner.key.facet.startswith(prefix) and owner.key.facet.endswith(":" + declaration + ":" + name):
                     return Ok(owner)
-        for prefix in ["model:", "class:", "trait:", "enum:", "newtype:"]:
+        for nominal in ["model", "class", "trait", "enum", "newtype", "rusttype"]:
             for owner in projection.owners:
-                if owner.key.facet == prefix + declaration:
+                if owner.key.facet == nominal + ":" + declaration:
                     return Ok(owner)
     else:
         for owner in projection.owners:
@@ -362,6 +371,11 @@ pub def compiled_owner_source(
         if owner.key.facet.endswith(":" + name):
             return Ok(owner)
     return Err(f"compiled body output has no matching owner source: {module}:{name}; identity={identity}")
+
+
+def nominal_kind(kind: str) -> bool:
+    """Whether a stable identity's kind names a declaration that can enclose members, as a member's `#in(...)` does."""
+    return kind in ["model", "class", "trait", "enum", "newtype", "rusttype"]
 
 
 def stable_member_declaration(identity: str) -> str:
@@ -504,6 +518,8 @@ def declaration_owner(line: str) -> str:
             name = identifier_prefix(header)
             if name != "":
                 return kind + ":" + name
+    if header.startswith("type "):
+        return type_declaration_owner(header[len("type "):])
     for kind in ["def", "const", "static", "model", "capability", "class", "trait", "partial", "newtype", "enum"]:
         prefix = kind + " "
         if header.startswith(prefix):
@@ -513,6 +529,22 @@ def declaration_owner(line: str) -> str:
             if name != "":
                 return kind + ":" + name
     return ""
+
+
+def type_declaration_owner(declaration: str) -> str:
+    """
+    Name a `type` declaration by the kind its stable identity names: `type X = newtype T` declares a newtype,
+    `type X = rusttype T` a Rust type, and any other `type X = T` an alias.
+    """
+    name = identifier_prefix(declaration)
+    equals = character_index(declaration, "=")
+    if name == "" or equals < 0:
+        return ""
+    target = declaration[equals + 1:].strip()
+    for kind in ["newtype", "rusttype"]:
+        if target.startswith(kind + " "):
+            return kind + ":" + name
+    return "type_alias:" + name
 
 
 def identifier_prefix(candidate: str) -> str:
