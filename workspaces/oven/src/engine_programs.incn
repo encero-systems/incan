@@ -27,7 +27,7 @@ from compiler_body_values import (
     select_body_inventory_except,
     select_namespace_inventory_except,
 )
-from compiler_plan_values import LOWERING_PROFILE, select_plan_inventory_except, plan_reads_changed, select_plan_modules
+from compiler_plan_values import LOWERING_PROFILE, encode_plan_selection, plan_selection_key, select_plan_inventory_except, plan_reads_changed, select_plan_modules
 from compiler_plan_modules import restored_modules
 from compiler_graph_records import EditCutoff, edit_cutoff, retire_compiler_versions, supersede_outputs
 from graph_read_demands import GraphDemand, note_graph_demand
@@ -475,6 +475,8 @@ pub def obtain(
         body_evaluations = bodies.checking_evaluations
         body_reuses = bodies.body_reuses
         body_ir_evaluations = bodies.body_ir_evaluations
+    # The plan-module selection is recorded with the request: the next one selects again only the slots that changed.
+    stage_put(request_transaction, plan_selection_key(origin), encode_plan_selection(origin, plan_modules.kept)?)
     # Each slot keeps one indexed output: the request's new evaluations retire the outputs they replace.
     retire_compiler_versions(graph, request_transaction, origin, CHECKER_PROFILE)?
     retire_compiler_versions(graph, request_transaction, origin, LOWERING_PROFILE)?
