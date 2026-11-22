@@ -12,7 +12,10 @@ from graph_read_demands import begin_graph_demands, finish_graph_demands, note_g
 from engine_epochs import CapturedRequest, after_projection
 from engine_capture import CaptureCounters
 from engine_proofs import retain, prepare_report
-from pub::incan_platform.store import Transaction, begin as begin_selection, commit, commit_pinned, read_counts, measure_frame_reads, finish_frame_reads
+from pub::incan_platform.store import (
+    SnapshotAdmission, Transaction, begin as begin_selection, commit, commit_pinned, read_counts,
+    measure_frame_reads, finish_frame_reads,
+)
 from observation import trace
 from jec import begin, record
 from pub::incan_platform.trace import Operation
@@ -62,7 +65,7 @@ pub model Ready:
     pub pin: Option[ExecutionLease] = None
 
 
-pub def finish_request(store: Path, pending: Pending) -> Result[Ready, str]:
+pub def finish_request(store: Path, mut admission: SnapshotAdmission, pending: Pending) -> Result[Ready, str]:
     """
     Capture installed facts once for this activation and resume reconciliation before the next request. The unit
     reasons the request records travel back with its completion, so they reach the caller's own trace channel.
@@ -70,7 +73,7 @@ pub def finish_request(store: Path, pending: Pending) -> Result[Ready, str]:
     begin_command()
     serve_from(pending.directory)
     collect_reasons()
-    settled = settled_request(store, pending)
+    settled = settled_request(store, admission, pending)
     notes = "\n".join(collected_reasons())
     served()
     end_command()
@@ -79,7 +82,7 @@ pub def finish_request(store: Path, pending: Pending) -> Result[Ready, str]:
     return Ok(ready)
 
 
-def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
+def settled_request(store: Path, mut admission: SnapshotAdmission, pending: Pending) -> Result[Ready, str]:
     """
     Settle one request without executing user code in the engine.
 
@@ -92,7 +95,7 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
     directory = store.joinpath("engine/console")
     directory.mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
     if pending.command == "check":
-        return settled_check(store, pending, directory.joinpath(run).0)
+        return settled_check(store, admission, pending, directory.joinpath(run).0)
     producing = begin()
     toolchain = toolchain_directory()?.0 + "/"
     standard = standard_library_dir()?.0 + "/"
@@ -104,6 +107,7 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
     measure_frame_reads(pending.proofs)
     produced_result = obtain(
         store,
+        admission,
         pending.capture.revision,
         pending.handle,
         directory.joinpath(run).0,
@@ -165,7 +169,7 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
             # 3. A completed native descriptor is selected independently for each caller.
             selecting = begin()
             mut captured = after_projection(pending.capture)?
-            mut selection = prepare_selection(store, pending.view, unit, pending.handle)?
+            mut selection = prepare_selection(admission, pending.view, unit, pending.handle)?
             mut group: list[Transaction] = []
             if let Some(transaction) = take(captured.transaction):
                 group.append(transaction)
@@ -245,7 +249,7 @@ def settled_library(
     )
 
 
-def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, str]:
+def settled_check(store: Path, mut admission: SnapshotAdmission, pending: Pending, console: str) -> Result[Ready, str]:
     """Check the captured build reach, publish its capture, and return no native selection or execution lease."""
     checking = begin()
     reading = read_counts()
@@ -255,6 +259,7 @@ def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, 
     measure_frame_reads(pending.proofs)
     result = check_program(
         store,
+        admission,
         pending.capture.revision,
         console,
         pending.format,

@@ -182,6 +182,7 @@ pub model NativeSelection:
 
 pub def check_program(
     store: Path,
+    mut admission: SnapshotAdmission,
     revision: str,
     console: str,
     format: str,
@@ -212,7 +213,6 @@ pub def check_program(
         whole_check = check_prepared(ready, toolchain, format, None, is_editor_view(view))?
         return Ok(CheckOutcome(code=whole_check.code, console=console))
     # Only the owners this request's edit reaches change between keystrokes; the view's pages are kept for the rest.
-    mut admission = SnapshotAdmission.for_store(store_path(store))
     reading = body_reading(admission, view, ready, epoch.inputs, record_writer)?
     invalidating = begin_work()
     invalid = body_owners_reading(reading.graph, reading.projected.keys, CHECKER_PROFILE)?
@@ -297,6 +297,7 @@ def select_bodies(
 
 pub def obtain(
     store: Path,
+    mut admission: SnapshotAdmission,
     revision: str,
     handle: str,
     console: str,
@@ -319,7 +320,6 @@ pub def obtain(
     """
     listing_refusals = get_or("OVEN_BODY_REFUSALS", "default") == "list"
     request_view = program_view(handle)?
-    mut admission = SnapshotAdmission.for_store(store_path(store))
     # The project descriptor, standalone index and checked graph select their own current view in this request.
     # 1. A hit uses the same whole-unit record as the legacy producer, without another compiler activation.
     # Refusal diagnosis must reach the checker: an earlier successful descriptor contains no refusal evidence.
@@ -771,17 +771,20 @@ def merge_request_transaction(native: Option[Transaction], source: Transaction) 
 
 pub def select_program(store: Path, view: str, unit: NativeUnit, handle: str) -> Result[NativeSelection, str]:
     """Commit a standalone selection through the engine's shared preparation boundary."""
-    mut selection = prepare_selection(store, view, unit, handle)?
+    mut admission = SnapshotAdmission.for_store(store_path(store))
+    mut selection = prepare_selection(admission, view, unit, handle)?
     if let Some(transaction) = selection.transaction:
         selection.snapshot = commit(transaction).map_err((error) => error.message())?
     return Ok(selection)
 
 
-pub def prepare_selection(store: Path, view: str, unit: NativeUnit, handle: str) -> Result[NativeSelection, str]:
+pub def prepare_selection(
+    mut admission: SnapshotAdmission, view: str, unit: NativeUnit, handle: str,
+) -> Result[NativeSelection, str]:
     """Stage the descriptor and its caller selection; an equal selection encodes and publishes nothing."""
     if program_view(handle)? != view:
         return Err("native descriptor belongs to a different project view")
-    selected = snapshot(store, view).map_err((error) => error.message())?
+    selected = admission.open(view).map_err((error) => error.message())?
     mut current = false
     if let Some(pointer) = get(selected, SELECTION_KEY).map_err((error) => error.message())?:
         current = decode_selection(view, pointer)? == handle

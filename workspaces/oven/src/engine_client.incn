@@ -27,8 +27,8 @@ from engine_wire import Refusal
 from incan_units import run_program
 from json_fields import required_text
 from observation import file_metadata, trace
-from pub::incan_platform.store import HOME_VIEW, Snapshot, begin, commit, fork, get, put, view_snapshot
-from store_path_conversion import claim, snapshot
+from pub::incan_platform.store import HOME_VIEW, Snapshot, SnapshotAdmission, begin, commit, fork, get, put, view_snapshot
+from store_path_conversion import claim, snapshot, store_path
 from toolchain import load_toolchain, toolchain_directory
 from installation_page import admitted_identity
 from unit_freshness import compiler_fingerprint, fingerprint
@@ -364,13 +364,14 @@ def execute_in(
     store = bakery()?
     store.mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
     compiler = installed_compiler()?
-    selected = snapshot(store, view).map_err((error) => error.message())?
+    mut admission = SnapshotAdmission.for_store(store_path(store))
+    selected = admission.open(view).map_err((error) => error.message())?
     if selected.index == "":
         # A program's first build in a home starts its project view as a copy-on-write fork of the home's view.
         if let Some(found) = bound:
             fork_project_view(store, found, view)?
     elif not proofs and command != "check" and output == "" and unit_options == "":
-        if let Some(code) = execute_local(store, selected, compiler, command, absolute, profile, arguments, argv0)?:
+        if let Some(code) = execute_local(store, admission, view, compiler, command, absolute, profile, arguments, argv0)?:
             return Ok(code)
     request = session_id()?
     identity = identity_for(store, compiler)?
@@ -461,7 +462,8 @@ def fork_project_view(store: Path, home_view: str, view: str) -> Result[None, st
 
 def execute_local(
     store: Path,
-    selected: Snapshot,
+    mut admission: SnapshotAdmission,
+    view: str,
     compiler: str,
     command: str,
     source: Path,
@@ -470,10 +472,9 @@ def execute_local(
     argv0: Option[str],
 ) -> Result[Option[i32], str]:
     """An unchanged local capture of an existing project view and its selected native record need no service request."""
-    view = selected.view
     capturing = begin_work()
     probed = probe_submit(
-        store,
+        admission,
         Submit(
             command=command,
             view=view,

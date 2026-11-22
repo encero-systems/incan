@@ -600,11 +600,13 @@ def prove_view_admission(root: Path, views: int) -> Result[int, str]:
 
 def publish_peer_replacements(root: Path) -> Result[None, str]:
     """Replace both views in one publication and collect while the parent holds the old leases."""
-    home = snapshot(root).map_err((error) => error.message())?
-    peer = snapshot(root, "peer").map_err((error) => error.message())?
+    mut home = snapshot(root).map_err((error) => error.message())?
+    mut peer = snapshot(root, "peer").map_err((error) => error.message())?
     previous = Path(manifest_path(home.root, home.generation, home.digest).value)
     old_bytes = previous.stat().map_err((error) => error.message())?.size().map_err((error) => error.message())?
     group = [put(begin(home), "key", b"home-new"), put(begin(peer), "key", b"peer-new")]
+    home.pin = None
+    peer.pin = None
     observe_work(WorkObserver(start=Some(observed_start), finish=Some(observed_finish)))
     before = observed_work.get("store_manifest_read", 0)
     published = commit_pinned(group, home.view).map_err((error) => error.message())?
