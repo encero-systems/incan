@@ -79,7 +79,10 @@ def exercise_provider_edit(binary: str, project: Path, bakery: Path, fresh: Path
 def make_project(project: Path, value: int) -> Result[None, str]:
     """Create a program whose only imported source belongs to the shared project library."""
     make_directory(project.joinpath("src"))?
-    write(project.joinpath("loaf.toml"), "[project]\nname = \"route_edit\"\nversion = \"0.1.0\"\n")?
+    write(
+        project.joinpath("loaf.toml"),
+        "[project]\nname = \"route_edit\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n",
+    )?
     write(project.joinpath("src/main.incn"), "from values import answer\n\ndef main() -> None:\n    println(answer())\n")?
     return write_provider(project, value)
 
