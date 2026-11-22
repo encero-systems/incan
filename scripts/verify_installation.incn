@@ -542,10 +542,7 @@ def run_rust_facets(installation: Installation) -> Result[int, str]:
     output.mkdir(true, true).map_err((error) => error.message())?
     mut planned: list[ReservedStep] = []
     mut projects: list[str] = []
-    mut environment = command_environment(installation)
-    bakery = selected_builder_bakery(get_or("INCAN_BUILDER_BAKERY", ""), get_or("INCAN_BUILDER_HOME", ""))
-    if bakery != "":
-        environment["INCAN_BAKERY"] = bakery
+    environment = builder_environment(installation, release_builder_bakery())
     manifests = sorted(
         [path.0 for path in installation.root.joinpath("loaves").rglob("loaf.toml").map_err((error) => error.message())?],
     )
@@ -601,16 +598,17 @@ def run_driver_integration(installation: Installation) -> Result[None, str]:
     sysroot = installed_path(toolchain, json_text(manifest, "sysroot")?)
 
     helper_source = installation.root.joinpath("workspaces/oven/src/toolchain_native.incn")
-    require_step(
-        command_step(
-            installation,
-            "driver-helper-build",
-            installation.oven.0,
-            ["build", helper_source.0, "--profile", "release"],
-            installation.root.joinpath("workspaces/oven"),
-            evidence.joinpath("helper-build.log"),
-        ),
-    )?
+    # The helper's dependencies are release units the shipped Oven build compiled; the builder's bakery holds them.
+    mut helper_build = command_step(
+        installation,
+        "driver-helper-build",
+        installation.oven.0,
+        ["build", helper_source.0, "--profile", "release"],
+        installation.root.joinpath("workspaces/oven"),
+        evidence.joinpath("helper-build.log"),
+    )
+    helper_build.environment = builder_environment(installation, release_builder_bakery())
+    require_step(helper_build)?
     helper = installation.root.joinpath("workspaces/oven/target/incan/release/bin/oven")
     if not helper.is_file():
         return Err(f"native description helper was not built: {helper.0}")
@@ -844,6 +842,22 @@ def command_step(
         log=log,
         timeout_seconds=installation.timeout_seconds,
     )
+
+
+pub def builder_environment(installation: Installation, bakery: str) -> Dict[str, str]:
+    """
+    The installed environment for builds of release units the release already compiled: the builder's bakery, which
+    admits a unit only by its full identity, when the release names one.
+    """
+    mut environment = command_environment(installation)
+    if bakery != "":
+        environment["INCAN_BAKERY"] = bakery
+    return environment
+
+
+def release_builder_bakery() -> str:
+    """The bakery the release names for its installed tests, or none outside a release."""
+    return selected_builder_bakery(get_or("INCAN_BUILDER_BAKERY", ""), get_or("INCAN_BUILDER_HOME", ""))
 
 
 def command_environment(installation: Installation) -> Dict[str, str]:
