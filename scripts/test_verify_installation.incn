@@ -1,7 +1,7 @@
 """Verify the installed-verification gate plan and the checks the census carries for the other gates."""
 
 from std.tempfile import TemporaryDirectory
-from oven_tests import selected_builder_bakery
+from oven_tests import PROJECT_RESERVATION_BYTES, selected_builder_bakery
 from release_support import TOOLCHAIN_DIRECTORY, builder_bakery, check_baseline
 from std.fs import Path
 from verify_installation import (
@@ -11,6 +11,8 @@ from verify_installation import (
     audit_relocation,
     builder_environment,
     census_jobs,
+    oven_jobs,
+    oven_test_arguments,
     require_lsp_contract,
     verification_gate_width,
     verification_phase_arguments,
@@ -83,10 +85,10 @@ def test_installed_release_tests_reuse_the_bakery_the_builder_compiled_into() ->
     return Ok(None)
 
 
-def test_every_installed_gate_starts_at_once_and_keeps_the_release_jobs_for_its_own_children() -> Result[None, str]:
+def test_every_installed_gate_starts_at_once_and_bounds_its_own_children() -> Result[None, str]:
     """
     The gates are independent, so the pool admits all of them together and only their memory reservations bound it;
-    each gate still runs at most the release's jobs of its own children.
+    each gate is passed the release's jobs and bounds its own children by them.
     """
     for jobs in [1, 2, 6]:
         assert verification_gate_width(jobs) == len(verification_phase_names(jobs))
@@ -106,6 +108,23 @@ def test_the_census_runs_twice_the_release_jobs_and_reserves_its_measured_share(
     reservations = [plan.reservation for plan in verification_phase_plans(2)]
     assert verification_phase_names(2)[4] == "census"
     assert reservations[4] == 4 * CENSUS_WORKER_RESERVATION_BYTES
+    return Ok(None)
+
+
+def test_the_oven_step_runs_twice_the_release_jobs_and_reserves_a_project_share_for_each() -> Result[None, str]:
+    """
+    The Oven step outlasts every other gate, the census included, and runs on alone after them, so like the census it
+    runs twice the release's jobs; the gate reserves one Oven project share for each invocation it may run.
+    """
+    assert oven_jobs(1) == 2
+    assert oven_jobs(2) == 4
+    assert oven_jobs(0) == 2
+    reservations = [plan.reservation for plan in verification_phase_plans(2)]
+    assert verification_phase_names(2)[1] == "oven"
+    assert reservations[1] == 4 * PROJECT_RESERVATION_BYTES
+    arguments = oven_test_arguments(Path("/oven"), Path("/checkout"), Path("/run"), 2)
+    assert arguments[5] == "--jobs"
+    assert arguments[6] == "4"
     return Ok(None)
 
 
