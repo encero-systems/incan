@@ -53,12 +53,15 @@ pub(super) fn api_declaration_backs_identity_entry(
             // `materialize_api_alias_projections` seeds callable projections from function declarations alone, so an
             // alias over a partial carries none here however the partial is reached. The raw export side does project
             // partials and the package-root entry checks that, so demanding it again from the checked API rejected
-            // every facade hop over a partial rather than catching a real disagreement.
+            // every facade hop over a partial rather than catching a real disagreement. An alias over an overload set
+            // has none either: it is one alias over several signatures, and each overload keeps its own graph entry,
+            // as the package-root rule for a re-export already accepts.
             let projected_callable = alias
                 .projected_function
                 .as_ref()
                 .map(|projected| projected.callable.name.as_str());
             let callable_metadata_agrees = (identity.kind == "partial" && projected_callable.is_none())
+                || (projected_callable.is_none() && publishes_overload_set(raw, entry))
                 || validate_alias_callable_metadata(
                     &format!("checked API alias `{}`", alias.name),
                     &entry.public_name,
@@ -290,6 +293,7 @@ pub(super) fn api_declaration_export_kind(declaration: &ApiDeclaration) -> Optio
 /// checks in `validate_export_identity_binding` and by the API-declaration backing checks, and consumers resolve by
 /// identity rather than by these strings.
 pub(super) fn canonical_identity_matches_path(
+    raw: &RawLibraryManifest,
     siblings: &[super::ExportIdentity],
     identity: &CanonicalIdentityExport,
     path: &[String],
@@ -309,12 +313,37 @@ pub(super) fn canonical_identity_matches_path(
     // That is the intended model: a local name for a declaration does not become a second declaration. Accept the
     // path when this package publishes it as an export carrying this same identity; that hop's own graph entry
     // proves its binding, so the chain stays validated one hop at a time instead of demanding that the last hop
-    // spell a name it deliberately replaced.
-    siblings.iter().any(|sibling| {
-        sibling.public_path.len() > 1
-            && &sibling.public_path[1..] == path
-            && sibling.canonical.as_ref() == Some(identity)
-    })
+    // spell a name it deliberately replaced. A hop another package publishes is proved the same way, by that
+    // package's own graph entry.
+    dependency_hop(raw, identity, path)
+        || siblings.iter().any(|sibling| {
+            sibling.public_path.len() > 1
+                && &sibling.public_path[1..] == path
+                && sibling.canonical.as_ref() == Some(identity)
+        })
+}
+
+/// Whether the identity graph publishes more than one function identity at `entry`'s public path: an overload set.
+pub(super) fn publishes_overload_set(raw: &RawLibraryManifest, entry: &super::ExportIdentity) -> bool {
+    raw.contract_metadata
+        .identity_graph
+        .exports
+        .iter()
+        .filter(|other| other.public_path == entry.public_path && other.kind == ExportIdentityKind::Function)
+        .count()
+        > 1
+}
+
+/// Whether `path` is a public path of another package, `["pub", <package>, ..., <name>]`, carrying an identity this
+/// package does not declare: a re-export of a dependency's renamed export (`pub from pub::facades import
+/// facade_calculate as b_calculate`) spells the dependency's hop, which the dependency's manifest binds to the
+/// declaration when that manifest is admitted. This manifest cannot see that entry and does not need to.
+pub(super) fn dependency_hop(raw: &RawLibraryManifest, identity: &CanonicalIdentityExport, path: &[String]) -> bool {
+    let declared_here = matches!(
+        &identity.origin,
+        CanonicalIdentityOriginExport::Package { library, .. } if library == &raw.name
+    );
+    !declared_here && matches!(path, [root, package, _, ..] if root == "pub" && package != &raw.name)
 }
 
 /// Validate all canonical field identities exported for one nominal declaration.
