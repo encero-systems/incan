@@ -506,3 +506,42 @@ fn a_loafs_foreign_preparation_starts_from_the_origins_its_install_record_lists(
     assert!(remapping.is_empty(), "a record without origins reaches {remapping:?}");
     Ok(())
 }
+
+/// A compiled Loaf's foreign preparation lays out a reached Loaf's types from the identity graph of that Loaf's install
+/// record: given a record of `base` whose graph omits `Other`, installing `shapes`, which reaches `base`, lays out
+/// `Inner` under its qualified spelling and not `Other`.
+#[test]
+fn a_reached_loaf_is_laid_out_from_the_identity_graph_its_install_record_carries() -> TestResult {
+    use crate::typechecker::{TypeChecker, canonical_public_library_type_name};
+    let root = tempfile::tempdir()?;
+    let loaves = shapes(root.path())?;
+    let base = Arc::clone(&loaves.entry("base").ok_or("missing base")?.artifact.manifest);
+    let shapes_manifest = Arc::clone(&loaves.entry("shapes").ok_or("missing shapes")?.artifact.manifest);
+    let mut producer = TypeChecker::new();
+    producer.set_loaves(Arc::clone(&loaves));
+    let mut record = producer.loaf_install_record("base", &base);
+    record
+        .identity_graph
+        .exports
+        .retain(|export| export.public_name != "Other");
+    let inner = canonical_public_library_type_name("base", "Inner");
+    let other = canonical_public_library_type_name("base", "Other");
+    let mut whole = checker("consumer", &loaves, &DependencyInterfacePreparationCache::default());
+    whole.cache_transitive_pub_export_semantics("shapes", &shapes_manifest);
+    assert!(
+        whole.transitive_pub_types.contains_key(&other),
+        "the whole record lays out {other}"
+    );
+    let cache = DependencyInterfacePreparationCache::default().with_install_record("base", record);
+    let mut consumer = checker("consumer", &loaves, &cache);
+    consumer.cache_transitive_pub_export_semantics("shapes", &shapes_manifest);
+    assert!(
+        consumer.transitive_pub_types.contains_key(&inner),
+        "a carried type is laid out"
+    );
+    assert!(
+        !consumer.transitive_pub_types.contains_key(&other),
+        "a type the reached Loaf's record omits is laid out under {other}"
+    );
+    Ok(())
+}
