@@ -341,7 +341,8 @@ impl TypeChecker {
                 && let Some(traits) = self.lookup_derivable_traits(&module)
             {
                 for trait_name in traits {
-                    paths.extend(self.body_ir_trait_derive_paths(&module, &trait_name));
+                    let (trait_module, declared_name) = self.derivable_trait_target(&module, &trait_name);
+                    paths.extend(self.body_ir_trait_derive_paths(&trait_module, &declared_name));
                 }
             } else {
                 let path = self.derive_trait_path(name);
