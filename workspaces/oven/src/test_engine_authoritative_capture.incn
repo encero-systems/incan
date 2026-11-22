@@ -77,16 +77,18 @@ def check_requests(mut channel: Channel, store: Path, trace: Path, source: Path)
     cold_requests = compiler_requests(trace)?
     assert cold_requests == (1, 1), f"expected one graph collection and one native request, found {cold_requests}"
     # 2. The same request must select the existing program.
-    repeated = completed_request(channel, store, source, 2, b"cold\n")?.1
+    repeated_epoch, repeated = completed_request(channel, store, source, 2, b"cold\n")?
     assert repeated.digest == first.digest, "second identical request published a capture"
+    assert repeated_epoch == first_epoch
     assert compiler_requests(trace)? == cold_requests, "second identical request activated the compiler"
     # 3. Changing bytes with their mtime restored must still change the reachable graph.
     edit_with_restored_mtime(helper, "pub def helper() -> int:\n    return 42\n")?
     edit_with_restored_mtime(source, "from nested.helper import helper\n\ndef main() -> None:\n    println(helper())\n")?
-    edited = completed_request(channel, store, source, 3, b"42\n")?.1
+    edited_epoch, edited = completed_request(channel, store, source, 3, b"42\n")?
     assert edited.digest != first.digest
-    native = compiler_requests(trace)?.1
-    assert native == 2, "the changed import did not activate the native compiler once"
+    assert edited_epoch.identity()? != first_epoch.identity()?
+    graphs, native = compiler_requests(trace)?
+    assert graphs > 1 and native == 2, "the changed import did not collect reach and activate the native compiler once"
     return Ok(None)
 
 
