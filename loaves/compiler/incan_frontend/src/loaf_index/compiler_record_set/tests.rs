@@ -686,6 +686,14 @@ fn a_dependency_outside_the_installed_set_opens_from_its_retained_inventory() ->
         "the admitted install digest must avoid a whole local manifest decode"
     );
 
+    let full = crate::loaf_index::LoafArtifact::read(&directory, "dependency")?;
+    let warm = crate::loaf_index::LoafArtifact::read(&directory, "dependency")?;
+    assert_eq!(full.identity, warm.identity);
+    assert!(
+        std::sync::Arc::ptr_eq(&full.manifest, &warm.manifest),
+        "a full local manifest demanded on the unchanged generation was decoded again"
+    );
+
     let old_selection = open()?;
     assert!(!old_selection.was_demanded());
     let modified = fs::metadata(&manifest_path)?.modified()?;
@@ -703,6 +711,10 @@ fn a_dependency_outside_the_installed_set_opens_from_its_retained_inventory() ->
             .contains("the manifest changed after its inventory was admitted")),
         "a same-size replacement with restored mtime may not reuse the previous manifest's selected install value"
     );
+    let changed = crate::loaf_index::LoafArtifact::read(&directory, "dependency")?;
+    assert_eq!(changed.manifest.version, "1.0.1");
+    assert_ne!(changed.identity.digest, full.identity.digest);
+
     Ok(())
 }
 
