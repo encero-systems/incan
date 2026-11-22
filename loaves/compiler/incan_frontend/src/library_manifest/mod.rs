@@ -12,6 +12,7 @@ pub mod declaration_records;
 pub mod executable_ranges;
 pub mod executable_surface;
 mod model;
+pub mod package_internal;
 pub(crate) mod ownership;
 pub mod public_identities;
 mod retained;
@@ -28,6 +29,7 @@ use incan_vocab::{
 pub use checked_replay::CheckedExportReplay;
 pub use model::*;
 pub use ownership::OwnershipExport;
+pub use package_internal::PackageInternalExports;
 pub use type_projection::{
     VisitTypeRefs, contains_native_union, visit_copied_type_refs, with_checked_type_origins, with_checked_type_routes,
     with_native_nominal_origins, with_self_owned_native_unions,
