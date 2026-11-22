@@ -45,6 +45,21 @@ fn staged_bytes(path: &Path) -> Option<Vec<u8>> {
     }
 }
 
+/// A staged page's bytes for a reader outside the worker's kept pages: its copy, or the store frame range its
+/// companion names, which is read only with the content digest the page is named by and only when it matches.
+pub(crate) fn staged_page(path: &Path) -> Result<Vec<u8>, String> {
+    let bytes = staged_bytes(path).ok_or_else(|| format!("cannot read staged page {}", path.display()))?;
+    match named_content(path) {
+        Some(content) if <[u8; 32]>::from(Sha256::digest(&bytes)) == content => Ok(bytes),
+        Some(_) => Err(format!("staged page {} differs from its named digest", path.display())),
+        None if path.is_file() => Ok(bytes),
+        None => Err(format!(
+            "staged page {} is offered by its frame without a digest",
+            path.display()
+        )),
+    }
+}
+
 /// The bytes of the store frame range a companion names: `segment\noffset\nlength\n`.
 fn framed_bytes(companion: &Path) -> Option<Vec<u8>> {
     use std::io::{Read, Seek, SeekFrom};
