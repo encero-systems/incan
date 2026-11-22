@@ -47,7 +47,7 @@ from testing import (
 )
 from runner_options import RUNNER_VALUE_OPTIONS, RunnerOptions, split_runner_options
 from test_batches import batch_groups, batch_of, module_of
-from project_library import with_testing_features
+from project_library import planned_program, with_testing_features
 from inline_source import inline, inline_arguments
 from owner_client import owned, status_code
 from owner_protocol import Reply
@@ -741,7 +741,7 @@ def ran(options: Options, passed: list[str]) -> Result[i32, str]:
     unit.program_entries = options.program_entries
     toolchain = toolchain_for(unit)?
     binary = program_binary(unit)
-    made = make_unit(unit, toolchain, binary, true)?
+    made = make_unit(planned_program(unit, options.direct)?, toolchain, binary, true)?
     record_work(Operation.LegacyPrepare, options.path, preparing)
     if made.code != 0:
         return Ok(made.code)
@@ -1217,7 +1217,7 @@ def built(options: Options, source: Path) -> Result[i32, str]:
         if status != 0 or not options.codegraph:
             return Ok(status)
         return published_library_graph(ready, toolchain, directory)
-    return delivered(options, compile_unit(unit, toolchain_for(unit)?, output)?, output)
+    return delivered(options, compile_unit(planned_program(unit, false)?, toolchain_for(unit)?, output)?, output)
 
 
 def records_library_graph(command: str, options: Options, source: Path, built: Result[i32, str]) -> Result[i32, str]:
