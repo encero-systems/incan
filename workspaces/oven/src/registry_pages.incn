@@ -32,7 +32,13 @@ def page_fingerprint(inputs: list[str]) -> Result[str, str]:
     return Ok(hexlify(sha256.digest(text.encode("utf-8"))))
 
 
-pub def recall_catalog(key: str, admission: Option[ClientStoreAdmission] = None) -> Result[Option[Catalog], str]:
+pub def recall_catalog(key: str) -> Result[Option[Catalog], str]:
+    """Read the current catalog page using a local bakery admission."""
+    mut admission = ClientStoreAdmission()
+    return recall_catalog_with_admission(key, admission)
+
+
+pub def recall_catalog_with_admission(key: str, mut admission: BorrowedMut[ClientStoreAdmission]) -> Result[Option[Catalog], str]:
     """
     Read the currently selected completed page, preserving all store and codec integrity errors.
 
@@ -43,10 +49,7 @@ pub def recall_catalog(key: str, admission: Option[ClientStoreAdmission] = None)
     # 1. A missing binding is a miss; damage to any selected object is an error.
     clock = begin_work()
     root = bakery()?
-    opened = match admission:
-        Some(client) => client.open_home(root)
-        None => snapshot(root)
-    view = opened.map_err((error) => error.message())?
+    view = admission.open_home(root).map_err((error) => error.message())?
     # Hold the already registered placement lease through mapped page decoding.
     _held = view.pin.clone()
     match get(view, binding(key)).map_err((error) => error.message())?:

@@ -38,7 +38,7 @@ from semver_req import (
     requirement_matches,
     version_text,
 )
-from rust_registry import read_registry_units, registry_selection, resolve_registry
+from rust_registry import read_registry_units_with_admission, registry_selection, resolve_registry
 from store_path_conversion import ClientStoreAdmission
 from rust_target import target_configuration
 from toolchain import load_toolchain, rust_compiler
@@ -102,9 +102,11 @@ pub def parse_lock_command(arguments: list[str]) -> Result[LockCommand, str]:
 
 pub def lock_project(command: LockCommand) -> Result[LockResult, str]:
     """Resolve and publish the explicit root project, reporting its selected sticky mode."""
+    mut admission = ClientStoreAdmission()
     match root_project(Path(command.path))?:
         None => return Err(f"{command.path}: no root loaf.toml")
-        Some(root) => return reconcile(root, "debug", FeatureRequest(), {}, ManifestReader(), command.mode, false, true)
+        Some(root) =>
+            return reconcile(root, "debug", FeatureRequest(), {}, ManifestReader(), command.mode, false, true, admission)
 
 
 pub def ensure_project_lock(
@@ -114,7 +116,20 @@ pub def ensure_project_lock(
     substitutes: Dict[str, str],
     reader: ManifestReader,
     locked: bool,
-    admission: Option[ClientStoreAdmission] = None,
+) -> Result[Option[str], str]:
+    """Read a project command's lock, returning a stale notice or a locked-mode refusal."""
+    mut admission = ClientStoreAdmission()
+    return ensure_project_lock_with_admission(path, profile, request, substitutes, reader, locked, admission)
+
+
+pub def ensure_project_lock_with_admission(
+    path: Path,
+    profile: str,
+    request: FeatureRequest,
+    substitutes: Dict[str, str],
+    reader: ManifestReader,
+    locked: bool,
+    mut admission: BorrowedMut[ClientStoreAdmission],
 ) -> Result[Option[str], str]:
     """
     Read a run, build, test or lint root's lock without ever writing it, or prove `--locked` needs no change.
@@ -255,7 +270,7 @@ def reconcile(
     requested_mode: str,
     locked: bool,
     write: bool,
-    admission: Option[ClientStoreAdmission] = None,
+    mut admission: BorrowedMut[ClientStoreAdmission],
 ) -> Result[LockResult, str]:
     """
     Resolve today's local and shipped-unit graph, retain valid pins, then compare or publish the generated lock.
@@ -291,7 +306,7 @@ def reconcile(
     )
     facets = local_facets(demand, configuration, substitutes, reader)?
     refuse_unmanaged_providers([root.0] + [facet.project for facet in facets], reader)?
-    mut registry = read_registry_units(Path(toolchain.registry_units), root.0, reader, false, admission)?
+    mut registry = read_registry_units_with_admission(Path(toolchain.registry_units), root.0, reader, false, admission)?
     registry.resolution_mode = mode
     if let Some(known) = existing:
         if keeps_existing(known, requested_mode, mode):

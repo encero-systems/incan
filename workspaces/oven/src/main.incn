@@ -33,7 +33,7 @@ from rust_registry import read_registry_units
 from rust_activation import ActivationPurpose
 from rust_manifest import rust_facet
 from rust_testing import build_rust_tests
-from project_lock import ensure_project_lock, lock_project, locked_report, parse_lock_command
+from project_lock import ensure_project_lock_with_admission, lock_project, locked_report, parse_lock_command
 from dependency_commands import dependency_command, parse_dependency_command
 from toolchain import load_toolchain, readmit_relinked_installation, rust_compiler
 from formatting import format_paths, parse_arguments as format_options
@@ -559,9 +559,9 @@ def records_command(command: str, arguments: list[str]) -> None:
                 Ok(text) => unit_options = text
             # Check observes one source reach like the legacy checker; it does not mutate a project lock, and warns of
             # the manifest entries this toolchain tolerates as every other project command does.
-            admission = ClientStoreAdmission.start()
+            mut admission = ClientStoreAdmission()
             if command != "check":
-                prepared_lock(command, options, Some(admission))
+                prepared_lock_with_admission(command, options, admission)
             else:
                 warn_tolerated_entries(command, Path(options.path))
             built = execute_records(
@@ -572,9 +572,9 @@ def records_command(command: str, arguments: list[str]) -> None:
                 options.argv0,
                 format,
                 options.engine_report,
+                admission,
                 unit_options,
                 options.output,
-                Some(admission),
             )
             finish(command, records_library_graph(command, options, source, built), format)
 
@@ -665,14 +665,20 @@ def enclosing_loaf(directory: Path) -> Result[Path, str]:
     return Err(f"{directory.0}: no loaf.toml in this directory or above it; name a source file")
 
 
-def prepared_lock(command: str, options: Options, admission: Option[ClientStoreAdmission] = None) -> None:
+def prepared_lock(command: str, options: Options) -> None:
+    """Read a project command's lock without rewriting it."""
+    mut admission = ClientStoreAdmission()
+    prepared_lock_with_admission(command, options, admission)
+
+
+def prepared_lock_with_admission(command: str, options: Options, mut admission: BorrowedMut[ClientStoreAdmission]) -> None:
     """
     Read a project command's root lock, which only `oven lock`, `oven add` and `oven update` write, and say in one line
     when it is stale; explicit direct source execution has no project lock.
     """
     if options.direct:
         return
-    match ensure_project_lock(
+    match ensure_project_lock_with_admission(
         Path(options.path),
         options.profile,
         options.request,
