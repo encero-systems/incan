@@ -62,6 +62,7 @@ from release_support import (
     verification_program,
 )
 from reference_cache import census_inputs
+from release_run import handoff_build_lane
 from release_verifier_teardown import finish_installed_verifier
 from relocated_sysroot import shared_relocated_sysroot
 from verify_installation import (
@@ -295,7 +296,7 @@ def test_cancelled_release_step_reaps_its_spawned_descendant() -> Result[None, s
 
 
 def test_completed_installed_verification_releases_its_engines_and_unit_lease() -> Result[None, str]:
-    """An installed records invocation can finish before a nested Bakery's engine releases the inherited unit."""
+    """The builder handoff and installed-verifier join release the engines that outlive their original commands."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     root = temporary.path().resolve().map_err((error) => error.message())?
     oven = root.joinpath("private  verification/verification-home/bin/incan")
@@ -344,7 +345,56 @@ def test_completed_installed_verification_releases_its_engines_and_unit_lease() 
             Ok(report) => println(RustString.from_utf8_lossy(report.stdout).into_owned())
             Err(_) => pass
     assert remaining == 0 and not blocked, f"installed verification left {remaining} processes; unit lease held={blocked}"
+    prove_builder_handoff(root.joinpath("builder-handoff"), installed)?
     return Ok(None)
+
+
+def prove_builder_handoff(root: Path, installed: Path) -> Result[None, str]:
+    """Keep a single Bakery available to two byte-identical placements when the release removes the first."""
+    lane = root.joinpath("lane")
+    builder = lane.joinpath("oven-bin/incan")
+    verifier = root.joinpath("verification-home/bin/incan")
+    for executable in [builder, verifier]:
+        executable.parent().mkdir(true, true).map_err((error) => error.message())?
+        _ = installed.copy(executable, true, true).map_err((error) => error.message())?
+    first = verifier_program(root.joinpath("programs/builder.incn"), "def main() -> None:\n    println(\"builder\")\n")?
+    second = verifier_program(root.joinpath("programs/installed.incn"), "def main() -> None:\n    println(\"installed\")\n")?
+    bakery = root.joinpath("shared-bakery")
+    warm = build_handoff_probe(builder, first, bakery, root.joinpath("builder.log"))?
+    assert warm == 0 and verifier_process_count(builder.0)? > 0, "the builder must leave a live owner"
+    current = bakery.joinpath("CURRENT")
+    before = current.read_text("utf-8", "strict").map_err((error) => error.message())?
+
+    reclaimed = handoff_build_lane(lane, false)?
+    removed = not lane.exists()
+    after = current.read_text("utf-8", "strict").map_err((error) => error.message())?
+    log = root.joinpath("installed.log")
+    outcome = build_handoff_probe(verifier, second, bakery, log)
+    finish_installed_verifier(verifier.0, Ok(None))?
+    # Restore only this probe's copy to let the red case retire any engine that survived the reclaim.
+    builder.parent().mkdir(true, true).map_err((error) => error.message())?
+    _ = installed.copy(builder, true, true).map_err((error) => error.message())?
+    finish_installed_verifier(builder.0, Ok(None))?
+
+    assert reclaimed > 0 and removed, "the release handoff must reclaim the build lane"
+    assert before == after, "retiring the builder must preserve the existing Bakery generation"
+    stdout = log.read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert outcome? == 0, stdout
+    return Ok(None)
+
+
+def build_handoff_probe(oven: Path, source: Path, bakery: Path, log: Path) -> Result[int, str]:
+    """Build one fresh program with a fixed executable and shared Bakery."""
+    return run_step(Step(
+        name="builder-handoff",
+        executable=oven.0,
+        arguments=["build", source.0, "--profile", "release"],
+        environment={"INCAN_ENGINE": "records", "INCAN_STDLIB": "", "INCAN_BAKERY": bakery.0, "OVEN_ENGINE_BINARY": oven.0},
+        remove_environment=[],
+        directory=Some(source.parent()),
+        log=log,
+        timeout_seconds=90,
+    ))
 
 
 const NESTED_VERIFICATION: str = """

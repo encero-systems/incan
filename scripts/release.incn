@@ -49,7 +49,6 @@ from release_support import (
     log_tail,
     parse_release_options,
     reference_worker_arguments,
-    reclaim_paths,
     record_tree_sample,
     seed_toolchain_directory,
     require_candidate_census,
@@ -81,6 +80,8 @@ from release_run import (
     Candidate,
     ReleasePaths,
     ReleaseRun,
+    finish_builder_handoff,
+    reclaim,
     release_paths,
     release_step,
     require_installed_verifier,
@@ -199,8 +200,8 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
             Ok(prepared) => installation = Some(prepared)
             Err(message) => return Err(refused_after(candidate.library, message))
     finish_oven_test_library(run, candidate)?
-    if not run.options.prove_fixed_point and not signed:
-        reclaim(run, "build-lane", [run.paths.lane])?
+    if not signed:
+        finish_builder_handoff(run)?
     reclaim(run, "reference-scratch", [run.paths.output.joinpath("reference-contracts-scratch")])?
     if not run.options.prove_fixed_point and not signed:
         reclaim(run, "source-targets", generated_source_targets(run))?
@@ -1177,14 +1178,6 @@ def generated_source_targets(run: ReleaseRun) -> list[Path]:
         run.paths.source.joinpath("loaves/toolchain/incan-rustc-driver/target"),
         run.paths.source.joinpath("loaves/compiler/incan_native_runtime/target"),
     ]
-
-
-def reclaim(run: ReleaseRun, label: str, paths: list[Path]) -> Result[None, str]:
-    """Reclaim one completed phase's exact scratch roots and retain the measured byte reduction."""
-    reclaimed = reclaim_paths(paths)?
-    append_bytes(run.paths.output.joinpath("timings.tsv"), f"reclaimed/{label}", reclaimed)?
-    _ = record_tree_sample(run.paths.output, run.paths.output.joinpath("tree-samples.tsv"), f"after-{label}")?
-    return Ok(None)
 
 
 def complete_receipt(run: ReleaseRun, counts: Option[Counts]) -> Result[None, str]:

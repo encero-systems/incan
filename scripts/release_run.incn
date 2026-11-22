@@ -13,10 +13,40 @@ from release_support import (
     ReleaseOptions,
     ReleaseTrace,
     Step,
+    append_bytes,
     append_timing,
     log_tail,
+    reclaim_paths,
+    record_tree_sample,
     run_step,
 )
+
+
+pub def reclaim(run: ReleaseRun, label: str, paths: list[Path]) -> Result[None, str]:
+    """Reclaim one completed phase's exact scratch roots and retain the measured byte reduction."""
+    return record_reclaim(run, label, reclaim_paths(paths)?)
+
+
+def record_reclaim(run: ReleaseRun, label: str, reclaimed: int) -> Result[None, str]:
+    """Record the bytes reclaimed from a release-owned phase and sample the remaining tree."""
+    append_bytes(run.paths.output.joinpath("timings.tsv"), f"reclaimed/{label}", reclaimed)?
+    _ = record_tree_sample(run.paths.output, run.paths.output.joinpath("tree-samples.tsv"), f"after-{label}")?
+    return Ok(None)
+
+
+pub def finish_builder_handoff(run: ReleaseRun) -> Result[None, str]:
+    """Complete the builder phase before installed verification and record any reclaimed build-lane bytes."""
+    reclaimed = handoff_build_lane(run.paths.lane, run.options.prove_fixed_point)?
+    if not run.options.prove_fixed_point:
+        return record_reclaim(run, "build-lane", reclaimed)
+    return Ok(None)
+
+
+pub def handoff_build_lane(lane: Path, retain: bool) -> Result[int, str]:
+    """Reclaim the release-owned build lane unless a fixed-point proof will read it again."""
+    if retain:
+        return Ok(0)
+    return reclaim_paths([lane])
 
 
 pub model ReleasePaths:
