@@ -45,7 +45,7 @@ from pub::internal_models import (
     encode_ready_work,
 )
 from pub::internal_models.checker_records import CHECKER_PROFILE
-from pub::internal_models.namespace_references import decode_namespace_references, namespace_reference_filename
+from pub::internal_models.namespace_references import decode_namespace_references, namespace_header_reference_filename, namespace_reference_filename
 from compiler_graph_records import (
     EditCutoff,
     OutputSlots,
@@ -58,7 +58,7 @@ from compiler_graph_records import (
 from compiler_prepared_records import PreparedBodyRecordSource
 from compiler_record_envelopes import RankedActivation, RankedCheckingSweep, persist_activation
 from compiler_ranked_build import RankedBuildInputs, contextual_ranked_pages
-from compiler_body_keys import body_key, namespace_key
+from compiler_body_keys import body_key, namespace_header_key, namespace_key
 from compiler_plan_values import LOWERING_PROFILE, select_plan_modules
 from compiler_plan_modules import plan_module_key
 from pub::incan_mir_plan import PlanModuleFunction, PlanModuleValue, encode_plan_module
@@ -82,6 +82,34 @@ from pub::internal_models.graph_crumb_fields import KEY_TYPE, encode_graph_row
 from std.io import BytesIO
 from compiler_source_projection import project_source, publish_source_projection, scope_member, scope_members, signature_record
 from compiler_projection_cache import cached_editable_dependency_signature_record, editable_dependency_projection_key
+
+
+pub def test_selected_namespaces_offer_their_headers_beside_their_frames() -> Result[None, str]:
+    """A request is offered the header of every namespace it is offered by frame, on a page of its own, so the
+    compiler admits an unchanged namespace by its header; a namespace that is not selected offers no header."""
+    origin = "coverage"
+    left = "src/left.incn"
+    right = "src/right.incn"
+    order = certified_namespace_order(origin, {left: [], right: []})?
+    selected = store_snapshot(memory_root()).map_err((error) => error.message())?
+    mut graph = commit(put(begin(selected), "incan.compiler.namespace-order\t" + order[left].evidence, order[left].certificate)).map_err((error) => error.message())?
+    graph = commit(put(begin(graph), "incan.compiler.namespace-order\t" + order[right].evidence, order[right].certificate)).map_err((error) => error.message())?
+    rank = ProducerRank(namespace=0, stage=ProducerStage.Signature, dependency=0)
+    for file in [left, right]:
+        scope = ReadScope(snapshot=graph.digest, profile=CHECKER_PROFILE)
+        source = PreparedBodyRecordSource.open(scope)
+        receipt = source.receipt(scope, namespace_key(origin, file), [], order[file].evidence)?
+        graph = publish_evaluation(graph, file, rank, b"selected namespace page", receipt)?.snapshot
+        header = source.receipt(scope, namespace_header_key(origin, file), [], order[file].evidence)?
+        graph = publish_evaluation(graph, "header-" + file, rank, b"selected namespace header", header)?.snapshot
+    offered = select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, [right], true)?
+    pages = {page.key: page.value for page in offered.pages}
+    assert namespace_reference_filename() in pages and namespace_header_reference_filename() in pages
+    frames = decode_namespace_references(pages[namespace_reference_filename()].clone())?
+    headers = decode_namespace_references(pages[namespace_header_reference_filename()].clone())?
+    assert len(frames) == 1 and frames[0].key.identity == left
+    assert len(headers) == 1 and headers[0].key == namespace_header_key(origin, left)
+    return Ok(None)
 
 
 pub def test_certified_module_owner_overlap_and_partial_cycle() -> Result[None, str]:
