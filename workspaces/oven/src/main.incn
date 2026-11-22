@@ -7,7 +7,7 @@ from rust::std::process import exit
 from rust::std::string import String as RustString
 from std.environ import get_or
 from std.fs import Path
-from engine_selector import Engine, select as select_engine
+from engine_selector import DEFAULT_ENGINE, Engine, select as select_engine
 from engine_client import deliver_program, execute as execute_records, execute_overlay, serve_overlays
 from engine_unit_options import unit_options_text
 from overlay_request import parse_overlay, parse_serve
@@ -270,7 +270,7 @@ def dispatch(command: str, rest: list[str]) -> None:
             Ok(report) => println(report)
         return
     if records_route(command, rest):
-        match select_engine(get_or("INCAN_ENGINE", "legacy")):
+        match select_engine(get_or("INCAN_ENGINE", DEFAULT_ENGINE)):
             Err(reason) =>
                 fail(f"{invoked()} {command}: engine refusal {refusal_code(reason.kind)}: {reason.detail}", 2)
             Ok(Engine.Records) =>
