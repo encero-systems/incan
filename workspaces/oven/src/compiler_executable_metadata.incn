@@ -1,0 +1,106 @@
+"""Read the selected executable format's owner and scope metadata without rebuilding checked bodies."""
+
+from rust::incan_semantics_core import encode_incan_symbol_identity
+from rust::incan_semantics_core::executable_representation import decode_owner
+from std.primitives.views import MappedFile, MappedView
+from pub::internal_models.checker_records import decode_owned_namespace_view
+from pub::internal_models.executable_body_wire import (
+    NamespaceAtom, PreparedWireReader, executable_graph_output_marker, prepare_executable_namespace_reader, prepare_executable_owner_reader,
+    read_executable_namespace_scopes, read_executable_owner_header,
+)
+from pub::internal_models.executable_scope import complete_scope_digest
+from pub::internal_models.overload_members import scope_output_suffix
+
+
+pub model ExecutableOwnerMetadata:
+    """The key binding, lowering symbol and scope reference read independently of statements."""
+
+    pub identity: str
+    pub source: str
+    pub name: str
+    pub symbol: str
+    pub scope: Option[str] = None
+
+
+pub def typed_executable_output(path: str) -> bool:
+    """Distinguish the published typed transport from the explicit predecessor handoff."""
+    return path.endswith(executable_graph_output_marker() + ".published" + scope_output_suffix())
+
+
+pub def executable_view(data: bytes) -> Result[MappedView, str]:
+    """Borrow authenticated fields from one owned input buffer."""
+    file = MappedFile.owned(data)?
+    return match file.view(0, file.len()):
+        Some(view) => Ok(view)
+        None => Err("executable value has no mapped view")
+
+
+pub def typed_owner_reader() -> Result[PreparedWireReader, str]:
+    """Prepare the dictionary once for the caller's owner inventory."""
+    return prepare_executable_owner_reader()
+
+
+pub def selected_owner_metadata_reader(typed: bool) -> Result[Option[PreparedWireReader], str]:
+    """Prepare the typed reader only if the request selected the current executable profile."""
+    if typed:
+        return Ok(Some(typed_owner_reader()?))
+    return Ok(None)
+
+
+pub def typed_owner_metadata(reader: Borrowed[PreparedWireReader], data: bytes) -> Result[ExecutableOwnerMetadata, str]:
+    """Admit an exact typed owner and read only the fields needed by graph publication."""
+    fields = read_executable_owner_header(reader, executable_view(data)?)?
+    return Ok(ExecutableOwnerMetadata(identity=metadata_text(fields[0])?, source=metadata_text(fields[1])?,
+        name=metadata_text(fields[2])?, symbol=metadata_text(fields[3])?, scope=scope_digest(fields[4])?))
+
+
+pub def predecessor_owner_metadata(data: bytes) -> Result[ExecutableOwnerMetadata, str]:
+    """Read a predecessor compiler handoff used by explicit legacy fixtures."""
+    decoded = decode_owner(data).map_err((error) => str(error))?
+    symbol = match decoded.body.canonical:
+        Some(canonical) => encode_incan_symbol_identity(canonical)
+        None => ""
+    return Ok(ExecutableOwnerMetadata(identity=decoded.identity, source=decoded.source,
+        name=str(decoded.body.name), symbol=symbol))
+
+
+pub def typed_namespace_reader() -> Result[PreparedWireReader, str]:
+    """Prepare the dictionary once for the caller's namespace inventory."""
+    return prepare_executable_namespace_reader()
+
+
+pub def namespace_digests(reader: Borrowed[PreparedWireReader], module: str, record: bytes) -> Result[list[str], str]:
+    """Admit the published namespace and extract only its unique, first-use scope addresses."""
+    selected = decode_owned_namespace_view(record).map_err((error) => f"published namespace refused: {error:?}")?
+    fields = read_executable_namespace_scopes(reader, selected.body_ir)?
+    if selected.module != module or metadata_text(fields[0])? != module:
+        return Err("executable namespace disagrees with its published source")
+    mut digests: list[str] = []
+    if let NamespaceAtom.Items(values) = fields[1]:
+        for value in values:
+            if let Some(digest) = scope_digest(value)?:
+                if digest in digests:
+                    return Err("executable namespace repeats a scope directory slot")
+                digests.append(digest)
+        return Ok(digests)
+    return Err("executable namespace requires a scope directory")
+
+
+def metadata_text(cell: NamespaceAtom) -> Result[str, str]:
+    """Read a schema-bound text member."""
+    if let NamespaceAtom.Text(value) = cell:
+        return Ok(value)
+    return Err("invalid executable metadata text field")
+
+
+def scope_digest(cell: NamespaceAtom) -> Result[Option[str], str]:
+    """Read the declared optional complete scope digest."""
+    match cell:
+        NamespaceAtom.Missing => return Ok(None)
+        NamespaceAtom.Present(values) =>
+            if len(values) == 1:
+                digest = metadata_text(values[0])?
+                if complete_scope_digest(digest):
+                    return Ok(Some(digest))
+        _ => pass
+    return Err("invalid executable scope digest")

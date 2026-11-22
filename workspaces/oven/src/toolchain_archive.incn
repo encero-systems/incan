@@ -191,6 +191,8 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
         description = replaced(description, "worker_protocol_crumb", JsonValue.bool(true))?
     if toolchain.unit_descriptor_crumb:
         description = replaced(description, "unit_descriptor_crumb", JsonValue.bool(true))?
+    if toolchain.graph_executable_crumb:
+        description = replaced(description, "graph_executable_crumb", JsonValue.bool(true))?
     if toolchain.compiler_record_export_crumb:
         description = replaced(description, "compiler_record_export_crumb", JsonValue.bool(true))?
     if toolchain.namespace_references:

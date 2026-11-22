@@ -1,7 +1,8 @@
 """Graph-only Crumb roots for checked executable bodies and modules."""
 
+pub from rust::internal_models_native import NamespaceAtom, PreparedWireReader
 from rust::internal_models_native import (
-    NamespaceAtom, PreparedWireReader, checked_projection_fields, decode_checked_projection, decode_checked_projection_view,
+    checked_projection_fields, decode_checked_projection, decode_checked_projection_view,
     encode_checked_projection, executable_type_descriptions,
 )
 from std.primitives.crumb.descriptions import Description
@@ -15,6 +16,13 @@ from executable_graph_schema import (
 
 const BODY: bytes = b"\x02\xff\x73\xc4\xb3\x17\x00"
 const MODULE: bytes = b"\x70\x27\x49\xa1\x72\x4a\x00"
+pub const EXECUTABLE_GRAPH_INPUT: str = "executable-graph-format"
+pub const EXECUTABLE_GRAPH_FORMAT: bytes = b"incan.graph.checked-executable/1"
+
+
+pub def executable_graph_output_marker() -> str:
+    """Request the typed executable rows while preserving the earlier sidecar suffix capabilities."""
+    return ".executable-crumb"
 
 
 def shapes(include_declarations: bool) -> list[Description]:
@@ -98,3 +106,8 @@ pub def prepare_executable_namespace_reader() -> Result[PreparedWireReader, str]
 pub def decode_executable_namespace_view(reader: Borrowed[PreparedWireReader], view: Borrowed[MappedView]) -> Result[NamespaceAtom, str]:
     """Restore the selected executable module from its authenticated immutable bytes."""
     return decode_checked_projection_view(reader, view)
+
+
+pub def read_executable_namespace_scopes(reader: Borrowed[PreparedWireReader], view: Borrowed[MappedView]) -> Result[list[NamespaceAtom], str]:
+    """Read the owning source and the first-use digest directory without materializing executable declarations."""
+    return checked_projection_fields(reader, view, [b"source", b"scopes"])

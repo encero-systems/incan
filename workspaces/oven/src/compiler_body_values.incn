@@ -15,7 +15,7 @@ from pub::internal_models.namespace_references import (
 from pub::internal_models.records import ReadReceipt, RecordKey, encode_record_key
 from pub::incan_mir_plan import LoweringEvent
 from pub::internal_models.namespace_order import NamespaceOrder, decode_namespace_order
-from compiler_body_keys import IDENTITY_PROFILE, NAMESPACE_IDENTITY_PROFILE
+from compiler_body_keys import EXECUTABLE_BODY_PROFILE, IDENTITY_PROFILE, NAMESPACE_IDENTITY_PROFILE
 from compiler_namespace_layouts import select_layout_references
 from compiler_owner_records import read_body_frame
 from compiler_graph_records import (
@@ -294,9 +294,7 @@ def paired_records(
         mut frame = b""
         if owner in body_positions:
             index = body_positions[owner]
-            # An older installation can carry an unwrapped kernel payload. Mint the frame under the current authority.
-            if bodies[index].value[:4] == b"CRMB":
-                frame = read_body_frame(bodies[index].key, profile, bodies[index].value)?
+            frame = read_body_frame(bodies[index].key, profile, bodies[index].value)?
         if len(frame) > 0 or allow_checking_pair:
             selected_records.append(SelectedBodyRecord(identity=local.key.identity, local=local.value,
                 final=finals[final_positions[owner]].value, body_ir=frame))
@@ -375,6 +373,10 @@ def owner_positions(records: Borrowed[list[ReusableRecord]]) -> Result[Dict[str,
     mut positions: Dict[str, int] = {}
     for index in range(len(records)):
         mut key = records[index].key
+        if key.family == "body-ir":
+            if key.identity_profile != EXECUTABLE_BODY_PROFILE:
+                return Err("selected executable owner has an obsolete identity profile")
+            key.identity_profile = IDENTITY_PROFILE
         key.family = "local"
         owner = encode_record_key(key)?
         if owner not in positions:

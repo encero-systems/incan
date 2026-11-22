@@ -33,7 +33,7 @@ from compiler_body_values import (
 from compiler_plan_values import LOWERING_PROFILE, encode_plan_selection, plan_selection_key, select_plan_inventory_except, plan_reads_changed, select_plan_modules
 from compiler_plan_modules import restored_modules
 from compiler_refusals import PreparedWarnings, replay_checked_warnings
-from compiler_graph_records import EditCutoff, EditReaders, PlanImportReach, retire_compiler_versions, select_edit_readers, supersede_outputs
+from compiler_graph_records import EditCutoff, EditReaders, PlanImportReach, retire_compiler_versions, retire_executable_predecessors, select_edit_readers, supersede_outputs
 from compiler_body_fallbacks import plan_module_origins
 from graph_read_demands import GraphDemand, note_graph_demand
 from engine_epochs import load_epoch
@@ -76,6 +76,8 @@ from pub::incan_platform.trace import Operation
 from pub::internal_models.checker_records import CHECKER_PROFILE
 from compiler_ranked_build import RankedBuildInputs
 from compiler_reopened_peers import selection as reopen_selection
+from pub::internal_models.executable_body_wire import EXECUTABLE_GRAPH_FORMAT, EXECUTABLE_GRAPH_INPUT
+from std.primitives.text import copy_frozen_bytes
 from compiler_runtime_requirements import RUNTIME_REQUIREMENTS, RUNTIME_REQUIREMENTS_REPORT, runtime_requirements_key
 
 pub model SealedProgram:
@@ -374,6 +376,8 @@ pub def obtain(
     described, _ = prepare_project_library(planned, toolchain)?
     ready = prepared_for(request_view, described, toolchain)?
     mut whole = whole_unit_reason(ready, unit_options)?
+    if whole == "" and not toolchain.graph_executable_crumb:
+        whole = "compiler predates typed executable graph records"
     if whole == "" and shared and ready.project_library is None:
         whole = "shared library refused"
     if whole != "":
@@ -381,7 +385,7 @@ pub def obtain(
         return whole_unit_program(store, selector, ready, toolchain, console, whole, epoch_reads)
     compiled_key = unit_key(ready, toolchain)?
     plan_report = plan_record_report_path(ready, compiled_key, toolchain.unit_descriptor_crumb)
-    body_output = graph_body_output_path(ready, compiled_key, toolchain.unit_descriptor_crumb)
+    body_output = graph_body_output_path(ready, compiled_key, toolchain.unit_descriptor_crumb, toolchain.graph_executable_crumb)
     if compiled_key.refusal != "":
         return Err(compiled_key.refusal)
     # Diagnosis has a separate native identity: a normal successful unit is not proof that all bodies were rechecked.
@@ -436,11 +440,12 @@ pub def obtain(
         cutoff=cutoff, plan_reach=plan_reach,
     )?
     mut selected_bodies = encode_body_inventory(retained_bodies)?
+    selected_bodies.append(SelectedBodyPage(key=EXECUTABLE_GRAPH_INPUT, value=copy_frozen_bytes(EXECUTABLE_GRAPH_FORMAT)))
     record_work(Operation.EngineSelect, "body-inventory", selecting)
     mut checking: Option[RankedBuildInputs] = None
     if not listing_refusals and len(invalid) > 0:
         checking = Some(RankedBuildInputs(graph=graph, projected=projected.transaction, origin=origin, invalid=invalid, changes=projected.keys, covered=covered, plan_reads=plan_reads))
-    if len(covered.owners) > 0:
+    if graph.generation > 0:
         selected_bodies.append(reopen_selection(graph, origin)?)
     selected_bodies.extend(namespaces.pages)
     selecting = begin_work()
@@ -511,7 +516,7 @@ pub def obtain(
             stage_put(request_transaction, runtime_key, requirements)
         # The compiler's report names the bodies it restored; a selected record it refused was checked afresh.
         reading_checker_sidecar = begin_work()
-        checker_counts = checker_record_counts(ready, compiled_key, toolchain.unit_descriptor_crumb)?
+        checker_counts = checker_record_counts(ready, compiled_key, toolchain.unit_descriptor_crumb, toolchain.graph_executable_crumb)?
         record_work(
             Operation.EngineSidecarAuthentication,
             checker_record_report_path(body_output).0,
@@ -545,6 +550,7 @@ pub def obtain(
     stage_put(request_transaction, plan_selection_key(origin), encode_plan_selection(origin, plan_modules.kept)?)
     # Each slot keeps one indexed output: the request's new evaluations retire the outputs they replace.
     retire_compiler_versions(graph, request_transaction, origin, CHECKER_PROFILE)?
+    retire_executable_predecessors(graph, request_transaction, origin, CHECKER_PROFILE)?
     retire_compiler_versions(graph, request_transaction, origin, LOWERING_PROFILE)?
     supersede_outputs(graph, request_transaction)?
     fact = produced_fact(produced.fact)?

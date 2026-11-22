@@ -80,6 +80,25 @@ pub fn open_graph_executable_scope(encoded: &[u8], source: &str, digest: &str) -
         return Err("checked executable scope disagrees with its selected digest".into());
     }
     let entries = internal_models::decode_executable_scope(&encoded.to_vec(), &source.to_owned())?;
+    restore_executable_scope_entries(entries)
+}
+
+/// Keep the selected scope encoded in the leased store view until decoding its requested bindings.
+pub fn open_mapped_graph_executable_scope(
+    reader: &internal_models::PreparedWireReader,
+    view: &internal_models::MappedView,
+    source: &str,
+    digest: &str,
+) -> Result<SharedIdentities, String> {
+    if hex::encode(Sha256::digest(view.0.as_bytes())) != digest {
+        return Err("checked executable scope disagrees with its selected digest".into());
+    }
+    let entries = internal_models::decode_executable_scope_view(reader, view, &source.to_owned())?;
+    restore_executable_scope_entries(entries)
+}
+
+/// Restore only a nonempty nominal map because an empty map has no independent scope record.
+fn restore_executable_scope_entries(entries: Vec<internal_models::NamespaceEntry>) -> Result<SharedIdentities, String> {
     let scope = SharedIdentities::restore(to_cell(NamespaceAtom::Mapping(entries))?)?;
     if scope.is_empty() {
         return Err("the empty executable scope does not have a separate record".into());

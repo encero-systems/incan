@@ -1,5 +1,6 @@
 """Authenticate compiler facts staged in the current unpublished graph transaction."""
 
+from pub::internal_models.executable_scope import EXECUTABLE_SCOPE_FAMILY
 from pub::internal_models.overload_members import OVERLOAD_MEMBERS, read_method_members
 from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
@@ -29,6 +30,7 @@ pub class PreparedBodyRecordSource with RecordSource:
 
     scope: ReadScope
     values: Dict[str, bytes] = {}
+    executable_scope_digests: Dict[str, str] = {}
     # The unit's compiler generation record: every receipt this source authenticates also reads it, so a checked
     # record is reused only under the compiler that wrote it.
     compiler: Option[RecordKey] = None
@@ -46,6 +48,10 @@ pub class PreparedBodyRecordSource with RecordSource:
         """Make one exact pending value available to later producers in the same transaction."""
         self.values[key] = value
 
+    pub def add_verified_executable_scope(mut self, key: str, digest: str) -> None:
+        """Remember the complete digest checked before the transaction staged this scope."""
+        self.executable_scope_digests[key] = digest
+
     pub def holds(self, key: str) -> bool:
         """Whether a value is already available under one encoded record key."""
         return key in self.values
@@ -61,7 +67,8 @@ pub class PreparedBodyRecordSource with RecordSource:
     pub def for_profile(self, profile: str) -> PreparedBodyRecordSource:
         """Bind the same staged values to the next producer profile without weakening its read-scope check."""
         scope = ReadScope(snapshot=self.scope.snapshot, profile=profile)
-        return PreparedBodyRecordSource(scope=scope, values=self.values, compiler=self.compiler)
+        return PreparedBodyRecordSource(scope=scope, values=self.values, compiler=self.compiler,
+            executable_scope_digests=self.executable_scope_digests)
 
     pub def receipt(
         self,
@@ -127,6 +134,14 @@ pub class PreparedBodyRecordSource with RecordSource:
             Ok(value) => value
             Err(_) => return RecordRead.Failed(ReadFault.InvalidEvidence)
 
+        if request.key.family == EXECUTABLE_SCOPE_FAMILY:
+            if key not in self.executable_scope_digests:
+                return RecordRead.Failed(ReadFault.UnfinishedSupplier)
+            if request != prepared_product_request(request.key) or self.executable_scope_digests[key] != request.key.facet:
+                return RecordRead.Failed(ReadFault.InvalidEvidence)
+            digest = self.executable_scope_digests[key]
+            evidence = RevisionEvidence(scope=scope.clone(), request=request.clone(), revision=digest, semantic_digest=digest)
+            return RecordRead.Found(SelectedFact(evidence=evidence, value=b"", selection_digest=digest))
         if key not in self.values:
             return RecordRead.Failed(ReadFault.UnfinishedSupplier)
         physical = self.values[key]
@@ -190,6 +205,9 @@ def reads_compiler_generation(family: str) -> bool:
 
 pub def prepared_product_request(key: RecordKey) -> RecordRequest:
     """Read scalar facts and bind opaque compiler products through their complete semantic digest."""
+    if key.family == EXECUTABLE_SCOPE_FAMILY:
+        selected = PayloadSelection(reference=key.facet, offset=0, length=0)
+        return RecordRequest(key=key, selection=RecordSelection.Payload(selected))
     if key.family in ["body-ir", "lowering-demand", "plan-function", "namespace", "plan-module"]:
         selected = PayloadSelection(reference=key.context, offset=0, length=0)
         return RecordRequest(key=key, selection=RecordSelection.Payload(selected))

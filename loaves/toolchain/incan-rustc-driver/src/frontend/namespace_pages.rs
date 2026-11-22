@@ -2,15 +2,18 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use incan_frontend::checker_records::{GraphNamespaceHeader, GraphNamespaceRecord, RecordAdapterFault};
+use incan_frontend::typechecker::executable_frames::restore_graph_executable_namespace;
 use incan_semantics_core::SymbolOrigin;
 use incan_semantics_core::body_ir::BodyIrModule;
 use internal_models::{GraphNamespaceView, NamespaceReference};
+use internal_models_native::{MappedView, PreparedWireReader};
 use sha2::{Digest, Sha256};
 
 use super::CheckedProgram;
+use super::graph_scope_access::GraphScopeAccess;
 use super::namespace_admission::{FrameAccess, admit_header};
 use super::namespace_crumb;
 use super::namespace_layout_pages::{LayoutPages, admit_layouts, reference_for};
@@ -22,6 +25,7 @@ const RETAINED_NAMESPACES: usize = 512;
 struct ProgramScope {
     bakery: PathBuf,
     project: PathBuf,
+    typed_executable: bool,
 }
 
 /// The graph selected these exact immutable producer bytes. Both values survive a fresh request's staging directory.
@@ -50,6 +54,7 @@ struct SelectedBody {
     header: Arc<GraphNamespaceHeader>,
     interface_digest: Option<namespace_crumb::InterfaceDigest>,
     wire_bytes: usize,
+    executable_scopes: Vec<String>,
     /// Exact authored bytes held only until the backend returns a reusable decoded body.
     authored: Option<Vec<u8>>,
 }
@@ -84,7 +89,13 @@ pub(super) struct NamespacePages {
     access: Option<FrameAccess>,
     scope: Option<ProgramScope>,
     checked: Mutex<HashMap<String, SelectedBody>>,
+    pub(super) typed_executable: bool,
+    pub(super) scope_access: GraphScopeAccess,
 }
+
+/// Prepare one closed graph executable dictionary per installed compiler process.
+static EXECUTABLE_NAMESPACE: LazyLock<Result<PreparedWireReader, String>> =
+    LazyLock::new(internal_models::prepare_executable_namespace_reader);
 
 impl NamespacePages {
     /// Read the bounded transport once. Older installations write ordinary keyed namespace files.
@@ -98,6 +109,8 @@ impl NamespacePages {
             namespace_header_key, namespace_header_reference_filename, namespace_key,
             namespace_layout_candidate_filename, namespace_layout_key, namespace_layout_reference_filename,
         };
+        let typed_executable = GraphScopeAccess::requested(directory)?;
+        let scope_access = GraphScopeAccess::new(directory, bakery);
         let frames = read_references(
             directory,
             &internal_models::namespace_reference_filename(),
@@ -105,7 +118,15 @@ impl NamespacePages {
         )?;
         let layouts = read_references(directory, &namespace_layout_reference_filename(), namespace_layout_key)?;
         if frames.is_none() && layouts.is_none() {
-            return Ok(Self::with_selection(Vec::new(), None, bakery, project, retain_bodies));
+            return Ok(Self::with_selection(
+                Vec::new(),
+                None,
+                bakery,
+                project,
+                retain_bodies,
+                typed_executable,
+                scope_access,
+            ));
         }
         let bakery = bakery
             .and_then(Path::to_str)
@@ -117,6 +138,8 @@ impl NamespacePages {
             Some(Path::new(bakery)),
             project,
             retain_bodies,
+            typed_executable,
+            scope_access,
         );
         selection.headers = read_references(directory, &namespace_header_reference_filename(), namespace_header_key)?
             .unwrap_or_default();
@@ -139,10 +162,13 @@ impl NamespacePages {
         bakery: Option<&Path>,
         project: &Path,
         retain_bodies: bool,
+        typed_executable: bool,
+        scope_access: GraphScopeAccess,
     ) -> Self {
         let scope = bakery.filter(|_| retain_bodies).map(|bakery| ProgramScope {
             bakery: bakery.to_owned(),
             project: project.to_owned(),
+            typed_executable,
         });
         if let Some(scope) = &scope
             && let Ok(mut resident) = RESIDENT.lock()
@@ -171,6 +197,8 @@ impl NamespacePages {
             access,
             scope,
             checked: Mutex::default(),
+            typed_executable,
+            scope_access,
         }
     }
 
@@ -184,7 +212,7 @@ impl NamespacePages {
             .references
             .binary_search_by(|reference| reference.key.identity.as_str().cmp(source))
         else {
-            return read_legacy_namespace(directory, source);
+            return read_legacy_namespace(self, directory, source);
         };
         let reference = &self.references[index];
         if let Some(mut retained) = self.take(source, reference) {
@@ -193,6 +221,11 @@ impl NamespacePages {
             }
             let body_ir = match retained.body {
                 ResidentBodyIr::Decoded(body) => {
+                    for digest in &retained.selected.executable_scopes {
+                        self.scope_access
+                            .resolve(source, digest)
+                            .map_err(RecordAdapterFault::InvalidField)?;
+                    }
                     tracing::trace!(target: "incan::invocation", module = source, wire_bytes = retained.selected.wire_bytes,
                         "reused resident namespace Body IR");
                     body
@@ -203,7 +236,13 @@ impl NamespacePages {
                         module = source, bytes = bytes.len(),
                     )
                     .entered();
-                    let body = decode_namespace_body(&bytes)?;
+                    let body = if self.typed_executable {
+                        let value = internal_models::decode_executable_namespace_frame(&bytes)
+                            .map_err(RecordAdapterFault::InvalidField)?;
+                        self.restore_typed_body(value, source, &mut retained.selected.executable_scopes)?
+                    } else {
+                        decode_namespace_body(&bytes)?
+                    };
                     retained.selected.authored = Some(bytes);
                     body
                 }
@@ -249,7 +288,11 @@ impl NamespacePages {
             .entered();
             internal_models::decode_graph_namespace_view(&view).map_err(namespace_codec_error)?
         };
-        let Some((record, interface_digest, wire_bytes)) = admit_namespace(source, record)? else {
+        let mut executable_scopes = Vec::new();
+        let Some((record, interface_digest, wire_bytes)) = admit_namespace(source, record, |body| {
+            self.decode_body_view(body, source, &mut executable_scopes)
+        })?
+        else {
             return Ok(None);
         };
         self.note(
@@ -259,10 +302,44 @@ impl NamespacePages {
                 header: Arc::clone(&record.header),
                 interface_digest: Some(interface_digest),
                 wire_bytes,
+                executable_scopes,
                 authored: None,
             },
         );
         Ok(Some(record))
+    }
+
+    /// Decode the selected typed module without copying its immutable input range.
+    fn decode_body_view(
+        &self,
+        body: &MappedView,
+        source: &str,
+        scopes: &mut Vec<String>,
+    ) -> Result<BodyIrModule, RecordAdapterFault> {
+        if !self.typed_executable {
+            return decode_namespace_body(body.0.as_bytes());
+        }
+        let reader = EXECUTABLE_NAMESPACE
+            .as_ref()
+            .map_err(|error| RecordAdapterFault::InvalidField(error.clone()))?;
+        let value = internal_models::decode_executable_namespace_view(reader, body)
+            .map_err(RecordAdapterFault::InvalidField)?;
+        self.restore_typed_body(value, source, scopes)
+    }
+
+    /// Retain the exact scope suppliers so a resident body authenticates them in its next snapshot.
+    fn restore_typed_body(
+        &self,
+        value: internal_models::NamespaceAtom,
+        source: &str,
+        scopes: &mut Vec<String>,
+    ) -> Result<BodyIrModule, RecordAdapterFault> {
+        restore_graph_executable_namespace(value, source, |digest| {
+            let scope = self.scope_access.resolve(source, digest)?;
+            scopes.push(digest.to_owned());
+            Ok(scope)
+        })
+        .map_err(RecordAdapterFault::InvalidField)
     }
 
     /// Admit an unchanged namespace by the header Oven offers beside its frame, without opening the frame. `None` when
@@ -310,6 +387,7 @@ impl NamespacePages {
                 header,
                 interface_digest: None,
                 wire_bytes: body_ir.len(),
+                executable_scopes: Vec::new(),
                 authored: Some(body_ir),
             },
         );
@@ -451,7 +529,11 @@ fn decode_namespace_body(bytes: &[u8]) -> Result<BodyIrModule, RecordAdapterFaul
 }
 
 /// Read a complete namespace page staged by an Oven that did not offer store references.
-fn read_legacy_namespace(root: &Path, source: &str) -> Result<Option<GraphNamespaceRecord>, RecordAdapterFault> {
+fn read_legacy_namespace(
+    pages: &NamespacePages,
+    root: &Path,
+    source: &str,
+) -> Result<Option<GraphNamespaceRecord>, RecordAdapterFault> {
     const MAX_PAGE_BYTES: u64 = 64 * 1024 * 1024;
     let key = format!("namespace-{}", hex::encode(Sha256::digest(source.as_bytes())));
     let path = root.join(key);
@@ -477,13 +559,17 @@ fn read_legacy_namespace(root: &Path, source: &str) -> Result<Option<GraphNamesp
         ))
     })?;
     let record = internal_models::decode_owned_namespace_view(&encoded).map_err(namespace_codec_error)?;
-    admit_namespace(source, record).map(|selected| selected.map(|(record, _, _)| record))
+    admit_namespace(source, record, |body| {
+        pages.decode_body_view(body, source, &mut Vec::new())
+    })
+    .map(|selected| selected.map(|(record, _, _)| record))
 }
 
 /// Bind compiler-owned namespace metadata and Body IR to the source whose graph record was opened.
 fn admit_namespace(
     source: &str,
     record: GraphNamespaceView,
+    decode_body: impl FnOnce(&MappedView) -> Result<BodyIrModule, RecordAdapterFault>,
 ) -> Result<Option<(GraphNamespaceRecord, namespace_crumb::InterfaceDigest, usize)>, RecordAdapterFault> {
     if record.module != source {
         return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
@@ -499,7 +585,7 @@ fn admit_namespace(
     drop(interface_span);
     let wire_bytes = record.body_ir.0.as_bytes().len();
     let body_span = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::decode_namespace_body_ir", module = source, bytes = record.body_ir.0.as_bytes().len()).entered();
-    let body_ir = decode_namespace_body(record.body_ir.0.as_bytes())?;
+    let body_ir = decode_body(&record.body_ir)?;
     drop(body_span);
     // Join witnesses by exact kernel owner path once per namespace. Duplicate declarations stay ambiguous.
     let mut owners = std::collections::HashMap::new();

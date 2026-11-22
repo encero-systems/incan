@@ -12,9 +12,24 @@ use std::sync::Arc;
 use incan_frontend::checker_records::{GraphBodyRecords, GraphNamespaceHeader, GraphNamespaceInterface};
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::typechecker::TypeChecker;
+use incan_frontend::typechecker::executable_frames::{
+    ExecutableOwnerInputs, ExecutableScopeRecords, encode_graph_executable_namespace, encode_graph_executable_owner,
+    open_graph_executable_owner, open_graph_executable_scope,
+};
 use incan_semantics_core::body_ir::BodyIrModule;
 use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId};
 use sha2::{Digest, Sha256};
+
+/// Recognize the same published executable format the request's input marker must select.
+pub(super) fn typed_executable_output(path: &Path) -> bool {
+    let marker = format!(
+        "{}.published{}",
+        internal_models::executable_graph_output_marker(),
+        internal_models::scope_output_suffix()
+    );
+    path.file_name()
+        .is_some_and(|name| name.as_encoded_bytes().ends_with(marker.as_bytes()))
+}
 
 /// One output awaiting canonical ordering and Incan-owned encoding.
 pub(super) struct PendingBodyValue {
@@ -115,12 +130,14 @@ pub(super) struct GraphBodyOutput {
     namespace_proofs: bool,
     published_namespaces: bool,
     owner_coordinates: bool,
+    typed_executable: bool,
     report_contracts: bool,
     report_scopes: bool,
     import_closures: Option<BTreeMap<String, Vec<String>>>,
     project_root: PathBuf,
     values: Vec<PendingBodyValue>,
     namespaces: Vec<PendingNamespaceValue>,
+    scope_values: BTreeMap<String, Vec<u8>>,
     fallbacks: Vec<PendingBodyFallback>,
     error: Option<String>,
 }
@@ -158,6 +175,7 @@ impl GraphBodyOutput {
             .as_ref()
             .and_then(|path| path.file_name())
             .is_some_and(|name| name.as_encoded_bytes().ends_with(publication_marker.as_bytes()));
+        let typed_executable = path.as_deref().is_some_and(typed_executable_output);
         let import_closures = path
             .as_ref()
             .and_then(|path| path.file_name())
@@ -184,6 +202,7 @@ impl GraphBodyOutput {
             namespace_proofs,
             published_namespaces,
             owner_coordinates,
+            typed_executable,
             report_scopes: path.as_ref().and_then(|p| p.file_name()).is_some_and(|name| {
                 name.as_encoded_bytes()
                     .ends_with(internal_models::scope_output_suffix().as_bytes())
@@ -196,6 +215,7 @@ impl GraphBodyOutput {
             project_root,
             values: Vec::new(),
             namespaces: Vec::new(),
+            scope_values: BTreeMap::new(),
             fallbacks: Vec::new(),
             error: None,
         })
@@ -468,6 +488,11 @@ impl GraphBodyOutput {
                 continue;
             };
             let module_path = module_path.to_string_lossy().into_owned();
+            let scopes = (self.typed_executable
+                && (namespaces.contains_key(&module_path) || owners.contains_key(&module_path)))
+            .then(|| ExecutableScopeRecords::pack(&module_path, lowered))
+            .transpose()?;
+            let mut referenced_scopes = std::collections::BTreeSet::new();
             if let Some(namespace) = namespaces.remove(&module_path) {
                 namespace.call_reads = call_reads
                     .get(&module_path)
@@ -480,8 +505,14 @@ impl GraphBodyOutput {
                         digest: read.digest,
                     })
                     .collect();
-                namespace.body_ir = incan_semantics_core::executable_representation::encode_namespace_module(lowered)
-                    .map_err(|error| format!("Body IR namespace row output refused: {error}"))?;
+                namespace.body_ir = match &scopes {
+                    Some(scopes) => {
+                        referenced_scopes.extend(scopes.digests.iter().flatten().cloned());
+                        encode_graph_executable_namespace(&module_path, lowered, &scopes.digests, &scopes.slots)?
+                    }
+                    None => incan_semantics_core::executable_representation::encode_namespace_module(lowered)
+                        .map_err(|error| format!("Body IR namespace row output refused: {error}"))?,
+                };
                 let mut inputs = Vec::new();
                 let retain = self.published_namespaces && access.is_some();
                 for body in &lowered.bodies {
@@ -570,39 +601,97 @@ impl GraphBodyOutput {
                 }
             }
             let no_reads = Vec::new();
-            let Some(module_owners) = owners.get(&module_path) else {
-                continue;
-            };
-            for body in &mut lowered.bodies {
-                let Some(index) = module_owners.get(&body.span).and_then(|candidates| {
-                    candidates
-                        .iter()
-                        .copied()
-                        .find(|&index| self.values[index].name == body.name)
-                }) else {
+            let owners_in_module = owners.get(&module_path);
+            for (body_index, body) in lowered.bodies.iter_mut().enumerate() {
+                let Some(index) = owners_in_module
+                    .and_then(|owners| owners.get(&body.span))
+                    .and_then(|candidates| {
+                        candidates
+                            .iter()
+                            .copied()
+                            .find(|&index| self.values[index].name == body.name)
+                    })
+                else {
                     continue;
                 };
                 let pending = &mut self.values[index];
-                pending.body_ir = incan_semantics_core::executable_representation::encode_graph_owner(
-                    &lowered.module_id,
-                    &module_path,
-                    &pending.identity,
-                    body,
-                    pending.physical_inputs,
-                )
-                .map_err(|error| format!("Body IR owner row output refused: {error}"))?;
-                if pending.physical_inputs.is_some() && TypeChecker::graph_body_has_scalar_placement(body) {
-                    incan_semantics_core::executable_representation::append_owner_coordinates(
-                        &mut pending.body_ir,
-                        &pending.coordinates,
-                    );
+                let witness =
+                    if call_reads.contains_key(&module_path) && incan_frontend::body_ir::needs_call_witness(body) {
+                        let reader = body.direct_call_id.path();
+                        let reads = by_reader.get(reader).unwrap_or(&no_reads);
+                        Some(internal_models::encode_owner_call_reads(
+                            &pending.identity,
+                            reader,
+                            &module_path,
+                            reads,
+                        )?)
+                    } else {
+                        None
+                    };
+                if let Some(scopes) = &scopes {
+                    let scope_digest = scopes.digests[scopes.slots[body_index]].as_deref();
+                    referenced_scopes.extend(scope_digest.map(str::to_owned));
+                    let physical_inputs = pending.physical_inputs.filter(|_| {
+                        body.nominal_instantiation.is_empty()
+                            && body.trait_default_instantiation.is_none()
+                            && body.native_attributes.is_empty()
+                    });
+                    let coordinates = if physical_inputs.is_some()
+                        && TypeChecker::graph_body_has_scalar_placement(body)
+                        && pending.coordinates.len()
+                            <= incan_semantics_core::executable_representation::MAX_OWNER_COORDINATES
+                    {
+                        pending.coordinates.as_slice()
+                    } else {
+                        &[]
+                    };
+                    pending.body_ir = encode_graph_executable_owner(
+                        ExecutableOwnerInputs {
+                            module: &lowered.module_id,
+                            source: &module_path,
+                            identity: &pending.identity,
+                            physical_inputs,
+                            coordinates,
+                            call_witness: witness.as_deref(),
+                            scope_digest,
+                        },
+                        body,
+                    )?;
+                } else {
+                    pending.body_ir = incan_semantics_core::executable_representation::encode_graph_owner(
+                        &lowered.module_id,
+                        &module_path,
+                        &pending.identity,
+                        body,
+                        pending.physical_inputs,
+                    )
+                    .map_err(|error| format!("Body IR owner row output refused: {error}"))?;
+                    if pending.physical_inputs.is_some() && TypeChecker::graph_body_has_scalar_placement(body) {
+                        incan_semantics_core::executable_representation::append_owner_coordinates(
+                            &mut pending.body_ir,
+                            &pending.coordinates,
+                        );
+                    }
+                    if let Some(witness) = witness {
+                        pending.body_ir.extend_from_slice(&witness);
+                    }
                 }
-                if call_reads.contains_key(&module_path) && incan_frontend::body_ir::needs_call_witness(body) {
-                    let reader = body.direct_call_id.path();
-                    let reads = by_reader.get(reader).unwrap_or(&no_reads);
-                    let witness =
-                        internal_models::encode_owner_call_reads(&pending.identity, reader, &module_path, reads)?;
-                    pending.body_ir.extend_from_slice(&witness);
+            }
+            if let Some(mut scopes) = scopes {
+                for digest in referenced_scopes {
+                    let value = scopes
+                        .values
+                        .remove(&digest)
+                        .ok_or("missing compiler-produced executable scope")?;
+                    match self.scope_values.entry(digest) {
+                        std::collections::btree_map::Entry::Vacant(entry) => {
+                            entry.insert(value);
+                        }
+                        std::collections::btree_map::Entry::Occupied(entry) if entry.get() != &value => {
+                            return Err("different compiler-produced scopes share one digest".into());
+                        }
+                        std::collections::btree_map::Entry::Occupied(_) => {}
+                    }
                 }
             }
         }
@@ -700,8 +789,21 @@ impl GraphBodyOutput {
                         .and_then(|record| internal_models::native_fields(&record))
                         .map_err(|error| format!("current checker output refused: {error:?}"))
                 };
-                let frame = incan_semantics_core::executable_representation::decode_owner(&value.body_ir)
-                    .map_err(|error| format!("current executable owner refused: {error}"))?;
+                let frame = if self.typed_executable {
+                    let mut opened = open_graph_executable_owner(&value.body_ir)?;
+                    if let Some(digest) = opened.scope_digest {
+                        let scope = self
+                            .scope_values
+                            .get(&digest)
+                            .ok_or("missing current executable scope")?;
+                        opened.frame.body.named_type_identities =
+                            open_graph_executable_scope(scope, &value.module, &digest)?;
+                    }
+                    opened.frame
+                } else {
+                    incan_semantics_core::executable_representation::decode_owner(&value.body_ir)
+                        .map_err(|error| format!("current executable owner refused: {error}"))?
+                };
                 Ok(incan_frontend::checker_records::GraphBodyRecord {
                     local: fields(&value.local)?.into(),
                     final_value: fields(&value.final_value)?.into(),
@@ -844,7 +946,7 @@ impl GraphBodyOutput {
                 internal_models::encode_method_lookups(&rows)
             })
             .transpose()?;
-        publish_rows(&path, rows, import_order, methods)?;
+        publish_rows(&path, rows, import_order, methods, self.scope_values)?;
         publish(&checker_report_path(&path), vec![report])
     }
 }
@@ -1087,6 +1189,7 @@ fn publish_rows(
     rows: Vec<Vec<u8>>,
     import_order: Option<Vec<u8>>,
     methods: Option<Vec<u8>>,
+    scopes: BTreeMap<String, Vec<u8>>,
 ) -> Result<(), String> {
     let parent = path.parent().ok_or("compiled graph output has no parent directory")?;
     std::fs::create_dir_all(parent)
@@ -1103,6 +1206,14 @@ fn publish_rows(
         let page = temporary.join("method-lookups.crumb");
         std::fs::write(&page, bytes).map_err(|error| format!("cannot write {}: {error}", page.display()))?;
     }
+    if !scopes.is_empty() {
+        let directory = temporary.join("executable-scopes");
+        std::fs::create_dir(&directory).map_err(|error| format!("cannot create {}: {error}", directory.display()))?;
+        for (digest, value) in scopes {
+            let page = directory.join(format!("{digest}.crumb"));
+            std::fs::write(&page, value).map_err(|error| format!("cannot write {}: {error}", page.display()))?;
+        }
+    }
     for (index, row) in rows.into_iter().enumerate() {
         let page = temporary.join(format!("{index:08}.crumb"));
         std::fs::write(&page, row)
@@ -1113,175 +1224,5 @@ fn publish_rows(
 }
 
 #[cfg(all(test, unix))]
-mod tests {
-    use super::{GraphBodyOutput, canonical_lowering_inputs, fallback_identity};
-
-    /// Explicit sidecar roots resolve aliases and refuse missing roots; an inactive collector needs neither.
-    #[test]
-    fn sidecar_root_resolves_aliases_and_refuses_missing_roots() -> Result<(), Box<dyn std::error::Error>> {
-        let root = std::env::temp_dir().join(format!("incan-graph-root-{}", std::process::id()));
-        std::fs::create_dir(&root)?;
-        let actual = root.join("actual");
-        let alias = root.join("alias");
-        std::fs::create_dir(&actual)?;
-        std::os::unix::fs::symlink(&actual, &alias)?;
-        let output = Some(root.join("bodies"));
-        let collector = GraphBodyOutput::prepare(output.clone(), alias)?;
-        assert_eq!(collector.project_root, actual.canonicalize()?);
-        assert!(!collector.namespace_proofs);
-        let current_output = root.join(format!("units{}", internal_models::namespace_proof_output_suffix()));
-        assert!(GraphBodyOutput::prepare(Some(current_output), actual.clone())?.namespace_proofs);
-        let missing = root.join("missing");
-        let refused = match GraphBodyOutput::prepare(output, missing.clone()) {
-            Ok(_) => return Err("an explicit missing graph body root was accepted".into()),
-            Err(message) => message,
-        };
-        assert!(refused.contains("cannot resolve graph body project root"));
-        assert!(GraphBodyOutput::prepare(None, missing).is_ok());
-        std::fs::remove_dir_all(root)?;
-        Ok(())
-    }
-
-    /// Framing coalesces equal owner evidence and names disagreement before the Incan codec sees it.
-    #[test]
-    fn lowering_inputs_are_unique_by_rendered_owner() -> Result<(), Box<dyn std::error::Error>> {
-        assert_eq!(
-            canonical_lowering_inputs(vec![
-                vec!["main#decl.0..12".to_owned(), "body:a".to_owned()],
-                vec!["main#decl.0..12".to_owned(), "body:a".to_owned()],
-            ])?,
-            vec![vec!["main#decl.0..12".to_owned(), "body:a".to_owned()]]
-        );
-        assert_eq!(
-            canonical_lowering_inputs(vec![
-                vec!["main#decl.0..12".to_owned(), "body:a".to_owned()],
-                vec!["main#decl.0..12".to_owned(), "body:b".to_owned()],
-            ]),
-            Err("conflicting lowering witnesses for Body IR owner main#decl.0..12".to_owned())
-        );
-        Ok(())
-    }
-
-    /// A checker fallback without an identity is encoded as absence rather than an invalid present-empty value.
-    #[test]
-    fn fallback_identity_normalizes_empty_presence() {
-        assert_eq!(fallback_identity(Some(String::new())), None);
-        assert_eq!(fallback_identity(None), None);
-        assert_eq!(fallback_identity(Some("owner".to_owned())), Some("owner".to_owned()));
-    }
-
-    /// Check one module `source`, lower its Body IR and attach it to a graph-body collector, as a compile does.
-    fn attached_output(
-        source: &str,
-        test: &str,
-    ) -> Result<(GraphBodyOutput, std::path::PathBuf), Box<dyn std::error::Error>> {
-        let scratch = std::env::temp_dir().join(format!("incan-graph-{test}-{}", std::process::id()));
-        std::fs::create_dir_all(scratch.join("src"))?;
-        let root = scratch.canonicalize()?;
-        let tokens = incan_frontend::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
-        let ast = incan_frontend::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
-        let mut checker = incan_frontend::typechecker::TypeChecker::new();
-        checker.set_current_module_path(Some(vec!["main".into()]));
-        checker.check_program(&ast).map_err(|errors| format!("{errors:?}"))?;
-        let providers = incan_frontend::body_ir::ProviderOperationCatalog::new();
-        let mut lowered = incan_frontend::body_ir::build_body_ir_module(
-            &ast,
-            &["main".into()],
-            checker.type_info(),
-            &incan_frontend::body_ir::BodyIrContext {
-                modules: incan_frontend::body_ir::ContextModules::default(),
-                provider_operations: &providers,
-                registry_package: None,
-                library_package: None,
-                include_inline_tests: false,
-            },
-        );
-        let module = incan_frontend::parsed_module::ParsedModule {
-            name: "main".into(),
-            path_segments: vec!["main".into()],
-            file_path: root.join("src/main.incn"),
-            source_positions: incan_frontend::diagnostics::SourcePositionIndex::new(source),
-            source: source.to_owned(),
-            ast,
-            gated_exports: Vec::new(),
-        };
-        let mut output = GraphBodyOutput::prepare(Some(root.join("bodies")), root.clone())?;
-        output.observe(&module, &checker, None, &[], "app");
-        if let Some(error) = output.error.take() {
-            return Err(error.into());
-        }
-        output.attach_body_ir(
-            std::slice::from_ref(&module),
-            std::slice::from_mut(&mut lowered),
-            &[],
-            &std::collections::BTreeMap::new(),
-            None,
-        )?;
-        Ok((output, scratch))
-    }
-
-    /// Two overloads whose source signatures differ only in their bounds share one stable identity, so neither can
-    /// own a graph-body row: their spelling is one fallback owner, and the output keeps one row per identity.
-    #[test]
-    fn overloads_sharing_one_source_signature_are_one_fallback_owner() -> Result<(), Box<dyn std::error::Error>> {
-        let source = concat!(
-            "model Left:\n    value: int\n\n",
-            "model Right:\n    value: int\n\n",
-            "def kind[T with Left]() -> str:\n    return \"left\"\n\n",
-            "def kind[T with Right]() -> str:\n    return \"right\"\n\n",
-            "def main() -> None:\n    println(kind[Right]())\n",
-        );
-        let (output, scratch) = attached_output(source, "shared-signature")?;
-        let mut identities = std::collections::BTreeSet::new();
-        assert!(
-            output
-                .values
-                .iter()
-                .all(|value| identities.insert((value.module.clone(), value.identity.clone()))),
-            "two graph-body values share one identity"
-        );
-        let kinds = output
-            .fallbacks
-            .iter()
-            .filter(|fallback| fallback.name == "kind")
-            .count();
-        assert_eq!(kinds, 1, "the shared spelling is not one fallback owner");
-        std::fs::remove_dir_all(&scratch)?;
-        Ok(())
-    }
-
-    /// A checked body the module's Body IR gives no row of its own, a trait's abstract method or a top-level partial's
-    /// generated function, is published as a fallback owner with its reason instead of refusing the whole output.
-    #[test]
-    fn bodies_without_their_own_body_ir_row_are_fallback_owners() -> Result<(), Box<dyn std::error::Error>> {
-        let source = concat!(
-            "trait Named:\n    def label(self) -> str:\n        \"\"\"Return the value label.\"\"\"\n        ...\n\n",
-            "model One with Named:\n    number: int\n\n    def label(self) -> str:\n        return str(self.number)\n\n",
-            "pub def route(method: str, path: str) -> str:\n    return method + path\n\n",
-            "pub get = partial route(method=\"GET\")\n\n",
-            "def main() -> None:\n    println(get(path=\"/\"))\n",
-        );
-        let (output, scratch) = attached_output(source, "fallbacks")?;
-        let fallbacks: Vec<(&str, &str)> = output
-            .fallbacks
-            .iter()
-            .map(|fallback| (fallback.name.as_str(), fallback.reason.as_str()))
-            .collect();
-        assert!(
-            fallbacks
-                .iter()
-                .any(|(name, reason)| *name == "label" && reason.contains("no Body IR row")),
-            "{fallbacks:?}"
-        );
-        assert!(
-            fallbacks
-                .iter()
-                .any(|(name, reason)| *name == "get" && reason.contains("partial")),
-            "{fallbacks:?}"
-        );
-        assert!(output.values.iter().all(|value| !value.body_ir.is_empty()));
-        assert!(output.values.iter().any(|value| value.name == "route"));
-        std::fs::remove_dir_all(&scratch)?;
-        Ok(())
-    }
-}
+#[path = "graph_body_output_tests.rs"]
+mod tests;

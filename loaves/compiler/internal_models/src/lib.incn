@@ -1,6 +1,7 @@
 """The compiler's shared record contracts, one module per contract; none names Oven, a worker or a native compiler object. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
 
 pub from rust::internal_models_native import (
+    MappedView, PreparedWireReader,
     IDENTITY_ADAPTER_PROFILE,
     IDENTITY_ADAPTER_SOURCE,
     IDENTITY_ADAPTER_GENERATION,
@@ -232,10 +233,11 @@ pub from executable_body_wire import (
     decode_executable_body, decode_executable_module, decode_executable_namespace_frame, decode_executable_namespace_view,
     decode_executable_owner_frame,
     encode_executable_body, encode_executable_module, encode_executable_namespace_frame, encode_executable_owner_frame,
+    executable_graph_output_marker,
     prepare_executable_namespace_reader, prepare_executable_owner_reader, read_executable_owner_header,
 )
 pub from executable_scope import (
-    EXECUTABLE_SCOPE_DIRECTORY, EXECUTABLE_SCOPE_FAMILY, decode_executable_scope, encode_executable_scope,
-    executable_scope_key,
+    EXECUTABLE_SCOPE_DIRECTORY, EXECUTABLE_SCOPE_FAMILY, decode_executable_scope, decode_executable_scope_view,
+    encode_executable_scope, executable_scope_key, prepare_executable_scope_reader,
 )
 pub from executable_snapshot import ExecutableSnapshot, reopen_executable_snapshot, selected_executable_scope

@@ -1,7 +1,8 @@
 """A nested editable declaration keeps its typed result, anchors and identities across the graph boundary."""
 
 from namespace_proof import encode_namespace_proof, read_namespace_proof
-from executable_scope import decode_executable_scope, encode_executable_scope
+from executable_scope import decode_executable_scope, encode_executable_scope, prepare_executable_scope_reader, read_executable_scope_source
+from std.primitives.views import MappedFile
 from std.hash import sha256
 from namespace_rows import NamespaceAtom, NamespaceField, NamespaceEntry, prepare_namespace_reader, decode_prepared_namespace, identify_prepared_namespace, decode_namespace_interface, encode_namespace_interface, publish_namespace_interface
 
@@ -99,6 +100,11 @@ pub def test_checked_namespace_reads_typed_function_and_rejects_old_json() -> Re
     assert scope[:4] == b"CRMB"
     restored_scope = decode_executable_scope(scope, "src/provider.incn")?
     assert encode_executable_scope("src/provider.incn", restored_scope)? == scope
+    scope_reader = prepare_executable_scope_reader()?
+    mapped_scope = MappedFile.owned(scope)?
+    match mapped_scope.view(0, mapped_scope.len()):
+        Some(scope_view) => assert read_executable_scope_source(scope_reader, scope_view)? == "src/provider.incn"
+        None => return Err("typed scope did not yield a complete immutable view")
     assert decode_executable_scope(scope, "src/peer.incn").is_err()
     assert decode_executable_scope(encoded, "src/provider.incn").is_err()
     assert decode_executable_scope(scope[:len(scope) - 1], "src/provider.incn").is_err()

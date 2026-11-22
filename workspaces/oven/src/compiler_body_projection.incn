@@ -3,8 +3,7 @@ records selected from a recreated projection, and the dependency read, span and 
 
 from std.fs import Path
 from std.environ import get_or
-from rust::incan_semantics_core import encode_incan_symbol_identity
-from rust::incan_semantics_core::executable_representation import decode_owner
+from compiler_executable_metadata import predecessor_owner_metadata, selected_owner_metadata_reader, typed_owner_metadata
 from pub::incan_platform.store import Snapshot, get
 from pub::internal_models import CompiledBodyDependencyRead, CompiledBodyValue
 from pub::internal_models.checker_records import CHECKER_PROFILE
@@ -199,16 +198,6 @@ def dependency_owner_record(
     return Err(f"compiled body output dependency module is absent: {package}:{module}")
 
 
-pub def lowering_symbol(identity: str, body_ir: bytes) -> Result[str, str]:
-    """Decode one fresh Body IR owner once and index its canonical lowering identity."""
-    decoded = decode_owner(body_ir).map_err((error) => f"cannot decode graph-eligible Body IR owner: {error}")?
-    if decoded.identity != identity:
-        return Err("graph-eligible Body IR owner disagrees with its stable publication identity")
-    match decoded.body.canonical:
-        Some(canonical) => return Ok(encode_incan_symbol_identity(canonical))
-        None => return Ok("")
-
-
 pub def dependency_read_key(
     projections: Borrowed[Dict[str, SourceProjection]],
     unit: UnitDescription,
@@ -280,6 +269,7 @@ pub def module_spans(
     editable_packages: list[str],
     origin: str,
     cutoff: EditCutoff,
+    typed: bool = false,
 ) -> Result[ModuleSpans, str]:
     """
     The spans of the editable dependency declarations each module's owners read, fresh or retained. A namespace row
@@ -295,6 +285,7 @@ pub def module_spans(
                 Some(key) => add_span(modules, value.module, key)
                 None => pass
     if let Some(prior) = selected:
+        reader = selected_owner_metadata_reader(typed and len(retained) > 0)?
         for record in retained:
             if len(record.body_ir) == 0:
                 continue
@@ -302,7 +293,12 @@ pub def module_spans(
             local = match reusable_evaluation(prior, local_key, CHECKER_PROFILE, cutoff)?:
                 Some(found) => found
                 None => continue
-            module = decode_owner(record.body_ir).map_err((error) => str(error))?.source
+            metadata = match reader:
+                Some(prepared) => typed_owner_metadata(prepared, record.body_ir)?
+                None => predecessor_owner_metadata(record.body_ir)?
+            if metadata.identity != record.identity:
+                return Err("retained Body IR disagrees with its graph owner")
+            let module: Borrowed[str] = metadata.source
             for witness in local.receipt.witnesses:
                 if let ReadWitness.Found(found, _) = witness:
                     if found.request.key.family == "owner-span":

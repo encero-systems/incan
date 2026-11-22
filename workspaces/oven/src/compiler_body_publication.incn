@@ -4,9 +4,6 @@ from pub::incan_platform.trace import enter_producer, finish_producer
 from std.fs import Path
 from pub::incan_mir_plan import INTERFACE_REPORT, LoweringEvent, decode_lowering_event, decode_lowering_refusal, decode_native_interface
 from pub::incan_mir_plan import LoweringDemands, decode_plan_function_record
-from rust::std::fs import remove_dir_all
-from rust::incan_semantics_core import encode_incan_symbol_identity
-from rust::incan_semantics_core::executable_representation import decode_owner
 from pub::incan_platform.store import Snapshot, Transaction, begin, commit, get, stage_delete, stage_put
 from pub::internal_models import (
     CompiledBodyDependencyRead,
@@ -37,8 +34,11 @@ from compiler_owner_retirement import retire_missing_functions
 from compiler_owner_records import encode_body_frame, encode_eligibility, read_body_frame
 from store_selection_records import encode_binding
 from compiler_graph_records import EditCutoff, prepare_evaluation, reusable_evaluation
-from compiler_body_rows import compiled_namespace_order, compiled_method_reads, read_compiled_body_outputs
-from compiler_namespace_layouts import read_compiled_layouts, stage_namespace_layout
+from compiler_body_authentication import authenticate_compiled_bodies
+from compiler_executable_metadata import predecessor_owner_metadata, selected_owner_metadata_reader, typed_owner_metadata
+from compiler_executable_scopes import ExecutableScopeInputs, stage_executable_scopes
+from pub::internal_models.executable_scope import executable_scope_key
+from compiler_namespace_layouts import stage_namespace_layout
 from pub::internal_models.overload_members import MethodReads
 from compiler_method_lookups import method_inputs
 pub from compiler_captured_sources import (
@@ -62,15 +62,11 @@ from compiler_body_fallbacks import (
     retained_namespace_event,
 )
 from compiler_body_projection import (
-    ProjectionRefusalMode,
     dependency_projection_refusal,
     dependency_read_key,
     dependency_signature_key,
     dependency_span_key,
-    lowering_symbol,
     module_spans,
-    projection_refusal_mode,
-    projection_refusals,
     root,
     source_projection,
 )
@@ -145,20 +141,6 @@ pub model PreparedCompiledBodies:
     pub lowering_demands: LoweringDemandWork = LoweringDemandWork()
 
 
-model AuthenticatedCompiledBodies:
-    """Decoded compiler rows and the measured fresh/reused owner counts they authenticate."""
-
-    outputs: CompiledBodyOutputs
-    layouts: Dict[str, bytes]
-    order: Dict[str, NamespaceOrder]
-
-    methods: MethodReads
-    origin: str
-    owner_evaluations: int
-    owner_reuses: int
-    body_ir_evaluations: int
-
-
 model StagedCompiledBodySources:
     """Prepared source authority and indexes shared by body and lowering evaluation staging."""
 
@@ -168,73 +150,6 @@ model StagedCompiledBodySources:
     projections: Dict[str, SourceProjection]
     editable_packages: list[str]
     rechecked: list[str]
-
-
-def authenticate_compiled_bodies(
-    unit: UnitDescription,
-    output: Path,
-    retained: list[SelectedBodyRecord],
-    restored: list[str],
-    restored_body_ir: list[str],
-    covered: Borrowed[CoveredBodyOwners],
-) -> Result[AuthenticatedCompiledBodies, str]:
-    """Authenticate one compiler row directory, consume it and count the owners checked or restored this activation."""
-    authenticating = begin_work()
-    if not output.is_dir():
-        return Err("successful graph-enabled compile did not publish body output rows")
-    outputs = read_compiled_body_outputs(output)?
-    layouts = read_compiled_layouts(output, outputs.namespaces)?
-    origin = source_origin(unit)
-    order = compiled_namespace_order(output, origin, outputs.namespaces)?
-
-    methods = compiled_method_reads(output)?
-    remove_dir_all(output.0).map_err((error) => f"cannot consume compiled body output {output.0}: {error}")?
-    chosen = set([record.identity for record in retained])
-    installed_frames = set(restored_body_ir)
-    published = set([value.identity for value in outputs.values])
-    for reader in methods.groups.keys():
-        if reader not in published:
-            return Err("fresh method lookup reader is not a published owner")
-    for reader in methods.retained:
-        if reader not in published or reader not in restored:
-            return Err("retained method lookup reader was not restored")
-    for owner in restored_body_ir:
-        if owner not in published:
-            return Err("compiler reported a restored Body IR frame outside its published owners")
-    # A settled-call retry may obtain an originally covered owner directly from this pinned graph.
-    restored_identities = set([owner for owner in restored if owner in chosen or owner in covered.owners])
-    mut owner_evaluations = len(outputs.fallbacks)
-    mut owner_reuses = 0
-    mut body_ir_evaluations = len(outputs.fallbacks)
-    for value in outputs.values:
-        if value.identity not in installed_frames:
-            body_ir_evaluations += 1
-        if value.identity in restored_identities:
-            owner_reuses += 1
-        else:
-            owner_evaluations += 1
-    if projection_refusal_mode()? == ProjectionRefusalMode.List:
-        refusals = projection_refusals(unit, origin, outputs.values)
-        if len(refusals) > 0:
-            return Err(
-                f"compiled body projection refusal list ({len(refusals)}):\n" + "\n".join(
-                    [f"{index + 1}. {refusals[index]}" for index in range(len(refusals))],
-                ),
-            )
-    record_work(Operation.EngineSidecarAuthentication, output.0, authenticating)
-    return Ok(
-        AuthenticatedCompiledBodies(
-            outputs=outputs,
-            layouts=layouts,
-            order=order,
-
-            methods=methods,
-            origin=origin,
-            owner_evaluations=owner_evaluations,
-            owner_reuses=owner_reuses,
-            body_ir_evaluations=body_ir_evaluations,
-        ),
-    )
 
 
 pub def publish_compiled_bodies(
@@ -299,6 +214,8 @@ pub def prepare_compiled_bodies(
     for positioned in captured_positions.keys():
         staged.source.add(positioned, captured_positions[positioned])
 
+    stage_executable_scopes(staged.transaction, staged.source, authenticated.scopes)
+
     # 3. A cold whole check stages the same graph values later edited activations replace independently.
     order = authenticated.order
     mut staged_certificates: set[str] = set()
@@ -310,10 +227,10 @@ pub def prepare_compiled_bodies(
     if let Some(prior) = selected:
         retire_missing_functions(prior, staged.transaction, origin, changed_sources, staged.projections, staged.rechecked, authenticated.outputs)?
     executable = stage_call_contracts(staged.transaction, staged.source, origin, authenticated.outputs.namespaces)?
-    spans = module_spans(staged.projections, authenticated.outputs.values, retained, selected, staged.editable_packages, origin, cutoff)?
+    spans = module_spans(staged.projections, authenticated.outputs.values, retained, selected, staged.editable_packages, origin, cutoff, authenticated.scopes.typed)?
     for slot in spans.retained.keys():
         staged.source.add(slot, spans.retained[slot])
-    stage_compiled_namespaces(staged.transaction, staged.source, staged.scope, staged.projections, authenticated.outputs.namespaces, origin, order, executable, spans.modules, authenticated.layouts)?
+    stage_compiled_namespaces(staged.transaction, staged.source, staged.scope, staged.projections, authenticated.outputs.namespaces, origin, order, executable, spans.modules, authenticated.layouts, authenticated.scopes)?
     published = stage_compiled_body_values(
         staged.transaction,
         staged.source,
@@ -328,6 +245,7 @@ pub def prepare_compiled_bodies(
         set([namespace.module for namespace in authenticated.outputs.namespaces]),
         order,
         executable,
+        authenticated.scopes,
     )?
     lowering_demands = prepare_optional_lowering_records(
         staged.transaction,
@@ -346,6 +264,7 @@ pub def prepare_compiled_bodies(
         admission_report,
         retained_plans,
         cutoff,
+        authenticated.scopes,
     )?
     record_work(Operation.EngineGraphStaging, output.0, staging)
     return Ok(
@@ -375,6 +294,7 @@ def stage_compiled_body_values(
     checked_namespaces: set[str],
     order: Borrowed[Dict[str, NamespaceOrder]],
     executable: Borrowed[ExecutableCallInputs],
+    scopes: Borrowed[ExecutableScopeInputs],
 ) -> Result[int, str]:
     """Stage each compiler-produced local, final and Body IR value with its exact source and dependency witnesses."""
     mut published = 0
@@ -459,6 +379,9 @@ def stage_compiled_body_values(
         mut frame_reads = [prepared_product_request(final_key), prepared_product_request(projection.placements[owner.key.facet].key)]
         if value.identity in executable.owners:
             frame_reads.extend([prepared_product_request(key) for key in executable.owners[value.identity]])
+        if value.identity in scopes.owners:
+            if let Some(digest) = scopes.owners[value.identity].scope:
+                frame_reads.append(prepared_product_request(executable_scope_key(origin, value.module, digest)?))
         body_ir_receipt = source.receipt(scope, body_ir_key, frame_reads, position.evidence)?
         _ = prepare_evaluation(
             prepared,
@@ -483,6 +406,7 @@ def stage_compiled_namespaces(
     executable: Borrowed[ExecutableCallInputs],
     spans: Borrowed[Dict[str, list[RecordKey]]],
     layouts: Borrowed[Dict[str, bytes]],
+    scopes: Borrowed[ExecutableScopeInputs],
 ) -> Result[None, str]:
     """
     Stage every checked namespace row with its projection owners and imported declaration indexes as witnesses.
@@ -517,6 +441,8 @@ def stage_compiled_namespaces(
             reads.extend([prepared_product_request(span) for span in spans[namespace.module]])
         if namespace.module in executable.modules:
             reads.extend([prepared_product_request(target) for target in executable.modules[namespace.module]])
+        if namespace.module in scopes.namespaces:
+            reads.extend([prepared_product_request(binding) for binding in scopes.namespaces[namespace.module]])
         receipt = source.receipt(scope, key, reads, position.evidence)?
         value = namespace_record(namespace)?
         _ = prepare_evaluation(
@@ -568,6 +494,7 @@ def prepare_optional_lowering_records(
     admission_report: Option[Path] = None,
     retained_plans: RetainedPlanInputs = RetainedPlanInputs(),
     cutoff: EditCutoff = EditCutoff(),
+    scopes: Borrowed[ExecutableScopeInputs],
 ) -> Result[LoweringDemandWork, str]:
     """Stage lowering records only when this compiler activation requested a plan report."""
     if let Some(report) = plan_output:
@@ -587,7 +514,7 @@ def prepare_optional_lowering_records(
                     rescued = select_body_inventory_of(graph, CHECKER_PROFILE, origin, demanded)?
         if len(rescued) != len(demanded):
             return Err("partially restored plan did not retain its demanded checked owner")
-        witnesses = lowering_witnesses(projections, outputs.values, retained + rescued, source, selected, unit, origin, orders, cutoff)?
+        witnesses = lowering_witnesses(projections, outputs.values, retained + rescued, source, selected, unit, origin, orders, scopes, cutoff)?
         return prepare_lowering_records(
             projections,
             prepared,
@@ -849,6 +776,7 @@ def lowering_witnesses(
     unit: UnitDescription,
     origin: str,
     mut orders: LoweringOrders,
+    scopes: Borrowed[ExecutableScopeInputs],
     cutoff: EditCutoff = EditCutoff(),
 ) -> Result[list[LoweringBody], str]:
     """
@@ -880,10 +808,15 @@ def lowering_witnesses(
                     signatures.append(key)
                     signatures.append(signature_scope_key(key))
                 None => pass
+        header = match value.identity in scopes.owners:
+            true => scopes.owners[value.identity]
+            false => predecessor_owner_metadata(value.body_ir)?
+        if header.identity != value.identity:
+            return Err("graph-eligible Body IR disagrees with its stable owner")
         witnesses.append(
             LoweringBody(
                 identity=value.identity,
-                symbol=lowering_symbol(value.identity, value.body_ir)?,
+                symbol=header.symbol,
                 module=value.module,
                 order=orders.fresh(value.module),
                 final=value.final,
@@ -891,17 +824,17 @@ def lowering_witnesses(
             ),
         )
         witnessed.add(value.identity)
+    reader = selected_owner_metadata_reader(scopes.typed and len(retained) > 0)?
     for record in retained:
         if record.identity in witnessed:
             continue
         if len(record.body_ir) == 0:
             continue
-        decoded = decode_owner(record.body_ir).map_err((error) => str(error))?
+        decoded = match reader:
+            Some(prepared) => typed_owner_metadata(prepared, record.body_ir)?
+            None => predecessor_owner_metadata(record.body_ir)?
         if decoded.identity != record.identity:
             return Err("retained Body IR disagrees with its graph owner")
-        symbol = match decoded.body.canonical:
-            Some(canonical) => encode_incan_symbol_identity(canonical)
-            None => ""
 
         key = body_key("body-ir", origin, record.identity, "checked", root(record.final)?)
         prior = match selected:
@@ -915,7 +848,7 @@ def lowering_witnesses(
             return Err("retained Body IR differs from the selected graph")
         # A carried module's source records are the selected graph's: its owner and inputs are current by the capture.
         carried = decoded.source in cutoff.carried
-        if not carried and not retained_sources_current(projections, prior, unit, origin, decoded.source, str(decoded.body.name), record.identity)?:
+        if not carried and not retained_sources_current(projections, prior, unit, origin, decoded.source, decoded.name, record.identity)?:
             continue
         position = orders.retained(prior, decoded.source, body)?
         source.add(encode_record_key(key)?, body.value)
@@ -955,7 +888,7 @@ def lowering_witnesses(
         witnesses.append(
             LoweringBody(
                 identity=record.identity,
-                symbol=symbol,
+                symbol=decoded.symbol,
                 module=decoded.source,
                 order=position,
                 final=record.final,

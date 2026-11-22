@@ -1,11 +1,13 @@
 """Typed nominal bindings shared by graph executable owners in one source module."""
 
 from rust::internal_models_native import (
-    NamespaceAtom, NamespaceEntry, NamespaceField, canonical_symbol_descriptions, decode_checked_projection,
+    NamespaceAtom, NamespaceEntry, NamespaceField, PreparedWireReader, canonical_symbol_descriptions,
+    checked_projection_fields, decode_checked_projection, decode_checked_projection_view,
     encode_checked_projection,
 )
 from std.primitives.crumb.descriptions import Description
 from std.primitives.text import copy_frozen_bytes
+from std.primitives.views import MappedView
 from crumb_rows import ModelField, model_description
 from records import RecordKey
 
@@ -64,6 +66,14 @@ pub def decode_executable_scope(encoded: Borrowed[bytes], module: Borrowed[str])
         _ => return Err("executable scope requires a record root")
 
 
+pub def decode_executable_scope_view(reader: Borrowed[PreparedWireReader], view: Borrowed[MappedView], module: Borrowed[str]) -> Result[list[NamespaceEntry], str]:
+    """Restore selected scope entries directly from their immutable store view."""
+    root = decode_checked_projection_view(reader, view)?
+    match root:
+        NamespaceAtom.Fields(fields) => return scope_bindings(fields, module)
+        _ => return Err("executable scope requires a record root")
+
+
 def scope_bindings(fields: list[NamespaceField], module: Borrowed[str]) -> Result[list[NamespaceEntry], str]:
     """Read the verified module and bindings using their stable identities."""
     mut source = ""
@@ -90,3 +100,15 @@ def field_number(key: bytes) -> u64:
     for index in range(len(key)):
         number = (number << 8) | key[index].saturating_resize[u64]()
     return number
+
+pub def prepare_executable_scope_reader() -> Result[PreparedWireReader, str]:
+    """Prepare the exact scope schema used in compiler publication."""
+    return PreparedWireReader.create(copy_frozen_bytes(ROOT), scope_descriptions(), "executable scope")
+
+
+pub def read_executable_scope_source(reader: Borrowed[PreparedWireReader], view: Borrowed[MappedView]) -> Result[str, str]:
+    """Check the scope frame and read its authenticated module without opening its nominal map."""
+    cells = checked_projection_fields(reader, view, [copy_frozen_bytes(MODULE)])?
+    if let NamespaceAtom.Text(module) = cells[0]:
+        return Ok(module)
+    return Err("executable scope requires a source module")

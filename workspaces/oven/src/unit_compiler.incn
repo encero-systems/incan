@@ -10,6 +10,7 @@ pub from pub::internal_models.checker_publication import CheckerRecordCounts
 from pub::internal_models.checker_publication import checker_report_suffix, decode_checker_counts
 from std.fs import Path
 from pub::internal_models.overload_members import scope_output_suffix
+from pub::internal_models.executable_body_wire import executable_graph_output_marker
 from std.json import parse
 from driver_command import driver_command
 from codegen import compiled_arguments
@@ -100,7 +101,7 @@ pub def compile_prepared_unit(
         write_selected_records(records_path, unit, records)?
         native += ["--graph-body-records", records_path.0]
         native += ["--plan-record-products", records_path.0]
-        output_path = graph_body_output_path(unit, key, toolchain.unit_descriptor_crumb)
+        output_path = graph_body_output_path(unit, key, toolchain.unit_descriptor_crumb, toolchain.graph_executable_crumb)
         discard_graph_body_output(output_path)?
         discard_file(checker_record_report_path(output_path))
         native += ["--graph-body-output", output_path.0]
@@ -192,18 +193,21 @@ pub def checked_body_counts(report: Path) -> Result[CheckedBodyCounts, str]:
     return Ok(CheckedBodyCounts(checked=checked, reused=reused, decoded=decoded))
 
 
-pub def graph_body_output_path(unit: UnitDescription, key: Key, typed: bool) -> Path:
+pub def graph_body_output_path(unit: UnitDescription, key: Key, typed: bool, executable_crumb: bool = false) -> Path:
     """Name the invocation sidecar written beside this exact described unit without publishing another descriptor."""
     directory = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath("units")
     description = descriptor_path(directory, described_by(key), typed)
     if typed:
-        return Path(description.0 + ".published" + scope_output_suffix())
+        mut prefix = ""
+        if executable_crumb:
+            prefix = executable_graph_output_marker()
+        return Path(description.0 + prefix + ".published" + scope_output_suffix())
     return Path(f"{description.0}.graph-body-output")
 
 
-pub def checker_record_counts(unit: UnitDescription, key: Key, typed: bool) -> Result[CheckerRecordCounts, str]:
+pub def checker_record_counts(unit: UnitDescription, key: Key, typed: bool, executable_crumb: bool = false) -> Result[CheckerRecordCounts, str]:
     """Read the compiler's complete per-owner admission report without inspecting diagnostic fallback strings."""
-    report = checker_record_report_path(graph_body_output_path(unit, key, typed))
+    report = checker_record_report_path(graph_body_output_path(unit, key, typed, executable_crumb))
     if not report.is_file():
         return Ok(CheckerRecordCounts())
     counts = decode_checker_counts(report.read_bytes().map_err((error) => error.message())?)?
