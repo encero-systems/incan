@@ -7,6 +7,9 @@
 use crate::*;
 use std::collections::{HashMap, HashSet};
 
+/// Unit used by runtime tests whose slots do not overlap.
+const TEST_UNIT: u64 = 0x5465_7374_0000_0001;
+
 /// Read a caught panic's text payload, as the language panic hook and `std.testing` read it.
 fn panic_message<R>(run: impl FnOnce() -> R + std::panic::UnwindSafe) -> Option<String> {
     let payload = std::panic::catch_unwind(run).err()?;
@@ -487,63 +490,66 @@ mod lists_and_collections {
 mod statics_and_names {
     use super::*;
 
+    /// Each supported carrier keeps its current value between calls on the same unit slot.
     #[test]
     fn static_cells_persist_across_calls() {
-        assert_eq!(read_static_int(9001, 5), 5);
-        write_static_int(9001, 6);
-        assert_eq!(read_static_int(9001, 5), 6);
-        write_static_text(9002, text("t"));
-        assert_eq!(read_static_text(9002, text("x")), "t");
-        assert_eq!(read_static_float(9003, 1.5), 1.5);
-        write_static_bool(9004, true);
-        assert!(read_static_bool(9004, false));
-        write_static_float(9005, 2.5);
-        assert_eq!(read_static_float(9005, 0.0), 2.5);
-        assert_eq!(read_static_int_set(9006, HashSet::from([1])), HashSet::from([1]));
-        write_static_int_set(9006, HashSet::from([2]));
-        assert_eq!(read_static_int_set(9006, HashSet::new()), HashSet::from([2]));
-        write_static_text_int_dict(9007, HashMap::from([(text("k"), 1)]));
+        assert_eq!(read_static_int_in_unit(TEST_UNIT, 9001, 5), 5);
+        write_static_int_in_unit(TEST_UNIT, 9001, 6);
+        assert_eq!(read_static_int_in_unit(TEST_UNIT, 9001, 5), 6);
+        write_static_text_in_unit(TEST_UNIT, 9002, text("t"));
+        assert_eq!(read_static_text_in_unit(TEST_UNIT, 9002, text("x")), "t");
+        assert_eq!(read_static_float_in_unit(TEST_UNIT, 9003, 1.5), 1.5);
+        write_static_bool_in_unit(TEST_UNIT, 9004, true);
+        assert!(read_static_bool_in_unit(TEST_UNIT, 9004, false));
+        write_static_float_in_unit(TEST_UNIT, 9005, 2.5);
+        assert_eq!(read_static_float_in_unit(TEST_UNIT, 9005, 0.0), 2.5);
         assert_eq!(
-            read_static_text_int_dict(9007, HashMap::new()),
+            read_static_int_set_in_unit(TEST_UNIT, 9006, HashSet::from([1])),
+            HashSet::from([1])
+        );
+        write_static_int_set_in_unit(TEST_UNIT, 9006, HashSet::from([2]));
+        assert_eq!(
+            read_static_int_set_in_unit(TEST_UNIT, 9006, HashSet::new()),
+            HashSet::from([2])
+        );
+        write_static_text_int_dict_in_unit(TEST_UNIT, 9007, HashMap::from([(text("k"), 1)]));
+        assert_eq!(
+            read_static_text_int_dict_in_unit(TEST_UNIT, 9007, HashMap::new()),
             HashMap::from([(text("k"), 1)])
         );
     }
 
+    /// A repeated module claim fails during initialization and after completion.
     #[test]
     fn module_initialization_is_claimed_once() {
-        assert!(begin_module_initialization(77));
-        assert!(!begin_module_initialization(77));
-        end_module_initialization(77);
-        assert!(!begin_module_initialization(77));
+        assert!(begin_unit_module_initialization(TEST_UNIT, 77));
+        assert!(!begin_unit_module_initialization(TEST_UNIT, 77));
+        end_unit_module_initialization(TEST_UNIT, 77);
+        assert!(!begin_unit_module_initialization(TEST_UNIT, 77));
     }
 
-    /// The seed's slot-only cells coexist with equal-numbered cells in each candidate unit.
+    /// Equal-numbered statics of two units have independent cells for each carrier.
     #[test]
-    fn static_slots_are_isolated_by_unit_during_bootstrap() {
+    fn static_slots_are_isolated_by_unit() {
         let (loaf, program) = (0x9f3a_51c2_7e10_44d8, 0);
-        write_static_int(0, 19);
         write_static_int_in_unit(loaf, 0, 2);
         assert_eq!(read_static_int_in_unit(program, 0, 100), 100);
         assert_eq!(read_static_int_in_unit(loaf, 0, 0), 2);
-        assert_eq!(read_static_int(0, 0), 19);
         write_static_text_in_unit(program, 0, text("program"));
         assert_eq!(read_static_text_in_unit(loaf, 0, text("loaf")), "loaf");
         write_static_int_set_in_unit(loaf, 0, HashSet::from([3]));
         assert_eq!(read_static_int_set_in_unit(program, 0, HashSet::new()), HashSet::new());
     }
 
-    /// A seed module and two candidate modules can each claim the same local initialization key.
+    /// Two units can each claim the same local module initialization key.
     #[test]
-    fn module_initialization_is_claimed_per_unit_during_bootstrap() {
+    fn module_initialization_is_claimed_per_unit() {
         let (loaf, program) = (0x51c2_9f3a_44d8_7e10, 0xe0aa_2b71_1f06_3c95);
-        assert!(begin_module_initialization(0));
         assert!(begin_unit_module_initialization(loaf, 0));
         assert!(!begin_unit_module_initialization(loaf, 0));
         assert!(begin_unit_module_initialization(program, 0));
         end_unit_module_initialization(loaf, 0);
-        end_module_initialization(0);
         assert!(!begin_unit_module_initialization(loaf, 0));
-        assert!(!begin_module_initialization(0));
     }
 
     #[test]
@@ -555,15 +561,17 @@ mod statics_and_names {
         assert_eq!(callable_name(text("other"), 41), "<callable>");
     }
 
+    /// Repeated entry publishes the decorated binding and invokes its initializer only once.
     #[test]
     fn decorated_bindings_publish_once() {
+        /// Count one initialization in the test unit's slot.
         fn publish() {
-            write_static_int(9100, read_static_int(9100, 0) + 1);
+            write_static_int_in_unit(TEST_UNIT, 9100, read_static_int_in_unit(TEST_UNIT, 9100, 0) + 1);
         }
         let address = publish as fn() as usize;
         initialize_binding(text("m"), text("inst"), publish, address, 1, text("decorated"));
         initialize_binding(text("m"), text("inst"), publish, address, 1, text("decorated"));
-        assert_eq!(read_static_int(9100, 0), 1);
+        assert_eq!(read_static_int_in_unit(TEST_UNIT, 9100, 0), 1);
         assert_eq!(callable_name(text("m"), 1), "decorated");
     }
 
@@ -901,6 +909,7 @@ mod generator_chains {
         );
     }
 
+    /// Generator consumers preserve their source order and visit each assigned slot.
     #[test]
     fn consumers_drain_in_order() {
         assert_eq!(count_generator(ints(vec![1, 2, 3])), 3);
@@ -916,14 +925,17 @@ mod generator_chains {
             list_generator(vec![text("a"), text("b")]),
             check
         ));
-        for_each_int_generator(ints(vec![9100, 9101]), |slot| write_static_int(slot, slot));
-        assert_eq!(read_static_int(9101, 0), 9101);
+        for_each_int_generator(ints(vec![9130, 9131]), |slot| {
+            write_static_int_in_unit(TEST_UNIT, slot, slot)
+        });
+        assert_eq!(read_static_int_in_unit(TEST_UNIT, 9131, 0), 9131);
     }
 }
 
 mod async_entries {
     use super::*;
 
+    /// Run successful and failing futures on the canonical executor and observe a unit entry's effect.
     #[test]
     fn future_entries_run_on_the_canonical_executor() {
         run_future_entry(async {});
@@ -932,23 +944,25 @@ mod async_entries {
             run_result_future_entry(async { Err(text("failed")) }),
             Err(text("failed"))
         );
+        /// Mark the unit entry as executed.
         fn entry() {
-            write_static_int(9200, 1);
+            write_static_int_in_unit(TEST_UNIT, 9200, 1);
         }
         run_async_entry(entry);
-        assert_eq!(read_static_int(9200, 0), 1);
+        assert_eq!(read_static_int_in_unit(TEST_UNIT, 9200, 0), 1);
     }
 
+    /// Equally ready race arms select the one written first.
     #[test]
     fn races_return_the_first_arm_in_source_order() {
         let winner = run_result_future_entry::<String, _>(async {
             let first: fn(i64) -> i64 = |v| v + 1;
             let second: fn(i64) -> i64 = |v| v + 100;
             let result = race_pair(async { 1_i64 }, first, async { 2_i64 }, second).await;
-            write_static_int(9201, result);
+            write_static_int_in_unit(TEST_UNIT, 9201, result);
             Ok(())
         });
         assert_eq!(winner, Ok(()));
-        assert_eq!(read_static_int(9201, 0), 2);
+        assert_eq!(read_static_int_in_unit(TEST_UNIT, 9201, 0), 2);
     }
 }

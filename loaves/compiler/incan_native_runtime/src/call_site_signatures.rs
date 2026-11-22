@@ -48,7 +48,6 @@ fn every_runtime_function_takes_its_call_site_types() {
     let _: fn(String) = crate::assert_failure;
     // Call site: assertions.incn: [pointer_type, PlanType.String, PlanType.String].
     let _: fn(fn(), String, String) = crate::assert_raises_deferred;
-    let _: fn(i64) -> bool = crate::begin_module_initialization;
     let _: fn(u64, i64) -> bool = crate::begin_unit_module_initialization;
     let _: fn(bool, bool) -> bool = crate::boolean_and;
     let _: fn(bool, bool) -> bool = crate::boolean_or;
@@ -71,7 +70,6 @@ fn every_runtime_function_takes_its_call_site_types() {
     let _: fn(i128, u8) -> crate::DecimalCarrier = crate::decimal_from_parts;
     let _: for<'a, 'b> fn(&'a std::string::String, &'b std::string::String) -> (bool, bool) =
         crate::decode_replacement_policy;
-    let _: fn(i64) = crate::end_module_initialization;
     let _: fn(u64, i64) = crate::end_unit_module_initialization;
     let _: for<'a, 'b> fn(&'a std::string::String, &'b std::string::String) -> bool = crate::ends_text;
     let _: for<'a> fn(&'a std::vec::Vec<u8>) -> std::vec::Vec<(i64, i64)> = crate::enumerate_bytes;
@@ -240,15 +238,8 @@ fn every_runtime_function_takes_its_call_site_types() {
     let _: fn(i64, i64, i64) -> incan_std_primitives::iter::Generator<i64> = crate::range_generator;
     let _: for<'a> fn(&'a std::string::String) -> std::result::Result<std::string::String, std::string::String> =
         crate::read_file_text;
-    let _: fn(i64, bool) -> bool = crate::read_static_bool;
-    let _: fn(i64, f64) -> f64 = crate::read_static_float;
-    let _: fn(i64, i64) -> i64 = crate::read_static_int;
     // Call site: static_storage.incn: [PlanType.Int, ty].
-    let _: fn(i64, std::collections::HashSet<i64>) -> std::collections::HashSet<i64> = crate::read_static_int_set;
-    let _: fn(i64, std::string::String) -> std::string::String = crate::read_static_text;
     // Call site: static cell rule: [PlanType.Int, ty].
-    let _: fn(i64, std::collections::HashMap<String, i64>) -> std::collections::HashMap<String, i64> =
-        crate::read_static_text_int_dict;
     let _: fn(u64, i64, bool) -> bool = crate::read_static_bool_in_unit;
     let _: fn(u64, i64, f64) -> f64 = crate::read_static_float_in_unit;
     let _: fn(u64, i64, i64) -> i64 = crate::read_static_int_in_unit;
@@ -319,14 +310,8 @@ fn every_runtime_function_takes_its_call_site_types() {
         &'a std::string::String,
         &'b std::string::String,
     ) -> std::result::Result<(), std::string::String> = crate::write_file_text;
-    let _: fn(i64, bool) = crate::write_static_bool;
-    let _: fn(i64, f64) = crate::write_static_float;
-    let _: fn(i64, i64) = crate::write_static_int;
     // Call site: static_storage.incn: [PlanType.Int, ty].
-    let _: fn(i64, std::collections::HashSet<i64>) = crate::write_static_int_set;
-    let _: fn(i64, std::string::String) = crate::write_static_text;
     // Call site: static cell rule: [PlanType.Int, ty].
-    let _: fn(i64, std::collections::HashMap<String, i64>) = crate::write_static_text_int_dict;
     let _: fn(u64, i64, bool) = crate::write_static_bool_in_unit;
     let _: fn(u64, i64, f64) = crate::write_static_float_in_unit;
     let _: fn(u64, i64, i64) = crate::write_static_int_in_unit;
