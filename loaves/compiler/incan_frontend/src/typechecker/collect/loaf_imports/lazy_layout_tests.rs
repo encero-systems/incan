@@ -1,6 +1,7 @@
 //! A compiled Loaf that a checker installs is installed by name: the layout of each of its declarations is built the
 //! first time a lookup reads it, and the checked and sealed modules are the same as when every layout is built at once.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -24,7 +25,10 @@ const CONSUMER: &str = "from provider import make\n\ndef main() -> int:\n    ret
 /// The installed `base` and `shapes` Loaves.
 fn shapes(root: &Path) -> TestResult<Arc<LoafIndex>> {
     let base = installed(root, &published_root("base", BASE, LoafIndex::default())?)?;
-    let shapes = installed(root, &published_root("shapes", SHAPES, LoafIndex::new([base.clone()])?)?)?;
+    let shapes = installed(
+        root,
+        &published_root("shapes", SHAPES, LoafIndex::new([base.clone()])?)?,
+    )?;
     Ok(Arc::new(LoafIndex::new([base, shapes])?))
 }
 
@@ -39,8 +43,12 @@ struct CheckedGraph {
 }
 
 /// Check the provider, seal and publish it, and check the consumer against its sealed interface, every checker sharing
-/// the build's preparation `cache`.
-fn check_graph(loaves: &Arc<LoafIndex>, cache: &DependencyInterfacePreparationCache) -> TestResult<CheckedGraph> {
+/// the build's preparation `cache`. Also returns the layout builds of the checks, counted before the consumer's
+/// dependency tables are rendered, which builds every layout they hold.
+fn check_graph(
+    loaves: &Arc<LoafIndex>,
+    cache: &DependencyInterfacePreparationCache,
+) -> TestResult<(CheckedGraph, BTreeMap<String, usize>)> {
     let provider = parse(PROVIDER)?;
     let consumer = parse(CONSUMER)?;
     let mut first = checker("provider", loaves, cache);
@@ -55,13 +63,15 @@ fn check_graph(loaves: &Arc<LoafIndex>, cache: &DependencyInterfacePreparationCa
     second
         .check_with_imports(&consumer, &[("provider", &provider)])
         .map_err(|errors| format!("consumer: {errors:?}"))?;
+    let builds = cache.layout_build_counts();
     let consumer_tables = format!("{:?}", second.dependency_interface_snapshot());
-    Ok(CheckedGraph {
+    let checked = CheckedGraph {
         sealed: format!("{:?}", interface.snapshot()),
         namespace: format!("{namespace:?}"),
         consumer_tables,
         body_ir: [body_ir(&provider, first), body_ir(&consumer, second)],
-    })
+    };
+    Ok((checked, builds))
 }
 
 /// Naming one type of a compiled Loaf builds that type's layout and the layouts a lookup then reads through it, and no
@@ -70,9 +80,7 @@ fn check_graph(loaves: &Arc<LoafIndex>, cache: &DependencyInterfacePreparationCa
 fn naming_one_provider_type_builds_only_its_layout_and_the_layouts_read_through_it() -> TestResult {
     let root = tempfile::tempdir()?;
     let loaves = shapes(root.path())?;
-    let cache = DependencyInterfacePreparationCache::default();
-    check_graph(&loaves, &cache)?;
-    let builds = cache.layout_build_counts();
+    let (_, builds) = check_graph(&loaves, &DependencyInterfacePreparationCache::default())?;
     assert!(
         builds.contains_key("Outer") && builds.contains_key("Inner"),
         "the named layouts were not built: {builds:?}"
@@ -81,7 +89,10 @@ fn naming_one_provider_type_builds_only_its_layout_and_the_layouts_read_through_
         .keys()
         .filter(|name| !matches!(name.as_str(), "Outer" | "Inner"))
         .collect::<Vec<_>>();
-    assert!(unread.is_empty(), "layouts no lookup read were built: {unread:?} of {builds:?}");
+    assert!(
+        unread.is_empty(),
+        "layouts no lookup read were built: {unread:?} of {builds:?}"
+    );
     Ok(())
 }
 
@@ -92,8 +103,8 @@ fn naming_one_provider_type_builds_only_its_layout_and_the_layouts_read_through_
 fn a_loaf_installed_by_name_checks_and_seals_as_one_installed_whole() -> TestResult {
     let root = tempfile::tempdir()?;
     let loaves = shapes(root.path())?;
-    let by_name = check_graph(&loaves, &DependencyInterfacePreparationCache::default())?;
-    let whole = check_graph(&loaves, &DependencyInterfacePreparationCache::eager_layouts())?;
+    let (by_name, _) = check_graph(&loaves, &DependencyInterfacePreparationCache::default())?;
+    let (whole, _) = check_graph(&loaves, &DependencyInterfacePreparationCache::eager_layouts())?;
     assert_eq!(by_name, whole);
     Ok(())
 }

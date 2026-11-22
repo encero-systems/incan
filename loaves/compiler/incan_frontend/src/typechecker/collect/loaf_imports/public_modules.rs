@@ -72,7 +72,7 @@ impl TypeChecker {
     pub(in crate::typechecker::collect) fn public_module_member(
         &mut self,
         library: &str,
-        manifest: &LibraryManifest,
+        manifest: &Arc<LibraryManifest>,
         module_path: &[String],
         member: &str,
     ) -> Result<Option<PublicModuleMember>, Vec<String>> {
@@ -345,7 +345,7 @@ impl TypeChecker {
     pub(in crate::typechecker::collect) fn public_module_type_remapping(
         &mut self,
         library: &str,
-        manifest: &LibraryManifest,
+        manifest: &Arc<LibraryManifest>,
         owner_module_path: &[String],
     ) -> HashMap<String, String> {
         let mut remapping = self.public_library_canonical_type_remapping(library, manifest);
