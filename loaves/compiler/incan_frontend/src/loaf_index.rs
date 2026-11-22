@@ -1229,6 +1229,47 @@ mod scoped_name_tests {
         assert_eq!(LoafArtifact::read(directory.path(), name)?.manifest.name, name);
         Ok(())
     }
+
+    /// A Loaf's parser vocabulary is kept in its own private record once its manifest is admitted, so a later
+    /// session's parser reads the vocabulary without decoding the whole manifest again.
+    #[test]
+    fn a_parser_vocabulary_is_read_without_its_manifest() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let name = "vocabulary/catalog";
+        let mut manifest = LibraryManifest::new(name, "1.0.0");
+        manifest.vocab = Some(crate::library_manifest::VocabExports {
+            metadata_version: 1,
+            unit_identity: "vocabulary-unit".to_owned(),
+            crate_path: "src/vocab.incn".to_owned(),
+            package_name: name.to_owned(),
+            keyword_registrations: Vec::new(),
+            dsl_surfaces: Vec::new(),
+            provider_manifest: Default::default(),
+            desugarer_artifact: None,
+        });
+        let path = directory.path().join(format!("{}.incnlib", artifact_stem(name)));
+        std::fs::write(&path, manifest.to_json_string()?)?;
+        let open = || {
+            IndexedLoaf::open(
+                name.to_owned(),
+                LoafNamespace::Dependency { key: name.to_owned() },
+                directory.path().to_path_buf(),
+                name,
+            )
+        };
+        let first = open()?;
+        let vocabulary = first
+            .parser_vocabulary()?
+            .ok_or("the first session found no vocabulary")?;
+        super::release_retained_loaves();
+        let second = open()?;
+        assert!(second.parser_vocabulary()?.as_deref() == Some(&*vocabulary));
+        assert!(
+            !second.was_demanded(),
+            "the second session decoded the manifest for its vocabulary"
+        );
+        Ok(())
+    }
 }
 
 #[cfg(test)]
