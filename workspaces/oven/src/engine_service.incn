@@ -23,7 +23,7 @@ from engine_messages import (
     CompletionStatus,
     EffectDisposition,
 )
-from engine_state import Identity, ServiceState
+from engine_state import Identity, ServiceState, records_generation
 from engine_epochs import prepare_submit
 from engine_actions import Pending, ExecutionLease, finish_request
 from engine_programs import read_program, program_handle
@@ -78,19 +78,19 @@ pub def serve(arguments: list[str]) -> Result[None, Refusal]:
 
 
 pub def serve_at(root: Path, identity: Identity, idle: int = 600) -> Result[None, Refusal]:
-    """Hold the store scheduling lock through startup, all client work and final socket withdrawal."""
+    """Hold this generation's scheduling lock through startup, all client work and final socket withdrawal."""
     selected = endpoint(root, identity)?
     held = Path(selected.lock).try_lock_exclusive().map_err((error) => transport(error.message()))?
     if held is None:
-        return Err(transport("another engine owns this store"))
+        return Err(transport("another engine of this generation owns this store"))
     withdraw_stale(selected.socket)?
     mut listener = listen(selected.socket, false).map_err(transport)?
     # A caller whose runtime directory names another socket path finds this one through the store; without the
     # record only callers sharing this environment can.
-    _ = record_endpoint(root, selected.socket)
+    _ = record_endpoint(selected.record, selected.socket)
     mut state = ServiceState(identity=identity, store=root, last_active=0)
     outcome = event_loop(listener, state, idle)
-    withdraw_endpoint(root, selected.socket)
+    withdraw_endpoint(selected.record, selected.socket)
     discard_file(Path(selected.socket))
     return outcome
 
@@ -286,6 +286,7 @@ def accept(mut client: Client, mut state: ServiceState, request: bytes, submit: 
                     format=submit.options,
                     directory=submit.directory,
                     unit_options=submit.unit_options,
+                    records=records_generation(state.identity).map_err(transport)?,
                     handle=program_handle(captured.identity, state.identity.compiler_generation, submit.view).map_err(
                         transport,
                     )?,

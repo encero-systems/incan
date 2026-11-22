@@ -179,6 +179,7 @@ pub def check_program(
     selected_home: Option[SelectedHome] = None,
     view: str = "",
     unit_options: str = "",
+    record_writer: str = "",
 ) -> Result[CheckOutcome, str]:
     """
     Describe and check one captured build reach without requesting code generation or a native selection. The check
@@ -199,7 +200,7 @@ pub def check_program(
         whole_check = check_prepared(ready, toolchain, format, None, is_editor_view(view))?
         return Ok(CheckOutcome(code=whole_check.code, console=console))
     # Only the owners this request's edit reaches change between keystrokes; the view's pages are kept for the rest.
-    reading = body_reading(store, view, ready, epoch.inputs)?
+    reading = body_reading(store, view, ready, epoch.inputs, record_writer)?
     directory = check_page_directory(store, view, ready)
     pages = keep_check_pages(reading.graph, source_origin(ready), reading.invalid, ready, directory)?
     checked = check_prepared(ready, toolchain, format, Some(pages.directory), is_editor_view(view))?
@@ -226,10 +227,11 @@ def prepared_for(view: str, described: UnitDescription, toolchain: Toolchain) ->
     return Ok(ready)
 
 
-def body_reading(store: Path, view: str, ready: UnitDescription, inputs: list[CapturedInput]) -> Result[BodyReading, str]:
+def body_reading(store: Path, view: str, ready: UnitDescription, inputs: list[CapturedInput], record_writer: str) -> Result[BodyReading, str]:
     """
     Read the graph a request selects checked bodies from: an editor view reads its own records, any other view the
-    shared ones. An owner whose earlier evaluation read a source projection this request changed is invalid.
+    shared ones. An owner whose earlier evaluation read a source projection this request changed is invalid, and so
+    is every owner whose records another writer than `record_writer` (a compiler and an Oven) wrote.
     """
     mut graph_view = str(HOME_VIEW)
     if is_editor_view(view):
@@ -238,7 +240,7 @@ def body_reading(store: Path, view: str, ready: UnitDescription, inputs: list[Ca
     graph = snapshot(store, graph_view).map_err((error) => error.message())?
     record_work(Operation.EngineSelect, "graph-snapshot", reading)
     projecting = begin_work()
-    projected = prepare_captured_source_inputs(graph, begin(graph), ready, inputs)?
+    projected = prepare_captured_source_inputs(graph, begin(graph), ready, inputs, record_writer)?
     record_work(Operation.EngineSelect, "captured-sources", projecting)
     invalidating = begin_work()
     invalid = body_owners_reading(graph, projected.keys, CHECKER_PROFILE)?
@@ -252,12 +254,13 @@ def select_bodies(
     ready: UnitDescription,
     inputs: list[CapturedInput],
     listing_refusals: bool,
+    record_writer: str,
 ) -> Result[BodySelection, str]:
     """
     Select the checked bodies a build reuses: every owner of the request's graph its edit leaves valid. Listing
     refusals checks every owner afresh.
     """
-    reading = body_reading(store, view, ready, inputs)?
+    reading = body_reading(store, view, ready, inputs, record_writer)?
     origin = source_origin(ready)
     mut invalid = reading.invalid
     if listing_refusals:
@@ -277,6 +280,7 @@ pub def obtain(
     producer: str = "",
     selected_home: Option[SelectedHome] = None,
     unit_options: str = "",
+    record_writer: str = "",
 ) -> Result[ProgramOutcome, str]:
     """
     Ask for a unit record, using the existing RFC 124 producer on a miss.
@@ -344,7 +348,7 @@ pub def obtain(
     # writes its source and checked-body records in its own view, so it never changes what a build reads.
     request_view = program_view(handle)?
     editor = is_editor_view(request_view)
-    selection = select_bodies(store, request_view, ready, epoch.inputs, listing_refusals)?
+    selection = select_bodies(store, request_view, ready, epoch.inputs, listing_refusals, record_writer)?
     graph = selection.graph
     projected = selection.projected
     invalid = selection.invalid
@@ -469,6 +473,7 @@ pub def obtain(
             Some(admission_report),
             scalar_plans.retained,
             cutoff,
+            record_writer,
         )?
         request_transaction = bodies.transaction
         demand_work = bodies.lowering_demands
