@@ -9,17 +9,63 @@ use incan_mir_plan_native::{
     Callee, CalleeKind, Constant, ExternalFunction, Function, Local, Operand, OperandKind, PlanType, RvalueKind,
     SourceSpan, TerminatorKind, Unwind, assign as plan_assign, block as plan_block, place as plan_place,
 };
-use incan_semantics_core::body_ir::{Body, StaticDeclaration, StaticInitializer};
-use incan_semantics_core::{SemanticSourceTargetKind, canonical_module_identity};
+use incan_semantics_core::body_ir::{
+    Body, LinkedStaticAccessors, StaticDeclaration, StaticInitializer, loaf_crate_name,
+};
+use incan_semantics_core::{SemanticSourceTargetKind, SymbolOrigin, canonical_module_identity};
 
-use crate::frame::{Builder, literal, temporary, terminate_call};
+use crate::frame::{Builder, external_call, literal, temporary, terminate_call};
 
 const BEGIN_MODULE_INITIALIZATION: &str = "incan_native_runtime::begin_unit_module_initialization";
 const END_MODULE_INITIALIZATION: &str = "incan_native_runtime::end_unit_module_initialization";
 
-/// Report whether a static's initializer is a computed body rather than an effect-free literal.
+/// Report whether a static participates in its declaring module's computed initialization.
 pub fn is_computed_static(declaration: &StaticDeclaration) -> bool {
     matches!(declaration.initial, StaticInitializer::Computed(_))
+        || linked_static(declaration).is_some_and(|accessors| accessors.initialize_module.is_some())
+}
+
+/// Read the producer bindings of this static, when it was supplied by a compiled Loaf publishing native storage.
+pub(crate) fn linked_static(declaration: &StaticDeclaration) -> Option<&LinkedStaticAccessors> {
+    match &declaration.initial {
+        StaticInitializer::Linked(accessors) => Some(accessors),
+        _ => None,
+    }
+}
+
+/// Resolve a recorded crate-relative operation against the exact package that declares its storage.
+pub(crate) fn linked_static_item(declaration: &StaticDeclaration, item: &str) -> Option<String> {
+    let SymbolOrigin::Package { library, .. } = &declaration.canonical.origin else {
+        return None;
+    };
+    Some(format!("{}::{item}", loaf_crate_name(library)))
+}
+
+/// Select the actual guard for a synthesized method, either in this plan or in the static's declaring Loaf.
+pub(crate) fn guarded_static_call(
+    builder: &Builder,
+    slot: usize,
+    method: String,
+    mutable: bool,
+) -> Result<CalleeKind, String> {
+    let declaration = &builder.program.statics[slot];
+    let Some(accessors) = linked_static(declaration) else {
+        return Ok(CalleeKind::StaticMethod(slot as i64, method));
+    };
+    let guard = accessors
+        .guarded
+        .as_ref()
+        .ok_or("linked static has no producer guard")?;
+    let accessor = if mutable {
+        guard
+            .with_mut
+            .as_deref()
+            .ok_or("linked static has no exclusive producer guard")?
+    } else {
+        guard.with_ref.as_str()
+    };
+    let item = linked_static_item(declaration, accessor).ok_or("linked static has no declaring Loaf")?;
+    Ok(CalleeKind::LinkedStaticMethod(item, method))
 }
 
 /// The declaring module of a static, read from its canonical identity.
@@ -30,7 +76,7 @@ pub fn static_owner(declaration: &StaticDeclaration) -> String {
 /// The first computed static slot module `owner` declares, which keys its initialization, or -1 for none.
 pub fn module_static_key(statics: &[StaticDeclaration], owner: &str) -> i64 {
     for (slot, declaration) in statics.iter().enumerate() {
-        if is_computed_static(declaration) && static_owner(declaration) == owner {
+        if matches!(declaration.initial, StaticInitializer::Computed(_)) && static_owner(declaration) == owner {
             return slot as i64;
         }
     }
@@ -104,20 +150,31 @@ mod unit_key_tests {
     }
 }
 
-/// Call module `owner`'s static initializer, as legacy calls `__incan_init_module_statics` at a function entry.
+/// Call the declaring unit's module initializer. Seed-era storage records without a producer binding still use
+/// the local initializer during the transition.
 pub fn initialize_module_statics(builder: &mut Builder, owner: &str, span: &SourceSpan) {
-    let key = module_static_key(&builder.program.statics, owner);
-    if key < 0 {
+    let initializer = builder.program.statics.iter().find_map(|declaration| {
+        if !is_computed_static(declaration) || static_owner(declaration) != owner {
+            return None;
+        }
+        match &declaration.initial {
+            StaticInitializer::Computed(_) => Some(CalleeKind::Planned(module_initializer_name(owner))),
+            StaticInitializer::Linked(accessors) => {
+                let path = accessors.initialize_module.as_deref()?;
+                linked_static_item(declaration, path).map(CalleeKind::External)
+            }
+            _ => None,
+        }
+    });
+    let Some(initializer) = initializer else {
         return;
-    }
+    };
     let output = temporary(builder, PlanType::Unit, span);
-    terminate_call(
-        builder,
-        CalleeKind::Planned(module_initializer_name(owner)),
-        Vec::new(),
-        output,
-        span,
-    );
+    if let CalleeKind::External(path) = initializer {
+        external_call(builder, &path, Vec::new(), PlanType::Unit, Vec::new(), output, span);
+    } else {
+        terminate_call(builder, initializer, Vec::new(), output, span);
+    }
 }
 
 /// Report whether a body initializes its module's statics on entry: every function and method does, as in legacy,
@@ -136,7 +193,9 @@ pub fn enters_module_initialization(body: &Body) -> bool {
 pub fn has_native_static_cell(declaration: &StaticDeclaration) -> bool {
     match declaration.initial {
         StaticInitializer::List(_) | StaticInitializer::Dict(_) => true,
-        _ => is_computed_static(declaration),
+        StaticInitializer::Linked(ref accessors) => accessors.guarded.is_some(),
+        StaticInitializer::Computed(_) => true,
+        _ => false,
     }
 }
 
@@ -195,7 +254,9 @@ pub fn module_initializer(statics: &[StaticDeclaration], key: i64, span: &Source
     let forced: Vec<i64> = statics
         .iter()
         .enumerate()
-        .filter(|(_, declaration)| is_computed_static(declaration) && static_owner(declaration) == owner)
+        .filter(|(_, declaration)| {
+            matches!(declaration.initial, StaticInitializer::Computed(_)) && static_owner(declaration) == owner
+        })
         .map(|(slot, _)| slot as i64)
         .collect();
     // 1. Completed modules return after a single native atomic load.

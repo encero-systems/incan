@@ -880,6 +880,9 @@ fn store_target(target: &CalleeKind, remap: &mut NominalRemap) -> Result<StoredT
         CalleeKind::StaticMethod(slot, name) => {
             StoredTarget::StaticMethod(remap.slot(NominalKind::Static, *slot, "")?.index, name.clone())
         }
+        CalleeKind::LinkedStaticMethod(path, name) => {
+            StoredTarget::LinkedStaticMethod(store_binding(path)?, name.clone())
+        }
         _ => return store_closure_target(target, remap),
     })
 }
@@ -940,6 +943,9 @@ fn restore_target(target: &StoredTarget, remap: &mut NominalRemap) -> Result<Cal
         }
         StoredTarget::StaticMethod(ordinal, name) => {
             CalleeKind::StaticMethod(remap.slot(NominalKind::Static, *ordinal, "")?.index, name.clone())
+        }
+        StoredTarget::LinkedStaticMethod(path, name) => {
+            CalleeKind::LinkedStaticMethod(restore_named_binding(path, remap)?, name.clone())
         }
     })
 }

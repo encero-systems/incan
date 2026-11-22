@@ -26,6 +26,8 @@ pub fn dependency_report(arguments: &[String]) -> Result<(), Box<dyn std::error:
         dependencies.graph_body_output,
         dependencies.collect_codegraph,
     )?;
+    let linked_static_exports = prepare_native_executable_surface(&program)?
+        .map_or_else(Arc::default, |surface| Arc::new(surface.linked_statics));
     let plan = lower_compilation_plan(
         &mut program,
         kind,
@@ -33,6 +35,7 @@ pub fn dependency_report(arguments: &[String]) -> Result<(), Box<dyn std::error:
         &source,
         &receipt,
         &mut Vec::new(),
+        &linked_static_exports,
         None,
         None,
     )?;
