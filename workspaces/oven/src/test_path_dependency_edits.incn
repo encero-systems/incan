@@ -1,0 +1,124 @@
+"""
+A program that calls a path-dependency Loaf runs the Loaf's current bodies on the records engine: an edit that moves a
+dependency declaration rechecks the program bodies that name it, and an edit elsewhere in the Loaf leaves them checked.
+"""
+
+from rust::std::process import Command
+from rust::std::str import from_utf8
+from std.environ import get_or
+from std.fs import Path
+from std.json import JsonValue
+from files import read, write
+from lowering_record_fixtures import command_proof, proof_count, stop_example_engine
+from scratch import scratch_directory
+
+
+const LIBRARY: str = "pub def greeting() -> str:\n    return \"from the library\"\n\n\npub def other() -> str:\n    return \"unchanged\"\n"
+
+
+model FixtureRun:
+    """One records run's engine report and the program's own output after it."""
+
+    pub report: JsonValue
+    pub output: str
+
+
+pub def test_a_moved_dependency_declaration_reaches_an_unchanged_program() -> Result[None, str]:
+    """
+    A longer body in the path dependency moves the declaration the unchanged program calls; the program then prints
+    the edited text, as the first engine does.
+    """
+    scratch = scratch_directory()?
+    app = path_dependency_fixture(scratch.path(), "greeting, other", "f\"{greeting()}; {other()}\"")?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    store = scratch.path().joinpath("store")
+    cold = records_run(binary, app, store)?
+    assert cold.output == "from the library; unchanged\n", cold.output
+    edit_library(scratch.path(), "\"from the library\"", "\"from the edited library\"")?
+    edited = records_run(binary, app, store)?
+    first = first_engine_run(binary, app, scratch.path().joinpath("first-store"))?
+    assert edited.output == first, f"records engine: {edited.output}; first engine: {first}"
+    assert edited.output == "from the edited library; unchanged\n", edited.output
+    text = edited.report.to_json().map_err((error) => error.message())?
+    assert proof_count(edited.report, "body_evaluations")? >= 1, text
+    return stop_example_engine(binary, store)
+
+
+pub def test_an_edit_after_a_dependency_declaration_leaves_its_reader_checked() -> Result[None, str]:
+    """
+    A longer body after the declaration a program calls leaves that declaration in place, so the program's checked
+    body is reused and the program prints what it printed before.
+    """
+    scratch = scratch_directory()?
+    app = path_dependency_fixture(scratch.path(), "greeting", "greeting()")?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    store = scratch.path().joinpath("store")
+    cold = records_run(binary, app, store)?
+    assert cold.output == "from the library\n", cold.output
+    edit_library(scratch.path(), "\"unchanged\"", "\"changed after the greeting\"")?
+    edited = records_run(binary, app, store)?
+    text = edited.report.to_json().map_err((error) => error.message())?
+    assert edited.output == "from the library\n", edited.output
+    assert proof_count(edited.report, "body_evaluations")? == 0, text
+    return stop_example_engine(binary, store)
+
+
+def path_dependency_fixture(root: Path, names: str, printed: str) -> Result[Path, str]:
+    """Write the program `app` that prints from the path-dependency Loaf `pathlib` next to it."""
+    library = root.joinpath("lib")
+    library.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    write(library.joinpath("loaf.toml"), "[project]\nname = \"pathlib\"\nversion = \"0.1.0\"\n")?
+    write(library.joinpath("src/lib.incn"), LIBRARY)?
+    app = root.joinpath("app")
+    app.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    write(
+        app.joinpath("loaf.toml"),
+        "[project]\nname = \"pathapp\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n"
+        + "[dependencies]\npathlib = { path = \"../lib\" }\n",
+    )?
+    write(app.joinpath("src/main.incn"), f"from pub::pathlib import {names}\n\n\ndef main() -> None:\n    println({printed})\n")?
+    return Ok(app)
+
+
+def edit_library(root: Path, before: str, after: str) -> Result[None, str]:
+    """Replace one string literal in the path dependency's only module."""
+    source = root.joinpath("lib/src/lib.incn")
+    text = read(source)?
+    assert before in text, text
+    return write(source, text.replace(before, after))
+
+
+def records_run(binary: str, app: Path, store: Path) -> Result[FixtureRun, str]:
+    """Run the program through the records engine with its report on the first line."""
+    outcome = Command
+        .new(binary)
+        .current_dir(app.0)
+        .args(["run", "src/main.incn", "--engine-report"])
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
+    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+    if not outcome.status.success():
+        return Err(f"records run: status={outcome.status.code()} stdout={output} stderr={errors}")
+    report = command_proof(outcome.stdout)?
+    lines = output.split("\n")
+    return Ok(FixtureRun(report=report, output="\n".join(lines[1:])))
+
+
+def first_engine_run(binary: str, app: Path, store: Path) -> Result[str, str]:
+    """Run the program through the first engine and return its output."""
+    outcome = Command
+        .new(binary)
+        .current_dir(app.0)
+        .args(["run", "src/main.incn"])
+        .env("INCAN_ENGINE", "legacy")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
+    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+    if not outcome.status.success():
+        return Err(f"first engine run: status={outcome.status.code()} stdout={output} stderr={errors}")
+    return Ok(output)
