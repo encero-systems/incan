@@ -11,15 +11,20 @@ from native_build import (
     NativeContext,
     StandardGeneration,
     StandardProfile,
+    beside_project,
     build_shipped_tools,
+    finish_tool_build,
     oven_test_library_step,
+    overlapping_project_capacity,
     refused_after,
     build_source_tools,
+    build_support_tool,
     build_standard_packages,
     publish_support,
     readmit_build_home,
     require_unique_runtime_root,
     share_seed_generations,
+    start_conductor,
     standard_profiles,
 )
 from oven_tests import host_memory, shared_memory
@@ -177,28 +182,32 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
     candidate = match produce_candidate(run):
         Ok(built) => built
         Err(message) => refuse_candidate_after_cancellation(reference, message)?
-    # 4. The Oven test library built ahead is joined before the source targets it reads are reclaimed.
-    match finish_oven_test_library(run, candidate):
-        Ok(_) => pass
-        Err(message) => _ = refuse_candidate_after_cancellation(reference, message)?
-
-    if not run.options.prove_fixed_point and not signed:
-        reclaim(run, "build-lane", [run.paths.lane])?
 
     # 5. The seed defines the independent case inventory and outcomes the installed candidate must retain.
     phase(run, "reference-verification")?
-    reference_log = finish_reference_census(run, reference)?
+    reference_log = match finish_reference_census(run, reference):
+        Ok(log) => log
+        Err(message) => return Err(refused_after(candidate.library, message))
+
+    # 6. The fresh installation owns the census and the one memory measurement; a packing invocation leaves it out. It
+    #    is installed while the Oven test library may still build; that build is joined before the build lane and the
+    #    source targets it reads are reclaimed.
+    mut installation: Option[PreparedInstallation] = None
+    if not run.options.stamp_signer:
+        match prepare_installation(run, candidate):
+            Ok(prepared) => installation = Some(prepared)
+            Err(message) => return Err(refused_after(candidate.library, message))
+    finish_oven_test_library(run, candidate)?
+    if not run.options.prove_fixed_point and not signed:
+        reclaim(run, "build-lane", [run.paths.lane])?
     reclaim(run, "reference-scratch", [run.paths.output.joinpath("reference-contracts-scratch")])?
     if not run.options.prove_fixed_point and not signed:
         reclaim(run, "source-targets", generated_source_targets(run))?
-
-    # 6. The fresh installation owns the census and the one memory measurement; a packing invocation leaves it out.
     mut counts: Option[Counts] = None
-    if not run.options.stamp_signer:
-        phase(run, "installed-verification")?
-        installed, installed_inputs = installed_verification(run, candidate)?
+    if let Some(prepared) = installation:
+        installed = installed_verification(run, prepared)?
         candidate_report = candidate_census(run, installed)?
-        store_installed_census(run, installed_inputs, installed)?
+        store_installed_census(run, prepared.inputs, installed)?
         compare_reference(run, reference_log, candidate_report)?
         counts = Some(candidate_report.counts)
 
@@ -480,16 +489,42 @@ def apply_release_trust(source: Path, toolchain: Path) -> Result[None, str]:
 
 
 def build_source_closure(run: ReleaseRun) -> Result[Candidate, str]:
-    """Build the conductor and the fresh support (the Rust runtime included) and standard source closure with the seed."""
+    """
+    Build the conductor and the fresh support (the Rust runtime included) and standard source closure with the seed.
+
+    Only the driver build after this needs the conductor: the support helper, the support closure and the standard
+    providers run the helper and the seed's driver. So when a second child fits, the conductor builds in the background
+    from the start, they proceed beside it in the remaining capacity, and the conductor is joined last.
+    """
     seed_context = seed_tool_context(run)?
-    conductor, helper = build_source_tools(seed_context, run.seed_home)?
-    context = native_context(run, conductor, run.paths.home)
+    if overlapping_project_capacity(seed_context.jobs, seed_context.memory) is None:
+        conductor, helper = build_source_tools(seed_context, run.seed_home)?
+        context = native_context(run, conductor, run.paths.home)
+        source_providers(run, context, helper)?
+        return Ok(Candidate(context=context, oven=conductor, lsp=Path("")))
+    pending = start_conductor(seed_context)?
+    beside = beside_project(seed_context)
+    match source_providers_beside(run, beside, pending.plan.destination):
+        Ok(_) =>
+            conductor = finish_tool_build(seed_context, pending)?
+            return Ok(Candidate(context=native_context(run, conductor, run.paths.home), oven=conductor, lsp=Path("")))
+        Err(message) => return Err(refused_after(Some(pending.worker), message))
+
+
+def source_providers_beside(run: ReleaseRun, seed_context: NativeContext, conductor: Path) -> Result[None, str]:
+    """Build the support helper, then the source providers, in the capacity a running conductor build leaves."""
+    helper = build_support_tool(seed_context, run.seed_home)?
+    context = beside_project(native_context(run, conductor, run.paths.home))
+    return source_providers(run, context, helper)
+
+
+def source_providers(run: ReleaseRun, context: NativeContext, helper: Path) -> Result[None, str]:
+    """Replace the seed's providers in the candidate home with the support closure and the standard Loaves."""
     withdraw_seed_providers(run)?
     readmit_build_home(context, helper, "source-home-readmit")?
     publish_support(context, helper)?
     require_unique_runtime_root(context)?
-    build_standard_packages(context, helper, "", standard_profiles(StandardGeneration.SourceClosure))?
-    return Ok(Candidate(context=context, oven=conductor, lsp=Path("")))
+    return build_standard_packages(context, helper, "", standard_profiles(StandardGeneration.SourceClosure))
 
 
 def seed_tool_context(run: ReleaseRun) -> Result[NativeContext, str]:
@@ -812,11 +847,21 @@ def release_baseline(run: ReleaseRun) -> Result[Path, str]:
     return Err(f"release PASS baseline is absent: {qualified.0}")
 
 
-def installed_verification(run: ReleaseRun, candidate: Candidate) -> Result[tuple[Path, CensusInputs], str]:
+pub model PreparedInstallation:
+    """The packed candidate installed in a second home, the checkout that verifies it, and its census inputs."""
+
+    pub verification: Path
+    pub home: Path
+    pub environment: Dict[str, str]
+    pub inputs: CensusInputs
+
+
+def prepare_installation(run: ReleaseRun, candidate: Candidate) -> Result[PreparedInstallation, str]:
     """
-    Install the packed candidate into a second home and run the Incan installed-verification program; return its
-    census and the inputs that decided it, read before the installation is reclaimed.
+    Install the packed candidate into a second home beside a fresh checkout, and read the inputs that decide its
+    census before verification reclaims the installation.
     """
+    phase(run, "installed-verification")?
     verification = run.paths.output.joinpath("verification-source")
     require_release_step(
         run,
@@ -875,6 +920,14 @@ def installed_verification(run: ReleaseRun, candidate: Candidate) -> Result[tupl
     # The installed Loaf and Rust-facet tests reuse the release units from the bakery the builds above compiled into.
     environment["INCAN_BUILDER_BAKERY"] = builder_bakery(get_or("INCAN_BAKERY", ""), run.paths.home)
     environment["INCAN_BUILDER_SOURCE"] = run.paths.source.0
+    return Ok(PreparedInstallation(verification=verification, home=home, environment=environment, inputs=inputs))
+
+
+def installed_verification(run: ReleaseRun, installation: PreparedInstallation) -> Result[Path, str]:
+    """Run the Incan installed-verification program in the prepared installation and return its census."""
+    verification = installation.verification
+    home = installation.home
+    environment = installation.environment
     require_linked_release_step(
         run,
         release_step(
@@ -910,7 +963,7 @@ def installed_verification(run: ReleaseRun, candidate: Candidate) -> Result[tupl
         "installed-verification-scratch",
         [verification, home, runs[0].joinpath("runner"), runs[0].joinpath("scratch")],
     )?
-    return Ok((log, inputs))
+    return Ok(log)
 
 
 def compare_reference(run: ReleaseRun, reference: Path, candidate: Borrowed[BaselineReport]) -> Result[None, str]:
