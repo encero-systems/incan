@@ -1,10 +1,13 @@
-"""Select the temporary legacy or records engine without falling back after a records refusal."""
+"""Select the records engine, the default, or the legacy engine `INCAN_ENGINE` names, without falling back after a refusal."""
 
 from engine_wire import Refusal, RefusalKind
 
+# The engine a command runs on when `INCAN_ENGINE` is unset.
+pub const DEFAULT_ENGINE: str = "records"
+
 
 pub enum Engine:
-    """The explicit migration modes; legacy remains the default until E7 acceptance."""
+    """The engines a command can select: records is the default, and legacy stays selectable until E7 removes it."""
 
     Legacy
     Records
