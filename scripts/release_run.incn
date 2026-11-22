@@ -6,7 +6,7 @@ a child process: named, logged, timed and, where the phase needs it, required to
 from rust::std::time import Instant
 from std.fs import Path
 from native_build import NativeContext
-from release_verifier_teardown import finish_installed_verifier
+from release_verifier_teardown import finish_installed_verifier, stop_release_oven
 from release_support import (
     TOOLCHAIN_DIRECTORY,
     BackgroundStep,
@@ -43,7 +43,8 @@ pub def finish_builder_handoff(run: ReleaseRun) -> Result[None, str]:
 
 
 pub def handoff_build_lane(lane: Path, retain: bool) -> Result[int, str]:
-    """Reclaim the release-owned build lane unless a fixed-point proof will read it again."""
+    """Retire the builder's standalone Oven before the installed request can reuse its Bakery."""
+    stop_release_oven(lane.joinpath("oven-bin/incan"))?
     if retain:
         return Ok(0)
     return reclaim_paths([lane])
