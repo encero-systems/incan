@@ -839,7 +839,7 @@ pub def test_retained_owner_selection_propagates_an_ambiguous_owner() -> Result[
 
 pub def test_projected_body_witnesses_drive_early_cutoff_and_signature_invalidation() -> Result[None, str]:
     """Owner, header and declaration witnesses identify body, import and signature dirtiness without checking."""
-    source = "from std import env\n\ndef first() -> int:\n    return 1\n\ndef second() -> int:\n    return first()\n\ndef unrelated() -> int:\n    return 3\n"
+    source = "from std import env\n\ndef first(\n) -> int:\n    return 1\n\ndef second() -> int:\n    return first()\n\ndef unrelated() -> int:\n    return 3\n"
     projection = project_source("package", "src/main.incn", source)?
     first_source = projected_owner(projection, "first")?
     second_source = projected_owner(projection, "second")?
@@ -889,11 +889,20 @@ pub def test_projected_body_witnesses_drive_early_cutoff_and_signature_invalidat
     changed_body = projected_owner(body_edit, "first")?
     assert body_edit.declarations.text == projection.declarations.text
     edited = publish_source_projection(complete, body_edit)?
-    assert invalid_body_owners(edited.snapshot, [changed_body.key], "profile")? == ["first"]
+    mut changed_keys = [body_edit.positioned.key]
+    if changed_body.digest() != first_source.digest():
+        changed_keys.append(changed_body.key)
+    if body_edit.header.digest() != projection.header.digest():
+        changed_keys.append(body_edit.header.key)
+    dirty = invalid_body_owners(edited.snapshot, changed_keys, "profile")?
+    assert dirty == ["first"], f"body edit dirtied {len(dirty)} owners: {dirty}"
+    assert body_edit.header.digest() == projection.header.digest()
+    assert changed_body.digest() != first_source.digest()
+    assert projected_owner(body_edit, "second")?.digest() == second_source.digest()
     assert select_body_values(edited.snapshot, family_key("local", "first"), family_key("final", "first"), "profile")? is None
     assert select_body_values(edited.snapshot, family_key("local", "second"), family_key("final", "second"), "profile")? is not None
 
-    signature_projection = project_source("package", "src/main.incn", source.replace("first() -> int", "first() -> str"))?
+    signature_projection = project_source("package", "src/main.incn", source.replace(") -> int:\n    return 1", ") -> str:\n    return 1"))?
     assert signature_projection.declarations.text != projection.declarations.text
     assert signature_projection.census.text == projection.census.text
     changed_signature = projected_owner(signature_projection, "first")?
@@ -910,7 +919,7 @@ pub def test_projected_body_witnesses_drive_early_cutoff_and_signature_invalidat
     removed_projection = project_source(
         "package",
         "src/main.incn",
-        source.replace("def first() -> int:\n    return 1\n\n", ""),
+        source.replace("def first(\n) -> int:\n    return 1\n\n", ""),
     )?
     assert removed_projection.declarations.text != projection.declarations.text
     assert removed_projection.census.text != projection.census.text
