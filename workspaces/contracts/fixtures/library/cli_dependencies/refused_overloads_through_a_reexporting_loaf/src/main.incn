@@ -1,0 +1,18 @@
+# behavior: a Loaf module that re-exports its dependency's overloaded functions publishes each complete overload set, so a program's call that matches no overload and one that matches more than one are refused as they are against the dependency itself
+# expect-exit: 1
+# expect-stderr-contains:
+#   Call to 'convert' matches none of its 2 overloads
+#   Call to overloaded function 'choose' is ambiguous
+#   expected 'pub::converters::Parcel', found 'Parcel'
+
+from pub::bridge.relayed import convert, choose, unwrap_value
+
+
+model Parcel:
+    pub value: int
+
+
+def main() -> None:
+    println(convert(true))
+    println(choose(1))
+    println(unwrap_value(Parcel(value=7)))
