@@ -23,8 +23,9 @@ pub(crate) fn method_name(slot: i64, method: &str) -> String {
     format!("__incan_static_method_{slot}_{method}")
 }
 
-/// Require the selected method's receiver to borrow exactly this cell's carrier, a model or a dictionary, and its
-/// result to outlive the storage guard. The same signature controls adapter declaration and plan validation.
+/// Require the selected method's receiver to borrow exactly this cell's carrier, a model or a dictionary (shared, or
+/// exclusively for an insertion), and its result to outlive the storage guard. The same signature controls adapter
+/// declaration and plan validation.
 pub(crate) fn method_target<'plan>(plan: &'plan Plan, slot: i64, name: &str) -> Result<&'plan Function, PlanError> {
     let cell = cell(plan, slot)?;
     let method = plan
@@ -38,7 +39,7 @@ pub(crate) fn method_target<'plan>(plan: &'plan Plan, slot: i64, name: &str) -> 
     })?;
     let carrier = match &receiver.ty {
         PlanType::ModelRef(owner, name) | PlanType::ModelMutRef(owner, name) => PlanType::Model(*owner, name.clone()),
-        PlanType::DictRef(key, value) => PlanType::Dict(key.clone(), value.clone()),
+        PlanType::DictRef(key, value) | PlanType::DictMutRef(key, value) => PlanType::Dict(key.clone(), value.clone()),
         _ => {
             return Err(PlanError::Invalid {
                 function: method.name.clone(),
@@ -279,7 +280,7 @@ fn guarded_method_item(slot: i64, method: &Function, span: Span) -> Result<Box<a
         .parameters
         .first()
         .ok_or_else(|| PlanError::UnknownCallee(method.name.clone()))?;
-    let mutable = matches!(receiver.ty, PlanType::ModelMutRef(..));
+    let mutable = matches!(receiver.ty, PlanType::ModelMutRef(..) | PlanType::DictMutRef(..));
     let names = method
         .parameters
         .iter()
