@@ -3,7 +3,7 @@
 from scratch import scratch_directory
 from compiler_body_values import SelectedBodyPage
 from unit import UnitDescription
-from unit_compiler import DIGEST_COMPANION, write_selected_records
+from unit_compiler import DIGEST_COMPANION, FRAME_COMPANION, write_selected_records
 
 const NAMED: str = "6e616d6564.incnmodule.positioned"
 const DIGEST: str = "abababababababababababababababababababababababababababababababab"
@@ -45,4 +45,23 @@ pub def test_a_staged_page_with_a_known_digest_is_named_by_it() -> Result[None, 
     assert named == DIGEST
     assert directory.joinpath(NAMED).read_bytes().map_err((error) => error.message())? == b"module page"
     assert not directory.joinpath("namespace-page" + DIGEST_COMPANION).exists()
+    return Ok(None)
+
+
+pub def test_a_page_offered_by_its_store_frame_is_staged_without_its_bytes() -> Result[None, str]:
+    """
+    A page selected with its digest and the immutable store frame that holds it is staged as a reference to that frame
+    beside its digest: the compiler reads the bytes from the store only when it does not already hold this content.
+    """
+    scratch = scratch_directory()?
+    directory = scratch.path().joinpath("records")
+    pages = [
+        SelectedBodyPage(key=NAMED, value=b"module page", digest=DIGEST, segment="/store/segments/one.seg", offset=24, length=11),
+    ]
+    write_selected_records(directory, staged_unit(), pages)?
+    assert not directory.joinpath(NAMED).exists(), "the page was staged as a copy of its bytes"
+    frame = directory.joinpath(NAMED + FRAME_COMPANION).read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert frame == "/store/segments/one.seg\n24\n11\n", frame
+    named = directory.joinpath(NAMED + DIGEST_COMPANION).read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert named == DIGEST
     return Ok(None)
