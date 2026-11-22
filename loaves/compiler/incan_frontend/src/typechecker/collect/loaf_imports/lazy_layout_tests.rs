@@ -416,3 +416,30 @@ fn a_loaf_registers_the_declarations_its_install_record_lists() -> TestResult {
     );
     Ok(())
 }
+
+/// Installing a compiled Loaf keys its root exports' layouts by the names its install record lists: given a record
+/// that omits one root model, that model gets no root-name entry while the others do.
+#[test]
+fn a_loaf_keys_the_root_exports_its_install_record_lists() -> TestResult {
+    use crate::typechecker::TypeChecker;
+    let root = tempfile::tempdir()?;
+    let loaves = shapes(root.path())?;
+    let manifest = Arc::clone(&loaves.entry("shapes").ok_or("missing shapes")?.artifact.manifest);
+    let mut producer = TypeChecker::new();
+    producer.set_loaves(Arc::clone(&loaves));
+    let mut record = producer.loaf_install_record("shapes", &manifest);
+    assert_eq!(record.root_exports.models, ["Outer", "Unused"]);
+    record.root_exports.models.retain(|name| name != "Unused");
+    let cache = DependencyInterfacePreparationCache::default().with_install_record("shapes", record);
+    let mut consumer = checker("consumer", &loaves, &cache);
+    consumer.cache_transitive_pub_export_semantics("shapes", &manifest);
+    assert!(
+        consumer.transitive_pub_types.contains_key("Outer"),
+        "a listed root model is keyed"
+    );
+    assert!(
+        !consumer.transitive_pub_types.contains_key("Unused"),
+        "a root model the record omits is keyed by its root name"
+    );
+    Ok(())
+}
