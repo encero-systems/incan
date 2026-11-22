@@ -631,3 +631,126 @@ fn a_loaf_install_record_replays_the_dependency_interface_without_opening_manife
     }
     Ok(())
 }
+
+/// Reconstruct every root nominal and trait layout from its declaration signature, layout, and defaults.
+/// A captured corpus can be checked through the same comparison as the fixture Loaves.
+#[test]
+fn root_export_layouts_match_their_declaration_facets() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let loaves = shapes(root.path())?;
+    let mut roots = 0;
+    for entry in loaves.entries() {
+        roots += compare_root_layouts(&entry.artifact.manifest, &entry.artifact.identity.digest)?;
+    }
+    assert_eq!(roots, 8, "the fixtures must exercise every root layout kind");
+
+    if let Some(directory) = std::env::var_os("INCAN_RECORDS_LAYOUT_CORPUS") {
+        use sha2::{Digest, Sha256};
+        let mut paths = std::fs::read_dir(directory)?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<Result<Vec<_>, _>>()?;
+        paths.sort();
+        let mut manifests = 0;
+        let mut layouts = 0;
+        for path in paths {
+            if path.extension().and_then(|extension| extension.to_str()) != Some("incnlib") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path)?;
+            let manifest = crate::library_manifest::LibraryManifest::from_json_str(&text)?;
+            let digest = format!("sha256:{:x}", Sha256::digest(text.as_bytes()));
+            layouts +=
+                compare_root_layouts(&manifest, &digest).map_err(|error| format!("{}: {error}", path.display()))?;
+            manifests += 1;
+        }
+        assert!(manifests > 0 && layouts > 0, "the corpus contains no root layouts");
+        println!("{manifests} census Loaves and {layouts} root layouts");
+    }
+    Ok(())
+}
+
+/// Compare the exact symbol kinds the root manifest exports with the layouts of their restored declarations.
+fn compare_root_layouts(manifest: &crate::library_manifest::LibraryManifest, digest: &str) -> TestResult<usize> {
+    use crate::library_manifest::compiler_records::RecordFamily;
+    use crate::library_manifest::declaration_records::{qualified_name, restored_nominal_declaration};
+    use crate::symbols::{SymbolKind, TypeInfo};
+    use crate::typechecker::TypeChecker;
+
+    let checker = TypeChecker::new();
+    let exports = &manifest.exports;
+    let layouts = exports
+        .models
+        .iter()
+        .map(|value| {
+            (
+                &value.name,
+                SymbolKind::Type(TypeInfo::Model(checker.model_info_from_manifest(value))),
+            )
+        })
+        .chain(exports.classes.iter().map(|value| {
+            (
+                &value.name,
+                SymbolKind::Type(TypeInfo::Class(checker.class_info_from_manifest(value))),
+            )
+        }))
+        .chain(exports.enums.iter().map(|value| {
+            (
+                &value.name,
+                SymbolKind::Type(TypeInfo::Enum(checker.enum_info_from_manifest(value))),
+            )
+        }))
+        .chain(exports.newtypes.iter().map(|value| {
+            (
+                &value.name,
+                SymbolKind::Type(TypeInfo::Newtype(checker.newtype_info_from_manifest(value))),
+            )
+        }))
+        .chain(
+            exports
+                .traits
+                .iter()
+                .map(|value| (&value.name, SymbolKind::Trait(checker.trait_info_from_manifest(value)))),
+        );
+    let records = manifest.compiler_records(digest)?;
+    let mut count = 0;
+    for (name, mut expected) in layouts {
+        let identity = manifest
+            .contract_metadata
+            .identity_graph
+            .entry_for_public_name(name)
+            .ok_or_else(|| format!("{} publishes no identity for {name}", manifest.name))?;
+        let (module, declaration) = TypeChecker::normalized_api_declaration_target(&identity.source_path)
+            .ok_or_else(|| format!("{}::{name} has no declaration path", manifest.name))?;
+        let key = qualified_name(&module, &declaration);
+        let read = |family| {
+            records
+                .records
+                .iter()
+                .find(|record| record.name == key && record.family == family)
+                .map(|record| serde_json::from_slice::<serde_json::Value>(&record.value))
+                .transpose()
+        };
+        let signature = read(RecordFamily::DeclarationSignature)?
+            .ok_or_else(|| format!("{}::{name} has no signature record for {key}", manifest.name))?;
+        let layout = read(RecordFamily::Layout)?;
+        let defaults = read(RecordFamily::Default)?;
+        let declaration = serde_json::from_value(restored_nominal_declaration(
+            signature,
+            layout.as_ref(),
+            defaults.as_ref(),
+        ))?;
+        let mut actual = checker
+            .symbol_kind_from_api_declaration(None, &declaration)
+            .ok_or_else(|| format!("{}::{name} restores no layout", manifest.name))?;
+        TypeChecker::mark_compiled_class_field_provider(&mut expected, &manifest.name);
+        TypeChecker::mark_compiled_class_field_provider(&mut actual, &manifest.name);
+        assert_eq!(
+            serde_json::to_value(actual)?,
+            serde_json::to_value(expected)?,
+            "{}::{name} using declaration {key}",
+            manifest.name,
+        );
+        count += 1;
+    }
+    Ok(count)
+}
