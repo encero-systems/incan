@@ -84,3 +84,32 @@ def whole_unit_build(binary: str, project: Path, store: Path) -> Result[JsonValu
     if not outcome.status.success():
         return Err(f"whole-unit build: status={outcome.status.code()} stdout={output} stderr={errors}")
     return command_proof(outcome.stdout)
+
+
+pub def test_a_library_build_asked_for_its_graph_publishes_it() -> Result[None, str]:
+    """
+    A library built whole by the records engine with `--codegraph` has its checked graph exported beside its native
+    publication, where the first engine's build puts it.
+    """
+    scratch = scratch_directory()?
+    project = scratch.path().joinpath("graphlib")
+    project.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    write(project.joinpath("loaf.toml"), "[project]\nname = \"graphlib\"\nversion = \"0.1.0\"\n")?
+    write(project.joinpath("src/lib.incn"), "pub def helper() -> int:\n    return 7\n")?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    store = scratch.path().joinpath("store")
+    outcome = Command
+        .new(binary)
+        .current_dir(project.0)
+        .args(["build", "src/lib.incn", "--codegraph"])
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
+    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+    if not outcome.status.success():
+        return Err(f"library graph build: status={outcome.status.code()} stdout={output} stderr={errors}")
+    graph = project.joinpath("target/incan/loaves/graphlib/debug/graphlib.incngraph")
+    assert graph.is_file(), f"no graph at {graph.0}; stderr={errors}"
+    return stop_example_engine(binary, store)
