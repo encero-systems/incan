@@ -591,7 +591,7 @@ fn recorded_nodes(page: &ModulePage, function: &str) -> Option<Vec<EventPosition
 }
 
 /// A traced frame's module and source name, as the reuse proof matches bodies across captures.
-fn frame_label(body: &Body) -> String {
+pub(crate) fn frame_label(body: &Body) -> String {
     format!("{}::{}", body_module_identity(body).unwrap_or_default(), body.name)
 }
 

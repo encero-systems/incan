@@ -155,7 +155,7 @@ fn complete_runtime_plan(
     extend_generic_constructor_arities(Arc::make_mut(&mut constructors), &template_constructors);
     extend_constructor_authority(Arc::make_mut(&mut constructors), &source_files, package_versions);
     extend_unions(&mut unions, &context);
-    intrinsics = intrinsic_declarations(&constructors, &context, &entry_file, intrinsics)?;
+    intrinsics = intrinsic_declarations(&constructors, &context, &entry_file, intrinsics, "continuation")?;
     resume_plan_roots(
         &mut program,
         constructors.clone(),

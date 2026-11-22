@@ -764,7 +764,14 @@ pub fn layout_tables(
 ) -> Result<(ConstructorIndex, Vec<IncanType>, Vec<EnumDeclaration>), String> {
     let constructors = index_constructors(&context.nominal_declarations, source_files, package_versions);
     let unions = collect_unions(context);
-    let intrinsics = intrinsic_declarations(&constructors, context, file, retained_intrinsics)?;
+    let intrinsics = intrinsic_declarations(&constructors, context, file, retained_intrinsics, "initial")?;
+    if crate::trace_channel::tracing_products() {
+        emit(
+            "carrier_unions",
+            "",
+            &format!("initial {} {}", unions.len(), unions.len()),
+        );
+    }
     Ok((constructors, unions, intrinsics))
 }
 

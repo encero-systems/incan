@@ -66,12 +66,22 @@ pub fn collect_unions(module: &BodyIrModule) -> Vec<IncanType> {
 
 /// Append union shapes introduced by resolved runtime facts while preserving every existing native slot.
 pub fn extend_unions(unions: &mut Vec<IncanType>, module: &BodyIrModule) {
+    let previous_count = unions.len();
     let mut retained: BTreeSet<IncanType> = unions.iter().cloned().collect();
-    for ty in collect_unions(module) {
+    let selected = collect_unions(module);
+    let constructed = selected.len();
+    for ty in selected {
         if !retained.contains(&ty) {
             retained.insert(ty.clone());
             unions.push(ty);
         }
+    }
+    if crate::trace_channel::tracing_products() {
+        crate::trace_channel::emit(
+            "carrier_unions",
+            "",
+            &format!("continuation {constructed} {}", unions.len() - previous_count),
+        );
     }
 }
 
