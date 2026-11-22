@@ -42,6 +42,9 @@ from release_support import (
 const GIB: int = 1073741824
 const FACET_RESERVATION_BYTES: int = 2 * GIB
 const SMALL_PROJECT_RESERVATION_BYTES: int = 2 * GIB
+# What one census worker reserves: a whole census at two jobs peaked at 1.73 GB (fast-census-base-1 and
+# fast-census-after-1), about 0.87 GB a worker, so 2 GiB keeps more than twice that.
+pub const CENSUS_WORKER_RESERVATION_BYTES: int = 2 * GIB
 # The census case that drives the installed language server live: initialization, navigation, call hierarchy and the
 # stale-buffer contract. The census runs it with `INCAN_LSP` naming the installed server, so no gate repeats it.
 pub const LSP_CONTRACT_CASE: str = "graph/incan/relationships"
@@ -240,9 +243,20 @@ pub def verification_phase_plans(jobs: int) -> list[VerificationPhasePlan]:
         VerificationPhasePlan(phase=VerificationPhase.Oven, reservation=workers * OVEN_PROJECT_RESERVATION_BYTES),
         VerificationPhasePlan(phase=VerificationPhase.RustFacets, reservation=workers * FACET_RESERVATION_BYTES),
         VerificationPhasePlan(phase=VerificationPhase.DriverIntegration, reservation=LOWERING_RESERVATION_BYTES),
-        VerificationPhasePlan(phase=VerificationPhase.Census, reservation=workers * LOWERING_RESERVATION_BYTES),
+        VerificationPhasePlan(
+            phase=VerificationPhase.Census,
+            reservation=census_jobs(jobs) * CENSUS_WORKER_RESERVATION_BYTES,
+        ),
         VerificationPhasePlan(phase=VerificationPhase.Memory, reservation=LOWERING_RESERVATION_BYTES),
     ]
+
+
+pub def census_jobs(jobs: int) -> int:
+    """
+    The census's workers: twice the release's jobs. It outlasts every other gate, which end in about half its time
+    and leave their processors to it.
+    """
+    return 2 * verification_workers(jobs)
 
 
 pub def verification_gate_width(jobs: int) -> int:
@@ -734,7 +748,7 @@ def run_contracts(installation: Installation, runner: Path) -> Result[BaselineRe
                 installation.oven,
                 installation.root.joinpath("workspaces/contracts/fixtures"),
                 installation.run.joinpath("scratch"),
-                installation.jobs,
+                census_jobs(installation.jobs),
                 installation.timeout_seconds,
             ),
             environment=environment,
