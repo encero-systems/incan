@@ -7,6 +7,7 @@ from std.tempfile import TemporaryDirectory
 from std.environ import get_or
 from std.primitives.locking import LockGuard
 from rust::std::rc import Rc
+from rust::std::mem import take
 from engine_capture import BuildEpoch, CapturedInput, InputRole, SelectedHome
 from bakery import find, fact_file
 from bakery_records import Fact
@@ -148,8 +149,7 @@ pub model BodyReading:
 pub model BodySelection:
     """A request view's checked-body records for one prepared unit, selected before the compiler checks it."""
 
-    pub graph: Snapshot
-    pub projected: PreparedSourceInputs
+    pub reading: BodyReading
     pub invalid: list[str]
     pub reached: EditReaders
 
@@ -232,7 +232,10 @@ def prepared_for(view: str, described: UnitDescription, toolchain: Toolchain) ->
     return Ok(ready)
 
 
-def body_reading(store: Path, view: str, ready: UnitDescription, inputs: list[CapturedInput], record_writer: str) -> Result[BodyReading, str]:
+def body_reading(
+    store: Path, view: str, ready: UnitDescription, inputs: list[CapturedInput], record_writer: str,
+    retain_projections: bool = false,
+) -> Result[BodyReading, str]:
     """
     Read the graph a request selects checked bodies from and stage the source changes against it. An editor view
     reads its own records. Other views use the shared graph. The writer generation is one input to the projections.
@@ -244,7 +247,7 @@ def body_reading(store: Path, view: str, ready: UnitDescription, inputs: list[Ca
     graph = snapshot(store, graph_view).map_err((error) => error.message())?
     record_work(Operation.EngineSelect, "graph-snapshot", reading)
     projecting = begin_work()
-    projected = prepare_captured_source_inputs(graph, begin(graph), ready, inputs, record_writer)?
+    projected = prepare_captured_source_inputs(graph, begin(graph), ready, inputs, record_writer, retain_projections)?
     record_work(Operation.EngineSelect, "captured-sources", projecting)
     return Ok(BodyReading(graph=graph, projected=projected))
 
@@ -261,7 +264,7 @@ def select_bodies(
     Select the checked bodies a build reuses: every owner of the request's graph its edit leaves valid. Listing
     refusals checks every owner afresh.
     """
-    reading = body_reading(store, view, ready, inputs, record_writer)?
+    reading = body_reading(store, view, ready, inputs, record_writer, retain_projections=true)?
     origin = source_origin(ready)
     selecting = begin_work()
     reached = select_edit_readers(reading.graph, reading.projected.keys, [CHECKER_PROFILE, LOWERING_PROFILE], not listing_refusals)?
@@ -274,7 +277,7 @@ def select_bodies(
     else:
         invalid = reached_body_owners(reached.direct, CHECKER_PROFILE)
     record_work(Operation.EngineSelect, "edit-readers", selecting)
-    return Ok(BodySelection(graph=reading.graph, projected=reading.projected, invalid=invalid, reached=reached))
+    return Ok(BodySelection(reading=reading, invalid=invalid, reached=reached))
 
 
 pub def obtain(
@@ -357,8 +360,9 @@ pub def obtain(
     request_view = program_view(handle)?
     editor = is_editor_view(request_view)
     mut selection = select_bodies(store, request_view, ready, epoch.inputs, listing_refusals, record_writer)?
-    graph = selection.graph
-    projected = selection.projected
+    graph = selection.reading.graph
+    mut captured_sources = take(selection.reading.projected.projections)
+    projected = selection.reading.projected
     invalid = selection.invalid
     origin = source_origin(ready)
     # Each selection stage before the unit request is one span, so an edit's fixed selection cost is measured.
@@ -479,6 +483,7 @@ pub def obtain(
             scalar_plans.retained,
             cutoff,
             record_writer,
+            captured_sources,
         )?
         request_transaction = bodies.transaction
         demand_work = bodies.lowering_demands

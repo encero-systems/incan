@@ -5,6 +5,7 @@ from pub::incan_platform.store import Snapshot, Transaction, begin, commit, get,
 from pub::internal_models.records import RecordKey, encode_record_key
 from pub::internal_models.source_value_records import source_value
 from compiler_source_projection import (
+    SourceProjection,
     SourceProjectionRecord,
     captured_source_key,
     compiler_generation_record,
@@ -35,6 +36,8 @@ pub model PreparedSourceInputs:
     pub positioned: Dict[str, bytes] = {}
     # The unit's own modules whose selected projection was carried rather than projected again.
     pub carried: set[str] = set()
+    # Local modules projected from this request's sources for the same feature selection as publication.
+    pub projections: Dict[str, SourceProjection] = {}
 
 
 pub def publish_captured_source_inputs(
@@ -55,6 +58,7 @@ pub def prepare_captured_source_inputs(
     unit: UnitDescription,
     inputs: list[CapturedInput],
     compiler: str = "",
+    retain_projections: bool = false,
 ) -> Result[PreparedSourceInputs, str]:
     """
     Stage captured source projections and report only keys whose semantic values differ from the selected view. The
@@ -64,7 +68,9 @@ pub def prepare_captured_source_inputs(
     mut changed: list[RecordKey] = []
     mut positioned: Dict[str, bytes] = {}
     mut carried: set[str] = set()
-    generation = compiler_generation_record(source_origin(unit), compiler)
+    mut projections: Dict[str, SourceProjection] = {}
+    origin = source_origin(unit)
+    generation = compiler_generation_record(origin, compiler)
     if stage_changed_projection(selected, prepared, encode_record_key(generation.key)?, generation, positioned)?:
         changed.append(generation.key)
     engine = observe(Path(executable()?))?.stamp
@@ -73,7 +79,8 @@ pub def prepare_captured_source_inputs(
             if let Some(identity) = captured_source_identity(unit, input.path)?:
                 mut declared: list[str] = []
                 mut active: Option[list[str]] = None
-                if identity[0] == source_origin(unit):
+                local = identity[0] == origin
+                if local:
                     declared = unit.declared_features
                     active = Some(unit.active_features)
                 capture = SourceProjectionRecord(
@@ -85,7 +92,7 @@ pub def prepare_captured_source_inputs(
                 # A module captured with the bytes, features and engine its selected projection was made from projects
                 # to the same records: its positioned record is carried and nothing is projected again.
                 if carried_projection(selected, capture, identity, positioned)?:
-                    if identity[0] == source_origin(unit):
+                    if local:
                         carried.add(identity[1])
                     continue
                 stage_put(prepared, encode_record_key(capture.key)?, capture.encoded()?)
@@ -117,7 +124,7 @@ pub def prepare_captured_source_inputs(
                     if stage_changed_projection(selected, prepared, encode_record_key(placement.key)?, placement, positioned)?:
                         changed.append(placement.key)
                 # Only another unit's checked bodies read a declaration's span: a path dependency's module stages it.
-                if identity[0] != source_origin(unit):
+                if not local:
                     for facet in projection.spans.keys():
                         span = projection.spans[facet]
                         if stage_changed_projection(selected, prepared, encode_record_key(span.key)?, span, positioned)?:
@@ -127,7 +134,9 @@ pub def prepare_captured_source_inputs(
                         key = encode_record_key(record.key)?
                         if stage_changed_projection(selected, prepared, key, record, positioned)?:
                             changed.append(record.key)
-    return Ok(PreparedSourceInputs(transaction=prepared, keys=changed, positioned=positioned, carried=carried))
+                if retain_projections and local:
+                    projections[identity[1]] = projection
+    return Ok(PreparedSourceInputs(transaction=prepared, keys=changed, positioned=positioned, carried=carried, projections=projections))
 
 
 def capture_marker(engine: str, digest: str, declared: list[str], active: Option[list[str]]) -> str:

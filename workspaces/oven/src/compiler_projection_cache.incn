@@ -1,6 +1,7 @@
 """Cache source projections once for one successful whole-program body publication."""
 
 from std.fs import Path
+from rust::std::mem import take
 from pub::internal_models import CompiledBodyOutputs
 from compiler_source_projection import (
     SourceProjection,
@@ -16,9 +17,10 @@ pub def projection_cache(
     unit: UnitDescription,
     origin: str,
     outputs: CompiledBodyOutputs,
-    lookup_modules: set[str] = set(),
+    lookup_modules: set[str],
+    mut projections: Dict[str, SourceProjection],
 ) -> Result[Dict[str, SourceProjection], str]:
-    """Project each current module once, including project dependency modules read by fresh bodies."""
+    """Complete the request's projection table for its compiler evidence and move the table into publication."""
     mut modules = lookup_modules
     for namespace in outputs.namespaces:
         modules.add(namespace.module)
@@ -32,8 +34,9 @@ pub def projection_cache(
     for fallback in outputs.fallbacks:
         modules.add(fallback.module)
 
-    mut projections: Dict[str, SourceProjection] = {}
     for module in modules:
+        if module in projections:
+            continue
         path = Path(unit.project_root).joinpath(module)
         projections[module] = project_source_file(origin, module, path, unit.declared_features, Some(unit.active_features))?
     mut roots: Dict[str, str] = {}
@@ -48,7 +51,7 @@ pub def projection_cache(
                         if key not in projections:
                             projections[key] = editable_dependency_projection(roots[package], package, dependency.module)?
                 None => pass
-    return Ok(projections)
+    return Ok(take(projections))
 
 
 pub def editable_dependency_projection_key(package: str, module: str) -> str:
