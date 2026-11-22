@@ -152,10 +152,10 @@ def test_verification_phases_reserve_their_complete_parallel_work() -> Result[No
     _ = replacement.replace(shared_output).map_err((error) => error.message())?
     assert pinned.read_text("utf-8", "strict").map_err((error) => error.message())? == "verifier"
     assert shared_output.read_text("utf-8", "strict").map_err((error) => error.message())? == "oven tests"
-    assert selected_builder_bakery("") == ""
-    assert selected_builder_bakery(temporary.path().0) == ""
+    assert selected_builder_bakery("", "") == ""
+    assert selected_builder_bakery("", temporary.path().0) == ""
     temporary.path().joinpath("bakery").mkdir(true, true).map_err((error) => error.message())?
-    assert selected_builder_bakery(temporary.path().0) == temporary.path().joinpath("bakery").0
+    assert selected_builder_bakery("", temporary.path().0) == temporary.path().joinpath("bakery").0
     return Ok(None)
 
 
