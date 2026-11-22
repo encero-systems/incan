@@ -24,7 +24,7 @@ use incan_frontend::contract_metadata::{
 use incan_frontend::hir::build_semantic_module_snapshot_v0;
 use incan_frontend::loaf_index::{LIBRARY_MANIFEST_EXTENSION, LoafIndex};
 use incan_frontend::parsed_module::ParsedModule;
-use incan_frontend::rust_abi_cache::{RustAbiCache, encode_rust_abi_cache};
+use incan_frontend::rust_abi_cache::RustAbiCache;
 use incan_frontend::testing_markers::{TestingMarkerSemantics, testing_marker_semantics_from_manifest};
 use incan_frontend::typechecker::{TypeCheckInfo, TypeChecker};
 use incan_frontend::{diagnostics, lexer, parser, vocab_desugar_pass};
@@ -78,8 +78,8 @@ pub type RustFacts = BTreeMap<String, incan_lang::interop::RustItemMetadata>;
 /// Where a session reads the Rust facts no ABI cache holds: the compiler's own rustc, over the unit's crates. The
 /// caches answer first; a source is asked only for the paths they leave uncovered, so a crate never has two answers.
 pub trait RustFactsSource: std::fmt::Debug + Send + Sync {
-    /// Facts for `paths`.
-    fn facts(&self, paths: &BTreeSet<String>) -> Result<RustFacts, String>;
+    /// Facts for `paths`, as one ABI cache whose items decode when a checker reads them.
+    fn facts(&self, paths: &BTreeSet<String>) -> Result<RustAbiCache, String>;
 }
 
 /// Where one session's Rust facts come from: the ABI caches of the crates the unit links, then the source.
@@ -292,9 +292,7 @@ impl CompilationSession {
         if uncovered.is_empty() {
             return Ok(());
         }
-        let facts = source.facts(&uncovered).map_err(CliError::failure)?;
-        let encoded = encode_rust_abi_cache(&facts).map_err(CliError::failure)?;
-        let cache = RustAbiCache::decode_owned(encoded).map_err(CliError::failure)?;
+        let cache = source.facts(&uncovered).map_err(CliError::failure)?;
         Arc::make_mut(&mut self.loaves).add_rust_fact_cache(&uncovered, Arc::new(cache));
         Ok(())
     }

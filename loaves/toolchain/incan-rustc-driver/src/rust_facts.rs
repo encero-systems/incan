@@ -80,8 +80,9 @@ pub struct RustcFacts {
 }
 
 impl incan_driver::session::RustFactsSource for RustcFacts {
-    /// Reuse the exact bounded extraction for this request and native generation, after shipped ABI lookup.
-    fn facts(&self, paths: &BTreeSet<String>) -> Result<BTreeMap<String, RustItemMetadata>, String> {
+    /// Reuse the exact bounded extraction for this request and native generation, after shipped ABI lookup, as the
+    /// stored cache itself.
+    fn facts(&self, paths: &BTreeSet<String>) -> Result<incan_frontend::rust_abi_cache::RustAbiCache, String> {
         incan_driver::rust_abi::cached_path_facts(&self.unit, paths, |requested| self.extract_paths(requested))
             .map_err(|error| error.message)
     }
