@@ -10,7 +10,7 @@ from lowering_record_fixtures import stop_example_engine
 from scratch import scratch_directory
 
 
-const OUTCOME_HEADER: bytes = b"incan.oven.outcome/2\n"
+const OUTCOME_HEADER: str = "incan.oven.outcome/2\n"
 
 
 pub def test_an_edit_reads_and_hashes_its_source_once() -> Result[None, str]:
@@ -125,7 +125,8 @@ def outcome_payload(key: str, store: Path) -> Result[bool, str]:
     if not key.startswith(f"{store.0}/payloads/"):
         return Ok(false)
     content = Path(key).read_bytes().map_err((error) => error.message())?
-    return Ok(content[:len(OUTCOME_HEADER)] == OUTCOME_HEADER)
+    header = OUTCOME_HEADER.encode("utf-8")
+    return Ok(content[:len(header)] == header)
 
 
 def trace_text(row: JsonValue, key: str) -> Result[str, str]:
