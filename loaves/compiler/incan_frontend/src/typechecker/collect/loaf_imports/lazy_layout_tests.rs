@@ -348,3 +348,30 @@ fn a_loafs_install_record_carries_its_identity_exports_and_the_kind_each_name_fi
     }
     Ok(())
 }
+
+/// Installing a compiled Loaf reads its nominal public types from its install record: given a record that lists one
+/// type fewer than the manifest publishes, the Loaf's canonical type remapping binds only the types the record lists.
+#[test]
+fn a_loafs_canonical_type_remapping_is_the_one_its_install_record_lists() -> TestResult {
+    use crate::typechecker::TypeChecker;
+    let root = tempfile::tempdir()?;
+    let loaves = shapes(root.path())?;
+    let manifest = loaves.manifest("shapes").ok_or("missing manifest")?;
+    let mut producer = TypeChecker::new();
+    producer.set_loaves(Arc::clone(&loaves));
+    let mut record = producer.loaf_install_record("shapes", manifest);
+    assert!(record.canonical_types.iter().any(|row| row.public_name == "Unused"));
+    record.canonical_types.retain(|row| row.public_name != "Unused");
+    let cache = DependencyInterfacePreparationCache::default().with_install_record("shapes", record);
+    let mut consumer = checker("consumer", &loaves, &cache);
+    let remapping = consumer.public_library_canonical_type_remapping("shapes", manifest);
+    assert!(
+        remapping.contains_key("Outer"),
+        "the record's types are bound: {remapping:?}"
+    );
+    assert!(
+        !remapping.contains_key("Unused"),
+        "a type the record does not list is bound: {remapping:?}"
+    );
+    Ok(())
+}
