@@ -605,6 +605,12 @@ impl TypeChecker {
         if let Some(source) = self.resolved_source_from_rust_carrier(&normalized) {
             return source;
         }
+        // A compiled declaration's generic argument can name a source alias in the provider's own scope.
+        if split_canonical_public_library_type_name(&normalized).is_some()
+            && self.transitive_pub_types.contains_key(&normalized)
+        {
+            return ResolvedType::Named(normalized);
+        }
         // Native scalar names are metadata vocabulary, independent of same-spelled source imports.
         if let Some(id) = numerics::from_str(&normalized)
             && numerics::as_str(id) == normalized

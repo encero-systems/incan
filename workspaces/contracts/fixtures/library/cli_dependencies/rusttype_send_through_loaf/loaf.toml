@@ -1,0 +1,9 @@
+[project]
+name = "rusttype_send_through_loaf"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+guard_provider = { path = "deps/guard_provider" }
