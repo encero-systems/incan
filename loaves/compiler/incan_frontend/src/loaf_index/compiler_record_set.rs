@@ -644,6 +644,8 @@ fn decode_manifest(
         },
         contract_metadata,
         rust_abi: decode_optional::<LibraryRustAbi>(&mut families, "rust-abi", name, dir)?,
+        // Installed Loaves are never a project's shared library, the only publisher of the package-internal section.
+        package_internal: None,
     };
     if let Some((family, _)) = families.first_key_value() {
         return Err(unreadable(

@@ -1,0 +1,26 @@
+pub def convert(value: int) -> int:
+    return value + 1
+
+
+pub def convert(value: str) -> str:
+    return value + "!"
+
+
+pub def choose(value: int) -> int:
+    return 1
+
+
+pub def choose(value: float) -> int:
+    return 2
+
+
+pub model Parcel:
+    pub value: int
+
+
+pub def unwrap_value(value: Parcel) -> int:
+    return value.value
+
+
+pub def unwrap_value(value: str) -> int:
+    return len(value)

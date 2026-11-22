@@ -1,0 +1,1 @@
+"""A Loaf whose module declares an enum adopting `Ord` under another spelling."""

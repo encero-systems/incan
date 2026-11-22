@@ -1,0 +1,9 @@
+[project]
+name = "static_storage_of_a_loaf_and_its_program"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+caselib = { path = "deps/caselib" }

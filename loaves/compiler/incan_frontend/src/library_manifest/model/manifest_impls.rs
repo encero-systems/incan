@@ -41,6 +41,7 @@ impl LibraryManifest {
             soft_keywords: SoftKeywordExports::default(),
             contract_metadata: LibraryContractMetadata::default(),
             rust_abi: None,
+            package_internal: None,
         }
     }
 

@@ -9,6 +9,7 @@ impl TypeChecker {
     pub fn new() -> Self {
         Self {
             record_package_identity: None,
+            project_library: None,
             #[cfg(test)]
             legacy_body_checking: false,
             #[cfg(test)]
@@ -233,6 +234,11 @@ impl TypeChecker {
     /// Set the defining package for declarations checked for a compiled-library artifact.
     pub fn set_current_package_identity(&mut self, package_identity: Option<String>) {
         self.symbols.set_package_identity(package_identity);
+    }
+
+    /// Name the project library this unit links, which makes it a unit of that library's own package (DD-0007).
+    pub fn set_project_library(&mut self, library: Option<String>) {
+        self.project_library = library;
     }
 
     /// Install the already admitted owning package fact without changing symbol ownership or asking a registry.

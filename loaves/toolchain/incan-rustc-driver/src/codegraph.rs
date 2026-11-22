@@ -89,6 +89,23 @@ fn unchecked_note(records: &[CodegraphRecord], project_root: &Path) -> Option<St
     Some(note)
 }
 
+/// Read the origins section of each graph given, in one process: one JSON line per graph, naming it and listing its
+/// origin records, so a request that follows many graphs' origins starts one reader instead of one per graph.
+pub fn read_origins(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    if arguments.is_empty() {
+        return Err("usage: --read-codegraph-origins GRAPH...".into());
+    }
+    use std::io::Write;
+    let mut output = std::io::BufWriter::new(std::io::stdout().lock());
+    for path in arguments {
+        let origins = incan_codegraph::artifact::read_origins(Path::new(path)).map_err(|error| error.to_string())?;
+        serde_json::to_writer(&mut output, &serde_json::json!({ "graph": path, "origins": origins }))?;
+        writeln!(output)?;
+    }
+    output.flush()?;
+    Ok(())
+}
+
 /// Decode a portable Loaf graph for a requested JSON projection. An optional per-kind field map trims transport after
 /// wire validation; query semantics and the field selection remain in Oven.
 pub fn read(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {

@@ -1,8 +1,8 @@
 """Verify the installed-verification gate plan and the checks the census carries for the other gates."""
 
 from std.tempfile import TemporaryDirectory
-from oven_tests import selected_builder_bakery
-from release_support import TOOLCHAIN_DIRECTORY, builder_bakery, check_baseline
+from oven_tests import PROJECT_RESERVATION_BYTES, selected_builder_bakery
+from release_support import TOOLCHAIN_DIRECTORY, builder_bakery, check_baseline, installed_builder_bakery
 from std.fs import Path
 from verify_installation import (
     CENSUS_WORKER_RESERVATION_BYTES,
@@ -11,6 +11,8 @@ from verify_installation import (
     audit_relocation,
     builder_environment,
     census_jobs,
+    oven_jobs,
+    oven_test_arguments,
     require_lsp_contract,
     verification_gate_width,
     verification_phase_arguments,
@@ -61,6 +63,29 @@ def test_the_installed_census_must_pass_the_language_server_contract() -> Result
     return Ok(None)
 
 
+def test_installed_tests_reuse_build_units_only_while_the_installation_has_their_natives() -> Result[None, str]:
+    """
+    A unit the build compiled names the native generations of the build home it linked. Installed verification asks
+    the builder's bakery only while the installed toolchain carries every native generation the build home holds;
+    otherwise it asks the installation's own bakery, so no unit naming a generation the installation lacks is reused.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    build = root.joinpath("build-home")
+    installed = root.joinpath("verification-home")
+    built = build.joinpath(TOOLCHAIN_DIRECTORY).joinpath("native")
+    carried = installed.joinpath(TOOLCHAIN_DIRECTORY).joinpath("native")
+    for generation in ["runtime-a", "std-b"]:
+        built.joinpath(generation).mkdir(true, true).map_err((error) => error.message())?
+    for generation in ["runtime-a", "std-b", "std-c"]:
+        carried.joinpath(generation).mkdir(true, true).map_err((error) => error.message())?
+    selected = root.joinpath("release-bakery")
+    assert installed_builder_bakery(selected.0, build, installed)? == selected.0
+    built.joinpath("seed-runtime").mkdir(true, true).map_err((error) => error.message())?
+    assert installed_builder_bakery(selected.0, build, installed)? == installed.joinpath("bakery").0
+    return Ok(None)
+
+
 def test_installed_release_tests_reuse_the_bakery_the_builder_compiled_into() -> Result[None, str]:
     """
     The release names the bakery its builds used: the one `INCAN_BAKERY` selected, else the build home's own. The
@@ -83,10 +108,10 @@ def test_installed_release_tests_reuse_the_bakery_the_builder_compiled_into() ->
     return Ok(None)
 
 
-def test_every_installed_gate_starts_at_once_and_keeps_the_release_jobs_for_its_own_children() -> Result[None, str]:
+def test_every_installed_gate_starts_at_once_and_bounds_its_own_children() -> Result[None, str]:
     """
     The gates are independent, so the pool admits all of them together and only their memory reservations bound it;
-    each gate still runs at most the release's jobs of its own children.
+    each gate is passed the release's jobs and bounds its own children by them.
     """
     for jobs in [1, 2, 6]:
         assert verification_gate_width(jobs) == len(verification_phase_names(jobs))
@@ -94,18 +119,36 @@ def test_every_installed_gate_starts_at_once_and_keeps_the_release_jobs_for_its_
     return Ok(None)
 
 
-def test_the_census_runs_twice_the_release_jobs_and_reserves_its_measured_share() -> Result[None, str]:
+def test_the_census_runs_twice_the_jobs_and_one_for_graph_and_reserves_its_measured_share() -> Result[None, str]:
     """
-    The census outlasts every other gate, so it runs twice the release's jobs; each of its workers reserves 2 GiB, more
-    than twice the 0.87 GB a worker took at the measured 1.73 GB peak of a whole census at two jobs.
+    The census runs its families in turn at twice the release's jobs, and its graph family beside them at one more;
+    each of its workers reserves 2 GiB, more than twice the 0.87 GB a worker took at the measured 1.73 GB peak of a
+    whole census at two jobs.
     """
     gib = 1073741824
-    assert census_jobs(1) == 2
-    assert census_jobs(2) == 4
+    assert census_jobs(1) == 3
+    assert census_jobs(2) == 5
     assert CENSUS_WORKER_RESERVATION_BYTES == 2 * gib
     reservations = [plan.reservation for plan in verification_phase_plans(2)]
     assert verification_phase_names(2)[4] == "census"
-    assert reservations[4] == 4 * CENSUS_WORKER_RESERVATION_BYTES
+    assert reservations[4] == 5 * CENSUS_WORKER_RESERVATION_BYTES
+    return Ok(None)
+
+
+def test_the_oven_step_runs_twice_the_release_jobs_and_reserves_a_project_share_for_each() -> Result[None, str]:
+    """
+    The Oven step outlasts every other gate, the census included, and runs on alone after them, so like the census it
+    runs twice the release's jobs; the gate reserves one Oven project share for each invocation it may run.
+    """
+    assert oven_jobs(1) == 2
+    assert oven_jobs(2) == 4
+    assert oven_jobs(0) == 2
+    reservations = [plan.reservation for plan in verification_phase_plans(2)]
+    assert verification_phase_names(2)[1] == "oven"
+    assert reservations[1] == 4 * PROJECT_RESERVATION_BYTES
+    arguments = oven_test_arguments(Path("/oven"), Path("/checkout"), Path("/run"), 2)
+    assert arguments[5] == "--jobs"
+    assert arguments[6] == "4"
     return Ok(None)
 
 

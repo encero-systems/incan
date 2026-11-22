@@ -22,7 +22,7 @@ from pub::incan_platform.trace import Operation
 from jec import begin, record as record_work
 from publication import place, publish
 from toolchain import NativeCrate, Toolchain, rust_compiler
-from native_references import NATIVE_CLOSURE_SCHEMA, RUST_NATIVE_SCHEMA, NativeAnchors, anchored_reference, native_anchors
+from native_references import NATIVE_CLOSURE_SCHEMA, RUST_NATIVE_SCHEMA
 from unit import UnitDescription
 from unit_publication import (
     admitted_identity as admitted_payload_identity,
@@ -348,24 +348,14 @@ pub def native_identities(externs: list[NativeCrate]) -> Result[list[str], str]:
 
     A linked dependency is identified by the digest of the bytes its publication recorded, not by its producer
     identity, so a rebuild that produced the same native code, such as a documentation edit, rekeys none of its
-    consumers. A toolchain native keeps the identity it was admitted under, together with where the installation
-    holds it, anchored as a unit's native closure names it: an installation keeps its natives in generation
-    directories, and a unit baked against one generation names that directory, which another installation with the
-    same natives in another generation does not have.
+    consumers. A toolchain native keeps the identity it was admitted under.
     """
     mut inputs: list[str] = []
-    mut anchors = NativeAnchors(toolchain="", bakery="")
-    for native in externs:
-        if native.identity != "":
-            anchors = native_anchors()?
-            break
     for native in externs:
         mut identity = native.identity
         if identity == "":
             _, content = publication(Path(native.path))?
             identity = f"content {content}"
-        else:
-            identity = f"{identity} at {anchored_reference(native.path, anchors)}"
         inputs.append(f"{native.name} {identity}")
     return Ok(sorted(inputs))
 

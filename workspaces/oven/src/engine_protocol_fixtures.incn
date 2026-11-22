@@ -1,0 +1,55 @@
+"""Helpers the engine protocol tests share: a refusal's detail as test text, stopping a records engine, a JSON text
+field check, and reaping a test's child process."""
+
+from core_process import Process
+from rust::std::thread import sleep
+from rust::std::time import Duration
+from std.fs import Path
+from engine_client import service_generation, service_identity
+from std.json import JsonValue
+from engine_endpoint import connect_with
+from engine_messages import Message, Stop
+from engine_wire import Refusal, zero_id
+
+
+pub def detail(refusal: Refusal) -> str:
+    """Expose typed test failures through the Oven harness's textual error boundary."""
+    return refusal.detail
+
+
+pub def json_text_is(document: JsonValue, key: str, expected: str) -> bool:
+    """Whether one optional JSON field is text equal to `expected`, without comparing carrier values."""
+    match document.get(key):
+        None => return false
+        Some(value) =>
+            match value.as_str():
+                None => return false
+                Some(found) => return found == expected
+
+
+pub def stop_engine(store: Path, binary: str) -> Result[None, str]:
+    """Stop the records engine serving `store`, and require its acknowledgment."""
+    mut identity = service_identity(store)?
+    identity.service_generation = service_generation(binary)?
+    mut channel = connect_with(store, identity, binary).map_err(detail)?
+    channel.send(zero_id(), Message.Stop(Stop(reason="execution collection proof completed"))).map_err(detail)?
+    stopped = channel.receive().map_err(detail)?
+    match stopped.message:
+        Message.Event(value) =>
+            assert value.status == "Stopping"
+        _ => return Err("execution collection proof did not stop its engine")
+    # Stop is acknowledged; peer withdrawal may race the local shutdown.
+    _ = channel.transport.close()
+    return Ok(None)
+
+
+pub def await_exit(mut child: Process, expected_success: bool) -> Result[None, str]:
+    """Reap this test's child, killing only that child if the lifecycle deadline fails."""
+    for _poll in range(2500):
+        match child.poll()?:
+            Some(status) =>
+                assert status == expected_success
+                return Ok(None)
+            None => sleep(Duration.from_millis(2))
+    child.terminate()?
+    return Err("test engine did not exit")

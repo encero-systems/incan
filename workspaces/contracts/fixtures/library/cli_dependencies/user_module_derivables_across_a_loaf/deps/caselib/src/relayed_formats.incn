@@ -1,0 +1,7 @@
+from relay_facade import Serialize as Encoder, Deserialize as Decoder
+
+__derives__ = [Encoder, Decoder]
+
+
+pub def restore[T with Decoder](source: str) -> Result[T, str]:
+    return T.from_json(source)

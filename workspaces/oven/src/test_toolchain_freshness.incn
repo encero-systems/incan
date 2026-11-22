@@ -19,7 +19,7 @@ from project_lock import toolchain_entry
 from scratch import scratch_directory
 from rust_registry import read_registry_units
 from rust_target import compiler_version, deployment_target
-from toolchain import NativeCrate, Toolchain, load_toolchain, rust_compiler
+from toolchain import Toolchain, load_toolchain, rust_compiler
 from toolchain_archive import portable_registry_unit, source_archive_name, stage_driver
 from unit_publication import record_path, record_payload
 from unit_freshness import fingerprint, sdk_settings_identity, unit_compiler_identity
@@ -60,39 +60,6 @@ pub def test_a_packed_toolchain_ships_its_driver_s_development_linker() -> Resul
     assert [entry.name() for entry in alone_stage.joinpath("bin").iterdir().map_err((error) => error.message())?] == [
         "incan-rustc-driver-ba9876543210",
     ]
-    return Ok(None)
-
-
-pub def test_installations_with_other_native_generations_never_share_a_unit() -> Result[None, str]:
-    """
-    A unit's native closure names the generation directory each installed native lives in, so its identity names it
-    too: two installations whose natives have the same admitted identities in other generation directories never
-    reuse each other's units over one Bakery, and installations with the same generations still do.
-
-    A build home linking its seed's generations baked units that an installation with newly identified ones then
-    reused, and their closures named natives it does not have ("cannot read native artifact", C22 and C23).
-    """
-    scratch = scratch_directory()?
-    setup = fixture(scratch.path())?
-    first = scratch.path().joinpath("toolchain/native/one/libruntime.rlib")
-    second = scratch.path().joinpath("toolchain/native/two/libruntime.rlib")
-    for path in [first, second]:
-        write(path, "runtime one")?
-    admitted = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-    mut installed = setup.toolchain
-    installed.externs = [NativeCrate(name="runtime", path=first.0, identity=admitted)]
-    mut other = setup.toolchain
-    other.externs = [NativeCrate(name="runtime", path=second.0, identity=admitted)]
-    mut same = setup.toolchain
-    same.externs = [NativeCrate(name="runtime", path=first.0, identity=admitted)]
-    assert compiler_fingerprint(other)? != compiler_fingerprint(installed)?, "another native generation kept the compiler identity"
-    assert compiler_fingerprint(same)? == compiler_fingerprint(installed)?, "the same native generation changed the compiler identity"
-    mut unit = setup.unit
-    unit.externs = installed.externs
-    mut moved = setup.unit
-    moved.externs = other.externs
-    assert unit_key(moved, other)?.digest != unit_key(unit, installed)?.digest, "a unit was keyed alike over another native generation"
-    assert unit_key(unit, same)?.digest == unit_key(unit, installed)?.digest, "a unit was keyed afresh over the same native generation"
     return Ok(None)
 
 

@@ -122,6 +122,7 @@ pub(crate) fn typecheck_modules(
         checker.set_current_module_path(Some(module.path_segments.clone()));
         checker.set_current_package_identity(package.map(str::to_owned));
         checker.set_record_package_identity(unit.record_package_identity());
+        checker.set_project_library(unit.project_library.clone());
         register_module_path_segments(&mut checker, modules);
         checker.set_loaves(Arc::clone(loaves));
         checker.set_dependency_interface_preparation_cache(dependency_preparations.clone());

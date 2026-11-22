@@ -1,0 +1,7 @@
+__derives__ = [Serialize]
+
+
+@rust.derive("serde::Serialize")
+pub trait Serialize:
+    def to_yaml(self) -> str:
+        return str("yaml")

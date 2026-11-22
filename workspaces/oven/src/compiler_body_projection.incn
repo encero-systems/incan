@@ -1,13 +1,17 @@
 """Source projections for compiled-body publication: the projection refusal preflight, owner and dependency owner
-records selected from a recreated projection, and the dependency read and signature keys they expose."""
+records selected from a recreated projection, and the dependency read, span and signature keys they expose."""
 
 from std.fs import Path
 from std.environ import get_or
 from rust::incan_semantics_core import encode_incan_symbol_identity
 from rust::incan_semantics_core::executable_representation import decode_owner
+from pub::incan_platform.store import Snapshot, get
 from pub::internal_models import CompiledBodyDependencyRead, CompiledBodyValue
-from pub::internal_models.records import RecordKey
-from compiler_body_keys import project_declaration_slot
+from pub::internal_models.checker_records import CHECKER_PROFILE
+from pub::internal_models.records import ReadWitness, RecordKey, encode_record_key
+from compiler_body_keys import body_key, project_declaration_slot
+from compiler_body_values import SelectedBodyRecord
+from compiler_graph_records import EditCutoff, reusable_evaluation
 from compiler_source_projection import (
     SourceProjection,
     SourceProjectionRecord,
@@ -17,6 +21,7 @@ from compiler_source_projection import (
 )
 from compiler_projection_cache import (
     cached_editable_dependency_signature_record,
+    cached_editable_dependency_span_record,
     cached_project_signature_record,
     project_dependency_module,
 )
@@ -228,6 +233,92 @@ pub def dependency_read_key(
                 )
             return Ok(None)
         None => return Ok(Some(project_declaration_slot(origin, dependency.module, dependency.name, dependency.identity)))
+
+
+pub def dependency_span_key(
+    projections: Borrowed[Dict[str, SourceProjection]],
+    dependency: CompiledBodyDependencyRead,
+    editable_packages: list[str],
+) -> Result[Option[RecordKey], str]:
+    """
+    A checked body names an editable dependency's declaration by its span, so it reads that declaration's span record: an
+    edit that moves the declaration or changes its length rechecks the body, and any other edit in the Loaf does not.
+    """
+    match dependency.package:
+        Some(package) =>
+            if package in editable_packages:
+                return Ok(
+                    Some(
+                        cached_editable_dependency_span_record(
+                            projections,
+                            package,
+                            dependency.module,
+                            dependency.name,
+                            dependency.identity,
+                        )?.key,
+                    ),
+                )
+            return Ok(None)
+        None => return Ok(None)
+
+
+pub model ModuleSpans:
+    """
+    The editable dependency spans each module's checked owners read, and the selected bytes of those only a retained
+    owner reads, which this publication stages for no fresh owner.
+    """
+
+    pub modules: Dict[str, list[RecordKey]] = {}
+    pub retained: Dict[str, bytes] = {}
+
+
+pub def module_spans(
+    projections: Borrowed[Dict[str, SourceProjection]],
+    values: list[CompiledBodyValue],
+    retained: list[SelectedBodyRecord],
+    selected: Option[Snapshot],
+    editable_packages: list[str],
+    origin: str,
+    cutoff: EditCutoff,
+) -> Result[ModuleSpans, str]:
+    """
+    The spans of the editable dependency declarations each module's owners read, fresh or retained. A namespace row
+    carries its module's whole Body IR, which names those declarations by their spans, so it reads them too.
+    """
+    mut modules: Dict[str, list[RecordKey]] = {}
+    mut prior_values: Dict[str, bytes] = {}
+    if len(editable_packages) == 0:
+        return Ok(ModuleSpans())
+    for value in values:
+        for dependency in value.dependency_reads:
+            match dependency_span_key(projections, dependency, editable_packages)?:
+                Some(key) => add_span(modules, value.module, key)
+                None => pass
+    if let Some(prior) = selected:
+        for record in retained:
+            if len(record.body_ir) == 0:
+                continue
+            local_key = body_key("local", origin, record.identity, "checked", root(record.local)?)
+            local = match reusable_evaluation(prior, local_key, CHECKER_PROFILE, cutoff)?:
+                Some(found) => found
+                None => continue
+            module = decode_owner(record.body_ir).map_err((error) => str(error))?.source
+            for witness in local.receipt.witnesses:
+                if let ReadWitness.Found(found, _) = witness:
+                    if found.request.key.family == "owner-span":
+                        slot = encode_record_key(found.request.key)?
+                        match get(prior, slot).map_err((error) => error.message())?:
+                            Some(stored) => prior_values[slot] = stored
+                            None => return Err("a retained owner's dependency span is absent")
+                        add_span(modules, module, found.request.key)
+    return Ok(ModuleSpans(modules=modules, retained=prior_values))
+
+
+def add_span(mut modules: Dict[str, list[RecordKey]], module: str, key: RecordKey) -> None:
+    if module not in modules:
+        modules[module] = []
+    if key not in modules[module]:
+        modules[module].append(key)
 
 
 pub def dependency_projection_refusal(
