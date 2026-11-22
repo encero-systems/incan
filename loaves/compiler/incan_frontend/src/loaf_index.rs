@@ -876,6 +876,30 @@ impl LoafIndex {
         self.demand(key).ok().flatten()
     }
 
+    /// Reopen fixture inventories without their already decoded manifests.
+    #[cfg(test)]
+    pub(crate) fn with_deferred_fixture_manifests(mut self) -> Result<Self, LoafIndexError> {
+        for entry in self.entries.values_mut() {
+            *entry = IndexedLoaf::known(
+                entry.key.clone(),
+                entry.namespace.clone(),
+                entry.dir.clone(),
+                entry.summary()?.clone(),
+            );
+        }
+        Ok(self)
+    }
+
+    /// Fixture manifests whose contents were demanded, including failed reads.
+    #[cfg(test)]
+    pub(crate) fn demanded_fixture_manifests(&self) -> Vec<&str> {
+        self.entries
+            .values()
+            .filter(|entry| entry.was_demanded())
+            .map(|entry| entry.key.as_str())
+            .collect()
+    }
+
     /// The one entry owning `module`, if any.
     pub fn owner_of(&self, module: &[String]) -> Option<&LoafEntry> {
         let entry = self.entries.values().find(|entry| entry.owns(module))?;

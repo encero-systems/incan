@@ -545,3 +545,84 @@ fn a_reached_loaf_is_laid_out_from_the_identity_graph_its_install_record_carries
     );
     Ok(())
 }
+
+/// Installing a sealed consumer interface from checked Loaf records preserves its dependency tables and refusals.
+/// Its provider identities come from the admitted inventories without demanding the manifests before a layout read.
+#[test]
+fn a_loaf_install_record_replays_the_dependency_interface_without_opening_manifests() -> TestResult {
+    use super::rust_reexport_chain_tests::published_module;
+    use crate::library_manifest::install_record::LoafInstallRecord;
+    use crate::typechecker::{TypeChecker, canonical_public_library_type_name};
+
+    let root = tempfile::tempdir()?;
+    let shapes_loaves = shapes(root.path())?;
+    let base = shapes_loaves.entry("base").ok_or("missing base")?;
+    let shapes = shapes_loaves.entry("shapes").ok_or("missing shapes")?;
+    let specs = installed(
+        root.path(),
+        &published_module(
+            "specs",
+            "fields",
+            "pub model Holder[T with Clone]:\n    pub item: T\n\npub type Saved = Holder[str]\n",
+            LoafIndex::default(),
+            Vec::new(),
+        )?,
+    )?;
+    let loaves = Arc::new(LoafIndex::new([base.clone(), shapes.clone(), specs.clone()])?);
+    let mut producer = checker("provider", &loaves, &DependencyInterfacePreparationCache::default());
+    let provider = parse(PROVIDER)?;
+    producer
+        .check_program(&provider)
+        .map_err(|errors| format!("{errors:?}"))?;
+    producer.cache_transitive_pub_export_semantics("specs", &specs.artifact.manifest);
+    let interface = producer.seal_current_module_dependency_interface(
+        "provider",
+        &provider,
+        crate::module::exported_symbols(&provider).into(),
+        true,
+    );
+    let cases = [Arc::clone(&loaves), Arc::new(LoafIndex::new([shapes.clone(), specs])?)];
+    for (complete, legacy) in [true, false].into_iter().zip(cases) {
+        let deferred = Arc::new(legacy.as_ref().clone().with_deferred_fixture_manifests()?);
+        let mut expected = checker("consumer", &legacy, &DependencyInterfacePreparationCache::default());
+        let mut replay = DependencyInterfacePreparationCache::default();
+        for library in legacy.keys() {
+            let manifest = legacy.manifest(library).ok_or("missing fixture manifest")?;
+            let record = producer.loaf_install_record(library, manifest);
+            let record = serde_json::from_slice::<LoafInstallRecord>(&serde_json::to_vec(&record)?)?;
+            replay = replay.with_install_record(library, record);
+        }
+        let mut actual = checker("consumer", &deferred, &replay);
+        expected.install_dependency_interfaces_directly(std::slice::from_ref(&interface));
+        actual.install_dependency_interfaces_directly(std::slice::from_ref(&interface));
+
+        let alias = TypeChecker::declaration_type_key("specs", &["fields".to_owned()], "Saved");
+        assert!(expected.type_aliases.contains_key(&alias));
+        assert_eq!(
+            serde_json::to_vec(&actual.type_aliases.get(&alias))?,
+            serde_json::to_vec(&expected.type_aliases.get(&alias))?
+        );
+        assert!(!expected.nominal_type_param_bounds.is_empty());
+        assert_eq!(actual.nominal_type_param_bounds, expected.nominal_type_param_bounds);
+        assert_eq!(actual.errors.is_empty(), complete);
+        assert_eq!(format!("{:?}", actual.errors), format!("{:?}", expected.errors));
+        if complete {
+            let name = canonical_public_library_type_name("base", "Inner");
+            let identity = actual
+                .public_library_type_identities
+                .get(&name)
+                .ok_or("missing Inner identity")?;
+            assert_eq!(identity.selected_provider.as_ref(), Some(&base.artifact.identity));
+        }
+        assert!(
+            deferred.demanded_fixture_manifests().is_empty(),
+            "install opened manifests before a layout read: {:?}",
+            deferred.demanded_fixture_manifests()
+        );
+        assert_eq!(
+            actual.dependency_interface_snapshot(),
+            expected.dependency_interface_snapshot()
+        );
+    }
+    Ok(())
+}
