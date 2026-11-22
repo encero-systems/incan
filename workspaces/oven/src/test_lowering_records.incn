@@ -826,7 +826,7 @@ pub def test_unrelated_edit_rechecks_no_generic_body() -> Result[None, str]:
 
 pub def test_unrelated_edit_reuses_runtime_list_instances() -> Result[None, str]:
     """A list program keeps its runtime roots and products, and an unrelated edit lowers in one attempt."""
-    edited, cold = unrelated_edit_reports("lists", list_source(), "4\nb\n42", "4\nb\n43", count_attempts=true)?
+    edited, cold = unrelated_edit_reports("lists", list_source(), "4\nb\n4\n42", "4\nb\n4\n43", count_attempts=true)?
     diagnostic = edited.to_json().map_err((error) => error.message())?
     assert proof_count(cold, "native_interface_evaluations")? == 1, cold.to_json().map_err((error) => error.message())?
     assert proof_count(edited, "body_evaluations")? == 1, diagnostic
@@ -877,6 +877,11 @@ def unrelated_edit_reports(
         cold_attempts = lowering_attempts(cold_trace)?
         assert cold_attempts == 2, f"independently cold lowering attempts: {cold_attempts}"
         assert warm_attempts == 1, f"steady lowering attempts: {warm_attempts}"
+        removed = text.replace(utf8_demand(), "").replace("value + 1", "value + 2")
+        _ = compare_runtime_demand_edit(binary, source, warm_store, removed, "4\nb\n43", "removed")?
+        added = text.replace("value + 1", "value + 3")
+        attempts = compare_runtime_demand_edit(binary, source, warm_store, added, "4\nb\n4\n44", "added")?
+        assert attempts == 2, f"new runtime demand lowering attempts: {attempts}"
     return Ok((edited, cold))
 
 
@@ -901,12 +906,39 @@ def lowering_attempts(trace: Option[Path]) -> Result[int, str]:
     return Ok(attempts)
 
 
+def compare_runtime_demand_edit(
+    binary: str, source: Path, store: Path, text: str, output: str, label: str,
+) -> Result[int, str]:
+    """An edit that changes the runtime closure must publish the fresh plan and executable."""
+    root = source.parent()
+    trace = Some(attempt_trace(root, label + "-trace")?)
+    plan = root.joinpath("native.plan")
+    native = root.joinpath("target/incan/release/bin/lists")
+    write(source, text)?
+    _ = lowering_example_run(binary, source, store, output, trace=trace)?
+    warm_plan = plan.read_bytes().map_err((error) => error.message())?
+    warm_native = native.read_bytes().map_err((error) => error.message())?
+    stop_example_engine(binary, store)?
+    root.joinpath("target").remove_tree().map_err((error) => error.message())?
+    fresh = root.joinpath(label + "-store")
+    _ = lowering_example_run(binary, source, fresh, output)?
+    stop_example_engine(binary, fresh)?
+    assert warm_plan == plan.read_bytes().map_err((error) => error.message())?, label
+    assert warm_native == native.read_bytes().map_err((error) => error.message())?, label
+    return lowering_attempts(trace)
+
+
+def utf8_demand() -> str:
+    """An implicit lowering-time demand for the standard primitive's UTF-8 encoder."""
+    return "    println(len(\"text\".encode(\"utf-8\")))\n"
+
+
 def list_source() -> str:
-    """Lists of `int` and `str` beside an unrelated function, so lowering requests the runtime Loaf's list instances."""
+    """List instances and an implicit UTF-8 encoder demand beside one unrelated function."""
     unrelated = "def unrelated(value: int) -> int:\n    return value + 1\n\n\n"
     lists = "    mut items = [1, 2, 3]\n    items.append(4)\n    names = [\"a\", \"b\"]\n"
-    entry = "def main() -> None:\n" + lists + "    println(items[3])\n    println(names[1])\n    println(unrelated(41))\n"
-    return unrelated + entry
+    entry = "def main() -> None:\n" + lists + "    println(items[3])\n    println(names[1])\n" + utf8_demand()
+    return unrelated + entry + "    println(unrelated(41))\n"
 
 
 def generic_source(index: str) -> str:
