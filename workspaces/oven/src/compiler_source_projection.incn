@@ -302,6 +302,14 @@ pub def owner_span_key(origin: str, path: str, name: str) -> RecordKey:
     return source_key("owner-span", origin, path, name)
 
 
+pub def compiler_generation_record(origin: str, compiler: str) -> SourceProjectionRecord:
+    """
+    The compiler generation every checked record of `origin` is read under. A record another compiler wrote is
+    withdrawn the first time a request names a different generation, and the new compiler's records are reused after.
+    """
+    return SourceProjectionRecord(key=source_key("compiler-generation", origin, "toolchain", "compiler"), text=compiler, start=0, end=0)
+
+
 pub def project_source(
     origin: str,
     path: str,
