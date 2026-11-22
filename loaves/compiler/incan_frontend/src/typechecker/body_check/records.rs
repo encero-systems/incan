@@ -1152,6 +1152,53 @@ struct FinalTypes {
 mod tests {
     use super::*;
 
+    /// A restored body can name a field of a sibling module's model that it reaches only through a call's return
+    /// type (`outcome = check_program(...)`, then `outcome.code`), with no lexical import of the model. When the
+    /// restore positions do not bind that field, restoring its reference must refuse or bind the field's own
+    /// declaration; it must never mint the field at the model's span, which lowering cannot find.
+    #[test]
+    fn sibling_member_reached_through_a_return_type_is_never_minted_at_its_model()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (program, checker, owner) = fixture("def view() -> int:\n    return 1\n", "view")?;
+        let mut positions = Positions::new(&checker, &program, owner, false)?;
+        let origin = incan_semantics_core::SymbolOrigin::Module(vec!["engine_programs".into()]);
+        let model = CanonicalSymbolId {
+            namespace: SymbolNamespace::OrdinaryLexical,
+            origin: origin.clone(),
+            declaration_name: "CheckOutcome".into(),
+            kind: SemanticSourceTargetKind::Model,
+            scope_discriminant: None,
+            declaration_span: Span::new(5619, 6111).into(),
+        };
+        let field = CanonicalSymbolId {
+            namespace: SymbolNamespace::Member,
+            origin,
+            declaration_name: "code".into(),
+            kind: SemanticSourceTargetKind::Field,
+            scope_discriminant: None,
+            declaration_span: Span::new(5746, 5759).into(),
+        };
+        let model_key = StableDeclarationId::from_canonical(&model, None, None)
+            .ok_or("missing model identity")?
+            .render_compact();
+        positions.type_identities.insert(model_key.clone(), model.clone());
+        let member_key = stable_member_identity(&field, &model, 0)?;
+        let row = [member_key.clone(), model_key, "0".into(), "field".into(), "code".into()];
+        let mut local = BodyLocal {
+            owner,
+            ..Default::default()
+        };
+        let mut identities = BTreeMap::new();
+        if restore_identity_context(&positions, &mut local, &mut identities, owner, &mut row.iter()).is_ok() {
+            assert_eq!(
+                identities.get(&member_key),
+                Some(&field),
+                "the restored field was minted at its model's span"
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn physical_inputs_ignore_duplicate_nominal_and_member_bindings() -> Result<(), Box<dyn std::error::Error>> {
         let (program, checker, owner) = fixture(
