@@ -41,7 +41,7 @@ from bakery_records import Fact
 from bakery_roots import lease_unit, register_root
 from compiler_body_values import SelectedBodyPage
 from compiler_ranked_build import RankedBuildInputs, ranked_build_pages
-from compiler_refusals import check_or_replay
+from compiler_refusals import check_or_replay, ordinary_compilation, retain_checked_warnings, warning_identity
 from observation import trace, trace_launch
 from project_library import library_loaf, library_output, shared_library
 from toolchain import Toolchain
@@ -52,6 +52,7 @@ from unit_compiler import (
     compile_prepared_unit,
     crate_name,
     described_by,
+    executable_warnings,
     run_compiler,
     write_unit,
 )
@@ -156,6 +157,8 @@ pub model Made:
     pub claim: Option[Rc[LockGuard]] = None
     # The bakery identity of the executable's unit, which a run of it leases; empty when nothing was baked.
     pub identity: str = ""
+    # The selected raw-source check's warning record, independent of positioned native code.
+    pub warnings: str = ""
 
 
 pub def compile_unit(
@@ -230,13 +233,12 @@ pub def obtain_executable(
     Development linkage has its own identity, and every shared library is validated before its fact is used.
     Execution starts the requested view, so the host's executable-path lookup and the program name agree.
 
-    1. A sealed fact of the identity, with every shared carrier its executable loads in place, is viewed, and no
-       compiler starts.
+    1. View a sealed fact with all its shared carriers. Replay the source's warnings or check a raw-source miss.
     2. Otherwise claim the identity: one bake of it at a time, in any project or process.
     3. A fact another command sealed while this one waited is viewed.
     4. Compile into a private staging directory of the fact.
-    5. Seal it, then view it. With `defer_publication` the caller's commit seals the prepared fact, so no view is
-       made here: the caller views the returned fact once that commit has flushed it.
+    5. Admit the source warnings and seal the executable. With `defer_publication` the caller commits the prepared
+       native fact before viewing it.
     """
     shared = development_link(unit, development)
     # Inputs that cannot be named portably are compiled in place; nothing is baked or reused.
@@ -250,17 +252,22 @@ pub def obtain_executable(
         None => store = bakery()?
     identity = unit_identity(selected)
     label = f"unit {crate_name(unit)} {unit.kind}"
-    register_root(store, unit.project_root, root_registration(unit), [identity])?
-    # 1. A sealed executable of the identity starts no compiler.
+    mut warnings = ""
+    mut retained = [identity]
+    if unit.kind == "program" and key.compiler != "" and ordinary_compilation():
+        warnings = warning_identity(key)?
+        retained.append(warnings)
+    register_root(store, unit.project_root, root_registration(unit), retained)?
+    # 1. A sealed executable uses the checked warnings of this raw source identity.
     if let Some(fact) = current_executable(store, identity, output)?:
-        made = viewed(store, fact, output, unit.kind, shared)?
+        made = reuse_executable(store, fact, output, unit, toolchain, key, warnings, shared)?
         trace(f"{label}: reused")
         return Ok(made)
     # 2. A concurrent build waits here, and then finds the fact it needs. The claim is held until this returns.
     held = claim(store, identity)?
     # 3. A bake another command finished while this one waited is used, not repeated.
     if let Some(fact) = current_executable(store, identity, output)?:
-        made = viewed(store, fact, output, unit.kind, shared)?
+        made = reuse_executable(store, fact, output, unit, toolchain, key, warnings, shared)?
         trace(f"{label}: reused (built meanwhile by another command)")
         return Ok(made)
     # 4. A failed bake publishes nothing; its staging directory goes with it.
@@ -275,6 +282,10 @@ pub def obtain_executable(
                 selected_pages = Some(pages)
             None => selected_pages = Some([])
     staged = staging(store, identity, prior_size(store, unit_name(unit)))?
+    warning_file = staged.joinpath(".checked-warnings")
+    mut staged_warnings: Option[Path] = None
+    if warnings != "":
+        staged_warnings = Some(warning_file)
     code = compile_staged(
         unit,
         toolchain,
@@ -284,13 +295,18 @@ pub def obtain_executable(
         shared,
         selected_pages,
         records_directory,
+        staged_warnings,
     )?
     if code != 0:
         _ = staged.remove_tree()
         return Ok(Made(code=code, launch=output, evaluations=1))
-    if key.compiler != "" and unit_key(unit, toolchain, key.compiler)?.digest != key.digest:
+    if key.compiler != "" and not executable_inputs_match(unit, toolchain, key, warnings != "")?:
         _ = staged.remove_tree()
         return Err("unit inputs changed while the native producer ran; no unit record was published")
+    if warning_file.is_file():
+        warning_bytes = warning_file.read_bytes().map_err((error) => error.message())?
+        warning_file.unlink().map_err((error) => error.message())?
+        retain_checked_warnings(store, warnings, unit, warning_bytes)?
     # 5. A request may group the record with capture and selection while retaining the producer claim.
 
     reaches = reached(store, [loaf.dir for loaf in unit.loaves])?
@@ -318,11 +334,36 @@ pub def obtain_executable(
                 transaction=Some(prepared.transaction),
                 claim=Some(Rc.new(held)),
                 identity=identity,
+                warnings=warnings,
             ),
         )
     fact = seal(store, identity, staged, unit.kind, unit_name(unit), reaches, f"incan {unit.kind} {unit.profile}")?
     launch = viewed(store, fact, output, unit.kind, shared)?.launch
-    return Ok(Made(code=0, launch=launch, evaluations=1, native_bakes=1, identity=identity))
+    return Ok(Made(code=0, launch=launch, evaluations=1, native_bakes=1, identity=identity, warnings=warnings))
+
+
+def executable_inputs_match(unit: UnitDescription, toolchain: Toolchain, key: Key, checks: bool) -> Result[bool, str]:
+    """Reconcile native inputs and any warning receipt in the same final observation."""
+    current = unit_key(unit, toolchain, key.compiler)?
+    return Ok(current.digest == key.digest and (not checks or current.replayed() == key.replayed()))
+
+
+def reuse_executable(
+    store: Path,
+    fact: Fact,
+    output: Path,
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    key: Key,
+    warnings: str,
+    shared: bool,
+) -> Result[Made, str]:
+    """Select the executable and the warning result for the requesting project's exact authored sources."""
+    if warnings != "":
+        executable_warnings(unit, toolchain, store, key, warnings)?
+    mut result = viewed(store, fact, output, unit.kind, shared)?
+    result.warnings = warnings
+    return Ok(result)
 
 
 def viewed(store: Path, fact: Fact, output: Path, kind: str, shared: bool) -> Result[Made, str]:
@@ -364,9 +405,12 @@ def compile_staged(
     shared: bool,
     graph_body_records: Option[list[SelectedBodyPage]] = None,
     records_directory: Option[Path] = None,
+    checked_warnings: Option[Path] = None,
 ) -> Result[i32, str]:
     """Compile a unit to its staged name. Returns the compiler's exit code."""
-    return compile_prepared_unit(unit, toolchain, staged, Some(key), reason, shared, graph_body_records, records_directory)
+    return compile_prepared_unit(
+        unit, toolchain, staged, Some(key), reason, shared, graph_body_records, records_directory, checked_warnings,
+    )
 
 
 pub def executable_outputs(kind: str, output: Path, shared: bool = false) -> list[Path]:
@@ -482,3 +526,8 @@ def root_registration(unit: UnitDescription) -> str:
 pub def executable_view(project: Path, profile: str, directory: str, name: str) -> Path:
     """The ordinary derived output location of a named executable, independent of how its unit was obtained."""
     return project.joinpath("target/incan").joinpath(profile).joinpath(directory).joinpath(name)
+
+
+pub def executable_project_root(binary: Path) -> str:
+    """Recover the diagnostic root from an admitted executable view without reading its manifest."""
+    return binary.parent().parent().parent().parent().parent().0

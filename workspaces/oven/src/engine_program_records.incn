@@ -8,7 +8,8 @@ from pub::internal_models.crumb_rows import ModelField, model_description, requi
 from pub::internal_models.graph_crumb_fields import decode_graph_row, encode_graph_row, text
 from json_fields import required_text
 
-const DESCRIPTOR_ROW: bytes = b"natuni\x00"
+const DESCRIPTOR_ROW: bytes = b"natun3\x00"
+const OLD_DESCRIPTOR_ROW: bytes = b"natuni\x00"
 const SELECTION_ROW: bytes = b"natsel\x00"
 pub const SELECTION_KEY: str = "incan.engine.selected-native-unit/2"
 
@@ -20,6 +21,7 @@ pub model NativeUnit:
     pub identity: str
     pub payload: str
     pub binary: str
+    pub warnings: str = ""
 
     pub def encoded(self, key: str) -> Result[bytes, str]:
         """Bind the descriptor to the exact program handle or standalone selector used to retrieve it."""
@@ -28,11 +30,23 @@ pub model NativeUnit:
             required_value(b"ident_", Value.Text(self.identity)),
             required_value(b"key___", Value.Text(key)),
             required_value(b"paylod", Value.Text(self.payload)),
+            required_value(b"warn__", Value.Text(self.warnings)),
         ])
 
 
 def descriptor_description() -> Description:
-    return model_description(DESCRIPTOR_ROW, "incan.engine.native-unit/2", [
+    return model_description(DESCRIPTOR_ROW, "incan.engine.native-unit/3", [
+        ModelField(identity=b"binary", name="binary", storage="string"),
+        ModelField(identity=b"ident_", name="identity", storage="string"),
+        ModelField(identity=b"key___", name="key", storage="string"),
+        ModelField(identity=b"paylod", name="payload", storage="string"),
+        ModelField(identity=b"warn__", name="warnings", storage="string"),
+    ])
+
+
+def old_descriptor_description() -> Description:
+    """The native descriptor preceding independent checked warning selection."""
+    return model_description(OLD_DESCRIPTOR_ROW, "incan.engine.native-unit/2", [
         ModelField(identity=b"binary", name="binary", storage="string"),
         ModelField(identity=b"ident_", name="identity", storage="string"),
         ModelField(identity=b"key___", name="key", storage="string"),
@@ -43,7 +57,14 @@ def descriptor_description() -> Description:
 pub def decode_program(key: str, data: bytes) -> Result[NativeUnit, str]:
     """Open a keyed descriptor or validate the predecessor's native-unit JSON schema."""
     if data[:4] == b"CRMB":
-        fields = decode_graph_row(data, DESCRIPTOR_ROW, descriptor_description(), 4)?
+        if let Ok(fields) = decode_graph_row(data, DESCRIPTOR_ROW, descriptor_description(), 5):
+            if text(fields[2].value)? != key:
+                return Err("native descriptor was stored under a different key")
+            return Ok(NativeUnit(
+                binary=text(fields[0].value)?, identity=text(fields[1].value)?, payload=text(fields[3].value)?,
+                warnings=text(fields[4].value)?,
+            ))
+        fields = decode_graph_row(data, OLD_DESCRIPTOR_ROW, old_descriptor_description(), 4)?
         if text(fields[2].value)? != key:
             return Err("native descriptor was stored under a different key")
         return Ok(NativeUnit(binary=text(fields[0].value)?, identity=text(fields[1].value)?, payload=text(fields[3].value)?))

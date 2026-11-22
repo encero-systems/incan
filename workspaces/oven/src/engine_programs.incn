@@ -29,6 +29,7 @@ from compiler_body_values import (
 )
 from compiler_plan_values import LOWERING_PROFILE, encode_plan_selection, plan_selection_key, select_plan_inventory_except, plan_reads_changed, select_plan_modules
 from compiler_plan_modules import restored_modules
+from compiler_refusals import replay_checked_warnings
 from compiler_graph_records import EditCutoff, edit_cutoff, retire_compiler_versions, supersede_outputs
 from graph_read_demands import GraphDemand, note_graph_demand
 from engine_epochs import load_epoch
@@ -36,7 +37,9 @@ pub from engine_program_records import NativeUnit
 from engine_program_records import SELECTION_KEY, decode_program, decode_selection, encode_selection, program_view
 from features import FeatureRequest
 from home import StandardPackage, dependency_artifact_dir
-from incan_units import check_prepared, obtain_executable, program_binary, executable_view, view_executable
+from incan_units import (
+    check_prepared, executable_project_root, executable_view, obtain_executable, program_binary, view_executable,
+)
 from pub::incan_platform.store import EXPECT_REPAIR, HOME_VIEW, Snapshot, Transaction, begin, commit, get, put
 from engine_overlay import is_editor_view
 from store_path_conversion import snapshot
@@ -299,8 +302,8 @@ pub def obtain(
     if not listing_refusals and unit_options == "":
         match read_program(store, handle)?:
             Some(unit) =>
-                if restore_program(store, unit)?:
-                    return Ok(ProgramOutcome(code=0, unit=Some(unit)))
+                if restore_program(store, unit, console)?:
+                    return Ok(ProgramOutcome(code=0, unit=Some(unit), console=console))
             None => pass
     # 2. Unsupported roots refuse explicitly; this producer does not pretend to expose declaration records.
     opening = begin_work()
@@ -317,8 +320,8 @@ pub def obtain(
         selector = standalone_selector(epoch, producer)?
     if not listing_refusals:
         if let Some(unit) = indexed_program(store, epoch, selector)?:
-            if restore_program(store, unit)?:
-                return Ok(ProgramOutcome(code=0, unit=Some(unit), epoch_reads=epoch_reads))
+            if restore_program(store, unit, console)?:
+                return Ok(ProgramOutcome(code=0, unit=Some(unit), console=console, epoch_reads=epoch_reads))
     preparing = begin_work()
 
     home = program_home(selected_home)?
@@ -487,7 +490,9 @@ pub def obtain(
     retire_compiler_versions(graph, request_transaction, origin, LOWERING_PROFILE)?
     supersede_outputs(graph, request_transaction)?
     fact = produced_fact(produced.fact)?
-    unit = NativeUnit(identity=key.digest, payload=executable_payload(fact, binary.name())?, binary=binary.0)
+    unit = NativeUnit(
+        identity=key.digest, payload=executable_payload(fact, binary.name())?, binary=binary.0, warnings=produced.warnings,
+    )
     # A fact this request baked is still unsealed, so its view waits for the request's commit.
     mut sealed: Option[SealedProgram] = None
     if produced.transaction is not None:
@@ -635,7 +640,9 @@ def whole_unit_program(
             ),
         )
     fact = produced_fact(produced.fact)?
-    unit = NativeUnit(identity=key.digest, payload=executable_payload(fact, binary.name())?, binary=binary.0)
+    unit = NativeUnit(
+        identity=key.digest, payload=executable_payload(fact, binary.name())?, binary=binary.0, warnings=produced.warnings,
+    )
     mut sealed: Option[SealedProgram] = None
     if produced.transaction is not None:
         sealed = Some(SealedProgram(fact=fact, binary=binary.0, shared=development_link(ready, true)))
@@ -767,18 +774,20 @@ def stored_program(selected: Snapshot, key: str) -> Result[Option[NativeUnit], s
         Some(data) => return Ok(Some(decode_program(key, data)?))
 
 
-pub def restore_program(store: Path, unit: NativeUnit) -> Result[bool, str]:
+pub def restore_program(store: Path, unit: NativeUnit, console: str = "") -> Result[bool, str]:
     """
     Validate the selected immutable unit and restore only missing or changed derived executable views. False tells the
-    caller to resolve the unit again: its executable loads a shared carrier that is gone, or its record was sealed again
-    since this selection, when the unit was linked again to different bytes.
+    caller to resolve a missing carrier, a superseded executable, or a missing warning result for this selection.
     """
     match unit_record(store, unit)?:
         None => return Ok(false)
         Some(fact) =>
             if not carriers_present(store, fact, Path(unit.binary))?:
                 return Ok(false)
-            view_executable(store, fact, Path(unit.binary), "program", loader_witness(store, fact, unit) is not None)?
+            binary = Path(unit.binary)
+            view_executable(store, fact, binary, "program", loader_witness(store, fact, unit) is not None)?
+            if unit.warnings != "":
+                return replay_checked_warnings(store, unit.warnings, executable_project_root(binary), console)
             return Ok(true)
 
 
@@ -891,9 +900,14 @@ def indexed_program(store: Path, epoch: BuildEpoch, selector: Option[str]) -> Re
                 Some(unit) =>
                     if unit.binary in ["", ".", ".."] or Path(unit.binary).name() != unit.binary:
                         return Err("standalone native index contains an invalid executable name")
-                    register_root(store, Path(epoch.roots[0]).parent().0, f"program\t{unit.binary}", [unit.identity])?
+                    mut retained = [unit.identity]
+                    if unit.warnings != "":
+                        retained.append(unit.warnings)
+                    register_root(store, Path(epoch.roots[0]).parent().0, f"program\t{unit.binary}", retained)?
                     binary = executable_view(Path(epoch.roots[0]).parent(), epoch.selection.profile, "bin", unit.binary)
-                    return Ok(Some(NativeUnit(identity=unit.identity, payload=unit.payload, binary=binary.0)))
+                    return Ok(Some(NativeUnit(
+                        identity=unit.identity, payload=unit.payload, binary=binary.0, warnings=unit.warnings,
+                    )))
 
 
 pub def index_program(
@@ -913,6 +927,8 @@ pub def index_program(
             mut transaction = match native:
                 Some(prepared) => prepared
                 None => begin(snapshot(store).map_err((error) => error.message())?)
-            descriptor = NativeUnit(identity=unit.identity, payload=unit.payload, binary=Path(unit.binary).name())
+            descriptor = NativeUnit(
+                identity=unit.identity, payload=unit.payload, binary=Path(unit.binary).name(), warnings=unit.warnings,
+            )
             stage_put(transaction, key, descriptor.encoded(key)?, EXPECT_REPAIR)
             return Ok(Some(transaction))
