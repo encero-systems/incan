@@ -118,11 +118,14 @@ pub fn cached_rust_facts(unit: &UnitDescription) -> CliResult<RustFactsSetup> {
 /// content store, where every unit and test case that reaches the same paths reads them. An extraction describes the
 /// types a signature names only for the crates it names itself, so a unit that also reaches one of its own crates keeps
 /// all of its paths in one extraction: the unit's indexed bakery extraction.
+///
+/// The facts come back as one ABI cache whose items decode when a checker reads them: a reused extraction is its
+/// stored bytes, never its items decoded and encoded into a second cache, and a fresh one is encoded once.
 pub fn cached_path_facts(
     unit: &UnitDescription,
     paths: &BTreeSet<String>,
     extract: impl Fn(&BTreeSet<String>) -> Result<RustFacts, String>,
-) -> CliResult<RustFacts> {
+) -> CliResult<RustAbiCache> {
     let Ok((directory, toolchain)) = installed_toolchain(unit) else {
         return unit_path_facts(unit, paths, &extract);
     };
@@ -140,8 +143,23 @@ pub fn cached_path_facts(
             &identity,
             || extract(paths),
         ),
-        Err(_) => extract(paths).map_err(CliError::failure),
+        Err(_) => encoded_cache(&extract(paths).map_err(CliError::failure)?),
     }
+}
+
+/// One fresh extraction's encoded cache bytes, written once and read by the session as they are.
+fn encoded_extraction(facts: &RustFacts) -> CliResult<Vec<u8>> {
+    incan_frontend::rust_abi_cache::encode_rust_abi_cache(facts).map_err(failure)
+}
+
+/// One fresh extraction as the encoded cache a session reads.
+fn encoded_cache(facts: &RustFacts) -> CliResult<RustAbiCache> {
+    RustAbiCache::decode_owned(encoded_extraction(facts)?).map_err(failure)
+}
+
+/// A stored extraction's bytes as its cache, when its sections and blocks are valid.
+fn stored_cache(bytes: Vec<u8>) -> Option<RustAbiCache> {
+    RustAbiCache::decode_owned(bytes).ok()
 }
 
 /// The installed artifact a path's root crate is, when the toolchain holds it: `None` for a unit's own crate, and the
@@ -192,7 +210,7 @@ fn shared_extraction(
     store: &Path,
     identity: &str,
     extract: impl FnOnce() -> Result<RustFacts, String>,
-) -> CliResult<RustFacts> {
+) -> CliResult<RustAbiCache> {
     let started = std::time::Instant::now();
     let cache = directory.join(format!("{identity}.rustabi"));
     let lock = fs::create_dir_all(directory).ok().and_then(|_| {
@@ -204,19 +222,15 @@ fn shared_extraction(
             .ok()
     });
     let Some(lock) = lock.filter(|lock| flock(lock, FlockOperation::LockExclusive).is_ok()) else {
-        return extract().map_err(CliError::failure);
+        return encoded_cache(&extract().map_err(CliError::failure)?);
     };
-    let stored = fs::read(&cache).ok().and_then(|bytes| {
-        RustAbiCache::decode_owned(bytes)
-            .and_then(RustAbiCache::into_items)
-            .ok()
-    });
+    let stored = fs::read(&cache).ok().and_then(stored_cache);
     let reused = stored.is_some();
     let facts = match stored {
         Some(facts) => facts,
         None => {
-            let facts = extract().map_err(CliError::failure)?;
-            if let Err(error) = store_extraction(directory, store, &cache, &facts)
+            let bytes = encoded_extraction(&extract().map_err(CliError::failure)?)?;
+            if let Err(error) = store_extraction(directory, store, &cache, &bytes)
                 && incan_frontend::trace_flags::trace_rust_facts()
             {
                 incan_frontend::trace_line!(
@@ -225,7 +239,7 @@ fn shared_extraction(
                     error.message
                 );
             }
-            facts
+            RustAbiCache::decode_owned(bytes).map_err(failure)?
         }
     };
     drop(lock);
@@ -241,11 +255,10 @@ fn shared_extraction(
     Ok(facts)
 }
 
-/// Publish one complete extraction under its request name.
-fn store_extraction(directory: &Path, store: &Path, cache: &Path, facts: &RustFacts) -> CliResult<()> {
-    let bytes = incan_frontend::rust_abi_cache::encode_rust_abi_cache(facts).map_err(failure)?;
+/// Publish one complete encoded extraction under its request name.
+fn store_extraction(directory: &Path, store: &Path, cache: &Path, bytes: &[u8]) -> CliResult<()> {
     let mut temporary = tempfile::NamedTempFile::new_in(directory).map_err(failure)?;
-    temporary.write_all(&bytes).map_err(failure)?;
+    temporary.write_all(bytes).map_err(failure)?;
     temporary.flush().map_err(failure)?;
     publish_cache(store, temporary, cache)
 }
@@ -262,12 +275,12 @@ fn unit_path_facts(
     unit: &UnitDescription,
     paths: &BTreeSet<String>,
     extract: &impl Fn(&BTreeSet<String>) -> Result<RustFacts, String>,
-) -> CliResult<RustFacts> {
+) -> CliResult<RustAbiCache> {
     let started = std::time::Instant::now();
 
     // ---- Optional cache availability ----
     let Some(directory) = &unit.rust_facts else {
-        return extract(paths).map_err(CliError::failure);
+        return encoded_cache(&extract(paths).map_err(CliError::failure)?);
     };
     let (index, staging) = (&directory.join("index"), &directory.join("staging"));
     let identity = match path_identity(unit, paths) {
@@ -280,23 +293,19 @@ fn unit_path_facts(
                     error.message
                 );
             }
-            return extract(paths).map_err(CliError::failure);
+            return encoded_cache(&extract(paths).map_err(CliError::failure)?);
         }
     };
     // ---- Indexed bakery payload or genuine extraction ----
     let cached = indexed_extraction(index, &identity)
         .and_then(|payload| fs::read(payload).ok())
-        .and_then(|bytes| {
-            RustAbiCache::decode_owned(bytes)
-                .and_then(RustAbiCache::into_items)
-                .ok()
-        });
+        .and_then(stored_cache);
     let reused = cached.is_some();
     let facts = if let Some(facts) = cached {
         facts
     } else {
-        let facts = extract(paths).map_err(CliError::failure)?;
-        if let Err(error) = stage_extraction(staging, &identity, &facts)
+        let bytes = encoded_extraction(&extract(paths).map_err(CliError::failure)?)?;
+        if let Err(error) = stage_extraction(staging, &identity, &bytes)
             && incan_frontend::trace_flags::trace_rust_facts()
         {
             incan_frontend::trace_line!(
@@ -305,7 +314,7 @@ fn unit_path_facts(
                 error.message
             );
         }
-        facts
+        RustAbiCache::decode_owned(bytes).map_err(failure)?
     };
     if let Err(error) = record_used(staging, &identity)
         && incan_frontend::trace_flags::trace_rust_facts()
@@ -354,12 +363,12 @@ fn indexed_extraction(index: &Path, identity: &str) -> Option<PathBuf> {
     })
 }
 
-/// Write a complete extraction as `<identity>.rustabi`, renaming it into place so Oven never reads a partial file.
-fn stage_extraction(staging: &Path, identity: &str, facts: &RustFacts) -> CliResult<()> {
-    let bytes = incan_frontend::rust_abi_cache::encode_rust_abi_cache(facts).map_err(failure)?;
+/// Write a complete encoded extraction as `<identity>.rustabi`, renaming it into place so Oven never reads a partial
+/// file.
+fn stage_extraction(staging: &Path, identity: &str, bytes: &[u8]) -> CliResult<()> {
     fs::create_dir_all(staging).map_err(failure)?;
     let mut temporary = tempfile::NamedTempFile::new_in(staging).map_err(failure)?;
-    temporary.write_all(&bytes).map_err(failure)?;
+    temporary.write_all(bytes).map_err(failure)?;
     temporary.flush().map_err(failure)?;
     temporary
         .persist(staging.join(format!("{identity}.rustabi")))
@@ -801,6 +810,53 @@ mod tests {
             vec![paths],
             "the unit's paths were split between extractions"
         );
+        Ok(())
+    }
+
+    /// One Rust record type of the unit's own crate, as an extraction describes it.
+    fn carrier() -> incan_lang::interop::RustItemMetadata {
+        incan_lang::interop::RustItemMetadata {
+            canonical_path: "first::Carrier".into(),
+            definition_path: None,
+            visibility: incan_lang::interop::RustVisibility::Public,
+            kind: incan_lang::interop::RustItemKind::Type(incan_lang::interop::RustTypeInfo::default()),
+        }
+    }
+
+    /// A unit's extraction that Oven baked into its index is read as the stored cache itself, its items decoded when a
+    /// checker reads them: the session receives that cache, not items decoded and encoded into another one.
+    #[test]
+    fn an_indexed_extraction_is_read_as_its_stored_cache() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let shipped = installed(root.path())?;
+        let unit = unit(root.path(), "first", &shipped)?;
+        let paths = BTreeSet::from(["first::Carrier".to_owned()]);
+        let extractions = std::cell::Cell::new(0);
+        let extract = |_: &BTreeSet<String>| -> Result<RustFacts, String> {
+            extractions.set(extractions.get() + 1);
+            Ok(RustFacts::from([("first::Carrier".to_owned(), carrier())]))
+        };
+        let fresh = cached_path_facts(&unit, &paths, extract)?;
+        assert!(fresh.contains("first::Carrier"));
+
+        // Oven bakes the staged extraction and indexes it under its request identity before the next run.
+        let directory = unit.rust_facts.clone().ok_or("the unit has no facts directory")?;
+        let staged = fs::read_dir(directory.join("staging"))?
+            .map(|entry| Ok(entry?.path()))
+            .collect::<Result<Vec<_>, std::io::Error>>()?
+            .into_iter()
+            .find(|path| path.extension().is_some_and(|extension| extension == "rustabi"))
+            .ok_or("no extraction was staged")?;
+        let identity = staged
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .ok_or("the staged extraction has no identity")?;
+        fs::write(directory.join("index"), format!("{identity}\t{}\n", staged.display()))?;
+
+        let reused = cached_path_facts(&unit, &paths, extract)?;
+        assert_eq!(extractions.get(), 1, "the indexed extraction was extracted again");
+        assert_eq!(reused.len(), 1);
+        assert_eq!(reused.get("first::Carrier")?, Some(carrier()));
         Ok(())
     }
 }
