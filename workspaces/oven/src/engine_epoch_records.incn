@@ -31,19 +31,20 @@ const LEGACY_HEAD: bytes = b"bldhea\x00"
 const META: str = "tuple<i64,i64,i64,i64,i64,i64>"
 
 
-def epoch_description() -> Description:
-    """The captured revision includes filesystem observations as well as the program inputs."""
+def epoch_description(scripted: bool = false) -> Description:
+    """Select the capture format that retains declared script paths when a manifest can select a provider."""
+    mut profile = "incan.engine.build-epoch/3"
+    mut declarations = "list<tuple<string,list<tuple<string,string>>,string,string,list<string>>>"
+    if scripted:
+        profile = "incan.engine.build-epoch/4"
+        declarations = "list<tuple<string,list<tuple<string,string>>,string,string,list<string>,list<string>>>"
     return model_description(
         EPOCH,
-        "incan.engine.build-epoch/3",
+        profile,
         [
             ModelField(identity=b"absent", name="absent", storage="list<tuple<string,string>>"),
             ModelField(identity=b"admitt", name="admitted", storage="list<string>"),
-            ModelField(
-                identity=b"declar",
-                name="declarations",
-                storage="list<tuple<string,list<tuple<string,string>>,string,string,list<string>>>",
-            ),
+            ModelField(identity=b"declar", name="declarations", storage=declarations),
             ModelField(identity=b"inputs", name="inputs", storage=f"list<tuple<string,string,{META},string,boolean>>"),
             ModelField(
                 identity=b"listin",
@@ -159,22 +160,22 @@ pub def encode_epoch(epoch: BuildEpoch) -> Result[bytes, str]:
                 ],
             ),
         )
+    scripted = len([true for decl in epoch.declarations if len(decl.scripts) > 0]) > 0
     mut declarations: list[Value] = []
     for decl in epoch.declarations:
-        declarations.append(
-            Value.Tuple(
-                [
-                    Value.Text(decl.manifest),
-                    paths(decl.files),
-                    Value.Text(decl.source_root),
-                    Value.Text(decl.rust_source_root),
-                    texts(decl.dependencies),
-                ],
-            ),
-        )
+        mut fields = [
+            Value.Text(decl.manifest),
+            paths(decl.files),
+            Value.Text(decl.source_root),
+            Value.Text(decl.rust_source_root),
+            texts(decl.dependencies),
+        ]
+        if scripted:
+            fields.append(texts(decl.scripts))
+        declarations.append(Value.Tuple(fields))
     return encode_graph_row(
         EPOCH,
-        epoch_description(),
+        epoch_description(scripted),
         [
             required_value(b"absent", paths(epoch.absent)),
             required_value(b"admitt", texts(epoch.admitted)),
@@ -191,10 +192,15 @@ pub def read_epoch(data: bytes) -> Result[BuildEpoch, str]:
     """Reopen the exact captured revision through its versioned record encoding."""
     if data[:4] != b"CRMB":
         return decoded_epoch(str(from_utf8(data).map_err((error) => str(error))?))
-    f = decode_graph_row(data, EPOCH, epoch_description(), 7)?
+    f, declaration_fields = match decode_graph_row(data, EPOCH, epoch_description(), 7):
+        Ok(previous) => (previous, 5)
+        Err(_) => (decode_graph_row(data, EPOCH, epoch_description(true), 7)?, 6)
     mut declarations: list[Declarations] = []
     for item in items(f[2].value)?:
-        p = tuple_items(item, 5)?
+        p = tuple_items(item, declaration_fields)?
+        mut scripts: list[str] = []
+        if declaration_fields == 6:
+            scripts = read_texts(p[5])?
         declarations.append(
             Declarations(
                 manifest=text(p[0])?,
@@ -202,6 +208,7 @@ pub def read_epoch(data: bytes) -> Result[BuildEpoch, str]:
                 source_root=text(p[2])?,
                 rust_source_root=text(p[3])?,
                 dependencies=read_texts(p[4])?,
+                scripts=scripts,
             ),
         )
     mut inputs: list[CapturedInput] = []

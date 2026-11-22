@@ -17,6 +17,7 @@ from engine_capture import (
     selected_home,
 )
 from engine_messages import Submit
+from engine_overlay import is_editor_view
 from pub::incan_platform.store import Lookup, Snapshot, Transaction, begin_compared, commit, lookup, owned, put
 from store_path_conversion import snapshot
 from features import FeatureRequest
@@ -46,7 +47,7 @@ pub model CapturedRequest:
     pub transaction: Option[Transaction] = None
     # The recorded source-graph reach this request was captured with, which its later capture checks again.
     pub reach: Option[SourceGraph] = None
-    # Build and run select the shared provider's inputs during initial capture and publication recheck.
+    # Whether the request permits capture to select a project's native provider.
     pub project_library: bool = false
 
 
@@ -88,10 +89,10 @@ pub def prepare_submit(
         return Err("unit records require one Incan program file and a project view")
     selected = selected_home()?
     admitted = selected.admitted
-    # Check and executable requests keep separate reach. The capture retains candidate names and exact membership.
-    project_library = submit.command != "check"
+    # Checks and editor saves need the source bodies. Other builds and runs can select a declared shared provider.
+    project_library = submit.command != "check" and not is_editor_view(submit.view)
     inputs = [
-        "settled-source-observation/3", str(project_library), submit.view, source.0, submit.input_selection, admitted.pin,
+        "settled-source-observation/4", str(project_library), submit.view, source.0, submit.input_selection, admitted.pin,
     ]
     head = f"incan.engine.capture-head\t{fingerprint(inputs)?}"
     before = snapshot(store, submit.view).map_err((error) => error.message())?
@@ -99,7 +100,7 @@ pub def prepare_submit(
     # 2. Every engine request starts at its selected source, and build and run select the same program inputs: the verb
     #    is an execution action, not a compiled identity. The unit's recorded source graphs bound its reach once they
     #    exist.
-    mut reach = recorded_reach(source, submit.input_selection, project_library)
+    mut reach = recorded_reach(source, submit.input_selection)
     if reach is None and discover_standalone:
         match first_standalone_reach(source, submit.input_selection, selected):
             Ok(found) => reach = found
@@ -217,7 +218,7 @@ pub def after_projection(captured: CapturedRequest) -> Result[CapturedRequest, s
 
 def graph_published(captured: CapturedRequest) -> Result[Option[CapturedRequest], str]:
     """The request refreshed with its unit's newly recorded graph reach, when that reach captures the same identity."""
-    reach = recorded_reach(Path(captured.epoch.roots[0]), captured.epoch.selection.profile, captured.project_library)
+    reach = recorded_reach(Path(captured.epoch.roots[0]), captured.epoch.selection.profile)
     if reach is None:
         return Ok(None)
     graphed = capture(recaptured(captured, reach), Some(captured.epoch), captured.selected.admitted, 0)?

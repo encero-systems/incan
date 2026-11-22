@@ -7,9 +7,10 @@ unit's project-local imports of those modules as imports of the library, so the 
 from std.fs import Path
 from files import make_directory, read
 from home import dependency_artifact_dir, standard_packages
+from intake import read_project
 from observation import entered, skipped_directory
 from publication import publish
-from unit import UnitDescription, UnitLoaf
+from unit import UnitDescription, UnitLoaf, project_root_of
 
 # The suffix that names a project's shared library, as package and dependency key, after the project's package.
 pub const LIBRARY_SUFFIX: str = "_project_library"
@@ -55,13 +56,42 @@ pub def planned_program(
     unit: UnitDescription, direct: bool, captured: Option[list[str]] = None,
 ) -> Result[UnitDescription, str]:
     """
-    A program unit as `build` and `run` both compile it: a project's program links the project's shared library, so it
-    compiles only its own modules, and a direct source, which is no project's unit, never does. A request with an
-    admitted source inventory supplies it here so the planner uses the same membership without listing it again.
+    Plan the same executable for `build` and `run`. A declared script shares a library when the project declares
+    another executable source. The records producer passes its already selected provider membership. An ordinary
+    project build uses the effective script declarations already read by intake.
     """
-    if direct:
+    if direct or unit.kind != "program":
         return Ok(unit)
+    if captured is None:
+        root = Path(unit.project_root)
+        if not root.joinpath("loaf.toml").is_file():
+            return Ok(unit)
+        project = read_project(root, unit.manifests).map_err((error) => error.message())?
+        scripts = [path for path in project.intent.scripts.values()]
+        if not selects_shared_executable(root, unit.source, scripts):
+            return Ok(unit)
     return with_project_library(unit, captured)
+
+
+pub def selects_shared_executable(root: Path, source: str, scripts: list[str]) -> bool:
+    """Require the requested source and at least one distinct executable from the project's script declarations."""
+    if len(set(scripts)) < 2:
+        return false
+    mut programs: set[str] = set()
+    for script in scripts:
+        path = root.joinpath(script)
+        if path.0.endswith(".incn") and path.is_file():
+            if let Ok(resolved) = path.resolve():
+                # The conventional library can be named by a tolerated legacy script or reached through an alias.
+                if resolved.name() != "lib.incn":
+                    if let Some(owner) = project_root_of(resolved):
+                        if owner.0 == root.0:
+                            programs.add(resolved.0)
+    if len(programs) < 2:
+        return false
+    if let Ok(entry) = Path(source).resolve():
+        return entry.0 in programs
+    return false
 
 
 pub def library_key(package: str) -> str:
