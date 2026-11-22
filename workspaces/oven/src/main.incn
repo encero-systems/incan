@@ -8,7 +8,8 @@ from rust::std::string import String as RustString
 from std.environ import get_or
 from std.fs import Path
 from engine_selector import Engine, select as select_engine
-from engine_client import execute as execute_records, execute_overlay, serve_overlays
+from engine_client import deliver_program, execute as execute_records, execute_overlay, serve_overlays
+from engine_unit_options import unit_options_text
 from overlay_request import parse_overlay, parse_serve
 from engine_proofs import report as proof_report
 from engine_service import serve as serve_engine, refusal_code
@@ -527,27 +528,28 @@ def records_command(command: str, arguments: list[str]) -> None:
                 format = selected[1]
     else:
         own, passed = program_arguments(arguments)
-    match parse_options(own, "."):
+    match parse_options(own, ".", command == "build"):
         Err(reason) => syntax_error(command, reason)
         Ok(parsed) =>
             options = records_validated(command, located(command, parsed))
-            if (
-                options.feature_options
-                or len(options.substitutes) > 0
-                or len(options.program_entries) > 0
-                or options.interop_target != ""
-            ):
-                fail(
-                    f"{invoked()} {command}: unit records do not implement feature, substitution, program-entry or interop-target options",
-                    1,
-                )
             if command == "build" and (len(passed) > 0 or options.argv0 is not None):
                 syntax_error(command, "program arguments and --argv0 require run")
             mut source = Path(options.path)
             match entry_source(source, options.manifests):
                 Err(reason) => fail(f"{invoked()} {command}: {reason}", 1)
-                Ok(None) => fail(f"{invoked()} {command}: records engine requires an Incan program", 1)
+                Ok(None) =>
+                    # A Rust project is no Incan unit: its build stays in this process, as it always has.
+                    if command == "build":
+                        prepared_lock(command, options)
+                        build_selected(options)
+                        return
+                    fail(f"{invoked()} {command}: records engine requires an Incan program", 1)
                 Ok(Some(selected)) => source = selected
+            # The engine describes exactly the unit these options ask for, under their one canonical spelling.
+            mut unit_options = ""
+            match unit_options_text(options):
+                Err(reason) => fail(f"{invoked()} {command}: {reason}", 1)
+                Ok(text) => unit_options = text
             # Check observes one source reach like the legacy checker; it does not mutate a project lock, and warns of
             # the manifest entries this toolchain tolerates as every other project command does.
             if command != "check":
@@ -556,7 +558,17 @@ def records_command(command: str, arguments: list[str]) -> None:
                 warn_tolerated_entries(command, Path(options.path))
             finish(
                 command,
-                execute_records(command, source, options.profile, passed, options.argv0, format, options.engine_report),
+                execute_records(
+                    command,
+                    source,
+                    options.profile,
+                    passed,
+                    options.argv0,
+                    format,
+                    options.engine_report,
+                    unit_options,
+                    options.output,
+                ),
                 format,
             )
 
@@ -1218,13 +1230,7 @@ def delivered(options: Options, code: i32, binary: Path) -> Result[i32, str]:
     """After a successful program build, place a fresh copy of the executable in OUTPUT_DIR, as 0.5.1's build did."""
     if code != 0 or options.output == "":
         return Ok(code)
-    directory = Path(options.output)
-    directory.mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
-    destination = directory.joinpath(binary.name())
-    # A new file rather than one rewritten in place, so a program that ran from it is never replaced under itself.
-    if destination.exists():
-        destination.unlink().map_err((error) => f"cannot {error.message()}")?
-    _ = binary.copy(destination, true, true).map_err((error) => f"cannot {error.message()}")?
+    deliver_program(options.output, binary)?
     return Ok(0)
 
 
