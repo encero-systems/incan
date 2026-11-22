@@ -3,17 +3,19 @@
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::Mutex;
 use std::sync::{Arc, OnceLock};
 
 use incan_mir_plan_native::{
     ADMITTED_MODULE_NOTE, AdmittedFunction, AdmittedModule, PARTIAL_MODULE_NOTE, POSITIONED_MODULE_PAGE,
-    PlanModuleFunction, REPOSITION_MODULE_PAGE, decode_plan_module, encode_module_note, read_module_admission,
-    write_module_placement,
+    PlanModuleFunction, PlanModuleValue, REPOSITION_MODULE_PAGE, decode_plan_module, encode_module_note,
+    read_module_admission, write_module_placement,
 };
 
 use sha2::{Digest, Sha256};
 
-use crate::resident_products::{ResidentPage, resident_page};
+use crate::resident_products::{ResidentPage, resident_full_page, resident_page};
 
 /// The companion of a staged page that names the immutable store frame range holding its bytes, when Oven offers the
 /// page by reference instead of a copy: the segment file, the value's offset and its length, one per line.
@@ -48,6 +50,7 @@ fn staged_bytes(path: &Path) -> Option<Vec<u8>> {
 /// A staged page's bytes for a reader outside the worker's kept pages: its copy, or the store frame range its
 /// companion names, which is read only with the content digest the page is named by and only when it matches.
 pub(crate) fn staged_page(path: &Path) -> Result<Vec<u8>, String> {
+    count_staged_read(path);
     let bytes = staged_bytes(path).ok_or_else(|| format!("cannot read staged page {}", path.display()))?;
     match named_content(path) {
         Some(content) if <[u8; 32]>::from(Sha256::digest(&bytes)) == content => Ok(bytes),
@@ -58,6 +61,48 @@ pub(crate) fn staged_page(path: &Path) -> Result<Vec<u8>, String> {
             path.display()
         )),
     }
+}
+
+/// An admitted module's plan page with its events: the page this worker already read and checked for the content
+/// Oven names it by, else read now through its copy or frame, checked against that digest and kept. A copy Oven names
+/// no digest for is read for this request only.
+pub(crate) fn admitted_plan_page(path: &Path) -> Result<Arc<PlanModuleValue>, String> {
+    let read = || {
+        let bytes = staged_page(path)?;
+        let page = decode_plan_module(&bytes).map_err(|error| format!("admitted plan module refused: {error:?}"))?;
+        Ok((page, bytes.len() as u64))
+    };
+    match named_content(path) {
+        Some(content) => resident_full_page(&content, read),
+        None => read().map(|(page, _)| Arc::new(page)),
+    }
+}
+
+/// How many times this process read each staged page, for counted contracts.
+#[cfg(test)]
+static STAGED_READS: Mutex<Option<HashMap<PathBuf, u64>>> = Mutex::new(None);
+
+#[cfg(test)]
+fn count_staged_read(path: &Path) {
+    if let Ok(mut guard) = STAGED_READS.lock() {
+        *guard
+            .get_or_insert_with(HashMap::new)
+            .entry(path.to_path_buf())
+            .or_insert(0) += 1;
+    }
+}
+
+#[cfg(not(test))]
+fn count_staged_read(_path: &Path) {}
+
+/// How many times this process has read and checked the staged page at `path`.
+#[cfg(test)]
+pub(crate) fn staged_page_reads(path: &Path) -> u64 {
+    STAGED_READS
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().and_then(|reads| reads.get(path).copied()))
+        .unwrap_or(0)
 }
 
 /// The bytes of the store frame range a companion names: `segment\noffset\nlength\n`.
@@ -419,7 +464,10 @@ mod tests {
         source_span,
     };
 
-    use super::{FRAME_COMPANION, admitted_frames, admitted_page, read_admitted, report_admitted, staged_page};
+    use super::{
+        FRAME_COMPANION, admitted_frames, admitted_page, admitted_plan_page, read_admitted, report_admitted,
+        staged_page, staged_page_reads,
+    };
     use crate::record_positions::{indexed_product, placed_record};
     use crate::resident_products::RestoreInputs;
     use crate::scalar_store::AdmittedPayload;
@@ -737,6 +785,62 @@ mod tests {
                 .events
                 .is_empty()
         );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// A worker reads, checks and decodes a staged page once per content Oven names it by, and keeps it with its
+    /// events: a request over the same pages reads none of them again, and one changed page is the one page read and
+    /// hashed.
+    #[test]
+    fn a_worker_reads_and_hashes_one_page_for_one_changed_page() -> Result<(), String> {
+        let root = directory("resident-full-pages");
+        let write = |path: &Path, bytes: &[u8]| std::fs::write(path, bytes).map_err(|error| error.to_string());
+        let page = |module: &str, event: u8| PlanModuleValue {
+            module: module.into(),
+            functions: vec![PlanModuleFunction {
+                identity: format!("pub::{module}::a"),
+                symbol: format!("pub::{module}::a"),
+                function: "a".into(),
+                key: "cd".repeat(32),
+                event: vec![event],
+            }],
+        };
+        let offer = |name: &str, encoded: &[u8]| -> Result<PathBuf, String> {
+            let segment = root.join(format!("{name}-{}.seg", hex::encode(&Sha256::digest(encoded)[..4])));
+            let mut stored = b"key prefix".to_vec();
+            let offset = stored.len();
+            stored.extend_from_slice(encoded);
+            write(&segment, &stored)?;
+            let path = root.join(format!("{}.incnmodule.positioned", hex::encode(name)));
+            let frame = format!("{}\n{offset}\n{}\n", segment.display(), encoded.len());
+            write(
+                &PathBuf::from(format!("{}{FRAME_COMPANION}", path.display())),
+                frame.as_bytes(),
+            )?;
+            write(
+                &PathBuf::from(format!("{}.digest", path.display())),
+                hex::encode(Sha256::digest(encoded)).as_bytes(),
+            )?;
+            Ok(path)
+        };
+        let first = offer("resident_kappa", &encode_plan_module(&page("resident_kappa", 1))?)?;
+        let second = offer("resident_lambda", &encode_plan_module(&page("resident_lambda", 2))?)?;
+        let reads = || staged_page_reads(&first) + staged_page_reads(&second);
+        for path in [&first, &second] {
+            admitted_plan_page(path)?;
+        }
+        assert_eq!(reads(), 2);
+        for path in [&first, &second] {
+            assert_eq!(admitted_plan_page(path)?.functions.len(), 1);
+        }
+        assert_eq!(reads(), 2, "a page the worker holds was read again");
+        // One page changes: the next request reads and hashes that page alone.
+        let changed = offer("resident_lambda", &encode_plan_module(&page("resident_lambda", 3))?)?;
+        assert_eq!(changed, second);
+        assert_eq!(admitted_plan_page(&first)?.functions[0].event, vec![1]);
+        assert_eq!(admitted_plan_page(&second)?.functions[0].event, vec![3]);
+        assert_eq!(reads(), 3, "one changed page was not the one page read");
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
