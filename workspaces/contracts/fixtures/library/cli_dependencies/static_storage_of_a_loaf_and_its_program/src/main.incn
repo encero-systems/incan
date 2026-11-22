@@ -1,0 +1,16 @@
+# behavior: a path-dependency Loaf's int static and the program's own int static are separate storage
+# pending: scalar statics are runtime cells keyed by their unit-local slot in one process-wide table, so the Loaf's first int static and the program's first int static share one cell (the program reads 2, not 100)
+# expect-stdout:
+#   1
+#   2
+#   100
+
+from pub::caselib.counter import bump
+
+static total: int = 100
+
+
+def main() -> None:
+    println(bump())
+    println(bump())
+    println(total)
