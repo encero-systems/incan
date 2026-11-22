@@ -128,9 +128,14 @@ def changed_owner(graph: Snapshot, prior: RecordKey, captured: Borrowed[Dict[str
                 if family == "compiler-generation":
                     # The owner was checked under the unit's compiler generation; it is ranked only while that holds.
                     generation = encode_record_key(key)?
-                    if not captured.contains_key(generation) or digest(source_value(key, captured[generation])?) != previous.semantic_digest:
+                    mut held: bytes = b""
+                    if captured.contains_key(generation):
+                        held = captured[generation]
+                    else:
                         return Ok(None)
-                    inputs[generation] = captured[generation]
+                    if digest(source_value(key, held)?) != previous.semantic_digest:
+                        return Ok(None)
+                    inputs[generation] = held
                     continue
                 if family == "scope-name":
                     if key.facet == "" or key.facet in scope_names:
