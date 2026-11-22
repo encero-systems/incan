@@ -101,7 +101,7 @@ pub model Invocation:
     # Worker projects this invocation may run in: it starts in the first one no other invocation is running in, and its
     # relative arguments resolve there. Empty runs it in `directory`.
     pub workers: list[str] = []
-    # A release-owned Loaf target shared by the invocations naming it.
+    # A release-owned Loaf target whose release test products are shared by the invocations naming it.
     pub scratch_target: str = ""
 
 
@@ -317,7 +317,7 @@ pub def invocations(
 
 
 def private_loaf_target(loaf: Path) -> Result[str, str]:
-    """Claim a fresh target in the release checkout only when this pool owns all of its test consumers."""
+    """Select a fresh target whose release test products have no consumer in the Rust facet gate."""
     target = loaf.joinpath("target")
     if target.exists() or target.is_symlink():
         return Ok("")
@@ -639,7 +639,7 @@ def reclaim_settled_targets(
     active: list[Running],
     running: list[Running],
 ) -> Result[None, str]:
-    """Release each target once its final owning invocation and its process tree have settled."""
+    """Release each Loaf's test products once their final owning invocation and its process tree have settled."""
     remaining = waiting + [item.position for item in running]
     held = [planned[position].scratch_target for position in remaining]
     mut released: list[str] = []
@@ -648,11 +648,19 @@ def reclaim_settled_targets(
         if target == "" or target in held or target in released:
             continue
         released.append(target)
-        if Path(target).is_symlink():
-            return Err(f"release Loaf target became a symlink: {target}")
-        bytes = reclaim_paths([Path(target)])?
+        bytes = reclaim_loaf_test_products(Path(target))?
         println(f"Reclaimed {bytes} logical bytes from completed Loaf tests at {target}")
     return Ok(None)
+
+
+def reclaim_loaf_test_products(target: Path) -> Result[int, str]:
+    """Reclaim release test executables and Rust build views from this project root. Other builds can still use its dependency observations and Loaf publications."""
+    incan = target.joinpath("incan")
+    products = [incan.joinpath("rust/release"), incan.joinpath("release/tests")]
+    for path in products:
+        if path.is_symlink() or (path.exists() and path.resolve().map_err((error) => error.message())?.0 != path.0):
+            return Err(f"release Loaf test output became a symlink: {path.0}")
+    return reclaim_paths(products)
 
 
 def settle_active(active: list[Running], ignored_prefix: int) -> ActiveSettlement:
