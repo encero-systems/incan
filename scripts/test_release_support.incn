@@ -37,8 +37,6 @@ from release_support import (
     parse_process_identities,
     parse_release_options,
     parse_verification_options,
-    reference_cache_identity,
-    reference_cache_root,
     reference_census_jobs,
     reference_worker_arguments,
     process_identities,
@@ -46,7 +44,6 @@ from release_support import (
     release_process_tree,
     reclaim_paths,
     record_tree_sample,
-    reuse_reference_log,
     release_receipt,
     release_rust_cache_root,
     reserved_admitted,
@@ -55,11 +52,11 @@ from release_support import (
     seed_toolchain_directory,
     signal_release_termination,
     start_background_step,
-    store_reference_log,
     tree_bytes,
     tree_digest,
     verification_program,
 )
+from reference_cache import census_inputs
 from relocated_sysroot import shared_relocated_sysroot
 from verify_installation import (
     audit_relocation,
@@ -115,7 +112,7 @@ def test_release_census_shares_compilation_without_dropping_a_family() -> Result
     assert arguments[9:] == [family for family in FAMILIES]
     assert reference_census_jobs(1) == 1
     assert reference_census_jobs(4) == 2
-    worker = reference_worker_arguments(Path("source"), Path("out"), Path("home"), Path("lsp"), 4, 120)
+    worker = reference_worker_arguments(Path("source"), Path("out"), Path("home"), Path("lsp"), 4, 120, Path("cache"))
     assert worker == [
         "run",
         "source/scripts/release.incn",
@@ -127,6 +124,7 @@ def test_release_census_shares_compilation_without_dropping_a_family() -> Result
         "lsp",
         "2",
         "120",
+        "cache",
     ]
     return Ok(None)
 
@@ -395,7 +393,10 @@ def test_seed_bridge_is_one_direct_child_with_only_the_authenticated_sources() -
 
 def test_release_arguments_refuse_ambiguous_or_unbounded_invocations() -> Result[None, str]:
     """Missing operands, abbreviated SHAs, unknown options, and nonpositive budgets fail closed."""
-    assert refused_release([SHA]) == "usage: release.incn SHA OUT [--keep-trees] [--prove-fixed-point] [--seed-source SHA] [--seed-bridge SHA] [--jobs N] [--timeout SECONDS] [--stamp-signer | --verify-installed BUNDLE]"
+    assert refused_release([SHA]) == "usage: release.incn SHA OUT [--keep-trees] [--prove-fixed-point] [--seed-source SHA] [--seed-bridge SHA] [--jobs N] [--timeout SECONDS] [--reference-cache DIR] [--stamp-signer | --verify-installed BUNDLE]"
+    assert refused_release([SHA, "out", "--reference-cache"]) == "--reference-cache needs the directory of reusable seed censuses"
+    assert parse_release_options([SHA, "out", "--reference-cache", "/cache"])?.reference_cache == "/cache"
+    assert parse_release_options([SHA, "out"])?.reference_cache == ""
     assert refused_release(["deadbeef", "out"]) == "SHA must be a full lowercase source commit"
     assert refused_release([SHA, "out", "--fast"]) == "unknown option `--fast`"
     assert refused_release([SHA, "out", "--jobs", "0"]) == "--jobs needs a positive integer"
@@ -491,22 +492,10 @@ def test_byte_comparison_reads_complete_content() -> Result[None, str]:
     return Ok(None)
 
 
-def test_reference_cache_identity_covers_seed_and_reference_source_trees() -> Result[None, str]:
-    """Changing a seed component, contracts tree or selected stdlib tree changes the reference cache key."""
+def test_the_relocated_rust_cache_lives_in_the_seed_home() -> Result[None, str]:
+    """The verified relocated sysroot copy is kept inside the caller-owned seed home."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
-    oven = temporary.path().joinpath("incan")
-    lsp = temporary.path().joinpath("incan-lsp")
-    manifest = temporary.path().joinpath("toolchain.json")
-    oven.write_bytes(b"oven-a").map_err((error) => error.message())?
-    lsp.write_bytes(b"lsp-a").map_err((error) => error.message())?
-    manifest.write_bytes(b"manifest-a").map_err((error) => error.message())?
-    original = reference_cache_identity(oven, lsp, manifest, "contracts-a", "stdlib-a")?
-    assert reference_cache_root(temporary.path()).0 == temporary.path().joinpath("cache/release-reference").0
     assert release_rust_cache_root(temporary.path()).0 == temporary.path().joinpath("cache/release-rust").0
-    assert reference_cache_identity(oven, lsp, manifest, "contracts-b", "stdlib-a")? != original
-    assert reference_cache_identity(oven, lsp, manifest, "contracts-a", "stdlib-b")? != original
-    lsp.write_bytes(b"lsp-b").map_err((error) => error.message())?
-    assert reference_cache_identity(oven, lsp, manifest, "contracts-a", "stdlib-a")? != original
     return Ok(None)
 
 
@@ -520,8 +509,8 @@ def test_a_missing_file_is_refused_by_its_path() -> Result[None, str]:
             assert reason.startswith(f"cannot digest {missing.0}: "), reason
     present = temporary.path().joinpath("incan")
     present.write_bytes(b"oven-a").map_err((error) => error.message())?
-    match reference_cache_identity(present, present, missing, "contracts-a", "stdlib-a"):
-        Ok(found) => return Err(f"an identity over a missing seed manifest digested to {found}")
+    match census_inputs(present, present, missing, temporary.path(), 600):
+        Ok(found) => return Err(f"census inputs over a missing seed manifest digested to {found.identity()}")
         Err(reason) =>
             assert missing.0 in reason, reason
     return Ok(None)
@@ -595,20 +584,9 @@ def test_driver_evidence_retains_qualified_unit_identities_and_dependency_scans(
     return Ok(None)
 
 
-def test_reference_cache_publication_keeps_complete_release_evidence() -> Result[None, str]:
-    """Cache publication retains the release log, and reuse materializes the same complete bytes."""
+def test_reference_timings_join_the_release_timings() -> Result[None, str]:
+    """The reference worker's private timings are appended to the release's, after its own rows."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
-    log = temporary.path().joinpath("release/reference-contracts.log")
-    cached = temporary.path().joinpath("cache/key/contracts.log")
-    reused = temporary.path().joinpath("next/reference-contracts.log")
-    log.parent().mkdir(true, true).map_err((error) => error.message())?
-    reused.parent().mkdir(true, true).map_err((error) => error.message())?
-    log.write_text(COMPLETE_LOG, "utf-8", "strict", None).map_err((error) => error.message())?
-    store_reference_log(log, cached)?
-    assert log.read_text("utf-8", "strict").map_err((error) => error.message())? == COMPLETE_LOG
-    assert cached.read_text("utf-8", "strict").map_err((error) => error.message())? == COMPLETE_LOG
-    reuse_reference_log(cached, reused)?
-    assert reused.read_text("utf-8", "strict").map_err((error) => error.message())? == COMPLETE_LOG
     timings = temporary.path().joinpath("timings.tsv")
     worker_timings = temporary.path().joinpath("reference-timings.tsv")
     timings.write_text("source-closure\t1.0\n", "utf-8", "strict", None).map_err((error) => error.message())?
