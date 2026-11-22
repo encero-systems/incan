@@ -9,6 +9,7 @@ from oven_tests import (
     LOWERING_RESERVATION_BYTES,
     PROJECT_RESERVATION_BYTES,
     Invocation,
+    admission_order,
     admitted,
     compile_ahead,
     default_jobs,
@@ -320,6 +321,29 @@ def test_a_settled_source_compiles_beside_the_others() -> Result[None, str]:
     assert ahead[0].reservation == planned[2].reservation
     assert ahead[0].log.0 == logs.joinpath("002-test_engine_protocol-compile.log").0
     assert ahead[0].log.0 not in [item.log.0 for item in planned]
+    remove_worker_projects(planned)?
+    return Ok(None)
+
+
+def test_loaf_tests_run_while_the_first_oven_source_builds_the_shared_project_library() -> Result[None, str]:
+    """
+    Every Oven source links the project library that the first of them to start builds, and no Loaf test does: the
+    pool admits the compile-ahead first, then every Loaf test, then the other Oven sources. Without a settled source
+    the first Oven source leads. Positions, and so the joined log, keep the planned order.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    fixture(root)?
+    evidence = root.joinpath("evidence")
+    logs = evidence.joinpath("oven-tests")
+    planned = invocations(root, evidence, logs, 2)?
+    early = compile_ahead(planned)
+    pooled = early + [item for item in planned if not item.alone]
+    assert [len(item.workers) > 0 for item in pooled] == [true, true, true, false, false, false, false, false]
+    assert admission_order(pooled) == [0, 3, 4, 5, 6, 7, 1, 2]
+    without_ahead = [item for item in planned if not item.alone]
+    assert admission_order(without_ahead) == [0, 2, 3, 4, 5, 6, 1]
+    assert admission_order([]) == []
     remove_worker_projects(planned)?
     return Ok(None)
 
