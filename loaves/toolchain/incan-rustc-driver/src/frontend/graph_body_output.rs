@@ -94,6 +94,12 @@ fn canonical_lowering_inputs(inputs: Vec<Vec<String>>) -> Result<Vec<Vec<String>
         .collect())
 }
 
+/// Why a top-level partial is a fallback owner: its generated function has no checked record of its own.
+const PARTIAL_FALLBACK: &str = "a partial's generated function has no checked owner record of its own";
+/// Why a checked method is a fallback owner when its module's Body IR gives it no row.
+const ROWLESS_METHOD_FALLBACK: &str =
+    "the module has no Body IR row for this method: it is abstract or lowered per implementation";
+
 /// Normalize an optional fallback owner before it crosses the Incan codec boundary.
 fn fallback_identity(identity: Option<String>) -> Option<String> {
     identity.filter(|value| !value.is_empty())
@@ -402,6 +408,19 @@ impl GraphBodyOutput {
                 }
             }
         }
+        // A top-level partial lowers to a generated function with no checked owner record of its own, so its module's
+        // namespace record is its witness and it is checked again from source on each request.
+        for declaration in &module.ast.declarations {
+            if let incan_frontend::ast::Declaration::Partial(partial) = &declaration.node {
+                self.fallbacks.push(PendingBodyFallback {
+                    module: module_path.clone(),
+                    name: partial.name.clone(),
+                    identity: None,
+                    reason: PARTIAL_FALLBACK.into(),
+                    artifact_refusals: Vec::new(),
+                });
+            }
+        }
         Ok(())
     }
 
@@ -584,6 +603,7 @@ impl GraphBodyOutput {
                 }
             }
         }
+        self.retire_rowless_methods();
         if let Some(value) = self.values.iter().find(|value| value.body_ir.is_empty()) {
             return Err(format!(
                 "compiled graph output has no Body IR row for {} in {}",
@@ -597,6 +617,28 @@ impl GraphBodyOutput {
             ));
         }
         Ok(())
+    }
+
+    /// Publish each checked method the module's Body IR gives no row of its own as a fallback owner with its reason.
+    ///
+    /// A trait's abstract method has no executable body, and a method lowered once per implementation has no row at
+    /// its own declaration, so neither can carry a graph-eligible Body IR frame. Its module's namespace record stays
+    /// its witness, and it is checked again from source on each request. Any other owner without a row is still a
+    /// refusal of the whole output.
+    fn retire_rowless_methods(&mut self) {
+        let (rowless, values): (Vec<_>, Vec<_>) = std::mem::take(&mut self.values)
+            .into_iter()
+            .partition(|value| value.body_ir.is_empty() && value.identity.starts_with("member/method:"));
+        self.values = values;
+        for value in rowless {
+            self.fallbacks.push(PendingBodyFallback {
+                module: value.module,
+                name: value.name,
+                identity: fallback_identity(Some(value.identity)),
+                reason: ROWLESS_METHOD_FALLBACK.into(),
+                artifact_refusals: Vec::new(),
+            });
+        }
     }
 
     /// Keep newly evaluated owners inside this activation. The ordinary physical and settled-call guards are
@@ -1091,5 +1133,81 @@ mod tests {
         assert_eq!(fallback_identity(Some(String::new())), None);
         assert_eq!(fallback_identity(None), None);
         assert_eq!(fallback_identity(Some("owner".to_owned())), Some("owner".to_owned()));
+    }
+
+    /// A checked body the module's Body IR gives no row of its own, a trait's abstract method or a top-level partial's
+    /// generated function, is published as a fallback owner with its reason instead of refusing the whole output.
+    #[test]
+    fn bodies_without_their_own_body_ir_row_are_fallback_owners() -> Result<(), Box<dyn std::error::Error>> {
+        let source = concat!(
+            "trait Named:\n    def label(self) -> str:\n        \"\"\"Return the value label.\"\"\"\n        ...\n\n",
+            "model One with Named:\n    number: int\n\n    def label(self) -> str:\n        return str(self.number)\n\n",
+            "pub def route(method: str, path: str) -> str:\n    return method + path\n\n",
+            "pub get = partial route(method=\"GET\")\n\n",
+            "def main() -> None:\n    println(get(path=\"/\"))\n",
+        );
+        let scratch = std::env::temp_dir().join(format!("incan-graph-fallbacks-{}", std::process::id()));
+        std::fs::create_dir_all(scratch.join("src"))?;
+        let root = scratch.canonicalize()?;
+        let tokens = incan_frontend::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let ast = incan_frontend::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = incan_frontend::typechecker::TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["main".into()]));
+        checker.check_program(&ast).map_err(|errors| format!("{errors:?}"))?;
+        let providers = incan_frontend::body_ir::ProviderOperationCatalog::new();
+        let mut lowered = incan_frontend::body_ir::build_body_ir_module(
+            &ast,
+            &["main".into()],
+            checker.type_info(),
+            &incan_frontend::body_ir::BodyIrContext {
+                modules: incan_frontend::body_ir::ContextModules::default(),
+                provider_operations: &providers,
+                registry_package: None,
+                library_package: None,
+                include_inline_tests: false,
+            },
+        );
+        let module = incan_frontend::parsed_module::ParsedModule {
+            name: "main".into(),
+            path_segments: vec!["main".into()],
+            file_path: root.join("src/main.incn"),
+            source_positions: incan_frontend::diagnostics::SourcePositionIndex::new(source),
+            source: source.to_owned(),
+            ast,
+            gated_exports: Vec::new(),
+        };
+        let mut output = GraphBodyOutput::prepare(Some(root.join("bodies")), root.clone())?;
+        output.observe(&module, &checker, None, &[], "app");
+        if let Some(error) = output.error.take() {
+            return Err(error.into());
+        }
+        output.attach_body_ir(
+            std::slice::from_ref(&module),
+            std::slice::from_mut(&mut lowered),
+            &[],
+            &std::collections::BTreeMap::new(),
+            None,
+        )?;
+        let fallbacks: Vec<(&str, &str)> = output
+            .fallbacks
+            .iter()
+            .map(|fallback| (fallback.name.as_str(), fallback.reason.as_str()))
+            .collect();
+        assert!(
+            fallbacks
+                .iter()
+                .any(|(name, reason)| *name == "label" && reason.contains("no Body IR row")),
+            "{fallbacks:?}"
+        );
+        assert!(
+            fallbacks
+                .iter()
+                .any(|(name, reason)| *name == "get" && reason.contains("partial")),
+            "{fallbacks:?}"
+        );
+        assert!(output.values.iter().all(|value| !value.body_ir.is_empty()));
+        assert!(output.values.iter().any(|value| value.name == "route"));
+        std::fs::remove_dir_all(&scratch)?;
+        Ok(())
     }
 }
