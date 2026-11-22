@@ -37,10 +37,11 @@ pub fn retained_inventory() -> [(&'static str, usize, u64); 2] {
     retained::inventory()
 }
 
-/// Release the Loaf manifests this process decoded for the request that just ended: a resident worker keeps no owned
-/// copy of its dependency closure between requests.
+/// Release the Loaf manifests and installed record groups this process decoded for the request that just ended: a
+/// resident worker keeps no owned copy of its dependency closure between requests.
 pub fn release_retained_loaves() {
     retained::release_artifacts();
+    compiler_record_set::release_admitted_groups();
 }
 
 /// Publish one private cache record atomically: write `bytes` to a new owner-only file beside `path`, named with this
