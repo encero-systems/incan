@@ -1,0 +1,46 @@
+"""Verify the installed-verification gate plan and the checks the census carries for the other gates."""
+
+from release_support import check_baseline
+from verify_installation import LSP_CONTRACT_CASE, require_lsp_contract, verification_phase_names
+
+const BASELINE: str = "behavior/a/a\n"
+
+
+def census(graph_verdict: str) -> str:
+    """A complete eight-family census whose language-server case has the given verdict."""
+    mut log = "PASS behavior/a/a\nPASS check/a/a\nPASS library/a/a\nPASS interop/a/a\n"
+    log += "PASS testing/a/a\nPASS project/a/a\nPASS format/a/a\n"
+    log += f"{graph_verdict} {LSP_CONTRACT_CASE}\n"
+    mut passed = 7
+    mut failed = 0
+    mut pending = 0
+    if graph_verdict == "PASS":
+        passed += 1
+    elif graph_verdict == "FAIL":
+        failed += 1
+    else:
+        pending += 1
+    log += f"total: {passed} passed, {failed} failed, {pending} pending\n"
+    return log
+
+
+def test_the_language_server_contract_runs_once_inside_the_installed_census() -> Result[None, str]:
+    """No gate repeats the census's live language-server case; the census, which runs it with the server, remains."""
+    names = verification_phase_names(2)
+    assert "lsp" not in names
+    assert "census" in names
+    assert names == ["relocation", "oven", "rust-facets", "driver-integration", "census", "memory"]
+    return Ok(None)
+
+
+def test_the_installed_census_must_pass_the_language_server_contract() -> Result[None, str]:
+    """A census that does not pass the live language-server case fails verification even when the baseline lacks it."""
+    assert LSP_CONTRACT_CASE == "graph/incan/relationships"
+    require_lsp_contract(check_baseline(BASELINE, census("PASS"))?)?
+    for verdict in ["FAIL", "PEND"]:
+        match require_lsp_contract(check_baseline(BASELINE, census(verdict))?):
+            Ok(_) => return Err(f"a census with {verdict} {LSP_CONTRACT_CASE} passed the language-server gate")
+            Err(message) =>
+                assert LSP_CONTRACT_CASE in message
+                assert verdict in message
+    return Ok(None)
