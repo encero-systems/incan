@@ -337,16 +337,21 @@ impl ExecutableDeclaration {
             }
             Self::DecoratedBody { body, binding, storage } => {
                 let identity = body.canonical.as_ref()?;
-                let crate::body_ir::StaticInitializer::Computed(initializer) = &storage.initial else {
-                    return None;
+                let initializer_matches = match &storage.initial {
+                    crate::body_ir::StaticInitializer::Computed(initializer) => {
+                        initializer.canonical.as_ref() == Some(identity) && initializer.decl_id == body.decl_id
+                    }
+                    crate::body_ir::StaticInitializer::Linked(accessors) => {
+                        accessors.valid_for(identity) && accessors.initialize_module.is_some()
+                    }
+                    _ => false,
                 };
                 (binding.initialization == crate::body_ir::DecoratedInitialization::ModuleStorage
                     && binding.initializer.is_none()
                     && binding.original_body.canonical.as_ref() == Some(identity)
                     && &storage.canonical == identity
-                    && initializer.canonical.as_ref() == Some(identity)
                     && binding.original_body.direct_call_id == body.direct_call_id
-                    && initializer.decl_id == body.decl_id)
+                    && initializer_matches)
                     .then_some(identity)
             }
             Self::Nominal(value) => Some(&value.canonical),
@@ -362,7 +367,10 @@ impl ExecutableDeclaration {
             Self::TypeAlias(value) => Some(&value.canonical),
             Self::Static(value) => {
                 if let crate::body_ir::StaticInitializer::Linked(accessors) = &value.initial
-                    && !accessors.valid_for(&value.canonical)
+                    && (!matches!(
+                        value.canonical.kind,
+                        crate::SemanticSourceTargetKind::Static | crate::SemanticSourceTargetKind::Const
+                    ) || !accessors.valid_for(&value.canonical))
                 {
                     return None;
                 }

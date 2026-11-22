@@ -90,7 +90,12 @@ impl Callbacks {
             Err(error) => compiler.sess.dcx().fatal(error.to_string()),
         }
         // A library unit re-exports its public names at the crate root (see `library_exports`).
-        match crate::library_exports::items(&self.plan, &self.library_facades, krate.spans.inner_span) {
+        match crate::library_exports::items(
+            &self.plan,
+            &self.library_facades,
+            &compiler.sess.psess.attr_id_generator,
+            krate.spans.inner_span,
+        ) {
             Ok(items) => krate.items.extend(items),
             Err(error) => compiler.sess.dcx().fatal(error.to_string()),
         }

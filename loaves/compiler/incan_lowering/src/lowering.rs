@@ -13,8 +13,8 @@ use incan_mir_plan_native::{
     Callee, EnumDeclaration, ExternalFunction, Function, GenericEnumDeclaration, GenericModelDeclaration,
     ModelDeclaration, Plan, PlanExport, StaticCell, ZipCarrier, fold_carrier_positions, fold_inventories, source_span,
 };
-use incan_semantics_core::body_ir::{BodyIrModule, NativeUnionDeclaration};
-use incan_semantics_core::{CompilerNodeId, IncanType};
+use incan_semantics_core::body_ir::{BodyIrModule, LinkedStaticAccessors, NativeUnionDeclaration};
+use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, IncanType};
 
 use crate::async_::validate_futures;
 use crate::body_index::body_index;
@@ -46,6 +46,7 @@ use crate::project::{project_context, project_context_parallel};
 use crate::runtime_calls::selected_runtime_requirements;
 use crate::runtime_layouts::runtime_zip_carriers;
 use crate::runtime_requirements::{RuntimeRequirement, RuntimeRetention};
+use crate::static_link_exports::publish_static_accessors;
 use crate::static_storage::lower_computed_statics;
 use crate::string_conversion::lower_string_conversions;
 use crate::string_conversion_contracts::validate_conversion_placement;
@@ -176,6 +177,8 @@ pub struct UnitInputs<'a> {
     pub scalar_products: Option<String>,
     pub scalar_bodies: &'a [(CompilerNodeId, String)],
     pub record_report: Option<String>,
+    /// Producer-owned native exports chosen before lowering the Loaf.
+    pub linked_static_exports: &'a BTreeMap<CanonicalSymbolId, LinkedStaticAccessors>,
 }
 
 /// Lower one checked unit by kind; test entries come from session collection, never from naming heuristics here.
@@ -391,6 +394,7 @@ fn lowered_plan(
         },
         inputs.kind,
         inputs.tests,
+        inputs.linked_static_exports,
         published,
         trace,
     )
@@ -583,6 +587,7 @@ pub fn resume_unit_plan(
         },
         inputs.kind,
         inputs.tests,
+        inputs.linked_static_exports,
         published,
         trace,
     )
@@ -628,6 +633,7 @@ fn finish_unit_plan(
     finishing: Finishing,
     kind: &str,
     tests: &[String],
+    linked_static_exports: &BTreeMap<CanonicalSymbolId, LinkedStaticAccessors>,
     published: &mut Vec<NativeUnionDeclaration>,
     trace: bool,
 ) -> Result<UnitPlanning, String> {
@@ -774,6 +780,13 @@ fn finish_unit_plan(
             &templates,
             &enum_templates,
         );
+        publish_static_accessors(
+            &retained_program,
+            linked_static_exports,
+            &entry_file,
+            &mut inventories,
+            &mut exports,
+        )?;
         publish_unions(&constructors, &context, &intrinsics, published)?;
     }
     let sources_count = inventories.enums.len() - intrinsics.len();

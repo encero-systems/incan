@@ -269,6 +269,8 @@ pub enum CalleeKind {
     InstallPanicHook(Vec<PlanType>),
     /// A target-verified foreign declaration; the physical symbol and link capability are never reconstructed.
     Foreign(ForeignFunction),
+    /// A declaring Loaf's guarded callback accessor and the closed consumer helper it invokes.
+    LinkedStaticMethod(String, String),
 }
 
 /// One target-verified C function with its exact symbol, explicit library, and native signature.
