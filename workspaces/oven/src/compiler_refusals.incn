@@ -1,13 +1,11 @@
 """
 Replay compiler-certified deterministic outcomes under the same complete identity as compiled outputs.
 
-Two outcomes are retained with their exact stdout and stderr bytes and their status: a unit compilation the compiler
-refuses with source diagnostics, and a check whose report unchanged inputs reproduce. A normal repeat of the same
-identity replays them without starting a compiler. Crashes, signals, uncertified failures, missing linked artifacts and
-inputs that changed while the compiler ran are never retained.
+Retain compiler refusals, certified check reports, and successful source-check warnings with their exact authored
+input identity. An unchanged request replays them without starting a compiler. Crashes, signals, uncertified failures,
+missing linked artifacts and inputs that changed while the compiler ran are never retained.
 
-Both are facts of the home bakery (see `bakery`): a refusal or check report is baked once under its identity, and a
-crash or an I/O failure publishes nothing.
+Each is a fact of the home bakery, baked once under its identity.
 
 A retained stream names the producing project's locations relative to its root, and a replay renders them under the
 requesting project's root, so the same identity replays at any path exactly as a fresh compiler run there prints.
@@ -38,6 +36,7 @@ const REFUSAL_RECEIPT: str = "incan.compiler-refusal/1\n"
 const CHECK_RECEIPT: str = "incan.compiler-check/1\n"
 const CHECK_DOMAIN: str = "incan.oven.check/2"
 const REFUSAL_DOMAIN: str = "incan.oven.refusal/2"
+const WARNING_DOMAIN: str = "incan.oven.checked-warnings/1"
 const OUTCOME: str = "outcome"
 # Stands for the producing project's root in a retained stream; a replay writes the requesting project's root there.
 const PROJECT_ROOT: str = "{incan.oven:project-root}"
@@ -52,6 +51,7 @@ pub def compile_or_replay(
     store: Path,
     key: Key,
     reason: str,
+    checked_warnings: Option[Path] = None,
 ) -> Result[i32, str]:
     """
     Preserve compiler outcomes and retain only certified, normally exited refusals of unchanged inputs.
@@ -72,14 +72,78 @@ pub def compile_or_replay(
             return show(refusal, toolchain.console)
     # 2. The worker and a single process capture the same streams; only the compiler's receipt certifies a refusal.
     trace(f"unit {unit.package} {unit.kind}: compiled ({reason})")
-    certificate = fresh_certificate(store, refused)?
+    certificate = fresh_certificate(store, refused, checked_warnings is not None)?
+    companion = warning_companion(certificate)
+    withdraw(companion)
     refusal = completed(toolchain, invocation + ["--certify", certificate.0] + options)?
     # 3. Publish a certified refusal only if the complete input identity is still unchanged.
     if cacheable and refusal.exited and refusal.code == 1 and certified(certificate, REFUSAL_RECEIPT):
         if still_keyed(unit, toolchain, key):
             _ = retain_outcome(store, refused, "refusal", outcome_name(unit, ""), refusal, unit.project_root)
     withdraw(certificate)
+    if let Some(destination) = checked_warnings:
+        if refusal.exited and refusal.code == 0 and companion.is_file():
+            warning_bytes = companion.read_bytes().map_err((error) => error.message())?
+            publish_binary(destination, warning_bytes)?
+    withdraw(companion)
     return show(refusal, toolchain.console)
+
+
+pub def warning_identity(key: Key) -> Result[str, str]:
+    """Warnings render source slices and positions, so their key binds every authored byte."""
+    return fingerprint([WARNING_DOMAIN, key.replayed()])
+
+
+pub def replay_checked_warnings(store: Path, identity: str, root: str, console: str) -> Result[bool, str]:
+    """Replay the selected checker's portable warning stream, distinguishing a silent check from missing evidence."""
+    if let Some(found) = load_outcome(store, identity, root)?:
+        if found.code == 0 and len(found.output) == 0:
+            if len(found.error) > 0:
+                _ = show(found, console)?
+            return Ok(true)
+    return Ok(false)
+
+
+pub def retain_checked_warnings(
+    store: Path, identity: str, unit: UnitDescription, warning_bytes: bytes,
+) -> Result[None, str]:
+    """Publish one verified successful source check's warning bytes, including the evidence that it was silent."""
+    outcome = Completion(code=0, exited=true, output=b"", error=warning_bytes)
+    return retain_outcome(store, identity, "check", f"{unit_name(unit)}\tchecked warnings", outcome, unit.project_root)
+
+
+pub def check_for_warnings(
+    unit: UnitDescription, toolchain: Toolchain, description: Path, store: Path, key: Key,
+) -> Result[None, str]:
+    """
+    Admit the diagnostics of an authored input that can reuse its native unit.
+
+    1. Claim the diagnostic identity and replay a result produced while this caller waited.
+    2. Check on a miss and admit its warnings only if the compiler certifies the same input.
+    """
+    # 1. The claim belongs to the raw-source result, independent of any native producer's claim.
+    identity = warning_identity(key)?
+    held = claim(store, identity)?
+    if replay_checked_warnings(store, identity, unit.project_root, toolchain.console)?:
+        return Ok(None)
+    # 2. The certificate covers the check's actual stderr. Its success message stays private to the check.
+    certificate = fresh_certificate(store, identity)?
+    found = completed(toolchain, ["--check", description.0, toolchain.sysroot, "--certify", certificate.0])?
+    verified = found.exited and found.code == 0 and certified(certificate, CHECK_RECEIPT)
+    withdraw(certificate)
+    warnings = Completion(code=found.code, exited=found.exited, output=b"", error=found.error)
+    if not verified or not still_keyed(unit, toolchain, key):
+        _ = show(warnings, toolchain.console)?
+        return Err("cannot certify diagnostics for the selected executable's source")
+    if let Some(relative) = relative_outcome(warnings, unit.project_root):
+        seal_outcome(store, identity, "check", f"{unit_name(unit)}\tchecked warnings", relative)?
+    _ = show(warnings, toolchain.console)?
+    return Ok(None)
+
+
+def warning_companion(certificate: Path) -> Path:
+    """The compiler writes just the source check's warnings beside its private compilation certificate."""
+    return Path(f"{certificate.0}.warnings")
 
 
 pub def check_or_replay(
@@ -157,7 +221,7 @@ def outcome_name(unit: UnitDescription, format: str) -> str:
     return name
 
 
-def ordinary_compilation() -> bool:
+pub def ordinary_compilation() -> bool:
     """Explicit diagnostic side channels require a real compiler invocation on every request."""
     return get_or("INCAN_DIRECT_REFUSAL_REPORT", "") == "" and get_or("INCAN_DIRECT_SEMANTIC_REPORT", "") == ""
 
@@ -191,11 +255,14 @@ def cold_completion(toolchain: Toolchain, arguments: list[str]) -> Result[Comple
     return Ok(Completion(code=code, exited=exited, output=result.stdout, error=result.stderr))
 
 
-def fresh_certificate(store: Path, identity: str) -> Result[Path, str]:
-    """A private receipt path in the bakery, in an existing directory and empty before the compiler runs."""
+def fresh_certificate(store: Path, identity: str, warnings: bool = false) -> Result[Path, str]:
+    """Name an empty private receipt path and request the compiler's warning companion only when needed."""
     receipts = store.joinpath("receipts")
     receipts.mkdir(true, true).map_err((error) => f"{receipts.0}: {error.message()}")?
-    certificate = receipts.joinpath(f"{identity}.{id()}.certificate")
+    mut extension = "certificate"
+    if warnings:
+        extension = "warning-certificate"
+    certificate = receipts.joinpath(f"{identity}.{id()}.{extension}")
     if certificate.is_file():
         certificate.unlink().map_err((error) => f"cannot {error.message()}")?
     return Ok(certificate)
@@ -264,11 +331,16 @@ def retain_outcome(
         None => return Ok(None)
         Some(relative) =>
             held = claim(store, identity)?
-            if find(store, identity)? is None:
-                staged = staging(store, identity)?
-                save_outcome(staged.joinpath(OUTCOME), identity, relative)?
-                _ = seal(store, identity, staged, kind, name, [], "certified compiler outcome")?
-            return Ok(None)
+            return seal_outcome(store, identity, kind, name, relative)
+
+
+def seal_outcome(store: Path, identity: str, kind: str, name: str, relative: Completion) -> Result[None, str]:
+    """Seal portable streams while the caller holds the outcome's producer claim."""
+    if find(store, identity)? is None:
+        staged = staging(store, identity)?
+        save_outcome(staged.joinpath(OUTCOME), identity, relative)?
+        _ = seal(store, identity, staged, kind, name, [], "certified compiler outcome")?
+    return Ok(None)
 
 
 def relative_outcome(outcome: Completion, root: str) -> Option[Completion]:

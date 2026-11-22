@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 
 use crate::dependency_report::RootOrigin;
 use incan_driver::body_ir::{load_loaf_modules, required_loaf_identities};
-use incan_driver::diagnostics::CliDiagnosticFailure;
+use incan_driver::diagnostics::{CliDiagnosticFailure, capture_warning_output};
 use incan_driver::loaf_publication::{
     PublicationFacts, prepare_executable_surface, prepare_loaf_publication, publish_native_unions, write_loaf,
 };
@@ -78,6 +78,26 @@ impl RefusalReceipt {
             self.deterministic();
         }
         failure.render_human()
+    }
+
+    /// Publish only warnings earned by source checking beside this invocation's private certificate. An empty
+    /// companion certifies a silent check. The caller admits it only after normal compilation and input validation.
+    fn checked_warnings<T, E>(&self, check: impl FnOnce() -> Result<T, E>) -> Result<T, E> {
+        let Some(certificate) = self.0.as_ref().filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "warning-certificate")
+        }) else {
+            return check();
+        };
+        let (result, warnings) = capture_warning_output(check);
+        let warnings = warnings.concat();
+        eprint!("{warnings}");
+        if result.is_ok() {
+            let mut companion = certificate.as_os_str().to_os_string();
+            companion.push(".warnings");
+            let _ = std::fs::write(companion, warnings);
+        }
+        result
     }
 }
 
@@ -909,16 +929,18 @@ fn check_compilation_source(
     let parent = tracing::Span::current();
     let checked = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
         let _parent = parent.enter();
-        checked_modules(
-            &unit,
-            &rust,
-            resident,
-            &receipt,
-            graph_body_records,
-            graph_body_output,
-            collect_codegraph,
-            false,
-        )
+        receipt.checked_warnings(|| {
+            checked_modules(
+                &unit,
+                &rust,
+                resident,
+                &receipt,
+                graph_body_records,
+                graph_body_output,
+                collect_codegraph,
+                false,
+            )
+        })
     });
     match checked {
         Ok(program) => Ok(program),

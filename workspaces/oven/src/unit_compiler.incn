@@ -16,7 +16,7 @@ from codegen import compiled_arguments
 from c_interop import archive_arguments
 from darwin_executable import normalize_release_executable
 from bakery import bakery
-from compiler_refusals import compile_or_replay
+from compiler_refusals import check_for_warnings, compile_or_replay, replay_checked_warnings
 from compiler_worker import compile_resident, served_resident
 from files import discard_file, open_stream, read
 from observation import trace_boundary
@@ -59,6 +59,7 @@ pub def compile_prepared_unit(
     development: bool = false,
     graph_body_records: Option[list[SelectedBodyPage]] = None,
     records_directory: Option[Path] = None,
+    checked_warnings: Option[Path] = None,
 ) -> Result[i32, str]:
     """
     Compile one prepared unit without dependency selection or recursive preparation.
@@ -111,10 +112,20 @@ pub def compile_prepared_unit(
     invocation = ["--unit", path.0, compiled, output.0, toolchain.sysroot]
     # 3. Refusal replay preserves the owner's request-local console routing.
     trace_boundary("compiler_request")
-    code = compile_or_replay(unit, toolchain, invocation, native, bakery()?, key, reason)?
+    code = compile_or_replay(unit, toolchain, invocation, native, bakery()?, key, reason, checked_warnings)?
     if code == 0 and executable:
         normalize_release_executable(output, unit.profile)?
     return Ok(code)
+
+
+pub def executable_warnings(
+    unit: UnitDescription, toolchain: Toolchain, store: Path, key: Key, identity: str,
+) -> Result[None, str]:
+    """Replay a selected source check or admit a raw source edit which can reuse the native output."""
+    if replay_checked_warnings(store, identity, unit.project_root, toolchain.console)?:
+        return Ok(None)
+    path = write_unit(unit, crate_name(unit), None, described_by(key), true, typed=toolchain.unit_descriptor_crumb)?
+    return check_for_warnings(unit, toolchain, path, store, key)
 
 
 pub def write_selected_records(
