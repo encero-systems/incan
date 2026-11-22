@@ -1,0 +1,155 @@
+"""An unchanged namespace is admitted whole by its header (DD-0015 §9): an edit checks its own module, and checking opens
+no unchanged namespace's frame beyond the interfaces it installs; a callee whose settled call contract changes still
+re-checks its callers."""
+
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from std.environ import get_or
+from std.fs import Path
+from std.json import JsonValue, parse
+from engine_client import service_generation, service_identity
+from engine_endpoint import connect_with
+from engine_messages import Message, Stop
+from engine_wire import Refusal, zero_id
+from files import write
+from scratch import scratch_directory
+
+
+pub def test_an_unchanged_namespace_is_admitted_by_its_header_and_a_changed_contract_rechecks_its_callers() -> Result[None, str]:
+    """A body edit of a callee admits its caller by header without opening the caller's frame in checking; a body edit
+    that changes the callee's settled call contract re-checks the caller, and both programs print what a cold build
+    would."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    project = root.joinpath("project")
+    project.mkdir(true, true).map_err((error) => error.message())?
+    main = project.joinpath("main.incn")
+    write(main, "from scale import first\n\ndef main() -> None:\n    items = [3, 4]\n    println(str(first(items)))\n")?
+    callee = project.joinpath("scale.incn")
+    write(callee, "pub def first(values: list[int]) -> int:\n    return values[0]\n")?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    store = root.joinpath("store")
+    exercised = exercise_admission(binary, root, store, main, callee)
+    if store.joinpath("CURRENT").is_file():
+        match stop_engine(store, binary):
+            Err(cleanup) =>
+                match exercised:
+                    Err(error) => return Err(f"{error}; engine cleanup failed: {cleanup}")
+                    Ok(_) => return Err(cleanup)
+            Ok(_) => pass
+    return exercised
+
+
+def exercise_admission(binary: str, root: Path, store: Path, main: Path, callee: Path) -> Result[None, str]:
+    """Build, edit the callee's body twice, and count what each edit's checking opened while the caller owns cleanup."""
+    _ = run(binary, root, store, main, "cold")?
+    write(callee, "pub def first(values: list[int]) -> int:\n    return values[0] * 1\n")?
+    body = run(binary, root, store, main, "body-edit")?
+    if checked_modules(body, "main.incn") != 0:
+        return Err("a body edit of the callee checked its unchanged caller")
+    if invocations(body, "incan_rustc_driver::admit_namespace_header") == 0:
+        return Err("the unchanged caller was not admitted by its namespace header")
+    if invocations(body, "incan_rustc_driver::open_installed_namespace_interface") != 0:
+        return Err("checking opened the frame of a namespace no checked module imports")
+    # Passing the parameter on to a function that keeps it changes how `first` reads it, not its signature.
+    write(
+        callee,
+        "def keep(values: list[int]) -> list[int]:\n    return values\n\npub def first(values: list[int]) -> int:\n    return keep(values)[0]\n",
+    )?
+    contract = run(binary, root, store, main, "contract-edit")?
+    if checked_modules(contract, "main.incn") == 0:
+        return Err("a changed callee contract did not re-check its caller")
+    return Ok(None)
+
+
+def run(binary: str, root: Path, store: Path, main: Path, name: str) -> Result[Path, str]:
+    """Run the program through the records engine with its compiler records traced into their own directory."""
+    observations = root.joinpath(f"observations-{name}")
+    observations.mkdir(true, true).map_err((error) => error.message())?
+    outcome = Command
+        .new(binary)
+        .arg("run")
+        .arg(main.0)
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .env("INCAN_ENGINE_TRACE", observations.0)
+        .env("INCAN_ENGINE_REQUEST", f"namespace-admission-{name}")
+        .output()
+        .map_err((error) => str(error))?
+    if not outcome.status.success() or outcome.stdout != b"3\x0a":
+        error = RustString.from_utf8(outcome.stderr).map_err((decode_error) => str(decode_error))?
+        return Err(f"{name} records run: status={outcome.status.code()} stderr={error}")
+    return Ok(observations)
+
+
+def records(directory: Path) -> list[JsonValue]:
+    """Every compiler invocation record traced into `directory`."""
+    mut found: list[JsonValue] = []
+    match directory.iterdir():
+        Err(_) => return found
+        Ok(entries) =>
+            for entry in entries:
+                if not entry.is_file():
+                    continue
+                match entry.read_text("utf-8", "strict"):
+                    Err(_) => continue
+                    Ok(text) =>
+                        for line in text.split("\n"):
+                            if line != "":
+                                match parse(line):
+                                    Ok(document) => found.append(document)
+                                    Err(_) => continue
+    return found
+
+
+def text_field(document: JsonValue, name: str) -> str:
+    """One string field of a traced record, or the empty string."""
+    match document.get(name):
+        Some(value) =>
+            match value.as_str():
+                Some(text) => return text
+                None => return ""
+        None => return ""
+
+
+def invocations(directory: Path, function: str) -> int:
+    """How many spans of `function` the traced compiler started."""
+    mut count = 0
+    for document in records(directory):
+        if text_field(document, "kind") == "begin" and text_field(document, "function") == function:
+            count += 1
+    return count
+
+
+def checked_modules(directory: Path, module: str) -> int:
+    """How many times the traced compiler checked the module whose source file is named `module`."""
+    mut count = 0
+    for document in records(directory):
+        if text_field(document, "kind") != "begin" or text_field(document, "function") != "incan_driver::typecheck_module":
+            continue
+        match document.get("fields"):
+            Some(fields) =>
+                if text_field(fields, "module").endswith("/" + module):
+                    count += 1
+            None => continue
+    return count
+
+
+def stop_engine(store: Path, binary: str) -> Result[None, str]:
+    """Stop the records engine serving `store`, and require its acknowledgment."""
+    mut identity = service_identity(store)?
+    identity.service_generation = service_generation(binary)?
+    mut channel = connect_with(store, identity, binary).map_err(detail)?
+    channel.send(zero_id(), Message.Stop(Stop(reason="namespace admission proof completed"))).map_err(detail)?
+    stopped = channel.receive().map_err(detail)?
+    match stopped.message:
+        Message.Event(value) =>
+            assert value.status == "Stopping"
+        _ => return Err("namespace admission proof did not stop its engine")
+    _ = channel.transport.close()
+    return Ok(None)
+
+
+def detail(refusal: Refusal) -> str:
+    """Expose typed test failures through the Oven harness's textual error boundary."""
+    return refusal.detail
