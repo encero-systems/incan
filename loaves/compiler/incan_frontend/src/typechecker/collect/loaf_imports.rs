@@ -38,6 +38,7 @@ use incan_semantics_core::{
     CanonicalSymbolId, DecoratorFeature, SemanticSourceTargetKind, SurfaceFeatureKey, SymbolOrigin,
 };
 
+mod deferred_layouts;
 mod import_aliases;
 mod manifest_callables;
 mod manifest_exports;
