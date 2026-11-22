@@ -8,6 +8,7 @@ from native_build import (
     ShippedToolOverlap,
     common_environment,
     shipped_tool_overlap,
+    tool_build_plan,
 )
 
 const GIB: int = 1073741824
@@ -50,4 +51,43 @@ def test_every_production_step_names_its_own_builder_as_the_engine() -> Result[N
     environment = common_environment(context)
     assert environment["OVEN_ENGINE_BINARY"] == "/lane/oven-bin/incan"
     assert environment["SELFBUILD_OVEN"] == environment["OVEN_ENGINE_BINARY"]
+    return Ok(None)
+
+
+def test_the_oven_build_observer_runs_as_the_release_runner_and_hands_the_build_its_own_context() -> Result[None, str]:
+    """
+    The shipped Oven build is sampled by the release program's own observer script. The observer is the runner's tool:
+    it runs on the runner's Oven in the runner's inherited home, standard library and Bakery, and names that Oven as
+    its engine, so it never compiles against a build home whose debug providers are still being published. The build
+    it observes is the candidate's, and gets the candidate context whole, as every production step does.
+    """
+    context = NativeContext(
+        repo=Path("/repo"),
+        lane=Path("/lane"),
+        home=Path("/home"),
+        builder="/lane/conductor",
+        stdlib="/repo/loaves/stdlib",
+        evidence=Path("/evidence"),
+        timings=Path("/evidence/timings.tsv"),
+        jobs=2,
+        memory=0,
+        timeout_seconds=60,
+        runner="/seed/bin/incan",
+    )
+    observer = tool_build_plan(context, "oven", false, "oven-build")?.child
+    assert observer.executable == "/seed/bin/incan"
+    assert observer.environment["OVEN_ENGINE_BINARY"] == "/seed/bin/incan"
+    for name in ["INCAN_HOME", "INCAN_STDLIB", "INCAN_BAKERY", "SELFBUILD_OVEN"]:
+        assert name not in observer.environment
+    candidate = common_environment(context)
+    handed = [argument for argument in observer.arguments if "=" in argument and argument.split("=")[0] in candidate]
+    assert len(handed) == len(candidate)
+    assert "OVEN_ENGINE_BINARY=/lane/conductor" in handed
+    assert "INCAN_HOME=/home" in handed
+    assert "INCAN_STDLIB=/repo/loaves/stdlib" in handed
+    assert "/lane/conductor" in observer.arguments
+    lsp = tool_build_plan(context, "lsp", false, "lsp-build")?.child
+    assert lsp.executable == "/lane/conductor"
+    assert lsp.environment["OVEN_ENGINE_BINARY"] == "/lane/conductor"
+    assert lsp.environment["INCAN_HOME"] == "/home"
     return Ok(None)
