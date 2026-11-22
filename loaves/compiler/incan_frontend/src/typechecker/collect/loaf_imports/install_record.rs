@@ -4,8 +4,8 @@
 use super::*;
 use crate::library_manifest::CanonicalIdentityExport;
 use crate::library_manifest::install_record::{
-    INSTALL_RECORD_SCHEMA, InstallCanonicalType, InstallDeclaration, InstallDeclarationKind, InstallModule,
-    InstallRootExports, LoafInstallRecord,
+    INSTALL_RECORD_SCHEMA, InstallCanonicalType, InstallDeclaration, InstallDeclarationKind, InstallExportKind,
+    InstallModule, InstallNamedExport, InstallRootExports, LoafInstallRecord,
 };
 
 impl TypeChecker {
@@ -38,11 +38,41 @@ impl TypeChecker {
             },
             type_origins: self.loaf_type_origins(library, manifest).values().cloned().collect(),
             modules: install_modules(manifest),
-            identity_exports: Vec::new(),
-            export_kinds: Vec::new(),
-            aliases: Vec::new(),
+            identity_exports: manifest.contract_metadata.identity_graph.exports.clone(),
+            export_kinds: install_export_kinds(manifest),
+            aliases: manifest.exports.aliases.clone(),
         }
     }
+}
+
+/// For each public name the identity graph of `manifest` publishes, in first-occurrence order, the kind of root export
+/// [`TypeChecker::find_manifest_export`] finds for it.
+fn install_export_kinds(manifest: &LibraryManifest) -> Vec<InstallNamedExport> {
+    let mut seen = HashSet::new();
+    manifest
+        .contract_metadata
+        .identity_graph
+        .exports
+        .iter()
+        .filter(|export| seen.insert(export.public_name.as_str()))
+        .map(|export| InstallNamedExport {
+            public_name: export.public_name.clone(),
+            kind: TypeChecker::find_manifest_export(manifest, &export.public_name).map(|found| match found {
+                ManifestExportRef::Alias(_) => InstallExportKind::Alias,
+                ManifestExportRef::Model(_) => InstallExportKind::Model,
+                ManifestExportRef::Class(_) => InstallExportKind::Class,
+                ManifestExportRef::Function(_) => InstallExportKind::Function,
+                ManifestExportRef::Partial(_) => InstallExportKind::Partial,
+                ManifestExportRef::Trait(_) => InstallExportKind::Trait,
+                ManifestExportRef::Enum(_) => InstallExportKind::Enum,
+                ManifestExportRef::EnumVariant { .. } => InstallExportKind::EnumVariant,
+                ManifestExportRef::TypeAlias(_) => InstallExportKind::TypeAlias,
+                ManifestExportRef::Newtype(_) => InstallExportKind::Newtype,
+                ManifestExportRef::Const(_) => InstallExportKind::Const,
+                ManifestExportRef::Static(_) => InstallExportKind::Static,
+            }),
+        })
+        .collect()
 }
 
 /// Each checked API module of `manifest` with the models, classes, enums, newtypes, type aliases and traits install
