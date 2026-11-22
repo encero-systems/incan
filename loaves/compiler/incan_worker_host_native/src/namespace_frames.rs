@@ -1,9 +1,9 @@
-//! Resolve a leased namespace frame through the store and authenticate the evaluation's exact payload.
+//! Resolve a leased namespace frame through the store, which authenticates the frame against its selected digest.
 
 use std::collections::HashMap;
 
 use incan_worker_host_bindings::{
-    Location, Lookup, MappedFile, MappedView, disk_root, read_frame_cached, store_error_text, view_digest,
+    Location, Lookup, MappedFile, MappedView, disk_root, read_frame_cached, store_error_text,
 };
 use internal_models_native::namespace_references::NamespaceReference;
 use internal_models_native::records::encode_record_key;
@@ -44,14 +44,10 @@ impl NamespaceFrameReader {
             tombstone: false,
         };
         let root = disk_root(self.directory.clone());
+        // The store verifies the whole frame, key and payload, against the frame digest Oven selected. That one
+        // verification authenticates the payload, so it is not hashed a second time for its evaluation digest.
         match read_frame_cached(&root, key, &location, &mut self.mappings).map_err(|error| store_error_text(&error))? {
-            Lookup::Found(view) => {
-                let digest: String = view_digest(&view).iter().map(|byte| format!("{byte:02x}")).collect();
-                if digest != reference.value_digest {
-                    return Err("selected namespace payload differs from its evaluation digest".to_owned());
-                }
-                Ok(view)
-            }
+            Lookup::Found(view) => Ok(view),
             _ => Err("selected namespace frame is missing".to_owned()),
         }
     }
