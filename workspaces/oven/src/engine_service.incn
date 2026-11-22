@@ -23,7 +23,7 @@ from engine_messages import (
     CompletionStatus,
     EffectDisposition,
 )
-from engine_state import Identity, ServiceState
+from engine_state import Identity, ServiceState, records_generation
 from engine_epochs import prepare_submit
 from engine_actions import Pending, ExecutionLease, finish_request
 from engine_programs import read_program, program_handle
@@ -286,6 +286,7 @@ def accept(mut client: Client, mut state: ServiceState, request: bytes, submit: 
                     format=submit.options,
                     directory=submit.directory,
                     unit_options=submit.unit_options,
+                    records=records_generation(state.identity).map_err(transport)?,
                     handle=program_handle(captured.identity, state.identity.compiler_generation, submit.view).map_err(
                         transport,
                     )?,
