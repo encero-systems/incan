@@ -27,6 +27,10 @@ pub struct DependencyInterfacePreparationCache {
     pub(super) foreign_remappings: Arc<std::sync::Mutex<HashMap<String, Arc<PreparedForeignRemapping>>>>,
     /// Each compiled library's nominal public types with their canonical spellings and admitted identities.
     pub(super) canonical_remappings: Arc<std::sync::Mutex<HashMap<String, Arc<[CanonicalTypeEntry]>>>>,
+    /// Each compiled Loaf's install record, by Loaf key: what installing it reads of it.
+    #[cfg(test)]
+    pub(super) install_records:
+        Arc<std::sync::Mutex<HashMap<String, Arc<crate::library_manifest::install_record::LoafInstallRecord>>>>,
     /// Each compiled Loaf's nominal type origins, by Loaf key, for the foreign preparations that reach it.
     pub(super) type_origins: Arc<std::sync::Mutex<HashMap<String, Arc<LoafTypeOrigins>>>>,
     /// How often each compiled library's canonical type remapping was evaluated by the checkers sharing this cache.
@@ -69,6 +73,19 @@ impl DependencyInterfacePreparationCache {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
+    }
+
+    /// This cache with `record` as the install record of the Loaf indexed as `library`.
+    pub(crate) fn with_install_record(
+        self,
+        library: &str,
+        record: crate::library_manifest::install_record::LoafInstallRecord,
+    ) -> Self {
+        self.install_records
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(library.to_owned(), Arc::new(record));
+        self
     }
 
     /// Count one build of the compiled declaration `name`'s layout.
