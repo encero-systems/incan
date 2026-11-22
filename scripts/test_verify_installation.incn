@@ -1,6 +1,8 @@
 """Verify the installed-verification gate plan and the checks the census carries for the other gates."""
 
-from release_support import check_baseline
+from std.tempfile import TemporaryDirectory
+from oven_tests import selected_builder_bakery
+from release_support import builder_bakery, check_baseline
 from verify_installation import LSP_CONTRACT_CASE, require_lsp_contract, verification_phase_names
 
 const BASELINE: str = "behavior/a/a\n"
@@ -43,4 +45,26 @@ def test_the_installed_census_must_pass_the_language_server_contract() -> Result
             Err(message) =>
                 assert LSP_CONTRACT_CASE in message
                 assert verdict in message
+    return Ok(None)
+
+
+def test_installed_release_tests_reuse_the_bakery_the_builder_compiled_into() -> Result[None, str]:
+    """
+    The release names the bakery its builds used: the one `INCAN_BAKERY` selected, else the build home's own. The
+    installed Loaf and Rust-facet tests ask that bakery, and the build home's only when the release named none.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    selected = root.joinpath("selected-bakery")
+    home = root.joinpath("build-home")
+    assert builder_bakery(selected.0, home) == selected.0
+    assert builder_bakery("", home) == home.joinpath("bakery").0
+    assert selected_builder_bakery("", "") == ""
+    assert selected_builder_bakery(selected.0, home.0) == ""
+    selected.mkdir(true, true).map_err((error) => error.message())?
+    assert selected_builder_bakery(selected.0, home.0) == selected.0
+    assert selected_builder_bakery("", home.0) == ""
+    home.joinpath("bakery").mkdir(true, true).map_err((error) => error.message())?
+    assert selected_builder_bakery("", home.0) == home.joinpath("bakery").0
+    assert selected_builder_bakery(selected.0, home.0) == selected.0
     return Ok(None)
