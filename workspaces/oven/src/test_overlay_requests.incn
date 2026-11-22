@@ -103,7 +103,10 @@ pub def test_a_keystroke_checks_only_the_function_it_edits() -> Result[None, str
     answered = overlay(binary, helper, buffer, store)
     if store.exists():
         stop_engine(binary, store)?
-    _ = ran?
+    baseline, _ = ran?
+    baseline_text = baseline.to_json().map_err((error) => error.message())?
+    assert count(baseline, "all_declarations")? == 3, baseline_text
+    assert count(baseline, "reusable_declarations")? == 3, baseline_text
     answer = answered?
     text = answer.to_json().map_err((error) => error.message())?
     assert answer.require("ok").map_err((error) => error.message())?.expect_bool().map_err((error) => error.message())?, text

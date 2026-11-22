@@ -3,6 +3,10 @@
 
 pub model Square:
     pub side: int
+    sides_count: int = 4
+
+    pub property perimeter -> int:
+        return self.side * self.sides_count
 
 
 pub def area(square: Square) -> int:
