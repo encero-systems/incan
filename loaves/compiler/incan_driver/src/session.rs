@@ -29,6 +29,9 @@ use incan_frontend::testing_markers::{TestingMarkerSemantics, testing_marker_sem
 use incan_frontend::typechecker::{TypeCheckInfo, TypeChecker};
 use incan_frontend::{diagnostics, lexer, parser, vocab_desugar_pass};
 
+#[cfg(test)]
+mod static_storage_tests;
+
 /// Checked products produced by one [`CompilationSession`] analysis pass: each module's checked facts, which Body IR
 /// lowers from, and its portable semantic snapshot, which tooling reads.
 #[derive(Debug, Clone)]
