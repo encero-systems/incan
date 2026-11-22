@@ -628,6 +628,10 @@ def await_completion(mut channel: Channel, request: bytes) -> Result[tuple[Compl
                 if not captured:
                     return Err("engine completed before capture")
                 channel.acknowledge(frame).map_err(detail)?
+                # The engine's reasons about this request's units are this command's reasons too.
+                for note in value.notes.split("\n"):
+                    if note != "":
+                        trace(note)
                 return Ok((value, interest))
             Message.Refused(value) => return Err(value.detail)
             Message.Ack(_) => pass

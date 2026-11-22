@@ -330,6 +330,7 @@ def encode_complete(value: Complete) -> Result[bytes, Refusal]:
                 scalar(encode_bindingoutcome(value.binding_outcome), 2),
                 scalar(encode_completionstatus(value.status), 2),
                 text(value.observation_handle)?,
+                text(value.notes)?,
             ],
         ),
     )
@@ -343,6 +344,7 @@ def decode_complete(mut reader: Decoder) -> Result[Complete, Refusal]:
     binding_outcome = decode_bindingoutcome(int(reader.number(2)?))?
     status = decode_completionstatus(int(reader.number(2)?))?
     observation_handle = reader.text()?
+    notes = reader.text()?
     return Ok(
         Complete(
             snapshot=snapshot,
@@ -351,6 +353,7 @@ def decode_complete(mut reader: Decoder) -> Result[Complete, Refusal]:
             binding_outcome=binding_outcome,
             status=status,
             observation_handle=observation_handle,
+            notes=notes,
         ),
     )
 
