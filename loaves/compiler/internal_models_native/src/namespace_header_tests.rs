@@ -19,7 +19,7 @@ fn namespace() -> GraphNamespaceValue {
         call_reads: vec![SettledCallRead {
             reader: "domain#decl.0..12".into(),
             target: "pkg.mod::f".into(),
-            digest: "d1".into(),
+            digest: format!("sha256:{}", "ab".repeat(32)),
         }],
         call_reads_known: true,
         identity_proof: b"proof bytes".to_vec(),

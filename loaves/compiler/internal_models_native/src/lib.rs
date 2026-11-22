@@ -28,6 +28,7 @@ mod hex_text;
 mod incan_debug;
 mod input_fields;
 pub mod manifest_cache;
+pub mod namespace_headers;
 pub mod namespace_order;
 pub mod namespace_proof;
 pub mod namespace_references;
@@ -121,6 +122,9 @@ pub use internal_models_bindings::MappedView;
 pub use manifest_cache::{
     ManifestCacheValue, ManifestInventory, decode_manifest_cache, decode_manifest_inventory, encode_manifest_cache,
     encode_manifest_inventory,
+};
+pub use namespace_headers::{
+    NamespaceHeaderValue, decode_namespace_header, encode_namespace_header, namespace_header_of,
 };
 pub use namespace_order::{
     CHECKING_BASIS, IMPORT_ORDER_FILE, NamespaceOrder, certified_namespace_order, checking_basis_key,
