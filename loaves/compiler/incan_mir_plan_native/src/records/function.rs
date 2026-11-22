@@ -5,6 +5,7 @@
 //! position in the unit's tables. Places, operands, operations and statements cross [`crate::records::body`].
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use incan_semantics_core::body_ir::loaf_item_path;
 use incan_semantics_core::{SemanticSourceTargetKind, SymbolNamespace, decode_incan_symbol_identity};
@@ -153,13 +154,14 @@ pub fn decode_frames(text: &[u8], references: &[NominalReference]) -> Result<Vec
 
 /// Restore the helper frames of one admitted product.
 fn restore_frames(stored: &StoredProduct, references: &[NominalReference]) -> Result<Vec<Function>, String> {
-    restore_noted_frames(stored, references).map(|(frames, _)| frames)
+    restore_noted_frames(stored, references, None).map(|(frames, _)| frames)
 }
 
 /// Restore the helper frames of one admitted product, with the linked crates their bindings name.
 fn restore_noted_frames(
     stored: &StoredProduct,
     references: &[NominalReference],
+    pending_runtime: Option<Arc<BTreeSet<String>>>,
 ) -> Result<(Vec<Function>, Vec<String>), String> {
     if stored.schema != SCHEMA {
         return Err("unknown native product schema".to_owned());
@@ -168,6 +170,7 @@ fn restore_noted_frames(
         return Err("plan product declaration identities differ from their resolved positions".to_owned());
     }
     let mut remap = binding_remap(references.to_vec());
+    remap.pending_runtime = pending_runtime;
     let frames = stored
         .frames
         .iter()
@@ -194,13 +197,14 @@ fn restore_product(
     stored: &StoredProduct,
     references: &[NominalReference],
 ) -> Result<(Function, Vec<ExternalFunction>), String> {
-    restore_noted_product(stored, references).map(|(function, runtime, _)| (function, runtime))
+    restore_noted_product(stored, references, None).map(|(function, runtime, _)| (function, runtime))
 }
 
 /// Restore an admitted product's function and runtime demand, with the linked crates their bindings name.
 fn restore_noted_product(
     stored: &StoredProduct,
     references: &[NominalReference],
+    pending_runtime: Option<Arc<BTreeSet<String>>>,
 ) -> Result<(Function, Vec<ExternalFunction>, Vec<String>), String> {
     if stored.schema != SCHEMA {
         return Err("unknown native product schema".to_owned());
@@ -217,6 +221,7 @@ fn restore_noted_product(
         return Err("plan product resolved a declaration in another table".to_owned());
     }
     let mut remap = binding_remap(references.to_vec());
+    remap.pending_runtime = pending_runtime;
     // 3. Both parts cross the private product boundary explicitly.
     let function = restore_function(&stored.function, &mut remap)?;
     let mut restored = Vec::with_capacity(stored.runtime.len());
@@ -232,9 +237,20 @@ fn restore_for_unit(
     stored: &StoredProduct,
     references: &[NominalReference],
     linked: &BTreeSet<String>,
+    can_request_runtime: Option<&dyn Fn(&str) -> bool>,
 ) -> Result<(Function, Vec<ExternalFunction>, Vec<Function>), String> {
-    let (function, runtime, mut crates) = restore_noted_product(stored, references)?;
-    let (frames, frame_crates) = restore_noted_frames(stored, references)?;
+    let pending_runtime = can_request_runtime.and_then(|allows| {
+        let paths: BTreeSet<_> = stored
+            .runtime
+            .iter()
+            .filter_map(|external| external.path.strip_prefix(RUST_BINDING))
+            .filter(|path| allows(path))
+            .map(str::to_owned)
+            .collect();
+        (!paths.is_empty()).then(|| Arc::new(paths))
+    });
+    let (function, runtime, mut crates) = restore_noted_product(stored, references, pending_runtime.clone())?;
+    let (frames, frame_crates) = restore_noted_frames(stored, references, pending_runtime)?;
     crates.extend(frame_crates);
     if let Some(name) = crates.iter().find(|name| !linked.contains(*name)) {
         return Err(format!(
@@ -248,7 +264,7 @@ fn restore_for_unit(
 pub fn restore_named_product(encoded: &[u8], unit: &UnitNominals) -> Option<NamedProduct> {
     let stored = decode_product_record(encoded).ok()?;
     let resolved = resolve_nominals(&stored.nominals, unit)?;
-    let (function, runtime, frames) = restore_for_unit(&stored, &resolved, &BTreeSet::new()).ok()?;
+    let (function, runtime, frames) = restore_for_unit(&stored, &resolved, &BTreeSet::new(), None).ok()?;
     Some((function, runtime, resolved, frames))
 }
 
@@ -314,7 +330,7 @@ pub(crate) fn decode_noted_product(
     text: &[u8],
     references: &[NominalReference],
 ) -> Result<(Function, Vec<ExternalFunction>, Vec<String>), String> {
-    restore_noted_product(&decode_product_record(text)?, references)
+    restore_noted_product(&decode_product_record(text)?, references, None)
 }
 
 /// Retain one complete function that names no model or enum; the enclosing product retains its requirements.
@@ -388,7 +404,19 @@ impl PlacedRecord {
         references: &[NominalReference],
         linked: &BTreeSet<String>,
     ) -> Result<(Function, Vec<ExternalFunction>, Vec<Function>), String> {
-        restore_for_unit(&self.stored, references, linked)
+        restore_for_unit(&self.stored, references, linked, None)
+    }
+
+    /// Restore ordinary frames while preserving exact recorded external demands the caller will resolve before
+    /// completing the unit. Only call targets in the product's own runtime inventory can use this admission.
+    /// Linkage for constants, static accesses, and other calls must already be established.
+    pub fn restore_with_runtime_demands(
+        &self,
+        references: &[NominalReference],
+        linked: &BTreeSet<String>,
+        can_request_runtime: &dyn Fn(&str) -> bool,
+    ) -> Result<(Function, Vec<ExternalFunction>, Vec<Function>), String> {
+        restore_for_unit(&self.stored, references, linked, Some(can_request_runtime))
     }
 
     /// Whether the product restores with every declaration bound to its own product-local ordinal.
@@ -623,7 +651,7 @@ fn store_external(value: &ExternalFunction, remap: &mut NominalRemap) -> Result<
 /// Select the native implementation only after the Incan-facing record has been accepted.
 fn restore_external(value: &StoredExternal, remap: &mut NominalRemap) -> Result<ExternalFunction, String> {
     Ok(ExternalFunction {
-        path: restore_named_binding(&value.path, remap)?,
+        path: restore_runtime_binding(&value.path, remap)?,
         type_arguments: restore_types(&value.arguments, remap)?,
         parameters: restore_types(&value.parameters, remap)?,
         return_type: restore_type(&value.result, remap)?,
@@ -718,6 +746,17 @@ pub(crate) fn restore_named_binding(identity: &str, remap: &mut NominalRemap) ->
         remap.crates.push(name.to_owned());
     }
     restore_binding(identity)
+}
+
+/// Restore a call whose exact recorded demand the consumer will still resolve, or require its linked crate.
+fn restore_runtime_binding(identity: &str, remap: &mut NominalRemap) -> Result<String, String> {
+    if let Some(paths) = &remap.pending_runtime
+        && let Some(path) = identity.strip_prefix(RUST_BINDING)
+        && paths.contains(path)
+    {
+        return restore_binding(identity);
+    }
+    restore_named_binding(identity, remap)
 }
 
 /// Select one native implementation for an admitted Incan binding identity at adapter time.
@@ -908,9 +947,9 @@ fn store_closure_target(target: &CalleeKind, remap: &mut NominalRemap) -> Result
 fn restore_target(target: &StoredTarget, remap: &mut NominalRemap) -> Result<CalleeKind, String> {
     Ok(match target {
         StoredTarget::Planned(name) => CalleeKind::Planned(name.clone()),
-        StoredTarget::External(identity) => CalleeKind::External(restore_named_binding(identity, remap)?),
+        StoredTarget::External(identity) => CalleeKind::External(restore_runtime_binding(identity, remap)?),
         StoredTarget::Instantiated(identity, arguments) => CalleeKind::Instantiated(
-            restore_named_binding(identity, remap)?,
+            restore_runtime_binding(identity, remap)?,
             restore_types(arguments, remap)?,
         ),
         StoredTarget::CloneModel(ordinal) => {

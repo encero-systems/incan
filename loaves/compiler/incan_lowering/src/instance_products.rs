@@ -140,6 +140,7 @@ pub fn reused_instance(
         &inputs,
         nominals,
         &products.linked,
+        None,
         Some(&current),
         &positions,
     ) else {

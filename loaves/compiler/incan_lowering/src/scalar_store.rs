@@ -14,6 +14,7 @@ use incan_mir_plan_native::{
     encode_lowering_refusal, encode_plan_function_record, encode_product, matches_product, place_product_record,
     plan_function_digest, positioned_product_requirements, product_nominals, resolve_nominals, unresolved_nominal,
 };
+use incan_semantics_core::body_ir::BodyIrModule;
 use incan_semantics_core::semantic_digest::semantic_digest;
 
 use crate::producer_trace::{enter_producer, finish_producer};
@@ -21,6 +22,7 @@ use crate::record_positions::{
     index_positions, indexed_product, place_positions, placed_record, positioned_product, relocate_product,
 };
 use crate::resident_products::resident_placed;
+use crate::runtime_calls::sealed_runtime_path;
 
 /// A record whose key is its checked meaning; its spans name Body IR nodes by ordinal through a request-local position
 /// map.
@@ -82,12 +84,14 @@ pub fn record_scalar_inputs(
 /// 2. Validate its input witness and payload digest, and resolve each declaration it names in the current unit.
 /// 3. Restore the complete native function at the current declaration and node positions, or return a cache miss.
 ///
-/// The function returns with the generic instance requests its lowering made, still encoded.
+/// The function returns with the generic instance requests its lowering made, still encoded. Ordinary planning
+/// supplies its runtime scope because it resolves returned demands before finishing the unit.
 pub fn retained_scalar(
     directory: &str,
     inputs: &[String],
     unit: &UnitNominals,
     linked: &BTreeSet<String>,
+    runtime_scope: Option<&BodyIrModule>,
     span: Option<&SourceSpan>,
     positions: &[(i64, i64)],
 ) -> Option<RetainedProduct> {
@@ -98,7 +102,7 @@ pub fn retained_scalar(
     let (placed, requests) = record_payload(&encoded, inputs, span, positions)?;
     let resolved = resolve_nominals(placed.nominals(), unit)?;
     // 3. The record placed in step 2 restores directly; its placed bytes are never written or read.
-    let (function, runtime, frames) = placed.restore(&resolved, linked).ok()?;
+    let (function, runtime, frames) = restore_scalar_product(&placed, &resolved, linked, runtime_scope).ok()?;
     Some((function, runtime, resolved, frames, requests))
 }
 
@@ -109,31 +113,34 @@ pub fn scalar_miss(
     inputs: &[String],
     unit: &UnitNominals,
     linked: &BTreeSet<String>,
+    runtime_scope: &BodyIrModule,
     span: Option<&SourceSpan>,
     positions: &[(i64, i64)],
-) -> &'static str {
+) -> String {
     let Ok(path) = scalar_path(directory, inputs) else {
-        return "its inputs have no product key";
+        return "its inputs have no product key".into();
     };
     let Ok(encoded) = std::fs::read(path) else {
-        return "no product is stored under its key";
+        return "no product is stored under its key".into();
     };
     let Ok(record) = decode_plan_function_record(&encoded) else {
-        return "its stored product does not decode";
+        return "its stored product does not decode".into();
     };
     if record.inputs != inputs {
-        return input_difference(&record.inputs, inputs);
+        return input_difference(&record.inputs, inputs).into();
     }
     let Some((placed, _)) = record_payload(&encoded, inputs, span, positions) else {
-        return "its stored product fails its digest or does not place at the body's nodes";
+        return "its stored product fails its digest or does not place at the body's nodes".into();
     };
     let Some(resolved) = resolve_nominals(placed.nominals(), unit) else {
-        return unresolved_nominal(placed.nominals(), unit).unwrap_or("a declaration it names does not resolve");
+        return unresolved_nominal(placed.nominals(), unit)
+            .unwrap_or("a declaration it names does not resolve")
+            .into();
     };
-    if placed.restore(&resolved, linked).is_err() {
-        return "its stored product does not restore at the resolved declarations";
+    if let Err(reason) = restore_scalar_product(&placed, &resolved, linked, Some(runtime_scope)) {
+        return reason;
     }
-    "a generic instance it requests is gone"
+    "a generic instance it requests is gone".into()
 }
 
 /// Publish a loss-checked native function without changing compilation's verdict.
@@ -568,8 +575,24 @@ pub fn admitted_function(
     placed: &PlacedRecord,
     resolved: &[NominalReference],
     linked: &BTreeSet<String>,
+    runtime_scope: &BodyIrModule,
 ) -> Option<(Function, Vec<ExternalFunction>, Vec<Function>)> {
-    placed.restore(resolved, linked).ok()
+    restore_scalar_product(placed, resolved, linked, Some(runtime_scope)).ok()
+}
+
+/// Admit deferred call demands only during ordinary planning, where the current sealed scope will resolve them.
+fn restore_scalar_product(
+    placed: &PlacedRecord,
+    resolved: &[NominalReference],
+    linked: &BTreeSet<String>,
+    runtime_scope: Option<&BodyIrModule>,
+) -> Result<(Function, Vec<ExternalFunction>, Vec<Function>), String> {
+    match runtime_scope {
+        Some(module) if !module.runtime_binding_scopes.is_empty() => {
+            placed.restore_with_runtime_demands(resolved, linked, &|path| sealed_runtime_path(module, path))
+        }
+        _ => placed.restore(resolved, linked),
+    }
 }
 
 /// Name a native product by the existing semantic digest owner's unambiguous framed serialization.
@@ -662,7 +685,7 @@ mod tests {
         );
         let unit = unit_nominals(Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let (restored, runtime, references, frames, encoded) =
-            retained_scalar(&directory, &inputs, &unit, &BTreeSet::new(), Some(&span), &[])
+            retained_scalar(&directory, &inputs, &unit, &BTreeSet::new(), None, Some(&span), &[])
                 .expect("a retained product is reused");
         assert_eq!(restored, function);
         assert!(runtime.is_empty() && references.is_empty() && frames.is_empty());
@@ -678,10 +701,10 @@ mod tests {
         retain_scalar(&directory, &inputs, &returning_unit("main"), &[], &[], &[], &[], &[]).expect("retain");
         let unit = unit_nominals(Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let changed = scalar_inputs("sha256:ab", "main", &span, true, "witness");
-        assert!(retained_scalar(&directory, &changed, &unit, &BTreeSet::new(), Some(&span), &[]).is_none());
+        assert!(retained_scalar(&directory, &changed, &unit, &BTreeSet::new(), None, Some(&span), &[]).is_none());
         let path = scalar_path(&directory, &inputs).expect("path");
         std::fs::write(&path, b"not a product").expect("damage");
-        assert!(retained_scalar(&directory, &inputs, &unit, &BTreeSet::new(), Some(&span), &[]).is_none());
+        assert!(retained_scalar(&directory, &inputs, &unit, &BTreeSet::new(), None, Some(&span), &[]).is_none());
         let _ = std::fs::remove_dir_all(&directory);
     }
 
@@ -750,7 +773,7 @@ mod tests {
             "a product holding a static slot was written"
         );
         let unit = unit_nominals(Vec::new(), Vec::new(), Vec::new(), Vec::new());
-        assert!(retained_scalar(&directory, &inputs, &unit, &BTreeSet::new(), Some(&span), &[]).is_none());
+        assert!(retained_scalar(&directory, &inputs, &unit, &BTreeSet::new(), None, Some(&span), &[]).is_none());
         let _ = std::fs::remove_dir_all(&directory);
     }
 }
