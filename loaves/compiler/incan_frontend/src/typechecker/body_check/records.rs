@@ -140,6 +140,9 @@ struct Positions {
     rust_reads: BTreeMap<String, Option<CanonicalSymbolId>>,
     caller: Option<super::super::type_info::CBindingRawCallOwner>,
     type_identities: BTreeMap<String, CanonicalSymbolId>,
+    /// The origin of the body's own module: a member of its own nominals that these positions do not bind is
+    /// compiler generated, while a sibling module's may be a declared member they cannot see.
+    origin: incan_semantics_core::SymbolOrigin,
 }
 
 impl Positions {
@@ -284,6 +287,7 @@ impl Positions {
             rust_reads,
             caller,
             type_identities,
+            origin,
         })
     }
 
@@ -1034,10 +1038,9 @@ fn restore_identity_context(
     let canonical = match positions.canonical(&identity) {
         Ok(member) => member,
         Err(error)
-            if matches!(
-                owner.origin,
-                incan_semantics_core::SymbolOrigin::Package { .. } | incan_semantics_core::SymbolOrigin::Module(_)
-            ) =>
+            if matches!(owner.origin, incan_semantics_core::SymbolOrigin::Package { .. })
+                || (matches!(owner.origin, incan_semantics_core::SymbolOrigin::Module(_))
+                    && owner.origin != positions.origin) =>
         {
             // A package or sibling-module declaration uses its own anchor. Only a checked generated member belongs at
             // the owner; any other member this restore cannot bind is checked afresh, never minted at the owner's span.
