@@ -465,13 +465,35 @@ mod tests {
     };
 
     use super::{
-        FRAME_COMPANION, admitted_frames, admitted_page, admitted_plan_page, read_admitted, report_admitted,
-        staged_page, staged_page_reads,
+        FRAME_LIST, admitted_frames, admitted_page, admitted_plan_page, read_admitted, report_admitted, staged_page,
+        staged_page_reads,
     };
     use crate::record_positions::{indexed_product, placed_record};
     use crate::resident_products::RestoreInputs;
     use crate::scalar_store::AdmittedPayload;
     use sha2::{Digest, Sha256};
+
+    /// Offer the page at `path` by a frame range of `segment` in its directory's frame list, named by `digest`,
+    /// replacing any line the list had for it.
+    fn list_frame(path: &Path, segment: &Path, offset: usize, length: usize, digest: &[u8]) -> Result<(), String> {
+        let list = path.parent().ok_or("page has no directory")?.join(FRAME_LIST);
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("page has no name")?;
+        let kept = std::fs::read_to_string(&list).unwrap_or_default();
+        let mut lines: Vec<String> = kept
+            .lines()
+            .filter(|line| line.split('\t').next() != Some(name))
+            .map(str::to_owned)
+            .collect();
+        lines.push(format!(
+            "{name}\t{}\t{offset}\t{length}\t{}",
+            segment.display(),
+            hex::encode(digest)
+        ));
+        std::fs::write(&list, lines.join("\n") + "\n").map_err(|error| error.to_string())
+    }
 
     /// A fresh directory for one test.
     fn directory(test: &str) -> PathBuf {
@@ -813,15 +835,7 @@ mod tests {
             stored.extend_from_slice(encoded);
             write(&segment, &stored)?;
             let path = root.join(format!("{}.incnmodule.positioned", hex::encode(name)));
-            let frame = format!("{}\n{offset}\n{}\n", segment.display(), encoded.len());
-            write(
-                &PathBuf::from(format!("{}{FRAME_COMPANION}", path.display())),
-                frame.as_bytes(),
-            )?;
-            write(
-                &PathBuf::from(format!("{}.digest", path.display())),
-                hex::encode(Sha256::digest(encoded)).as_bytes(),
-            )?;
+            list_frame(&path, &segment, offset, encoded.len(), &Sha256::digest(encoded))?;
             Ok(path)
         };
         let first = offer("resident_kappa", &encode_plan_module(&page("resident_kappa", 1))?)?;
@@ -852,32 +866,20 @@ mod tests {
     fn every_reader_of_a_staged_page_reads_a_frame_offered_page_checked_by_its_digest() -> Result<(), String> {
         let root = directory("frame-reader");
         let write = |path: &Path, bytes: &[u8]| std::fs::write(path, bytes).map_err(|error| error.to_string());
-        let companion = |path: &Path, suffix: &str| PathBuf::from(format!("{}{suffix}", path.display()));
         let segment = root.join("one.seg");
         write(&segment, b"prefix page bytes suffix")?;
         let framed = root.join("framed.incnmodule.positioned");
-        write(
-            &companion(&framed, FRAME_COMPANION),
-            format!("{}\n7\n10\n", segment.display()).as_bytes(),
-        )?;
-        write(
-            &companion(&framed, ".digest"),
-            hex::encode(Sha256::digest(b"page bytes")).as_bytes(),
-        )?;
+        list_frame(&framed, &segment, 7, 10, &Sha256::digest(b"page bytes"))?;
         assert_eq!(staged_page(&framed)?, b"page bytes".to_vec());
         let copied = root.join("copied.incnmodule.positioned");
         write(&copied, b"copied page")?;
         assert_eq!(staged_page(&copied)?, b"copied page".to_vec());
         let unnamed = root.join("unnamed.incnmodule.positioned");
-        write(
-            &companion(&unnamed, FRAME_COMPANION),
-            format!("{}\n7\n10\n", segment.display()).as_bytes(),
-        )?;
-        assert!(staged_page(&unnamed).is_err(), "a frame without its digest was read");
-        write(
-            &companion(&unnamed, ".digest"),
-            hex::encode(Sha256::digest(b"other bytes")).as_bytes(),
-        )?;
+        assert!(
+            staged_page(&unnamed).is_err(),
+            "a page with neither a copy nor a frame was read"
+        );
+        list_frame(&unnamed, &segment, 7, 10, &Sha256::digest(b"other bytes"))?;
         assert!(
             staged_page(&unnamed).is_err(),
             "a frame whose bytes are not its digest was read"
@@ -902,15 +904,7 @@ mod tests {
             stored.extend_from_slice(b"the next frame");
             write(&segment, &stored)?;
             let path = root.join(format!("{}.incnmodule.reposition", hex::encode(module)));
-            let frame = format!("{}\n{offset}\n{}\n", segment.display(), encoded.len());
-            write(
-                &PathBuf::from(format!("{}{FRAME_COMPANION}", path.display())),
-                frame.as_bytes(),
-            )?;
-            write(
-                &PathBuf::from(format!("{}.digest", path.display())),
-                hex::encode(Sha256::digest(named)).as_bytes(),
-            )?;
+            list_frame(&path, &segment, offset, encoded.len(), &Sha256::digest(named))?;
             Ok(path)
         };
         let page = |module: &str| PlanModuleValue {
