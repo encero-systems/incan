@@ -26,6 +26,7 @@ from native_build import (
     share_seed_generations,
     start_conductor,
     standard_profiles,
+    withdraw_seed_native_generations,
 )
 from oven_tests import host_memory, shared_memory
 from release_support import (
@@ -41,7 +42,6 @@ from release_support import (
     append_timing,
     append_timing_file,
     installed_builder_bakery,
-    unselected_native_generations,
     cancel_background_step,
     check_baseline,
     counts_json,
@@ -452,7 +452,9 @@ def prepare_candidate_home(run: ReleaseRun) -> Result[None, str]:
         .write_text(absolute_manifest(manifest, seed.0)?, "utf-8", "strict", None)
         .map_err((error) => error.message())?
     apply_release_trust(run.paths.source, run.paths.toolchain)?
-    share_seed_tree(seed, run.paths.toolchain, "loaves")?
+    seed_loaves = seed.joinpath("loaves")
+    if seed_loaves.exists():
+        run.paths.toolchain.joinpath("loaves").symlink_to(seed_loaves).map_err((error) => error.message())?
     share_seed_generations(seed, run.paths.toolchain, "native")?
     # The candidate ships its own registry closure, each unit with the source checksum the release pins.
     write_checksummed_registry(run.paths.toolchain, run.paths.source.joinpath(REGISTRY_CHECKSUMS))?
@@ -526,31 +528,7 @@ def source_providers(run: ReleaseRun, context: NativeContext, helper: Path) -> R
     publish_support(context, helper)?
     require_unique_runtime_root(context)?
     build_standard_packages(context, helper, "", standard_profiles(StandardGeneration.SourceClosure))?
-    return withdraw_seed_native_generations(run)
-
-
-def withdraw_seed_native_generations(run: ReleaseRun) -> Result[None, str]:
-    """
-    Remove the native generations the build home copied from its seed and its published support no longer selects, so
-    the build home carries what the archive will carry and installed verification may reuse the units built from here.
-    """
-    document = read_json(run.paths.toolchain.joinpath("toolchain.json"))?
-    externs = document.get("externs").unwrap_or(JsonValue.array([]))
-    searched = document.get("search").unwrap_or(JsonValue.array([]))
-    mut selected: list[str] = []
-    for native in externs.expect_array().map_err((error) => error.message())?:
-        path = native.require("path").and_then((value) => value.expect_str())
-        selected.append(path.map_err((error) => error.message())?)
-    for path in searched.expect_array().map_err((error) => error.message())?:
-        selected.append(path.expect_str().map_err((error) => error.message())?)
-    withdrawn = unselected_native_generations(run.paths.toolchain, selected)?
-    for directory in withdrawn:
-        if directory.is_symlink():
-            directory.unlink().map_err((error) => error.message())?
-        else:
-            directory.remove_tree().map_err((error) => f"cannot withdraw {directory.0}: {error.message()}")?
-    println(f"build home: withdrew {len(withdrawn)} seed native generations its published support does not select")
-    return Ok(None)
+    return withdraw_seed_native_generations(run.paths.toolchain)
 
 
 def seed_tool_context(run: ReleaseRun) -> Result[NativeContext, str]:
@@ -1095,14 +1073,6 @@ def withdraw_seed_providers(run: ReleaseRun) -> Result[None, str]:
     fields["externs"] = JsonValue.array([])
     fields["search"] = JsonValue.array([])
     return replace_json(path, JsonValue.object(fields))
-
-
-def share_seed_tree(seed: Path, destination: Path, name: str) -> Result[None, str]:
-    """Link one immutable seed tree into the candidate home when the seed publishes it."""
-    source = seed.joinpath(name)
-    if source.exists():
-        destination.joinpath(name).symlink_to(source).map_err((error) => error.message())?
-    return Ok(None)
 
 
 def preserve_registry_lock(toolchain: Path) -> Result[None, str]:

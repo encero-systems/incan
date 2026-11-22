@@ -24,6 +24,7 @@ from release_support import (
     run_reserved_steps,
     run_step,
     start_background_step,
+    unselected_native_generations,
 )
 
 const GIB: int = 1073741824
@@ -396,6 +397,25 @@ pub def require_unique_runtime_root(context: NativeContext) -> Result[None, str]
         if name in seen:
             return Err(f"native runtime closure has conflicting direct root: {name}")
         seen.add(name)
+    return Ok(None)
+
+
+pub def withdraw_seed_native_generations(toolchain: Path) -> Result[None, str]:
+    """
+    Drop seed native generations the published support no longer selects. Installed verification may then reuse
+    units from the builder's bakery while resolving their native references against the packed toolchain.
+    """
+    document = read_json(toolchain.joinpath("toolchain.json"))?
+    mut selected = [absolute(manifest_text(native, "path")?, toolchain).0 for native in entries(document, "externs")?]
+    for path in entries(document, "search")?:
+        selected.append(absolute(path.expect_str().map_err((error) => error.message())?, toolchain).0)
+    withdrawn = unselected_native_generations(toolchain, selected)?
+    for directory in withdrawn:
+        if directory.is_symlink():
+            directory.unlink().map_err((error) => error.message())?
+        else:
+            directory.remove_tree().map_err((error) => f"cannot withdraw {directory.0}: {error.message()}")?
+    println(f"build home: withdrew {len(withdrawn)} seed native generations its published support does not select")
     return Ok(None)
 
 
