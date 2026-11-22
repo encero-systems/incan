@@ -620,3 +620,43 @@ fn a_consumer_reads_one_declarations_signature_record_alone() -> Result<(), Box<
     );
     Ok(())
 }
+
+/// In records mode a dependency Loaf outside the installed set keeps its ordinary artifact contract, retained
+/// generation-bound inventory included: the first request's session reads its manifest whole and retains the
+/// inventory, and a later request's session (a parsing session asks only for vocabulary) opens it from the inventory
+/// without reading the manifest again.
+#[test]
+fn a_dependency_outside_the_installed_set_opens_from_its_retained_inventory() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    let home = tempfile::tempdir()?;
+    let _home = super::super::manifest_input::select_test_home(home.path());
+    let _selected = thread_selection::select(RecordSet::new(root.path().join("installed"), Vec::new()));
+    let directory = root.path().join("dependency");
+    fs::create_dir(&directory)?;
+    let manifest = LibraryManifest::new("dependency", "1.0.0");
+    fs::write(directory.join("dependency.incnlib"), manifest.to_json_string()?)?;
+    let open = || {
+        super::super::lazy_entry::IndexedLoaf::open(
+            "dependency".to_owned(),
+            crate::loaf_index::LoafNamespace::Dependency {
+                key: "dependency".to_owned(),
+            },
+            directory.clone(),
+            "dependency",
+        )
+    };
+    let first = open()?;
+    assert!(
+        first.was_demanded(),
+        "the first session admitted no inventory before reading"
+    );
+    let later = open()?;
+    assert!(
+        !later.was_demanded(),
+        "a later session read the unchanged manifest whole again"
+    );
+    assert!(!later.globals.vocabulary);
+    assert_eq!(later.summary()?.identity, first.summary()?.identity);
+    Ok(())
+}
