@@ -1,0 +1,12 @@
+"""A class with a member partial it keeps to its own package."""
+
+pub static COUNT: int = 3
+
+
+pub class Box:
+    pub v: int
+
+    pub def add(self, n: int) -> int:
+        return n + self.v
+
+    capped = partial add(n=COUNT)
